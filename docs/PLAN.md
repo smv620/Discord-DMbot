@@ -61,9 +61,21 @@ table's voice channel, transcribes each speaker, and privately advises the DM on
 **Delivery to the DM.** Discord has no pop-ups. Alerts go to a private `#dm-screen`
 text channel (only the DM can see it) and optionally to DMs.
 
-**Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Each
-campaign selects 2014 or 2024 rules. Owned sourcebook text is never bulk-copied to the
-server; only short, relevant excerpts are sent per query.
+**Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
+sourcebook text is never bulk-copied to the server; only short, relevant excerpts are
+sent per query.
+
+**Rules edition (decided 2026-10-03).** The 2024 rules are always the default — including
+when running a legacy adventure such as *Rime of the Frostmaiden*.
+1. Look up the 2024 version of a spell or rule first.
+2. Only if no 2024 version exists, fall back to the 2014 version.
+3. Any 2014 content used is tagged **`[Legacy 2014]`** wherever it appears (alerts,
+   citations, house-rule records, transcripts' rule notes).
+
+Precedence, highest first: **house rule → homebrew → 2024 → 2014 `[Legacy 2014]`**.
+Lookups must match renamed content (e.g. 2024 dropped many creator names from spell
+titles), so the rules index keys each entry by a normalized name plus known aliases,
+and a 2014 entry is used only when no 2024 entry matches any alias.
 
 **House rules.** The database is the source of truth; the Google Doc is a readable
 mirror. Each rule records: the rule, the book rule it supersedes, and the scenario
@@ -80,7 +92,8 @@ starts, configurable auto-delete of audio and transcripts, and player data remov
 
 ## Open decisions
 
-- 2014 vs 2024 rules for the first campaign
+- Whether the 2024-first rule also applies to monster stat blocks in legacy
+  adventures (2025 Monster Manual vs the adventure's printed stat blocks)
 - Hosting: DM's PC during sessions vs cloud server
 - Transcription engine for Phase 1
 - License: private repo vs public with PolyForm Strict 1.0.0
