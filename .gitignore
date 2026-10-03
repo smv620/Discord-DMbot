@@ -218,3 +218,26 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- DMbot additions ----
+# Secrets (keep the example file)
+.env.*
+!.env.example
+
+# Node (ears service)
+node_modules/
+ears/dist/
+npm-debug.log*
+
+# PyCharm / editors
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local data: recordings, transcripts, databases, logs
+data/
+*.sqlite
+*.db
+logs/
+*.log
