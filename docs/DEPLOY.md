@@ -72,7 +72,10 @@ in a volume, so restarts are fast.
 | See logs | `docker compose logs -f core` (or `ears`) |
 | Status | `docker compose ps` |
 
-The containers restart automatically after a crash or a server reboot.
+The containers restart automatically after a crash or a server reboot. A game that was
+running picks up where it left off: DMbot rejoins the voice channel and tells the DM
+screen. A few seconds of speech during the restart can't be recovered. Only `/dmbot stop`
+ends a session for good.
 
 ### Logs
 
