@@ -1,6 +1,7 @@
 import unittest
 
 from dmbot.campaigns import Campaign
+from dmbot.transcription.config import Engine
 from dmbot.ui.logic import (
     BUTTON_LABEL_MAX,
     ago,
@@ -13,6 +14,7 @@ from dmbot.ui.logic import (
     runnable,
     settings_summary,
     shorten,
+    writing_status,
 )
 
 NOW = 1_800_000_000
@@ -147,3 +149,31 @@ class BackupName(unittest.TestCase):
         for bad in bads:
             self.assertIsNone(backup_campaign_name(bad))
         self.assertEqual(dm_list(campaign(dm_user_ids=frozenset({9, 7}))), "<@7>, <@9>")
+
+
+class WritingStatus(unittest.TestCase):
+    def test_off_never_says_keeping_up(self) -> None:
+        # #39: with TRANSCRIBER=none, nothing is written down.
+        line = writing_status("none", 0, 0.0)
+        self.assertTrue(line.startswith("Writing things down: off."))
+        self.assertNotIn("keeping up", line)
+        self.assertIn("Whoever hosts DMbot", line)  # says who can change it
+        self.assertNotIn("⚠️", line)  # a choice, not a fault
+
+    def test_running_engine(self) -> None:
+        running: tuple[Engine, ...] = ("whisper-local", "cloud")
+        for engine in running:
+            self.assertEqual(writing_status(engine, 0, None), "Writing things down: keeping up")
+            self.assertEqual(writing_status(engine, 0, 0.4), "Writing things down: keeping up")
+            self.assertEqual(
+                writing_status(engine, 3, 2.6),
+                "Writing things down: keeping up (about 3 s behind)",
+            )
+            self.assertIn("Writing things down: falling behind", writing_status(engine, 16, 1.0))
+
+    def test_plain_words(self) -> None:
+        engines: tuple[Engine, ...] = ("none", "whisper-local")
+        for engine in engines:
+            line = writing_status(engine, 0, None).lower()
+            for jargon in ("transcri", "engine", "backlog", "whisper"):
+                self.assertNotIn(jargon, line)

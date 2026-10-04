@@ -11,6 +11,7 @@ from collections.abc import Collection, Iterable
 from datetime import UTC, datetime
 
 from dmbot.campaigns import DM_SCREEN_VISIBILITY, FALLBACK_NONE, RULESETS, Campaign
+from dmbot.transcription.config import Engine
 
 # Discord limits.
 BUTTON_LABEL_MAX = 80
@@ -139,6 +140,35 @@ def screen_note(visibility: str) -> str:
     if visibility == "open":
         return " (everyone in the server can see it)"
     return ""
+
+
+# Waiting speech clips at which the Status button says writing is falling behind.
+WRITING_BEHIND_BACKLOG = 16
+
+
+def writing_status(engine: Engine, backlog: int, last_latency_s: float | None) -> str:
+    """The Status button's line about writing down what's said (#39).
+
+    With transcription turned off (TRANSCRIBER=none) nothing is written down, so it
+    must not say it's keeping up. Every state starts with the same words, so a DM
+    skimming the list finds it.
+    """
+    if engine == "none":
+        return (
+            "Writing things down: off. DMbot hears who's talking but doesn't write down "
+            "what's said. Whoever hosts DMbot can turn it on."
+        )
+    if backlog >= WRITING_BEHIND_BACKLOG:
+        return (
+            "⚠️ Writing things down: falling behind. DMbot still hears everyone; the "
+            "words will show up late."
+        )
+    behind = (
+        f" (about {last_latency_s:.0f} s behind)"
+        if last_latency_s is not None and last_latency_s >= 1
+        else ""
+    )
+    return f"Writing things down: keeping up{behind}"
 
 
 def backup_filename(campaign_name: str, now: int) -> str:

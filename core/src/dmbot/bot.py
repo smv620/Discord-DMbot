@@ -488,15 +488,11 @@ class DMBot(commands.AutoShardedBot):
             lines.append("Nobody has said yes to recording yet.")
         p = self.pipeline
         if table is not None:
-            if p.backlog >= 16:
-                lines.append("⚠️ Writing things down is falling behind.")
-            else:
-                behind = (
-                    f" (about {p.last_latency_s:.0f} s behind)"
-                    if p.last_latency_s is not None and p.last_latency_s >= 1
-                    else ""
+            lines.append(
+                ui_logic.writing_status(
+                    self.settings.transcription.engine, p.backlog, p.last_latency_s
                 )
-                lines.append(f"Keeping up: yes{behind}")
+            )
         if p.dropped or self.ears.rejected_frames or p.total_failures:
             log.info(
                 "Status for guild %s: dropped=%d failures=%d bad_frames=%d backlog=%d",
