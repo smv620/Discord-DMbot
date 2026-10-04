@@ -127,6 +127,19 @@ RESUME_SPACING_S = 0.5
 RESUME_RETRY_DELAYS_S = (5, 15, 30, 60, 120, 300)
 
 
+def silence_voice_warnings() -> None:
+    """Turn off discord.py's 'PyNaCl/davey is not installed, voice will NOT be
+    supported' warnings (#38).
+
+    core never joins voice; ears does. The warnings are harmless here but read like a
+    voice failure. Don't install PyNaCl or davey in core to hide them: core doesn't use
+    them. `warn_dave` only exists in newer discord.py versions.
+    """
+    for flag in ("warn_nacl", "warn_dave"):
+        if hasattr(discord.VoiceClient, flag):
+            setattr(discord.VoiceClient, flag, False)
+
+
 @dataclass(slots=True)
 class Table:
     guild_id: int
@@ -174,6 +187,7 @@ class DMBot(commands.AutoShardedBot):
         intents = discord.Intents.none()
         intents.guilds = True
         intents.voice_states = True  # who is in which voice channel; not privileged
+        silence_voice_warnings()  # before super().__init__, which logs them
         super().__init__(
             command_prefix=commands.when_mentioned,
             intents=intents,
