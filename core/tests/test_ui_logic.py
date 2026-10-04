@@ -1,6 +1,7 @@
 import unittest
 
 from dmbot.campaigns import Campaign
+from dmbot.transcription.config import Engine
 from dmbot.ui.logic import (
     BUTTON_LABEL_MAX,
     ago,
@@ -154,18 +155,25 @@ class WritingStatus(unittest.TestCase):
     def test_off_never_says_keeping_up(self) -> None:
         # #39: with TRANSCRIBER=none, nothing is written down.
         line = writing_status("none", 0, 0.0)
-        self.assertIn("off", line)
-        self.assertNotIn("Keeping up", line)
+        self.assertTrue(line.startswith("Writing things down: off."))
+        self.assertNotIn("keeping up", line)
+        self.assertIn("Whoever hosts DMbot", line)  # says who can change it
+        self.assertNotIn("⚠️", line)  # a choice, not a fault
 
     def test_running_engine(self) -> None:
-        for engine in ("whisper-local", "cloud"):
-            self.assertEqual(writing_status(engine, 0, None), "Keeping up: yes")
-            self.assertEqual(writing_status(engine, 0, 0.4), "Keeping up: yes")
-            self.assertEqual(writing_status(engine, 3, 2.6), "Keeping up: yes (about 3 s behind)")
-            self.assertIn("falling behind", writing_status(engine, 16, 1.0))
+        running: tuple[Engine, ...] = ("whisper-local", "cloud")
+        for engine in running:
+            self.assertEqual(writing_status(engine, 0, None), "Writing things down: keeping up")
+            self.assertEqual(writing_status(engine, 0, 0.4), "Writing things down: keeping up")
+            self.assertEqual(
+                writing_status(engine, 3, 2.6),
+                "Writing things down: keeping up (about 3 s behind)",
+            )
+            self.assertIn("Writing things down: falling behind", writing_status(engine, 16, 1.0))
 
     def test_plain_words(self) -> None:
-        for engine in ("none", "whisper-local"):
+        engines: tuple[Engine, ...] = ("none", "whisper-local")
+        for engine in engines:
             line = writing_status(engine, 0, None).lower()
             for jargon in ("transcri", "engine", "backlog", "whisper"):
                 self.assertNotIn(jargon, line)

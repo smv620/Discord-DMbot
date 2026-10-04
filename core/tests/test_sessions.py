@@ -213,7 +213,7 @@ class SessionTests(DatabaseTest):
         busy = "\n".join(await self.bot.status_lines(GUILD))
         self.assertIn("**Frostmaiden**", busy)
         self.assertIn(f"<#{SCREEN}>", busy)
-        self.assertIn("Keeping up: yes", busy)
+        self.assertIn("Writing things down: keeping up", busy)
         for jargon in ("backlog", "frame", "pipeline", "ears", "service"):
             self.assertNotIn(jargon, busy.lower())
 
@@ -226,7 +226,7 @@ class SessionTests(DatabaseTest):
         await self.start()
         busy = "\n".join(await self.bot.status_lines(GUILD))
         self.assertIn("Writing things down: off", busy)
-        self.assertNotIn("Keeping up", busy)
+        self.assertNotIn("keeping up", busy)
 
     async def test_ears_events_do_not_leave_log_tags_behind(self) -> None:
         # The ears connection task lives on, so tags must be scoped per event.
