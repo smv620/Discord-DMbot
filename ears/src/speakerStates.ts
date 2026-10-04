@@ -7,6 +7,11 @@
 export class SpeakerStates {
   private readonly capturing = new Map<string, boolean>();
 
+  /** Whether this session has noted this user before. */
+  has(userId: string): boolean {
+    return this.capturing.has(userId);
+  }
+
   /** The log line if this user's state changed, else null. */
   note(userId: string, capturing: boolean, reason = ""): string | null {
     if (this.capturing.get(userId) === capturing) return null;

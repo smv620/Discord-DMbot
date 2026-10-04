@@ -263,6 +263,7 @@ class DMBot(commands.AutoShardedBot):
             if self.tables.get(table.guild_id) is table:
                 del self.tables[table.guild_id]
             raise
+        sent = await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
             log.info(
                 "Session started%s: voice channel %s, DM screen %s",
@@ -270,9 +271,10 @@ class DMBot(commands.AutoShardedBot):
                 table.voice_channel_id,
                 table.screen_channel_id,
             )
-        return await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
+        return sent
 
-    async def stop_table(self, guild_id: int, reason: str = "stopped") -> Table | None:
+    async def stop_table(self, guild_id: int, reason: str) -> Table | None:
+        """End a running session. `reason` goes in the log (IDs only, no names)."""
         table = self.tables.pop(guild_id, None)
         if table is None:
             return None
@@ -878,13 +880,17 @@ class DMBot(commands.AutoShardedBot):
         while True:
             await asyncio.sleep(SUMMARY_INTERVAL_S)
             for table in list(self.tables.values()):
-                with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
-                    line = table.capture_log.log_line()  # IDs and numbers only
-                    if line:
-                        log.info(line)
-                    text = table.capture_log.render(partial(self.name_of, table.guild_id))
-                    if text:
-                        await self.post(table.screen_channel_id, text)
+                await self.post_summary(table)
+
+    async def post_summary(self, table: Table) -> None:
+        """Log one capture-check line, then post the check to the DM screen."""
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            line = table.capture_log.log_line()  # IDs and numbers only; before render
+            if line:
+                log.info(line)
+            text = table.capture_log.render(partial(self.name_of, table.guild_id))
+            if text:
+                await self.post(table.screen_channel_id, text)
 
 
 # ---- slash commands ----------------------------------------------------------

@@ -61,14 +61,14 @@ class CaptureLog:
     def log_line(self) -> str | None:
         """One line for the terminal log: user IDs and numbers only, never names or
         words (#37). Call before render(), which resets. None if nothing was captured."""
-        parts = []
+        parts: list[str] = []
         for user_id, s in sorted(self._stats.items()):
             if s.utterances == 0:
                 continue
             part = f"user {user_id}: {s.utterances} x speech, {s.seconds:.1f} s"
             if s.frames_expected > 0:
                 percent, flagged = audio_health(s.frames_received, s.frames_expected)
-                part += f", audio {percent}%{' (gaps)' if flagged else ''}"
+                part += f", audio {percent}%{' (audio gaps)' if flagged else ''}"
             parts.append(part)
         if not parts:
             return None

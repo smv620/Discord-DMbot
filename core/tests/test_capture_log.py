@@ -93,7 +93,7 @@ class LogLineTests(unittest.TestCase):
         line = log.log_line()
         self.assertEqual(
             line,
-            "Capture check: 2 speaker(s); user 11: 1 x speech, 1.0 s, audio 94% (gaps); "
+            "Capture check: 2 speaker(s); user 11: 1 x speech, 1.0 s, audio 94% (audio gaps); "
             "user 22: 1 x speech, 2.0 s",
         )
         self.assertNotIn("magic", line or "")

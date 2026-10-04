@@ -48,6 +48,9 @@ export interface TableSessionOptions {
  * non-bot speakers, decodes their Opus audio, converts it to 16 kHz mono PCM and
  * streams it to core. Audio from anyone else is never subscribed to or decoded.
  */
+/** How long to wait for the voice connection, encryption handshake included. */
+export const READY_TIMEOUT_MS = 20_000;
+
 export class TableSession {
   readonly guildId: string;
   readonly channelId: string;
@@ -78,15 +81,18 @@ export class TableSession {
   }
 
   /** Wait until the voice connection is ready (DAVE handshake included). */
-  async ready(timeoutMs = 20_000): Promise<void> {
+  async ready(timeoutMs = READY_TIMEOUT_MS): Promise<void> {
     await entersState(this.connection, VoiceConnectionStatus.Ready, timeoutMs);
   }
 
   /** Stop capturing these users immediately (consent revoked, or a pause). */
   dropSpeakers(userIds: readonly string[], reason = "opted out"): void {
     for (const userId of userIds) {
-      this.noteState(userId, false, reason);
+      // Stop first, then log. Only log people this session has heard: the consent
+      // list holds everyone in the server who opted in, not just this channel.
+      const heard = this.speakers.has(userId) || this.states.has(userId);
       this.endSpeaker(userId, false);
+      if (heard) this.noteState(userId, false, reason);
     }
   }
 

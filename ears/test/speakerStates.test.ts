@@ -18,6 +18,14 @@ test("users are tracked separately", () => {
   assert.equal(states.note("1", true), null);
 });
 
+test("has() tells heard users from unknown ones", () => {
+  const states = new SpeakerStates();
+  assert.equal(states.has("1"), false);
+  states.note("1", true);
+  assert.equal(states.has("1"), true);
+  assert.equal(states.has("2"), false);
+});
+
 test("the reason is optional", () => {
   assert.equal(new SpeakerStates().note("3", false), "not capturing user 3");
 });

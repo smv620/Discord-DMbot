@@ -5,7 +5,7 @@ import { Allowlist } from "./consent.js";
 import { CoreLink } from "./coreLink.js";
 import { Logger } from "./log.js";
 import type { CoreCommand } from "./protocol.js";
-import { TableSession } from "./voice.js";
+import { READY_TIMEOUT_MS, TableSession } from "./voice.js";
 
 /**
  * ears entry point. Logs in with the shared bot token using only the voice-state
@@ -95,7 +95,7 @@ async function handleCommand(command: CoreCommand): Promise<void> {
         link.send({ type: "status", state: "joined", guildId: command.guildId, channelId: command.channelId });
       } catch {
         log.warn(
-          `couldn't join voice channel ${command.channelId} within 20 s ` +
+          `couldn't join voice channel ${command.channelId} within ${READY_TIMEOUT_MS / 1000} s ` +
             "(Connect permission, or the encryption handshake failed)",
           { guildId: command.guildId },
         );
