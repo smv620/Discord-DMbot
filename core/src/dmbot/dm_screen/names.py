@@ -37,14 +37,15 @@ def short_name(campaign_name: str) -> str:
     cut to 15 characters; otherwise drop the vowels and cut to 15. Digits don't count
     as vowels or consonants.
     """
-    text = "".join(c for c in campaign_name.lower() if ("a" <= c <= "z") or c.isdigit())
+    text = "".join(c for c in campaign_name.lower() if "a" <= c <= "z" or "0" <= c <= "9")
     if not text:
         return FALLBACK
     letters = [c for c in text if c.isalpha()]
     vowels = sum(c in VOWELS for c in letters)
-    if letters and vowels * 2 > len(letters):
+    if vowels * 2 > len(letters):
         return text[:SHORT_MAX]
-    return "".join(c for c in text if c not in VOWELS)[:SHORT_MAX] or text[:SHORT_MAX]
+    # Never empty: a name of only vowels took the branch above.
+    return "".join(c for c in text if c not in VOWELS)[:SHORT_MAX]
 
 
 def numbered(base: str, number: int) -> str:
@@ -65,21 +66,37 @@ def sub_channel_name(kind: str, campaign_name: str, number: int = 1) -> str:
     return _fit(f"{PREFIX}-{kind}-{numbered(short_name(campaign_name), number)}")
 
 
-def pick_channel_number(campaign_name: str, others: Iterable[tuple[str, int | None]]) -> int:
-    """The lowest number (1 = no prefix) not already used by a campaign that would clash.
+def _rendered(campaign_name: str, number: int) -> tuple[str, str]:
+    """The names Discord will show: the DM screen's, and the sub-channels' short part."""
+    return (
+        screen_channel_name(campaign_name, number),
+        numbered(short_name(campaign_name), number),
+    )
 
-    `others` are the server's other campaigns as (name, stored number or None). Two
-    campaigns clash if their full names or their short names come out the same.
+
+def clashes(campaign_name: str, number: int, others: Iterable[tuple[str, int | None]]) -> bool:
+    """Whether these names, with this number, are already shown for another campaign."""
+    screen, short = _rendered(campaign_name, number)
+    for name, other_number in others:
+        if other_number is None:
+            continue  # picks its number later, avoiding ours
+        other_screen, other_short = _rendered(name, other_number)
+        if screen == other_screen or short == other_short:
+            return True
+    return False
+
+
+def pick_channel_number(campaign_name: str, others: Iterable[tuple[str, int | None]]) -> int:
+    """The lowest number (1 = no prefix) that gives names no other campaign shows.
+
+    `others` are the server's other campaigns as (name, stored number or None). Names
+    are compared as Discord will show them, numbers and the 100-character cut included,
+    so "2 Frozens Cake" can't land on the `2frznsck` that "Frozens Cake" already shows.
     Campaigns without a number yet don't block anything: they pick theirs later.
     """
-    mine = (slug(campaign_name), short_name(campaign_name))
-    used = {
-        number
-        for name, number in others
-        if number is not None and (slug(name) == mine[0] or short_name(name) == mine[1])
-    }
+    taken = list(others)
     number = 1
-    while number in used:
+    while clashes(campaign_name, number, taken):
         number += 1
     return number
 

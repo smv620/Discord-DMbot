@@ -1,6 +1,7 @@
 """Channel names (docs/PLAN.md, "Channel structure"): the examples from the plan."""
 
 from dmbot.dm_screen.names import (
+    clashes,
     is_screen_name,
     numbered,
     pick_channel_number,
@@ -92,6 +93,29 @@ def test_campaigns_without_a_number_yet_dont_block() -> None:
 
 def test_lowest_free_number_is_reused() -> None:
     assert pick_channel_number("Frozn Sack", [("Frozen Sick", 1), ("Frozens Cake", 3)]) == 2
+
+
+def test_a_name_starting_with_a_digit_cant_land_on_a_clash_number() -> None:
+    # "Frozens Cake" already shows 2frznsck; "2 Frozens Cake" would show 2frznsck too.
+    assert pick_channel_number("2 Frozens Cake", [("Frozens Cake", 2)]) == 2
+    # ...and the other way round for the DM screen: 2frozens-cake.
+    assert pick_channel_number("Frozens Cake", [("2frozens cake", 1), ("Frozen Sick", 1)]) == 3
+
+
+def test_very_long_names_that_only_differ_after_the_cut_clash() -> None:
+    a = "Campaign " * 12 + "Alpha"
+    b = "Campaign " * 12 + "Bravo"
+    assert screen_channel_name(a) == screen_channel_name(b)
+    assert pick_channel_number(b, [(a, 1)]) == 2
+
+
+def test_a_name_that_still_fits_keeps_its_number() -> None:
+    assert not clashes("Frozens Cake", 2, [("Frozen Sick", 1)])
+    assert clashes("Frozens Cake", 1, [("Frozen Sick", 1)])
+
+
+def test_only_ascii_digits_are_kept() -> None:
+    assert short_name("Curse ²") == "crs"
 
 
 def test_screen_names_new_and_old_style() -> None:

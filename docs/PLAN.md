@@ -326,10 +326,19 @@ so the docs always show names the way Discord does. For the campaign
   the lowest free number from 2 up, on both names. *Example:* "Frozen Sick" and
   "Frozens Cake" both shorten to `frznsck`. "Frozens Cake" was made second, so its
   channels are `dmb-dm-screen-2frozens-cake` and `dmb-time-2frznsck` (and so on).
-- A name may itself start with a digit ("2 Frozen" → `2frzn`). That's fine: a clash
-  number always goes in front of whatever the name already is, and DMbot keeps track of
-  which number each campaign got, so it never has to guess from the channel name.
-- Discord allows 100 characters per channel name; longer names are cut to fit.
+- Clashes are checked on the **names Discord will actually show**, numbers included. So
+  a name that starts with a digit can't land on another campaign's clash number:
+  "2 Frozens Cake" next to "Frozens Cake" (already `2frznsck`) gets a number too.
+- The number is chosen once, the first time the campaign's DM screen is made, and stored.
+  It changes only if the campaign is renamed so that its names clash; other campaigns'
+  names never shift. Campaigns made before this rule get their number the next time
+  they start, in that order.
+- Discord allows 100 characters per channel name; longer names are cut to fit, and two
+  names that only differ after the cut count as a clash.
+- Renaming an old-style screen (`dm-screen-…`), or after a campaign rename, is
+  best-effort: Discord allows two renames per channel every 10 minutes, so DMbot tries
+  again at the next start rather than holding anything up. A channel used by two
+  campaigns is never renamed.
 
 *Who can see what.* Channels are either **controlled** or **unrestricted**:
 
