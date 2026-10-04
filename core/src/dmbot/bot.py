@@ -1,7 +1,9 @@
-"""Discord bot: slash commands, table sessions, and the capture pipeline.
+"""Discord bot: sessions for each campaign, and the capture pipeline.
 
-Phase 0 scope: join the table voice channel through ears, enforce consent, segment
-speech per speaker, and post periodic capture summaries to the DM's private channel.
+A session ("table") is one campaign being played in one voice channel. `/dmbot start`
+(dmbot.ui.dmbot_commands) picks the campaign and channel; this module joins the voice
+channel through ears, enforces consent, segments speech per speaker, and posts periodic
+capture summaries to the campaign's DM screen.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from dmbot.audio.segmenter import Segmenter, Utterance
+from dmbot.campaigns import CampaignStore
 from dmbot.capture_log import CaptureLog
 from dmbot.channel_access import (
     SAME_CHANNEL,
@@ -29,6 +32,7 @@ from dmbot.channel_access import (
 )
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.dm_screen import ensure_dm_screen
 from dmbot.ears.protocol import (
     AudioFrame,
     EarsMessage,
@@ -44,6 +48,8 @@ from dmbot.ears.server import EarsServer
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline
+from dmbot.ui import logic as ui_logic
+from dmbot.ui.dmbot_commands import dmbot_group
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +73,12 @@ class Table:
     capture_log: CaptureLog = field(default_factory=CaptureLog)
     listening: bool = False
     notice_posted: bool = False
+    campaign_id: str | None = None
+    campaign_name: str = ""
+    dm_user_ids: frozenset[int] = frozenset()
+
+    def is_dm(self, user_id: int) -> bool:
+        return user_id == self.dm_user_id or user_id in self.dm_user_ids
 
 
 class DMBot(commands.Bot):
@@ -75,6 +87,7 @@ class DMBot(commands.Bot):
         settings: Settings,
         consent: ConsentStore,
         transcriber: Transcriber | None = None,
+        campaigns: CampaignStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -82,6 +95,8 @@ class DMBot(commands.Bot):
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
         self.consent = consent
+        # Tests may omit the store; run() always passes the real one.
+        self.campaigns = campaigns if campaigns is not None else CampaignStore(":memory:")
         self.tables: dict[int, Table] = {}
         self.pipeline = TranscriptionPipeline(
             transcriber or PlaceholderTranscriber(),
@@ -104,7 +119,7 @@ class DMBot(commands.Bot):
     # ---- lifecycle ---------------------------------------------------------
 
     async def setup_hook(self) -> None:
-        self.tree.add_command(table_group)
+        self.tree.add_command(dmbot_group)
         self.tree.add_command(consent_group)
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
@@ -146,6 +161,139 @@ class DMBot(commands.Bot):
             return None
         await self.ears.send(leave_command(guild_id))
         return table
+
+    # ---- sessions (used by /dmbot start · stop · help) ---------------------
+
+    def active_campaign_id(self, guild_id: int) -> str | None:
+        table = self.tables.get(guild_id)
+        return table.campaign_id if table else None
+
+    def start_blocker(self, guild_id: int) -> str | None:
+        """Why `/dmbot start` can't begin right now, or None if it can."""
+        if not self.ears.connected:
+            return EARS_DOWN
+        table = self.tables.get(guild_id)
+        if table is not None:
+            name = f"**{table.campaign_name}** " if table.campaign_name else ""
+            return (
+                f"DMbot is already listening to {name}in <#{table.voice_channel_id}>. "
+                "Use `/dmbot stop` first."
+            )
+        return None
+
+    async def start_campaign_session(
+        self, interaction: discord.Interaction, campaign_id: str, voice_id: int
+    ) -> tuple[bool, str]:
+        """Start listening for a campaign. Returns (started, message for the DM)."""
+        guild = interaction.guild
+        if guild is None:
+            return False, "Use this in a server."
+        problem = self.start_blocker(guild.id)
+        if problem:
+            return False, problem
+        campaign = await self.campaigns.get(guild.id, campaign_id)
+        if campaign is None:
+            return False, "That campaign isn't here any more. Run `/dmbot start` again."
+        manager = (
+            isinstance(interaction.user, discord.Member)
+            and interaction.user.guild_permissions.manage_guild
+        )
+        if not ui_logic.can_run(campaign, interaction.user.id, manager):
+            return False, ui_logic.NO_CAMPAIGN_ACCESS
+        me = cast(discord.Member | None, guild.me)  # None while the guild is still loading
+        if me is None:
+            return False, STARTING_UP
+        voice = guild.get_channel(voice_id)
+        if not isinstance(voice, discord.VoiceChannel | discord.StageChannel):
+            return False, "I can't find that voice channel. Pick another one."
+        voice_perms = voice.permissions_for(me)
+        if not (voice_perms.view_channel and voice_perms.connect):
+            return False, (
+                f"I can't join {voice.mention}. Give me **View Channel** and **Connect** "
+                "there (Edit Channel → Permissions), then press Start again."
+            )
+
+        screen_id = await ensure_dm_screen(self, interaction, campaign)
+        if screen_id is None:
+            return False, (
+                "I couldn't find a channel for DM updates. Run `/dmbot start` from a "
+                "private channel."
+            )
+        if screen_id == voice.id:
+            return False, SAME_CHANNEL
+        screen = self.get_channel(screen_id)
+        screen_perms: discord.Permissions | None
+        if screen is None:
+            screen_perms = None
+        elif screen_id == interaction.channel_id:
+            # Discord's own resolved view of the invoking channel (threads too).
+            screen_perms = interaction.app_permissions
+        elif isinstance(screen, discord.abc.GuildChannel | discord.Thread):
+            screen_perms = screen.permissions_for(me)
+        else:
+            screen_perms = None
+        problems = post_problems(
+            screen_id=screen_id,
+            screen_perms=screen_perms,
+            screen_in_thread=isinstance(screen, discord.Thread),
+            voice_id=voice.id,
+            voice_perms=voice_perms,
+        )
+        if problems:
+            return False, join_blocked_message(problems)
+
+        await self.campaigns.set_dm_screen(guild.id, campaign.id, screen_id)
+        await self.campaigns.set_last_voice_channel(guild.id, campaign.id, voice.id)
+        campaign = await self.campaigns.mark_played(guild.id, campaign.id)
+        table = Table(
+            guild_id=guild.id,
+            voice_channel_id=voice.id,
+            screen_channel_id=screen_id,
+            dm_user_id=interaction.user.id,
+            segmenter=Segmenter(guild.id),
+            campaign_id=campaign.id,
+            campaign_name=campaign.name,
+            dm_user_ids=campaign.dm_user_ids,
+        )
+        await self.start_table(table)
+        return True, (
+            f"▶ Starting **{campaign.name}** in {voice.mention}.\n"
+            f"DM updates will appear in <#{screen_id}>. Keep that channel private."
+        )
+
+    async def stop_session(self, guild_id: int, user_id: int, is_server_manager: bool) -> str:
+        table = self.tables.get(guild_id)
+        if table is None:
+            return "DMbot isn't listening right now."
+        if not (table.is_dm(user_id) or is_server_manager):
+            return "Only the DM (or a server manager) can stop the session."
+        await self.stop_table(guild_id)
+        name = f" to **{table.campaign_name}**" if table.campaign_name else ""
+        return f"Stopped listening{name}. See you next session! 👋"
+
+    async def status_lines(self, guild_id: int) -> list[str]:
+        table = self.tables.get(guild_id)
+        users = await self.consent.consenting(guild_id)
+        names = ", ".join(sorted(self.name_of(guild_id, u) for u in users)) or "nobody yet"
+        voice_ok = "connected ✅" if self.ears.connected else "not connected ⚠️"
+        lines = [f"Voice service: {voice_ok}"]
+        if table is None:
+            lines.append("Listening: no. Use `/dmbot start` to begin.")
+        else:
+            state = "listening" if table.listening else "connecting…"
+            campaign = f" to **{table.campaign_name}**" if table.campaign_name else ""
+            lines.append(f"Listening{campaign} in <#{table.voice_channel_id}> ({state})")
+            lines.append(f"DM updates go to <#{table.screen_channel_id}>")
+        lines.append(f"Agreed to be recorded: {names}")
+        p = self.pipeline
+        lag = f", last delay {p.last_latency_s:.1f} s" if p.last_latency_s is not None else ""
+        lines.append(f"Transcription: {p.backlog} waiting{lag}")
+        if p.dropped or self.ears.rejected_frames or p.total_failures:
+            lines.append(
+                f"Problems: {p.dropped} dropped clip(s), {p.total_failures} failed "
+                f"transcription(s), {self.ears.rejected_frames} bad frame(s)"
+            )
+        return lines
 
     def name_of(self, guild_id: int, user_id: int) -> str:
         guild = self.get_guild(guild_id)
@@ -201,9 +349,10 @@ class DMBot(commands.Bot):
         if status.state == "joined":
             table.listening = True
             count = len(await self.consent.consenting(table.guild_id))
+            campaign = f" for **{table.campaign_name}**" if table.campaign_name else ""
             await self.post(
                 table.screen_channel_id,
-                f"✅ Listening in <#{table.voice_channel_id}>. "
+                f"✅ Listening in <#{table.voice_channel_id}>{campaign}. "
                 f"{count} player(s) have opted in to recording.",
             )
             if not table.notice_posted:
@@ -277,126 +426,6 @@ def _bot(interaction: discord.Interaction) -> DMBot:
     return cast(DMBot, interaction.client)
 
 
-table_group = app_commands.Group(
-    name="table", description="Start or stop listening to your D&D table", guild_only=True
-)
-
-
-@table_group.command(
-    name="join", description="Listen to the voice channel you're in (you become the DM)"
-)
-async def table_join(interaction: discord.Interaction) -> None:
-    bot = _bot(interaction)
-    member = interaction.user
-    guild = interaction.guild
-    if guild is None or not isinstance(member, discord.Member):
-        await interaction.response.send_message("Use this in a server.", ephemeral=True)
-        return
-    if member.voice is None or member.voice.channel is None:
-        await interaction.response.send_message(
-            "Join the table's voice channel first, then run `/table join`.", ephemeral=True
-        )
-        return
-    if not bot.ears.connected:
-        await interaction.response.send_message(EARS_DOWN, ephemeral=True)
-        return
-    if interaction.channel_id is None:
-        await interaction.response.send_message("Run this from a text channel.", ephemeral=True)
-        return
-
-    voice = member.voice.channel
-    me = cast(discord.Member | None, guild.me)  # None while the guild is still loading
-    if me is None:
-        await interaction.response.send_message(STARTING_UP, ephemeral=True)
-        return
-    if interaction.channel_id == voice.id:
-        await interaction.response.send_message(SAME_CHANNEL, ephemeral=True)
-        return
-    # post() looks channels up in the cache, so an uncached screen channel can't be used.
-    # app_permissions is Discord's own resolved view of the invoking channel (threads too).
-    screen_visible = bot.get_channel(interaction.channel_id) is not None
-    problems = post_problems(
-        screen_id=interaction.channel_id,
-        screen_perms=interaction.app_permissions if screen_visible else None,
-        screen_in_thread=isinstance(interaction.channel, discord.Thread),
-        voice_id=voice.id,
-        voice_perms=voice.permissions_for(me),
-    )
-    if problems:
-        await interaction.response.send_message(
-            join_blocked_message(problems), ephemeral=True, allowed_mentions=NO_PINGS
-        )
-        return
-
-    table = Table(
-        guild_id=guild.id,
-        voice_channel_id=voice.id,
-        screen_channel_id=interaction.channel_id,
-        dm_user_id=member.id,
-        segmenter=Segmenter(guild.id),
-    )
-    await bot.stop_table(guild.id)
-    await bot.start_table(table)
-    await interaction.response.send_message(
-        f"Joining {voice.mention}. Updates for the DM will appear in this channel, "
-        "so keep it private to you.",
-        ephemeral=True,
-    )
-
-
-@table_group.command(name="leave", description="Stop listening")
-async def table_leave(interaction: discord.Interaction) -> None:
-    bot = _bot(interaction)
-    if interaction.guild is None or not isinstance(interaction.user, discord.Member):
-        await interaction.response.send_message("Use this in a server.", ephemeral=True)
-        return
-    table = bot.tables.get(interaction.guild.id)
-    if table is None:
-        await interaction.response.send_message("I'm not listening right now.", ephemeral=True)
-        return
-    is_admin = interaction.user.guild_permissions.manage_guild
-    if interaction.user.id != table.dm_user_id and not is_admin:
-        await interaction.response.send_message(
-            "Only the DM (or a server manager) can stop the session.", ephemeral=True
-        )
-        return
-    await bot.stop_table(interaction.guild.id)
-    await interaction.response.send_message("Stopped listening. 👋", ephemeral=True)
-
-
-@table_group.command(name="status", description="Show what DMbot is doing right now")
-async def table_status(interaction: discord.Interaction) -> None:
-    bot = _bot(interaction)
-    if interaction.guild is None:
-        await interaction.response.send_message("Use this in a server.", ephemeral=True)
-        return
-    gid = interaction.guild.id
-    table = bot.tables.get(gid)
-    users = await bot.consent.consenting(gid)
-    names = ", ".join(sorted(bot.name_of(gid, u) for u in users)) or "nobody yet"
-    lines = [
-        f"Voice service: {'connected ✅' if bot.ears.connected else 'not connected ⚠️'}",
-        (
-            f"Table: <#{table.voice_channel_id}> "
-            f"({'listening' if table.listening else 'connecting…'}), DM <@{table.dm_user_id}>"
-            if table
-            else "Table: not listening"
-        ),
-        f"Opted in to recording: {names}",
-    ]
-    p = bot.pipeline
-    lag = f", last delay {p.last_latency_s:.1f} s" if p.last_latency_s is not None else ""
-    lines.append(f"Transcription: {p.backlog} waiting{lag}")
-    if p.dropped or bot.ears.rejected_frames or p.total_failures:
-        lines.append(
-            f"Problems: {p.dropped} dropped clip(s), {p.total_failures} failed "
-            f"transcription(s), {bot.ears.rejected_frames} bad frame(s)"
-        )
-    await interaction.response.send_message(
-        "\n".join(lines), ephemeral=True, allowed_mentions=NO_PINGS
-    )
-
-
 consent_group = app_commands.Group(
     name="consent", description="Choose whether DMbot may record your voice", guild_only=True
 )
@@ -447,13 +476,17 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
 
 
 async def run(settings: Settings) -> None:
-    consent = ConsentStore(settings.data_dir / "dmbot.sqlite")
+    db_path = settings.data_dir / "dmbot.sqlite"
+    campaigns = CampaignStore(db_path)
+    consent = ConsentStore(db_path)
     transcriber = build_transcriber(settings.transcription)
     try:
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
-        bot = DMBot(settings, consent, transcriber)
+        bot = DMBot(settings, consent, transcriber, campaigns)
         async with bot:
             await bot.start(settings.discord_token)
     finally:
         with contextlib.suppress(Exception):
             consent.close()
+        with contextlib.suppress(Exception):
+            campaigns.close()
