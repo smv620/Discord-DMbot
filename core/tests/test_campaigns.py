@@ -1,9 +1,12 @@
+import asyncio
 import json
 import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 
-from dmbot.campaigns import Campaign, CampaignError, CampaignStore
+from dmbot.campaigns import DEFAULT_DM_SCREEN_VISIBILITY, Campaign, CampaignError, CampaignStore
 from dmbot.campaigns.store import EXPORT_FORMAT, EXPORT_VERSION
 from dmbot.db import apply_migrations, connect
 
@@ -507,3 +510,76 @@ class SharedFile(unittest.IsolatedAsyncioTestCase):
             finally:
                 campaigns.close()
                 consent.close()
+
+
+class DMScreenVisibility(StoreTest):
+    """Per-campaign DM-screen visibility (PLAN.md; requested on PR #61 for #30)."""
+
+    async def test_default_is_peek(self) -> None:
+        c = await self.make("A")
+        self.assertEqual(c.dm_screen_visibility, "peek")
+
+    async def test_set_at_create_and_change(self) -> None:
+        c = await self.make("A", dm_screen_visibility="private")
+        self.assertEqual(c.dm_screen_visibility, "private")
+        c = await self.store.set_dm_screen_visibility(GUILD_A, c.id, "open")
+        self.assertEqual(c.dm_screen_visibility, "open")
+
+    async def test_rejects_unknown_values(self) -> None:
+        with self.assertRaisesRegex(CampaignError, "who can see the DM screen"):
+            await self.make("A", dm_screen_visibility="secret")
+        c = await self.make("B")
+        with self.assertRaisesRegex(CampaignError, "who can see the DM screen"):
+            await self.store.set_dm_screen_visibility(GUILD_A, c.id, "everyone")
+
+    async def test_other_server_cannot_change_it(self) -> None:
+        c = await self.make("A", guild=GUILD_A)
+        with self.assertRaisesRegex(CampaignError, "doesn't exist in this server"):
+            await self.store.set_dm_screen_visibility(GUILD_B, c.id, "open")
+
+    async def test_backup_round_trip_and_old_backups(self) -> None:
+        c = await self.make("A", dm_screen_visibility="private")
+        backup = await self.store.export(GUILD_A, c.id)
+        self.assertEqual(backup["campaign"]["dm_screen_visibility"], "private")
+        restored = await self.store.import_backup(GUILD_B, backup, DM)
+        self.assertEqual(restored.dm_screen_visibility, "private")
+
+        old = json.loads(json.dumps(backup))
+        del old["campaign"]["dm_screen_visibility"]  # made before the setting existed
+        self.assertEqual(
+            (await self.store.import_backup(GUILD_B, old, DM)).dm_screen_visibility, "peek"
+        )
+
+        bad = json.loads(json.dumps(backup))
+        bad["campaign"]["dm_screen_visibility"] = "spoilers-for-all"
+        with self.assertRaisesRegex(CampaignError, "damaged"):
+            await self.store.import_backup(GUILD_B, bad, DM)
+
+        replaced = await self.store.import_backup(GUILD_A, old, DM, replace_campaign_id=c.id)
+        self.assertEqual(replaced.dm_screen_visibility, "peek")
+
+
+class UpgradeExistingDatabase(unittest.TestCase):
+    def test_migration_002_adds_visibility_to_existing_campaigns(self) -> None:
+        from dmbot.campaigns.store import MIGRATIONS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "dmbot.sqlite"
+            conn = connect(path)
+            apply_migrations(conn, MIGRATIONS[:1])  # a database from before this change
+            conn.execute(
+                "INSERT INTO campaigns (id, guild_id, name, name_key, created_at,"
+                " target_ruleset, fallback_ruleset) VALUES ('c1', 1, 'Old', 'old', 0,"
+                " '2024', '2014')"
+            )
+            conn.close()
+            store = CampaignStore(path)
+            try:
+                c = asyncio.run(store.get(1, "c1"))
+                assert c is not None
+                # The SQL default in campaigns_002 must match the Python default.
+                self.assertEqual(c.dm_screen_visibility, DEFAULT_DM_SCREEN_VISIBILITY)
+                with self.assertRaises(sqlite3.IntegrityError):
+                    store._db.execute("UPDATE campaigns SET dm_screen_visibility = 'nope'")
+            finally:
+                store.close()
