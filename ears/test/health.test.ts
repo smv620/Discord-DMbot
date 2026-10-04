@@ -140,8 +140,42 @@ test("finish resets for the next utterance", () => {
   assert.deepEqual(t.finish(), { framesReceived: 1, framesExpected: 1, pauses: 0, pausedMs: 0 });
 });
 
+test("two pauses in one utterance are both excluded", () => {
+  const t = new UtteranceTracker();
+  let next = speak(t, 0, 20, 5);
+  next = speak(t, next + 300, 20, 5);
+  speak(t, next + 500, 20);
+  const h = t.finish();
+  assert.ok(h);
+  assert.equal(h.pauses, 2);
+  assert.equal(h.pausedMs, 800);
+  assert.deepEqual([h.framesReceived, h.framesExpected], [60, 60]);
+});
+
+test("PAUSE_MIN_MS boundary: 40 ms after silence is not a pause, 41 ms is", () => {
+  const at40 = new UtteranceTracker();
+  at40.packet(speak(at40, 0, 5, 5) - FRAME_MS + 40, false);
+  assert.equal(at40.finish()?.pauses, 0);
+
+  const at41 = new UtteranceTracker();
+  at41.packet(speak(at41, 0, 5, 5) - FRAME_MS + 41, false);
+  assert.equal(at41.finish()?.pauses, 1);
+});
+
+test("silence frames mid-speech at normal cadence are not a pause", () => {
+  const t = new UtteranceTracker();
+  for (let i = 0; i < 50; i++) t.packet(i * FRAME_MS, i >= 20 && i < 25);
+  const h = t.finish();
+  assert.ok(h);
+  assert.equal(h.pauses, 0);
+  assert.deepEqual([h.framesReceived, h.framesExpected], [50, 50]);
+});
+
 test("isSilenceFrame matches only Discord's 3-byte silence frame", () => {
   assert.equal(isSilenceFrame(Buffer.from(SILENCE_FRAME)), true);
   assert.equal(isSilenceFrame(Buffer.from([0xf8, 0xff, 0xfe, 0x00])), false);
   assert.equal(isSilenceFrame(Buffer.from([0x78, 0x01, 0x02])), false);
+  assert.equal(isSilenceFrame(Buffer.alloc(0)), false);
+  // The receiver hands over subarray views of larger buffers.
+  assert.equal(isSilenceFrame(Buffer.from([0x00, 0xf8, 0xff, 0xfe, 0x00]).subarray(1, 4)), true);
 });

@@ -166,7 +166,8 @@ export class TableSession {
       if (this.options.debugAudio) {
         console.log(
           `[ears] audio user=${userId} received=${framesReceived} expected=${framesExpected} ` +
-            `pauses=${health.pauses} paused_ms=${health.pausedMs}`,
+            `pauses=${health.pauses} paused_ms=${health.pausedMs} ` +
+            `link_dropped_total=${link.droppedAudioFrames}`,
         );
       }
     }
