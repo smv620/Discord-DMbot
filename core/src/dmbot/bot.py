@@ -197,6 +197,7 @@ class DMBot(commands.AutoShardedBot):
         self._background: list[asyncio.Task[None]] = []
         self._session_locks: dict[int, asyncio.Lock] = {}
         self._resume_started = False
+        self._closing = False
         # Servers whose saved session is waiting for Discord to make the server available.
         self._resume_when_available: set[int] = set()
 
@@ -221,6 +222,9 @@ class DMBot(commands.AutoShardedBot):
         ]
 
     async def close(self) -> None:
+        if self._closing:  # SIGTERM and the normal exit can both call this
+            return
+        self._closing = True
         for task in self._background:
             task.cancel()
         await asyncio.gather(*self._background, return_exceptions=True)
@@ -237,8 +241,17 @@ class DMBot(commands.AutoShardedBot):
         await self.ears.send(allowlist_command(guild_id, users))
 
     async def start_table(self, table: Table) -> bool:
+        """Register the session, send ears the consent list, then the join.
+
+        If the consent list can't be loaded, nothing is left half-started.
+        """
         self.tables[table.guild_id] = table
-        await self.push_allowlist(table.guild_id)
+        try:
+            await self.push_allowlist(table.guild_id)
+        except BaseException:
+            if self.tables.get(table.guild_id) is table:
+                del self.tables[table.guild_id]
+            raise
         return await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
 
     async def stop_table(self, guild_id: int) -> Table | None:
@@ -390,7 +403,13 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Couldn't save the new session")
             return False, SAVE_FAILED
-        await self.start_table(table)
+        try:
+            await self.start_table(table)
+        except Exception:
+            log.exception("Couldn't start the session")
+            with contextlib.suppress(Exception):
+                await self.sessions.clear(guild.id)  # don't resume what never started
+            return False, SAVE_FAILED
         return True, (
             f"▶ Listening to **{campaign.name}** in {voice.mention}.\n"
             f"DM notes go to <#{screen_id}>"
@@ -721,12 +740,15 @@ class DMBot(commands.AutoShardedBot):
 
     async def _on_status(self, table: Table, status: Status) -> None:
         if status.state == "joined":
-            if table.listening:
-                return  # a repeat "joined" (e.g. ears reconnected): nothing new to say
+            # A repeat "joined" (ears confirming again) has nothing new to say, but the
+            # recording notice below is still retried if it hasn't been posted yet.
+            repeat = table.listening
             table.listening = True
             count = len(await self.consent.consenting(table.guild_id))
             campaign = f" for **{table.campaign_name}**" if table.campaign_name else ""
-            if table.resumed:
+            if repeat:
+                pass
+            elif table.resumed:
                 table.resumed = False
                 if table.announce_resume:
                     await self.post(
@@ -839,7 +861,9 @@ async def consent_give(interaction: discord.Interaction) -> None:
             ephemeral=True,
         )
         return
-    if gid in bot.tables:
+    # Always tell ears (if connected), even with no session here: it may still be in
+    # voice from before a restart.
+    with contextlib.suppress(Exception):
         await bot.push_allowlist(gid)
     message = (
         "Thanks — DMbot will now transcribe your voice in this server's table channel. "
@@ -867,8 +891,10 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
     table = bot.tables.get(gid)
     if table is not None:
         table.segmenter.drop(uid)
-        with contextlib.suppress(Exception):
-            await bot.push_allowlist(gid)
+    # Always tell ears (if connected), even with no session here: it may still be in
+    # voice from before a restart.
+    with contextlib.suppress(Exception):
+        await bot.push_allowlist(gid)
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
         await bot.consent.revoke(gid, uid)
@@ -902,8 +928,9 @@ async def run(settings: Settings) -> None:
 
 
 def _close_on_sigterm(bot: DMBot) -> None:
-    """Kubernetes stops a pod with SIGTERM: shut down cleanly (leave voice, finish
-    transcribing) and keep running sessions saved, so the next pod picks them up."""
+    """Kubernetes stops a pod with SIGTERM: shut down cleanly (leave voice, close the
+    voice link) and keep running sessions saved, so the next pod picks them up. Speech
+    still waiting to be transcribed is lost."""
     loop = asyncio.get_running_loop()
     with contextlib.suppress(NotImplementedError):  # not available on Windows
         loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.ensure_future(bot.close()))

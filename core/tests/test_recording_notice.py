@@ -74,3 +74,10 @@ class RecordingNoticeTests(DatabaseTest):
         count = len(self.posts)
         await self.joined()  # ears confirmed again without a drop in between
         self.assertEqual(len(self.posts), count)
+
+    async def test_notice_retried_on_a_repeat_joined(self) -> None:
+        self.voice_ok = False
+        await self.joined()
+        self.voice_ok = True
+        await self.joined()  # ears confirmed again; the notice still hasn't been posted
+        self.assertTrue(self.table.notice_posted)

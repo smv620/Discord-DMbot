@@ -108,7 +108,13 @@ link.on("command", (command) => {
 link.on("connected", () => {
   log.info("connected to core");
   link.send({ type: "status", state: "ready" });
-  // Leave any voice session core doesn't ask for again soon (see audit.ts).
+  // Stop capturing at once in every session until core re-sends its consent list: a
+  // player may have opted out while the link was down (see audit.ts). core sends the
+  // list again straight away for every session it still wants.
+  for (const [guildId, session] of sessions) {
+    session.dropSpeakers(allowlist.set(guildId, []));
+  }
+  // Leave any voice session core doesn't ask for again soon.
   audit.begin(sessions.keys());
   if (auditTimer) clearTimeout(auditTimer);
   auditTimer = setTimeout(() => {
@@ -117,6 +123,7 @@ link.on("connected", () => {
       log.info("leaving voice: core didn't ask for this session after reconnecting", { guildId });
       sessions.get(guildId)?.destroy();
       allowlist.clear(guildId);
+      link.send({ type: "status", state: "left", guildId });
     }
   }, CONFIRM_MS);
 });

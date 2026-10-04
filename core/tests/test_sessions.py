@@ -426,6 +426,56 @@ class SaveAndResume(SessionTests):
             await bot._resume_with_retries()
         self.assertIn(GUILD, bot.tables)
 
+    async def test_a_consent_error_during_resume_leaves_nothing_half_started(self) -> None:
+        import dmbot.bot as bot_module
+
+        await self.start()
+        bot = await self.restart()
+        real = bot.consent.consenting
+        calls = 0
+
+        async def flaky(guild_id: int) -> frozenset[int]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("database hiccup")
+            return await real(guild_id)
+
+        bot.consent.consenting = flaky  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            failed = await bot.resume_sessions()
+        self.assertEqual(failed, {GUILD})
+        self.assertNotIn(GUILD, bot.tables)  # not stuck "joining…"
+        with patch.object(bot_module, "RESUME_RETRY_DELAYS_S", ()):
+            self.assertEqual(await bot.resume_sessions(only=failed), set())
+        self.assertIn(GUILD, bot.tables)
+        self.assertTrue(any('"join"' in m for m in self.ears.sent))
+
+    async def test_a_failed_start_is_not_resumed_later(self) -> None:
+        self.consent.consenting = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            ok, _ = await self.start()
+        self.assertFalse(ok)
+        self.assertNotIn(GUILD, self.bot.tables)
+        self.assertIsNone(await self.sessions.get(GUILD))
+
+    async def test_revoke_reaches_ears_even_without_a_session_here(self) -> None:
+        from dmbot.bot import consent_revoke
+
+        await self.consent.grant(GUILD, PLAYER)
+        bot = await self.restart()  # ears may still be in voice from before
+        interaction = SimpleNamespace(
+            client=bot,
+            guild=self.guild,
+            user=member(PLAYER),
+            response=SimpleNamespace(defer=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+        await consent_revoke.callback(interaction)  # type: ignore[arg-type]
+        lists = [json.loads(m) for m in self.ears.sent if '"allowlist"' in m]
+        self.assertTrue(lists)
+        self.assertNotIn(str(PLAYER), lists[0]["userIds"])
+
     async def test_resume_starts_once(self) -> None:
         bot = await self.restart()
         bot._resume_with_retries = AsyncMock()  # type: ignore[method-assign]
