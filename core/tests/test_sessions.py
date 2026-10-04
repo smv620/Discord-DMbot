@@ -57,8 +57,11 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         guild.get_channel = lambda cid: voice if cid == VOICE else None
         self.guild = guild
 
-        known = {SCREEN, OTHER_TEXT, VOICE}
-        self.bot.get_channel = lambda cid: object() if cid in known else None  # type: ignore[method-assign,assignment,return-value]
+        other_text = MagicMock(spec=discord.TextChannel)
+        other_text.id = OTHER_TEXT
+        other_text.permissions_for = lambda _me: CAN_POST
+        channels: dict[int, Any] = {SCREEN: object(), OTHER_TEXT: other_text, VOICE: voice}
+        self.bot.get_channel = channels.get  # type: ignore[method-assign,assignment]
 
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
 
