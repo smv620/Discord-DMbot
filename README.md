@@ -50,6 +50,11 @@ They run side by side on the same computer and talk over a local, password-prote
    and run `/table join` from `#dm-screen`. Each player runs `/consent give` (you too, if
    you want your own voice transcribed). Talk for a bit and watch the capture check appear.
 
+## Running on a server
+
+See [`docs/DEPLOY.md`](docs/DEPLOY.md): one `docker compose up -d --build` starts both
+parts on any Linux cloud server.
+
 ## Transcription engines
 
 Pick one with `TRANSCRIBER` in `.env`:

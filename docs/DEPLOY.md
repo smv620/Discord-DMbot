@@ -1,0 +1,82 @@
+# Deploying DMbot to a cloud server
+
+DMbot runs as two containers (core and ears) on one Linux server. Nothing is opened to
+the internet: the bot only makes outgoing connections to Discord (and to your
+speech-to-text provider, if you use cloud transcription).
+
+## 1. Choose a server
+
+Any provider that sells a plain Linux VM works (Hetzner, DigitalOcean, Linode/Akamai,
+Vultr, AWS Lightsail, …). Pick **Ubuntu 24.04 LTS**.
+
+| Transcription | Suggested size | Notes |
+|---|---|---|
+| `TRANSCRIBER=cloud` or `none` | 1–2 vCPU, 2 GB RAM | Cheapest. Build with `CORE_EXTRAS=dev`. |
+| `whisper-local`, model `small` | 4+ vCPU, 8 GB RAM | Works for a typical table; a few seconds of delay. Prefer dedicated CPU over shared. |
+| `whisper-local`, `large-v3`/`turbo` | NVIDIA GPU server | Best accuracy; costs much more. Needs the NVIDIA container toolkit (not covered here). |
+
+Start small: you can switch `TRANSCRIBER` later without redeploying code.
+
+## 2. Install Docker
+
+SSH into the server, then:
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER   # log out and back in after this
+```
+
+## 3. Get DMbot and configure it
+
+```bash
+git clone https://github.com/smv620/Discord-DMbot.git
+cd Discord-DMbot
+cp .env.example .env
+nano .env        # fill in DISCORD_TOKEN, EARS_SHARED_SECRET, TRANSCRIBER, …
+chmod 600 .env   # only you can read your secrets
+```
+
+Leave `DISCORD_DEV_GUILD_ID` set to your server's ID — slash commands appear there
+instantly. (Without it, commands register globally, which can take up to an hour.)
+
+For cloud-only transcription, also add `CORE_EXTRAS=dev` to `.env` for a much smaller
+image.
+
+## 4. Start it
+
+```bash
+docker compose up -d --build
+docker compose logs -f        # watch it start; Ctrl+C stops watching, not the bot
+```
+
+You should see `ears connected` in core's log and `logged in as …` from ears. The first
+start with local Whisper downloads the model (a few hundred MB for `small`); it is kept
+in a volume, so restarts are fast.
+
+## 5. Everyday commands
+
+| Task | Command |
+|---|---|
+| Update to the latest version | `git pull && docker compose up -d --build` |
+| Restart | `docker compose restart` |
+| Stop | `docker compose down` |
+| See logs | `docker compose logs -f core` (or `ears`) |
+| Status | `docker compose ps` |
+
+The containers restart automatically after a crash or a server reboot.
+
+## Data and backups
+
+Consent records live in the `dmbot-data` Docker volume. Back it up with:
+
+```bash
+docker run --rm -v discord-dmbot_dmbot-data:/data -v "$PWD":/backup busybox \
+  tar czf /backup/dmbot-data.tgz -C /data .
+```
+
+## Security checklist
+
+- `.env` is `chmod 600` and never committed (it is in `.gitignore`).
+- No ports are published; `docker compose ps` should show no `0.0.0.0:` mappings.
+- Keep the server patched: `sudo apt update && sudo apt upgrade` monthly.
+- Use SSH keys, not passwords, to log in to the server.
