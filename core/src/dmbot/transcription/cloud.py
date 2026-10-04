@@ -7,6 +7,7 @@ CLOUD_STT_MODEL. Audio is sent over HTTPS only.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import aiohttp
@@ -17,7 +18,9 @@ from dmbot.transcription.config import TranscriptionSettings
 
 log = logging.getLogger(__name__)
 
-REQUEST_TIMEOUT_S = 30
+REQUEST_TIMEOUT_S = 15
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+RETRY_DELAY_S = 1.0
 
 
 class CloudTranscriptionError(RuntimeError):
@@ -40,7 +43,10 @@ class CloudTranscriber:
             self._owns_session = True
         return self._session
 
-    async def transcribe(self, utterance: Utterance, hints: list[str]) -> str | None:
+    async def warm_up(self) -> None:
+        return None
+
+    def _form(self, utterance: Utterance, hints: list[str]) -> aiohttp.FormData:
         s = self._settings
         form = aiohttp.FormData()
         form.add_field(
@@ -53,18 +59,25 @@ class CloudTranscriber:
         prompt = build_prompt(hints)
         if prompt:
             form.add_field("prompt", prompt)
+        return form
 
+    async def transcribe(self, utterance: Utterance, hints: list[str]) -> str | None:
+        s = self._settings
         headers = {"Authorization": f"Bearer {s.cloud_api_key}"}
-        async with self._get_session().post(s.cloud_url, data=form, headers=headers) as resp:
-            if resp.status != 200:
-                # Never include the key or audio in errors; status + short body only.
-                body = (await resp.text())[:200]
-                raise CloudTranscriptionError(
-                    f"Speech-to-text service returned {resp.status}: {body}"
-                )
-            payload = await resp.json(content_type=None)
-        text = payload.get("text") if isinstance(payload, dict) else None
-        return clean_text(text) if isinstance(text, str) else None
+        for attempt in (1, 2):
+            # A FormData body can only be sent once, so build it per attempt.
+            form = self._form(utterance, hints)
+            async with self._get_session().post(s.cloud_url, data=form, headers=headers) as resp:
+                if resp.status == 200:
+                    payload = await resp.json(content_type=None)
+                    text = payload.get("text") if isinstance(payload, dict) else None
+                    return clean_text(text) if isinstance(text, str) else None
+                if attempt == 1 and resp.status in RETRY_STATUSES:
+                    await asyncio.sleep(RETRY_DELAY_S)
+                    continue
+                # Status only: provider error bodies can echo request details.
+                raise CloudTranscriptionError(f"speech-to-text service returned HTTP {resp.status}")
+        return None  # pragma: no cover  # loop always returns or raises
 
     async def close(self) -> None:
         if self._owns_session and self._session is not None and not self._session.closed:

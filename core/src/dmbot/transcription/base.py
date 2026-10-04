@@ -17,10 +17,18 @@ from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE
 # Whisper's prompt window is ~224 tokens; keep hints well inside it.
 MAX_HINT_CHARS = 600
 # Shorter clips are almost always coughs, clicks or "uh" — not worth transcribing.
-MIN_UTTERANCE_S = 0.4
+MIN_UTTERANCE_S = 0.25
+
+
+class TranscriberUnavailable(RuntimeError):
+    """The configured engine cannot start (missing package, bad settings)."""
 
 
 class Transcriber(Protocol):
+    async def warm_up(self) -> None:
+        """Prepare before the session (load models). Raise TranscriberUnavailable if unusable."""
+        ...
+
     async def transcribe(self, utterance: Utterance, hints: list[str]) -> str | None:
         """Return the text spoken in the utterance, or None if nothing usable.
 
@@ -35,6 +43,9 @@ class Transcriber(Protocol):
 
 class PlaceholderTranscriber:
     """Returns no text. Used with TRANSCRIBER=none (capture checks only)."""
+
+    async def warm_up(self) -> None:
+        return None
 
     async def transcribe(self, utterance: Utterance, hints: list[str]) -> str | None:
         return None

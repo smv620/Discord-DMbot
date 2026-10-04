@@ -13,6 +13,18 @@ class TranscriptionConfigTests(unittest.TestCase):
         s = load_transcription_settings({})
         self.assertEqual(s, TranscriptionSettings())
         self.assertEqual((s.engine, s.whisper_model, s.language), ("whisper-local", "small", "en"))
+        self.assertEqual((s.whisper_compute_type, s.whisper_beam_size), ("auto", 1))
+
+    def test_language_auto(self) -> None:
+        self.assertEqual(load_transcription_settings({"TRANSCRIBE_LANGUAGE": "auto"}).language, "")
+
+    def test_beam_size_validated(self) -> None:
+        self.assertEqual(
+            load_transcription_settings({"WHISPER_BEAM_SIZE": "3"}).whisper_beam_size, 3
+        )
+        for bad in ("0", "x", "-1"):
+            with self.assertRaises(TranscriptionConfigError):
+                load_transcription_settings({"WHISPER_BEAM_SIZE": bad})
 
     def test_rejects_unknown_engine(self) -> None:
         with self.assertRaisesRegex(TranscriptionConfigError, "TRANSCRIBER must be one of"):

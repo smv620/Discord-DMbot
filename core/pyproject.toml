@@ -18,6 +18,7 @@ dependencies = [
 # Local transcription (TRANSCRIBER=whisper-local). Not needed for TRANSCRIBER=cloud.
 whisper = [
     "faster-whisper>=1.1",
+    "numpy>=1.26",
 ]
 dev = [
     "numpy>=1.26",

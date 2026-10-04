@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.audio.segmenter import Utterance
+from dmbot.transcription.base import TranscriberUnavailable
 from dmbot.transcription.config import TranscriptionSettings
 from dmbot.transcription.whisper_local import (
     LocalWhisperTranscriber,
@@ -62,6 +63,14 @@ class LocalWhisperTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["initial_prompt"], "Names: Aria, Bram.")
         self.assertEqual(call["language"], "en")
         self.assertTrue(call["vad_filter"])
+        self.assertEqual(call["beam_size"], 1)
+
+    async def test_auto_language_passes_none(self) -> None:
+        t = LocalWhisperTranscriber(TranscriptionSettings(language=""))
+        model = FakeModel([FakeSegment("bonjour")])
+        t._model = model
+        await t.transcribe(Utterance(1, 2, 0, 0, bytes(3200)), [])
+        self.assertIsNone(model.calls[0]["language"])
 
     async def test_nothing_usable(self) -> None:
         t = LocalWhisperTranscriber(TranscriptionSettings())
@@ -72,5 +81,5 @@ class LocalWhisperTests(unittest.IsolatedAsyncioTestCase):
         if importlib.util.find_spec("faster_whisper") is not None:
             self.skipTest("faster-whisper is installed")
         t = LocalWhisperTranscriber(TranscriptionSettings())
-        with self.assertRaisesRegex(RuntimeError, r"\[whisper\]"):
+        with self.assertRaisesRegex(TranscriberUnavailable, r"\[whisper\]"):
             await t.warm_up()

@@ -4,8 +4,11 @@ Runs on this machine's CPU or GPU — free and private, but needs a reasonably s
 machine for live play. Install with ``pip install -e ".[whisper]"``.
 
 Model guide (WHISPER_MODEL):
-- CPU-only server: ``base`` or ``small`` with WHISPER_COMPUTE_TYPE=int8
-- NVIDIA GPU: ``large-v3`` or ``turbo`` with WHISPER_COMPUTE_TYPE=float16
+- CPU-only server: ``base`` or ``small`` (WHISPER_COMPUTE_TYPE=auto picks int8)
+- NVIDIA GPU: ``large-v3`` or ``turbo`` (auto picks float16)
+
+Shutdown note: a transcription already running in its worker thread can't be
+interrupted, so stopping the bot may wait for the current clip (at most a few seconds).
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.audio.segmenter import Utterance
-from dmbot.transcription.base import build_prompt, clean_text
+from dmbot.transcription.base import TranscriberUnavailable, build_prompt, clean_text
 from dmbot.transcription.config import TranscriptionSettings
 
 log = logging.getLogger(__name__)
@@ -49,7 +52,7 @@ class LocalWhisperTranscriber:
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:
-            raise RuntimeError(
+            raise TranscriberUnavailable(
                 'Local Whisper is not installed. Run: pip install -e ".[whisper]" '
                 "(or set TRANSCRIBER=cloud to use a pay-as-you-go service)."
             ) from exc
@@ -85,7 +88,7 @@ class LocalWhisperTranscriber:
             language=self._settings.language or None,
             initial_prompt=prompt,
             vad_filter=True,
-            beam_size=5,
+            beam_size=self._settings.whisper_beam_size,
             condition_on_previous_text=False,
         )
         kept = [

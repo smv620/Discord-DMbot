@@ -24,15 +24,29 @@ class TranscriptionConfigError(ValueError):
 @dataclass(frozen=True, slots=True)
 class TranscriptionSettings:
     engine: Engine = "whisper-local"
-    language: str = "en"
+    language: str = "en"  # "" = auto-detect
     # whisper-local
     whisper_model: str = "small"
     whisper_device: str = "auto"  # auto | cpu | cuda
-    whisper_compute_type: str = "default"  # default | int8 | float16 | ...
+    whisper_compute_type: str = "auto"  # auto picks int8 on CPU, float16 on GPU
+    whisper_beam_size: int = 1  # 1 = greedy: fastest, fine for live speech
     # cloud
     cloud_url: str = DEFAULT_CLOUD_URL
     cloud_api_key: str = ""
     cloud_model: str = "whisper-1"
+
+
+def _language(value: str) -> str:
+    """'auto' means let the engine detect the language (empty string)."""
+    return "" if value.lower() == "auto" else value
+
+
+def _positive_int(name: str, value: str) -> int:
+    if not value.isdigit() or int(value) < 1:
+        raise TranscriptionConfigError(
+            f'{name} must be a whole number of 1 or more, got "{value}".'
+        )
+    return int(value)
 
 
 def load_transcription_settings(env: Mapping[str, str]) -> TranscriptionSettings:
@@ -46,10 +60,11 @@ def load_transcription_settings(env: Mapping[str, str]) -> TranscriptionSettings
         )
     settings = TranscriptionSettings(
         engine=engine,
-        language=get("TRANSCRIBE_LANGUAGE", "en"),
+        language=_language(get("TRANSCRIBE_LANGUAGE", "en")),
         whisper_model=get("WHISPER_MODEL", "small"),
         whisper_device=get("WHISPER_DEVICE", "auto"),
-        whisper_compute_type=get("WHISPER_COMPUTE_TYPE", "default"),
+        whisper_compute_type=get("WHISPER_COMPUTE_TYPE", "auto"),
+        whisper_beam_size=_positive_int("WHISPER_BEAM_SIZE", get("WHISPER_BEAM_SIZE", "1")),
         cloud_url=get("CLOUD_STT_URL", DEFAULT_CLOUD_URL),
         cloud_api_key=get("CLOUD_STT_API_KEY", ""),
         cloud_model=get("CLOUD_STT_MODEL", "whisper-1"),
