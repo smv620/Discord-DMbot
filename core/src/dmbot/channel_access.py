@@ -10,14 +10,14 @@ from dataclasses import dataclass
 
 import discord
 
-FIX_HINT = "Fix it in each channel's settings → Permissions, then run `/table join` again."
-
 
 @dataclass(frozen=True, slots=True)
 class PostProblem:
     channel_id: int
     missing: tuple[str, ...]
     why: str
+    in_thread: bool = False
+    unseen: bool = False  # the bot can't find the channel at all
 
 
 def missing_post_permissions(perms: discord.Permissions, *, in_thread: bool = False) -> list[str]:
@@ -33,18 +33,66 @@ def missing_post_permissions(perms: discord.Permissions, *, in_thread: bool = Fa
     return missing
 
 
+SAME_CHANNEL = (
+    "Run `/table join` from your private DM channel, not the voice channel's chat — "
+    "players can read that."
+)
+STARTING_UP = "I'm still starting up. Try `/table join` again in a moment."
+
+
+def post_problems(
+    *,
+    screen_id: int,
+    screen_perms: discord.Permissions | None,
+    screen_in_thread: bool,
+    voice_id: int,
+    voice_perms: discord.Permissions,
+) -> list[PostProblem]:
+    """Problems posting DM updates (screen) and the recording notice (voice chat).
+
+    `screen_perms` is None when the bot can't find the screen channel at all.
+    """
+    problems: list[PostProblem] = []
+    if screen_perms is None:
+        problems.append(PostProblem(screen_id, (), "", unseen=True))
+    elif missing := missing_post_permissions(screen_perms, in_thread=screen_in_thread):
+        problems.append(
+            PostProblem(screen_id, tuple(missing), "your DM updates go here", screen_in_thread)
+        )
+    if missing := missing_post_permissions(voice_perms):
+        problems.append(
+            PostProblem(voice_id, tuple(missing), "players must see the recording notice there")
+        )
+    return problems
+
+
+def _bullet(p: PostProblem) -> str:
+    if p.unseen:
+        return (
+            f"• I can't see <#{p.channel_id}>. Give me **View Channel** there, or run "
+            "`/table join` from another private channel"
+        )
+    needs = " and ".join(f"**{name}**" for name in p.missing)
+    where = ", set on its parent channel" if p.in_thread else ""
+    return f"• <#{p.channel_id}> needs {needs}{where} ({p.why})"
+
+
 def join_blocked_message(problems: list[PostProblem]) -> str:
-    lines = ["I can't start yet:"]
-    for p in problems:
-        needs = " and ".join(f"**{name}**" for name in p.missing)
-        lines.append(f"• <#{p.channel_id}> needs {needs} — {p.why}")
-    lines.append(FIX_HINT)
+    count = sum(len(p.missing) for p in problems if not p.unseen)
+    it = "it" if count == 1 else "them"
+    lines = ["⚠️ Not joining — I can't post where I need to:"]
+    lines += [_bullet(p) for p in problems]
+    if count:
+        lines.append(
+            f"Add {it} via Edit Channel → Permissions (for me or my role), "
+            "then run `/table join` again."
+        )
     return "\n".join(lines)
 
 
 def notice_failed_message(voice_channel_id: int) -> str:
     return (
-        f"⚠️ I couldn't post the recording notice in <#{voice_channel_id}>, so players may "
-        "not know I'm listening. Give DMbot **Send Messages** there, or tell the table "
-        "yourself."
+        f"⚠️ Players weren't told I'm listening — the recording notice failed in "
+        f"<#{voice_channel_id}>. Tell the table now. Then check I have **Send Messages** "
+        "there; I'll retry on the next `/table join`."
     )

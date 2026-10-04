@@ -21,10 +21,11 @@ from discord.ext import commands
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.capture_log import CaptureLog
 from dmbot.channel_access import (
-    PostProblem,
+    SAME_CHANNEL,
+    STARTING_UP,
     join_blocked_message,
-    missing_post_permissions,
     notice_failed_message,
+    post_problems,
 )
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
@@ -276,35 +277,6 @@ def _bot(interaction: discord.Interaction) -> DMBot:
     return cast(DMBot, interaction.client)
 
 
-def _post_problems(
-    guild: discord.Guild,
-    screen_channel_id: int,
-    voice: discord.VoiceChannel | discord.StageChannel,
-) -> list[PostProblem]:
-    """Channels the bot must post in for `/table join`, with any missing permissions."""
-    me = guild.me
-    screen = guild.get_channel_or_thread(screen_channel_id)
-    checks: list[tuple[int, list[str], str]] = [
-        (
-            screen_channel_id,
-            (
-                missing_post_permissions(
-                    screen.permissions_for(me), in_thread=isinstance(screen, discord.Thread)
-                )
-                if screen is not None
-                else ["View Channel", "Send Messages"]
-            ),
-            "your DM updates go here.",
-        ),
-        (
-            voice.id,
-            missing_post_permissions(voice.permissions_for(me)),
-            "players need to see the recording notice in its chat.",
-        ),
-    ]
-    return [PostProblem(cid, tuple(missing), why) for cid, missing, why in checks if missing]
-
-
 table_group = app_commands.Group(
     name="table", description="Start or stop listening to your D&D table", guild_only=True
 )
@@ -333,7 +305,23 @@ async def table_join(interaction: discord.Interaction) -> None:
         return
 
     voice = member.voice.channel
-    problems = _post_problems(guild, interaction.channel_id, voice)
+    me = cast(discord.Member | None, guild.me)  # None while the guild is still loading
+    if me is None:
+        await interaction.response.send_message(STARTING_UP, ephemeral=True)
+        return
+    if interaction.channel_id == voice.id:
+        await interaction.response.send_message(SAME_CHANNEL, ephemeral=True)
+        return
+    # post() looks channels up in the cache, so an uncached screen channel can't be used.
+    # app_permissions is Discord's own resolved view of the invoking channel (threads too).
+    screen_visible = bot.get_channel(interaction.channel_id) is not None
+    problems = post_problems(
+        screen_id=interaction.channel_id,
+        screen_perms=interaction.app_permissions if screen_visible else None,
+        screen_in_thread=isinstance(interaction.channel, discord.Thread),
+        voice_id=voice.id,
+        voice_perms=voice.permissions_for(me),
+    )
     if problems:
         await interaction.response.send_message(
             join_blocked_message(problems), ephemeral=True, allowed_mentions=NO_PINGS
