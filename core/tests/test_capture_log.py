@@ -1,7 +1,7 @@
 import unittest
 
 from dmbot.audio.segmenter import Utterance
-from dmbot.capture_log import CaptureLog
+from dmbot.capture_log import CaptureLog, audio_health
 
 
 def utt(user: int, seconds: float) -> Utterance:
@@ -35,3 +35,50 @@ class CaptureLogTests(unittest.TestCase):
         log = CaptureLog()
         log.add_health(1, 50, 50)
         self.assertIsNone(log.render(str))
+
+
+class AudioHealthTests(unittest.TestCase):
+    def test_flagged_never_shows_95_or_more(self) -> None:
+        # #44: 94.6% used to show as "audio 95% ⚠️ audio gaps".
+        self.assertEqual(audio_health(946, 1000), (94, True))
+        for expected in range(1, 400):
+            for received in range(expected + 1):
+                percent, flagged = audio_health(received, expected)
+                self.assertEqual(flagged, percent < 95, (received, expected))
+
+    def test_threshold_is_exactly_95(self) -> None:
+        self.assertEqual(audio_health(95, 100), (95, False))
+        self.assertEqual(audio_health(19, 20), (95, False))
+        self.assertEqual(audio_health(949, 1000), (94, True))
+        self.assertEqual(audio_health(100, 100), (100, False))
+
+    def test_summed_health_stays_capped(self) -> None:
+        # One interval can hold several reports; the total can't pass 100%.
+        log = CaptureLog()
+        log.add_utterance(utt(1, 1.0), None)
+        log.add_health(1, 52, 50)
+        log.add_health(1, 50, 50)
+        text = log.render(str)
+        assert text is not None
+        self.assertIn("audio 100%", text)
+        self.assertNotIn("⚠️", text)
+        self.assertEqual(audio_health(120, 100), (100, False))
+        self.assertEqual(audio_health(-1, 100), (0, True))
+
+    def test_over_count_cannot_hide_a_gap(self) -> None:
+        # 60/50 and 40/50: the second clip lost 20%, which must still show.
+        log = CaptureLog()
+        log.add_utterance(utt(1, 1.0), None)
+        log.add_health(1, 60, 50)
+        log.add_health(1, 40, 50)
+        text = log.render(str)
+        assert text is not None
+        self.assertIn("audio 90% ⚠️ audio gaps", text)
+
+    def test_render_shows_rounded_down_and_flag(self) -> None:
+        log = CaptureLog()
+        log.add_utterance(utt(1, 1.0), None)
+        log.add_health(1, 946, 1000)
+        text = log.render(str)
+        assert text is not None
+        self.assertIn("audio 94% ⚠️ audio gaps", text)

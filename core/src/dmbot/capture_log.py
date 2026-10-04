@@ -11,8 +11,20 @@ from dataclasses import dataclass
 
 from dmbot.audio.segmenter import Utterance
 
-# Below this share of expected frames, audio quality is flagged to the DM.
-HEALTH_WARN_RATIO = 0.95
+# Below this percentage of expected frames, audio quality is flagged to the DM.
+HEALTH_WARN_PERCENT = 95
+
+
+def audio_health(received: int, expected: int) -> tuple[int, bool]:
+    """(percent to show, whether to flag gaps) for `expected` > 0.
+
+    Uses whole-number maths and rounds down, so a flagged result never shows as 95%
+    or more (#44: 94.6% used to read "audio 95% ⚠️ audio gaps"). Received is capped at
+    expected: ears caps each utterance (#36), and the sum here must stay capped too.
+    """
+    received = max(0, min(received, expected))
+    flagged = received * 100 < HEALTH_WARN_PERCENT * expected
+    return received * 100 // expected, flagged
 
 
 @dataclass(slots=True)
@@ -42,8 +54,9 @@ class CaptureLog:
 
     def add_health(self, user_id: int, received: int, expected: int) -> None:
         stats = self._get(user_id)
-        stats.frames_received += received
-        stats.frames_expected += expected
+        # Cap each report, so one over-counted clip can't hide a gap in another.
+        stats.frames_received += max(0, min(received, expected))
+        stats.frames_expected += max(0, expected)
 
     def render(self, name_of: Callable[[int], str]) -> str | None:
         """Render and reset the summary. Returns None if nothing was captured."""
@@ -57,9 +70,9 @@ class CaptureLog:
                 continue
             line = f"• **{name_of(user_id)}** — {s.utterances} × speech, {s.seconds:.1f} s"
             if s.frames_expected > 0:
-                ratio = min(1.0, s.frames_received / s.frames_expected)
-                flag = "" if ratio >= HEALTH_WARN_RATIO else " ⚠️ audio gaps"
-                line += f", audio {ratio:.0%}{flag}"
+                percent, flagged = audio_health(s.frames_received, s.frames_expected)
+                flag = " ⚠️ audio gaps" if flagged else ""
+                line += f", audio {percent}%{flag}"
             lines.append(line)
             for text in s.transcripts or []:
                 lines.append(f"  › {text}")
