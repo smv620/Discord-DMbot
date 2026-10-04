@@ -87,9 +87,17 @@ edition supersedes 2024, it becomes "newest" and 2024 content gets its own legac
 mirror. Each rule records: the rule, the book rule it supersedes, and the scenario
 that created it (session, date, what happened).
 
-**Transcription.** Per-speaker audio means no diarization is needed. Name hints
-(characters, NPCs, places) are fed to the transcriber. Engine is pluggable: cloud
-speech-to-text or local Whisper.
+**Transcription (decided 2026-10-03).** Per-speaker audio means no diarization is
+needed. Name hints (players now; characters, NPCs, places later) are fed to the
+transcriber. Default engine is **local Whisper** (faster-whisper). Every engine sits behind
+one `Transcriber` interface and is chosen by `TRANSCRIBER=` in config, so switching to a
+**cloud pay-as-you-go** API (any OpenAI-compatible endpoint) is a settings change, not a
+code change — for DMs without a GPU.
+
+**Hosting (decided 2026-10-03).** A cloud server runs both ears and core. Because local
+Whisper runs on that server, its size decides transcription quality and speed: a CPU-only
+server suits the `base`/`small` models; larger models need a GPU server, or switch to
+`TRANSCRIBER=cloud`. Deployment packaging (Docker) is a follow-up task.
 
 **Consent & retention.** `/consent` opt-in per player, an announcement when listening
 starts, configurable auto-delete of audio and transcripts, and player data removal.
@@ -100,5 +108,4 @@ starts, configurable auto-delete of audio and transcripts, and player data remov
 
 ## Open decisions
 
-- Hosting: DM's PC during sessions vs cloud server
-- Transcription engine for Phase 1
+- Cloud server provider and size (CPU vs GPU) — depends on Whisper model quality needed

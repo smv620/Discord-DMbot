@@ -35,12 +35,13 @@ from dmbot.ears.protocol import (
 )
 from dmbot.ears.server import EarsServer
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
+from dmbot.transcription.factory import build_transcriber
+from dmbot.transcription.pipeline import TranscriptionPipeline
 
 log = logging.getLogger(__name__)
 
 SUMMARY_INTERVAL_S = 15
 IDLE_SWEEP_INTERVAL_S = 1
-TRANSCRIBE_QUEUE_SIZE = 64
 NO_PINGS = discord.AllowedMentions.none()
 
 EARS_DOWN = (
@@ -73,8 +74,15 @@ class DMBot(commands.Bot):
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
         self.consent = consent
-        self.transcriber: Transcriber = transcriber or PlaceholderTranscriber()
         self.tables: dict[int, Table] = {}
+        self.pipeline = TranscriptionPipeline(
+            transcriber or PlaceholderTranscriber(),
+            consent,
+            is_active=lambda guild_id: guild_id in self.tables,
+            hints=self._name_hints,
+            deliver=self._deliver_transcript,
+            alert=self._alert_dm,
+        )
         self.ears = EarsServer(
             host=settings.ears_host,
             port=settings.ears_port,
@@ -83,8 +91,6 @@ class DMBot(commands.Bot):
             on_audio=self._on_audio,
             on_link_change=self._on_ears_link_change,
         )
-        self._utterances: asyncio.Queue[Utterance] = asyncio.Queue(TRANSCRIBE_QUEUE_SIZE)
-        self.dropped_utterances = 0
         self._background: list[asyncio.Task[None]] = []
 
     # ---- lifecycle ---------------------------------------------------------
@@ -100,7 +106,7 @@ class DMBot(commands.Bot):
             await self.tree.sync()
         await self.ears.start()
         self._background = [
-            asyncio.create_task(self._transcribe_worker(), name="transcribe"),
+            asyncio.create_task(self.pipeline.run(), name="transcribe"),
             asyncio.create_task(self._idle_sweeper(), name="idle-sweep"),
             asyncio.create_task(self._summary_poster(), name="summaries"),
         ]
@@ -108,6 +114,8 @@ class DMBot(commands.Bot):
     async def close(self) -> None:
         for task in self._background:
             task.cancel()
+        await asyncio.gather(*self._background, return_exceptions=True)
+        await self.pipeline.transcriber.close()
         for guild_id in list(self.tables):
             await self.ears.send(leave_command(guild_id))
         await self.ears.stop()
@@ -170,7 +178,7 @@ class DMBot(commands.Bot):
         elif isinstance(message, Speaking) and message.event == "end":
             utterance = table.segmenter.end(message.user_id)
             if utterance is not None:
-                self._enqueue(utterance)
+                self.pipeline.enqueue(utterance)
         elif isinstance(message, Health):
             table.capture_log.add_health(
                 message.user_id, message.frames_received, message.frames_expected
@@ -205,29 +213,27 @@ class DMBot(commands.Bot):
             return
         utterance = table.segmenter.add(frame)
         if utterance is not None:
-            self._enqueue(utterance)
-
-    def _enqueue(self, utterance: Utterance) -> None:
-        try:
-            self._utterances.put_nowait(utterance)
-        except asyncio.QueueFull:
-            self.dropped_utterances += 1
+            self.pipeline.enqueue(utterance)
 
     # ---- background loops --------------------------------------------------
 
-    async def _transcribe_worker(self) -> None:
-        while True:
-            utterance = await self._utterances.get()
-            table = self.tables.get(utterance.guild_id)
-            # Skip if the table ended or the speaker revoked consent while queued.
-            if table is None or not self.consent.has_consent(utterance.guild_id, utterance.user_id):
-                continue
-            try:
-                text = await self.transcriber.transcribe(utterance, hints=[])
-            except Exception:
-                log.exception("Transcription failed")
-                text = None
+    def _deliver_transcript(self, utterance: Utterance, text: str | None) -> None:
+        table = self.tables.get(utterance.guild_id)
+        if table is not None:
             table.capture_log.add_utterance(utterance, text)
+
+    async def _alert_dm(self, guild_id: int, message: str) -> None:
+        table = self.tables.get(guild_id)
+        if table is not None:
+            await self.post(table.screen_channel_id, message)
+
+    async def _name_hints(self, guild_id: int) -> list[str]:
+        """Names Whisper should expect. Phase 1: players' display names.
+
+        Later phases add character, NPC, and place names.
+        """
+        users = await self.consent.consenting(guild_id)
+        return [self.name_of(guild_id, uid) for uid in users]
 
     async def _idle_sweeper(self) -> None:
         while True:
@@ -235,7 +241,7 @@ class DMBot(commands.Bot):
             now_ms = int(time.time() * 1000)
             for table in self.tables.values():
                 for utterance in table.segmenter.flush_idle(now_ms):
-                    self._enqueue(utterance)
+                    self.pipeline.enqueue(utterance)
 
     async def _summary_poster(self) -> None:
         while True:
@@ -337,10 +343,13 @@ async def table_status(interaction: discord.Interaction) -> None:
         ),
         f"Opted in to recording: {names}",
     ]
-    if bot.dropped_utterances or bot.ears.rejected_frames:
+    p = bot.pipeline
+    lag = f", last delay {p.last_latency_s:.1f} s" if p.last_latency_s is not None else ""
+    lines.append(f"Transcription: {p.backlog} waiting{lag}")
+    if p.dropped or bot.ears.rejected_frames or p.total_failures:
         lines.append(
-            f"Dropped: {bot.dropped_utterances} utterance(s), "
-            f"{bot.ears.rejected_frames} bad frame(s)"
+            f"Problems: {p.dropped} dropped clip(s), {p.total_failures} failed "
+            f"transcription(s), {bot.ears.rejected_frames} bad frame(s)"
         )
     await interaction.response.send_message(
         "\n".join(lines), ephemeral=True, allowed_mentions=NO_PINGS
@@ -364,11 +373,16 @@ async def consent_give(interaction: discord.Interaction) -> None:
     await bot.consent.grant(gid, interaction.user.id)
     if gid in bot.tables:
         await bot.push_allowlist(gid)
-    await interaction.response.send_message(
+    message = (
         "Thanks — DMbot will now transcribe your voice in this server's table channel. "
-        "Use `/consent revoke` to stop at any time.",
-        ephemeral=True,
+        "Use `/consent revoke` to stop at any time."
     )
+    if bot.settings.transcription.engine == "cloud":
+        message += (
+            "\nNote: this server uses an outside speech-to-text service, so your voice "
+            "clips and display name are sent to that service to be transcribed."
+        )
+    await interaction.response.send_message(message, ephemeral=True)
 
 
 @consent_group.command(
@@ -393,8 +407,10 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
 
 async def run(settings: Settings) -> None:
     consent = ConsentStore(settings.data_dir / "dmbot.sqlite")
-    bot = DMBot(settings, consent)
+    transcriber = build_transcriber(settings.transcription)
     try:
+        await transcriber.warm_up()  # load the Whisper model now, not on the first word
+        bot = DMBot(settings, consent, transcriber)
         async with bot:
             await bot.start(settings.discord_token)
     finally:

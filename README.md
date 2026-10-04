@@ -8,9 +8,9 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full plan and roadmap.
 
 ## Status
 
-**Phase 0 — capture pipeline.** The bot joins your table channel, records only players
-who opt in, and posts a capture check to the DM every 15 seconds (who spoke, how long,
-and audio health). Transcription arrives in Phase 1.
+**Phase 1 — live transcription.** The bot joins your table channel, records only players
+who opt in, and every 15 seconds posts to the DM's private channel who spoke, what they
+said, and audio health.
 
 ## How it's built
 
@@ -35,7 +35,7 @@ They run side by side on the same computer and talk over a local, password-prote
    cd core
    python -m venv .venv
    .venv\Scripts\activate        # Windows  (macOS/Linux: source .venv/bin/activate)
-   pip install -e ".[dev]"
+   pip install -e ".[dev,whisper]"   # drop ",whisper" if using cloud transcription
    python -m dmbot
    ```
 4. **Start ears** (second terminal, Node 22+):
@@ -47,6 +47,24 @@ They run side by side on the same computer and talk over a local, password-prote
 5. **In Discord:** make a private text channel (e.g. `#dm-screen`), join your voice
    channel, and run `/table join` from `#dm-screen`. Each player runs `/consent give`.
    Talk for a bit and watch the capture check appear.
+
+## Transcription engines
+
+Pick one with `TRANSCRIBER` in `.env`:
+
+| Engine | Cost | Needs | Notes |
+|---|---|---|---|
+| `whisper-local` (default) | Free | `pip install -e ".[whisper]"`; a strong CPU or an NVIDIA GPU | Audio never leaves your server. Model downloads on first run. |
+| `cloud` | Pay per minute of speech | `CLOUD_STT_API_KEY` | Any OpenAI-compatible speech-to-text API. Best for servers without a GPU. |
+| `none` | Free | — | Capture checks only, no text. |
+
+On a CPU-only server use `WHISPER_MODEL=small` (or `base` if it falls behind). With an
+NVIDIA GPU use `large-v3` or `turbo`. The default compute type (`auto`) picks the fastest
+precision for your hardware. If transcription falls behind, DMbot warns you in
+`#dm-screen`; `/table status` shows the backlog.
+
+When `TRANSCRIBER=cloud`, players are told during `/consent give` that their voice clips
+go to an outside service.
 
 ## Commands
 

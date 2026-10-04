@@ -24,9 +24,14 @@ def main() -> None:
         raise SystemExit(2) from exc
 
     from dmbot.bot import run  # imported late so config errors show before discord loads
+    from dmbot.transcription.base import TranscriberUnavailable
 
-    with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(run(settings))
+    try:
+        with contextlib.suppress(KeyboardInterrupt):
+            asyncio.run(run(settings))
+    except TranscriberUnavailable as exc:
+        print(f"Transcription problem: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
 
 
 if __name__ == "__main__":
