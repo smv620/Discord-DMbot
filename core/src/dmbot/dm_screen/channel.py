@@ -1,0 +1,279 @@
+"""Create a campaign's DM screen channel and keep its permissions matching its visibility.
+
+Every change to a screen's permissions (setup, visibility change, peek, hide) runs under
+that campaign's lock and starts from a fresh copy of the channel, so two changes can't
+race or work from stale overwrites.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+from dataclasses import dataclass
+from typing import Protocol
+
+import discord
+
+from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.dm_screen import messages
+from dmbot.dm_screen.rules import (
+    Perms,
+    Target,
+    channel_name,
+    find_exposure,
+    is_peeker,
+    merge_overwrites,
+    missing_required,
+    overwrite_plan,
+    restrict,
+    unique_channel_name,
+)
+
+log = logging.getLogger(__name__)
+
+OverwriteKey = discord.Role | discord.Member | discord.Object
+HELP_CARD_SCAN = 50  # recent messages searched for an old help card to replace
+CACHE_WAIT_STEPS, CACHE_WAIT_S = 30, 0.1  # up to 3 s for a new channel to reach the cache
+
+_locks: dict[str, asyncio.Lock] = {}
+
+
+def campaign_lock(campaign_id: str) -> asyncio.Lock:
+    """One lock per campaign for anything that changes its DM screen's permissions."""
+    return _locks.setdefault(campaign_id, asyncio.Lock())
+
+
+class DMScreenError(Exception):
+    """A problem the DM can fix. The message is safe to show them as-is."""
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenResult:
+    channel: discord.TextChannel
+    warning: str | None  # who unexpectedly can see the screen, for the DM
+
+
+def _target(key: OverwriteKey) -> Target:
+    # Uncached members come back as discord.Object(type=User); only roles are roles.
+    if isinstance(key, discord.Role) or (
+        isinstance(key, discord.Object) and key.type is discord.Role
+    ):
+        return Target("role", key.id)
+    return Target("member", key.id)
+
+
+def _perms(overwrite: discord.PermissionOverwrite) -> dict[str, bool]:
+    return {name: value for name, value in overwrite if value is not None}
+
+
+def current_overwrites(channel: discord.abc.GuildChannel) -> dict[Target, Perms]:
+    return {_target(key): _perms(ow) for key, ow in channel.overwrites.items()}
+
+
+def _key(guild: discord.Guild, target: Target) -> OverwriteKey:
+    if target.kind == "role":
+        return guild.get_role(target.id) or discord.Object(target.id, type=discord.Role)
+    # Members may not be cached (no members intent); an Object works for overwrites.
+    return guild.get_member(target.id) or discord.Object(target.id, type=discord.Member)
+
+
+def held_permissions(me: discord.Member) -> set[str]:
+    perms = me.guild_permissions
+    if perms.administrator:
+        return set(discord.Permissions.VALID_FLAGS)
+    return {name for name, value in perms if value}
+
+
+def _discord_overwrites(
+    guild: discord.Guild, overwrites: dict[Target, Perms], held: set[str]
+) -> dict[OverwriteKey, discord.PermissionOverwrite]:
+    return {
+        _key(guild, target): discord.PermissionOverwrite(**restrict(perms, held))
+        for target, perms in overwrites.items()
+    }
+
+
+def _me(guild: discord.Guild) -> discord.Member:
+    me = guild.me
+    if me is None:
+        raise DMScreenError("I'm still starting up. Try again in a moment.")
+    missing = missing_required(held_permissions(me))
+    if missing:
+        raise DMScreenError(messages.needs_permissions(missing))
+    return me
+
+
+async def fresh_screen(guild: discord.Guild, campaign: Campaign) -> discord.TextChannel | None:
+    """The campaign's screen as Discord has it now (not the possibly stale cache)."""
+    if campaign.dm_screen_channel_id is None:
+        return None
+    try:
+        channel = await guild.fetch_channel(campaign.dm_screen_channel_id)
+    except discord.NotFound:
+        return None
+    return channel if isinstance(channel, discord.TextChannel) else None
+
+
+def screen_channel(guild: discord.Guild, campaign: Campaign) -> discord.TextChannel | None:
+    """The cached screen channel, for quick checks that don't change permissions."""
+    if campaign.dm_screen_channel_id is None:
+        return None
+    channel = guild.get_channel(campaign.dm_screen_channel_id)
+    return channel if isinstance(channel, discord.TextChannel) else None
+
+
+def _exposure_warning(
+    overwrites: dict[Target, Perms], guild: discord.Guild, me: discord.Member, campaign: Campaign
+) -> str | None:
+    exposure = find_exposure(
+        campaign.dm_screen_visibility,
+        overwrites,
+        guild_id=guild.id,
+        bot_id=me.id,
+        dm_ids=campaign.dm_user_ids,
+    )
+    return messages.exposure_warning(exposure)
+
+
+async def _apply(
+    channel: discord.TextChannel, campaign: Campaign, me: discord.Member
+) -> dict[Target, Perms]:
+    """Send the screen's full overwrite set; returns what was sent (not the stale cache)."""
+    guild = channel.guild
+    current = current_overwrites(channel)
+    peekers = [t.id for t, perms in current.items() if t.kind == "member" and is_peeker(perms)]
+    plan = overwrite_plan(
+        campaign.dm_screen_visibility,
+        guild_id=guild.id,
+        bot_id=me.id,
+        dm_ids=campaign.dm_user_ids,
+        peeker_ids=peekers,
+    )
+    held = held_permissions(me)
+    merged = merge_overwrites(current, plan, guild_id=guild.id)
+    sent: dict[Target, Perms] = {t: restrict(p, held) for t, p in merged.items()}
+    await channel.edit(
+        overwrites=_discord_overwrites(guild, merged, held),
+        topic=messages.topic(campaign.name, campaign.dm_screen_visibility),
+        reason=f"DMbot: DM screen visibility for {campaign.name}",
+    )
+    return sent
+
+
+async def _replace_help_card(
+    channel: discord.TextChannel, campaign: Campaign, me: discord.Member
+) -> None:
+    """Delete earlier help cards (their text and buttons may be out of date), post a new one."""
+    from dmbot.dm_screen.buttons import card_view  # buttons imports this module
+
+    async for old in channel.history(limit=HELP_CARD_SCAN):
+        if old.author.id == me.id and old.content.startswith(messages.HELP_CARD_TITLE):
+            with contextlib.suppress(discord.HTTPException):
+                await old.delete()
+    text = messages.help_card(campaign.name, campaign.dm_screen_visibility)
+    card = await channel.send(text, view=card_view(campaign))
+    # Pinning needs Pin Messages, which DMbot doesn't ask for; the card works unpinned.
+    with contextlib.suppress(discord.HTTPException):
+        await card.pin(reason="DMbot: DM screen help card")
+
+
+async def setup_dm_screen(
+    guild: discord.Guild,
+    campaign: Campaign,
+    store: CampaignStore,
+    *,
+    category: discord.CategoryChannel | None = None,
+    refresh_card: bool = False,
+) -> ScreenResult:
+    """Create or update the campaign's DM screen. See `ensure_dm_screen`."""
+    me = _me(guild)
+    async with campaign_lock(campaign.id):
+        try:
+            channel = await fresh_screen(guild, campaign)
+            if channel is None:
+                channel, overwrites = await _create(guild, campaign, store, me, category)
+                refresh_card = True
+            else:
+                overwrites = await _apply(channel, campaign, me)
+            if refresh_card:
+                await _replace_help_card(channel, campaign, me)
+        except discord.Forbidden as exc:
+            # The server-wide check passed, so something more local blocks it, such as
+            # the category's own permissions.
+            raise DMScreenError(messages.FORBIDDEN_HERE) from exc
+        except discord.HTTPException as exc:
+            log.warning("DM screen setup failed: %s", exc)
+            raise DMScreenError(messages.discord_error(exc.text or str(exc.status))) from exc
+    return ScreenResult(channel, _exposure_warning(overwrites, guild, me, campaign))
+
+
+async def _create(
+    guild: discord.Guild,
+    campaign: Campaign,
+    store: CampaignStore,
+    me: discord.Member,
+    category: discord.CategoryChannel | None,
+) -> tuple[discord.TextChannel, dict[Target, Perms]]:
+    held = held_permissions(me)
+    plan = overwrite_plan(
+        campaign.dm_screen_visibility,
+        guild_id=guild.id,
+        bot_id=me.id,
+        dm_ids=campaign.dm_user_ids,
+    )
+    name = unique_channel_name(channel_name(campaign.name), (c.name for c in guild.channels))
+    channel = await guild.create_text_channel(
+        name,
+        category=category,
+        overwrites=_discord_overwrites(guild, dict(plan), held),
+        topic=messages.topic(campaign.name, campaign.dm_screen_visibility),
+        reason=f"DMbot: DM screen for {campaign.name}",
+    )
+    # Callers look the new channel up in the cache, which fills in from Discord's
+    # gateway event shortly after the create call returns.
+    for _ in range(CACHE_WAIT_STEPS):
+        if guild.get_channel(channel.id) is not None:
+            break
+        await asyncio.sleep(CACHE_WAIT_S)
+    try:
+        await store.set_dm_screen(guild.id, campaign.id, channel.id)
+    except BaseException:
+        # Don't leave a channel behind that no campaign knows about.
+        with contextlib.suppress(discord.HTTPException):
+            await channel.delete(reason="DMbot: could not save the DM screen")
+        raise
+    return channel, {target: restrict(perms, held) for target, perms in plan.items()}
+
+
+class HasCampaigns(Protocol):
+    campaigns: CampaignStore
+
+
+async def ensure_dm_screen(
+    bot: HasCampaigns, interaction: discord.Interaction, campaign: Campaign
+) -> int | None:
+    """The hook `/dmbot start` calls (#48): the campaign's DM screen channel ID.
+
+    Creates `#dm-screen-<campaign>` if the campaign has none (or it was deleted), and
+    makes its permissions match the campaign's visibility. Call it again after changing
+    the campaign's DMs or visibility. Raises DMScreenError with a message for the DM if
+    something needs fixing. Anyone unexpected who can see the screen is warned about in
+    the screen itself.
+    """
+    guild = interaction.guild
+    if guild is None:
+        raise DMScreenError("Use this in a server.")
+    category = getattr(interaction.channel, "category", None)
+    result = await setup_dm_screen(
+        guild,
+        campaign,
+        bot.campaigns,
+        category=category if isinstance(category, discord.CategoryChannel) else None,
+    )
+    if result.warning:
+        with contextlib.suppress(discord.HTTPException):
+            await result.channel.send(
+                result.warning, allowed_mentions=discord.AllowedMentions.none()
+            )
+    return result.channel.id

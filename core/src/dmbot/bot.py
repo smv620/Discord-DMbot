@@ -21,7 +21,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.campaigns import CampaignStore
+from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.capture_log import CaptureLog
 from dmbot.channel_access import (
     SAME_CHANNEL,
@@ -32,7 +32,15 @@ from dmbot.channel_access import (
 )
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
-from dmbot.dm_screen import ensure_dm_screen
+from dmbot.dm_screen import (
+    DMScreenError,
+    HideButton,
+    PeekButton,
+    VisibilityButton,
+    ensure_dm_screen,
+    peek_view,
+)
+from dmbot.dm_screen import messages as screen_messages
 from dmbot.ears.protocol import (
     AudioFrame,
     EarsMessage,
@@ -122,6 +130,8 @@ class DMBot(commands.Bot):
     async def setup_hook(self) -> None:
         self.tree.add_command(dmbot_group)
         self.tree.add_command(consent_group)
+        # DM-screen buttons keep working after a restart.
+        self.add_dynamic_items(PeekButton, HideButton, VisibilityButton)
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -239,7 +249,10 @@ class DMBot(commands.Bot):
                 "there (Edit Channel → Permissions), then press Start again."
             )
 
-        screen_id = await ensure_dm_screen(self, interaction, campaign)
+        try:
+            screen_id = await ensure_dm_screen(self, interaction, campaign)
+        except DMScreenError as exc:
+            return False, str(exc)
         if screen_id is None:
             return False, (
                 "I couldn't find a channel for DM notes. Run `/dmbot start` from a "
@@ -357,18 +370,43 @@ class DMBot(commands.Bot):
         member = guild.get_member(user_id) if guild else None
         return member.display_name if member else f"<@{user_id}>"
 
-    async def post(self, channel_id: int, text: str) -> bool:
+    async def post(self, channel_id: int, text: str, view: discord.ui.View | None = None) -> bool:
         """Send a message; returns False (and logs) if it could not be posted."""
         channel = self.get_channel(channel_id)
         if not isinstance(channel, discord.abc.Messageable):
             log.warning("Could not post to channel %s: channel not found", channel_id)
             return False
         try:
-            await channel.send(text, allowed_mentions=NO_PINGS)
+            # send() rejects view=None, so only pass a view when there is one.
+            if view is None:
+                await channel.send(text, allowed_mentions=NO_PINGS)
+            else:
+                await channel.send(text, allowed_mentions=NO_PINGS, view=view)
         except discord.HTTPException as exc:
             log.warning("Could not post to channel %s: %s", channel_id, exc)
             return False
         return True
+
+    async def after_screen_change(self, campaign: Campaign, channel: discord.TextChannel) -> None:
+        """Keep a live session in step after the DM changes who can see the DM screen."""
+        table = self.tables.get(campaign.guild_id)
+        if table is None or table.campaign_id != campaign.id:
+            return
+        table.screen_channel_id = channel.id  # the screen may have been re-created
+        if campaign.dm_screen_visibility == "peek":
+            # Players got no Peek button if the notice was posted under another setting.
+            await self.post(
+                table.voice_channel_id, screen_messages.peek_invite(), view=peek_view(campaign.id)
+            )
+
+    async def _peek_view(self, table: Table) -> discord.ui.View | None:
+        """The Peek button for the players' notice, when the campaign allows peeking."""
+        if table.campaign_id is None:
+            return None
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or campaign.dm_screen_visibility != "peek":
+            return None
+        return peek_view(campaign.id)
 
     # ---- ears events -------------------------------------------------------
 
@@ -420,6 +458,7 @@ class DMBot(commands.Bot):
                     "🔴 **DMbot is listening in this channel** to help the DM.\n"
                     "Only people who opt in with `/consent give` are recorded. "
                     "Change your mind any time with `/consent revoke`.",
+                    view=await self._peek_view(table),
                 )
                 if not table.notice_posted:
                     await self.post(
