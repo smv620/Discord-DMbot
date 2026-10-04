@@ -164,8 +164,8 @@ screen channel (only the DM can see it) and optionally to DMs.
 - **New campaign:** asks for the name, the **target ruleset**, and the **fallback ruleset**
   (defaults: 2024 rules, then 2014 legacy), and which **optional rules** to include
   (default: included where they don't conflict with the target ruleset).
-- **One DM screen per campaign:** a channel such as `#dm-screen-frostmaiden`, which the
-  bot creates. Who else can see it depends on the campaign's **DM-screen visibility**
+- **One DM screen per campaign:** a channel such as `#dmb-dm-screen-rime-of-the-frostmaiden`,
+  which the bot creates (see "Channel structure"). Who else can see it depends on the campaign's **DM-screen visibility**
   (see "DM-screen visibility" below; default **opt-in peek**). If a suitable channel
   already exists, setup offers to use it, after checking the bot can post there and that
   its visibility matches the campaign's setting. The DM may be someone other than the
@@ -182,8 +182,8 @@ takes the server ID and every query filters on it, so isolation can't be forgott
 caller. A feature with per-campaign data adds its own tables (with `campaign_id` and
 `guild_id`) and registers an `ExportSection`, so its data is included in backups and
 removed with the campaign. Schema changes go through `dmbot.db` migrations. The campaign
-also stores its DM-screen visibility (`private` / `peek` / `open`, default `peek`);
-applying it to channel permissions is #30.
+also stores its DM-screen visibility (`private` / `peek` / `open`, default `peek`), which
+`dmbot.dm_screen` applies to the channel's permissions (#30).
 
 **Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are
@@ -295,6 +295,72 @@ channel's chat.
 - Granting peek access needs the bot to manage that channel's permissions (Manage
   Channels and Manage Roles); per least privilege it only does this in the DM screen it
   created or was given.
+
+**Channel structure (decided 2026-10-04, #85).** Every channel DMbot creates starts with
+`dmb-`, so its channels group together in the sidebar and are clearly bot-managed.
+
+*Names.* Discord turns every text channel name into lowercase with dashes for spaces,
+so the docs always show names the way Discord does. For the campaign
+**Rime of the Frostmaiden**:
+
+| Channel | Name in Discord | Built in |
+|---|---|---|
+| DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
+| Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
+| Game time (clock, effects, rests) | `dmb-time-rmfthfrstmdn` | Phase 4 |
+| NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Phase 5 |
+| Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
+
+- **The DM screen uses the full campaign name:** `rime-of-the-frostmaiden`.
+- **Sub-channels use a short name** (`rmfthfrstmdn`), made like this:
+  1. Lowercase the name and keep only `a–z` and `0–9` (spaces, dashes, punctuation,
+     accents and emoji are dropped). `Rime of the Frostmaiden` → `rimeofthefrostmaiden`.
+     If nothing is left (a name of only emoji, say), the short name is `campaign`.
+  2. If **more than half of the letters are vowels** (a, e, i, o, u; **y is not a
+     vowel**; digits don't count either way), keep the vowels and cut it to 15
+     characters. `Eerie Aura` → `eerieaura` (7 of 9 letters are vowels), not `rr`.
+  3. Otherwise remove the vowels and cut it to 15 characters.
+     `rimeofthefrostmaiden` → `rmfthfrstmdn`.
+- **Clashes get a number at the front, starting at 2.** If a new campaign's screen name
+  or short name is already used by another campaign in the server, the new campaign gets
+  the lowest free number from 2 up, on both names. *Example:* "Frozen Sick" and
+  "Frozens Cake" both shorten to `frznsck`. "Frozens Cake" was made second, so its
+  channels are `dmb-dm-screen-2frozens-cake` and `dmb-time-2frznsck` (and so on).
+- A name may itself start with a digit ("2 Frozen" → `2frzn`). That's fine: a clash
+  number always goes in front of whatever the name already is, and DMbot keeps track of
+  which number each campaign got, so it never has to guess from the channel name.
+- Discord allows 100 characters per channel name; longer names are cut to fit.
+
+*Who can see what.* Channels are either **controlled** or **unrestricted**:
+
+| Kind | Channels | Players see it |
+|---|---|---|
+| **Controlled** | DM screen, rules, NPCs, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
+| **Unrestricted** | Game time | Always, by everyone in the server |
+
+- Players can **read but never post** in any DMbot channel (no threads, reactions or
+  commands either), the same read-only access as a DM-screen peek.
+- Changing the setting (the help-card buttons) updates every controlled channel together.
+  Peeking opens all controlled channels for that player; hiding closes them all. Once
+  there's more than one controlled channel, the peek warning must name every channel a
+  peek opens (rules, NPCs, plot), so players know exactly what they're agreeing to see.
+- Server owners and admins always see every channel (see above).
+
+*Modes.*
+- **Compact mode:** everything goes in the DM screen. This is the default while the DM
+  screen is the only channel built (Phases 1.5–2).
+- **Organized mode:** each campaign gets a category, `📋 Rime of the Frostmaiden`
+  (categories keep capitals and emoji), holding its `dmb-` channels. Each channel has a
+  pinned "What's this channel?" card saying what it's for and who can see it. This
+  becomes the default once the first sub-channel ships. A DM can switch back to compact
+  mode, which keeps players' notifications quiet too.
+- Discord allows 500 channels per server and 50 per category, so with five channels and
+  a category per campaign, a server can hold about 80 campaigns in organized mode.
+
+*Why.* It mirrors a real table: the DM screen stays hidden, reference material sits on
+the table. Actionable alerts stay separate from reference information. Players can follow
+the clock and NPCs without seeing rulings, and each channel can be muted on its own.
+Code changes: #87.
 
 Sessions and their participants are stored, and each transcript can be downloaded as a
 file by its participants and the DM: from a 📄 button in the consent DMs, at session end,

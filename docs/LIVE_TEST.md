@@ -22,12 +22,13 @@ encryption, with little or no audio loss, and that consent is enforced.
 
 - [ ] **Bot created** in the Discord Developer Portal, with its token copied.
 - [ ] **Install link** with scopes `bot` + `applications.commands` and permissions View
-      Channels, Send Messages, Connect, Speak. **Bot added** to the server.
+      Channels, Send Messages, Read Message History, Connect, Speak, Manage Channels and
+      Manage Roles. **Bot added** to the server.
 - [ ] **Developer Mode** turned on (User Settings → Advanced), and the **server ID**
       copied.
-- [ ] **`#dm-screen` exists** as a **private text channel**, with DMbot added under
-      Permissions and **View Channel** and **Send Messages** set to ✅ (not neutral).
-      (Making this automatic is issue #30.)
+- [ ] **No DM screen to make by hand:** `/dmbot start` creates
+      `#dmb-dm-screen-<campaign>` (for a campaign called "Test Campaign":
+      `#dmb-dm-screen-test-campaign`).
 - [ ] **Test voice channel:** if it's private or restricted, DMbot has View Channel,
       Connect, and Send Messages there.
 - [ ] **Postgres set up** on the PC, once (README, "Database"). Earlier test data
@@ -89,18 +90,21 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
 ### Step 4: run the session (owner)
 
 1. **Join the voice channel,** both people.
-2. **Run `/dmbot start` in #dm-screen.** Pick the campaign (the first time, name a test
-   campaign and press **Create campaign**), check the voice channel, and press
-   **▶ Start listening**. Not in the voice channel's chat: running it there
-   sends DM updates where players can see them (#26). If the command doesn't appear,
+2. **Run `/dmbot start` in any text channel** (not the voice channel's chat). Pick the
+   campaign (the first time, name a test campaign and press **Create campaign**), check
+   the voice channel, and press **▶ Start listening**. If the command doesn't appear,
    press Ctrl+R in Discord.
 3. **Expect:**
-   - In #dm-screen: "✅ Listening in <channel>."
-   - In the voice channel's chat: "🔴 DMbot is listening in this channel…"
-   - If either is missing, the bot should now warn in #dm-screen about what to fix (#27).
+   - A new channel `#dmb-dm-screen-<campaign>` (the DM screen; for "Test Campaign":
+     `#dmb-dm-screen-test-campaign`) with a help card, and in it: "✅ Listening in
+     <channel>."
+   - No other `dmb-` channels and no category yet. That's normal (compact mode).
+   - In the voice channel's chat: "🔴 DMbot is listening in this channel…" (with a 👀
+     **Peek behind the DM screen** button under the default setting).
+   - If either is missing, the bot should warn in the DM screen about what to fix (#27).
 4. **Both people run `/consent give`.**
 5. **Talk for 2–3 minutes.** Take turns, use a few long sentences, and overlap once.
-6. **Watch #dm-screen.** Every 15 s:
+6. **Watch the DM screen.** Every 15 s:
    ```
    🎙️ Capture check
    • Name — N × speech, X.X s, audio NN%
@@ -114,7 +118,7 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
 | Check | Pass | Fail |
 |---|---|---|
 | Both parts connected, bot online | Yes | Any startup error |
-| Join messages in #dm-screen and voice chat | Both appear | Either missing |
+| Join messages in the DM screen and voice chat | Both appear | Either missing |
 | Audio % per speaker | **95–100%** | Below 90%, or "⚠️ audio gaps" |
 | Every consenting speaker appears in capture checks | Yes | Someone missing |
 | Revoked speaker disappears | Yes | Still listed after revoke |
