@@ -1,8 +1,11 @@
 """Starting and stopping campaign sessions (`/dmbot start` · `stop` · Status)."""
 
+import asyncio
+import dataclasses
+import json
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -225,7 +228,13 @@ class SaveAndResume(SessionTests):
             return True
 
         self.bot.post = fake_post  # type: ignore[method-assign]
+        self.guild.unavailable = False
         self.bot.get_guild = lambda gid: self.guild if gid == GUILD else None  # type: ignore[method-assign]
+        screen = MagicMock(spec=discord.TextChannel)
+        screen.id = SCREEN
+        screen.permissions_for = lambda _me: CAN_POST
+        self.channels: dict[int, Any] = {SCREEN: screen, VOICE: self.voice}
+        self.bot.get_channel = self.channels.get  # type: ignore[method-assign]
 
     async def restart(self) -> DMBot:
         """A new process with the same database: in-memory state is gone."""
@@ -241,6 +250,9 @@ class SaveAndResume(SessionTests):
         bot.get_guild = self.bot.get_guild  # type: ignore[method-assign]
         bot.get_channel = self.bot.get_channel  # type: ignore[method-assign]
         return bot
+
+    def screen_posts(self) -> list[str]:
+        return [t for cid, t in self.posts if cid == SCREEN]
 
     async def test_start_saves_and_stop_forgets(self) -> None:
         await self.start()
@@ -258,7 +270,7 @@ class SaveAndResume(SessionTests):
         with self.assertLogs("dmbot.bot", "ERROR"):
             ok, message = await self.start()
         self.assertFalse(ok)
-        self.assertIn("couldn't save the session", message)
+        self.assertIn("couldn't start", message)
         self.assertNotIn(GUILD, self.bot.tables)
         self.assertFalse(any('"join"' in m for m in self.ears.sent))
 
@@ -275,17 +287,44 @@ class SaveAndResume(SessionTests):
 
         await self.start()
         bot = await self.restart()
-        self.assertEqual(await bot.resume_sessions(), 1)
+        self.assertEqual(await bot.resume_sessions(), set())
         table = bot.tables[GUILD]
         self.assertEqual(
             (table.campaign_id, table.voice_channel_id, table.screen_channel_id, table.dm_user_id),
             (self.campaign.id, VOICE, SCREEN, DM),
         )
-        self.assertTrue(any('"join"' in m for m in self.ears.sent))
+        kinds = [json.loads(m)["type"] for m in self.ears.sent]
+        self.assertEqual(kinds, ["allowlist", "join"])  # consent list first, then voice
         self.posts.clear()
         await bot._on_status(table, Status("joined", guild_id=GUILD))
-        screen = [t for cid, t in self.posts if cid == SCREEN]
-        self.assertTrue(any("picked up" in t and "**Frostmaiden**" in t for t in screen))
+        self.assertTrue(any("listening again" in t for t in self.screen_posts()))
+        self.posts.clear()
+        await bot._on_status(table, Status("joined", guild_id=GUILD))  # a repeat
+        self.assertEqual(self.posts, [])
+
+    async def test_quick_repeat_restarts_stay_quiet(self) -> None:
+        from dmbot.ears.protocol import Status
+
+        await self.start()
+        for _ in range(2):
+            bot = await self.restart()
+            await bot.resume_sessions()
+            self.posts.clear()
+            await bot._on_status(bot.tables[GUILD], Status("joined", guild_id=GUILD))
+        self.assertFalse(any("listening again" in t for t in self.screen_posts()))
+
+    async def test_a_crash_loop_gives_up(self) -> None:
+        import dmbot.bot as bot_module
+
+        await self.start()
+        for _ in range(bot_module.MAX_RESUMES_IN_A_ROW):
+            await (await self.restart()).resume_sessions()
+        bot = await self.restart()
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            await bot.resume_sessions()
+        self.assertNotIn(GUILD, bot.tables)
+        self.assertIsNone(await self.sessions.get(GUILD))
+        self.assertTrue(any("kept restarting" in t for t in self.screen_posts()))
 
     async def test_notice_is_not_repeated_after_a_restart(self) -> None:
         from dmbot.ears.protocol import Status
@@ -303,22 +342,97 @@ class SaveAndResume(SessionTests):
         await self.start()
         self.guild.get_channel = lambda cid: None
         bot = await self.restart()
-        self.assertEqual(await bot.resume_sessions(), 0)
+        await bot.resume_sessions()
         self.assertNotIn(GUILD, bot.tables)
         self.assertIsNone(await self.sessions.get(GUILD))
-        self.assertTrue(any(cid == SCREEN and "can't rejoin" in t for cid, t in self.posts))
+        self.assertEqual(await self.sessions.guilds_to_resume(bot.settings.shards), [])
+        self.assertTrue(any("not listening" in t for t in self.screen_posts()))
+
+    async def test_no_resume_without_a_dm_screen(self) -> None:
+        await self.start()
+        del self.channels[SCREEN]
+        bot = await self.restart()
+        await bot.resume_sessions()
+        self.assertNotIn(GUILD, bot.tables)
+        self.assertIsNone(await self.sessions.get(GUILD))
+
+    async def test_no_resume_for_an_old_session(self) -> None:
+        import dmbot.bot as bot_module
+
+        await self.start()
+        saved = await self.sessions.get(GUILD)
+        assert saved is not None
+        old = saved.started_at - bot_module.MAX_RESUME_AGE_S - 60
+        await self.sessions.save(dataclasses.replace(saved, started_at=old))
+        bot = await self.restart()
+        await bot.resume_sessions()
+        self.assertNotIn(GUILD, bot.tables)
+        self.assertTrue(any("too long ago" in t for t in self.screen_posts()))
 
     async def test_no_resume_when_dmbot_left_the_server(self) -> None:
         await self.start()
         bot = await self.restart()
         bot.get_guild = lambda gid: None  # type: ignore[method-assign]
-        self.assertEqual(await bot.resume_sessions(), 0)
+        await bot.resume_sessions()
         self.assertIsNone(await self.sessions.get(GUILD))
 
-    async def test_resume_runs_once(self) -> None:
+    async def test_an_unavailable_server_waits_for_discord(self) -> None:
+        await self.start()
+        self.guild.unavailable = True
+        bot = await self.restart()
+        await bot.resume_sessions()
+        self.assertNotIn(GUILD, bot.tables)
+        self.assertIsNotNone(await self.sessions.get(GUILD))  # kept, not thrown away
+        self.guild.unavailable = False
+        await bot.on_guild_available(self.guild)
+        self.assertIn(GUILD, bot.tables)
+
+    async def test_stop_during_a_restart_ends_the_saved_session(self) -> None:
+        await self.start()
+        bot = await self.restart()  # not resumed yet
+        refused = await bot.stop_session(GUILD, PLAYER, False)
+        self.assertIn("Only the DM", refused)
+        self.assertIsNotNone(await self.sessions.get(GUILD))
+        message = await bot.stop_session(GUILD, DM, False)
+        self.assertIn("won't rejoin", message)
+        self.assertIsNone(await self.sessions.get(GUILD))
+        self.assertTrue(any('"leave"' in m for m in self.ears.sent))
+        await bot.resume_sessions()
+        self.assertNotIn(GUILD, bot.tables)
+
+    async def test_resume_retries_when_the_database_is_not_ready(self) -> None:
+        import dmbot.bot as bot_module
+
         await self.start()
         bot = await self.restart()
-        bot.resume_sessions = AsyncMock(return_value=1)  # type: ignore[method-assign]
+        real = bot.sessions.guilds_to_resume
+        calls = 0
+
+        async def flaky(shards: Any) -> list[int]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("database starting up")
+            return await real(shards)
+
+        bot.sessions.guilds_to_resume = flaky  # type: ignore[method-assign]
+        with (
+            patch.object(bot_module, "RESUME_RETRY_DELAYS_S", (0, 0)),
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
+            await bot._resume_with_retries()
+        self.assertIn(GUILD, bot.tables)
+
+    async def test_resume_starts_once(self) -> None:
+        bot = await self.restart()
+        bot._resume_with_retries = AsyncMock()  # type: ignore[method-assign]
         await bot.on_ready()
-        await bot.on_ready()  # Discord reconnected: must not resume again
-        bot.resume_sessions.assert_awaited_once()
+        await bot.on_ready()  # Discord reconnected: must not start again
+        await asyncio.gather(*bot._background)
+        bot._resume_with_retries.assert_awaited_once()
+
+    async def test_a_saved_session_counts_as_playing(self) -> None:
+        await self.start()
+        bot = await self.restart()
+        self.assertTrue(await bot.is_campaign_playing(GUILD, self.campaign.id))
+        self.assertFalse(await bot.is_campaign_playing(GUILD, "other"))

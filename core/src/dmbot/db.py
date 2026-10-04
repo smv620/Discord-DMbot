@@ -115,7 +115,11 @@ class Database:
 
     @asynccontextmanager
     async def unscoped(self) -> AsyncIterator[Conn]:
-        """A transaction with no server set: server tables look empty. For schema work."""
+        """A transaction with no server set: server tables look empty.
+
+        For schema work and for routing tables, which hold only server IDs (see
+        dmbot.schema).
+        """
         async with self._pool.connection() as conn, conn.transaction():
             yield conn
 

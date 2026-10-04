@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import signal
 import time
 from dataclasses import dataclass, field
 from functools import partial
@@ -21,12 +22,13 @@ from discord import app_commands
 from discord.ext import commands
 
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.campaigns import CampaignStore
+from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.capture_log import CaptureLog
 from dmbot.channel_access import (
     SAME_CHANNEL,
     STARTING_UP,
     join_blocked_message,
+    missing_post_permissions,
     notice_failed_message,
     post_problems,
 )
@@ -66,23 +68,55 @@ EARS_DOWN = (
 )
 
 
-SAVE_FAILED = "I couldn't save the session, so I haven't started. Please try again in a moment."
+SAVE_FAILED = "I couldn't start just now. Try `/dmbot start` again in a moment."
 STOP_FAILED = (
-    "I couldn't save that DMbot stopped, so I'm still listening. "
-    "Please try `/dmbot stop` again in a moment."
-)
-RESUME_NO_CAMPAIGN = (
-    "🔄 I restarted, but the campaign that was playing isn't here any more, so I didn't "
-    "rejoin. Use `/dmbot start` to begin again."
+    "⚠️ I'm **still listening**. I couldn't stop just now. Try `/dmbot stop` again in a moment."
 )
 
 
 def resume_no_voice_message(campaign_name: str, voice_channel_id: int) -> str:
     return (
-        f"🔄 I restarted, but I can't rejoin <#{voice_channel_id}> for **{campaign_name}** "
-        "any more (the channel is gone or I'm not allowed in). Use `/dmbot start` to "
-        "begin again."
+        f"🔄 I restarted, but I can't get back into <#{voice_channel_id}> for "
+        f"**{campaign_name}**, so I'm not listening. Check the channel is still there and "
+        "that I'm allowed to join it, then use `/dmbot start`."
     )
+
+
+def resume_too_old_message(campaign_name: str) -> str:
+    return (
+        f"🔄 I restarted, but the **{campaign_name}** session started too long ago to pick "
+        "up, so I'm not listening. Use `/dmbot start` when you play next."
+    )
+
+
+def resume_gave_up_message(campaign_name: str) -> str:
+    return (
+        f"⚠️ I kept restarting during **{campaign_name}**, so I've stopped listening to be "
+        "safe. Use `/dmbot start` to try again. If it keeps happening, tell whoever runs "
+        "DMbot."
+    )
+
+
+def resumed_message(campaign_name: str, voice_channel_id: int) -> str:
+    name = f" for **{campaign_name}**" if campaign_name else ""
+    return (
+        f"🔄 I restarted and I'm listening again in <#{voice_channel_id}>{name}. "
+        "I may have missed a few seconds of talk."
+    )
+
+
+# A session older than this isn't resumed (nobody plays that long without a break).
+MAX_RESUME_AGE_S = 16 * 3600
+# Resumes closer together than this count as one streak...
+RESUME_STREAK_WINDOW_S = 30 * 60
+# ...and a streak this long means DMbot keeps crashing: stop instead of looping.
+MAX_RESUMES_IN_A_ROW = 5
+# Quiet repeat restarts: only post "listening again" if the last resume wasn't this recent.
+RESUME_QUIET_S = 10 * 60
+# Space out rejoining voice channels, so many sessions don't all hit Discord at once.
+RESUME_SPACING_S = 0.5
+# Retry the startup resume when the database or Discord isn't ready yet.
+RESUME_RETRY_DELAYS_S = (5, 15, 30, 60, 120, 300)
 
 
 @dataclass(slots=True)
@@ -99,6 +133,7 @@ class Table:
     campaign_name: str = ""
     dm_user_ids: frozenset[int] = frozenset()
     resumed: bool = False  # picked up again after a restart
+    announce_resume: bool = True  # post "listening again" when voice is back
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
@@ -161,7 +196,9 @@ class DMBot(commands.AutoShardedBot):
         )
         self._background: list[asyncio.Task[None]] = []
         self._session_locks: dict[int, asyncio.Lock] = {}
-        self._resume_done = False
+        self._resume_started = False
+        # Servers whose saved session is waiting for Discord to make the server available.
+        self._resume_when_available: set[int] = set()
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -216,6 +253,13 @@ class DMBot(commands.AutoShardedBot):
     def active_campaign_id(self, guild_id: int) -> str | None:
         table = self.tables.get(guild_id)
         return table.campaign_id if table else None
+
+    async def is_campaign_playing(self, guild_id: int, campaign_id: str) -> bool:
+        """Running here, or saved and about to be resumed after a restart."""
+        if self.active_campaign_id(guild_id) == campaign_id:
+            return True
+        saved = await self.sessions.get(guild_id)
+        return saved is not None and saved.campaign_id == campaign_id
 
     def session_lock(self, guild_id: int) -> asyncio.Lock:
         """Held while a session starts or stops, or a campaign is replaced, per server."""
@@ -358,7 +402,9 @@ class DMBot(commands.AutoShardedBot):
         async with self.session_lock(guild_id):
             table = self.tables.get(guild_id)
             if table is None:
-                return "DMbot isn't listening right now."
+                # Maybe a saved session that hasn't been picked up again yet (DMbot is
+                # restarting): stopping must still end it, or it would come back.
+                return await self._stop_saved(guild_id, user_id, is_server_manager)
             if not (table.is_dm(user_id) or is_server_manager):
                 return (
                     "Only the DM can stop the session. To stop recording *you*, "
@@ -426,37 +472,98 @@ class DMBot(commands.AutoShardedBot):
 
     # ---- resuming after a restart ------------------------------------------
 
-    async def on_ready(self) -> None:
-        # on_ready can fire again after Discord reconnects; resume only once.
-        if self._resume_done:
-            return
-        self._resume_done = True
+    async def _stop_saved(self, guild_id: int, user_id: int, is_server_manager: bool) -> str:
+        """`/dmbot stop` for a session that's saved but not running in this process."""
         try:
-            await self.resume_sessions()
+            saved = await self.sessions.get(guild_id)
+            if saved is None:
+                return "DMbot isn't listening right now."
+            campaign = await self.campaigns.get(guild_id, saved.campaign_id)
+            dms = campaign.dm_user_ids if campaign else frozenset()
+            if not (user_id == saved.started_by or user_id in dms or is_server_manager):
+                return (
+                    "Only the DM can stop the session. To stop recording *you*, "
+                    "use `/consent revoke`."
+                )
+            await self.sessions.clear(guild_id)
         except Exception:
-            log.exception("Couldn't resume saved sessions")
+            log.exception("Couldn't stop a saved session")
+            return STOP_FAILED
+        self._resume_when_available.discard(guild_id)
+        # In case an ears from before the restart is still in the channel.
+        await self.ears.send(leave_command(guild_id))
+        return "Stopped. DMbot won't rejoin. See you next session! 👋"
 
-    async def resume_sessions(self) -> int:
-        """Rejoin the sessions that were running on this process's shards. Returns how
-        many were resumed."""
+    async def on_ready(self) -> None:
+        # on_ready fires again after Discord reconnects; start resuming only once.
+        if self._resume_started:
+            return
+        self._resume_started = True
+        self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
+
+    async def _resume_with_retries(self) -> None:
+        """Resume saved sessions, retrying servers that failed (database or Discord not
+        ready yet). Gives up after the last delay; those sessions stay saved and a later
+        restart tries again."""
+        pending: set[int] | None = None  # None: all servers on this process's shards
+        for delay in (0, *RESUME_RETRY_DELAYS_S):
+            await asyncio.sleep(delay)
+            try:
+                pending = await self.resume_sessions(only=pending)
+            except Exception:
+                log.exception("Couldn't look up saved sessions; will retry")
+                continue
+            if not pending:
+                return
+        log.error("Gave up resuming %d session(s) for now", len(pending or ()))
+
+    async def resume_sessions(self, only: set[int] | None = None) -> set[int]:
+        """Rejoin the sessions that were running on this process's shards.
+
+        Returns the servers that failed in a way worth retrying. Raises if the list of
+        saved sessions can't be read at all.
+        """
+        guild_ids = await self.sessions.guilds_to_resume(self.settings.shards)
+        if only is not None:
+            guild_ids = [g for g in guild_ids if g in only]
+        failed: set[int] = set()
         resumed = 0
-        for guild_id in await self.sessions.guilds_to_resume(self.settings.shards):
+        for guild_id in guild_ids:
             async with self.session_lock(guild_id):
                 with log_context(guild_id=guild_id):
                     try:
-                        if await self._resume_one(guild_id):
-                            resumed += 1
+                        started = await self._resume_one(guild_id)
                     except Exception:
-                        log.exception("Couldn't resume this server's session")
+                        log.exception("Couldn't resume this server's session; will retry")
+                        failed.add(guild_id)
+                        continue
+            if started:
+                resumed += 1
+                await asyncio.sleep(RESUME_SPACING_S)
         if resumed:
             log.info("Resumed %d session(s)", resumed)
-        return resumed
+        return failed
+
+    async def on_guild_available(self, guild: discord.Guild) -> None:
+        """Discord made a server available again: resume its session if one was waiting."""
+        if guild.id not in self._resume_when_available:
+            return
+        self._resume_when_available.discard(guild.id)
+        async with self.session_lock(guild.id):
+            with log_context(guild_id=guild.id):
+                try:
+                    await self._resume_one(guild.id)
+                except Exception:
+                    log.exception("Couldn't resume this server's session")
 
     async def _resume_one(self, guild_id: int) -> bool:
+        """Resume one server's saved session. Returns True if it was started again."""
         if guild_id in self.tables:
             return False  # already started again (e.g. by /dmbot start)
         saved = await self.sessions.get(guild_id)
-        if saved is None:  # only the routing entry was left behind
+        if saved is None:
+            # Only the routing entry was left (e.g. the campaign was deleted, which
+            # deletes its session). Nothing to say to anyone.
             await self.sessions.clear(guild_id)
             return False
         guild = self.get_guild(guild_id)
@@ -464,44 +571,93 @@ class DMBot(commands.AutoShardedBot):
             log.info("Not resuming: DMbot is no longer in this server")
             await self.sessions.clear(guild_id)
             return False
+        if guild.unavailable:
+            # A Discord outage: channels aren't known yet. Keep the session; resume it
+            # when Discord says the server is back (on_guild_available).
+            log.info("Server unavailable; will resume when Discord makes it available")
+            self._resume_when_available.add(guild_id)
+            return False
         campaign = await self.campaigns.get(guild_id, saved.campaign_id)
-        if campaign is None:
+        if campaign is None:  # can't normally happen: deleting a campaign deletes this
             await self.sessions.clear(guild_id)
-            await self.post(saved.screen_channel_id, RESUME_NO_CAMPAIGN)
             return False
         with log_context(campaign_id=campaign.id):
-            me = cast(discord.Member | None, guild.me)
-            voice = guild.get_channel(saved.voice_channel_id)
-            can_join = (
+            return await self._resume_campaign(guild, saved, campaign)
+
+    async def _resume_campaign(
+        self, guild: discord.Guild, saved: SavedSession, campaign: Campaign
+    ) -> bool:
+        now = int(time.time())
+        screen_id = self._usable_screen(guild, saved.screen_channel_id, campaign)
+        if screen_id is None:
+            # Nowhere to tell the DM anything, so don't record without them knowing.
+            log.info("Not resuming: no DM screen DMbot can post in")
+            await self.sessions.clear(guild.id)
+            return False
+        if now - saved.started_at > MAX_RESUME_AGE_S:
+            log.info("Not resuming: session too old")
+            await self.sessions.clear(guild.id)
+            await self.post(screen_id, resume_too_old_message(campaign.name))
+            return False
+        me = cast(discord.Member | None, guild.me)
+        voice = guild.get_channel(saved.voice_channel_id)
+        can_join = (
+            me is not None
+            and isinstance(voice, discord.VoiceChannel | discord.StageChannel)
+            and voice.permissions_for(me).view_channel
+            and voice.permissions_for(me).connect
+        )
+        if not can_join:
+            log.info("Not resuming: can't rejoin the voice channel")
+            await self.sessions.clear(guild.id)
+            await self.post(
+                screen_id, resume_no_voice_message(campaign.name, saved.voice_channel_id)
+            )
+            return False
+        streak = await self.sessions.note_resume(guild.id, now, RESUME_STREAK_WINDOW_S)
+        if streak > MAX_RESUMES_IN_A_ROW:
+            log.error("Not resuming: restarted %d times in a row", streak - 1)
+            await self.sessions.clear(guild.id)
+            await self.post(screen_id, resume_gave_up_message(campaign.name))
+            return False
+        recently = (
+            saved.last_resumed_at is not None and now - saved.last_resumed_at < RESUME_QUIET_S
+        )
+        table = Table(
+            guild_id=guild.id,
+            voice_channel_id=saved.voice_channel_id,
+            screen_channel_id=screen_id,
+            dm_user_id=saved.started_by,
+            segmenter=Segmenter(guild.id),
+            notice_posted=saved.notice_posted,
+            campaign_id=campaign.id,
+            campaign_name=campaign.name,
+            dm_user_ids=campaign.dm_user_ids,
+            resumed=True,
+            announce_resume=not recently,
+        )
+        # Sends the allowlist, then the join. If ears isn't connected yet, it gets both
+        # when it connects (_on_ears_link_change).
+        await self.start_table(table)
+        log.info("Resuming session (restart %d in a row)", streak)
+        return True
+
+    def _usable_screen(self, guild: discord.Guild, saved_id: int, campaign: Campaign) -> int | None:
+        """The saved DM screen if DMbot can still post there, else the campaign's own."""
+        me = guild.me
+        for channel_id in (saved_id, campaign.dm_screen_channel_id):
+            if channel_id is None:
+                continue
+            channel = self.get_channel(channel_id)
+            if (
                 me is not None
-                and isinstance(voice, discord.VoiceChannel | discord.StageChannel)
-                and voice.permissions_for(me).view_channel
-                and voice.permissions_for(me).connect
-            )
-            if not can_join:
-                log.info("Not resuming: can't rejoin the voice channel")
-                await self.sessions.clear(guild_id)
-                await self.post(
-                    saved.screen_channel_id,
-                    resume_no_voice_message(campaign.name, saved.voice_channel_id),
+                and isinstance(channel, discord.abc.GuildChannel | discord.Thread)
+                and not missing_post_permissions(
+                    channel.permissions_for(me), in_thread=isinstance(channel, discord.Thread)
                 )
-                return False
-            table = Table(
-                guild_id=guild_id,
-                voice_channel_id=saved.voice_channel_id,
-                screen_channel_id=saved.screen_channel_id,
-                dm_user_id=saved.started_by,
-                segmenter=Segmenter(guild_id),
-                notice_posted=saved.notice_posted,
-                campaign_id=campaign.id,
-                campaign_name=campaign.name,
-                dm_user_ids=campaign.dm_user_ids,
-                resumed=True,
-            )
-            # If ears isn't connected yet, it gets the join when it connects.
-            await self.start_table(table)
-            log.info("Resuming session")
-            return True
+            ):
+                return channel_id
+        return None
 
     async def _remember_notice(self, guild_id: int) -> None:
         try:
@@ -565,17 +721,18 @@ class DMBot(commands.AutoShardedBot):
 
     async def _on_status(self, table: Table, status: Status) -> None:
         if status.state == "joined":
+            if table.listening:
+                return  # a repeat "joined" (e.g. ears reconnected): nothing new to say
             table.listening = True
             count = len(await self.consent.consenting(table.guild_id))
             campaign = f" for **{table.campaign_name}**" if table.campaign_name else ""
             if table.resumed:
                 table.resumed = False
-                await self.post(
-                    table.screen_channel_id,
-                    f"🔄 I restarted and picked up{campaign} where we left off, in "
-                    f"<#{table.voice_channel_id}>. A few seconds of what was said may be "
-                    "missing.",
-                )
+                if table.announce_resume:
+                    await self.post(
+                        table.screen_channel_id,
+                        resumed_message(table.campaign_name, table.voice_channel_id),
+                    )
             else:
                 await self.post(
                     table.screen_channel_id,
@@ -736,8 +893,17 @@ async def run(settings: Settings) -> None:
         transcriber = build_transcriber(settings.transcription)
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
         bot = DMBot(settings, ConsentStore(db), CampaignStore(db), SessionStore(db), transcriber)
+        _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)
     finally:
         with contextlib.suppress(Exception):
             await db.close()
+
+
+def _close_on_sigterm(bot: DMBot) -> None:
+    """Kubernetes stops a pod with SIGTERM: shut down cleanly (leave voice, finish
+    transcribing) and keep running sessions saved, so the next pod picks them up."""
+    loop = asyncio.get_running_loop()
+    with contextlib.suppress(NotImplementedError):  # not available on Windows
+        loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.ensure_future(bot.close()))

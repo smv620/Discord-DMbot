@@ -97,6 +97,9 @@ ACTIVE_SESSIONS = """
         started_by        BIGINT NOT NULL,
         started_at        BIGINT NOT NULL,
         notice_posted     BOOLEAN NOT NULL DEFAULT FALSE,
+        -- Restarts in a row, so a crash loop can't spam the DM screen or retry forever.
+        resume_count      INTEGER NOT NULL DEFAULT 0,
+        last_resumed_at   BIGINT,
         FOREIGN KEY (campaign_id, guild_id)
             REFERENCES campaigns (id, guild_id) ON DELETE CASCADE
     );

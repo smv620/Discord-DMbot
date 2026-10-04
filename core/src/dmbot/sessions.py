@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from dmbot.db import Conn, Database
+from dmbot.db import Conn, Database, row_int
 from dmbot.sharding import ShardSettings
 
 
@@ -23,6 +23,8 @@ class SavedSession:
     started_by: int
     started_at: int
     notice_posted: bool
+    resume_count: int = 0
+    last_resumed_at: int | None = None
 
 
 class SessionStore:
@@ -42,7 +44,8 @@ class SessionStore:
                 " screen_channel_id = EXCLUDED.screen_channel_id,"
                 " started_by = EXCLUDED.started_by,"
                 " started_at = EXCLUDED.started_at,"
-                " notice_posted = EXCLUDED.notice_posted",
+                " notice_posted = EXCLUDED.notice_posted,"
+                " resume_count = 0, last_resumed_at = NULL",
                 (
                     session.guild_id,
                     session.campaign_id,
@@ -62,6 +65,21 @@ class SessionStore:
     async def get(self, guild_id: int) -> SavedSession | None:
         async with self._db.guild(guild_id) as conn:
             return await _select(conn, guild_id)
+
+    async def note_resume(self, guild_id: int, now: int, streak_window_s: int) -> int:
+        """Count a resume. Returns how many resumes in a row this is: the count restarts
+        at 1 when the previous resume was more than `streak_window_s` ago."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE active_sessions SET"
+                " resume_count = CASE WHEN last_resumed_at IS NOT NULL"
+                "   AND %s - last_resumed_at <= %s THEN resume_count + 1 ELSE 1 END,"
+                " last_resumed_at = %s"
+                " WHERE guild_id = %s RETURNING resume_count",
+                (now, streak_window_s, now, guild_id),
+            )
+            row = await cur.fetchone()
+            return int(row["resume_count"]) if row else 0
 
     async def mark_notice_posted(self, guild_id: int) -> None:
         """Players have been told DMbot is listening; don't repeat it after a restart."""
@@ -100,4 +118,6 @@ async def _select(conn: Conn, guild_id: int) -> SavedSession | None:
         started_by=int(row["started_by"]),
         started_at=int(row["started_at"]),
         notice_posted=bool(row["notice_posted"]),
+        resume_count=int(row["resume_count"]),
+        last_resumed_at=row_int(row, "last_resumed_at"),
     )

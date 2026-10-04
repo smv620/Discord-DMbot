@@ -521,7 +521,7 @@ class RestoreChoice(_Menu):
         bot = _bot(interaction)
         # The session lock stops a campaign being replaced while it's starting up.
         async with bot.session_lock(guild.id):
-            if replace_id is not None and bot.active_campaign_id(guild.id) == replace_id:
+            if replace_id is not None and await bot.is_campaign_playing(guild.id, replace_id):
                 await _tell(
                     interaction, "That campaign is playing right now. Use `/dmbot stop` first."
                 )
