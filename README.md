@@ -21,6 +21,32 @@ said, and audio health.
 
 They run side by side on the same computer and talk over a local, password-protected link.
 
+## Channel structure
+
+DMbot makes its own channels for each campaign. They all start with `dmb-`, so they sit
+together in your channel list and you can tell at a glance they're DMbot's. Discord shows
+channel names in lowercase, so a campaign called **Rime of the Frostmaiden** gets:
+
+```
+📋 Rime of the Frostmaiden              (category, in organized mode)
+├─ #dmb-dm-screen-rime-of-the-frostmaiden   DM notes and alerts       ← now
+├─ #dmb-rules-rmfthfrstmdn                  house rules and rulings   ← later
+├─ #dmb-time-rmfthfrstmdn                   game clock and effects    ← later
+├─ #dmb-npcs-rmfthfrstmdn                   NPCs you've met           ← later
+└─ #dmb-plot-rmfthfrstmdn                   story so far              ← later
+```
+
+- **Today there's only the DM screen** (compact mode: everything goes there). The other
+  channels arrive with their features, and then each campaign gets its own category.
+- **Who can see them:** game time is open to everyone. The DM screen, rules, NPCs and plot
+  follow the campaign's setting: only the DM, **players can peek after a spoiler
+  warning (default)**, or everyone. Players can read but never post. Server owners and
+  admins can always see every channel.
+- Sub-channels use a short name (vowels removed); if two campaigns would share a name,
+  the newer one gets a number, like `#dmb-time-2frznsck`.
+
+Details: [`docs/PLAN.md`](docs/PLAN.md), "Channel structure".
+
 ## Setup (test server)
 
 For a full, step-by-step live test (who does what, expected output, pass/fail, and how to
@@ -32,7 +58,8 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
    Messages**, **Read Message History**, **Connect**, **Speak**, **Manage Channels**, and
    **Manage Roles**. Use the install link to add it to your private test server.
    *Why Manage Channels and Manage Roles:* Discord grants these for the whole server, but
-   DMbot only uses them on its own DM screen channels: it creates `#dm-screen-<campaign>`,
+   DMbot only uses them on its own `dmb-` channels: it creates
+   `#dmb-dm-screen-<campaign>`,
    hides it from players unless you choose otherwise, and lets a player peek after a
    spoiler warning. It never changes other channels or anyone's server roles.
 2. **Configure.** Copy `.env.example` to `.env` in the repo root and fill in
@@ -55,7 +82,7 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
    ```
 6. **In Discord:** run `/dmbot start` in any text channel. The first time, it asks you to
    name your campaign and who can see its DM screen; after that it offers the last
-   campaign and voice channel you used. DMbot makes a `#dm-screen-<campaign>` channel for
+   campaign and voice channel you used. DMbot makes a `#dmb-dm-screen-<campaign>` channel for
    your notes, with buttons there to change who can see it. Each player runs
    `/consent give` (you too, if you want your own voice transcribed). Talk for a bit and
    watch the capture check appear in the DM screen.
@@ -101,7 +128,7 @@ Pick one with `TRANSCRIBER` in `.env`:
 On a CPU-only server use `WHISPER_MODEL=small` (or `base` if it falls behind). With an
 NVIDIA GPU use `large-v3` or `turbo`. The default compute type (`auto`) picks the fastest
 precision for your hardware. If transcription falls behind, DMbot warns you in
-`#dm-screen`; the **Status** button in `/dmbot help` shows the backlog.
+the DM screen; the **Status** button in `/dmbot help` shows the backlog.
 
 When `TRANSCRIBER=cloud`, players are told during `/consent give` that their voice clips
 go to an outside service.
@@ -110,7 +137,7 @@ go to an outside service.
 
 | Command | What it does |
 |---|---|
-| `/dmbot start` | Pick the campaign (or make a new one) and the voice channel, then start listening. DM notes go to the campaign's `#dm-screen-<campaign>` channel, which DMbot makes the first time. |
+| `/dmbot start` | Pick the campaign (or make a new one) and the voice channel, then start listening. DM notes go to the campaign's `#dmb-dm-screen-<campaign>` channel, which DMbot makes the first time. |
 | `/dmbot stop` | Stop listening (the campaign's DM, or a server manager). |
 | `/dmbot help` | What DMbot does and doesn't do, plus a **Status** button. |
 | `/dmbot backup` | Download a copy of a campaign you run. |
