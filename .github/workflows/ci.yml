@@ -24,12 +24,13 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      # Switch to `npm ci` once package-lock.json is committed.
-      - name: npm install
+          cache: npm
+          cache-dependency-path: ears/package-lock.json
+      - name: npm ci
         run: |
           set -o pipefail
-          npm install --no-audit --no-fund 2>&1 | tee install.log || {
-            grep -E "npm (error|ERR)" install.log | head -40 | sed 's/^/::error title=npm install::/'
+          npm ci --no-audit --no-fund 2>&1 | tee install.log || {
+            grep -E "npm (error|ERR)" install.log | head -40 | sed 's/^/::error title=npm ci::/'
             exit 1
           }
       - name: typecheck
