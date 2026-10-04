@@ -99,12 +99,46 @@ def settings_summary(
 ) -> list[str]:
     return [
         f"• **Main rules:** {ruleset_label(target)}",
-        f"• **Backup rules** (used only when the main rules don't cover something): "
-        f"{ruleset_label(fallback)}",
+        f"• **If the main rules don't cover something:** {ruleset_label(fallback)}",
         "• **Optional rules** from Xanathar's and Tasha's (where the main rules don't "
         f"cover them): {'on' if optional_rules else 'off'}",
         f"• **Who sees the DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
     ]
+
+
+# Menu choices that still make sense after a choice is made (Discord then hides the
+# menu's placeholder, so each option must say what it's about).
+
+
+def main_rules_choices() -> dict[str, str]:
+    return {k: f"Main rules: {v}" for k, v in RULESETS.items()}
+
+
+def fallback_choices(target: str) -> dict[str, str]:
+    choices = {
+        k: f"If the main rules don't cover it: {v}" for k, v in RULESETS.items() if k != target
+    }
+    choices[FALLBACK_NONE] = "If the main rules don't cover it: use the main rules only"
+    return choices
+
+
+OPTIONAL_RULES_CHOICES = {
+    "on": "Optional rules: on (recommended)",
+    "off": "Optional rules: off",
+}
+
+
+def visibility_choices() -> dict[str, str]:
+    return {k: f"DM screen: {v}" for k, v in DM_SCREEN_VISIBILITY.items()}
+
+
+def screen_note(visibility: str) -> str:
+    """How the start message describes who can see the DM screen."""
+    if visibility == "peek":
+        return " (players can peek if they choose)"
+    if visibility == "open":
+        return " (everyone at the table can see it)"
+    return ""
 
 
 def backup_filename(campaign_name: str, now: int) -> str:
@@ -112,6 +146,15 @@ def backup_filename(campaign_name: str, now: int) -> str:
     day = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d")
     return f"{slug}-{day}.dmbot.json"
 
+
+WELCOME_TEXT = (
+    "**🎲 DMbot helps the DM run the game.**\n"
+    "It listens to people who said yes, writes down what's said, and sends the DM rules "
+    "tips in private. It remembers each campaign between sessions.\n"
+    "**It never makes up the story and never decides. The DM always does.**\n"
+    "\n"
+    "Let's set up your first campaign. It takes about a minute."
+)
 
 HELP_TEXT = (
     "**🎲 DMbot helps the Dungeon Master.**\n"

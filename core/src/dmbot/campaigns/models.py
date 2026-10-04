@@ -11,7 +11,7 @@ from dataclasses import dataclass
 # Rulesets a DM can pick, with the plain label shown in pickers.
 RULESETS: dict[str, str] = {
     "2024": "2024 rules (newest)",
-    "2014": "2014 rules (legacy)",
+    "2014": "2014 rules (older)",
 }
 # A fallback of "none" means: only the target ruleset, nothing older.
 FALLBACK_NONE = "none"

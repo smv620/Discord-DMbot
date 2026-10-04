@@ -34,8 +34,8 @@ def missing_post_permissions(perms: discord.Permissions, *, in_thread: bool = Fa
 
 
 SAME_CHANNEL = (
-    "Run `/dmbot start` from your private DM channel, not the voice channel's chat — "
-    "players can read that."
+    "Run `/dmbot start` from a private channel only you can see (like #dm-screen), not "
+    "the voice channel's chat. Players can read that."
 )
 STARTING_UP = "I'm still starting up. Try `/dmbot start` again in a moment."
 

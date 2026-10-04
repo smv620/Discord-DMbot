@@ -115,6 +115,7 @@ class DMBot(commands.Bot):
             on_link_change=self._on_ears_link_change,
         )
         self._background: list[asyncio.Task[None]] = []
+        self._session_locks: dict[int, asyncio.Lock] = {}
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -168,6 +169,10 @@ class DMBot(commands.Bot):
         table = self.tables.get(guild_id)
         return table.campaign_id if table else None
 
+    def session_lock(self, guild_id: int) -> asyncio.Lock:
+        """Held while a session starts or stops, or a campaign is replaced, per server."""
+        return self._session_locks.setdefault(guild_id, asyncio.Lock())
+
     def start_blocker(self, guild_id: int) -> str | None:
         """Why `/dmbot start` can't begin right now, or None if it can."""
         if not self.ears.connected:
@@ -176,29 +181,42 @@ class DMBot(commands.Bot):
         if table is not None:
             name = f"**{table.campaign_name}** " if table.campaign_name else ""
             return (
-                f"DMbot is already listening to {name}in <#{table.voice_channel_id}>. "
-                "Use `/dmbot stop` first."
+                f"DMbot is already running {name}in <#{table.voice_channel_id}>. "
+                "Its DM can stop it with `/dmbot stop`."
             )
         return None
 
     async def start_campaign_session(
         self, interaction: discord.Interaction, campaign_id: str, voice_id: int
     ) -> tuple[bool, str]:
-        """Start listening for a campaign. Returns (started, message for the DM)."""
+        """Start listening for a campaign. Returns (started, message for the DM).
+
+        Runs under the server's session lock, so two people pressing Start at the same
+        moment can't both start a session.
+        """
         guild = interaction.guild
         if guild is None:
             return False, "Use this in a server."
+        async with self.session_lock(guild.id):
+            return await self._start_locked(interaction, guild, campaign_id, voice_id)
+
+    async def _start_locked(
+        self,
+        interaction: discord.Interaction,
+        guild: discord.Guild,
+        campaign_id: str,
+        voice_id: int,
+    ) -> tuple[bool, str]:
         problem = self.start_blocker(guild.id)
         if problem:
             return False, problem
         campaign = await self.campaigns.get(guild.id, campaign_id)
         if campaign is None:
             return False, "That campaign isn't here any more. Run `/dmbot start` again."
-        manager = (
-            isinstance(interaction.user, discord.Member)
-            and interaction.user.guild_permissions.manage_guild
-        )
-        if not ui_logic.can_run(campaign, interaction.user.id, manager):
+        user = interaction.user
+        if not isinstance(user, discord.Member):
+            return False, "Use this in a server."
+        if not ui_logic.can_run(campaign, user.id, user.guild_permissions.manage_guild):
             return False, ui_logic.NO_CAMPAIGN_ACCESS
         me = cast(discord.Member | None, guild.me)  # None while the guild is still loading
         if me is None:
@@ -206,6 +224,14 @@ class DMBot(commands.Bot):
         voice = guild.get_channel(voice_id)
         if not isinstance(voice, discord.VoiceChannel | discord.StageChannel):
             return False, "I can't find that voice channel. Pick another one."
+        # The DM must be able to join the channel too, so nobody can point DMbot at a
+        # private voice channel they aren't allowed in.
+        user_perms = voice.permissions_for(user)
+        if not (user_perms.view_channel and user_perms.connect):
+            return False, (
+                f"You can't join {voice.mention} yourself, so DMbot can't use it for your "
+                "table. Pick a voice channel you can join."
+            )
         voice_perms = voice.permissions_for(me)
         if not (voice_perms.view_channel and voice_perms.connect):
             return False, (
@@ -216,8 +242,8 @@ class DMBot(commands.Bot):
         screen_id = await ensure_dm_screen(self, interaction, campaign)
         if screen_id is None:
             return False, (
-                "I couldn't find a channel for DM updates. Run `/dmbot start` from a "
-                "private channel."
+                "I couldn't find a channel for DM notes. Run `/dmbot start` from a "
+                "private channel only you can see."
             )
         if screen_id == voice.id:
             return False, SAME_CHANNEL
@@ -249,7 +275,7 @@ class DMBot(commands.Bot):
             guild_id=guild.id,
             voice_channel_id=voice.id,
             screen_channel_id=screen_id,
-            dm_user_id=interaction.user.id,
+            dm_user_id=user.id,
             segmenter=Segmenter(guild.id),
             campaign_id=campaign.id,
             campaign_name=campaign.name,
@@ -257,41 +283,72 @@ class DMBot(commands.Bot):
         )
         await self.start_table(table)
         return True, (
-            f"▶ Starting **{campaign.name}** in {voice.mention}.\n"
-            f"DM updates will appear in <#{screen_id}>. Keep that channel private."
+            f"▶ Listening to **{campaign.name}** in {voice.mention}.\n"
+            f"DM notes go to <#{screen_id}>"
+            f"{ui_logic.screen_note(campaign.dm_screen_visibility)}. "
+            "Only players who said yes are recorded."
         )
 
     async def stop_session(self, guild_id: int, user_id: int, is_server_manager: bool) -> str:
-        table = self.tables.get(guild_id)
-        if table is None:
-            return "DMbot isn't listening right now."
-        if not (table.is_dm(user_id) or is_server_manager):
-            return "Only the DM (or a server manager) can stop the session."
-        await self.stop_table(guild_id)
+        async with self.session_lock(guild_id):
+            table = self.tables.get(guild_id)
+            if table is None:
+                return "DMbot isn't listening right now."
+            if not (table.is_dm(user_id) or is_server_manager):
+                return (
+                    "Only the DM can stop the session. To stop recording *you*, "
+                    "use `/consent revoke`."
+                )
+            await self.stop_table(guild_id)
         name = f" to **{table.campaign_name}**" if table.campaign_name else ""
         return f"Stopped listening{name}. See you next session! 👋"
 
     async def status_lines(self, guild_id: int) -> list[str]:
+        """Plain-language status for the Status button. Raw counters go to the log."""
         table = self.tables.get(guild_id)
-        users = await self.consent.consenting(guild_id)
-        names = ", ".join(sorted(self.name_of(guild_id, u) for u in users)) or "nobody yet"
-        voice_ok = "connected ✅" if self.ears.connected else "not connected ⚠️"
-        lines = [f"Voice service: {voice_ok}"]
-        if table is None:
-            lines.append("Listening: no. Use `/dmbot start` to begin.")
-        else:
-            state = "listening" if table.listening else "connecting…"
-            campaign = f" to **{table.campaign_name}**" if table.campaign_name else ""
-            lines.append(f"Listening{campaign} in <#{table.voice_channel_id}> ({state})")
-            lines.append(f"DM updates go to <#{table.screen_channel_id}>")
-        lines.append(f"Agreed to be recorded: {names}")
-        p = self.pipeline
-        lag = f", last delay {p.last_latency_s:.1f} s" if p.last_latency_s is not None else ""
-        lines.append(f"Transcription: {p.backlog} waiting{lag}")
-        if p.dropped or self.ears.rejected_frames or p.total_failures:
+        lines: list[str] = []
+        if not self.ears.connected:
             lines.append(
-                f"Problems: {p.dropped} dropped clip(s), {p.total_failures} failed "
-                f"transcription(s), {self.ears.rejected_frames} bad frame(s)"
+                "⚠️ DMbot's listening part isn't running. Whoever hosts DMbot needs to restart it."
+            )
+        if table is None:
+            lines.append("🎙 Not listening. Use `/dmbot start` to begin.")
+        else:
+            campaign = f" to **{table.campaign_name}**" if table.campaign_name else ""
+            joining = "" if table.listening else " (joining…)"
+            lines.append(
+                f"🎙 Listening{campaign} in <#{table.voice_channel_id}>{joining} · "
+                f"DM notes go to <#{table.screen_channel_id}>"
+            )
+        users = await self.consent.consenting(guild_id)
+        if users:
+            names = ", ".join(sorted(self.name_of(guild_id, u) for u in users))
+            lines.append(f"Recording only: {names} (people who said yes)")
+        else:
+            lines.append("Nobody has said yes to recording yet.")
+        p = self.pipeline
+        if table is not None:
+            if p.backlog >= 16:
+                lines.append("⚠️ Writing things down is falling behind.")
+            else:
+                behind = (
+                    f" (about {p.last_latency_s:.0f} s behind)"
+                    if p.last_latency_s is not None and p.last_latency_s >= 1
+                    else ""
+                )
+                lines.append(f"Keeping up: yes{behind}")
+        if p.dropped or self.ears.rejected_frames or p.total_failures:
+            log.info(
+                "Status for guild %s: dropped=%d failures=%d bad_frames=%d backlog=%d",
+                guild_id,
+                p.dropped,
+                p.total_failures,
+                self.ears.rejected_frames,
+                p.backlog,
+            )
+            lines.append(
+                "⚠️ Some speech was missed. If this keeps happening, use `/dmbot stop` "
+                "then `/dmbot start`."
             )
         return lines
 

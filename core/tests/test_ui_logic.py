@@ -99,6 +99,29 @@ class Wording(unittest.TestCase):
         self.assertEqual(backup_filename("✨✨", NOW), "campaign-2027-01-15.dmbot.json")
 
 
+class MenuChoices(unittest.TestCase):
+    def test_choices_explain_themselves(self) -> None:
+        from dmbot.ui.logic import (
+            OPTIONAL_RULES_CHOICES,
+            fallback_choices,
+            main_rules_choices,
+            screen_note,
+            visibility_choices,
+        )
+
+        self.assertEqual(main_rules_choices()["2024"], "Main rules: 2024 rules (newest)")
+        fb = fallback_choices("2024")
+        self.assertNotIn("2024", fb)
+        self.assertTrue(all(v.startswith("If the main rules don't cover it") for v in fb.values()))
+        self.assertIn("none", fb)
+        self.assertTrue(all(v.startswith("DM screen: ") for v in visibility_choices().values()))
+        self.assertTrue(
+            all(len(v) <= 100 for v in [*fb.values(), *OPTIONAL_RULES_CHOICES.values()])
+        )
+        self.assertIn("peek", screen_note("peek"))
+        self.assertEqual(screen_note("private"), "")
+
+
 class VoiceDefault(unittest.TestCase):
     def test_prefers_last_time_then_current(self) -> None:
         c = campaign(last_voice_channel_id=50)

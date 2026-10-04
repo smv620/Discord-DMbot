@@ -44,16 +44,20 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         self.ears = FakeEarsConnection()
         self.bot.ears._active = self.ears  # type: ignore[assignment]
 
-        self.voice_perms = CAN_POST
+        self.voice_perms = CAN_POST  # what DMbot may do in the voice channel
+        self.user_voice_perms = CAN_POST  # what the person pressing Start may do there
+        bot_member = member(999)
         voice = MagicMock(spec=discord.VoiceChannel)
         voice.id = VOICE
         voice.mention = f"<#{VOICE}>"
-        voice.permissions_for = lambda _me: self.voice_perms
+        voice.permissions_for = lambda who: (
+            self.voice_perms if who is bot_member else self.user_voice_perms
+        )
         self.voice = voice
 
         guild = MagicMock(spec=discord.Guild)
         guild.id = GUILD
-        guild.me = member(999)
+        guild.me = bot_member
         guild.get_channel = lambda cid: voice if cid == VOICE else None
         self.guild = guild
 
@@ -82,7 +86,8 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_dm_starts_a_session(self) -> None:
         ok, message = await self.start()
         self.assertTrue(ok, message)
-        self.assertIn("Starting **Frostmaiden**", message)
+        self.assertIn("Listening to **Frostmaiden**", message)
+        self.assertIn("players can peek", message)
         table = self.bot.tables[GUILD]
         self.assertEqual(
             (table.campaign_id, table.voice_channel_id, table.screen_channel_id),
@@ -118,6 +123,26 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ok)
         self.assertIn("**Connect**", message)
 
+    async def test_dm_must_be_able_to_join_the_channel(self) -> None:
+        self.user_voice_perms = discord.Permissions(view_channel=True)  # no Connect
+        ok, message = await self.start()
+        self.assertFalse(ok)
+        self.assertIn("can't join", message)
+        self.assertIn("yourself", message)
+        self.assertNotIn(GUILD, self.bot.tables)
+
+    async def test_two_starts_at_once_start_only_one_session(self) -> None:
+        import asyncio
+
+        other = await self.campaigns.create(GUILD, "Second", DM)
+        results = await asyncio.gather(
+            self.bot.start_campaign_session(self.interaction(member(DM)), self.campaign.id, VOICE),
+            self.bot.start_campaign_session(self.interaction(member(DM)), other.id, VOICE),
+        )
+        self.assertEqual(sorted(ok for ok, _ in results), [False, True])
+        joins = [m for m in self.ears.sent if '"join"' in m]
+        self.assertEqual(len(joins), 1)
+
     async def test_refuses_the_voice_channels_own_chat(self) -> None:
         ok, message = await self.start(channel_id=VOICE)
         self.assertFalse(ok)
@@ -130,7 +155,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
             self.interaction(member(DM)), other.id, VOICE
         )
         self.assertFalse(ok)
-        self.assertIn("already listening to **Frostmaiden**", message)
+        self.assertIn("already running **Frostmaiden**", message)
 
     async def test_voice_service_down(self) -> None:
         self.bot.ears._active = None
@@ -140,6 +165,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         await self.start()
         refused = await self.bot.stop_session(GUILD, PLAYER, False)
         self.assertIn("Only the DM", refused)
+        self.assertIn("/consent revoke", refused)
         self.assertIn(GUILD, self.bot.tables)
         done = await self.bot.stop_session(GUILD, DM, False)
         self.assertIn("Stopped listening to **Frostmaiden**", done)
@@ -151,10 +177,14 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         await self.start()
         self.assertIn("Stopped", await self.bot.stop_session(GUILD, PLAYER, False))
 
-    async def test_status_lines(self) -> None:
+    async def test_status_lines_are_plain(self) -> None:
         idle = "\n".join(await self.bot.status_lines(GUILD))
         self.assertIn("/dmbot start", idle)
+        self.assertIn("Nobody has said yes", idle)
         await self.start()
         busy = "\n".join(await self.bot.status_lines(GUILD))
         self.assertIn("**Frostmaiden**", busy)
         self.assertIn(f"<#{SCREEN}>", busy)
+        self.assertIn("Keeping up: yes", busy)
+        for jargon in ("backlog", "frame", "pipeline", "ears", "service"):
+            self.assertNotIn(jargon, busy.lower())
