@@ -233,7 +233,10 @@ class SaveAndResume(SessionTests):
         screen = MagicMock(spec=discord.TextChannel)
         screen.id = SCREEN
         screen.permissions_for = lambda _me: CAN_POST
-        self.channels: dict[int, Any] = {SCREEN: screen, VOICE: self.voice}
+        other_text = MagicMock(spec=discord.TextChannel)
+        other_text.id = OTHER_TEXT
+        other_text.permissions_for = lambda _me: CAN_POST
+        self.channels: dict[int, Any] = {SCREEN: screen, VOICE: self.voice, OTHER_TEXT: other_text}
         self.bot.get_channel = self.channels.get  # type: ignore[method-assign]
 
     async def restart(self) -> DMBot:
