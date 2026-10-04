@@ -13,6 +13,7 @@ from dmbot.ui.logic import (
     runnable,
     settings_summary,
     shorten,
+    writing_status,
 )
 
 NOW = 1_800_000_000
@@ -147,3 +148,24 @@ class BackupName(unittest.TestCase):
         for bad in bads:
             self.assertIsNone(backup_campaign_name(bad))
         self.assertEqual(dm_list(campaign(dm_user_ids=frozenset({9, 7}))), "<@7>, <@9>")
+
+
+class WritingStatus(unittest.TestCase):
+    def test_off_never_says_keeping_up(self) -> None:
+        # #39: with TRANSCRIBER=none, nothing is written down.
+        line = writing_status("none", 0, 0.0)
+        self.assertIn("off", line)
+        self.assertNotIn("Keeping up", line)
+
+    def test_running_engine(self) -> None:
+        for engine in ("whisper-local", "cloud"):
+            self.assertEqual(writing_status(engine, 0, None), "Keeping up: yes")
+            self.assertEqual(writing_status(engine, 0, 0.4), "Keeping up: yes")
+            self.assertEqual(writing_status(engine, 3, 2.6), "Keeping up: yes (about 3 s behind)")
+            self.assertIn("falling behind", writing_status(engine, 16, 1.0))
+
+    def test_plain_words(self) -> None:
+        for engine in ("none", "whisper-local"):
+            line = writing_status(engine, 0, None).lower()
+            for jargon in ("transcri", "engine", "backlog", "whisper"):
+                self.assertNotIn(jargon, line)

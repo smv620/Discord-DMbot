@@ -217,6 +217,17 @@ class SessionTests(DatabaseTest):
         for jargon in ("backlog", "frame", "pipeline", "ears", "service"):
             self.assertNotIn(jargon, busy.lower())
 
+    async def test_status_says_writing_is_off_without_transcription(self) -> None:
+        # #39: TRANSCRIBER=none must not read as "keeping up".
+        self.bot.settings = dataclasses.replace(
+            self.bot.settings,
+            transcription=dataclasses.replace(self.bot.settings.transcription, engine="none"),
+        )
+        await self.start()
+        busy = "\n".join(await self.bot.status_lines(GUILD))
+        self.assertIn("Writing things down: off", busy)
+        self.assertNotIn("Keeping up", busy)
+
     async def test_ears_events_do_not_leave_log_tags_behind(self) -> None:
         # The ears connection task lives on, so tags must be scoped per event.
         from dmbot.ears.protocol import Status

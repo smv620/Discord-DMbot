@@ -141,6 +141,28 @@ def screen_note(visibility: str) -> str:
     return ""
 
 
+# Waiting speech clips at which the Status button says writing is falling behind.
+WRITING_BEHIND_BACKLOG = 16
+
+
+def writing_status(engine: str, backlog: int, last_latency_s: float | None) -> str:
+    """The Status button's line about writing down what's said (#39).
+
+    With transcription turned off (TRANSCRIBER=none) nothing is written down, so it
+    must not say it's keeping up.
+    """
+    if engine == "none":
+        return "Writing things down: off (DMbot only checks who it can hear)"
+    if backlog >= WRITING_BEHIND_BACKLOG:
+        return "⚠️ Writing things down is falling behind."
+    behind = (
+        f" (about {last_latency_s:.0f} s behind)"
+        if last_latency_s is not None and last_latency_s >= 1
+        else ""
+    )
+    return f"Keeping up: yes{behind}"
+
+
 def backup_filename(campaign_name: str, now: int) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", campaign_name.casefold()).strip("-")[:40] or "campaign"
     day = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d")
