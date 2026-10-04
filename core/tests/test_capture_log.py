@@ -65,6 +65,16 @@ class AudioHealthTests(unittest.TestCase):
         self.assertEqual(audio_health(120, 100), (100, False))
         self.assertEqual(audio_health(-1, 100), (0, True))
 
+    def test_over_count_cannot_hide_a_gap(self) -> None:
+        # 60/50 and 40/50: the second clip lost 20%, which must still show.
+        log = CaptureLog()
+        log.add_utterance(utt(1, 1.0), None)
+        log.add_health(1, 60, 50)
+        log.add_health(1, 40, 50)
+        text = log.render(str)
+        assert text is not None
+        self.assertIn("audio 90% ⚠️ audio gaps", text)
+
     def test_render_shows_rounded_down_and_flag(self) -> None:
         log = CaptureLog()
         log.add_utterance(utt(1, 1.0), None)

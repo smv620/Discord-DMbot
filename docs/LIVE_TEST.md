@@ -119,12 +119,13 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
 |---|---|---|
 | Both parts connected, bot online | Yes | Any startup error |
 | Join messages in the DM screen and voice chat | Both appear | Either missing |
-| Audio % per speaker | **95–100%** | Below 90%, or "⚠️ audio gaps" |
+| Audio % per speaker | **95–100%** | Below 90% |
 | Every consenting speaker appears in capture checks | Yes | Someone missing |
 | Revoked speaker disappears | Yes | Still listed after revoke |
 | No errors in either terminal during the session | None | Any traceback or error |
 
-Audio between 90% and 95% is borderline. Repeat the test once before calling it.
+Audio of 90–94% (shown with "⚠️ audio gaps") is borderline. Repeat the test once before
+calling it.
 
 ### Step 6: report (Claude)
 

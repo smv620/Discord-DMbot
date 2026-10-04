@@ -54,8 +54,9 @@ class CaptureLog:
 
     def add_health(self, user_id: int, received: int, expected: int) -> None:
         stats = self._get(user_id)
-        stats.frames_received += received
-        stats.frames_expected += expected
+        # Cap each report, so one over-counted clip can't hide a gap in another.
+        stats.frames_received += max(0, min(received, expected))
+        stats.frames_expected += max(0, expected)
 
     def render(self, name_of: Callable[[int], str]) -> str | None:
         """Render and reset the summary. Returns None if nothing was captured."""
