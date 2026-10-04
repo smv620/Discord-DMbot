@@ -66,7 +66,15 @@ jobs:
             sed -nE 's/^([^:]+):([0-9]+): error: (.*)$/::error file=core\/\1,line=\2::\3/p' mypy.log | head -50
             exit 1
           }
-      - run: pytest -q
+      - name: pytest
+        run: |
+          set -o pipefail
+          pytest -q --tb=short -rfE 2>&1 | tee pytest.log || {
+            # One multi-line annotation, so failures are readable without the raw log.
+            summary=$(grep -E "^(FAILED|ERROR) |^E  |^[^ ].*\.py:[0-9]+: " pytest.log | head -80 | sed -e 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+            echo "::error title=pytest failures::${summary}"
+            exit 1
+          }
 
   docker:
     name: docker images
