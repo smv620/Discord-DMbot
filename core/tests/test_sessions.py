@@ -225,7 +225,7 @@ class SaveAndResume(SessionTests):
             return True
 
         self.bot.post = fake_post  # type: ignore[method-assign]
-        self.bot.get_guild = lambda gid: self.guild if gid == GUILD else None  # type: ignore[method-assign,assignment,return-value]
+        self.bot.get_guild = lambda gid: self.guild if gid == GUILD else None  # type: ignore[method-assign]
 
     async def restart(self) -> DMBot:
         """A new process with the same database: in-memory state is gone."""
@@ -311,7 +311,7 @@ class SaveAndResume(SessionTests):
     async def test_no_resume_when_dmbot_left_the_server(self) -> None:
         await self.start()
         bot = await self.restart()
-        bot.get_guild = lambda gid: None  # type: ignore[method-assign,assignment,return-value]
+        bot.get_guild = lambda gid: None  # type: ignore[method-assign]
         self.assertEqual(await bot.resume_sessions(), 0)
         self.assertIsNone(await self.sessions.get(GUILD))
 
