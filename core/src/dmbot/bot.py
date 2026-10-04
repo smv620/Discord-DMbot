@@ -47,6 +47,7 @@ from dmbot.ears.protocol import (
 )
 from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
+from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline
@@ -65,6 +66,25 @@ EARS_DOWN = (
 )
 
 
+SAVE_FAILED = "I couldn't save the session, so I haven't started. Please try again in a moment."
+STOP_FAILED = (
+    "I couldn't save that DMbot stopped, so I'm still listening. "
+    "Please try `/dmbot stop` again in a moment."
+)
+RESUME_NO_CAMPAIGN = (
+    "🔄 I restarted, but the campaign that was playing isn't here any more, so I didn't "
+    "rejoin. Use `/dmbot start` to begin again."
+)
+
+
+def resume_no_voice_message(campaign_name: str, voice_channel_id: int) -> str:
+    return (
+        f"🔄 I restarted, but I can't rejoin <#{voice_channel_id}> for **{campaign_name}** "
+        "any more (the channel is gone or I'm not allowed in). Use `/dmbot start` to "
+        "begin again."
+    )
+
+
 @dataclass(slots=True)
 class Table:
     guild_id: int
@@ -78,6 +98,7 @@ class Table:
     campaign_id: str | None = None
     campaign_name: str = ""
     dm_user_ids: frozenset[int] = frozenset()
+    resumed: bool = False  # picked up again after a restart
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
@@ -103,6 +124,7 @@ class DMBot(commands.AutoShardedBot):
         settings: Settings,
         consent: ConsentStore,
         campaigns: CampaignStore,
+        sessions: SessionStore,
         transcriber: Transcriber | None = None,
     ) -> None:
         intents = discord.Intents.none()
@@ -118,6 +140,7 @@ class DMBot(commands.AutoShardedBot):
         self.settings = settings
         self.consent = consent
         self.campaigns = campaigns
+        self.sessions = sessions
         self.tables: dict[int, Table] = {}
         self.pipeline = TranscriptionPipeline(
             transcriber or PlaceholderTranscriber(),
@@ -138,6 +161,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self._background: list[asyncio.Task[None]] = []
         self._session_locks: dict[int, asyncio.Lock] = {}
+        self._resume_done = False
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -306,6 +330,22 @@ class DMBot(commands.AutoShardedBot):
             campaign_name=campaign.name,
             dm_user_ids=campaign.dm_user_ids,
         )
+        # Save before joining, so a restart can always pick the session up again.
+        try:
+            await self.sessions.save(
+                SavedSession(
+                    guild_id=guild.id,
+                    campaign_id=campaign.id,
+                    voice_channel_id=voice.id,
+                    screen_channel_id=screen_id,
+                    started_by=user.id,
+                    started_at=int(time.time()),
+                    notice_posted=False,
+                )
+            )
+        except Exception:
+            log.exception("Couldn't save the new session")
+            return False, SAVE_FAILED
         await self.start_table(table)
         return True, (
             f"▶ Listening to **{campaign.name}** in {voice.mention}.\n"
@@ -324,6 +364,13 @@ class DMBot(commands.AutoShardedBot):
                     "Only the DM can stop the session. To stop recording *you*, "
                     "use `/consent revoke`."
                 )
+            # Forget the saved session first: if that fails, keep listening rather than
+            # stop now and come back by surprise after the next restart.
+            try:
+                await self.sessions.clear(guild_id)
+            except Exception:
+                log.exception("Couldn't clear the saved session")
+                return STOP_FAILED
             await self.stop_table(guild_id)
         name = f" to **{table.campaign_name}**" if table.campaign_name else ""
         return f"Stopped listening{name}. See you next session! 👋"
@@ -376,6 +423,92 @@ class DMBot(commands.AutoShardedBot):
                 "then `/dmbot start`."
             )
         return lines
+
+    # ---- resuming after a restart ------------------------------------------
+
+    async def on_ready(self) -> None:
+        # on_ready can fire again after Discord reconnects; resume only once.
+        if self._resume_done:
+            return
+        self._resume_done = True
+        try:
+            await self.resume_sessions()
+        except Exception:
+            log.exception("Couldn't resume saved sessions")
+
+    async def resume_sessions(self) -> int:
+        """Rejoin the sessions that were running on this process's shards. Returns how
+        many were resumed."""
+        resumed = 0
+        for guild_id in await self.sessions.guilds_to_resume(self.settings.shards):
+            async with self.session_lock(guild_id):
+                with log_context(guild_id=guild_id):
+                    try:
+                        if await self._resume_one(guild_id):
+                            resumed += 1
+                    except Exception:
+                        log.exception("Couldn't resume this server's session")
+        if resumed:
+            log.info("Resumed %d session(s)", resumed)
+        return resumed
+
+    async def _resume_one(self, guild_id: int) -> bool:
+        if guild_id in self.tables:
+            return False  # already started again (e.g. by /dmbot start)
+        saved = await self.sessions.get(guild_id)
+        if saved is None:  # only the routing entry was left behind
+            await self.sessions.clear(guild_id)
+            return False
+        guild = self.get_guild(guild_id)
+        if guild is None:
+            log.info("Not resuming: DMbot is no longer in this server")
+            await self.sessions.clear(guild_id)
+            return False
+        campaign = await self.campaigns.get(guild_id, saved.campaign_id)
+        if campaign is None:
+            await self.sessions.clear(guild_id)
+            await self.post(saved.screen_channel_id, RESUME_NO_CAMPAIGN)
+            return False
+        with log_context(campaign_id=campaign.id):
+            me = cast(discord.Member | None, guild.me)
+            voice = guild.get_channel(saved.voice_channel_id)
+            can_join = (
+                me is not None
+                and isinstance(voice, discord.VoiceChannel | discord.StageChannel)
+                and voice.permissions_for(me).view_channel
+                and voice.permissions_for(me).connect
+            )
+            if not can_join:
+                log.info("Not resuming: can't rejoin the voice channel")
+                await self.sessions.clear(guild_id)
+                await self.post(
+                    saved.screen_channel_id,
+                    resume_no_voice_message(campaign.name, saved.voice_channel_id),
+                )
+                return False
+            table = Table(
+                guild_id=guild_id,
+                voice_channel_id=saved.voice_channel_id,
+                screen_channel_id=saved.screen_channel_id,
+                dm_user_id=saved.started_by,
+                segmenter=Segmenter(guild_id),
+                notice_posted=saved.notice_posted,
+                campaign_id=campaign.id,
+                campaign_name=campaign.name,
+                dm_user_ids=campaign.dm_user_ids,
+                resumed=True,
+            )
+            # If ears isn't connected yet, it gets the join when it connects.
+            await self.start_table(table)
+            log.info("Resuming session")
+            return True
+
+    async def _remember_notice(self, guild_id: int) -> None:
+        try:
+            await self.sessions.mark_notice_posted(guild_id)
+        except Exception:
+            # Worst case after a restart: players see the notice once more.
+            log.exception("Couldn't save that the recording notice was posted")
 
     def name_of(self, guild_id: int, user_id: int) -> str:
         guild = self.get_guild(guild_id)
@@ -435,11 +568,20 @@ class DMBot(commands.AutoShardedBot):
             table.listening = True
             count = len(await self.consent.consenting(table.guild_id))
             campaign = f" for **{table.campaign_name}**" if table.campaign_name else ""
-            await self.post(
-                table.screen_channel_id,
-                f"✅ Listening in <#{table.voice_channel_id}>{campaign}. "
-                f"{count} player(s) have opted in to recording.",
-            )
+            if table.resumed:
+                table.resumed = False
+                await self.post(
+                    table.screen_channel_id,
+                    f"🔄 I restarted and picked up{campaign} where we left off, in "
+                    f"<#{table.voice_channel_id}>. A few seconds of what was said may be "
+                    "missing.",
+                )
+            else:
+                await self.post(
+                    table.screen_channel_id,
+                    f"✅ Listening in <#{table.voice_channel_id}>{campaign}. "
+                    f"{count} player(s) have opted in to recording.",
+                )
             if not table.notice_posted:
                 # Players learn they're being recorded from this notice, so a failure
                 # must reach the DM; it is retried on the next join.
@@ -449,7 +591,9 @@ class DMBot(commands.AutoShardedBot):
                     "Only people who opt in with `/consent give` are recorded. "
                     "Change your mind any time with `/consent revoke`.",
                 )
-                if not table.notice_posted:
+                if table.notice_posted:
+                    await self._remember_notice(table.guild_id)
+                else:
                     await self.post(
                         table.screen_channel_id, notice_failed_message(table.voice_channel_id)
                     )
@@ -591,7 +735,7 @@ async def run(settings: Settings) -> None:
     try:
         transcriber = build_transcriber(settings.transcription)
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
-        bot = DMBot(settings, ConsentStore(db), CampaignStore(db), transcriber)
+        bot = DMBot(settings, ConsentStore(db), CampaignStore(db), SessionStore(db), transcriber)
         async with bot:
             await bot.start(settings.discord_token)
     finally:

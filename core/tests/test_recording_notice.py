@@ -6,6 +6,7 @@ from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.ears.protocol import Status
+from dmbot.sessions import SessionStore
 from tests.pg import DatabaseTest
 
 GUILD, VOICE, SCREEN = 1, 2, 3
@@ -16,7 +17,10 @@ class RecordingNoticeTests(DatabaseTest):
         await super().asyncSetUp()
         self.consent = ConsentStore(self.db)
         self.bot = DMBot(
-            Settings(discord_token="t", ears_secret="s"), self.consent, CampaignStore(self.db)
+            Settings(discord_token="t", ears_secret="s"),
+            self.consent,
+            CampaignStore(self.db),
+            SessionStore(self.db),
         )
         self.posts: list[tuple[int, str]] = []
         self.voice_ok = True
