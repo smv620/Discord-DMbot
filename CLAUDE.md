@@ -31,6 +31,26 @@ CI runs all of the above on every pull request. Never merge red CI.
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
 
+## Issue log: shared memory between Claude sessions
+Several Claude sessions work on this repo (the cloud/web session and the Claude Code
+session in PyCharm). They don't share memory, so **GitHub Issues are the shared log.**
+- **Start of every task:** read open issues and recent `fix-log` issues, and anything
+  touching the area you're about to change:
+  `gh api "repos/smv620/Discord-DMbot/issues?state=all&per_page=30"`
+- **Every bug you find gets an issue**, opened before or while you fix it. Labels:
+  `bug` plus `session: web` or `session: pycharm`. Use the template in
+  `.github/ISSUE_TEMPLATE/bug.md`: Background (what you were doing), Symptom (exact
+  error), Root cause, Fix, Watch for.
+- **Bugs found and fixed within the same piece of work** still get an issue: label it
+  `fix-log` as well, and close it with a link to the PR.
+- **Reviewer-agent findings you fix** are logged too: one issue per significant finding,
+  and minor ones grouped into one issue.
+- **Fix PRs say `Fixes #N`** so the issue closes when the PR merges.
+- **The repo is public:** never put tokens, `.env` contents, or players' personal data
+  in issues.
+- In cloud sessions `gh issue …` and `gh pr …` may fail (GraphQL is blocked). Use the
+  REST API through `gh api repos/smv620/Discord-DMbot/...` instead.
+
 ## Hard rules
 - **Secrets:** never commit tokens or keys. Config comes from environment variables
   (`.env` locally, see `.env.example`). Never log tokens.
