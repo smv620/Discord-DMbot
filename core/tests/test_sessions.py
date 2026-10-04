@@ -471,7 +471,7 @@ class SaveAndResume(SessionTests):
             response=SimpleNamespace(defer=AsyncMock()),
             followup=SimpleNamespace(send=AsyncMock()),
         )
-        await consent_revoke.callback(interaction)  # type: ignore[arg-type]
+        await consent_revoke.callback(interaction)  # type: ignore[arg-type,call-arg]
         lists = [json.loads(m) for m in self.ears.sent if '"allowlist"' in m]
         self.assertTrue(lists)
         self.assertNotIn(str(PLAYER), lists[0]["userIds"])
