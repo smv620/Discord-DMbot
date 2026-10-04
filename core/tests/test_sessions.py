@@ -576,8 +576,8 @@ class SaveAndResume(SessionTests):
         from dmbot.bot import consent_give, consent_revoke
 
         with self.assertLogs("dmbot.bot", level="INFO") as logs:
-            await consent_give.callback(self._consent_interaction(PLAYER))  # type: ignore[arg-type,call-arg]
-            await consent_revoke.callback(self._consent_interaction(PLAYER))  # type: ignore[arg-type,call-arg]
+            await consent_give.callback(self._consent_interaction(PLAYER))  # type: ignore[call-arg]
+            await consent_revoke.callback(self._consent_interaction(PLAYER))  # type: ignore[call-arg]
         text = "\n".join(logs.output)
         self.assertIn(f"Consent given: user {PLAYER}", text)
         self.assertIn(f"Consent withdrawn: user {PLAYER}", text)
@@ -587,7 +587,7 @@ class SaveAndResume(SessionTests):
 
         self.consent.grant = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
         with self.assertLogs("dmbot.bot", level="INFO") as logs:
-            await consent_give.callback(self._consent_interaction(PLAYER))  # type: ignore[arg-type,call-arg]
+            await consent_give.callback(self._consent_interaction(PLAYER))  # type: ignore[call-arg]
         self.assertNotIn("Consent given", "\n".join(logs.output))
 
     async def test_capture_check_is_logged_and_posted(self) -> None:
