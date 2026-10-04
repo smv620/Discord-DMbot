@@ -38,15 +38,17 @@ They run side by side on the same computer and talk over a local, password-prote
    pip install -e ".[dev,whisper]"   # drop ",whisper" if using cloud transcription
    python -m dmbot
    ```
-4. **Start ears** (second terminal, Node 22+):
+4. **Start ears** (second terminal, Node 22.12+):
    ```bash
    cd ears
    npm install
    npm run dev
    ```
-5. **In Discord:** make a private text channel (e.g. `#dm-screen`), join your voice
-   channel, and run `/table join` from `#dm-screen`. Each player runs `/consent give`.
-   Talk for a bit and watch the capture check appear.
+5. **In Discord:** make a private text channel (e.g. `#dm-screen`) and add the bot to it
+   with **View Channel** and **Send Messages** — a private channel hides the bot too, so
+   without this no updates appear. Join your voice channel and run `/table join` from
+   `#dm-screen`. Each player, including you, runs `/consent give`. Talk for a bit and
+   watch the capture check appear.
 
 ## Transcription engines
 
