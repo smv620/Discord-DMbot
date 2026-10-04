@@ -263,12 +263,23 @@ class DMBot(commands.AutoShardedBot):
             if self.tables.get(table.guild_id) is table:
                 del self.tables[table.guild_id]
             raise
-        return await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
+        sent = await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            log.info(
+                "Session started%s: voice channel %s, DM screen %s",
+                " again after a restart" if table.resumed else "",
+                table.voice_channel_id,
+                table.screen_channel_id,
+            )
+        return sent
 
-    async def stop_table(self, guild_id: int) -> Table | None:
+    async def stop_table(self, guild_id: int, reason: str) -> Table | None:
+        """End a running session. `reason` goes in the log (IDs only, no names)."""
         table = self.tables.pop(guild_id, None)
         if table is None:
             return None
+        with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
+            log.info("Session ended: %s", reason)
         await self.ears.send(leave_command(guild_id))
         return table
 
@@ -445,7 +456,7 @@ class DMBot(commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't clear the saved session")
                 return STOP_FAILED
-            await self.stop_table(guild_id)
+            await self.stop_table(guild_id, f"/dmbot stop by user {user_id}")
         name = f" to **{table.campaign_name}**" if table.campaign_name else ""
         return f"Stopped listening{name}. See you next session! 👋"
 
@@ -517,6 +528,7 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Couldn't stop a saved session")
             return STOP_FAILED
+        log.info("Saved session ended before it resumed: /dmbot stop by user %s", user_id)
         self._resume_when_available.discard(guild_id)
         # In case an ears from before the restart is still in the channel.
         await self.ears.send(leave_command(guild_id))
@@ -782,6 +794,8 @@ class DMBot(commands.AutoShardedBot):
             table.listening = True
             count = len(await self.consent.consenting(table.guild_id))
             campaign = f" for **{table.campaign_name}**" if table.campaign_name else ""
+            if not repeat:
+                log.info("In the voice channel; %d player(s) opted in", count)
             if repeat:
                 pass
             elif table.resumed:
@@ -810,13 +824,17 @@ class DMBot(commands.AutoShardedBot):
                 )
                 table.peek_offered = table.notice_posted and peek is not None
                 if table.notice_posted:
+                    log.info("Recording notice posted in the voice channel's chat")
                     await self._remember_notice(table.guild_id)
                 else:
+                    log.warning("Recording notice NOT posted; telling the DM")
                     await self.post(
                         table.screen_channel_id, notice_failed_message(table.voice_channel_id)
                     )
         elif status.state in ("left", "error"):
             table.listening = False
+            # The detail comes from ears' own fixed messages, never from users.
+            log.warning("Voice %s: %s", status.state, status.detail or "no detail")
             detail = status.detail or "The voice connection ended."
             await self.post(table.screen_channel_id, f"⚠️ {detail}")
 
@@ -862,10 +880,17 @@ class DMBot(commands.AutoShardedBot):
         while True:
             await asyncio.sleep(SUMMARY_INTERVAL_S)
             for table in list(self.tables.values()):
-                with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
-                    text = table.capture_log.render(partial(self.name_of, table.guild_id))
-                    if text:
-                        await self.post(table.screen_channel_id, text)
+                await self.post_summary(table)
+
+    async def post_summary(self, table: Table) -> None:
+        """Log one capture-check line, then post the check to the DM screen."""
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            line = table.capture_log.log_line()  # IDs and numbers only; before render
+            if line:
+                log.info(line)
+            text = table.capture_log.render(partial(self.name_of, table.guild_id))
+            if text:
+                await self.post(table.screen_channel_id, text)
 
 
 # ---- slash commands ----------------------------------------------------------
@@ -900,6 +925,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
             ephemeral=True,
         )
         return
+    log.info("Consent given: user %s", interaction.user.id)
     # Always tell ears (if connected), even with no session here: it may still be in
     # voice from before a restart.
     with contextlib.suppress(Exception):
@@ -927,6 +953,7 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
     gid, uid = interaction.guild.id, interaction.user.id
     # Stop first, before anything that can be slow or fail.
     bot.consent.stop_now(gid, uid)
+    log.info("Consent withdrawn: user %s", uid)
     table = bot.tables.get(gid)
     if table is not None:
         table.segmenter.drop(uid)

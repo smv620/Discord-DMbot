@@ -512,3 +512,100 @@ class SaveAndResume(SessionTests):
         bot = await self.restart()
         self.assertTrue(await bot.is_campaign_playing(GUILD, self.campaign.id))
         self.assertFalse(await bot.is_campaign_playing(GUILD, "other"))
+
+    # ---- session event logs (#37): IDs and numbers only, never names ----------
+
+    async def test_session_events_are_logged_without_names(self) -> None:
+        from dmbot.ears.protocol import Status
+
+        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.bot", level="INFO") as logs:
+            await self.start()
+            await self.bot._on_ears_message(Status("joined", guild_id=GUILD))
+            await self.bot._on_ears_message(Status("joined", guild_id=GUILD))  # a repeat
+            await self.bot._on_ears_message(
+                Status("error", guild_id=GUILD, detail="Lost the voice connection.")
+            )
+            await self.bot.stop_session(GUILD, DM, False)
+        text = "\n".join(logs.output)
+        for expected in (
+            f"Session started: voice channel {VOICE}, DM screen {SCREEN}",
+            "In the voice channel; 0 player(s) opted in",
+            "Recording notice posted",
+            "WARNING:dmbot.bot:Voice error: Lost the voice connection.",
+            f"Session ended: /dmbot stop by user {DM}",
+        ):
+            self.assertIn(expected, text)
+        self.assertEqual(text.count("In the voice channel"), 1)
+        self.assertNotIn("Frostmaiden", text)  # campaign names stay out of logs
+
+    async def test_failed_recording_notice_is_a_warning(self) -> None:
+        from dmbot.ears.protocol import Status
+
+        await self.start()
+        self.bot.post = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.bot", level="WARNING") as logs:
+            await self.bot._on_ears_message(Status("joined", guild_id=GUILD))
+        self.assertIn("Recording notice NOT posted", "\n".join(logs.output))
+
+    async def test_resume_and_saved_stop_are_logged(self) -> None:
+        await self.start()
+        bot = await self.restart()
+        with self.assertLogs("dmbot.bot", level="INFO") as logs:
+            await bot.resume_sessions()
+        self.assertIn("Session started again after a restart", "\n".join(logs.output))
+
+        bot = await self.restart()  # saved again, not running in this process
+        with self.assertLogs("dmbot.bot", level="INFO") as logs:
+            await bot.stop_session(GUILD, DM, False)
+        self.assertIn(
+            f"Saved session ended before it resumed: /dmbot stop by user {DM}",
+            "\n".join(logs.output),
+        )
+
+    def _consent_interaction(self, user_id: int) -> Any:
+        return SimpleNamespace(
+            client=self.bot,
+            guild=self.guild,
+            user=member(user_id),
+            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+
+    async def test_consent_is_logged_by_id(self) -> None:
+        from dmbot.bot import consent_give, consent_revoke
+
+        with self.assertLogs("dmbot.bot", level="INFO") as logs:
+            await consent_give.callback(self._consent_interaction(PLAYER))  # type: ignore[call-arg]
+            await consent_revoke.callback(self._consent_interaction(PLAYER))  # type: ignore[call-arg]
+        text = "\n".join(logs.output)
+        self.assertIn(f"Consent given: user {PLAYER}", text)
+        self.assertIn(f"Consent withdrawn: user {PLAYER}", text)
+
+    async def test_consent_not_logged_as_given_when_the_save_fails(self) -> None:
+        from dmbot.bot import consent_give
+
+        self.consent.grant = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.bot", level="INFO") as logs:
+            await consent_give.callback(self._consent_interaction(PLAYER))  # type: ignore[call-arg]
+        self.assertNotIn("Consent given", "\n".join(logs.output))
+
+    async def test_capture_check_is_logged_and_posted(self) -> None:
+        from dmbot.audio.segmenter import Utterance
+
+        await self.start()
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        table = self.bot.tables[GUILD]
+        table.capture_log.add_utterance(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)), None)
+        table.capture_log.add_health(PLAYER, 50, 50)
+        with self.assertLogs("dmbot.bot", level="INFO") as logs:
+            await self.bot.post_summary(table)
+        self.assertIn(
+            f"Capture check: 1 speaker(s); user {PLAYER}: 1 x speech, 1.0 s, audio 100%",
+            "\n".join(logs.output),
+        )
+        posted.assert_awaited_once()
+        call = posted.await_args
+        assert call is not None
+        self.assertIn("Capture check", call.args[1])
