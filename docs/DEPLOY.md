@@ -73,9 +73,13 @@ in a volume, so restarts are fast.
 | Status | `docker compose ps` |
 
 The containers restart automatically after a crash or a server reboot. A game that was
-running picks up where it left off: DMbot rejoins the voice channel and tells the DM
-screen. A few seconds of speech during the restart can't be recovered. Only `/dmbot stop`
-ends a session for good.
+running picks up where it left off: DMbot rejoins the voice channel and posts a note in
+the DM screen. A few seconds of speech during the restart can't be recovered.
+
+DMbot won't rejoin, and says why in the DM screen, if the voice channel is gone or it's no
+longer allowed in, if the session started more than 16 hours ago, or if it restarted five
+times in a row (to stop a crash loop). `/dmbot stop` always ends a session for good, even
+while DMbot is restarting.
 
 ### Logs
 
