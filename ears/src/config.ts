@@ -1,9 +1,15 @@
+import { parseLogFormat, parseLogLevel, type LogLevel } from "./log.js";
+import { parseShards, type ShardSettings } from "./shards.js";
+
 export interface EarsConfig {
   discordToken: string;
   coreUrl: string;
   secret: string;
   /** DMBOT_DEBUG_AUDIO=1: log per-utterance audio health (user IDs and counts only). */
   debugAudio: boolean;
+  shards: ShardSettings;
+  logFormat: "text" | "json";
+  logLevel: LogLevel;
 }
 
 /** Read configuration from environment variables. Throws a readable error if anything is missing. */
@@ -31,5 +37,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): EarsConfig {
     secret,
     coreUrl: `ws://${host}:${port}`,
     debugAudio: env.DMBOT_DEBUG_AUDIO?.trim() === "1",
+    shards: parseShards(env.SHARD_COUNT, env.SHARD_IDS),
+    logFormat: parseLogFormat(env.LOG_FORMAT),
+    logLevel: parseLogLevel(env.LOG_LEVEL),
   };
 }

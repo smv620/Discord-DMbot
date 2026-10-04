@@ -16,10 +16,11 @@ from __future__ import annotations
 import json
 import re
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
-PROTOCOL_VERSION = 1
+# 2: hello carries the shard settings, so core can refuse an ears serving other shards.
+PROTOCOL_VERSION = 2
 AUDIO_FRAME_KIND = 1
 AUDIO_HEADER_BYTES = 25
 SAMPLE_RATE = 16_000
@@ -35,7 +36,9 @@ _SNOWFLAKE = re.compile(r"^\d{1,20}$")
 @dataclass(frozen=True, slots=True)
 class Hello:
     version: int
-    secret: str
+    secret: str = field(repr=False)
+    shard_count: int = 1
+    shard_ids: tuple[int, ...] = (0,)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,9 +104,23 @@ def parse_ears_message(raw: str) -> EarsMessage | None:
     kind = data.get("type")
     if kind == "hello":
         version, secret = _non_negative_int(data.get("version")), data.get("secret")
-        if version is not None and isinstance(secret, str):
+        if version is None or not isinstance(secret, str):
+            return None
+        if version < 2:  # older ears: no shard fields; the version check rejects it later
             return Hello(version=version, secret=secret)
-        return None
+        count = _non_negative_int(data.get("shardCount"))
+        raw_ids = data.get("shardIds")
+        if count is None or count < 1 or not isinstance(raw_ids, list) or not raw_ids:
+            return None
+        ids = [_non_negative_int(i) for i in raw_ids]
+        if any(i is None or i >= count for i in ids) or len(set(ids)) != len(ids):
+            return None
+        return Hello(
+            version=version,
+            secret=secret,
+            shard_count=count,
+            shard_ids=tuple(sorted(i for i in ids if i is not None)),
+        )
 
     if kind == "status":
         state = data.get("state")

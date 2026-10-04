@@ -74,6 +74,20 @@ in a volume, so restarts are fast.
 
 The containers restart automatically after a crash or a server reboot.
 
+### Logs
+
+On a server, both parts write one JSON object per line (`LOG_FORMAT=json`, the Compose
+default), with `shard_id`, `guild_id` (the Discord server) and `campaign_id` where known,
+so a log collector can filter by server or campaign. Logs never contain names, what was
+said, or keys. Set `LOG_FORMAT=text` in `.env` for easier reading by eye.
+
+### Growing past one shard
+
+One core + ears pair with one shard is enough until DMbot is in a few thousand servers.
+To split the load, run more pairs, each with the **same** `SHARD_COUNT` and its own
+`SHARD_IDS` (e.g. `SHARD_COUNT=4`: `SHARD_IDS=0,1` on one, `2,3` on another). A core
+refuses an ears whose shard settings differ, and says so in the log.
+
 ## Data and backups
 
 Campaigns and consent live in Postgres, in the `postgres-data` Docker volume. Back it

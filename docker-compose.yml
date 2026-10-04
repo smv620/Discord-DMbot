@@ -29,6 +29,7 @@ services:
     env_file: .env
     environment:
       EARS_WS_HOST: 0.0.0.0   # listen on the private network so ears can reach it
+      LOG_FORMAT: ${LOG_FORMAT:-json}   # one JSON line per event on servers
       DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
       POSTGRES_ADMIN_PASSWORD: ""   # only the postgres service needs these
       DMBOT_DB_PASSWORD: ""
@@ -45,6 +46,7 @@ services:
     env_file: .env
     environment:
       EARS_WS_HOST: core       # reach core by its service name
+      LOG_FORMAT: ${LOG_FORMAT:-json}
       DATABASE_URL: ""         # ears never touches the database
       POSTGRES_ADMIN_PASSWORD: ""
       DMBOT_DB_PASSWORD: ""

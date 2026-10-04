@@ -6,6 +6,8 @@ import {
   AUDIO_HEADER_BYTES,
   decodeAudioFrame,
   encodeAudioFrame,
+  helloMessage,
+  PROTOCOL_VERSION,
   parseCoreCommand,
 } from "../src/protocol.js";
 
@@ -90,4 +92,15 @@ test("parseCoreCommand rejects malformed input", () => {
   ]) {
     assert.equal(parseCoreCommand(raw), null, raw);
   }
+});
+
+test("hello states the version and shards", () => {
+  assert.deepEqual(helloMessage("s", { count: 4, ids: [1, 3] }), {
+    type: "hello",
+    version: PROTOCOL_VERSION,
+    secret: "s",
+    shardCount: 4,
+    shardIds: [1, 3],
+  });
+  assert.equal(PROTOCOL_VERSION, 2);
 });

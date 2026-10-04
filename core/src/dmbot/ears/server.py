@@ -23,6 +23,7 @@ from dmbot.ears.protocol import (
     decode_audio_frame,
     parse_ears_message,
 )
+from dmbot.sharding import ShardSettings
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class EarsServer:
         on_message: OnMessage,
         on_audio: OnAudio,
         on_link_change: OnLinkChange | None = None,
+        shards: ShardSettings | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -51,6 +53,7 @@ class EarsServer:
         self._on_message = on_message
         self._on_audio = on_audio
         self._on_link_change = on_link_change
+        self._shards = shards or ShardSettings()
         self._server: Server | None = None
         self._active: ServerConnection | None = None
         self.rejected_frames = 0
@@ -88,12 +91,24 @@ class EarsServer:
             return False
         return True
 
-    def _authenticated(self, hello: EarsMessage | None) -> bool:
-        return (
-            isinstance(hello, Hello)
-            and hello.version == PROTOCOL_VERSION
-            and hmac.compare_digest(hello.secret.encode(), self._secret)
-        )
+    def _rejection(self, hello: EarsMessage | None) -> str | None:
+        """Why this hello can't be accepted (for the log), or None if it's fine."""
+        if not isinstance(hello, Hello):
+            return "no valid hello"
+        if not hmac.compare_digest(hello.secret.encode(), self._secret):
+            return "wrong EARS_SHARED_SECRET"
+        if hello.version != PROTOCOL_VERSION:
+            return (
+                f"ears speaks protocol {hello.version}, core speaks {PROTOCOL_VERSION}: "
+                "update both to the same DMbot version"
+            )
+        if (hello.shard_count, hello.shard_ids) != (self._shards.count, self._shards.ids):
+            return (
+                f"ears serves shards {list(hello.shard_ids)} of {hello.shard_count}, core "
+                f"serves {list(self._shards.ids)} of {self._shards.count}: give both the "
+                "same SHARD_COUNT and SHARD_IDS"
+            )
+        return None
 
     async def _handle(self, conn: ServerConnection) -> None:
         try:
@@ -103,9 +118,10 @@ class EarsServer:
             return
 
         hello = parse_ears_message(first) if isinstance(first, str) else None
-        if not self._authenticated(hello):
-            log.warning("Rejected an ears connection with a bad hello")
-            await conn.close(code=1008, reason="unauthorized")
+        problem = self._rejection(hello)
+        if problem is not None:
+            log.warning("Rejected an ears connection: %s", problem)
+            await conn.close(code=1008, reason="rejected")
             return
 
         previous, self._active = self._active, conn

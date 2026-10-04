@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
-import { parseCoreCommand, PROTOCOL_VERSION, type CoreCommand, type EarsMessage } from "./protocol.js";
+import type { Logger } from "./log.js";
+import { helloMessage, parseCoreCommand, type CoreCommand, type EarsMessage } from "./protocol.js";
+import type { ShardSettings } from "./shards.js";
 
 /** Stop queueing audio if this much is waiting to be sent; core is not keeping up. */
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
@@ -10,6 +12,8 @@ const MAX_BACKOFF_MS = 15_000;
 export interface CoreLinkOptions {
   url: string;
   secret: string;
+  shards: ShardSettings;
+  log: Logger;
 }
 
 export interface CoreLinkEvents {
@@ -68,7 +72,7 @@ export class CoreLink extends EventEmitter<CoreLinkEvents> {
 
     ws.on("open", () => {
       this.backoffMs = MIN_BACKOFF_MS;
-      ws.send(JSON.stringify({ type: "hello", version: PROTOCOL_VERSION, secret: this.options.secret }));
+      ws.send(JSON.stringify(helloMessage(this.options.secret, this.options.shards)));
       this.emit("connected");
     });
 
@@ -78,7 +82,7 @@ export class CoreLink extends EventEmitter<CoreLinkEvents> {
       if (command) {
         this.emit("command", command);
       } else {
-        console.warn("[ears] ignored invalid message from core");
+        this.options.log.warn("ignored an invalid message from core");
       }
     });
 
@@ -89,7 +93,7 @@ export class CoreLink extends EventEmitter<CoreLinkEvents> {
     });
 
     ws.on("error", (err) => {
-      console.warn(`[ears] core link error: ${err.message}`);
+      this.options.log.warn(`core link error: ${err.message}`);
     });
   }
 

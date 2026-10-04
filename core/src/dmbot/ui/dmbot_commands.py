@@ -20,6 +20,7 @@ from discord import app_commands
 from dmbot.campaigns import DEFAULT_DM_SCREEN_VISIBILITY, Campaign, CampaignError
 from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET, clean_name, name_key
 from dmbot.campaigns.store import MAX_BACKUP_BYTES, decode_backup, encode_backup
+from dmbot.logs import set_log_context
 from dmbot.ui import logic
 
 if TYPE_CHECKING:
@@ -72,6 +73,10 @@ class _Menu(discord.ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.origin: discord.Interaction | None = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        set_log_context(guild_id=interaction.guild_id)  # tag this button press's logs
+        return True
 
     async def on_timeout(self) -> None:
         if self.origin is not None:

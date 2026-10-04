@@ -2,6 +2,7 @@ import { Client, Events, GatewayIntentBits } from "discord.js";
 import { loadConfig } from "./config.js";
 import { Allowlist } from "./consent.js";
 import { CoreLink } from "./coreLink.js";
+import { Logger } from "./log.js";
 import type { CoreCommand } from "./protocol.js";
 import { TableSession } from "./voice.js";
 
@@ -11,12 +12,17 @@ import { TableSession } from "./voice.js";
  * Slash commands and all game logic live in core.
  */
 const config = loadConfig();
+const log = new Logger({ format: config.logFormat, level: config.logLevel, shards: config.shards });
 const allowlist = new Allowlist();
 const sessions = new Map<string, TableSession>();
-const link = new CoreLink({ url: config.coreUrl, secret: config.secret });
+const link = new CoreLink({ url: config.coreUrl, secret: config.secret, shards: config.shards, log });
 
+// The same shards as core (SHARD_COUNT / SHARD_IDS), so ears can join voice in every
+// server core serves. core checks this on connect.
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+  shards: config.shards.ids,
+  shardCount: config.shards.count,
 });
 
 async function isBotOrUnknown(guildId: string, userId: string): Promise<boolean> {
@@ -54,6 +60,7 @@ async function handleCommand(command: CoreCommand): Promise<void> {
         link,
         isBotOrUnknown: (userId) => isBotOrUnknown(command.guildId, userId),
         debugAudio: config.debugAudio,
+        log,
         onClosed: () => {
           if (sessions.get(command.guildId) === session) sessions.delete(command.guildId);
         },
@@ -78,22 +85,24 @@ async function handleCommand(command: CoreCommand): Promise<void> {
 
 link.on("command", (command) => {
   handleCommand(command).catch((err: unknown) => {
-    console.error("[ears] command failed", err);
+    log.error("command from core failed", { guildId: command.guildId, error: err });
   });
 });
 
 link.on("connected", () => {
-  console.log("[ears] connected to core");
+  log.info("connected to core");
   link.send({ type: "status", state: "ready" });
 });
 
 link.on("disconnected", () => {
-  console.warn("[ears] core link down; retrying");
+  log.warn("core link down; retrying");
 });
 
 // Connect to core only after Discord is ready, so join commands can find the server.
 client.once(Events.ClientReady, (ready) => {
-  console.log(`[ears] logged in as ${ready.user.tag}`);
+  log.info(
+    `logged in as ${ready.user.tag}, shards ${config.shards.ids.join(",")} of ${config.shards.count}`,
+  );
   link.start();
 });
 

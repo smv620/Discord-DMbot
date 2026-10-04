@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from dmbot.audio.segmenter import Utterance
+from dmbot.logs import log_context
 from dmbot.transcription.base import MIN_UTTERANCE_S, Transcriber
 
 log = logging.getLogger(__name__)
@@ -83,8 +84,9 @@ class TranscriptionPipeline:
     async def run(self) -> None:
         while True:
             queued_at, utterance = await self._queue.get()
-            await self._check_backlog(utterance.guild_id)
-            await self.process(utterance)
+            with log_context(guild_id=utterance.guild_id):
+                await self._check_backlog(utterance.guild_id)
+                await self.process(utterance)
             self.last_latency_s = time.monotonic() - queued_at
 
     async def process(self, utterance: Utterance) -> None:

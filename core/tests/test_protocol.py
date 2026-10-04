@@ -65,6 +65,13 @@ class AudioFrames(unittest.TestCase):
 class ControlMessages(unittest.TestCase):
     def test_parses_each_type(self) -> None:
         self.assertEqual(
+            parse_ears_message(
+                '{"type":"hello","version":2,"secret":"s","shardCount":4,"shardIds":[3,1]}'
+            ),
+            Hello(2, "s", 4, (1, 3)),
+        )
+        # An older ears (no shard fields) still parses, so core can say why it's refused.
+        self.assertEqual(
             parse_ears_message('{"type":"hello","version":1,"secret":"s"}'), Hello(1, "s")
         )
         self.assertEqual(
@@ -91,6 +98,12 @@ class ControlMessages(unittest.TestCase):
             "[]",
             '{"type":"hello","version":"1","secret":"s"}',
             '{"type":"hello","version":true,"secret":"s"}',
+            '{"type":"hello","version":2,"secret":"s"}',
+            '{"type":"hello","version":2,"secret":"s","shardCount":0,"shardIds":[0]}',
+            '{"type":"hello","version":2,"secret":"s","shardCount":2,"shardIds":[]}',
+            '{"type":"hello","version":2,"secret":"s","shardCount":2,"shardIds":[2]}',
+            '{"type":"hello","version":2,"secret":"s","shardCount":2,"shardIds":[1,1]}',
+            '{"type":"hello","version":2,"secret":"s","shardCount":2,"shardIds":["1"]}',
             '{"type":"status","state":"dancing"}',
             '{"type":"speaking","guildId":"1","userId":"x","event":"end","timestampMs":1}',
             '{"type":"speaking","guildId":"1","userId":"2","event":"later","timestampMs":1}',
@@ -109,3 +122,8 @@ class ControlMessages(unittest.TestCase):
             json.loads(allowlist_command(1, {30, 4})),
             {"type": "allowlist", "guildId": "1", "userIds": ["4", "30"]},
         )
+
+
+class HelloSecretHidden(unittest.TestCase):
+    def test_secret_not_in_repr(self) -> None:
+        self.assertNotIn("topsecret", repr(Hello(2, "topsecret")))

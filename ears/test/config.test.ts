@@ -24,3 +24,24 @@ test("rejects a non-numeric port", () => {
     /must be a number/,
   );
 });
+
+test("shard and log settings default to one shard and text logs", () => {
+  const c = loadConfig({ DISCORD_TOKEN: "t", EARS_SHARED_SECRET: "s" });
+  assert.deepEqual(c.shards, { count: 1, ids: [0] });
+  assert.equal(c.logFormat, "text");
+  assert.equal(c.logLevel, "INFO");
+});
+
+test("shard and log settings are read", () => {
+  const c = loadConfig({
+    DISCORD_TOKEN: "t",
+    EARS_SHARED_SECRET: "s",
+    SHARD_COUNT: "4",
+    SHARD_IDS: "2,3",
+    LOG_FORMAT: "json",
+    LOG_LEVEL: "warning",
+  });
+  assert.deepEqual(c.shards, { count: 4, ids: [2, 3] });
+  assert.equal(c.logFormat, "json");
+  assert.equal(c.logLevel, "WARNING");
+});

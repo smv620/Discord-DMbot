@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dmbot.logs import LOG_FORMATS, LOG_LEVELS
+from dmbot.sharding import ShardConfigError, ShardSettings, parse_shards
 from dmbot.transcription.config import (
     TranscriptionConfigError,
     TranscriptionSettings,
@@ -28,6 +30,9 @@ class Settings:
     database_url: str = field(default="", repr=False)  # contains the password
     data_dir: Path = Path("data")
     transcription: TranscriptionSettings = field(default_factory=TranscriptionSettings)
+    shards: ShardSettings = field(default_factory=ShardSettings)
+    log_format: str = "text"
+    log_level: str = "INFO"
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -56,6 +61,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     except TranscriptionConfigError as exc:
         raise ConfigError(str(exc)) from exc
 
+    try:
+        shards = parse_shards(get("SHARD_COUNT"), get("SHARD_IDS"))
+    except ShardConfigError as exc:
+        raise ConfigError(str(exc)) from exc
+
+    log_format = (get("LOG_FORMAT") or "text").lower()
+    if log_format not in LOG_FORMATS:
+        raise ConfigError(f'LOG_FORMAT must be "text" or "json", got "{log_format}".')
+    log_level = (get("LOG_LEVEL") or "INFO").upper()
+    if log_level not in LOG_LEVELS:
+        raise ConfigError(f"LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}.")
+
     return Settings(
         discord_token=get("DISCORD_TOKEN"),
         ears_secret=get("EARS_SHARED_SECRET"),
@@ -65,4 +82,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         database_url=get("DATABASE_URL"),
         data_dir=Path(get("DMBOT_DATA_DIR") or "data"),
         transcription=transcription,
+        shards=shards,
+        log_format=log_format,
+        log_level=log_level,
     )
