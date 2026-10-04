@@ -123,6 +123,7 @@ screen channel (only the DM can see it) and optionally to DMs.
 |---|---|
 | `/dmbot start` | Start listening: pick the campaign and the voice channel (both default to last time). Replaces `/table join` |
 | `/dmbot stop` | Stop listening and close the session. Replaces `/table leave` |
+| `/dmbot backup` · `/dmbot restore` | Download a copy of a campaign; bring one back from a copy (restore needs a file, which only a command can take) |
 | `/dmbot help` | A short, friendly guide with buttons |
 | `/houserules` | List, add, edit, and remove house rules for the current campaign |
 | `/optionalrules` | Turn optional rules (e.g. Xanathar's, Tasha's) on or off for the current campaign |
@@ -223,7 +224,7 @@ server suits the `base`/`small` models; larger models need a GPU server, or swit
 
 **Consent (decided 2026-10-04).** Consent is asked by **private message with buttons**,
 the way other Discord bots handle opt-ins. No typing, and no slash command needed.
-- When `/table join` starts a session, DMbot DMs everyone in the table voice channel
+- When `/dmbot start` starts a session, DMbot DMs everyone in the table voice channel
   (the DM included), and anyone who joins later. The message says DMbot is for
   entertainment only, other uses are prohibited, their voice will be recorded and
   transcribed, and consenting participants can view and download transcripts. It has a
@@ -240,7 +241,7 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 - Consent records store the terms version, the UTC timestamp, and the method. Changing the
   consent wording re-prompts everyone (#35).
 - The public "DMbot is listening" notice in the voice channel's chat still posts once per
-  `/table join`, is not repeated after a voice-service reconnect, and the DM is warned if
+  `/dmbot start`, is not repeated after a voice-service reconnect, and the DM is warned if
   it can't be posted.
 
 **Transcripts vs. the DM screen (decided 2026-10-04).**

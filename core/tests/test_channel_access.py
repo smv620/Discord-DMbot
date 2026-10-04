@@ -84,7 +84,7 @@ def test_blocked_message_names_each_channel_and_permission() -> None:
     assert "<#1> needs **View Channel** and **Send Messages** (updates go here)" in text
     assert "<#2> needs **Send Messages** (notice goes here)" in text
     assert "Add them via Edit Channel → Permissions" in text
-    assert "run `/table join` again" in text
+    assert "run `/dmbot start` again" in text
 
 
 def test_blocked_message_says_it_for_a_single_permission() -> None:
@@ -110,4 +110,4 @@ def test_notice_failed_message_says_tell_the_table_first() -> None:
     text = notice_failed_message(42)
     assert "<#42>" in text
     assert text.index("Tell the table now") < text.index("Send Messages")
-    assert "retry on the next `/table join`" in text
+    assert "retry on the next `/dmbot start`" in text

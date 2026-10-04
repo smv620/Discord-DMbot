@@ -1,6 +1,6 @@
 """Can the bot post where it needs to? Pure checks, testable without Discord.
 
-Posting fails silently otherwise (the bot only logs a warning), so `/table join`
+Posting fails silently otherwise (the bot only logs a warning), so `/dmbot start`
 checks up front and tells the DM exactly which permission to add.
 """
 
@@ -34,10 +34,10 @@ def missing_post_permissions(perms: discord.Permissions, *, in_thread: bool = Fa
 
 
 SAME_CHANNEL = (
-    "Run `/table join` from your private DM channel, not the voice channel's chat — "
-    "players can read that."
+    "Run `/dmbot start` from a private channel only you can see (like #dm-screen), not "
+    "the voice channel's chat. Players can read that."
 )
-STARTING_UP = "I'm still starting up. Try `/table join` again in a moment."
+STARTING_UP = "I'm still starting up. Try `/dmbot start` again in a moment."
 
 
 def post_problems(
@@ -70,7 +70,7 @@ def _bullet(p: PostProblem) -> str:
     if p.unseen:
         return (
             f"• I can't see <#{p.channel_id}>. Give me **View Channel** there, or run "
-            "`/table join` from another private channel"
+            "`/dmbot start` from another private channel"
         )
     needs = " and ".join(f"**{name}**" for name in p.missing)
     where = ", set on its parent channel" if p.in_thread else ""
@@ -85,7 +85,7 @@ def join_blocked_message(problems: list[PostProblem]) -> str:
     if count:
         lines.append(
             f"Add {it} via Edit Channel → Permissions (for me or my role), "
-            "then run `/table join` again."
+            "then run `/dmbot start` again."
         )
     return "\n".join(lines)
 
@@ -94,5 +94,5 @@ def notice_failed_message(voice_channel_id: int) -> str:
     return (
         f"⚠️ Players weren't told I'm listening — the recording notice failed in "
         f"<#{voice_channel_id}>. Tell the table now. Then check I have **Send Messages** "
-        "there; I'll retry on the next `/table join`."
+        "there; I'll retry on the next `/dmbot start`."
     )
