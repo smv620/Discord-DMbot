@@ -225,7 +225,7 @@ __marimo__/
 !.env.example
 
 # Node (ears service)
-node_modules/
+node_modules
 ears/dist/
 npm-debug.log*
 

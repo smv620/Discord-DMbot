@@ -127,3 +127,16 @@ class ControlMessages(unittest.TestCase):
 class HelloSecretHidden(unittest.TestCase):
     def test_secret_not_in_repr(self) -> None:
         self.assertNotIn("topsecret", repr(Hello(2, "topsecret")))
+
+
+class HelloFixture(unittest.TestCase):
+    def test_parses_what_ears_sends(self) -> None:
+        h = FIXTURES["hello"]
+        parsed = parse_ears_message(json.dumps(h["json"]))
+        self.assertEqual(parsed, Hello(2, h["secret"], h["shardCount"], tuple(h["shardIds"])))
+
+    def test_other_versions_parse_without_guessing_fields(self) -> None:
+        self.assertEqual(
+            parse_ears_message('{"type":"hello","version":3,"secret":"s","new":1}'),
+            Hello(3, "s"),
+        )

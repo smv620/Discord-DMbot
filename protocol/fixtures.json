@@ -16,5 +16,24 @@
       ],
       "hex": "010db4da5f49f8b47801b69b4ba630f34e0000018bcfe5680000000100ffffff7f0080"
     }
-  ]
+  ],
+  "hello": {
+    "_comment": "What ears sends first: helloMessage(secret, {count, ids}) in ears, parse_ears_message in core.",
+    "secret": "fixture-secret",
+    "shardCount": 4,
+    "shardIds": [
+      1,
+      3
+    ],
+    "json": {
+      "type": "hello",
+      "version": 2,
+      "secret": "fixture-secret",
+      "shardCount": 4,
+      "shardIds": [
+        1,
+        3
+      ]
+    }
+  }
 }

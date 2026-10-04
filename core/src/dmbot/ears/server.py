@@ -121,7 +121,9 @@ class EarsServer:
         problem = self._rejection(hello)
         if problem is not None:
             log.warning("Rejected an ears connection: %s", problem)
-            await conn.close(code=1008, reason="rejected")
+            # The reason holds no secrets, and lets ears log what to fix. WebSocket close
+            # reasons are limited to 123 bytes.
+            await conn.close(code=1008, reason=problem.encode()[:120].decode(errors="ignore"))
             return
 
         previous, self._active = self._active, conn

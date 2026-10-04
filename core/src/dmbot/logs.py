@@ -46,7 +46,12 @@ def log_context(*, guild_id: int | None = None, campaign_id: str | None = None) 
 
 
 def set_log_context(*, guild_id: int | None = None, campaign_id: str | None = None) -> None:
-    """Tag the rest of the current task (e.g. one Discord interaction) with these IDs."""
+    """Tag the rest of the current task with these IDs.
+
+    Only for tasks that handle exactly one thing, such as one Discord interaction. In a
+    long-lived task (a connection, a loop) use `log_context` instead, or the IDs would
+    stick to everything that task logs afterwards.
+    """
     if guild_id is not None:
         _guild.set(guild_id)
     if campaign_id is not None:
@@ -114,8 +119,16 @@ class TextFormatter(logging.Formatter):
         return super().format(record)
 
 
+# discord.py logs raw gateway events at DEBUG, which include usernames and what people
+# type into commands and forms. Never let LOG_LEVEL turn that on.
+LIBRARY_MIN_LEVEL = {"discord": logging.INFO}
+
+
 def configure_logging(fmt: str, level: str, shards: ShardSettings) -> None:
-    """Replace the root handlers with one stderr handler in the chosen format."""
+    """Replace the root handlers with one stderr handler in the chosen format.
+
+    Safe to call again: the previous handlers are replaced, not added to.
+    """
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(JsonFormatter() if fmt == "json" else TextFormatter())
     handler.addFilter(ContextFilter(shards))
@@ -124,3 +137,5 @@ def configure_logging(fmt: str, level: str, shards: ShardSettings) -> None:
         root.removeHandler(old)
     root.addHandler(handler)
     root.setLevel(level)
+    for name, minimum in LIBRARY_MIN_LEVEL.items():
+        logging.getLogger(name).setLevel(max(minimum, logging.getLevelName(level)))

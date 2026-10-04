@@ -11,7 +11,15 @@ import {
   parseCoreCommand,
 } from "../src/protocol.js";
 
+interface HelloFixture {
+  secret: string;
+  shardCount: number;
+  shardIds: number[];
+  json: unknown;
+}
+
 interface Fixtures {
+  hello: HelloFixture;
   audioFrameHeaderBytes: number;
   audioFrameKind: number;
   audioFrames: { guildId: string; userId: string; timestampMs: number; samples: number[]; hex: string }[];
@@ -103,4 +111,9 @@ test("hello states the version and shards", () => {
     shardIds: [1, 3],
   });
   assert.equal(PROTOCOL_VERSION, 2);
+});
+
+test("hello matches the shared fixture core parses", () => {
+  const h = fixtures.hello;
+  assert.deepEqual(helloMessage(h.secret, { count: h.shardCount, ids: h.shardIds }), h.json);
 });

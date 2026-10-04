@@ -148,7 +148,9 @@ class DMBot(commands.AutoShardedBot):
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
-        else:
+        elif 0 in self.settings.shards.ids:
+            # Commands are registered once for the whole bot, not per shard: only the
+            # pod serving shard 0 does it, so many pods don't all sync at startup.
             await self.tree.sync()
         await self.ears.start()
         self._background = [
@@ -396,36 +398,37 @@ class DMBot(commands.AutoShardedBot):
     # ---- ears events -------------------------------------------------------
 
     async def _on_ears_link_change(self, connected: bool) -> None:
+        # Runs in the ears connection's task, which lives on: scope the IDs per table.
         for table in list(self.tables.values()):
-            set_log_context(guild_id=table.guild_id, campaign_id=table.campaign_id)
-            if connected:
-                # ears (re)started: restore its state for every active table.
-                await self.push_allowlist(table.guild_id)
-                await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
-            else:
-                table.listening = False
-                await self.post(
-                    table.screen_channel_id,
-                    "⚠️ Lost contact with the voice service. I'll rejoin automatically "
-                    "when it's back.",
-                )
+            with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                if connected:
+                    # ears (re)started: restore its state for every active table.
+                    await self.push_allowlist(table.guild_id)
+                    await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
+                else:
+                    table.listening = False
+                    await self.post(
+                        table.screen_channel_id,
+                        "⚠️ Lost contact with the voice service. I'll rejoin automatically "
+                        "when it's back.",
+                    )
 
     async def _on_ears_message(self, message: EarsMessage) -> None:
         guild_id = None if isinstance(message, Hello) else message.guild_id
         table = self.tables.get(guild_id) if guild_id is not None else None
         if table is None:
             return
-        set_log_context(guild_id=table.guild_id, campaign_id=table.campaign_id)
-        if isinstance(message, Status):
-            await self._on_status(table, message)
-        elif isinstance(message, Speaking) and message.event == "end":
-            utterance = table.segmenter.end(message.user_id)
-            if utterance is not None:
-                self.pipeline.enqueue(utterance)
-        elif isinstance(message, Health):
-            table.capture_log.add_health(
-                message.user_id, message.frames_received, message.frames_expected
-            )
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            if isinstance(message, Status):
+                await self._on_status(table, message)
+            elif isinstance(message, Speaking) and message.event == "end":
+                utterance = table.segmenter.end(message.user_id)
+                if utterance is not None:
+                    self.pipeline.enqueue(utterance)
+            elif isinstance(message, Health):
+                table.capture_log.add_health(
+                    message.user_id, message.frames_received, message.frames_expected
+                )
 
     async def _on_status(self, table: Table, status: Status) -> None:
         if status.state == "joined":

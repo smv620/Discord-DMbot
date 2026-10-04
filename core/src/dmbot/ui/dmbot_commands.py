@@ -217,6 +217,10 @@ class NewCampaignForm(discord.ui.Modal, title="New campaign"):
         max_length=80,
     )
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        set_log_context(guild_id=interaction.guild_id)  # tag this form's logs
+        return True
+
     async def on_submit(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
         if guild is None:

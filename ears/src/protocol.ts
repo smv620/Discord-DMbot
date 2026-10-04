@@ -1,5 +1,7 @@
+import type { ShardSettings } from "./shards.js";
+
 /**
- * ears <-> core wire protocol (version 1).
+ * ears <-> core wire protocol (version 2).
  *
  * Keep in sync with core/src/dmbot/ears/protocol.py. Shared test vectors live in
  * protocol/fixtures.json and are checked by both test suites.
@@ -15,8 +17,6 @@
  */
 
 /** 2: hello carries the shard settings, so core can refuse an ears serving other shards. */
-import type { ShardSettings } from "./shards.js";
-
 export const PROTOCOL_VERSION = 2;
 export const AUDIO_FRAME_KIND = 1;
 export const AUDIO_HEADER_BYTES = 25;

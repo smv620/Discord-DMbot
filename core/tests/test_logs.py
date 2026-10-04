@@ -88,3 +88,40 @@ class LogTests(unittest.TestCase):
         asyncio.run(both())
         guilds = sorted(str(e["guild_id"]) for e in self.lines(stream))
         self.assertEqual(guilds, sorted([str(111 << 22), str(222 << 22)]))
+
+
+class LibraryLevels(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = logging.getLogger()
+        self.saved = (list(self.root.handlers), self.root.level)
+        self.discord_level = logging.getLogger("discord").level
+
+    def tearDown(self) -> None:
+        handlers, level = self.saved
+        for h in list(self.root.handlers):
+            self.root.removeHandler(h)
+        for h in handlers:
+            self.root.addHandler(h)
+        self.root.setLevel(level)
+        logging.getLogger("discord").setLevel(self.discord_level)
+
+    def test_discord_never_logs_debug(self) -> None:
+        # discord.py's DEBUG logs raw events: usernames and what people type.
+        configure_logging("json", "DEBUG", ONE_OF_SEVEN)
+        self.assertEqual(logging.getLogger("discord").level, logging.INFO)
+        self.assertFalse(logging.getLogger("discord.gateway").isEnabledFor(logging.DEBUG))
+        configure_logging("json", "WARNING", ONE_OF_SEVEN)
+        self.assertEqual(logging.getLogger("discord").level, logging.WARNING)
+
+    def test_configuring_twice_does_not_duplicate_lines(self) -> None:
+        configure_logging("json", "INFO", ONE_OF_SEVEN)
+        configure_logging("json", "INFO", ONE_OF_SEVEN)
+        self.assertEqual(len(self.root.handlers), 1)
+
+    def test_log_context_does_not_outlive_its_block(self) -> None:
+        from dmbot.logs import _campaign, _guild
+
+        with log_context(guild_id=GUILD, campaign_id="c1"):
+            pass
+        self.assertIsNone(_guild.get())
+        self.assertIsNone(_campaign.get())

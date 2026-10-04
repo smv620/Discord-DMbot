@@ -2,12 +2,11 @@ import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import type { Logger } from "./log.js";
 import { helloMessage, parseCoreCommand, type CoreCommand, type EarsMessage } from "./protocol.js";
+import { ReconnectPolicy } from "./reconnect.js";
 import type { ShardSettings } from "./shards.js";
 
 /** Stop queueing audio if this much is waiting to be sent; core is not keeping up. */
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
-const MIN_BACKOFF_MS = 500;
-const MAX_BACKOFF_MS = 15_000;
 
 export interface CoreLinkOptions {
   url: string;
@@ -29,7 +28,8 @@ export interface CoreLinkEvents {
  */
 export class CoreLink extends EventEmitter<CoreLinkEvents> {
   private ws: WebSocket | null = null;
-  private backoffMs = MIN_BACKOFF_MS;
+  private readonly policy = new ReconnectPolicy();
+  private lastRejection: string | null = null;
   private stopped = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   droppedAudioFrames = 0;
@@ -71,7 +71,7 @@ export class CoreLink extends EventEmitter<CoreLinkEvents> {
     this.ws = ws;
 
     ws.on("open", () => {
-      this.backoffMs = MIN_BACKOFF_MS;
+      this.policy.opened(Date.now());
       ws.send(JSON.stringify(helloMessage(this.options.secret, this.options.shards)));
       this.emit("connected");
     });
@@ -86,10 +86,23 @@ export class CoreLink extends EventEmitter<CoreLinkEvents> {
       }
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code, reasonBuffer) => {
       if (this.ws === ws) this.ws = null;
-      this.emit("disconnected");
-      this.scheduleReconnect();
+      const { delayMs, rejected } = this.policy.closed(Date.now(), code);
+      if (rejected) {
+        // Log a refusal once per reason, not on every retry.
+        const reason = reasonBuffer.toString() || "no reason given";
+        if (reason !== this.lastRejection) {
+          this.options.log.error(
+            `core refused this ears: ${reason}. Retrying every ${delayMs / 1000} s until it's fixed.`,
+          );
+          this.lastRejection = reason;
+        }
+      } else {
+        this.lastRejection = null;
+        this.emit("disconnected");
+      }
+      this.scheduleReconnect(delayMs);
     });
 
     ws.on("error", (err) => {
@@ -97,10 +110,8 @@ export class CoreLink extends EventEmitter<CoreLinkEvents> {
     });
   }
 
-  private scheduleReconnect(): void {
+  private scheduleReconnect(delayMs: number): void {
     if (this.stopped) return;
-    const delay = this.backoffMs;
-    this.backoffMs = Math.min(this.backoffMs * 2, MAX_BACKOFF_MS);
-    this.reconnectTimer = setTimeout(() => this.connect(), delay);
+    this.reconnectTimer = setTimeout(() => this.connect(), delayMs);
   }
 }

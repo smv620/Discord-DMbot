@@ -1,4 +1,4 @@
-"""ears <-> core wire protocol (version 1).
+"""ears <-> core wire protocol (version 2).
 
 Keep in sync with ears/src/protocol.ts. Shared test vectors live in
 protocol/fixtures.json and are checked by both test suites.
@@ -106,7 +106,9 @@ def parse_ears_message(raw: str) -> EarsMessage | None:
         version, secret = _non_negative_int(data.get("version")), data.get("secret")
         if version is None or not isinstance(secret, str):
             return None
-        if version < 2:  # older ears: no shard fields; the version check rejects it later
+        if version != PROTOCOL_VERSION:
+            # Another version: don't guess its fields. The version check refuses it with
+            # a clear reason instead of "no valid hello".
             return Hello(version=version, secret=secret)
         count = _non_negative_int(data.get("shardCount"))
         raw_ids = data.get("shardIds")
