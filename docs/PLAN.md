@@ -153,6 +153,12 @@ effects, story events, sessions and transcripts, and its DM screen. It persists 
 Discord sessions. A server can have several campaigns. **Export** (backup to a file) and
 **import** (restore) are available per campaign to its DM.
 
+*Implementation (#47):* `core/src/dmbot/campaigns/` holds the campaign store. Every method
+takes the server ID and every query filters on it, so isolation can't be forgotten by a
+caller. A feature with per-campaign data adds its own tables (with `campaign_id` and
+`guild_id`) and registers an `ExportSection`, so its data is included in backups and
+removed with the campaign. Schema changes go through `dmbot.db` migrations.
+
 **Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are
 sent per query.
