@@ -45,10 +45,15 @@ CI runs all of the above on every pull request. Never merge red CI.
   (`.env` locally, see `.env.example`). Never log tokens.
 - **Consent:** never capture, decode, store, or transcribe audio from a user who has
   not opted in. Bots are never captured. This is enforced in ears (allowlist) and
-  re-checked in core.
+  re-checked in core, including after every async step. Consent is given with a DM
+  button (slash command as fallback), carries over per server, and every join triggers
+  a reminder with the consent date and a stop button. See docs/PLAN.md.
 - **One voice channel:** the bot listens only to the configured table channel.
 - **DM authority:** the bot never posts rulings to players or public channels. Advice
   goes only to `#dm-screen` / the DM. PlotBot and NPCBot record only DM-confirmed facts.
+- **Transcripts are shared; the DM screen is not.** Every consenting participant may
+  view and download session transcripts. DM-screen content (rules alerts, house-rule
+  prompts, NPC and plot notes) never goes into transcripts or to players.
 - **Citations:** every rules alert includes its source and confidence.
 - **Rules edition:** newest ruleset first, always — even in legacy adventures — for
   spells, rules, and monsters (currently 2024 PHB / 2025 MM). Use legacy content only

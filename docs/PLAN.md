@@ -56,7 +56,7 @@ table's voice channel, transcribes each speaker, and privately advises the DM on
 | Phase | Deliverable | Notes |
 |---|---|---|
 | 0 | Scaffolding, CI, ears ↔ core audio pipeline | Prove live per-speaker capture in a real DAVE channel |
-| 1 | **Listener**: `/table join`, `/consent`, live per-speaker transcript in a private `#dm-screen` channel, post-session transcript export | No AI yet; useful on its own |
+| 1 | **Listener**: `/table join`, consent by DM with buttons (#33–#35), live per-speaker transcript in a private `#dm-screen` channel, stored session transcripts that participants can download (#41) | No AI yet; useful on its own |
 | 2 | **Rules advisor**: SRD 5.2 + homebrew links, alerts with ✅ Agree / 🙈 Ignore / ⚖️ Override buttons, verbosity levels, house-rules database | Tiered pipeline: local trigger filter → fast model triage → stronger model for real rulings |
 | 3 | **Google Drive**: OAuth (`drive.file` scope), house-rules doc mirror, `/access status · test · revoke` | Small web callback page for sign-in |
 | 4 | **Character data** from public D&D Beyond character links | Unofficial endpoints; handle breakage gracefully |
@@ -107,11 +107,40 @@ Whisper runs on that server, its size decides transcription quality and speed: a
 server suits the `base`/`small` models; larger models need a GPU server, or switch to
 `TRANSCRIBER=cloud`. Deployment packaging (Docker) is a follow-up task.
 
-**Consent & retention.** `/consent` opt-in per player, an announcement when listening
-starts, configurable auto-delete of audio and transcripts, and player data removal.
-The announcement posts once per `/table join` in the voice channel's chat, and is not
-repeated after a voice-service reconnect. `/table join` refuses to start if the bot
-can't post it, and if it still fails, the DM is warned and it is retried on the next join.
+**Consent (decided 2026-10-04).** Consent is asked by **private message with buttons**,
+the way other Discord bots handle opt-ins. No typing, and no slash command needed.
+- When `/table join` starts a session, DMbot DMs everyone in the table voice channel
+  (the DM included), and anyone who joins later. The message says DMbot is for
+  entertainment only, other uses are prohibited, their voice will be recorded and
+  transcribed, and consenting participants can view and download transcripts. It has a
+  **✅ I consent** button (#33).
+- **Consent carries over** between sessions, per server. **Every time** a consented
+  person joins a channel where DMbot is listening, they get a private reminder with the
+  date and time they consented and how to revoke, plus a **🛑 Stop recording me**
+  button (#33, #34).
+- Revoking takes effect immediately. Queued and in-flight audio and text for that person
+  are discarded.
+- People with DMs off are nudged in the voice channel's chat. The DM sees who couldn't be
+  reached. Nobody is recorded without consent.
+- `/consent give` and `/consent revoke` remain as fallbacks.
+- Consent records store the terms version, the UTC timestamp, and the method. Changing the
+  consent wording re-prompts everyone (#35).
+- The public "DMbot is listening" notice in the voice channel's chat still posts once per
+  `/table join`, is not repeated after a voice-service reconnect, and the DM is warned if
+  it can't be posted.
+
+**Transcripts vs. the DM screen (decided 2026-10-04).**
+| Content | Who sees it |
+|---|---|
+| **Transcripts** (what was said at the table) | The DM **and every consenting participant** can view and download them (#41) |
+| **DM screen** (rules alerts, house-rule prompts, NPC and plot notes) | The DM only, by default. Players *may* see `#dm-screen` if the DM shares it, but that's discouraged, like peeking behind the screen at a real table. The bot never sends DM-screen content to players. |
+
+Sessions and their participants are stored, and each transcript can be downloaded as a
+file by its participants and the DM: from a 📄 button in the consent DMs, at session end,
+or with `/transcript`. Transcripts never contain DM-screen content.
+
+**Retention.** Configurable auto-delete of audio and transcripts per server, and a
+"Delete my past transcripts" action for each player.
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
 
@@ -120,3 +149,6 @@ can't post it, and if it still fails, the DM is warned and it is retried on the 
 ## Open decisions
 
 - Cloud server provider and size (CPU vs GPU) — depends on Whisper model quality needed
+- Final wording of the consent DM and join reminder (#33)
+- Whether revoking consent also removes a person's past lines from stored transcripts (#34)
+- Whether consenting members who missed a session can download its transcript (#41)
