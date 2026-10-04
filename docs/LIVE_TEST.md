@@ -134,7 +134,12 @@ Audio between 90% and 95% is borderline. Repeat the test once before calling it.
    - the Status output (from `/dmbot help`);
    - a pass or fail for each row of the table in step 5;
    - links to any issues filed.
-3. **Stop both processes** with Ctrl+C in each terminal.
+3. **Update the testing logs** (CLAUDE.md, "Testing logs"):
+   - Append the full record, including anything the owner pasted from Discord, to
+     `docs/testing-history.log`.
+   - Rewrite `docs/testing-status.log` so it shows only the next test, any blockers and
+     the latest result.
+4. **Stop both processes** with Ctrl+C in each terminal.
 
 ---
 
