@@ -65,17 +65,23 @@ text channel (only the DM can see it) and optionally to DMs.
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are
 sent per query.
 
-**Rules edition (decided 2026-10-03).** The 2024 rules are always the default — including
-when running a legacy adventure such as *Rime of the Frostmaiden*.
-1. Look up the 2024 version of a spell or rule first.
-2. Only if no 2024 version exists, fall back to the 2014 version.
-3. Any 2014 content used is tagged **`[Legacy 2014]`** wherever it appears (alerts,
-   citations, house-rule records, transcripts' rule notes).
+**Rules edition (decided 2026-10-03).** The newest official ruleset is always the
+default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
+running a legacy adventure such as *Rime of the Frostmaiden*. This covers spells, rules,
+**and monster stat blocks**.
+1. Look up the newest version of a spell, rule, or monster first.
+2. Only if no newer version exists, fall back to the legacy version (for a monster in a
+   legacy adventure, the adventure's printed stat block).
+3. Any legacy content used is tagged **`[Legacy 2014]`** wherever it appears (alerts,
+   citations, house-rule records, transcript rule notes).
 
-Precedence, highest first: **house rule → homebrew → 2024 → 2014 `[Legacy 2014]`**.
+Precedence, highest first: **house rules → homebrew → newest ruleset → legacy rules
+`[Legacy 2014]`**.
+
 Lookups must match renamed content (e.g. 2024 dropped many creator names from spell
 titles), so the rules index keys each entry by a normalized name plus known aliases,
-and a 2014 entry is used only when no 2024 entry matches any alias.
+and a legacy entry is used only when no newer entry matches any alias. If a future
+edition supersedes 2024, it becomes "newest" and 2024 content gets its own legacy tag.
 
 **House rules.** The database is the source of truth; the Google Doc is a readable
 mirror. Each rule records: the rule, the book rule it supersedes, and the scenario
@@ -92,8 +98,6 @@ starts, configurable auto-delete of audio and transcripts, and player data remov
 
 ## Open decisions
 
-- Whether the 2024-first rule also applies to monster stat blocks in legacy
-  adventures (2025 Monster Manual vs the adventure's printed stat blocks)
 - Hosting: DM's PC during sessions vs cloud server
 - Transcription engine for Phase 1
 - License: private repo vs public with PolyForm Strict 1.0.0

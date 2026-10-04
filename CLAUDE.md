@@ -41,9 +41,10 @@ CI runs all of the above on every pull request. Never merge red CI.
 - **DM authority:** the bot never posts rulings to players or public channels. Advice
   goes only to `#dm-screen` / the DM. PlotBot and NPCBot record only DM-confirmed facts.
 - **Citations:** every rules alert includes its source and confidence.
-- **Rules edition:** 2024 rules first, always — even in legacy adventures. Use a 2014
-  spell or rule only when no 2024 version exists, and tag it `[Legacy 2014]` everywhere
-  it appears. Precedence: house rule → homebrew → 2024 → 2014. See docs/PLAN.md.
+- **Rules edition:** newest ruleset first, always — even in legacy adventures — for
+  spells, rules, and monsters (currently 2024 PHB / 2025 MM). Use legacy content only
+  when no newer version exists, and tag it `[Legacy 2014]` everywhere it appears.
+  Precedence: house rules → homebrew → newest ruleset → legacy. See docs/PLAN.md.
 - **Copyrighted content:** SRD 5.2 (CC-BY-4.0) may be stored with attribution. Do not
   bulk-copy D&D Beyond or sourcebook text into the repo, database, or prompts; send
   only short, relevant excerpts per query.
