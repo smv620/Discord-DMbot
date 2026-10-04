@@ -50,7 +50,8 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
 5. **In Discord:** make a private text channel (e.g. `#dm-screen`) and, in the channel's
    permissions, add the bot with **View Channel** and **Send Messages** — a private
    channel hides the bot too, so without this no updates appear. Join your voice channel
-   and run `/table join` from `#dm-screen`. Each player runs `/consent give` (you too, if
+   and run `/dmbot start` from `#dm-screen`. The first time, it asks you to name your
+   campaign; after that it offers the last campaign and voice channel you used. Each player runs `/consent give` (you too, if
    you want your own voice transcribed). Talk for a bit and watch the capture check appear.
 
 ## Running on a server
@@ -71,7 +72,7 @@ Pick one with `TRANSCRIBER` in `.env`:
 On a CPU-only server use `WHISPER_MODEL=small` (or `base` if it falls behind). With an
 NVIDIA GPU use `large-v3` or `turbo`. The default compute type (`auto`) picks the fastest
 precision for your hardware. If transcription falls behind, DMbot warns you in
-`#dm-screen`; `/table status` shows the backlog.
+`#dm-screen`; the **Status** button in `/dmbot help` shows the backlog.
 
 When `TRANSCRIBER=cloud`, players are told during `/consent give` that their voice clips
 go to an outside service.
@@ -80,9 +81,11 @@ go to an outside service.
 
 | Command | What it does |
 |---|---|
-| `/table join` | Listen to the voice channel you're in. You become the DM; updates go to the channel you ran it in. |
-| `/table leave` | Stop listening (DM or server manager). |
-| `/table status` | Show connection, table, and who has opted in. |
+| `/dmbot start` | Pick the campaign (or make a new one) and the voice channel, then start listening. DM updates go to the campaign's DM screen (the channel you ran it in, the first time). |
+| `/dmbot stop` | Stop listening (the campaign's DM, or a server manager). |
+| `/dmbot help` | What DMbot does and doesn't do, plus a **Status** button. |
+| `/dmbot backup` | Download a copy of a campaign you run. |
+| `/dmbot restore` | Bring a campaign back from a copy, as a new campaign or replacing one of yours. |
 | `/consent give` | Let DMbot record and transcribe your voice in this server. |
 | `/consent revoke` | Stop recording you and discard unprocessed audio. |
 

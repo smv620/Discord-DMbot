@@ -81,7 +81,9 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
 ### Step 4: run the session (owner)
 
 1. **Join the voice channel,** both people.
-2. **Run `/table join` in #dm-screen.** Not in the voice channel's chat: running it there
+2. **Run `/dmbot start` in #dm-screen.** Pick the campaign (the first time, name a test
+   campaign and press **Create campaign**), check the voice channel, and press
+   **▶ Start listening**. Not in the voice channel's chat: running it there
    sends DM updates where players can see them (#26). If the command doesn't appear,
    press Ctrl+R in Discord.
 3. **Expect:**
@@ -97,7 +99,7 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    ```
 7. **Consent check:** the second person runs `/consent revoke` and keeps talking. They
    must **disappear** from the following capture checks.
-8. **Run `/table status`,** then `/table leave`.
+8. **Run `/dmbot help` and press Status,** then `/dmbot stop`.
 
 ### Step 5: judge the result (Claude and owner)
 
@@ -121,7 +123,7 @@ Audio between 90% and 95% is borderline. Repeat the test once before calling it.
    - date, `development` commit SHA, OS, and Node and Python versions;
    - number of speakers and session length;
    - audio % per speaker, from 2–3 capture checks;
-   - the `/table status` output;
+   - the Status output (from `/dmbot help`);
    - a pass or fail for each row of the table in step 5;
    - links to any issues filed.
 3. **Stop both processes** with Ctrl+C in each terminal.
