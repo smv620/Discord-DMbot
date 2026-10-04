@@ -141,11 +141,12 @@ screen channel (only the DM can see it) and optionally to DMs.
 - **New campaign:** asks for the name, the **target ruleset**, and the **fallback ruleset**
   (defaults: 2024 rules, then 2014 legacy), and which **optional rules** to include
   (default: included where they don't conflict with the target ruleset).
-- **One DM screen per campaign:** a private channel such as `#dm-screen-frostmaiden`,
-  visible only to that campaign's DM(s) and the bot. If a suitable channel already exists,
-  setup offers to use it, after checking the bot can post there and no players can see it.
-  The DM may be someone other than the server owner; `/dmbot` setup and a "change DM"
-  option keep DM-screen access in sync (#30).
+- **One DM screen per campaign:** a channel such as `#dm-screen-frostmaiden`, which the
+  bot creates. Who else can see it depends on the campaign's **DM-screen visibility**
+  (see "DM-screen visibility" below; default **opt-in peek**). If a suitable channel
+  already exists, setup offers to use it, after checking the bot can post there and that
+  its visibility matches the campaign's setting. The DM may be someone other than the
+  server owner; `/dmbot` setup and a "change DM" option keep DM-screen access in sync (#30).
 
 **Campaigns (decided 2026-10-04).** Each campaign is a separate memory: house rules,
 optional-rule settings, rulesets, name list, NPCs and relationships, game clock and
@@ -238,7 +239,25 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 | Content | Who sees it |
 |---|---|
 | **Transcripts** (what was said at the table) | The DM **and every consenting participant** can view and download them (#41) |
-| **DM screen** (rules alerts, house-rule prompts, NPC and plot notes) | The DM only, by default. Players *may* see `#dm-screen` if the DM shares it, but that's discouraged, like peeking behind the screen at a real table. The bot never sends DM-screen content to players. |
+| **DM screen** (rules alerts, house-rule prompts, NPC and plot notes) | The DM, plus players only as the campaign's **DM-screen visibility** allows (below). The bot never *sends* DM-screen content to players. |
+
+**DM-screen visibility (decided 2026-10-04).** Each campaign's DM picks one; if none is
+picked, **opt-in peek** applies. Discord has no warning screen in front of a normal
+channel, so a warning can only come *before* access is granted, which is why the default
+is opt-in rather than open.
+| Setting | Players | How |
+|---|---|---|
+| **Private** | Can't see it | Only the campaign's DM(s) and the bot have access |
+| **Opt-in peek** (default) | Hidden until they choose | A **"Peek behind the DM screen"** button (in the pinned help card and `/dmbot help`) warns: *"This may spoil surprises in the game. Are you sure?"* [Yes, show me] [Cancel]. Yes gives that player access; the DM screen notes who peeked. A player can hide it again. Helpful for new DMs and players learning or testing the bot. |
+| **Open** | Can see it | Everyone at the table; the channel topic and a pinned note warn about spoilers |
+
+- **Server owners and admins always see every channel**, whatever the setting; Discord
+  doesn't let a bot hide channels from them. The bot can't prevent an admin from opening
+  the screen to players, but it checks and tells the DM when a player can see the DM
+  screen under the **private** setting.
+- Granting peek access needs the bot to manage that channel's permissions (Manage
+  Channels and Manage Roles); per least privilege it only does this in the DM screen it
+  created or was given.
 
 Sessions and their participants are stored, and each transcript can be downloaded as a
 file by its participants and the DM: from a 📄 button in the consent DMs, at session end,
