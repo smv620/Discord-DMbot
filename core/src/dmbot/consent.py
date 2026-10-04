@@ -7,9 +7,10 @@ the consenting set to ears, which refuses to capture anyone else.
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 import time
 from pathlib import Path
+
+from dmbot.db import connect
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS consent (
@@ -23,12 +24,8 @@ CREATE TABLE IF NOT EXISTS consent (
 
 class ConsentStore:
     def __init__(self, path: Path | str) -> None:
-        self._path = str(path)
-        if self._path != ":memory:":
-            Path(self._path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(self._path, check_same_thread=False)
+        self._db = connect(path)  # same settings as every other store (dmbot.db)
         self._db.execute(_SCHEMA)
-        self._db.commit()
         self._lock = asyncio.Lock()
         self._cache: dict[int, frozenset[int]] = {}
 
@@ -65,13 +62,11 @@ class ConsentStore:
             "INSERT OR REPLACE INTO consent (guild_id, user_id, granted_at) VALUES (?, ?, ?)",
             (guild_id, user_id, int(time.time())),
         )
-        self._db.commit()
 
     def _revoke(self, guild_id: int, user_id: int) -> None:
         self._db.execute(
             "DELETE FROM consent WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)
         )
-        self._db.commit()
 
     def _select(self, guild_id: int) -> frozenset[int]:
         rows = self._db.execute(
