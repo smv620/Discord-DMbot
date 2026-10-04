@@ -358,3 +358,152 @@ class Migrations(unittest.TestCase):
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
         self.assertNotIn("t", tables)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 0)
+        conn.close()
+
+
+class ReviewHardening(StoreTest):
+    """Cases from the reviewer and perf-qa agents' review of the first version."""
+
+    async def test_cancelled_call_cannot_overlap_the_next(self) -> None:
+        import asyncio
+        import threading
+
+        c = await self.make("A")
+        started = threading.Event()
+        release = threading.Event()
+        original = self.store._rename
+
+        def slow_rename(guild_id: int, campaign_id: str, name: str) -> Campaign:
+            started.set()
+            release.wait(5)
+            return original(guild_id, campaign_id, name)
+
+        self.store._rename = slow_rename  # type: ignore[method-assign,assignment]
+        task = asyncio.create_task(self.store.rename(GUILD_A, c.id, "Slow"))
+        await asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        # The next call must wait for the cancelled call's thread, not run alongside it.
+        nxt = asyncio.create_task(self.store.create(GUILD_A, "B", DM))
+        await asyncio.sleep(0.05)
+        self.assertFalse(nxt.done())
+        release.set()
+        created = await nxt
+        self.assertEqual(created.name, "B")
+        renamed = await self.store.get(GUILD_A, c.id)
+        assert renamed is not None
+        self.assertEqual(renamed.name, "Slow")  # the cancelled call's thread still finished
+
+    async def test_failed_commit_leaves_store_usable(self) -> None:
+        from dmbot.db import transaction
+
+        db = self.store._db
+        with self.assertRaises(RuntimeError), transaction(db):
+            db.execute("SELECT 1")
+            raise RuntimeError("simulated failure before COMMIT")
+        self.assertFalse(db.in_transaction)
+        await self.make("Still works")
+
+    async def test_bad_ids_and_timestamps_get_friendly_errors(self) -> None:
+        c = await self.make("A")
+        good = await self.store.export(GUILD_A, c.id)
+        cases: list[tuple[str, Any, Any]] = [
+            ("dms", ["²"], None),  # unicode digit: isdigit() is True, int() fails
+            ("dms", [str(2**63)], None),  # doesn't fit SQLite INTEGER
+            ("dms", ["0"], None),
+            ("created_at", None, 2**63),
+            ("last_played_at", None, 2**70),
+        ]
+        for field, dms, ts in cases:
+            data = json.loads(json.dumps(good))
+            if dms is not None:
+                data["sections"][field] = dms
+            else:
+                data["campaign"][field] = ts
+            with self.subTest(field=field), self.assertRaisesRegex(CampaignError, "damaged"):
+                await self.store.import_backup(GUILD_B, data, DM)
+
+    async def test_only_a_dm_can_replace_a_campaign(self) -> None:
+        c = await self.make("A")
+        backup = await self.store.export(GUILD_A, c.id)
+        with self.assertRaisesRegex(CampaignError, "Only this campaign's DM"):
+            await self.store.import_backup(GUILD_A, backup, 999, replace_campaign_id=c.id)
+
+    async def test_child_rows_cannot_point_at_another_servers_campaign(self) -> None:
+        c = await self.make("A", guild=GUILD_A)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store._db.execute(
+                "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (?, ?, ?)",
+                (c.id, GUILD_B, 1),
+            )
+
+    async def test_long_names_get_a_free_restored_name(self) -> None:
+        c = await self.make("x" * 80)
+        backup = await self.store.export(GUILD_A, c.id)
+        r = await self.store.import_backup(GUILD_A, backup, DM)
+        self.assertTrue(r.name.endswith(" (restored)"))
+        self.assertLessEqual(len(r.name), 80)
+
+    async def test_section_bug_becomes_friendly_error_and_rolls_back(self) -> None:
+        class Broken:
+            name = "broken"
+
+            def dump(self, conn: sqlite3.Connection, guild_id: int, cid: str) -> list[Any]:
+                return [{"x": 1}]
+
+            def load(
+                self, conn: sqlite3.Connection, guild_id: int, cid: str, rows: list[Any]
+            ) -> None:
+                rows[0]["missing"]  # KeyError: a section that forgot to validate
+
+            def clear(self, conn: sqlite3.Connection, guild_id: int, cid: str) -> None:
+                return None
+
+        self.store.register_section(Broken())
+        c = await self.make("A")
+        backup = await self.store.export(GUILD_A, c.id)
+        with self.assertRaisesRegex(CampaignError, "damaged"):
+            await self.store.import_backup(GUILD_B, backup, DM)
+        self.assertEqual(await self.store.list_campaigns(GUILD_B), [])
+
+
+class BackupFiles(unittest.TestCase):
+    def test_encode_decode(self) -> None:
+        from dmbot.campaigns.store import decode_backup, encode_backup
+
+        data = {"format": EXPORT_FORMAT, "campaign": {"name": "Ærth & Frost"}}
+        self.assertEqual(decode_backup(encode_backup(data)), data)
+
+    def test_rejects_oversized_and_garbage(self) -> None:
+        from dmbot.campaigns import store as store_mod
+
+        with self.assertRaisesRegex(CampaignError, "too big"):
+            store_mod.decode_backup(b" " * (store_mod.MAX_BACKUP_BYTES + 1))
+        for raw in (b"\xff\xfe", b"{not json", b"[" * 100_000):
+            with self.assertRaisesRegex(CampaignError, "isn't a DMbot campaign backup"):
+                store_mod.decode_backup(raw)
+
+
+class SharedFile(unittest.IsolatedAsyncioTestCase):
+    """Consent and campaign stores share one database file (WAL, busy timeout)."""
+
+    async def test_concurrent_writes_from_both_stores(self) -> None:
+        import asyncio
+        import tempfile
+        from pathlib import Path
+
+        from dmbot.consent import ConsentStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "dmbot.sqlite"
+            campaigns = CampaignStore(path)
+            consent = ConsentStore(path)
+            try:
+                await asyncio.gather(
+                    *(campaigns.create(GUILD_A, f"C{i}", DM) for i in range(20)),
+                    *(consent.grant(GUILD_A, 1000 + i) for i in range(20)),
+                )
+                self.assertEqual(len(await campaigns.list_campaigns(GUILD_A)), 20)
+                self.assertEqual(len(await consent.consenting(GUILD_A)), 20)
+            finally:
+                campaigns.close()
+                consent.close()
