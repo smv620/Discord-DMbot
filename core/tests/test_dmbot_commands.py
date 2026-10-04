@@ -12,6 +12,7 @@ from dmbot.campaigns import CampaignStore
 from dmbot.campaigns.store import MAX_BACKUP_BYTES, encode_backup
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.sessions import SessionStore
 from dmbot.ui import dmbot_commands as cmds
 from tests.pg import DatabaseTest
 
@@ -59,7 +60,13 @@ class CommandTests(DatabaseTest):
         await super().asyncSetUp()
         self.consent = ConsentStore(self.db)
         self.campaigns = CampaignStore(self.db)
-        self.bot = DMBot(Settings(discord_token="t", ears_secret="s"), self.consent, self.campaigns)
+        self.sessions = SessionStore(self.db)
+        self.bot = DMBot(
+            Settings(discord_token="t", ears_secret="s"),
+            self.consent,
+            self.campaigns,
+            self.sessions,
+        )
         self.bot.ears._active = SimpleNamespace(send=AsyncMock())  # type: ignore[assignment]
 
     async def test_first_start_shows_the_welcome(self) -> None:

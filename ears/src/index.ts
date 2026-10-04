@@ -1,5 +1,6 @@
 import { Client, Events, GatewayIntentBits } from "discord.js";
 import { loadConfig } from "./config.js";
+import { CONFIRM_MS, SessionAudit } from "./audit.js";
 import { Allowlist } from "./consent.js";
 import { CoreLink } from "./coreLink.js";
 import { Logger } from "./log.js";
@@ -15,6 +16,8 @@ const config = loadConfig();
 const log = new Logger({ format: config.logFormat, level: config.logLevel, shards: config.shards });
 const allowlist = new Allowlist();
 const sessions = new Map<string, TableSession>();
+const audit = new SessionAudit();
+let auditTimer: NodeJS.Timeout | null = null;
 const link = new CoreLink({ url: config.coreUrl, secret: config.secret, shards: config.shards, log });
 
 // The same shards as core (SHARD_COUNT / SHARD_IDS), so ears can join voice in every
@@ -33,6 +36,7 @@ async function isBotOrUnknown(guildId: string, userId: string): Promise<boolean>
 }
 
 async function handleCommand(command: CoreCommand): Promise<void> {
+  audit.confirm(command.guildId);
   switch (command.type) {
     case "allowlist": {
       const removed = allowlist.set(command.guildId, command.userIds);
@@ -50,6 +54,18 @@ async function handleCommand(command: CoreCommand): Promise<void> {
       if (!guild) {
         link.send({ type: "status", state: "error", guildId: command.guildId, detail: "ears is not in that server." });
         return;
+      }
+      const existing = sessions.get(command.guildId);
+      if (existing && existing.channelId === command.channelId) {
+        // Already in that channel (core re-sent the join after reconnecting): keep the
+        // connection instead of dropping and rejoining, and confirm it.
+        try {
+          await existing.ready();
+          link.send({ type: "status", state: "joined", guildId: command.guildId, channelId: command.channelId });
+          return;
+        } catch {
+          existing.destroy(); // not healthy after all: rejoin below
+        }
       }
       sessions.get(command.guildId)?.destroy();
       const session = new TableSession({
@@ -92,6 +108,24 @@ link.on("command", (command) => {
 link.on("connected", () => {
   log.info("connected to core");
   link.send({ type: "status", state: "ready" });
+  // Stop capturing at once in every session until core re-sends its consent list: a
+  // player may have opted out while the link was down (see audit.ts). core sends the
+  // list again straight away for every session it still wants.
+  for (const [guildId, session] of sessions) {
+    session.dropSpeakers(allowlist.set(guildId, []));
+  }
+  // Leave any voice session core doesn't ask for again soon.
+  audit.begin(sessions.keys());
+  if (auditTimer) clearTimeout(auditTimer);
+  auditTimer = setTimeout(() => {
+    for (const guildId of audit.takeUnconfirmed()) {
+      if (!sessions.has(guildId)) continue;
+      log.info("leaving voice: core didn't ask for this session after reconnecting", { guildId });
+      sessions.get(guildId)?.destroy();
+      allowlist.clear(guildId);
+      link.send({ type: "status", state: "left", guildId });
+    }
+  }, CONFIRM_MS);
 });
 
 link.on("disconnected", () => {
@@ -107,6 +141,7 @@ client.once(Events.ClientReady, (ready) => {
 });
 
 function shutdown(): void {
+  if (auditTimer) clearTimeout(auditTimer);
   for (const session of sessions.values()) session.destroy();
   link.stop();
   void client.destroy().finally(() => process.exit(0));

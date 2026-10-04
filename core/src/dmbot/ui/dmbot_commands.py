@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -25,6 +26,8 @@ from dmbot.ui import logic
 
 if TYPE_CHECKING:
     from dmbot.bot import DMBot
+
+log = logging.getLogger(__name__)
 
 VIEW_TIMEOUT_S = 600  # under Discord's 15-minute limit for editing a reply
 NO_PINGS = discord.AllowedMentions.none()
@@ -521,7 +524,15 @@ class RestoreChoice(_Menu):
         bot = _bot(interaction)
         # The session lock stops a campaign being replaced while it's starting up.
         async with bot.session_lock(guild.id):
-            if replace_id is not None and bot.active_campaign_id(guild.id) == replace_id:
+            try:
+                playing = replace_id is not None and await bot.is_campaign_playing(
+                    guild.id, replace_id
+                )
+            except Exception:
+                log.exception("Couldn't check whether the campaign is playing")
+                await _tell(interaction, "Something went wrong. Try again in a moment.")
+                return
+            if playing:
                 await _tell(
                     interaction, "That campaign is playing right now. Use `/dmbot stop` first."
                 )

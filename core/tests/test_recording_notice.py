@@ -6,6 +6,7 @@ from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.ears.protocol import Status
+from dmbot.sessions import SessionStore
 from tests.pg import DatabaseTest
 
 GUILD, VOICE, SCREEN = 1, 2, 3
@@ -16,7 +17,10 @@ class RecordingNoticeTests(DatabaseTest):
         await super().asyncSetUp()
         self.consent = ConsentStore(self.db)
         self.bot = DMBot(
-            Settings(discord_token="t", ears_secret="s"), self.consent, CampaignStore(self.db)
+            Settings(discord_token="t", ears_secret="s"),
+            self.consent,
+            CampaignStore(self.db),
+            SessionStore(self.db),
         )
         self.posts: list[tuple[int, str]] = []
         self.voice_ok = True
@@ -52,6 +56,7 @@ class RecordingNoticeTests(DatabaseTest):
         self.assertEqual(len(self.screen_warnings()), 1)
 
         self.voice_ok = True
+        self.table.listening = False  # the voice connection dropped and came back
         await self.joined()
         self.assertTrue(self.table.notice_posted)
         self.assertEqual(len(self.voice_posts()), 2)  # first attempt + successful retry
@@ -60,5 +65,19 @@ class RecordingNoticeTests(DatabaseTest):
     async def test_warning_repeats_while_notice_keeps_failing(self) -> None:
         self.voice_ok = False
         await self.joined()
+        self.table.listening = False  # the voice connection dropped and came back
         await self.joined()
         self.assertEqual(len(self.screen_warnings()), 2)
+
+    async def test_a_repeat_joined_says_nothing_new(self) -> None:
+        await self.joined()
+        count = len(self.posts)
+        await self.joined()  # ears confirmed again without a drop in between
+        self.assertEqual(len(self.posts), count)
+
+    async def test_notice_retried_on_a_repeat_joined(self) -> None:
+        self.voice_ok = False
+        await self.joined()
+        self.voice_ok = True
+        await self.joined()  # ears confirmed again; the notice still hasn't been posted
+        self.assertTrue(self.table.notice_posted)

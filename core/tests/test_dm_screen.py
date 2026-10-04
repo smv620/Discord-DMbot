@@ -29,6 +29,7 @@ from dmbot.dm_screen.rules import (
     unique_channel_name,
 )
 from dmbot.ears.protocol import Status
+from dmbot.sessions import SessionStore
 from tests.pg import DatabaseTest
 
 GUILD, BOT, DM, PLAYER, OTHER = 1, 2, 3, 4, 5
@@ -191,7 +192,10 @@ class NoticePeekButtonTests(DatabaseTest):
         await super().asyncSetUp()
         self.consent = ConsentStore(self.db)
         self.bot = DMBot(
-            Settings(discord_token="t", ears_secret="s"), self.consent, CampaignStore(self.db)
+            Settings(discord_token="t", ears_secret="s"),
+            self.consent,
+            CampaignStore(self.db),
+            SessionStore(self.db),
         )
         self.views: dict[int, discord.ui.View | None] = {}
 
