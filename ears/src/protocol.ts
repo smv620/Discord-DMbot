@@ -1,5 +1,7 @@
+import type { ShardSettings } from "./shards.js";
+
 /**
- * ears <-> core wire protocol (version 1).
+ * ears <-> core wire protocol (version 2).
  *
  * Keep in sync with core/src/dmbot/ears/protocol.py. Shared test vectors live in
  * protocol/fixtures.json and are checked by both test suites.
@@ -14,7 +16,8 @@
  *     bytes 25-    PCM, signed 16-bit little-endian, mono, 16 kHz
  */
 
-export const PROTOCOL_VERSION = 1;
+/** 2: hello carries the shard settings, so core can refuse an ears serving other shards. */
+export const PROTOCOL_VERSION = 2;
 export const AUDIO_FRAME_KIND = 1;
 export const AUDIO_HEADER_BYTES = 25;
 export const SAMPLE_RATE = 16_000;
@@ -25,6 +28,8 @@ export interface HelloMessage {
   type: "hello";
   version: number;
   secret: string;
+  shardCount: number;
+  shardIds: number[];
 }
 
 export type EarsState = "ready" | "joined" | "left" | "error";
@@ -115,6 +120,11 @@ export function parseCoreCommand(raw: string): CoreCommand | null {
     default:
       return null;
   }
+}
+
+/** The first message on every connection: proves the shared secret and states the shards. */
+export function helloMessage(secret: string, shards: ShardSettings): HelloMessage {
+  return { type: "hello", version: PROTOCOL_VERSION, secret, shardCount: shards.count, shardIds: [...shards.ids] };
 }
 
 /** Build a binary audio frame. `pcm` must be s16le mono 16 kHz. */

@@ -6,10 +6,20 @@ import {
   AUDIO_HEADER_BYTES,
   decodeAudioFrame,
   encodeAudioFrame,
+  helloMessage,
+  PROTOCOL_VERSION,
   parseCoreCommand,
 } from "../src/protocol.js";
 
+interface HelloFixture {
+  secret: string;
+  shardCount: number;
+  shardIds: number[];
+  json: unknown;
+}
+
 interface Fixtures {
+  hello: HelloFixture;
   audioFrameHeaderBytes: number;
   audioFrameKind: number;
   audioFrames: { guildId: string; userId: string; timestampMs: number; samples: number[]; hex: string }[];
@@ -90,4 +100,20 @@ test("parseCoreCommand rejects malformed input", () => {
   ]) {
     assert.equal(parseCoreCommand(raw), null, raw);
   }
+});
+
+test("hello states the version and shards", () => {
+  assert.deepEqual(helloMessage("s", { count: 4, ids: [1, 3] }), {
+    type: "hello",
+    version: PROTOCOL_VERSION,
+    secret: "s",
+    shardCount: 4,
+    shardIds: [1, 3],
+  });
+  assert.equal(PROTOCOL_VERSION, 2);
+});
+
+test("hello matches the shared fixture core parses", () => {
+  const h = fixtures.hello;
+  assert.deepEqual(helloMessage(h.secret, { count: h.shardCount, ids: h.shardIds }), h.json);
 });

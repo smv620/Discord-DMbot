@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -206,3 +206,24 @@ class SessionTests(DatabaseTest):
         self.assertIn("Keeping up: yes", busy)
         for jargon in ("backlog", "frame", "pipeline", "ears", "service"):
             self.assertNotIn(jargon, busy.lower())
+
+    async def test_ears_events_do_not_leave_log_tags_behind(self) -> None:
+        # The ears connection task lives on, so tags must be scoped per event.
+        from dmbot.ears.protocol import Status
+        from dmbot.logs import _campaign, _guild
+
+        await self.start()
+        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        await self.bot._on_ears_message(Status("joined", guild_id=GUILD))
+        await self.bot._on_ears_link_change(False)
+        self.assertIsNone(_guild.get())
+        self.assertIsNone(_campaign.get())
+
+
+class ShardSetup(DatabaseTest):
+    async def test_bot_serves_the_configured_shards(self) -> None:
+        from dmbot.sharding import ShardSettings
+
+        settings = Settings(discord_token="t", ears_secret="s", shards=ShardSettings(4, (1, 3)))
+        bot = DMBot(settings, ConsentStore(self.db), CampaignStore(self.db))
+        self.assertEqual((bot.shard_count, bot.shard_ids), (4, [1, 3]))

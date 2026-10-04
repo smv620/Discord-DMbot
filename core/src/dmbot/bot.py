@@ -54,6 +54,7 @@ from dmbot.ears.protocol import (
     leave_command,
 )
 from dmbot.ears.server import EarsServer
+from dmbot.logs import log_context, set_log_context
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline
@@ -91,7 +92,21 @@ class Table:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
 
 
-class DMBot(commands.Bot):
+class DMBotTree(app_commands.CommandTree["DMBot"]):
+    """Tags every slash-command log line with the server it came from."""
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        set_log_context(guild_id=interaction.guild_id)
+        return True
+
+
+class DMBot(commands.AutoShardedBot):
+    """One process serving the shards in `settings.shards` (one shard by default).
+
+    Per-server state (sessions, locks, loops) only exists for servers on these shards,
+    so nothing runs twice when several processes split the shards between them.
+    """
+
     def __init__(
         self,
         settings: Settings,
@@ -102,7 +117,13 @@ class DMBot(commands.Bot):
         intents = discord.Intents.none()
         intents.guilds = True
         intents.voice_states = True  # who is in which voice channel; not privileged
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents)
+        super().__init__(
+            command_prefix=commands.when_mentioned,
+            intents=intents,
+            shard_count=settings.shards.count,
+            shard_ids=list(settings.shards.ids),
+            tree_cls=DMBotTree,
+        )
         self.settings = settings
         self.consent = consent
         self.campaigns = campaigns
@@ -119,6 +140,7 @@ class DMBot(commands.Bot):
             host=settings.ears_host,
             port=settings.ears_port,
             secret=settings.ears_secret,
+            shards=settings.shards,
             on_message=self._on_ears_message,
             on_audio=self._on_audio,
             on_link_change=self._on_ears_link_change,
@@ -137,7 +159,9 @@ class DMBot(commands.Bot):
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
-        else:
+        elif 0 in self.settings.shards.ids:
+            # Commands are registered once for the whole bot, not per shard: only the
+            # pod serving shard 0 does it, so many pods don't all sync at startup.
             await self.tree.sync()
         await self.ears.start()
         self._background = [
@@ -209,7 +233,8 @@ class DMBot(commands.Bot):
         if guild is None:
             return False, "Use this in a server."
         async with self.session_lock(guild.id):
-            return await self._start_locked(interaction, guild, campaign_id, voice_id)
+            with log_context(guild_id=guild.id, campaign_id=campaign_id):
+                return await self._start_locked(interaction, guild, campaign_id, voice_id)
 
     async def _start_locked(
         self,
@@ -409,34 +434,37 @@ class DMBot(commands.Bot):
     # ---- ears events -------------------------------------------------------
 
     async def _on_ears_link_change(self, connected: bool) -> None:
-        for table in self.tables.values():
-            if connected:
-                # ears (re)started: restore its state for every active table.
-                await self.push_allowlist(table.guild_id)
-                await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
-            else:
-                table.listening = False
-                await self.post(
-                    table.screen_channel_id,
-                    "⚠️ Lost contact with the voice service. I'll rejoin automatically "
-                    "when it's back.",
-                )
+        # Runs in the ears connection's task, which lives on: scope the IDs per table.
+        for table in list(self.tables.values()):
+            with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                if connected:
+                    # ears (re)started: restore its state for every active table.
+                    await self.push_allowlist(table.guild_id)
+                    await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
+                else:
+                    table.listening = False
+                    await self.post(
+                        table.screen_channel_id,
+                        "⚠️ Lost contact with the voice service. I'll rejoin automatically "
+                        "when it's back.",
+                    )
 
     async def _on_ears_message(self, message: EarsMessage) -> None:
         guild_id = None if isinstance(message, Hello) else message.guild_id
         table = self.tables.get(guild_id) if guild_id is not None else None
         if table is None:
             return
-        if isinstance(message, Status):
-            await self._on_status(table, message)
-        elif isinstance(message, Speaking) and message.event == "end":
-            utterance = table.segmenter.end(message.user_id)
-            if utterance is not None:
-                self.pipeline.enqueue(utterance)
-        elif isinstance(message, Health):
-            table.capture_log.add_health(
-                message.user_id, message.frames_received, message.frames_expected
-            )
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            if isinstance(message, Status):
+                await self._on_status(table, message)
+            elif isinstance(message, Speaking) and message.event == "end":
+                utterance = table.segmenter.end(message.user_id)
+                if utterance is not None:
+                    self.pipeline.enqueue(utterance)
+            elif isinstance(message, Health):
+                table.capture_log.add_health(
+                    message.user_id, message.frames_received, message.frames_expected
+                )
 
     async def _on_status(self, table: Table, status: Status) -> None:
         if status.state == "joined":
@@ -502,17 +530,19 @@ class DMBot(commands.Bot):
         while True:
             await asyncio.sleep(IDLE_SWEEP_INTERVAL_S)
             now_ms = int(time.time() * 1000)
-            for table in self.tables.values():
-                for utterance in table.segmenter.flush_idle(now_ms):
-                    self.pipeline.enqueue(utterance)
+            for table in list(self.tables.values()):
+                with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                    for utterance in table.segmenter.flush_idle(now_ms):
+                        self.pipeline.enqueue(utterance)
 
     async def _summary_poster(self) -> None:
         while True:
             await asyncio.sleep(SUMMARY_INTERVAL_S)
             for table in list(self.tables.values()):
-                text = table.capture_log.render(partial(self.name_of, table.guild_id))
-                if text:
-                    await self.post(table.screen_channel_id, text)
+                with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                    text = table.capture_log.render(partial(self.name_of, table.guild_id))
+                    if text:
+                        await self.post(table.screen_channel_id, text)
 
 
 # ---- slash commands ----------------------------------------------------------

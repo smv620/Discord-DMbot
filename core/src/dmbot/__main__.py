@@ -10,18 +10,22 @@ import sys
 from dotenv import find_dotenv, load_dotenv
 
 from dmbot.config import ConfigError, load_settings
+from dmbot.logs import configure_logging
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
     load_dotenv(find_dotenv(usecwd=True))
     try:
         settings = load_settings()
     except ConfigError as exc:
         print(f"Configuration problem: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
+    configure_logging(settings.log_format, settings.log_level, settings.shards)
+    logging.getLogger("dmbot").info(
+        "Starting: shards %s of %d",
+        ",".join(map(str, settings.shards.ids)),
+        settings.shards.count,
+    )
 
     from dmbot.bot import run  # imported late so config errors show before discord loads
     from dmbot.db import DatabaseError

@@ -11,6 +11,7 @@ import prism from "prism-media";
 import { Downsampler } from "./audio.js";
 import type { Allowlist } from "./consent.js";
 import type { CoreLink } from "./coreLink.js";
+import type { Logger } from "./log.js";
 import { UtteranceTracker, isSilenceFrame } from "./health.js";
 import { encodeAudioFrame } from "./protocol.js";
 
@@ -36,6 +37,7 @@ export interface TableSessionOptions {
   isBotOrUnknown: BotCheck;
   /** Log per-utterance audio health (user IDs and counts only). */
   debugAudio?: boolean;
+  log: Logger;
   /** Called once when the session ends for any reason. */
   onClosed?: () => void;
 }
@@ -135,11 +137,11 @@ export class TableSession {
     });
 
     decoder.on("error", (err: Error) => {
-      console.warn(`[ears] decode error for ${userId}: ${err.message}`);
+      this.options.log.warn(`decode error for user ${userId}: ${err.message}`, { guildId: this.guildId });
       this.endSpeaker(userId, true);
     });
     stream.on("error", (err: Error) => {
-      console.warn(`[ears] receive error for ${userId}: ${err.message}`);
+      this.options.log.warn(`receive error for user ${userId}: ${err.message}`, { guildId: this.guildId });
       this.endSpeaker(userId, true);
     });
     stream.on("end", () => this.endSpeaker(userId, true));
@@ -164,10 +166,11 @@ export class TableSession {
       const { framesReceived, framesExpected } = health;
       link.send({ type: "health", guildId: this.guildId, userId, framesReceived, framesExpected });
       if (this.options.debugAudio) {
-        console.log(
-          `[ears] audio user=${userId} received=${framesReceived} expected=${framesExpected} ` +
+        this.options.log.info(
+          `audio user=${userId} received=${framesReceived} expected=${framesExpected} ` +
             `pauses=${health.pauses} paused_ms=${health.pausedMs} ` +
             `link_dropped_total=${link.droppedAudioFrames}`,
+          { guildId: this.guildId },
         );
       }
     }
