@@ -435,17 +435,23 @@ class CampaignStore:
                 )
             else:
                 name = await self._free_name(conn, guild_id, info["name"])
-                campaign_id = await self._insert(
-                    conn,
-                    guild_id,
-                    name,
-                    info["target_ruleset"],
-                    info["fallback_ruleset"],
-                    info["optional_rules_default"],
-                    info["created_at"],
-                    info["last_played_at"],
-                    info["dm_screen_visibility"],
-                )
+                try:
+                    campaign_id = await self._insert(
+                        conn,
+                        guild_id,
+                        name,
+                        info["target_ruleset"],
+                        info["fallback_ruleset"],
+                        info["optional_rules_default"],
+                        info["created_at"],
+                        info["last_played_at"],
+                        info["dm_screen_visibility"],
+                    )
+                except pg_errors.UniqueViolation as exc:
+                    # Another restore took the same name a moment ago.
+                    raise CampaignError(
+                        "Another campaign just took that name. Please try again."
+                    ) from exc
             for name, rows in sections.items():
                 try:
                     await self._sections[name].load(conn, guild_id, campaign_id, rows)
@@ -542,21 +548,16 @@ class CampaignStore:
         )
         return campaign_id
 
-    async def _name_taken(self, conn: Conn, guild_id: int, name: str) -> bool:
-        cur = await conn.execute(
-            "SELECT 1 FROM campaigns WHERE guild_id = %s AND name_key = %s",
-            (guild_id, name_key(name)),
-        )
-        return await cur.fetchone() is not None
-
     async def _free_name(self, conn: Conn, guild_id: int, base: str) -> str:
         """`base`, or `base (restored)`, `base (restored 2)`, … whichever is free."""
-        if not await self._name_taken(conn, guild_id, base):
+        cur = await conn.execute("SELECT name_key FROM campaigns WHERE guild_id = %s", (guild_id,))
+        taken = {r["name_key"] for r in await cur.fetchall()}
+        if name_key(base) not in taken:
             return base
         for n in range(1, 1000):
             suffix = " (restored)" if n == 1 else f" (restored {n})"
             candidate = clean_name(base[: NAME_MAX - len(suffix)].rstrip() + suffix)
-            if not await self._name_taken(conn, guild_id, candidate):
+            if name_key(candidate) not in taken:
                 return candidate
         raise CampaignError("Too many campaigns with that name. Rename one and try again.")
 

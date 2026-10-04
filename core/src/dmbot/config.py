@@ -20,12 +20,12 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class Settings:
-    discord_token: str
-    ears_secret: str
+    discord_token: str = field(repr=False)
+    ears_secret: str = field(repr=False)
     ears_host: str = "127.0.0.1"
     ears_port: int = 8765
     dev_guild_id: int | None = None
-    database_url: str = ""
+    database_url: str = field(default="", repr=False)  # contains the password
     data_dir: Path = Path("data")
     transcription: TranscriptionSettings = field(default_factory=TranscriptionSettings)
 

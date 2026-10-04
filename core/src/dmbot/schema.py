@@ -48,7 +48,6 @@ INITIAL = (
         UNIQUE (guild_id, name_key),
         UNIQUE (id, guild_id)
     );
-    CREATE INDEX campaigns_by_guild ON campaigns (guild_id);
 
     CREATE TABLE campaign_dms (
         campaign_id TEXT NOT NULL,
@@ -58,6 +57,7 @@ INITIAL = (
         FOREIGN KEY (campaign_id, guild_id)
             REFERENCES campaigns (id, guild_id) ON DELETE CASCADE
     );
+    CREATE INDEX campaign_dms_by_guild ON campaign_dms (guild_id, campaign_id);
 
     CREATE TABLE campaign_optional_rules (
         campaign_id TEXT NOT NULL,

@@ -497,7 +497,17 @@ async def consent_give(interaction: discord.Interaction) -> None:
         await interaction.response.send_message("Use this in a server.", ephemeral=True)
         return
     gid = interaction.guild.id
-    await bot.consent.grant(gid, interaction.user.id)
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        await bot.consent.grant(gid, interaction.user.id)
+    except Exception:
+        log.exception("Couldn't save consent in guild %s", gid)
+        await interaction.followup.send(
+            "Sorry, DMbot couldn't save that just now, so it is **not** recording you. "
+            "Please try `/consent give` again in a minute.",
+            ephemeral=True,
+        )
+        return
     if gid in bot.tables:
         await bot.push_allowlist(gid)
     message = (
@@ -509,7 +519,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
             "\nNote: this server uses an outside speech-to-text service, so your voice "
             "clips and display name are sent to that service to be transcribed."
         )
-    await interaction.response.send_message(message, ephemeral=True)
+    await interaction.followup.send(message, ephemeral=True)
 
 
 @consent_group.command(
@@ -520,13 +530,27 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
     if interaction.guild is None:
         await interaction.response.send_message("Use this in a server.", ephemeral=True)
         return
-    gid = interaction.guild.id
-    await bot.consent.revoke(gid, interaction.user.id)
+    gid, uid = interaction.guild.id, interaction.user.id
+    # Stop first, before anything that can be slow or fail.
+    bot.consent.stop_now(gid, uid)
     table = bot.tables.get(gid)
     if table is not None:
-        table.segmenter.drop(interaction.user.id)
-        await bot.push_allowlist(gid)
-    await interaction.response.send_message(
+        table.segmenter.drop(uid)
+        with contextlib.suppress(Exception):
+            await bot.push_allowlist(gid)
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        await bot.consent.revoke(gid, uid)
+    except Exception:
+        log.exception("Couldn't save a consent revoke in guild %s", gid)
+        await interaction.followup.send(
+            "DMbot has stopped recording you and discarded any unprocessed audio, but "
+            "couldn't save that. Please run `/consent revoke` again in a minute so it "
+            "sticks after a restart.",
+            ephemeral=True,
+        )
+        return
+    await interaction.followup.send(
         "Done — DMbot has stopped recording you and discarded any unprocessed audio.",
         ephemeral=True,
     )
@@ -534,8 +558,8 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
 
 async def run(settings: Settings) -> None:
     db = await Database.open(settings.database_url)
-    transcriber = build_transcriber(settings.transcription)
     try:
+        transcriber = build_transcriber(settings.transcription)
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
         bot = DMBot(settings, ConsentStore(db), CampaignStore(db), transcriber)
         async with bot:

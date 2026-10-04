@@ -30,7 +30,8 @@ def main() -> None:
     try:
         with contextlib.suppress(KeyboardInterrupt):
             # psycopg's async mode needs a selector event loop; Windows defaults to another.
-            asyncio.run(run(settings), loop_factory=asyncio.SelectorEventLoop)
+            loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None
+            asyncio.run(run(settings), loop_factory=loop_factory)
     except TranscriberUnavailable as exc:
         print(f"Transcription problem: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc

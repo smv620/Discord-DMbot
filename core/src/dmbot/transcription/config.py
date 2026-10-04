@@ -9,7 +9,7 @@ TRANSCRIBER picks the engine:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 Engine = Literal["whisper-local", "cloud", "none"]
@@ -32,7 +32,7 @@ class TranscriptionSettings:
     whisper_beam_size: int = 1  # 1 = greedy: fastest, fine for live speech
     # cloud
     cloud_url: str = DEFAULT_CLOUD_URL
-    cloud_api_key: str = ""
+    cloud_api_key: str = field(default="", repr=False)
     cloud_model: str = "whisper-1"
 
 

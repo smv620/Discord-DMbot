@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from psycopg import AsyncConnection, sql
+from psycopg import errors as pg_errors
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -52,6 +53,7 @@ class Database:
         schema: str | None = None,
         min_size: int = 1,
         max_size: int = 10,
+        open_timeout: float = 15,
         migrations: Sequence[Migration] = MIGRATIONS,
     ) -> Database:
         """Connect, check the role is safe, and bring the schema up to date.
@@ -67,14 +69,18 @@ class Database:
         pool: AsyncConnectionPool[Conn] = AsyncConnectionPool(
             conninfo,
             connection_class=AsyncConnection[DictRow],
-            kwargs={"autocommit": True, "row_factory": dict_row},
+            kwargs={"autocommit": True, "row_factory": dict_row, "connect_timeout": 5},
             min_size=min_size,
             max_size=max_size,
+            timeout=10,  # longest wait for a free connection before giving up
+            # Test each connection before use, so a Postgres restart doesn't break the
+            # next command.
+            check=AsyncConnectionPool.check_connection,
             open=False,
             name="dmbot",
         )
         try:
-            await pool.open(wait=True, timeout=15)
+            await pool.open(wait=True, timeout=open_timeout)
         except Exception as exc:
             await pool.close()
             raise DatabaseError(
@@ -139,7 +145,7 @@ class Database:
         """
         applied: list[str] = []
         async with self.unscoped() as conn:
-            await conn.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_KEY,))
+            await _take_migration_lock(conn)
             await conn.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations ("
                 " name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
@@ -157,12 +163,24 @@ class Database:
         return applied
 
 
+async def _take_migration_lock(conn: AsyncConnection[Any]) -> None:
+    """Wait for any other DMbot updating the schema, but not forever."""
+    await conn.execute("SET LOCAL lock_timeout = '60s'")
+    try:
+        await conn.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_KEY,))
+    except pg_errors.LockNotAvailable as exc:
+        raise DatabaseError(
+            "Another copy of DMbot has been updating the database for over a minute. "
+            "Check it isn't stuck, then start this one again."
+        ) from exc
+
+
 async def _create_schema(url: str, schema: str) -> None:
     conn = await AsyncConnection.connect(url, autocommit=True)
     try:
         # Under the migration lock, so processes starting together don't race.
         async with conn.transaction():
-            await conn.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_KEY,))
+            await _take_migration_lock(conn)
             await conn.execute(
                 sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema))
             )

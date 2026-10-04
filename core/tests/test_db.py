@@ -61,6 +61,46 @@ class RowLevelSecurity(DatabaseTest):
                 assert row is not None
                 self.assertEqual(row["n"], 0)
 
+    async def test_server_setting_is_cleared_after_an_error(self) -> None:
+        await self.add_consent(GUILD_A, 1)
+        db = await Database.open(TEST_URL, schema=self.schema, max_size=1)
+        try:
+            with self.assertRaises(RuntimeError):
+                async with db.guild(GUILD_A):
+                    raise RuntimeError("boom")
+            self.assertEqual(await self.visible_without_server(db), 0)
+        finally:
+            await db.close()
+
+    async def test_server_setting_is_cleared_after_cancellation(self) -> None:
+        await self.add_consent(GUILD_A, 1)
+        db = await Database.open(TEST_URL, schema=self.schema, max_size=1)
+        try:
+            started = asyncio.Event()
+
+            async def slow() -> None:
+                async with db.guild(GUILD_A) as conn:
+                    started.set()
+                    await conn.execute("SELECT pg_sleep(30)")
+
+            task = asyncio.create_task(slow())
+            await started.wait()
+            await asyncio.sleep(0.2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertEqual(await self.visible_without_server(db), 0)
+        finally:
+            await db.close()
+
+    @staticmethod
+    async def visible_without_server(db: Database) -> int:
+        async with db.unscoped() as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM consent")
+            row = await cur.fetchone()
+            assert row is not None
+            return int(row["n"])
+
     async def test_every_table_is_isolated_or_explicitly_unscoped(self) -> None:
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
@@ -114,9 +154,15 @@ class StartupChecks(DatabaseTest):
     async def test_refuses_a_superuser(self) -> None:
         if not SUPERUSER_URL:
             self.skipTest("set DMBOT_TEST_SUPERUSER_URL to test this")
-        with self.assertRaisesRegex(DatabaseError, "not a superuser"):
-            await Database.open(SUPERUSER_URL, schema=f"t_{uuid.uuid4().hex[:16]}")
+        schema = f"t_{uuid.uuid4().hex[:16]}"
+        try:
+            with self.assertRaisesRegex(DatabaseError, "not a superuser"):
+                await Database.open(SUPERUSER_URL, schema=schema)
+        finally:
+            await drop_schema(SUPERUSER_URL, schema)
 
     async def test_bad_url_gives_a_readable_error(self) -> None:
         with self.assertRaisesRegex(DatabaseError, "DATABASE_URL"):
-            await Database.open("postgresql://nobody@127.0.0.1:1/none?connect_timeout=1")
+            await Database.open(
+                "postgresql://nobody@127.0.0.1:1/none?connect_timeout=1", open_timeout=1
+            )

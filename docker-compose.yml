@@ -30,6 +30,8 @@ services:
     environment:
       EARS_WS_HOST: 0.0.0.0   # listen on the private network so ears can reach it
       DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
+      POSTGRES_ADMIN_PASSWORD: ""   # only the postgres service needs these
+      DMBOT_DB_PASSWORD: ""
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,6 +45,9 @@ services:
     env_file: .env
     environment:
       EARS_WS_HOST: core       # reach core by its service name
+      DATABASE_URL: ""         # ears never touches the database
+      POSTGRES_ADMIN_PASSWORD: ""
+      DMBOT_DB_PASSWORD: ""
     depends_on:
       - core
     restart: unless-stopped
