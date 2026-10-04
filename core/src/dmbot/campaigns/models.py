@@ -19,8 +19,8 @@ FALLBACK_NONE = "none"
 # Who besides the DM can see the campaign's DM screen (docs/PLAN.md, "DM-screen visibility").
 DM_SCREEN_VISIBILITY: dict[str, str] = {
     "private": "Only the DM",
-    "peek": "Players can peek if they choose (with a spoiler warning)",
-    "open": "Everyone at the table",
+    "peek": "Players can peek (recommended)",
+    "open": "Everyone in the server (read-only)",
 }
 DEFAULT_DM_SCREEN_VISIBILITY = "peek"
 

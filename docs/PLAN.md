@@ -280,8 +280,13 @@ is opt-in rather than open.
 | Setting | Players | How |
 |---|---|---|
 | **Private** | Can't see it | Only the campaign's DM(s) and the bot have access |
-| **Opt-in peek** (default) | Hidden until they choose | A **"Peek behind the DM screen"** button (in the pinned help card and `/dmbot help`) warns: *"This may spoil surprises in the game. Are you sure?"* [Yes, show me] [Cancel]. Yes gives that player access; the DM screen notes who peeked. A player can hide it again. Helpful for new DMs and players learning or testing the bot. |
-| **Open** | Can see it | Everyone at the table; the channel topic and a pinned note warn about spoilers |
+| **Opt-in peek** (default) | Hidden until they choose | A **"Peek behind the DM screen"** button on the players' "DMbot is listening" notice in the voice channel's chat warns that they'll see the DM's notes (old ones too), that the DM will see they peeked, and that they can hide it again. [Yes, show me] [Cancel]. Yes gives **read-only** access (no posting, threads, reactions or commands); the DM screen notes who peeked. Pressing Peek again, or Hide on the screen's help card, hides it. Helpful for new DMs and players learning or testing the bot. |
+| **Open** | Can see it | **Everyone in the server**, read-only; the channel topic and the help card warn about spoilers |
+
+The DM picks the setting when creating a campaign, and changes it any time with the
+buttons on the DM screen's help card (🔒 Only the DM · 👀 Players can peek · 📖 Everyone
+in the server). Changing to "peek" during a session posts a Peek button in the voice
+channel's chat.
 
 - **Server owners and admins always see every channel**, whatever the setting; Discord
   doesn't let a bot hide channels from them. The bot can't prevent an admin from opening
