@@ -1,0 +1,105 @@
+"""setup_dm_screen against a fake Discord server: what it creates, edits and saves."""
+
+import unittest
+from collections.abc import AsyncIterator
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
+import discord
+
+from dmbot.campaigns import CampaignStore
+from dmbot.dm_screen import setup_dm_screen
+
+GUILD, BOT, DM, GENERAL, NEW = 1, 2, 3, 40, 50
+BOT_PERMS = discord.Permissions(
+    view_channel=True,
+    send_messages=True,
+    read_message_history=True,
+    manage_channels=True,
+    manage_roles=True,
+)
+
+
+async def no_history(**_: Any) -> AsyncIterator[discord.Message]:
+    return
+    yield  # an async generator with nothing in it
+
+
+def text_channel(channel_id: int, name: str, guild: Any) -> Any:
+    channel = MagicMock(spec=discord.TextChannel)
+    channel.id = channel_id
+    channel.name = name
+    channel.guild = guild
+    channel.overwrites = {}
+    channel.edit = AsyncMock()
+    channel.history = no_history
+    channel.send = AsyncMock(return_value=MagicMock(pin=AsyncMock()))
+    return channel
+
+
+class SetupTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.store = CampaignStore(":memory:")
+        self.campaign = await self.store.create(GUILD, "Frostmaiden", DM)
+
+        me = MagicMock(spec=discord.Member)
+        me.id = BOT
+        me.guild_permissions = BOT_PERMS
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = GUILD
+        guild.me = me
+        guild.channels = []
+        guild.get_role = lambda _id: None
+        guild.get_member = lambda _id: None
+        self.general = text_channel(GENERAL, "general", guild)
+        self.new = text_channel(NEW, "dm-screen-frostmaiden", guild)
+        guild.fetch_channel = AsyncMock(return_value=self.general)
+        guild.create_text_channel = AsyncMock(return_value=self.new)
+        guild.get_channel = lambda cid: self.new if cid == NEW else None
+        self.guild = guild
+
+    async def asyncTearDown(self) -> None:
+        self.store.close()
+
+    def created_overwrite_for(self, target_id: int) -> discord.PermissionOverwrite:
+        overwrites: dict[Any, discord.PermissionOverwrite] = (
+            self.guild.create_text_channel.call_args.kwargs["overwrites"]
+        )
+        return next(ow for key, ow in overwrites.items() if key.id == target_id)
+
+    async def test_an_ordinary_saved_channel_is_never_taken_over(self) -> None:
+        # A channel saved before DMbot made screens itself, e.g. #general.
+        await self.store.set_dm_screen(GUILD, self.campaign.id, GENERAL)
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        self.general.edit.assert_not_called()
+        self.guild.create_text_channel.assert_awaited_once()
+        assert result.channel is self.new
+        saved = await self.store.get(GUILD, self.campaign.id)
+        assert saved is not None and saved.dm_screen_channel_id == NEW
+
+    async def test_new_screen_is_hidden_from_everyone_and_open_to_the_dm(self) -> None:
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert self.created_overwrite_for(GUILD).view_channel is False  # @everyone
+        assert self.created_overwrite_for(DM).send_messages is True
+        assert self.created_overwrite_for(BOT).view_channel is True
+
+    async def test_visibility_is_saved_and_applied_from_a_fresh_read(self) -> None:
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="open")
+        assert result.campaign.dm_screen_visibility == "open"
+        stored = await self.store.get(GUILD, self.campaign.id)
+        assert stored is not None and stored.dm_screen_visibility == "open"
+        everyone = self.created_overwrite_for(GUILD)
+        assert everyone.view_channel is True and everyone.send_messages is False
+
+    async def test_view_channel_is_recognised_under_discord_pys_old_name(self) -> None:
+        # Permissions(view_channel=True) iterates as "read_messages"; setup must not
+        # think the bot lacks View Channels.
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert result.channel is self.new
+
+    async def test_an_existing_screen_is_updated_not_recreated(self) -> None:
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=self.new)
+        await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="private")
+        self.new.edit.assert_awaited_once()
+        self.guild.create_text_channel.assert_not_called()

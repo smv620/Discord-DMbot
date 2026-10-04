@@ -41,9 +41,16 @@ HIDE_NOT_PEEKING = "You weren't peeking, so there's nothing to hide."
 HIDE_IS_DM = "You're a DM of this campaign, so the DM screen stays visible to you."
 HIDE_OPEN = "The DM screen is open to everyone, so it can't be hidden just for you."
 PLAYER_FAILED = "Sorry, DMbot couldn't change the DM screen for you. Let your DM know."
-NOT_THE_DM = (
-    "Only this campaign's DM, or someone with Manage Server, can change who sees the DM screen."
-)
+NOT_THE_DM = "Only this campaign's DM (or a server manager) can change who can see the DM screen."
+SOMETHING_WENT_WRONG = "Sorry, something went wrong changing the DM screen. Please try again."
+
+
+def lost_access(channel_id: int) -> str:
+    return (
+        f"I can't see this campaign's DM screen (<#{channel_id}>) anymore. Give DMbot "
+        "**View Channel** there again (Edit Channel → Permissions), or delete that channel "
+        "and I'll make a new one."
+    )
 
 
 FORBIDDEN_HERE = (
@@ -88,14 +95,17 @@ def help_card(campaign_name: str, visibility: str) -> str:
     ]
     if visibility != "open":
         lines.append("Server owners and admins can always see every channel.")
-    lines.append("**DM:** use the buttons below to change who can see this.")
+    lines.append("**DM:** press a button below to change who can see this.")
     if visibility == "peek":
         lines.append(f"**Peeking?** Press 🙈 **{HIDE_LABEL}** below to stop.")
     return "\n".join(lines)
 
 
-def visibility_changed(visibility: str) -> str:
-    return f"Done. **Who can see the DM screen:** {WHO_CAN_SEE[visibility]}"
+def visibility_changed(visibility: str, *, was: str) -> str:
+    text = f"Done. **Who can see the DM screen:** {WHO_CAN_SEE[visibility]}"
+    if was == "peek" and visibility == "private":
+        text += " Players who were peeking can't see it anymore."
+    return text
 
 
 def peek_invite() -> str:

@@ -85,7 +85,7 @@ go to an outside service.
 
 | Command | What it does |
 |---|---|
-| `/dmbot start` | Pick the campaign (or make a new one) and the voice channel, then start listening. DM updates go to the campaign's DM screen (the channel you ran it in, the first time). |
+| `/dmbot start` | Pick the campaign (or make a new one) and the voice channel, then start listening. DM notes go to the campaign's `#dm-screen-<campaign>` channel, which DMbot makes the first time. |
 | `/dmbot stop` | Stop listening (the campaign's DM, or a server manager). |
 | `/dmbot help` | What DMbot does and doesn't do, plus a **Status** button. |
 | `/dmbot backup` | Download a copy of a campaign you run. |

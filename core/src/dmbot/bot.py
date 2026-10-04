@@ -81,6 +81,7 @@ class Table:
     capture_log: CaptureLog = field(default_factory=CaptureLog)
     listening: bool = False
     notice_posted: bool = False
+    peek_offered: bool = False  # players have been shown the Peek button this session
     campaign_id: str | None = None
     campaign_name: str = ""
     dm_user_ids: frozenset[int] = frozenset()
@@ -253,11 +254,6 @@ class DMBot(commands.Bot):
             screen_id = await ensure_dm_screen(self, interaction, campaign)
         except DMScreenError as exc:
             return False, str(exc)
-        if screen_id is None:
-            return False, (
-                "I couldn't find a channel for DM notes. Run `/dmbot start` from a "
-                "private channel only you can see."
-            )
         if screen_id == voice.id:
             return False, SAME_CHANNEL
         screen = self.get_channel(screen_id)
@@ -377,7 +373,7 @@ class DMBot(commands.Bot):
             log.warning("Could not post to channel %s: channel not found", channel_id)
             return False
         try:
-            # send() rejects view=None, so only pass a view when there is one.
+            # discord.py's types don't accept view=None, so only pass a real view.
             if view is None:
                 await channel.send(text, allowed_mentions=NO_PINGS)
             else:
@@ -393,9 +389,11 @@ class DMBot(commands.Bot):
         if table is None or table.campaign_id != campaign.id:
             return
         table.screen_channel_id = channel.id  # the screen may have been re-created
-        if campaign.dm_screen_visibility == "peek":
+        table.dm_user_ids = campaign.dm_user_ids
+        if campaign.dm_screen_visibility == "peek" and not table.peek_offered:
             # Players got no Peek button if the notice was posted under another setting.
-            await self.post(
+            # Once per session, so switching back and forth doesn't spam them.
+            table.peek_offered = await self.post(
                 table.voice_channel_id, screen_messages.peek_invite(), view=peek_view(campaign.id)
             )
 
@@ -453,13 +451,15 @@ class DMBot(commands.Bot):
             if not table.notice_posted:
                 # Players learn they're being recorded from this notice, so a failure
                 # must reach the DM; it is retried on the next join.
+                peek = await self._peek_view(table)
                 table.notice_posted = await self.post(
                     table.voice_channel_id,
                     "🔴 **DMbot is listening in this channel** to help the DM.\n"
                     "Only people who opt in with `/consent give` are recorded. "
                     "Change your mind any time with `/consent revoke`.",
-                    view=await self._peek_view(table),
+                    view=peek,
                 )
+                table.peek_offered = table.notice_posted and peek is not None
                 if not table.notice_posted:
                     await self.post(
                         table.screen_channel_id, notice_failed_message(table.voice_channel_id)

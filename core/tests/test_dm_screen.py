@@ -22,6 +22,7 @@ from dmbot.dm_screen.rules import (
     everyone,
     find_exposure,
     is_peeker,
+    is_screen_name,
     merge_overwrites,
     missing_required,
     overwrite_plan,
@@ -327,7 +328,19 @@ def test_peek_warning_says_what_peeking_means() -> None:
 
 
 def test_visibility_changed_says_who_can_see_now() -> None:
-    assert m.WHO_CAN_SEE["private"] in m.visibility_changed("private")
+    assert m.WHO_CAN_SEE["open"] in m.visibility_changed("open", was="private")
+
+
+def test_switching_peek_to_private_says_peekers_lost_access() -> None:
+    assert "can't see it anymore" in m.visibility_changed("private", was="peek")
+    assert "can't see it anymore" not in m.visibility_changed("private", was="open")
+
+
+def test_only_dm_screen_names_count_as_screens() -> None:
+    assert is_screen_name("dm-screen")
+    assert is_screen_name("dm-screen-frostmaiden")
+    assert not is_screen_name("general")
+    assert not is_screen_name("dm-screenshots")
 
 
 def test_visibility_button_custom_ids_round_trip() -> None:

@@ -69,6 +69,12 @@ def channel_name(campaign_name: str) -> str:
     return name[:CHANNEL_NAME_MAX].rstrip("-")
 
 
+def is_screen_name(name: str) -> bool:
+    """Whether a channel is named like a DM screen DMbot makes. DMbot only changes the
+    permissions of such channels, never of an ordinary channel saved by mistake."""
+    return name == CHANNEL_PREFIX or name.startswith(f"{CHANNEL_PREFIX}-")
+
+
 def unique_channel_name(name: str, taken: Iterable[str]) -> str:
     """`name`, or `name-2`, `name-3`… if a channel already uses it."""
     used = set(taken)

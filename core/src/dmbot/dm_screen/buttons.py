@@ -267,13 +267,20 @@ class VisibilityButton(
             await interaction.response.send_message(messages.NOT_THE_DM, ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
+        was = campaign.dm_screen_visibility
         try:
-            campaign = await store.set_dm_screen_visibility(guild.id, campaign.id, self.visibility)
-            result = await setup_dm_screen(guild, campaign, store, refresh_card=True)
+            # Saved and applied together under the campaign's lock.
+            result = await setup_dm_screen(guild, campaign.id, store, visibility=self.visibility)
         except DMScreenError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
             return
-        reply = messages.visibility_changed(self.visibility)
+        except Exception:
+            # Never leave the DM on "thinking…".
+            log.exception("Changing DM-screen visibility failed")
+            await interaction.followup.send(messages.SOMETHING_WENT_WRONG, ephemeral=True)
+            return
+        campaign = result.campaign
+        reply = messages.visibility_changed(self.visibility, was=was)
         if result.warning:
             reply += "\n" + result.warning
             with contextlib.suppress(discord.HTTPException):
