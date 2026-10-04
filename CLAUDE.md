@@ -60,6 +60,19 @@ session in PyCharm). They don't share memory, so **GitHub Issues are the shared 
 - In cloud sessions `gh issue …` and `gh pr …` may fail (GraphQL is blocked). Use the
   REST API through `gh api repos/smv620/Discord-DMbot/...` instead.
 
+## Testing logs
+Live-testing progress is kept in two files on `development`, so no session needs
+terminal output or Discord screenshots copied to it.
+- **`docs/testing-status.log`:** the immediate testing picture only: the next test, its
+  checklist, blockers, and the latest result. Keep it short (about one screen) by moving
+  finished items to the history and trimming them here.
+- **`docs/testing-history.log`:** the complete record of every test run, append-only and
+  oldest first. Fix mistakes with a new dated entry, never by rewriting.
+- **Maintainer:** the PyCharm session updates both after every live test and whenever
+  testing plans change. It copies in what the owner pastes from Discord. Other sessions
+  read them before planning test-related work.
+- Same privacy rule as issues: no tokens, `.env` contents, or players' personal data.
+
 ## Hard rules
 - **Simple enough for a child:** user-facing text uses plain words, never technical terms
   ("remembers your NPCs between sessions", not "knowledge graph"). Prefer buttons over
