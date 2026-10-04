@@ -23,6 +23,9 @@ They run side by side on the same computer and talk over a local, password-prote
 
 ## Setup (test server)
 
+For a full, step-by-step live test (who does what, expected output, pass/fail, and how to
+report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
+
 1. **Create the bot.** In the [Discord Developer Portal](https://discord.com/developers/applications):
    New Application → **Bot** → Reset Token (copy it). Under **Installation**, give it the
    `bot` and `applications.commands` scopes with permissions **View Channels**, **Send
