@@ -158,7 +158,9 @@ Discord sessions. A server can have several campaigns. **Export** (backup to a f
 takes the server ID and every query filters on it, so isolation can't be forgotten by a
 caller. A feature with per-campaign data adds its own tables (with `campaign_id` and
 `guild_id`) and registers an `ExportSection`, so its data is included in backups and
-removed with the campaign. Schema changes go through `dmbot.db` migrations.
+removed with the campaign. Schema changes go through `dmbot.db` migrations. The campaign
+also stores its DM-screen visibility (`private` / `peek` / `open`, default `peek`);
+applying it to channel permissions is #30.
 
 **Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are

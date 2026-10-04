@@ -8,6 +8,8 @@ isolation").
 """
 
 from dmbot.campaigns.models import (
+    DEFAULT_DM_SCREEN_VISIBILITY,
+    DM_SCREEN_VISIBILITY,
     FALLBACK_NONE,
     RULESETS,
     Campaign,
@@ -16,6 +18,8 @@ from dmbot.campaigns.models import (
 from dmbot.campaigns.store import CampaignStore, ExportSection
 
 __all__ = [
+    "DEFAULT_DM_SCREEN_VISIBILITY",
+    "DM_SCREEN_VISIBILITY",
     "FALLBACK_NONE",
     "RULESETS",
     "Campaign",

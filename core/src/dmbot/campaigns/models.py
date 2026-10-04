@@ -16,6 +16,14 @@ RULESETS: dict[str, str] = {
 # A fallback of "none" means: only the target ruleset, nothing older.
 FALLBACK_NONE = "none"
 
+# Who besides the DM can see the campaign's DM screen (docs/PLAN.md, "DM-screen visibility").
+DM_SCREEN_VISIBILITY: dict[str, str] = {
+    "private": "Only the DM",
+    "peek": "Players can peek if they choose (with a spoiler warning)",
+    "open": "Everyone at the table",
+}
+DEFAULT_DM_SCREEN_VISIBILITY = "peek"
+
 DEFAULT_TARGET = "2024"
 DEFAULT_FALLBACK = "2014"
 
@@ -39,6 +47,7 @@ class Campaign:
     dm_user_ids: frozenset[int]
     dm_screen_channel_id: int | None
     last_voice_channel_id: int | None
+    dm_screen_visibility: str = DEFAULT_DM_SCREEN_VISIBILITY
 
     @property
     def last_active_at(self) -> int:
@@ -68,3 +77,8 @@ def check_rulesets(target: str, fallback: str) -> None:
         raise CampaignError("Please pick a backup ruleset from the list, or none.")
     if fallback == target:
         raise CampaignError("The backup ruleset must be different from the main one.")
+
+
+def check_dm_screen_visibility(value: str) -> None:
+    if value not in DM_SCREEN_VISIBILITY:
+        raise CampaignError("Please pick who can see the DM screen from the list.")

@@ -22,11 +22,13 @@ from pathlib import Path
 from typing import Any, Protocol, TypeVar
 
 from dmbot.campaigns.models import (
+    DEFAULT_DM_SCREEN_VISIBILITY,
     DEFAULT_FALLBACK,
     DEFAULT_TARGET,
     NAME_MAX,
     Campaign,
     CampaignError,
+    check_dm_screen_visibility,
     check_rulesets,
     clean_name,
     name_key,
@@ -75,6 +77,13 @@ MIGRATIONS: Sequence[Migration] = (
             FOREIGN KEY (campaign_id, guild_id)
                 REFERENCES campaigns (id, guild_id) ON DELETE CASCADE
         )
+        """,
+    ),
+    (
+        "campaigns_002_dm_screen_visibility",
+        """
+        ALTER TABLE campaigns
+            ADD COLUMN dm_screen_visibility TEXT NOT NULL DEFAULT 'peek'
         """,
     ),
 )
@@ -227,6 +236,7 @@ class CampaignStore:
         target_ruleset: str = DEFAULT_TARGET,
         fallback_ruleset: str = DEFAULT_FALLBACK,
         optional_rules_default: bool = True,
+        dm_screen_visibility: str = DEFAULT_DM_SCREEN_VISIBILITY,
     ) -> Campaign:
         return await self._run(
             self._create,
@@ -236,6 +246,7 @@ class CampaignStore:
             target_ruleset,
             fallback_ruleset,
             optional_rules_default,
+            dm_screen_visibility,
         )
 
     async def get(self, guild_id: int, campaign_id: str) -> Campaign | None:
@@ -287,6 +298,19 @@ class CampaignStore:
         """
         return await self._run(
             self._set_column, guild_id, campaign_id, "dm_screen_channel_id", channel_id
+        )
+
+    async def set_dm_screen_visibility(
+        self, guild_id: int, campaign_id: str, visibility: str
+    ) -> Campaign:
+        """Who besides the DM may see the DM screen: "private", "peek" or "open".
+
+        This only stores the choice; applying it to Discord channel permissions is the
+        DM-screen feature's job (#30).
+        """
+        check_dm_screen_visibility(visibility)
+        return await self._run(
+            self._set_column, guild_id, campaign_id, "dm_screen_visibility", visibility
         )
 
     async def set_last_voice_channel(
@@ -353,6 +377,7 @@ class CampaignStore:
             dm_user_ids=frozenset(dms),
             dm_screen_channel_id=row["dm_screen_channel_id"],
             last_voice_channel_id=row["last_voice_channel_id"],
+            dm_screen_visibility=row["dm_screen_visibility"],
         )
 
     def _get(self, guild_id: int, campaign_id: str) -> Campaign | None:
@@ -404,12 +429,13 @@ class CampaignStore:
         optional_default: bool,
         created_at: int,
         last_played_at: int | None,
+        visibility: str,
     ) -> str:
         campaign_id = uuid.uuid4().hex
         self._db.execute(
             "INSERT INTO campaigns (id, guild_id, name, name_key, created_at, last_played_at,"
-            " target_ruleset, fallback_ruleset, optional_rules_default)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " target_ruleset, fallback_ruleset, optional_rules_default, dm_screen_visibility)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 campaign_id,
                 guild_id,
@@ -420,6 +446,7 @@ class CampaignStore:
                 target,
                 fallback,
                 int(optional_default),
+                visibility,
             ),
         )
         return campaign_id
@@ -432,14 +459,23 @@ class CampaignStore:
         target: str,
         fallback: str,
         optional_default: bool,
+        visibility: str,
     ) -> Campaign:
         name = clean_name(raw_name)
         check_rulesets(target, fallback)
+        check_dm_screen_visibility(visibility)
         with transaction(self._db):
             if self._name_taken(guild_id, name):
                 raise CampaignError("This server already has a campaign with that name.")
             campaign_id = self._insert(
-                guild_id, name, target, fallback, optional_default, int(self._clock()), None
+                guild_id,
+                name,
+                target,
+                fallback,
+                optional_default,
+                int(self._clock()),
+                None,
+                visibility,
             )
             self._db.execute(
                 "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (?, ?, ?)",
@@ -481,6 +517,7 @@ class CampaignStore:
             "last_voice_channel_id",
             "last_played_at",
             "optional_rules_default",
+            "dm_screen_visibility",
         }
     )
 
@@ -564,6 +601,7 @@ class CampaignStore:
                 "target_ruleset": campaign.target_ruleset,
                 "fallback_ruleset": campaign.fallback_ruleset,
                 "optional_rules_default": campaign.optional_rules_default,
+                "dm_screen_visibility": campaign.dm_screen_visibility,
             },
             "sections": {
                 name: section.dump(self._db, guild_id, campaign_id)
@@ -589,13 +627,15 @@ class CampaignStore:
                     section.clear(self._db, guild_id, campaign_id)
                 self._db.execute(
                     "UPDATE campaigns SET target_ruleset = ?, fallback_ruleset = ?,"
-                    " optional_rules_default = ?, last_played_at = ?"
+                    " optional_rules_default = ?, last_played_at = ?,"
+                    " dm_screen_visibility = ?"
                     " WHERE guild_id = ? AND id = ?",
                     (
                         info["target_ruleset"],
                         info["fallback_ruleset"],
                         int(info["optional_rules_default"]),
                         info["last_played_at"],
+                        info["dm_screen_visibility"],
                         guild_id,
                         campaign_id,
                     ),
@@ -610,6 +650,7 @@ class CampaignStore:
                     info["optional_rules_default"],
                     info["created_at"],
                     info["last_played_at"],
+                    info["dm_screen_visibility"],
                 )
             for name, rows in sections.items():
                 try:
@@ -690,6 +731,11 @@ def _validate_backup(
     optional_default = campaign.get("optional_rules_default", True)
     if not isinstance(optional_default, bool):
         raise CampaignError(damaged)
+    # Backups made before this setting existed fall back to the default.
+    visibility = campaign.get("dm_screen_visibility", DEFAULT_DM_SCREEN_VISIBILITY)
+    if not isinstance(visibility, str):
+        raise CampaignError(damaged)
+    check_dm_screen_visibility(visibility)
 
     unknown = set(sections) - known_sections
     if unknown:
@@ -705,5 +751,6 @@ def _validate_backup(
         "target_ruleset": target,
         "fallback_ruleset": fallback,
         "optional_rules_default": optional_default,
+        "dm_screen_visibility": visibility,
     }
     return info, {name: list(rows) for name, rows in sections.items()}
