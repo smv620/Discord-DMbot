@@ -2,16 +2,27 @@
 
 DMbot is a Discord bot that helps a D&D **Dungeon Master** run sessions. It listens to the
 table's voice channel, transcribes each speaker, and privately advises the DM on rules
-(published and homebrew). It never makes rulings: **the bot advises, the DM decides.**
+(published and homebrew). It keeps track of characters, NPCs, game time, and story events
+between sessions. It never makes rulings and never invents story: **the bot advises,
+the DM decides.**
 
 ## Guiding principles
 
+0. **Simple enough for a child (decided 2026-10-04).** Everything a user sees uses plain
+   words and buttons. No technical terms: say "DMbot remembers your NPCs between
+   sessions," never "knowledge graph." Commands are entry points; every choice after that
+   is a button. The bot must make it obvious that it **does not make up the story and
+   does not make decisions**. It only suggests, cites, and remembers.
 1. **The DM is the authority.** The bot proposes; the DM confirms, overrides, or ignores.
    Overrides can become house rules, and house rules beat book rules.
 2. **Consent first.** Nobody is recorded or transcribed unless they have opted in.
-3. **One table channel.** The bot listens to exactly one voice channel per server.
-   Anything said in another channel is never heard. Players step out of the table
-   channel for private asides.
+3. **One table channel per session.** The bot listens to exactly one voice channel at a
+   time per server. Anything said in another channel is never heard. Players step out
+   of the table channel for private asides.
+7. **Every campaign is separate.** Each campaign has its own memory (house rules,
+   characters, NPCs, game clock, story events, transcripts, DM screen). One Discord server
+   can run several campaigns, and **no Discord server can ever see another server's data
+   or settings.**
 4. **Cite, don't assert.** Every alert names its source (SRD section, homebrew doc,
    or house rule number) and a confidence level.
 5. **Quiet by default.** Verbosity levels and cooldowns keep the DM from being flooded.
@@ -51,23 +62,96 @@ table's voice channel, transcribes each speaker, and privately advises the DM on
   AI analysis, storage, integrations. Developed in PyCharm.
 - Both use the same Discord bot token. ears requests only the voice-state intent.
 
+**Understanding pipeline (decided 2026-10-04).** After transcription, each utterance
+passes through cheap steps first, so expensive AI is only spent on game content:
+
+```
+voice → transcription → ① name fixing → ② off-topic filter → ③ speaker tagging
+                          (EntityBot)      (fast, cheap AI)     (who's talking)
+                                                   │ game content only
+                                                   ▼
+                     ④ helpers: Rules advisor · House rules · TimeBot · NPC tracker · PlotBot
+```
+1. **Name fixing (EntityBot):** corrects misheard fantasy names using the campaign's name
+   list (see below). Cheap sound-alike matching first, AI only for unclear cases.
+2. **Off-topic filter:** a very light, fast AI pass labels each stretch as in-game, table
+   talk, or non-game content. Only game content goes on to the helpers. Everything stays in
+   the transcript, labeled.
+3. **Speaker tagging:** labels who is speaking: the player's character, an NPC voiced by
+   the DM, the DM narrating, table talk, or non-game content.
+4. **Helpers** consume the cleaned, labeled stream.
+
+**Hosting target: public bot, isolated per server (decided 2026-10-04).** DMbot will be a
+public bot others can install, deployed on a scalable Kubernetes platform:
+- **Each Discord server gets its own worker** (a pod, started when the server connects)
+  with its **own persistent storage**, keyed by server ID, listing which campaigns it owns.
+  No two servers share a worker, a database, or settings.
+- **Technical note:** Discord gives a public bot **one identity and one gateway
+  connection** (split into shards as it grows), not one per server. So a small **gateway
+  router** holds the Discord connection and hands each server's events and voice session
+  to that server's worker. The isolation the owner wants comes from per-server workers and
+  storage; the router never stores campaign data.
+- Local Whisper per worker doesn't scale to many simultaneous tables, so hosted
+  deployments will mostly use cloud transcription, paid with each customer's own key (see
+  API keys). Self-hosting with local Whisper stays supported (docs/DEPLOY.md, Docker).
+- A public bot needs a **privacy policy and terms of service**, and **Discord verification**
+  once it's in 75+ servers.
+
 ## Phases
 
 | Phase | Deliverable | Notes |
 |---|---|---|
-| 0 | Scaffolding, CI, ears ↔ core audio pipeline | Prove live per-speaker capture in a real DAVE channel |
-| 1 | **Listener**: `/table join`, consent by DM with buttons (#33–#35), live per-speaker transcript in a private `#dm-screen` channel, stored session transcripts that participants can download (#41) | No AI yet; useful on its own |
-| 2 | **Rules advisor**: SRD 5.2 + homebrew links, alerts with ✅ Agree / 🙈 Ignore / ⚖️ Override buttons, verbosity levels, house-rules database | Tiered pipeline: local trigger filter → fast model triage → stronger model for real rulings |
-| 3 | **Google Drive**: OAuth (`drive.file` scope), house-rules doc mirror, `/access status · test · revoke` | Small web callback page for sign-in |
-| 4 | **Character data** from public D&D Beyond character links | Unofficial endpoints; handle breakage gracefully |
-| 5 | **PlotBot**: candidate events from transcript, DM confirms; never invents story | |
-| 6 | **NPCBot**: knowledge graph (nodes + edges with properties) of NPCs, party, factions; DM confirms; tracks player vs DM knowledge | Plain DB tables first |
-| later | D&D Beyond companion browser extension (AboveVTT-style) for campaign and owned content | Runs in the DM's own browser session; no server-side credentials |
+| 0 | Scaffolding, CI, ears ↔ core audio pipeline | ✅ Done. Live capture works (#40) |
+| 1 | **Listener**: consent by DM buttons (#33–#35), live per-speaker transcript in the DM screen, stored session transcripts participants can download (#41), transcript format with speaker labels | No AI yet; useful on its own |
+| 1.5 | **Campaigns and setup**: `/dmbot start · stop · help`, first-time guide, campaign picker, one DM screen per campaign, voice-channel picker, target/fallback rulesets, optional rules, campaign export/import, bring-your-own API keys | Foundation for everything after |
+| 2 | **Understanding the table**: name fixing (EntityBot), off-topic filter, speaker tagging | Every helper depends on clean, labeled input |
+| 3 | **Rules advisor + house rules**: alerts with ✅ Agree / 🙈 Ignore / ⚖️ Override, house rules by voice with DM approval, `/houserules` | Uses the rules hierarchy below |
+| 4 | **TimeBot**: game clock, effect durations, rests, dawn/noon/dusk, split-party clocks | |
+| 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Shares the EntityBot name list |
+| 6 | **DM sidebar**: voice messages to DMbot, marked `[DM Sidebar Discussion]` | No install needed |
+| 7 | **Google Drive** (house-rules doc mirror) and **character data** from D&D Beyond links | |
+| later | Paid service billing (owner's key, per-server metering); D&D Beyond companion extension; optional DM hotkey helper | |
 
 ## Feature notes
 
-**Delivery to the DM.** Discord has no pop-ups. Alerts go to a private `#dm-screen`
-text channel (only the DM can see it) and optionally to DMs.
+**Delivery to the DM.** Discord has no pop-ups. Alerts go to the campaign's private DM
+screen channel (only the DM can see it) and optionally to DMs.
+
+**Commands (decided 2026-10-04).** Five entry points; everything else is buttons.
+
+| Command | What it does |
+|---|---|
+| `/dmbot start` | Start listening: pick the campaign and the voice channel (both default to last time). Replaces `/table join` |
+| `/dmbot stop` | Stop listening and close the session. Replaces `/table leave` |
+| `/dmbot help` | A short, friendly guide with buttons |
+| `/houserules` | List, add, edit, and remove house rules for the current campaign |
+| `/optionalrules` | Turn optional rules (e.g. Xanathar's, Tasha's) on or off for the current campaign |
+| `/transcript` | Download a session transcript. If DMbot is still recording: "This transcript may be incomplete. Use `/dmbot stop` first for the full session." [Download anyway] [Cancel] |
+
+`/consent give · revoke` stay as hidden fallbacks for people with DMs off.
+
+**First-time setup and starting a session (decided 2026-10-04).**
+- The first `/dmbot start` in a server runs a short guide: explains in three lines what
+  DMbot does and doesn't do, sets up the campaign, sets up its DM screen, and pins a
+  "How DMbot helps" card with buttons (Add a house rule · Download a transcript · Help).
+- **Every start asks:**
+  - **Which campaign?** [▶ *Name*, last played *date/time*] (default: last used) ·
+    [Another campaign ▾] · [＋ New campaign]
+  - **Which voice channel?** Default: the one used last time for this campaign.
+- **New campaign:** asks for the name, the **target ruleset**, and the **fallback ruleset**
+  (defaults: 2024 rules, then 2014 legacy), and which **optional rules** to include
+  (default: included where they don't conflict with the target ruleset).
+- **One DM screen per campaign:** a private channel such as `#dm-screen-frostmaiden`,
+  visible only to that campaign's DM(s) and the bot. If a suitable channel already exists,
+  setup offers to use it, after checking the bot can post there and no players can see it.
+  The DM may be someone other than the server owner; `/dmbot` setup and a "change DM"
+  option keep DM-screen access in sync (#30).
+
+**Campaigns (decided 2026-10-04).** Each campaign is a separate memory: house rules,
+optional-rule settings, rulesets, name list, NPCs and relationships, game clock and
+effects, story events, sessions and transcripts, and its DM screen. It persists between
+Discord sessions. A server can have several campaigns. **Export** (backup to a file) and
+**import** (restore) are available per campaign to its DM.
 
 **Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are
@@ -83,17 +167,37 @@ running a legacy adventure such as *Rime of the Frostmaiden*. This covers spells
 3. Any legacy content used is tagged **`[Legacy 2014]`** wherever it appears (alerts,
    citations, house-rule records, transcript rule notes).
 
-Precedence, highest first: **house rules → homebrew → newest ruleset → legacy rules
-`[Legacy 2014]`**.
+Precedence, highest first: **house rules → homebrew → target ruleset → fallback ruleset**.
+The DM only picks the target and fallback rulesets (defaults: 2024, then 2014 legacy);
+the order itself never changes. Content from the fallback ruleset is tagged
+**`[Legacy 2014]`** (or the matching edition tag).
+
+**Optional rules (decided 2026-10-04).** Where the target ruleset neither includes nor
+contradicts an optional rule from a supplement (e.g. Xanathar's Guide, Tasha's Cauldron),
+the fallback applies. Example: going 24 hours without a long rest risks exhaustion — an
+optional Xanathar's rule that the 2024 books don't include or change. New campaigns ask
+which optional rules to use, **default: on**. `/optionalrules` toggles them any time. House
+rules can still override them.
 
 Lookups must match renamed content (e.g. 2024 dropped many creator names from spell
 titles), so the rules index keys each entry by a normalized name plus known aliases,
 and a legacy entry is used only when no newer entry matches any alias. If a future
 edition supersedes 2024, it becomes "newest" and 2024 content gets its own legacy tag.
 
-**House rules.** The database is the source of truth; the Google Doc is a readable
-mirror. Each rule records: the rule, the book rule it supersedes, and the scenario
-that created it (session, date, what happened).
+**House rules (decided 2026-10-04).** Each campaign has its own. The database is the
+source of truth; the Google Doc (Phase 7) is a readable mirror. Each rule records the
+rule, the book rule it supersedes, and the scenario that created it (session, date, what
+happened). Ways in:
+1. **From an alert:** ⚖️ Override → "Save as a house rule?"
+2. **By voice:** DMbot listens for the DM declaring a house rule, and compares it against
+   the existing hierarchy. **Every voice-proposed rule needs the DM's approval** in the DM
+   screen: new rules show [Save] [Edit] [Cancel]; conflicts with an existing house rule
+   show both and ask which wins.
+3. **By typing** in the DM screen ("House rule: …"), with the same approval.
+4. **`/houserules`:** list with Edit and Remove.
+
+Only the DM can declare or change a house rule. A player may suggest one; it becomes a
+proposal when the DM clearly agrees out loud, then goes through the same approval.
 
 **Transcription (decided 2026-10-03).** Per-speaker audio means no diarization is
 needed. Name hints (players now; characters, NPCs, places later) are fed to the
@@ -102,7 +206,7 @@ one `Transcriber` interface and is chosen by `TRANSCRIBER=` in config, so switch
 **cloud pay-as-you-go** API (any OpenAI-compatible endpoint) is a settings change, not a
 code change — for DMs without a GPU.
 
-**Hosting (decided 2026-10-03).** A cloud server runs both ears and core. Because local
+**Hosting, self-hosted (decided 2026-10-03).** A cloud server runs both ears and core. Because local
 Whisper runs on that server, its size decides transcription quality and speed: a CPU-only
 server suits the `base`/`small` models; larger models need a GPU server, or switch to
 `TRANSCRIBER=cloud`. Deployment packaging (Docker) is a follow-up task.
@@ -139,6 +243,58 @@ Sessions and their participants are stored, and each transcript can be downloade
 file by its participants and the DM: from a 📄 button in the consent DMs, at session end,
 or with `/transcript`. Transcripts never contain DM-screen content.
 
+**Transcript format (decided 2026-10-04).** One line per utterance:
+`[timestamp] (Discord name) {entity}: text`, where `{entity}` is the in-game character,
+an NPC or other in-game entity, `{narrating}` for the DM, `{table_talk}`, or
+`{non-game_content}`. Off-topic talk stays in the transcript, labeled. DM voice messages
+to the bot appear as `[DM Sidebar Discussion]`.
+- **Players' lines:** players only speak in character, for a familiar or pet, as table
+  talk, or off-topic, so the AI's best guess is used with no prompts.
+- **DM's lines:** when DMbot isn't confident who the DM is voicing (narration vs which
+  NPC), it asks in the DM screen, because a wrong label can throw off plot and NPC tracking.
+
+**Name fixing (EntityBot) (decided 2026-10-04).** Speech engines miss fantasy names, so
+each campaign keeps a **name list** (characters, NPCs, places, monsters, spells, items)
+with nicknames ("Cerric the Brightshadow" = "Cerric"). It is the same list the NPC tracker
+uses.
+- The most relevant names are given to the speech engine as hints.
+- After transcription, names that sound close and fit the context are fixed ("Sarah" →
+  Cerric when Cerric is in the scene).
+- **Unsure?** The DM screen asks "Did they mean…?" with **at most 3 options** plus
+  **Type it**. Answers are remembered as nicknames for that campaign.
+- Retraining the speech engine per campaign is a later option, not the first step.
+
+**Off-topic filter (decided 2026-10-04).** A very light, fast AI pass right after
+transcription. Scheduling, life updates, and other non-game talk are labeled
+`{non-game_content}` and not analyzed further, which saves cost.
+
+**TimeBot (decided 2026-10-04).** Tracks **game time** (not real time) quietly in the
+background.
+- Reads time cues from narration ("you walk for a few hours"), rests (short ≈ 1 hour,
+  long ≈ 8 hours), and combat rounds.
+- Tracks timed effects (e.g. Mage Armor 8 hours, Bless 1 minute) from the rules data and
+  suggests in the DM screen when one has likely ended.
+- **Speaks up only for:** conflicts ("earlier it was night; the clock says noon"), effects
+  ending, transitions, **dawn, noon and dusk**, a periodic "where are we" note (e.g.
+  "Afternoon of Day 4"), and **24 hours without a long rest** (optional exhaustion rule,
+  on by default, adjustable by house rules).
+- **Split party:** keeps a separate clock for each group, and warns when one group gets too
+  far ahead of the other.
+- The DM can correct the clock with buttons ([+1 hour] [It's dawn] [Set time…]).
+
+**DM sidebar (decided 2026-10-04).** A Discord bot can't watch for key presses, and
+muting in Discord stops audio to everyone including the bot. So the DM sends a **voice
+message in their DM conversation with DMbot** (hold the mic button, speak, release).
+DMbot transcribes it, answers in the DM screen, and logs it as `[DM Sidebar Discussion]`.
+The table never hears it. An optional hotkey helper app for the DM's PC may come later.
+
+**AI and speech API keys (decided 2026-10-04).** Start with **bring your own key**: each
+server's DM or admin enters their own Anthropic API key (and a cloud speech-to-text key if
+used) through a private pop-up form, never typed in a channel. Keys are stored encrypted
+and per server; usage and spending limits live in their own provider account. A paid
+service (the owner's key, metered and billed per server) may follow later; the code
+keeps a single "who pays for this call" seam so that switch stays small.
+
 **Retention.** Configurable auto-delete of audio and transcripts per server, and a
 "Delete my past transcripts" action for each player.
 
@@ -148,7 +304,8 @@ or with `/transcript`. Transcripts never contain DM-screen content.
 
 ## Open decisions
 
-- Cloud server provider and size (CPU vs GPU) — depends on Whisper model quality needed
 - Final wording of the consent DM and join reminder (#33)
 - Whether revoking consent also removes a person's past lines from stored transcripts (#34)
 - Whether consenting members who missed a session can download its transcript (#41)
+- Hosting provider and Kubernetes setup for the public bot; GPU vs cloud transcription per worker
+- Privacy policy and terms of service text for the public bot

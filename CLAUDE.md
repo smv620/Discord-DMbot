@@ -41,6 +41,15 @@ CI runs all of the above on every pull request. Never merge red CI.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
 
 ## Hard rules
+- **Simple enough for a child:** user-facing text uses plain words, never technical terms
+  ("remembers your NPCs between sessions", not "knowledge graph"). Prefer buttons over
+  commands. Make it obvious the bot never invents story and never decides. The ux-critic
+  agent checks this on every PR.
+- **Campaign and server isolation:** every query, cache, file, and AI prompt is scoped to
+  one campaign. No data or settings ever cross between campaigns, and never between
+  Discord servers.
+- **API keys:** customers' keys are entered through private forms, stored encrypted, never
+  logged, and never shown back in full.
 - **Secrets:** never commit tokens or keys. Config comes from environment variables
   (`.env` locally, see `.env.example`). Never log tokens.
 - **Consent:** never capture, decode, store, or transcribe audio from a user who has
@@ -58,7 +67,9 @@ CI runs all of the above on every pull request. Never merge red CI.
 - **Rules edition:** newest ruleset first, always — even in legacy adventures — for
   spells, rules, and monsters (currently 2024 PHB / 2025 MM). Use legacy content only
   when no newer version exists, and tag it `[Legacy 2014]` everywhere it appears.
-  Precedence: house rules → homebrew → newest ruleset → legacy. See docs/PLAN.md.
+  Precedence: house rules → homebrew → target ruleset → fallback ruleset (the DM picks
+  target and fallback; defaults 2024 → 2014). Optional supplement rules are on by
+  default where the target doesn't conflict. See docs/PLAN.md.
 - **Copyrighted content:** SRD 5.2 (CC-BY-4.0) may be stored with attribution. Do not
   bulk-copy D&D Beyond or sourcebook text into the repo, database, or prompts; send
   only short, relevant excerpts per query.
