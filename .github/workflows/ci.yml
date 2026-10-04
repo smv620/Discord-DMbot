@@ -67,3 +67,28 @@ jobs:
             exit 1
           }
       - run: pytest -q
+
+  docker:
+    name: docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: compose file is valid
+        run: cp .env.example .env && docker compose config --quiet
+      - name: build ears image
+        run: docker build -t dmbot-ears ./ears
+      - name: build core image (with local Whisper)
+        run: docker build -t dmbot-core ./core
+      - name: smoke test core image
+        # Missing settings must fail fast with a readable message, not a traceback.
+        run: |
+          set +e
+          out=$(docker run --rm dmbot-core 2>&1); code=$?
+          echo "$out"
+          test $code -eq 2 && echo "$out" | grep -q "Missing required settings"
+      - name: smoke test ears image
+        run: |
+          set +e
+          out=$(docker run --rm dmbot-ears 2>&1); code=$?
+          echo "$out"
+          test $code -ne 0 && echo "$out" | grep -q "Missing required settings"

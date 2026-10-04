@@ -105,7 +105,8 @@ code change — for DMs without a GPU.
 **Hosting (decided 2026-10-03).** A cloud server runs both ears and core. Because local
 Whisper runs on that server, its size decides transcription quality and speed: a CPU-only
 server suits the `base`/`small` models; larger models need a GPU server, or switch to
-`TRANSCRIBER=cloud`. Deployment packaging (Docker) is a follow-up task.
+`TRANSCRIBER=cloud`. Both parts ship as Docker containers started with one
+`docker compose` command; see docs/DEPLOY.md.
 
 **Consent & retention.** `/consent` opt-in per player, an announcement when listening
 starts, configurable auto-delete of audio and transcripts, and player data removal.
