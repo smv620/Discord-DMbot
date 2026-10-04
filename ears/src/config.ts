@@ -2,6 +2,8 @@ export interface EarsConfig {
   discordToken: string;
   coreUrl: string;
   secret: string;
+  /** DMBOT_DEBUG_AUDIO=1: log per-utterance audio health (user IDs and counts only). */
+  debugAudio: boolean;
 }
 
 /** Read configuration from environment variables. Throws a readable error if anything is missing. */
@@ -24,5 +26,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): EarsConfig {
   if (!/^\d+$/.test(port)) {
     throw new Error(`EARS_WS_PORT must be a number, got "${port}".`);
   }
-  return { discordToken, secret, coreUrl: `ws://${host}:${port}` };
+  return {
+    discordToken,
+    secret,
+    coreUrl: `ws://${host}:${port}`,
+    debugAudio: env.DMBOT_DEBUG_AUDIO?.trim() === "1",
+  };
 }

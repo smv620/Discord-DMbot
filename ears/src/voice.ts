@@ -17,9 +17,6 @@ import { encodeAudioFrame } from "./protocol.js";
 /** End a speaker's stream after this much silence; one stream = one utterance. */
 const SILENCE_END_MS = 800;
 
-/** DMBOT_DEBUG_AUDIO=1 logs per-utterance audio health (user IDs and counts only). */
-const DEBUG_AUDIO = process.env.DMBOT_DEBUG_AUDIO === "1";
-
 /** Returns true if the user is a bot OR cannot be identified (deny by default). */
 export type BotCheck = (userId: string) => Promise<boolean>;
 
@@ -37,6 +34,8 @@ export interface TableSessionOptions {
   allowlist: Allowlist;
   link: CoreLink;
   isBotOrUnknown: BotCheck;
+  /** Log per-utterance audio health (user IDs and counts only). */
+  debugAudio?: boolean;
   /** Called once when the session ends for any reason. */
   onClosed?: () => void;
 }
@@ -123,7 +122,8 @@ export class TableSession {
     link.send({ type: "speaking", guildId: this.guildId, userId, event: "start", timestampMs: Date.now() });
 
     // Health is measured on the Opus packets as they arrive, so silence frames
-    // (which mark a pause) can be told apart from lost packets.
+    // (which mark a pause) can be told apart from lost packets. Times are delivery
+    // times; this listener runs before the piped decoder sees each packet.
     stream.on("data", (packet: Buffer) => {
       pipeline.tracker.packet(Date.now(), isSilenceFrame(packet));
     });
@@ -160,9 +160,10 @@ export class TableSession {
     link.send({ type: "speaking", guildId: this.guildId, userId, event: "end", timestampMs: Date.now() });
     const health = pipeline.tracker.finish();
     if (report && health) {
+      // Send only the protocol fields; pauses/pausedMs are local debug info.
       const { framesReceived, framesExpected } = health;
       link.send({ type: "health", guildId: this.guildId, userId, framesReceived, framesExpected });
-      if (DEBUG_AUDIO) {
+      if (this.options.debugAudio) {
         console.log(
           `[ears] audio user=${userId} received=${framesReceived} expected=${framesExpected} ` +
             `pauses=${health.pauses} paused_ms=${health.pausedMs}`,

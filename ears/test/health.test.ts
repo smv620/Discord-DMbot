@@ -62,14 +62,73 @@ test("loss inside speech is still caught when the utterance also has pauses", ()
   assert.equal(h.framesReceived, 91);
 });
 
-test("jitter right after a silence frame is not a pause", () => {
+test("jitter right after silence frames is not a pause", () => {
   const t = new UtteranceTracker();
-  t.packet(0, true);
-  t.packet(FRAME_MS + 15, false); // 35 ms: late, but within PAUSE_MIN_MS
+  const next = speak(t, 0, 5, 5);
+  t.packet(next + 15, false); // 35 ms after the last silence frame: late, within PAUSE_MIN_MS
   const h = t.finish();
   assert.ok(h);
   assert.equal(h.pauses, 0);
-  assert.equal(h.framesExpected, 3);
+  assert.equal(h.framesExpected, 7); // 0..115 ms spans 7 frames; nothing excluded
+});
+
+test("a single stray silence frame can't hide a gap", () => {
+  const t = new UtteranceTracker();
+  const gapStart = speak(t, 0, 50, 1); // only the last packet is a silence frame
+  speak(t, gapStart + 200, 50);
+  const h = t.finish();
+  assert.ok(h);
+  assert.equal(h.pauses, 0);
+  assert.equal(h.framesExpected, 110);
+});
+
+test("an utterance may start with silence frames", () => {
+  const t = new UtteranceTracker();
+  const next = speak(t, 0, 5, 5); // all silence
+  speak(t, next + 300, 20); // pause, then speech
+  const h = t.finish();
+  assert.ok(h);
+  assert.equal(h.pauses, 1);
+  assert.deepEqual([h.framesReceived, h.framesExpected], [25, 25]);
+});
+
+test("continuous silence frames never book a pause", () => {
+  const t = new UtteranceTracker();
+  speak(t, 0, 40, 40);
+  const h = t.finish();
+  assert.ok(h);
+  assert.equal(h.pauses, 0);
+  assert.deepEqual([h.framesReceived, h.framesExpected], [40, 40]);
+});
+
+test("trailing silence with no resumed speech is fully counted", () => {
+  const t = new UtteranceTracker();
+  speak(t, 0, 30, 5);
+  const h = t.finish();
+  assert.ok(h);
+  assert.equal(h.pauses, 0);
+  assert.deepEqual([h.framesReceived, h.framesExpected], [30, 30]);
+});
+
+test("known limit (#43): packets lost right after a pause are booked as the pause", () => {
+  const t = new UtteranceTracker();
+  const pauseStart = speak(t, 0, 50, 5);
+  // Speech resumes 300 ms later, but its first 10 packets never arrive (e.g. DAVE
+  // decrypt failures). Without RTP data this looks exactly like a 500 ms pause.
+  speak(t, pauseStart + 300 + 10 * FRAME_MS, 40);
+  const h = t.finish();
+  assert.ok(h);
+  assert.equal(h.framesReceived, h.framesExpected); // the loss is not visible
+});
+
+test("a jitter burst can't report more frames than expected", () => {
+  const t = new UtteranceTracker();
+  const next = speak(t, 0, 5, 5);
+  for (let i = 0; i < 10; i++) t.packet(next + 500, false); // 10 packets delivered at once
+  const h = t.finish();
+  assert.ok(h);
+  assert.equal(h.framesExpected, 6);
+  assert.equal(h.framesReceived, 6);
 });
 
 test("finish resets for the next utterance", () => {
