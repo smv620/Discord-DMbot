@@ -34,7 +34,8 @@ from dmbot.ears.protocol import (
     leave_command,
 )
 from dmbot.ears.server import EarsServer
-from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
+from dmbot.transcription.base import MIN_UTTERANCE_S, PlaceholderTranscriber, Transcriber
+from dmbot.transcription.factory import build_transcriber
 
 log = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ class DMBot(commands.Bot):
     async def close(self) -> None:
         for task in self._background:
             task.cancel()
+        await self.transcriber.close()
         for guild_id in list(self.tables):
             await self.ears.send(leave_command(guild_id))
         await self.ears.stop()
@@ -222,12 +224,25 @@ class DMBot(commands.Bot):
             # Skip if the table ended or the speaker revoked consent while queued.
             if table is None or not self.consent.has_consent(utterance.guild_id, utterance.user_id):
                 continue
+            if utterance.duration_s < MIN_UTTERANCE_S:
+                table.capture_log.add_utterance(utterance, None)
+                continue
             try:
-                text = await self.transcriber.transcribe(utterance, hints=[])
+                text = await self.transcriber.transcribe(
+                    utterance, hints=await self._name_hints(utterance.guild_id)
+                )
             except Exception:
                 log.exception("Transcription failed")
                 text = None
             table.capture_log.add_utterance(utterance, text)
+
+    async def _name_hints(self, guild_id: int) -> list[str]:
+        """Names Whisper should expect. Phase 1: players' display names.
+
+        Later phases add character, NPC, and place names.
+        """
+        users = await self.consent.consenting(guild_id)
+        return [self.name_of(guild_id, uid) for uid in users]
 
     async def _idle_sweeper(self) -> None:
         while True:
@@ -393,7 +408,11 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
 
 async def run(settings: Settings) -> None:
     consent = ConsentStore(settings.data_dir / "dmbot.sqlite")
-    bot = DMBot(settings, consent)
+    transcriber = build_transcriber(settings.transcription)
+    warm_up = getattr(transcriber, "warm_up", None)
+    if warm_up is not None:
+        await warm_up()  # load the Whisper model now, not on the first word spoken
+    bot = DMBot(settings, consent, transcriber)
     try:
         async with bot:
             await bot.start(settings.discord_token)

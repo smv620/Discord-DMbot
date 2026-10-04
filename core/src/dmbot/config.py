@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from dmbot.transcription.config import (
+    TranscriptionConfigError,
+    TranscriptionSettings,
+    load_transcription_settings,
+)
 
 
 class ConfigError(ValueError):
@@ -20,6 +26,7 @@ class Settings:
     ears_port: int = 8765
     dev_guild_id: int | None = None
     data_dir: Path = Path("data")
+    transcription: TranscriptionSettings = field(default_factory=TranscriptionSettings)
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -43,6 +50,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if guild_raw and not guild_raw.isdigit():
         raise ConfigError("DISCORD_DEV_GUILD_ID must be a server ID (digits only).")
 
+    try:
+        transcription = load_transcription_settings(env)
+    except TranscriptionConfigError as exc:
+        raise ConfigError(str(exc)) from exc
+
     return Settings(
         discord_token=get("DISCORD_TOKEN"),
         ears_secret=get("EARS_SHARED_SECRET"),
@@ -50,4 +62,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ears_port=int(port_raw),
         dev_guild_id=int(guild_raw) if guild_raw else None,
         data_dir=Path(get("DMBOT_DATA_DIR") or "data"),
+        transcription=transcription,
     )

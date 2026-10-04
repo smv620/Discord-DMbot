@@ -9,12 +9,18 @@ description = "DMbot core: Discord slash commands, consent, transcription and DM
 requires-python = ">=3.12"
 dependencies = [
     "discord.py>=2.5,<3",
+    "aiohttp>=3.9",
     "websockets>=13,<17",
     "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
+# Local transcription (TRANSCRIBER=whisper-local). Not needed for TRANSCRIBER=cloud.
+whisper = [
+    "faster-whisper>=1.1",
+]
 dev = [
+    "numpy>=1.26",
     "pytest>=8",
     "ruff>=0.8",
     "mypy>=1.13",
@@ -42,7 +48,7 @@ files = ["src", "tests"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["dotenv"]
+module = ["dotenv", "faster_whisper"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
