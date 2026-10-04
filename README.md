@@ -28,7 +28,7 @@ together in your channel list and you can tell at a glance they're DMbot's. Disc
 channel names in lowercase, so a campaign called **Rime of the Frostmaiden** gets:
 
 ```
-📋 Rime of the Frostmaiden              (category, in organized mode)
+📋 Rime of the Frostmaiden              (category, coming later)
 ├─ #dmb-dm-screen-rime-of-the-frostmaiden   DM notes and alerts       ← now
 ├─ #dmb-rules-rmfthfrstmdn                  house rules and rulings   ← later
 ├─ #dmb-time-rmfthfrstmdn                   game clock and effects    ← later
@@ -38,12 +38,15 @@ channel names in lowercase, so a campaign called **Rime of the Frostmaiden** get
 
 - **Today there's only the DM screen** (compact mode: everything goes there). The other
   channels arrive with their features, and then each campaign gets its own category.
-- **Who can see them:** game time is open to everyone. The DM screen, rules, NPCs and plot
-  follow the campaign's setting: only the DM, **players can peek after a spoiler
-  warning (default)**, or everyone. Players can read but never post. Server owners and
-  admins can always see every channel.
-- Sub-channels use a short name (vowels removed); if two campaigns would share a name,
-  the newer one gets a number, like `#dmb-time-2frznsck`.
+- **Who can see them:** game time is open to everyone. For the DM screen, rules, NPCs and
+  plot, the DM picks one of these with the buttons on the DM screen's help card:
+  🔒 **Only the DM**, 👀 **Players can peek** (default; players see a spoiler warning
+  first), or 📖 **Everyone in the server**. Players can read but never post. Server
+  owners and admins can always see every channel.
+- Sub-channels use a short name, usually the campaign name without vowels
+  (`rmfthfrstmdn`). If another campaign already has the same name or short name, the new
+  one gets a number in front of both, starting at 2: `#dmb-dm-screen-2frozens-cake`,
+  `#dmb-time-2frznsck`.
 
 Details: [`docs/PLAN.md`](docs/PLAN.md), "Channel structure".
 
@@ -58,10 +61,9 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
    Messages**, **Read Message History**, **Connect**, **Speak**, **Manage Channels**, and
    **Manage Roles**. Use the install link to add it to your private test server.
    *Why Manage Channels and Manage Roles:* Discord grants these for the whole server, but
-   DMbot only uses them on its own `dmb-` channels: it creates
-   `#dmb-dm-screen-<campaign>`,
-   hides it from players unless you choose otherwise, and lets a player peek after a
-   spoiler warning. It never changes other channels or anyone's server roles.
+   DMbot only uses them on its own `dmb-` channels. It creates them, hides them from
+   players unless you choose otherwise, and lets a player peek after a spoiler warning.
+   It never changes other channels or anyone's server roles.
 2. **Configure.** Copy `.env.example` to `.env` in the repo root and fill in
    `DISCORD_TOKEN`, `DISCORD_DEV_GUILD_ID`, a long random `EARS_SHARED_SECRET`, and
    `DATABASE_URL` (see [Database](#database)).

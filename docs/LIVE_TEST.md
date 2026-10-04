@@ -95,8 +95,10 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    the voice channel, and press **▶ Start listening**. If the command doesn't appear,
    press Ctrl+R in Discord.
 3. **Expect:**
-   - A new channel `#dmb-dm-screen-<campaign>` (the DM screen) with a help card, and in
-     it: "✅ Listening in <channel>."
+   - A new channel `#dmb-dm-screen-<campaign>` (the DM screen; for "Test Campaign":
+     `#dmb-dm-screen-test-campaign`) with a help card, and in it: "✅ Listening in
+     <channel>."
+   - No other `dmb-` channels and no category yet. That's normal (compact mode).
    - In the voice channel's chat: "🔴 DMbot is listening in this channel…" (with a 👀
      **Peek behind the DM screen** button under the default setting).
    - If either is missing, the bot should warn in the DM screen about what to fix (#27).

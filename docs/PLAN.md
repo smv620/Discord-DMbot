@@ -313,10 +313,12 @@ so the docs always show names the way Discord does. For the campaign
 
 - **The DM screen uses the full campaign name:** `rime-of-the-frostmaiden`.
 - **Sub-channels use a short name** (`rmfthfrstmdn`), made like this:
-  1. Lowercase the name, then drop spaces, dashes and punctuation.
-     `Rime of the Frostmaiden` → `rimeofthefrostmaiden`.
+  1. Lowercase the name and keep only `a–z` and `0–9` (spaces, dashes, punctuation,
+     accents and emoji are dropped). `Rime of the Frostmaiden` → `rimeofthefrostmaiden`.
+     If nothing is left (a name of only emoji, say), the short name is `campaign`.
   2. If **more than half of the letters are vowels** (a, e, i, o, u; **y is not a
-     vowel**), keep the vowels and cut it to 15 characters.
+     vowel**; digits don't count either way), keep the vowels and cut it to 15
+     characters. `Eerie Aura` → `eerieaura` (7 of 9 letters are vowels), not `rr`.
   3. Otherwise remove the vowels and cut it to 15 characters.
      `rimeofthefrostmaiden` → `rmfthfrstmdn`.
 - **Clashes get a number at the front, starting at 2.** If a new campaign's screen name
@@ -324,6 +326,9 @@ so the docs always show names the way Discord does. For the campaign
   the lowest free number from 2 up, on both names. *Example:* "Frozen Sick" and
   "Frozens Cake" both shorten to `frznsck`. "Frozens Cake" was made second, so its
   channels are `dmb-dm-screen-2frozens-cake` and `dmb-time-2frznsck` (and so on).
+- A name may itself start with a digit ("2 Frozen" → `2frzn`). That's fine: a clash
+  number always goes in front of whatever the name already is, and DMbot keeps track of
+  which number each campaign got, so it never has to guess from the channel name.
 - Discord allows 100 characters per channel name; longer names are cut to fit.
 
 *Who can see what.* Channels are either **controlled** or **unrestricted**:
@@ -336,7 +341,9 @@ so the docs always show names the way Discord does. For the campaign
 - Players can **read but never post** in any DMbot channel (no threads, reactions or
   commands either), the same read-only access as a DM-screen peek.
 - Changing the setting (the help-card buttons) updates every controlled channel together.
-  Peeking opens all controlled channels for that player; hiding closes them all.
+  Peeking opens all controlled channels for that player; hiding closes them all. Once
+  there's more than one controlled channel, the peek warning must name every channel a
+  peek opens (rules, NPCs, plot), so players know exactly what they're agreeing to see.
 - Server owners and admins always see every channel (see above).
 
 *Modes.*
