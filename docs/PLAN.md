@@ -98,7 +98,16 @@ than in separate volumes.
 
 - **Isolation:** every table has the server ID, every query filters on it, and Postgres
   **row-level security** (forced, so even the table owner is subject to it) only returns
-  rows for the server set in the current transaction (#68).
+  rows for the server set in the current transaction (#68). DMbot refuses to connect as a
+  superuser. Limit: today the app's database user also owns the tables, so row-level
+  security guards against a forgotten filter, not against a compromised process. Before
+  hosting for the public, split it into an owner user for migrations and an app user
+  that can only read and write rows.
+- **Consent changes reach every process:** each process caches consent for the instant
+  audio check. Once more than one process can change a server's consent (for example a
+  DM button handled by a different shard), a change must notify the others (Postgres
+  `LISTEN/NOTIFY`, or routing all consent writes through the shard that owns the
+  server). A revoke must stop recording everywhere at once (#69).
 - **Shard manager from day one:** `AutoShardedBot` in core, the same shards in ears, so
   scaling is a settings change (#69).
 - **Pods are disposable:** active sessions live in Postgres; a restarted or moved pod
