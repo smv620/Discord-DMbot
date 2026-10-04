@@ -12,6 +12,7 @@ import { Downsampler } from "./audio.js";
 import type { Allowlist } from "./consent.js";
 import type { CoreLink } from "./coreLink.js";
 import type { Logger } from "./log.js";
+import { SpeakerStates } from "./speakerStates.js";
 import { UtteranceTracker, isSilenceFrame } from "./health.js";
 import { encodeAudioFrame } from "./protocol.js";
 
@@ -53,6 +54,7 @@ export class TableSession {
   private readonly connection: VoiceConnection;
   private readonly speakers = new Map<string, SpeakerPipeline>();
   private readonly pending = new Set<string>();
+  private readonly states = new SpeakerStates();
   private destroyed = false;
 
   constructor(private readonly options: TableSessionOptions) {
@@ -80,9 +82,12 @@ export class TableSession {
     await entersState(this.connection, VoiceConnectionStatus.Ready, timeoutMs);
   }
 
-  /** Stop capturing these users immediately (consent revoked). */
-  dropSpeakers(userIds: readonly string[]): void {
-    for (const userId of userIds) this.endSpeaker(userId, false);
+  /** Stop capturing these users immediately (consent revoked, or a pause). */
+  dropSpeakers(userIds: readonly string[], reason = "opted out"): void {
+    for (const userId of userIds) {
+      this.noteState(userId, false, reason);
+      this.endSpeaker(userId, false);
+    }
   }
 
   destroy(): void {
@@ -100,11 +105,21 @@ export class TableSession {
     this.pending.add(userId);
     try {
       const isBot = await this.options.isBotOrUnknown(userId);
-      if (this.destroyed || !this.options.allowlist.isAllowed(this.guildId, userId, isBot)) return;
+      if (this.destroyed) return;
+      if (!this.options.allowlist.isAllowed(this.guildId, userId, isBot)) {
+        this.noteState(userId, false, "not opted in, or a bot");
+        return;
+      }
+      this.noteState(userId, true);
       this.subscribe(userId);
     } finally {
       this.pending.delete(userId);
     }
+  }
+
+  private noteState(userId: string, capturing: boolean, reason?: string): void {
+    const line = this.states.note(userId, capturing, reason);
+    if (line) this.options.log.info(line, { guildId: this.guildId });
   }
 
   private subscribe(userId: string): void {
@@ -184,6 +199,7 @@ export class TableSession {
         entersState(this.connection, VoiceConnectionStatus.Connecting, 5_000),
       ]);
     } catch {
+      this.options.log.warn("lost the voice connection and couldn't reconnect", { guildId: this.guildId });
       this.options.link.send({
         type: "status",
         state: "left",

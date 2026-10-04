@@ -40,10 +40,12 @@ async function handleCommand(command: CoreCommand): Promise<void> {
   switch (command.type) {
     case "allowlist": {
       const removed = allowlist.set(command.guildId, command.userIds);
+      log.info(`consent list: ${command.userIds.length} opted in`, { guildId: command.guildId });
       sessions.get(command.guildId)?.dropSpeakers(removed);
       return;
     }
     case "leave": {
+      if (sessions.has(command.guildId)) log.info("left voice (core asked)", { guildId: command.guildId });
       sessions.get(command.guildId)?.destroy();
       allowlist.clear(command.guildId);
       link.send({ type: "status", state: "left", guildId: command.guildId });
@@ -52,6 +54,7 @@ async function handleCommand(command: CoreCommand): Promise<void> {
     case "join": {
       const guild = client.guilds.cache.get(command.guildId);
       if (!guild) {
+        log.warn("can't join voice: ears is not in that server", { guildId: command.guildId });
         link.send({ type: "status", state: "error", guildId: command.guildId, detail: "ears is not in that server." });
         return;
       }
@@ -61,6 +64,7 @@ async function handleCommand(command: CoreCommand): Promise<void> {
         // connection instead of dropping and rejoining, and confirm it.
         try {
           await existing.ready();
+          log.info(`still in voice channel ${command.channelId}; kept the connection`, { guildId: command.guildId });
           link.send({ type: "status", state: "joined", guildId: command.guildId, channelId: command.channelId });
           return;
         } catch {
@@ -84,8 +88,17 @@ async function handleCommand(command: CoreCommand): Promise<void> {
       sessions.set(command.guildId, session);
       try {
         await session.ready();
+        // ready() includes the DAVE (end-to-end encryption) handshake.
+        log.info(`joined voice channel ${command.channelId} (encrypted connection ready)`, {
+          guildId: command.guildId,
+        });
         link.send({ type: "status", state: "joined", guildId: command.guildId, channelId: command.channelId });
       } catch {
+        log.warn(
+          `couldn't join voice channel ${command.channelId} within 20 s ` +
+            "(Connect permission, or the encryption handshake failed)",
+          { guildId: command.guildId },
+        );
         session.destroy();
         link.send({
           type: "status",
@@ -112,7 +125,7 @@ link.on("connected", () => {
   // player may have opted out while the link was down (see audit.ts). core sends the
   // list again straight away for every session it still wants.
   for (const [guildId, session] of sessions) {
-    session.dropSpeakers(allowlist.set(guildId, []));
+    session.dropSpeakers(allowlist.set(guildId, []), "paused until core sends the consent list again");
   }
   // Leave any voice session core doesn't ask for again soon.
   audit.begin(sessions.keys());

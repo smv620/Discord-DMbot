@@ -217,6 +217,31 @@ class SessionTests(DatabaseTest):
         for jargon in ("backlog", "frame", "pipeline", "ears", "service"):
             self.assertNotIn(jargon, busy.lower())
 
+    async def test_session_events_are_logged_without_names(self) -> None:
+        # #37: a live test can be judged from the terminals alone.
+        from dmbot.ears.protocol import Status
+
+        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.bot", level="INFO") as logs:
+            await self.start()
+            await self.bot._on_ears_message(Status("joined", guild_id=GUILD))
+            await self.bot._on_ears_message(Status("joined", guild_id=GUILD))  # a repeat
+            await self.bot._on_ears_message(
+                Status("left", guild_id=GUILD, detail="Lost the voice connection.")
+            )
+            await self.bot.stop_session(GUILD, DM, False)
+        text = "\n".join(logs.output)
+        for expected in (
+            f"Session started: voice channel {VOICE}, DM screen {SCREEN}",
+            "In the voice channel; 0 player(s) opted in",
+            "Recording notice posted",
+            "Voice left: Lost the voice connection.",
+            f"Session ended: /dmbot stop by user {DM}",
+        ):
+            self.assertIn(expected, text)
+        self.assertEqual(text.count("In the voice channel"), 1)
+        self.assertNotIn("Frostmaiden", text)  # campaign names stay out of logs
+
     async def test_ears_events_do_not_leave_log_tags_behind(self) -> None:
         # The ears connection task lives on, so tags must be scoped per event.
         from dmbot.ears.protocol import Status

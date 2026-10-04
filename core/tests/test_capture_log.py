@@ -82,3 +82,27 @@ class AudioHealthTests(unittest.TestCase):
         text = log.render(str)
         assert text is not None
         self.assertIn("audio 94% ⚠️ audio gaps", text)
+
+
+class LogLineTests(unittest.TestCase):
+    def test_ids_and_numbers_only(self) -> None:
+        log = CaptureLog()
+        log.add_utterance(utt(22, 2.0), "I cast magic missile")
+        log.add_utterance(utt(11, 1.0), None)
+        log.add_health(11, 946, 1000)
+        line = log.log_line()
+        self.assertEqual(
+            line,
+            "Capture check: 2 speaker(s); user 11: 1 x speech, 1.0 s, audio 94% (gaps); "
+            "user 22: 1 x speech, 2.0 s",
+        )
+        self.assertNotIn("magic", line or "")
+        # log_line doesn't reset; render still shows the same check.
+        self.assertIsNotNone(log.render(str))
+        self.assertIsNone(log.log_line())
+
+    def test_nothing_captured(self) -> None:
+        log = CaptureLog()
+        self.assertIsNone(log.log_line())
+        log.add_health(1, 50, 50)
+        self.assertIsNone(log.log_line())

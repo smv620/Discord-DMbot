@@ -109,8 +109,13 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    🎙️ Capture check
    • Name — N × speech, X.X s, audio NN%
    ```
+   **The terminals show the same picture** (IDs and numbers only, no names or words):
+   core logs `Session started`, `Consent given: user …` and a `Capture check: …` line
+   every 15 s; ears logs `joined voice channel …` and `capturing user …` the first time
+   each person is heard.
 7. **Consent check:** the second person runs `/consent revoke` and keeps talking. They
-   must **disappear** from the following capture checks.
+   must **disappear** from the following capture checks. In the terminals: core logs
+   `Consent withdrawn: user …` and ears logs `not capturing user …: opted out`.
 8. **Run `/dmbot help` and press Status,** then `/dmbot stop`.
 
 ### Step 5: judge the result (Claude and owner)
