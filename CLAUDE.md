@@ -32,7 +32,8 @@ CI runs all of the above on every pull request. Never merge red CI.
     wants to test, for example a live session on the test server.
   - `main`: only code that has passed beta testing and looks ready to deploy. The
     cloud server deploys from here.
-- Never push directly to `development`, `beta`, or `main`. The owner merges.
+- Never push directly to `development`, `beta`, or `main`. The owner merges, except
+  log-only PRs (see "Testing logs").
 - Promotions (`development` → `beta`, `beta` → `main`) are PRs, opened only when the
   owner asks.
 - One concern per PR. Link the GitHub issue it closes.
@@ -72,6 +73,9 @@ terminal output or Discord screenshots copied to it.
   testing plans change. It copies in what the owner pastes from Discord. Other sessions
   read them before planning test-related work.
 - Same privacy rule as issues: no tokens, `.env` contents, or players' personal data.
+- **Log-only PRs may be merged by Claude** once CI passes (owner decision, 2026-10-04).
+  A PR counts as log-only when it changes nothing but `docs/testing-status.log` and/or
+  `docs/testing-history.log`. Every other PR is still merged by the owner.
 
 ## Hard rules
 - **Simple enough for a child:** user-facing text uses plain words, never technical terms
