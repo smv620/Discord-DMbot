@@ -1,20 +1,23 @@
 """The recording notice: posted once per table, retried and reported if it fails."""
 
-import unittest
-
 from dmbot.audio.segmenter import Segmenter
 from dmbot.bot import DMBot, Table
+from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.ears.protocol import Status
+from tests.pg import DatabaseTest
 
 GUILD, VOICE, SCREEN = 1, 2, 3
 
 
-class RecordingNoticeTests(unittest.IsolatedAsyncioTestCase):
+class RecordingNoticeTests(DatabaseTest):
     async def asyncSetUp(self) -> None:
-        self.consent = ConsentStore(":memory:")
-        self.bot = DMBot(Settings(discord_token="t", ears_secret="s"), self.consent)
+        await super().asyncSetUp()
+        self.consent = ConsentStore(self.db)
+        self.bot = DMBot(
+            Settings(discord_token="t", ears_secret="s"), self.consent, CampaignStore(self.db)
+        )
         self.posts: list[tuple[int, str]] = []
         self.voice_ok = True
 
@@ -24,9 +27,6 @@ class RecordingNoticeTests(unittest.IsolatedAsyncioTestCase):
 
         self.bot.post = fake_post  # type: ignore[method-assign]
         self.table = Table(GUILD, VOICE, SCREEN, dm_user_id=9, segmenter=Segmenter(GUILD))
-
-    async def asyncTearDown(self) -> None:
-        self.consent.close()
 
     async def joined(self) -> None:
         await self.bot._on_status(self.table, Status("joined", guild_id=GUILD))

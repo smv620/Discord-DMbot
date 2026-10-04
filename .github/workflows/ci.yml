@@ -49,6 +49,19 @@ jobs:
     defaults:
       run:
         working-directory: core
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      # DMbot runs as an ordinary role so row-level security applies (superusers skip it).
+      DMBOT_TEST_DATABASE_URL: postgresql://dmbot:dmbot@localhost:5432/dmbot_test
+      DMBOT_TEST_SUPERUSER_URL: postgresql://postgres:postgres@localhost:5432/dmbot_test
+      DMBOT_REQUIRE_DB_TESTS: "1"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -66,6 +79,11 @@ jobs:
             sed -nE 's/^([^:]+):([0-9]+): error: (.*)$/::error file=core\/\1,line=\2::\3/p' mypy.log | head -50
             exit 1
           }
+      - name: test database
+        run: >-
+          psql "postgresql://postgres:postgres@localhost:5432/postgres"
+          -c "CREATE ROLE dmbot LOGIN PASSWORD 'dmbot'"
+          -c "CREATE DATABASE dmbot_test OWNER dmbot ENCODING 'UTF8'"
       - name: pytest
         run: |
           set -o pipefail
@@ -82,7 +100,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: compose file is valid
-        run: cp .env.example .env && docker compose config --quiet
+        run: |
+          cp .env.example .env
+          printf 'POSTGRES_ADMIN_PASSWORD=ci\nDMBOT_DB_PASSWORD=ci\n' >> .env
+          docker compose config --quiet
       - name: build ears image
         run: docker build -t dmbot-ears ./ears
       - name: build core image (with local Whisper)

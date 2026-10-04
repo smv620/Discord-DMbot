@@ -36,8 +36,10 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
    hides it from players unless you choose otherwise, and lets a player peek after a
    spoiler warning. It never changes other channels or anyone's server roles.
 2. **Configure.** Copy `.env.example` to `.env` in the repo root and fill in
-   `DISCORD_TOKEN`, `DISCORD_DEV_GUILD_ID`, and a long random `EARS_SHARED_SECRET`.
-3. **Start core** (PyCharm terminal, Python 3.12+):
+   `DISCORD_TOKEN`, `DISCORD_DEV_GUILD_ID`, a long random `EARS_SHARED_SECRET`, and
+   `DATABASE_URL` (see [Database](#database)).
+3. **Start Postgres** (once per PC restart; see [Database](#database)).
+4. **Start core** (PyCharm terminal, Python 3.12+):
    ```bash
    cd core
    python -m venv .venv
@@ -45,18 +47,41 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
    pip install -e ".[dev,whisper]"   # drop ",whisper" if using cloud transcription
    python -m dmbot
    ```
-4. **Start ears** (second terminal, Node 22.12+):
+5. **Start ears** (second terminal, Node 22.12+):
    ```bash
    cd ears
    npm ci
    npm run dev
    ```
-5. **In Discord:** run `/dmbot start` in any text channel. The first time, it asks you to
+6. **In Discord:** run `/dmbot start` in any text channel. The first time, it asks you to
    name your campaign and who can see its DM screen; after that it offers the last
    campaign and voice channel you used. DMbot makes a `#dm-screen-<campaign>` channel for
    your notes, with buttons there to change who can see it. Each player runs
    `/consent give` (you too, if you want your own voice transcribed). Talk for a bit and
    watch the capture check appear in the DM screen.
+
+## Database
+
+DMbot keeps campaigns and consent in **Postgres** (16 or newer). Each Discord server's
+rows are locked to that server by Postgres itself (row-level security), so DMbot must
+connect as an **ordinary database user, not a superuser** such as `postgres`. It refuses
+to start otherwise. The database must use UTF8. DMbot creates its tables on first start.
+
+**On your PC with conda** (one time):
+```bash
+conda activate dmbot
+conda install -c conda-forge postgresql
+initdb -D "%USERPROFILE%\dmbot-pg" -U postgres -E UTF8 --no-locale   # macOS/Linux: -D ~/dmbot-pg
+pg_ctl -D "%USERPROFILE%\dmbot-pg" -l "%USERPROFILE%\dmbot-pg\log.txt" start
+psql -U postgres -c "CREATE ROLE dmbot LOGIN PASSWORD 'dmbot'"
+createdb -U postgres -O dmbot -E UTF8 -T template0 dmbot
+```
+Then in `.env`: `DATABASE_URL=postgresql://dmbot:dmbot@localhost:5432/dmbot`.
+This database only listens on your own PC. After a restart, run the `pg_ctl … start` line
+again before starting core. Stop it with `pg_ctl -D "%USERPROFILE%\dmbot-pg" stop`.
+
+**With Docker Compose:** nothing to install. Set `POSTGRES_ADMIN_PASSWORD` and
+`DMBOT_DB_PASSWORD` in `.env`; Compose starts Postgres and creates the `dmbot` user.
 
 ## Running on a server
 

@@ -1,6 +1,5 @@
 """setup_dm_screen against a fake Discord server: what it creates, edits and saves."""
 
-import unittest
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -9,6 +8,7 @@ import discord
 
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import setup_dm_screen
+from tests.pg import DatabaseTest
 
 GUILD, BOT, DM, GENERAL, NEW = 1, 2, 3, 40, 50
 BOT_PERMS = discord.Permissions(
@@ -37,9 +37,10 @@ def text_channel(channel_id: int, name: str, guild: Any) -> Any:
     return channel
 
 
-class SetupTests(unittest.IsolatedAsyncioTestCase):
+class SetupTests(DatabaseTest):
     async def asyncSetUp(self) -> None:
-        self.store = CampaignStore(":memory:")
+        await super().asyncSetUp()
+        self.store = CampaignStore(self.db)
         self.campaign = await self.store.create(GUILD, "Frostmaiden", DM)
 
         me = MagicMock(spec=discord.Member)
@@ -57,9 +58,6 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         guild.create_text_channel = AsyncMock(return_value=self.new)
         guild.get_channel = lambda cid: self.new if cid == NEW else None
         self.guild = guild
-
-    async def asyncTearDown(self) -> None:
-        self.store.close()
 
     def created_overwrite_for(self, target_id: int) -> discord.PermissionOverwrite:
         overwrites: dict[Any, discord.PermissionOverwrite] = (

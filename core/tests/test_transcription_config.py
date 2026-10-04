@@ -48,4 +48,11 @@ class TranscriptionConfigTests(unittest.TestCase):
 
     def test_errors_surface_through_main_settings(self) -> None:
         with self.assertRaises(ConfigError):
-            load_settings({"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s", "TRANSCRIBER": "x"})
+            load_settings(
+                {
+                    "DISCORD_TOKEN": "t",
+                    "EARS_SHARED_SECRET": "s",
+                    "DATABASE_URL": "postgresql://x",
+                    "TRANSCRIBER": "x",
+                }
+            )

@@ -30,6 +30,8 @@ encryption, with little or no audio loss, and that consent is enforced.
       (Making this automatic is issue #30.)
 - [ ] **Test voice channel:** if it's private or restricted, DMbot has View Channel,
       Connect, and Send Messages there.
+- [ ] **Postgres set up** on the PC, once (README, "Database"). Earlier test data
+      (the old `data/` folder) is not carried over: campaigns are made again.
 - [ ] **A second person** available for voice: a friend, or a second account on a phone.
 
 ### Step 1: `.env` (owner)
@@ -42,6 +44,7 @@ Required for this test:
 DISCORD_TOKEN=<bot token>
 DISCORD_DEV_GUILD_ID=<server ID>
 EARS_SHARED_SECRET=<long random string>
+DATABASE_URL=postgresql://dmbot:dmbot@localhost:5432/dmbot
 TRANSCRIBER=none
 ```
 To make a secret: `python -c "import secrets; print(secrets.token_hex(32))"`
@@ -53,12 +56,17 @@ Terminal 1:
 ```
 conda activate dmbot
 git fetch origin && git checkout development && git pull
+pg_ctl -D "%USERPROFILE%\dmbot-pg" -l "%USERPROFILE%\dmbot-pg\log.txt" start
 cd core
 pip install -e ".[dev]"
 python -m dmbot
 ```
+(`pg_ctl` says "another server might be running" if Postgres is already up; that's fine.)
 **Expect:** a log line `Waiting for ears on ws://127.0.0.1:8765`.
 **If it exits with "Missing required settings":** ask the owner to fill in `.env` (step 1).
+**If it exits with "Database problem":** the message says what's wrong. Usually Postgres
+isn't running (run the `pg_ctl … start` line) or `DATABASE_URL` uses the `postgres`
+superuser instead of `dmbot`.
 **If it says "Local Whisper is not installed":** `TRANSCRIBER` isn't set to `none`. Ask
 the owner to fix `.env`.
 

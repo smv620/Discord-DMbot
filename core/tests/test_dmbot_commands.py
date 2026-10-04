@@ -1,7 +1,6 @@
 """The /dmbot commands' first steps, with fake Discord interactions."""
 
 import json
-import unittest
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -14,6 +13,7 @@ from dmbot.campaigns.store import MAX_BACKUP_BYTES, encode_backup
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.ui import dmbot_commands as cmds
+from tests.pg import DatabaseTest
 
 GUILD, DM, OTHER_DM = 1, 7, 8
 
@@ -54,18 +54,13 @@ def attachment(raw: bytes, size: int | None = None) -> Any:
     return a
 
 
-class CommandTests(unittest.IsolatedAsyncioTestCase):
+class CommandTests(DatabaseTest):
     async def asyncSetUp(self) -> None:
-        self.consent = ConsentStore(":memory:")
-        self.campaigns = CampaignStore(":memory:")
-        self.bot = DMBot(
-            Settings(discord_token="t", ears_secret="s"), self.consent, campaigns=self.campaigns
-        )
+        await super().asyncSetUp()
+        self.consent = ConsentStore(self.db)
+        self.campaigns = CampaignStore(self.db)
+        self.bot = DMBot(Settings(discord_token="t", ears_secret="s"), self.consent, self.campaigns)
         self.bot.ears._active = SimpleNamespace(send=AsyncMock())  # type: ignore[assignment]
-
-    async def asyncTearDown(self) -> None:
-        self.consent.close()
-        self.campaigns.close()
 
     async def test_first_start_shows_the_welcome(self) -> None:
         it = fake_interaction(self.bot)

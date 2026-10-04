@@ -1,6 +1,5 @@
 """Starting and stopping campaign sessions (`/dmbot start` · `stop` · Status)."""
 
-import unittest
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -14,6 +13,7 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import DMScreenError
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
+from tests.pg import DatabaseTest
 
 GUILD, VOICE, SCREEN, OTHER_TEXT = 1, 2, 3, 4
 DM, PLAYER = 7, 8
@@ -44,16 +44,15 @@ async def screen_from_invoking_channel(bot: DMBot, interaction: Any, campaign: A
     return int(interaction.channel_id)
 
 
-class SessionTests(unittest.IsolatedAsyncioTestCase):
+class SessionTests(DatabaseTest):
     async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
         hook = patch("dmbot.bot.ensure_dm_screen", screen_from_invoking_channel)
         hook.start()
         self.addCleanup(hook.stop)
-        self.consent = ConsentStore(":memory:")
-        self.campaigns = CampaignStore(":memory:")
-        self.bot = DMBot(
-            Settings(discord_token="t", ears_secret="s"), self.consent, campaigns=self.campaigns
-        )
+        self.consent = ConsentStore(self.db)
+        self.campaigns = CampaignStore(self.db)
+        self.bot = DMBot(Settings(discord_token="t", ears_secret="s"), self.consent, self.campaigns)
         self.ears = FakeEarsConnection()
         self.bot.ears._active = self.ears  # type: ignore[assignment]
 
@@ -81,10 +80,6 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         self.bot.get_channel = channels.get  # type: ignore[method-assign]
 
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
-
-    async def asyncTearDown(self) -> None:
-        self.consent.close()
-        self.campaigns.close()
 
     def interaction(self, user: Any, channel_id: int = SCREEN) -> Any:
         return SimpleNamespace(

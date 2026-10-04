@@ -1,7 +1,6 @@
 """DM screen: channel names, permission plans, exposure checks, wording, Peek on the notice."""
 
 import re
-import unittest
 
 import discord
 
@@ -30,6 +29,7 @@ from dmbot.dm_screen.rules import (
     unique_channel_name,
 )
 from dmbot.ears.protocol import Status
+from tests.pg import DatabaseTest
 
 GUILD, BOT, DM, PLAYER, OTHER = 1, 2, 3, 4, 5
 CID = "0123456789abcdef0123456789abcdef"
@@ -186,10 +186,13 @@ class FakeChannel:
         self.id = channel_id
 
 
-class NoticePeekButtonTests(unittest.IsolatedAsyncioTestCase):
+class NoticePeekButtonTests(DatabaseTest):
     async def asyncSetUp(self) -> None:
-        self.consent = ConsentStore(":memory:")
-        self.bot = DMBot(Settings(discord_token="t", ears_secret="s"), self.consent)
+        await super().asyncSetUp()
+        self.consent = ConsentStore(self.db)
+        self.bot = DMBot(
+            Settings(discord_token="t", ears_secret="s"), self.consent, CampaignStore(self.db)
+        )
         self.views: dict[int, discord.ui.View | None] = {}
 
         async def fake_post(
@@ -199,10 +202,6 @@ class NoticePeekButtonTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         self.bot.post = fake_post  # type: ignore[method-assign]
-
-    async def asyncTearDown(self) -> None:
-        self.consent.close()
-        self.bot.campaigns.close()
 
     async def notice_view(self, visibility: str | None) -> discord.ui.View | None:
         campaign_id = None
@@ -353,14 +352,9 @@ def test_visibility_button_custom_ids_round_trip() -> None:
     assert template.fullmatch(f"dmbot:vis:{CID}:everyone") is None
 
 
-class CardViewTests(unittest.IsolatedAsyncioTestCase):
+class CardViewTests(DatabaseTest):
     async def test_card_view_marks_current_setting_and_adds_hide_only_for_peek(self) -> None:
-        await card_view_check()
-
-
-async def card_view_check() -> None:
-    store = CampaignStore(":memory:")
-    try:
+        store = CampaignStore(self.db)
         campaign = await store.create(GUILD, "Frostmaiden", DM)  # default: peek
         view = card_view(campaign)
         buttons = [i for i in view.children if isinstance(i, VisibilityButton)]
@@ -369,8 +363,6 @@ async def card_view_check() -> None:
         assert any(isinstance(i, HideButton) for i in view.children)
         private = await store.set_dm_screen_visibility(GUILD, campaign.id, "private")
         assert not any(isinstance(i, HideButton) for i in card_view(private).children)
-    finally:
-        store.close()
 
 
 def test_open_is_described_as_the_whole_server() -> None:

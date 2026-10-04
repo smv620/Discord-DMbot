@@ -1,105 +1,206 @@
-"""Tiny SQLite helpers shared by the stores: connection settings, transactions, migrations.
+"""Postgres access shared by every store: a connection pool, per-server transactions,
+row-level security, and run-once migrations.
 
-All stores open their database with `connect()`, so every connection to the shared file
-uses the same settings (WAL, busy timeout, autocommit + explicit transactions).
+Isolation (CLAUDE.md, "Campaign and server isolation") is enforced twice:
+1. every query filters on the Discord server (guild) ID, and
+2. Postgres **row-level security**: every table with server data has a policy that only
+   shows rows whose `guild_id` matches the server set for the current transaction. The
+   policies are FORCEd, so they apply to the table owner too. Code must therefore reach
+   server data through `Database.guild(guild_id)`; without it, those tables look empty.
 
-Each store owns a list of (name, SQL) migrations. Names are recorded in
-`schema_migrations`, so each one runs exactly once per database file, in order.
-Never edit a migration that has shipped; add a new one instead.
+DMbot must connect as an ordinary (non-superuser) role, because superusers skip
+row-level security. `Database.open` refuses otherwise.
 """
 
 from __future__ import annotations
 
-import sqlite3
-import time
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager, suppress
-from pathlib import Path
+import logging
+import re
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
+from typing import Any
 
-Migration = tuple[str, str]
+from psycopg import AsyncConnection, sql
+from psycopg import errors as pg_errors
+from psycopg.conninfo import make_conninfo
+from psycopg.rows import DictRow, dict_row
+from psycopg_pool import AsyncConnectionPool
 
+from dmbot.schema import MIGRATIONS, Migration
 
-def connect(path: Path | str) -> sqlite3.Connection:
-    """Open a SQLite connection with the settings every store uses.
+log = logging.getLogger(__name__)
 
-    Autocommit mode (isolation_level=None): writes that must be atomic use
-    `transaction()`, so schema changes and data changes are covered alike.
-    """
-    target = str(path)
-    if target != ":memory:":
-        Path(target).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(target, check_same_thread=False, timeout=10, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    if target != ":memory:":
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-    return conn
+Conn = AsyncConnection[DictRow]
+
+# Any constant works; it just has to be the same for every DMbot process.
+MIGRATION_LOCK_KEY = 0x0D4B07
+_SCHEMA_NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 
-@contextmanager
-def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    """BEGIN IMMEDIATE … COMMIT, rolled back if anything (including COMMIT) fails.
-
-    The connection is always left outside a transaction, so one failure (disk full,
-    database busy) can't jam every later write.
-    """
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        yield conn
-        conn.execute("COMMIT")
-    except BaseException:
-        _rollback_quietly(conn)
-        raise
+class DatabaseError(RuntimeError):
+    """The database can't be used as configured. The message says how to fix it."""
 
 
-@contextmanager
-def read_snapshot(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    """A read-only transaction, so several SELECTs see one consistent state."""
-    conn.execute("BEGIN")
-    try:
-        yield conn
-        conn.execute("COMMIT")
-    except BaseException:
-        _rollback_quietly(conn)
-        raise
+class Database:
+    def __init__(self, pool: AsyncConnectionPool[Conn]) -> None:
+        self._pool = pool
 
+    @classmethod
+    async def open(
+        cls,
+        url: str,
+        *,
+        schema: str | None = None,
+        min_size: int = 1,
+        max_size: int = 10,
+        open_timeout: float = 15,
+        migrations: Sequence[Migration] = MIGRATIONS,
+    ) -> Database:
+        """Connect, check the role is safe, and bring the schema up to date.
 
-def _rollback_quietly(conn: sqlite3.Connection) -> None:
-    # SQLite may already have rolled back (e.g. on a full disk). Don't let a failing
-    # ROLLBACK hide the original error.
-    if conn.in_transaction:
-        with suppress(sqlite3.Error):
-            conn.execute("ROLLBACK")
+        `schema` puts everything in a separate Postgres schema (used by tests).
+        """
+        conninfo = url
+        if schema is not None:
+            if not _SCHEMA_NAME.match(schema):
+                raise ValueError(f"Invalid schema name: {schema!r}")
+            await _create_schema(url, schema)
+            conninfo = make_conninfo(url, options=f"-c search_path={schema}")
+        pool: AsyncConnectionPool[Conn] = AsyncConnectionPool(
+            conninfo,
+            connection_class=AsyncConnection[DictRow],
+            kwargs={"autocommit": True, "row_factory": dict_row, "connect_timeout": 5},
+            min_size=min_size,
+            max_size=max_size,
+            timeout=10,  # longest wait for a free connection before giving up
+            # Test each connection before use, so a Postgres restart doesn't break the
+            # next command.
+            check=AsyncConnectionPool.check_connection,
+            open=False,
+            name="dmbot",
+        )
+        try:
+            await pool.open(wait=True, timeout=open_timeout)
+        except Exception as exc:
+            await pool.close()
+            raise DatabaseError(
+                "Can't connect to the database. Check DATABASE_URL and that Postgres is running."
+            ) from exc
+        db = cls(pool)
+        try:
+            await db._check_role()
+            await db.migrate(migrations)
+        except BaseException:
+            await db.close()
+            raise
+        return db
 
+    async def close(self) -> None:
+        await self._pool.close()
 
-def apply_migrations(conn: sqlite3.Connection, migrations: Sequence[Migration]) -> list[str]:
-    """Apply any migrations not yet recorded. Returns the names applied now."""
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS schema_migrations ("
-        " name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)"
-    )
-    done = {row[0] for row in conn.execute("SELECT name FROM schema_migrations")}
-    applied: list[str] = []
-    for name, sql in migrations:
-        if name in done:
-            continue
-        with transaction(conn):
-            for statement in _statements(sql):
-                conn.execute(statement)
-            conn.execute(
-                "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
-                (name, int(time.time())),
+    @asynccontextmanager
+    async def guild(self, guild_id: int, *, snapshot: bool = False) -> AsyncIterator[Conn]:
+        """A transaction that can only see one Discord server's rows.
+
+        `snapshot=True` makes every read in the transaction see the same moment (for
+        backups). The transaction commits when the block ends, or rolls back on error.
+        """
+        async with self._pool.connection() as conn, conn.transaction():
+            if snapshot:
+                await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            await conn.execute(
+                "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild_id)),)
             )
-        applied.append(name)
-    return applied
+            yield conn
+
+    @asynccontextmanager
+    async def unscoped(self) -> AsyncIterator[Conn]:
+        """A transaction with no server set: server tables look empty. For schema work."""
+        async with self._pool.connection() as conn, conn.transaction():
+            yield conn
+
+    async def _check_role(self) -> None:
+        async with self.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT rolsuper, rolbypassrls, current_setting('server_encoding') AS encoding"
+                " FROM pg_roles WHERE rolname = current_user"
+            )
+            row = await cur.fetchone()
+        if row is None or row["rolsuper"] or row["rolbypassrls"]:
+            raise DatabaseError(
+                "DMbot's database user must be an ordinary user, not a superuser, so "
+                "each Discord server's data stays separate. See README, 'Database'."
+            )
+        if row["encoding"] != "UTF8":
+            raise DatabaseError(
+                "DMbot's database must use UTF8 encoding (campaign and player names can "
+                "contain any character). See README, 'Database'."
+            )
+
+    async def migrate(self, migrations: Sequence[Migration] = MIGRATIONS) -> list[str]:
+        """Apply migrations not yet recorded, all in one transaction.
+
+        An advisory lock makes this safe when several DMbot processes start together.
+        Returns the names applied now.
+        """
+        applied: list[str] = []
+        async with self.unscoped() as conn:
+            await _take_migration_lock(conn)
+            await conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations ("
+                " name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+            )
+            cur = await conn.execute("SELECT name FROM schema_migrations")
+            done = {r["name"] for r in await cur.fetchall()}
+            for name, statements in migrations:
+                if name in done:
+                    continue
+                await conn.execute(statements)  # no parameters: several statements are fine
+                await conn.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (name,))
+                applied.append(name)
+        if applied:
+            log.info("Database updated: %s", ", ".join(applied))
+        return applied
 
 
-def _statements(sql: str) -> list[str]:
-    """Split a migration into statements.
+async def _take_migration_lock(conn: AsyncConnection[Any]) -> None:
+    """Wait for any other DMbot updating the schema, but not forever."""
+    await conn.execute("SET LOCAL lock_timeout = '60s'")
+    try:
+        await conn.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_KEY,))
+    except pg_errors.LockNotAvailable as exc:
+        raise DatabaseError(
+            "Another copy of DMbot has been updating the database for over a minute. "
+            "Check it isn't stuck, then start this one again."
+        ) from exc
 
-    Limitation: splits on every ';', so migrations must not contain ';' inside string
-    literals or trigger bodies (CREATE TRIGGER … BEGIN …; END). Add a different runner
-    before writing one of those.
-    """
-    return [s.strip() for s in sql.split(";") if s.strip()]
+
+async def _create_schema(url: str, schema: str) -> None:
+    conn = await AsyncConnection.connect(url, autocommit=True)
+    try:
+        # Under the migration lock, so processes starting together don't race.
+        async with conn.transaction():
+            await _take_migration_lock(conn)
+            await conn.execute(
+                sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema))
+            )
+    finally:
+        await conn.close()
+
+
+async def drop_schema(url: str, schema: str) -> None:
+    """Remove a schema made with `Database.open(schema=...)` (tests)."""
+    if not _SCHEMA_NAME.match(schema):
+        raise ValueError(f"Invalid schema name: {schema!r}")
+    conn = await AsyncConnection.connect(url, autocommit=True)
+    try:
+        await conn.execute(
+            sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+        )
+    finally:
+        await conn.close()
+
+
+def row_int(row: dict[str, Any], key: str) -> int | None:
+    value = row[key]
+    return None if value is None else int(value)
