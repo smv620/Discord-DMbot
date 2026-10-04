@@ -1,0 +1,111 @@
+import json
+import unittest
+from pathlib import Path
+
+from dmbot.ears.protocol import (
+    AUDIO_FRAME_KIND,
+    AUDIO_HEADER_BYTES,
+    Health,
+    Hello,
+    Speaking,
+    Status,
+    allowlist_command,
+    decode_audio_frame,
+    encode_audio_frame,
+    join_command,
+    leave_command,
+    parse_ears_message,
+)
+
+FIXTURES = json.loads(
+    (Path(__file__).resolve().parents[2] / "protocol" / "fixtures.json").read_text()
+)
+
+
+def pcm_from(samples: list[int]) -> bytes:
+    return b"".join(s.to_bytes(2, "little", signed=True) for s in samples)
+
+
+class SharedFixtures(unittest.TestCase):
+    def test_constants_match(self) -> None:
+        self.assertEqual(AUDIO_HEADER_BYTES, FIXTURES["audioFrameHeaderBytes"])
+        self.assertEqual(AUDIO_FRAME_KIND, FIXTURES["audioFrameKind"])
+
+    def test_decode_fixture_frames(self) -> None:
+        for f in FIXTURES["audioFrames"]:
+            frame = decode_audio_frame(bytes.fromhex(f["hex"]))
+            assert frame is not None
+            self.assertEqual(frame.guild_id, int(f["guildId"]))
+            self.assertEqual(frame.user_id, int(f["userId"]))
+            self.assertEqual(frame.timestamp_ms, f["timestampMs"])
+            self.assertEqual(frame.pcm, pcm_from(f["samples"]))
+
+    def test_encode_matches_fixture(self) -> None:
+        for f in FIXTURES["audioFrames"]:
+            encoded = encode_audio_frame(
+                int(f["guildId"]), int(f["userId"]), f["timestampMs"], pcm_from(f["samples"])
+            )
+            self.assertEqual(encoded.hex(), f["hex"])
+
+
+class AudioFrames(unittest.TestCase):
+    def test_rejects_malformed(self) -> None:
+        self.assertIsNone(decode_audio_frame(b"\x01\x02"))
+        wrong_kind = bytes([9]) + bytes(AUDIO_HEADER_BYTES - 1) + b"\x00\x00"
+        self.assertIsNone(decode_audio_frame(wrong_kind))
+        odd = bytes([AUDIO_FRAME_KIND]) + bytes(AUDIO_HEADER_BYTES - 1) + b"\x00"
+        self.assertIsNone(decode_audio_frame(odd))
+
+    def test_duration(self) -> None:
+        frame = decode_audio_frame(encode_audio_frame(1, 2, 3, bytes(640)))
+        assert frame is not None
+        self.assertAlmostEqual(frame.duration_ms, 20.0)
+
+
+class ControlMessages(unittest.TestCase):
+    def test_parses_each_type(self) -> None:
+        self.assertEqual(
+            parse_ears_message('{"type":"hello","version":1,"secret":"s"}'), Hello(1, "s")
+        )
+        self.assertEqual(
+            parse_ears_message('{"type":"status","state":"joined","guildId":"5","channelId":"6"}'),
+            Status("joined", 5, 6),
+        )
+        self.assertEqual(
+            parse_ears_message(
+                '{"type":"speaking","guildId":"1","userId":"2","event":"end","timestampMs":9}'
+            ),
+            Speaking(1, 2, "end", 9),
+        )
+        self.assertEqual(
+            parse_ears_message(
+                '{"type":"health","guildId":"1","userId":"2",'
+                '"framesReceived":48,"framesExpected":50}'
+            ),
+            Health(1, 2, 48, 50),
+        )
+
+    def test_rejects_invalid(self) -> None:
+        for raw in [
+            "nope",
+            "[]",
+            '{"type":"hello","version":"1","secret":"s"}',
+            '{"type":"hello","version":true,"secret":"s"}',
+            '{"type":"status","state":"dancing"}',
+            '{"type":"speaking","guildId":"1","userId":"x","event":"end","timestampMs":1}',
+            '{"type":"speaking","guildId":"1","userId":"2","event":"later","timestampMs":1}',
+            '{"type":"health","guildId":"1","userId":"2","framesReceived":-1,"framesExpected":1}',
+            '{"type":"mystery"}',
+        ]:
+            self.assertIsNone(parse_ears_message(raw), raw)
+
+    def test_commands_use_string_ids(self) -> None:
+        self.assertEqual(
+            json.loads(join_command(18446744073709551615, 2)),
+            {"type": "join", "guildId": "18446744073709551615", "channelId": "2"},
+        )
+        self.assertEqual(json.loads(leave_command(1)), {"type": "leave", "guildId": "1"})
+        self.assertEqual(
+            json.loads(allowlist_command(1, {30, 4})),
+            {"type": "allowlist", "guildId": "1", "userIds": ["4", "30"]},
+        )

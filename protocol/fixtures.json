@@ -1,0 +1,20 @@
+{
+  "_comment": "Shared test vectors for the ears <-> core protocol. Both test suites load this file. Change it only together with ears/src/protocol.ts and core/src/dmbot/ears/protocol.py.",
+  "audioFrameHeaderBytes": 25,
+  "audioFrameKind": 1,
+  "audioFrames": [
+    {
+      "guildId": "987654321098765432",
+      "userId": "123456789012345678",
+      "timestampMs": 1700000000000,
+      "samples": [
+        0,
+        1,
+        -1,
+        32767,
+        -32768
+      ],
+      "hex": "010db4da5f49f8b47801b69b4ba630f34e0000018bcfe5680000000100ffffff7f0080"
+    }
+  ]
+}
