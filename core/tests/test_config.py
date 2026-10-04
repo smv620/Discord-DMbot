@@ -3,7 +3,7 @@ from pathlib import Path
 
 from dmbot.config import ConfigError, load_settings
 
-BASE = {"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s"}
+BASE = {"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s", "DATABASE_URL": "postgresql://x"}
 
 
 class ConfigTests(unittest.TestCase):
@@ -13,7 +13,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(s.data_dir, Path("data"))
 
     def test_names_missing(self) -> None:
-        with self.assertRaisesRegex(ConfigError, "DISCORD_TOKEN, EARS_SHARED_SECRET"):
+        with self.assertRaisesRegex(ConfigError, "DISCORD_TOKEN, EARS_SHARED_SECRET, DATABASE_URL"):
             load_settings({})
 
     def test_bad_values(self) -> None:

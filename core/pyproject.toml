@@ -12,6 +12,8 @@ dependencies = [
     "aiohttp>=3.9",
     "websockets>=13,<17",
     "python-dotenv>=1.0",
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
 ]
 
 [project.optional-dependencies]

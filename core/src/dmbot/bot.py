@@ -32,6 +32,7 @@ from dmbot.channel_access import (
 )
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.db import Database
 from dmbot.dm_screen import ensure_dm_screen
 from dmbot.ears.protocol import (
     AudioFrame,
@@ -86,8 +87,8 @@ class DMBot(commands.Bot):
         self,
         settings: Settings,
         consent: ConsentStore,
+        campaigns: CampaignStore,
         transcriber: Transcriber | None = None,
-        campaigns: CampaignStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -95,8 +96,7 @@ class DMBot(commands.Bot):
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
         self.consent = consent
-        # Tests may omit the store; run() always passes the real one.
-        self.campaigns = campaigns if campaigns is not None else CampaignStore(":memory:")
+        self.campaigns = campaigns
         self.tables: dict[int, Table] = {}
         self.pipeline = TranscriptionPipeline(
             transcriber or PlaceholderTranscriber(),
@@ -533,17 +533,13 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
 
 
 async def run(settings: Settings) -> None:
-    db_path = settings.data_dir / "dmbot.sqlite"
-    campaigns = CampaignStore(db_path)
-    consent = ConsentStore(db_path)
+    db = await Database.open(settings.database_url)
     transcriber = build_transcriber(settings.transcription)
     try:
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
-        bot = DMBot(settings, consent, transcriber, campaigns)
+        bot = DMBot(settings, ConsentStore(db), CampaignStore(db), transcriber)
         async with bot:
             await bot.start(settings.discord_token)
     finally:
         with contextlib.suppress(Exception):
-            consent.close()
-        with contextlib.suppress(Exception):
-            campaigns.close()
+            await db.close()

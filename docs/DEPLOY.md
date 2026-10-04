@@ -35,9 +35,14 @@ work in progress and `beta` is for testing; see CLAUDE.md.)
 git clone --branch main https://github.com/smv620/Discord-DMbot.git
 cd Discord-DMbot
 cp .env.example .env
-nano .env        # fill in DISCORD_TOKEN, EARS_SHARED_SECRET, TRANSCRIBER, …
+nano .env        # fill in DISCORD_TOKEN, EARS_SHARED_SECRET, TRANSCRIBER,
+                 # POSTGRES_ADMIN_PASSWORD, DMBOT_DB_PASSWORD, …
 chmod 600 .env   # only you can read your secrets
 ```
+
+Make both database passwords long, random, and letters and numbers only
+(`openssl rand -hex 24`). Compose runs Postgres for you and sets `DATABASE_URL`; the
+database is not reachable from outside the server.
 
 Leave `DISCORD_DEV_GUILD_ID` set to your server's ID — slash commands appear there
 instantly. (Without it, commands register globally, which can take up to an hour.)
@@ -71,12 +76,15 @@ The containers restart automatically after a crash or a server reboot.
 
 ## Data and backups
 
-Consent records live in the `dmbot-data` Docker volume. Back it up with:
+Campaigns and consent live in Postgres, in the `postgres-data` Docker volume. Back it
+up with:
 
 ```bash
-docker run --rm -v discord-dmbot_dmbot-data:/data -v "$PWD":/backup busybox \
-  tar czf /backup/dmbot-data.tgz -C /data .
+docker compose exec -T postgres pg_dump -U postgres -Fc dmbot > dmbot-$(date +%F).dump
 ```
+Restore into a fresh install with
+`docker compose exec -T postgres pg_restore -U postgres -d dmbot --clean < dmbot-DATE.dump`.
+The Whisper model is kept in its own volume and downloads again if lost, so it needs no backup.
 
 ## Security checklist
 

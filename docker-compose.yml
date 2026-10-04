@@ -2,6 +2,25 @@
 # Settings come from .env in this folder (copy .env.example). Nothing is exposed to the
 # internet: ears talks to core over a private Docker network.
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      # The admin (superuser) password is only used inside this container. DMbot itself
+      # connects as the ordinary "dmbot" role created by deploy/postgres-init.
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
+      DMBOT_DB_PASSWORD: ${DMBOT_DB_PASSWORD:?set DMBOT_DB_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Over TCP, so it only passes once first-time setup has finished.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U dmbot -d dmbot"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   core:
     build:
       context: ./core
@@ -10,8 +29,12 @@ services:
     env_file: .env
     environment:
       EARS_WS_HOST: 0.0.0.0   # listen on the private network so ears can reach it
+      DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
-      - dmbot-data:/data       # consent records and (later) house rules
+      - dmbot-data:/data       # local files (campaign data itself is in Postgres)
       - whisper-models:/models # downloaded Whisper models, kept across updates
     restart: unless-stopped
 
@@ -25,5 +48,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres-data:
   dmbot-data:
   whisper-models:

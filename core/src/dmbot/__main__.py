@@ -24,13 +24,18 @@ def main() -> None:
         raise SystemExit(2) from exc
 
     from dmbot.bot import run  # imported late so config errors show before discord loads
+    from dmbot.db import DatabaseError
     from dmbot.transcription.base import TranscriberUnavailable
 
     try:
         with contextlib.suppress(KeyboardInterrupt):
-            asyncio.run(run(settings))
+            # psycopg's async mode needs a selector event loop; Windows defaults to another.
+            asyncio.run(run(settings), loop_factory=asyncio.SelectorEventLoop)
     except TranscriberUnavailable as exc:
         print(f"Transcription problem: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    except DatabaseError as exc:
+        print(f"Database problem: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
 
