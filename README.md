@@ -62,3 +62,13 @@ They run side by side on the same computer and talk over a local, password-prote
 
 Rules for contributors (human or Claude) are in [`CLAUDE.md`](CLAUDE.md). CI runs
 type checks, lint, and tests for both parts on every pull request.
+
+## License
+
+Licensed under the [PolyForm Strict License 1.0.0](LICENSE). You may use DMbot for
+noncommercial purposes. Changing it, building on it, redistributing it, or any
+commercial use requires written permission from the owner — contact
+[@smv620](https://github.com/smv620).
+
+Rules content from the System Reference Document 5.2 is used under
+[CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) and attributed where it appears.
