@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -11,6 +11,7 @@ from dmbot.campaigns import CampaignStore
 from dmbot.channel_access import SAME_CHANNEL
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.dm_screen import DMScreenError
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
 from tests.pg import DatabaseTest
 
@@ -34,9 +35,21 @@ def member(user_id: int, *, manager: bool = False) -> Any:
     return m
 
 
+async def screen_from_invoking_channel(bot: DMBot, interaction: Any, campaign: Any) -> int:
+    """Stand-in for the real DM-screen hook (tested in test_dm_screen.py), so these tests
+    can focus on sessions: the saved screen if it still exists, else the invoking channel."""
+    saved = campaign.dm_screen_channel_id
+    if saved is not None and bot.get_channel(saved) is not None:
+        return int(saved)
+    return int(interaction.channel_id)
+
+
 class SessionTests(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        hook = patch("dmbot.bot.ensure_dm_screen", screen_from_invoking_channel)
+        hook.start()
+        self.addCleanup(hook.stop)
         self.consent = ConsentStore(self.db)
         self.campaigns = CampaignStore(self.db)
         self.bot = DMBot(Settings(discord_token="t", ears_secret="s"), self.consent, self.campaigns)
@@ -101,6 +114,16 @@ class SessionTests(DatabaseTest):
         ok, message = await self.start()
         self.assertTrue(ok, message)
         self.assertEqual(self.bot.tables[GUILD].screen_channel_id, OTHER_TEXT)
+
+    async def test_dm_screen_problem_is_shown_to_the_dm_and_nothing_starts(self) -> None:
+        async def failing_hook(bot: Any, interaction: Any, campaign: Any) -> int:
+            raise DMScreenError("I need **Manage Roles** to set up the DM screen.")
+
+        with patch("dmbot.bot.ensure_dm_screen", failing_hook):
+            ok, message = await self.start()
+        self.assertFalse(ok)
+        self.assertIn("Manage Roles", message)
+        self.assertNotIn(GUILD, self.bot.tables)
 
     async def test_player_cannot_start_someone_elses_campaign(self) -> None:
         ok, message = await self.start(member(PLAYER))

@@ -241,3 +241,6 @@ data/
 *.db
 logs/
 *.log
+# Shared live-testing logs (kept in git so every Claude session can read them)
+!docs/testing-status.log
+!docs/testing-history.log
