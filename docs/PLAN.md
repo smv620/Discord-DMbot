@@ -81,19 +81,41 @@ voice → transcription → ① name fixing → ② off-topic filter → ③ spe
    the DM, the DM narrating, table talk, or non-game content.
 4. **Helpers** consume the cleaned, labeled stream.
 
-**Hosting target: public bot, isolated per server (decided 2026-10-04).** DMbot will be a
-public bot others can install, deployed on a scalable Kubernetes platform:
-- **Each Discord server gets its own worker** (a pod, started when the server connects)
-  with its **own persistent storage**, keyed by server ID, listing which campaigns it owns.
-  No two servers share a worker, a database, or settings.
-- **Technical note:** Discord gives a public bot **one identity and one gateway
-  connection** (split into shards as it grows), not one per server. So a small **gateway
-  router** holds the Discord connection and hands each server's events and voice session
-  to that server's worker. The isolation the owner wants comes from per-server workers and
-  storage; the router never stores campaign data.
-- Local Whisper per worker doesn't scale to many simultaneous tables, so hosted
-  deployments will mostly use cloud transcription, paid with each customer's own key (see
-  API keys). Self-hosting with local Whisper stays supported (docs/DEPLOY.md, Docker).
+**Hosting target: public bot, shard pods + workers (decided 2026-10-04, #57).** DMbot will
+be a public bot others can install, on a scalable Kubernetes platform. *This replaces the
+earlier "one pod per Discord server" idea:* Discord gives a bot one gateway connection per
+shard (each shard covers up to ~2,500 servers), and isolation is stronger in the database
+than in separate volumes.
+
+| Piece | Job | Scales by |
+|---|---|---|
+| **Shard pods** (`core` + `ears`) | Commands, buttons, voice capture for the servers on their shards | `SHARD_COUNT` / `SHARD_IDS` settings (1 to start) |
+| **Transcription & AI workers** (later) | Whisper or cloud transcription, name fixing, rules advice, TimeBot | Live game sessions, via a job queue |
+| **Scheduler worker** (later, single) | Reminders, retention cleanup, timed jobs | One runner, so nothing is sent twice |
+| **Postgres** | All durable data: campaigns, consent, active sessions, and later house rules, NPCs, clock | Managed database |
+| **Redis** (later) | Short-lived coordination only: session leases, locks, queues, cooldowns | |
+| **Object storage** (later) | Transcript and backup files | |
+
+- **Isolation:** every table has the server ID, every query filters on it, and Postgres
+  **row-level security** (forced, so even the table owner is subject to it) only returns
+  rows for the server set in the current transaction (#68). DMbot refuses to connect as a
+  superuser. Limit: today the app's database user also owns the tables, so row-level
+  security guards against a forgotten filter, not against a compromised process. Before
+  hosting for the public, split it into an owner user for migrations and an app user
+  that can only read and write rows.
+- **Consent changes reach every process:** each process caches consent for the instant
+  audio check. Once more than one process can change a server's consent (for example a
+  DM button handled by a different shard), a change must notify the others (Postgres
+  `LISTEN/NOTIFY`, or routing all consent writes through the shard that owns the
+  server). A revoke must stop recording everywhere at once (#69).
+- **Shard manager from day one:** `AutoShardedBot` in core, the same shards in ears, so
+  scaling is a settings change (#69).
+- **Pods are disposable:** active sessions live in Postgres; a restarted or moved pod
+  resumes them, rejoins voice, and tells the DM screen. A few seconds of audio during the
+  gap can't be saved (#70).
+- **Structured JSON logs** with shard, server, and campaign IDs; never names or speech (#69).
+- Hosted deployments will mostly use cloud transcription with the customer's own key
+  (#50); self-hosting with local Whisper stays supported (docs/DEPLOY.md, Docker).
 - A public bot needs a **privacy policy and terms of service**, and **Discord verification**
   once it's in 75+ servers.
 
@@ -216,7 +238,8 @@ one `Transcriber` interface and is chosen by `TRANSCRIBER=` in config, so switch
 **cloud pay-as-you-go** API (any OpenAI-compatible endpoint) is a settings change, not a
 code change — for DMs without a GPU.
 
-**Hosting, self-hosted (decided 2026-10-03).** A cloud server runs both ears and core. Because local
+**Hosting, self-hosted (decided 2026-10-03).** A cloud server runs ears, core, and Postgres
+(decided 2026-10-04: Postgres everywhere, so self-hosting and hosting debug the same database). Because local
 Whisper runs on that server, its size decides transcription quality and speed: a CPU-only
 server suits the `base`/`small` models; larger models need a GPU server, or switch to
 `TRANSCRIBER=cloud`. Both parts ship as Docker containers started with one
@@ -336,5 +359,5 @@ keeps a single "who pays for this call" seam so that switch stays small.
 - Final wording of the consent DM and join reminder (#33)
 - Whether revoking consent also removes a person's past lines from stored transcripts (#34)
 - Whether consenting members who missed a session can download its transcript (#41)
-- Hosting provider and Kubernetes setup for the public bot; GPU vs cloud transcription per worker
+- Hosting provider and Kubernetes setup (Helm) for the public bot; GPU vs cloud transcription workers
 - Privacy policy and terms of service text for the public bot
