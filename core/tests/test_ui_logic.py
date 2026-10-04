@@ -114,12 +114,13 @@ class BackupName(unittest.TestCase):
         from dmbot.ui.logic import backup_campaign_name, dm_list
 
         self.assertEqual(backup_campaign_name({"campaign": {"name": " Frost "}}), "Frost")
-        for bad in (
+        bads: list[object] = [
             None,
             [],
             {"campaign": 5},
             {"campaign": {"name": 5}},
             {"campaign": {"name": " "}},
-        ):
+        ]
+        for bad in bads:
             self.assertIsNone(backup_campaign_name(bad))
         self.assertEqual(dm_list(campaign(dm_user_ids=frozenset({9, 7}))), "<@7>, <@9>")
