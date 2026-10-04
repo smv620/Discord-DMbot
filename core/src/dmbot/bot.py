@@ -20,6 +20,13 @@ from discord.ext import commands
 
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.capture_log import CaptureLog
+from dmbot.channel_access import (
+    SAME_CHANNEL,
+    STARTING_UP,
+    join_blocked_message,
+    notice_failed_message,
+    post_problems,
+)
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.ears.protocol import (
@@ -59,6 +66,7 @@ class Table:
     segmenter: Segmenter
     capture_log: CaptureLog = field(default_factory=CaptureLog)
     listening: bool = False
+    notice_posted: bool = False
 
 
 class DMBot(commands.Bot):
@@ -144,13 +152,18 @@ class DMBot(commands.Bot):
         member = guild.get_member(user_id) if guild else None
         return member.display_name if member else f"<@{user_id}>"
 
-    async def post(self, channel_id: int, text: str) -> None:
+    async def post(self, channel_id: int, text: str) -> bool:
+        """Send a message; returns False (and logs) if it could not be posted."""
         channel = self.get_channel(channel_id)
-        if isinstance(channel, discord.abc.Messageable):
-            try:
-                await channel.send(text, allowed_mentions=NO_PINGS)
-            except discord.HTTPException as exc:
-                log.warning("Could not post to channel %s: %s", channel_id, exc)
+        if not isinstance(channel, discord.abc.Messageable):
+            log.warning("Could not post to channel %s: channel not found", channel_id)
+            return False
+        try:
+            await channel.send(text, allowed_mentions=NO_PINGS)
+        except discord.HTTPException as exc:
+            log.warning("Could not post to channel %s: %s", channel_id, exc)
+            return False
+        return True
 
     # ---- ears events -------------------------------------------------------
 
@@ -186,7 +199,6 @@ class DMBot(commands.Bot):
 
     async def _on_status(self, table: Table, status: Status) -> None:
         if status.state == "joined":
-            first_time = not table.listening
             table.listening = True
             count = len(await self.consent.consenting(table.guild_id))
             await self.post(
@@ -194,13 +206,19 @@ class DMBot(commands.Bot):
                 f"✅ Listening in <#{table.voice_channel_id}>. "
                 f"{count} player(s) have opted in to recording.",
             )
-            if first_time:
-                await self.post(
+            if not table.notice_posted:
+                # Players learn they're being recorded from this notice, so a failure
+                # must reach the DM; it is retried on the next join.
+                table.notice_posted = await self.post(
                     table.voice_channel_id,
                     "🔴 **DMbot is listening in this channel** to help the DM.\n"
                     "Only people who opt in with `/consent give` are recorded. "
                     "Change your mind any time with `/consent revoke`.",
                 )
+                if not table.notice_posted:
+                    await self.post(
+                        table.screen_channel_id, notice_failed_message(table.voice_channel_id)
+                    )
         elif status.state in ("left", "error"):
             table.listening = False
             detail = status.detail or "The voice connection ended."
@@ -287,6 +305,29 @@ async def table_join(interaction: discord.Interaction) -> None:
         return
 
     voice = member.voice.channel
+    me = cast(discord.Member | None, guild.me)  # None while the guild is still loading
+    if me is None:
+        await interaction.response.send_message(STARTING_UP, ephemeral=True)
+        return
+    if interaction.channel_id == voice.id:
+        await interaction.response.send_message(SAME_CHANNEL, ephemeral=True)
+        return
+    # post() looks channels up in the cache, so an uncached screen channel can't be used.
+    # app_permissions is Discord's own resolved view of the invoking channel (threads too).
+    screen_visible = bot.get_channel(interaction.channel_id) is not None
+    problems = post_problems(
+        screen_id=interaction.channel_id,
+        screen_perms=interaction.app_permissions if screen_visible else None,
+        screen_in_thread=isinstance(interaction.channel, discord.Thread),
+        voice_id=voice.id,
+        voice_perms=voice.permissions_for(me),
+    )
+    if problems:
+        await interaction.response.send_message(
+            join_blocked_message(problems), ephemeral=True, allowed_mentions=NO_PINGS
+        )
+        return
+
     table = Table(
         guild_id=guild.id,
         voice_channel_id=voice.id,

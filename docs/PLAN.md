@@ -101,6 +101,9 @@ server suits the `base`/`small` models; larger models need a GPU server, or swit
 
 **Consent & retention.** `/consent` opt-in per player, an announcement when listening
 starts, configurable auto-delete of audio and transcripts, and player data removal.
+The announcement posts once per `/table join` in the voice channel's chat, and is not
+repeated after a voice-service reconnect. `/table join` refuses to start if the bot
+can't post it, and if it still fails, the DM is warned and it is retried on the next join.
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
 
