@@ -28,8 +28,11 @@ sudo usermod -aG docker $USER   # log out and back in after this
 
 ## 3. Get DMbot and configure it
 
+Servers run the **`main`** branch: tested code that is ready to deploy. (`development` is
+work in progress and `beta` is for testing; see CLAUDE.md.)
+
 ```bash
-git clone https://github.com/smv620/Discord-DMbot.git
+git clone --branch main https://github.com/smv620/Discord-DMbot.git
 cd Discord-DMbot
 cp .env.example .env
 nano .env        # fill in DISCORD_TOKEN, EARS_SHARED_SECRET, TRANSCRIBER, …
@@ -57,7 +60,8 @@ in a volume, so restarts are fast.
 
 | Task | Command |
 |---|---|
-| Update to the latest version | `git pull && docker compose up -d --build` |
+| Update to the latest release | `git checkout main && git pull origin main && docker compose up -d --build` |
+| Test a beta on a test server | `git checkout beta && git pull origin beta && docker compose up -d --build` |
 | Restart | `docker compose restart` |
 | Stop | `docker compose down` |
 | See logs | `docker compose logs -f core` (or `ears`) |
