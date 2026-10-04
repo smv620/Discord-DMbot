@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import discord
 
@@ -11,6 +11,7 @@ from dmbot.campaigns import CampaignStore
 from dmbot.channel_access import SAME_CHANNEL
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.dm_screen import DMScreenError
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
 from tests.pg import DatabaseTest
 
@@ -101,6 +102,16 @@ class SessionTests(DatabaseTest):
         ok, message = await self.start()
         self.assertTrue(ok, message)
         self.assertEqual(self.bot.tables[GUILD].screen_channel_id, OTHER_TEXT)
+
+    async def test_dm_screen_problem_is_shown_to_the_dm_and_nothing_starts(self) -> None:
+        async def failing_hook(bot: Any, interaction: Any, campaign: Any) -> int:
+            raise DMScreenError("I need **Manage Roles** to set up the DM screen.")
+
+        with patch("dmbot.bot.ensure_dm_screen", failing_hook):
+            ok, message = await self.start()
+        self.assertFalse(ok)
+        self.assertIn("Manage Roles", message)
+        self.assertNotIn(GUILD, self.bot.tables)
 
     async def test_player_cannot_start_someone_elses_campaign(self) -> None:
         ok, message = await self.start(member(PLAYER))

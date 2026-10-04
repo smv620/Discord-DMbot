@@ -29,8 +29,12 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
 1. **Create the bot.** In the [Discord Developer Portal](https://discord.com/developers/applications):
    New Application → **Bot** → Reset Token (copy it). Under **Installation**, give it the
    `bot` and `applications.commands` scopes with permissions **View Channels**, **Send
-   Messages**, **Connect**, and **Speak**. Use the install link to add it to your private
-   test server.
+   Messages**, **Read Message History**, **Connect**, **Speak**, **Manage Channels**, and
+   **Manage Roles**. Use the install link to add it to your private test server.
+   *Why Manage Channels and Manage Roles:* Discord grants these for the whole server, but
+   DMbot only uses them on its own DM screen channels: it creates `#dm-screen-<campaign>`,
+   hides it from players unless you choose otherwise, and lets a player peek after a
+   spoiler warning. It never changes other channels or anyone's server roles.
 2. **Configure.** Copy `.env.example` to `.env` in the repo root and fill in
    `DISCORD_TOKEN`, `DISCORD_DEV_GUILD_ID`, a long random `EARS_SHARED_SECRET`, and
    `DATABASE_URL` (see [Database](#database)).
@@ -106,7 +110,7 @@ go to an outside service.
 
 | Command | What it does |
 |---|---|
-| `/dmbot start` | Pick the campaign (or make a new one) and the voice channel, then start listening. DM updates go to the campaign's DM screen (the channel you ran it in, the first time). |
+| `/dmbot start` | Pick the campaign (or make a new one) and the voice channel, then start listening. DM notes go to the campaign's `#dm-screen-<campaign>` channel, which DMbot makes the first time. |
 | `/dmbot stop` | Stop listening (the campaign's DM, or a server manager). |
 | `/dmbot help` | What DMbot does and doesn't do, plus a **Status** button. |
 | `/dmbot backup` | Download a copy of a campaign you run. |

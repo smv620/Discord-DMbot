@@ -102,7 +102,7 @@ def settings_summary(
         f"• **If the main rules don't cover something:** {ruleset_label(fallback)}",
         "• **Optional rules** from Xanathar's and Tasha's (where the main rules don't "
         f"cover them): {'on' if optional_rules else 'off'}",
-        f"• **Who sees the DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
+        f"• **Who can see the DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
     ]
 
 
@@ -137,7 +137,7 @@ def screen_note(visibility: str) -> str:
     if visibility == "peek":
         return " (players can peek if they choose)"
     if visibility == "open":
-        return " (everyone at the table can see it)"
+        return " (everyone in the server can see it)"
     return ""
 
 
