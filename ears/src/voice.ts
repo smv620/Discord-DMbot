@@ -11,7 +11,7 @@ import prism from "prism-media";
 import { Downsampler } from "./audio.js";
 import type { Allowlist } from "./consent.js";
 import type { CoreLink } from "./coreLink.js";
-import { UtteranceTracker } from "./health.js";
+import { UtteranceTracker, isSilenceFrame } from "./health.js";
 import { encodeAudioFrame } from "./protocol.js";
 
 /** End a speaker's stream after this much silence; one stream = one utterance. */
@@ -34,6 +34,8 @@ export interface TableSessionOptions {
   allowlist: Allowlist;
   link: CoreLink;
   isBotOrUnknown: BotCheck;
+  /** Log per-utterance audio health (user IDs and counts only). */
+  debugAudio?: boolean;
   /** Called once when the session ends for any reason. */
   onClosed?: () => void;
 }
@@ -119,9 +121,15 @@ export class TableSession {
 
     link.send({ type: "speaking", guildId: this.guildId, userId, event: "start", timestampMs: Date.now() });
 
+    // Health is measured on the Opus packets as they arrive, so silence frames
+    // (which mark a pause) can be told apart from lost packets. Times are delivery
+    // times; this listener runs before the piped decoder sees each packet.
+    stream.on("data", (packet: Buffer) => {
+      pipeline.tracker.packet(Date.now(), isSilenceFrame(packet));
+    });
+
     decoder.on("data", (pcm48k: Buffer) => {
       const now = Date.now();
-      pipeline.tracker.frame(now);
       const pcm16k = pipeline.downsampler.push(pcm48k);
       if (pcm16k.length > 0) link.sendAudio(encodeAudioFrame(this.guildId, userId, now, pcm16k));
     });
@@ -152,7 +160,16 @@ export class TableSession {
     link.send({ type: "speaking", guildId: this.guildId, userId, event: "end", timestampMs: Date.now() });
     const health = pipeline.tracker.finish();
     if (report && health) {
-      link.send({ type: "health", guildId: this.guildId, userId, ...health });
+      // Send only the protocol fields; pauses/pausedMs are local debug info.
+      const { framesReceived, framesExpected } = health;
+      link.send({ type: "health", guildId: this.guildId, userId, framesReceived, framesExpected });
+      if (this.options.debugAudio) {
+        console.log(
+          `[ears] audio user=${userId} received=${framesReceived} expected=${framesExpected} ` +
+            `pauses=${health.pauses} paused_ms=${health.pausedMs} ` +
+            `link_dropped_total=${link.droppedAudioFrames}`,
+        );
+      }
     }
   }
 

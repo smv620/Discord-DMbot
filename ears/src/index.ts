@@ -53,6 +53,7 @@ async function handleCommand(command: CoreCommand): Promise<void> {
         allowlist,
         link,
         isBotOrUnknown: (userId) => isBotOrUnknown(command.guildId, userId),
+        debugAudio: config.debugAudio,
         onClosed: () => {
           if (sessions.get(command.guildId) === session) sessions.delete(command.guildId);
         },

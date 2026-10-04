@@ -39,6 +39,14 @@ table's voice channel, transcribes each speaker, and privately advises the DM on
   `@snazzah/davey` is the best-supported receive path. ears joins the table channel,
   subscribes only to consenting, non-bot users, decodes Opus to 16 kHz mono PCM, and
   streams frames to core. It holds no game logic.
+- **Audio health** (the "audio NN%" in capture checks) compares Opus packets received
+  with packets expected per utterance. Speaker pauses, which clients mark with five
+  silence frames, are excluded. Known limit: packets lost right after a pause, such as
+  DAVE decrypt failures on resumed speech, look like part of the pause and aren't
+  counted (up to ~800 ms per pause). Exact detection is tracked in #43. RTP sequence
+  numbers would be exact, but `@discordjs/voice` strips the RTP header before the
+  receive stream, so reading them needs its internal UDP socket. Packet arrival plus
+  silence frames was chosen instead, as the public-API option.
 - **core** (Python): everything else — slash commands, consent records, transcription,
   AI analysis, storage, integrations. Developed in PyCharm.
 - Both use the same Discord bot token. ears requests only the voice-state intent.
