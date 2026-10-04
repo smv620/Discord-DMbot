@@ -41,7 +41,7 @@ They run side by side on the same computer and talk over a local, password-prote
 4. **Start ears** (second terminal, Node 22.12+):
    ```bash
    cd ears
-   npm install
+   npm ci
    npm run dev
    ```
 5. **In Discord:** make a private text channel (e.g. `#dm-screen`) and, in the channel's
