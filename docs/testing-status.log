@@ -1,0 +1,65 @@
+DMbot - TESTING STATUS (current testing only)
+=============================================
+Last updated: 2026-10-04 by the PyCharm session
+
+What this file is
+  The immediate live-testing picture: what's next, what's blocking it, and the latest
+  result. It is kept SHORT: finished items move to docs/testing-history.log (the full
+  record, append-only), and this file is trimmed. The PyCharm session maintains both.
+  The web session reads them; it doesn't need copied terminal output.
+  Never put tokens, .env contents or players' personal data here (the repo is public).
+
+------------------------------------------------------------------------------
+NEXT TEST: Test 1, run 2: voice capture with 2 people (docs/LIVE_TEST.md)
+------------------------------------------------------------------------------
+Why
+  Run 1 (2026-10-04) had only the DM. It was a partial pass: consent revoke, two
+  speakers at once, and overlapping speech weren't tested. The audio % was
+  borderline, but the cause has since been fixed (#36, PR #46).
+
+Before the test (owner)
+  [ ] .env: add DMBOT_DEBUG_AUDIO=1
+  [ ] A second person in the voice channel (a phone with a second account is fine)
+  [ ] Optional: the "clumsy" tool (Windows) to add ~5% packet loss for the sensitivity check
+
+Before the test (PyCharm session)
+  [ ] git fetch, check out development, pull; pip install -e ".[dev]" in core; npm ci in ears
+  [ ] Start core, then ears; confirm "ears connected"
+
+Commands to use
+  /table join, /consent give, /consent revoke, /table status, /table leave
+  (/dmbot start is planned in #48 and NOT built yet)
+
+What to check (in addition to LIVE_TEST.md step 5)
+  - Debug line per utterance in the ears terminal:
+      [ears] audio user=... received=... expected=... pauses=... paused_ms=... link_dropped_total=...
+  - Long sentences with short pauses should read 95-100% with pauses > 0
+  - With ~5% loss injected, the % should DROP. That's the proof the #36 fix doesn't hide loss.
+  - link_dropped_total stays at 0
+  - The second person runs /consent revoke and disappears from the next capture checks
+  - The ⚠️ flag, not the rounded %, decides pass or fail (#44)
+
+------------------------------------------------------------------------------
+BLOCKED / WAITING
+------------------------------------------------------------------------------
+  - DM-screen creation and the "Peek behind the DM screen" test is waiting on #30, which
+    isn't built yet. The proposed split (web session: #48 /dmbot start; PyCharm session:
+    #30 on top of the campaign store) is awaiting the owner's OK.
+  - The campaign store (PR #61, merged) has no dm_screen_visibility field yet. It was
+    requested on PR #61 (private / peek / open, default peek per PR #59).
+
+------------------------------------------------------------------------------
+LATEST RESULT: Test 1, run 1 (2026-10-04), PARTIAL / BORDERLINE
+------------------------------------------------------------------------------
+  Connected, bot online ................ PASS
+  Join messages ......................... PASS (voice-chat notice inferred, no failure logged)
+  Audio % ............................... BORDERLINE 100/91/100/91/94/100. The cause was
+                                          speaker pauses counted as loss; fixed in #36.
+  Consenting speaker appears ............ PASS (1 of 1)
+  Revoked speaker disappears ............ NOT TESTED
+  No terminal errors .................... PASS
+  Details: docs/testing-history.log and issue #40.
+
+Open issues found by testing
+  #37 log session events   #38 misleading PyNaCl/davey warnings   #39 status "last delay"
+  #43 DAVE loss right after a pause   #44 "95% ⚠️" rounding   #45 uncounted audio losses

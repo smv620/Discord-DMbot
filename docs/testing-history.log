@@ -1,0 +1,76 @@
+DMbot - TESTING HISTORY (append-only)
+=====================================
+The complete record of live tests, newest at the bottom. Entries are added, never
+rewritten (corrections go in a new dated entry). The current picture is in
+docs/testing-status.log. Maintained by the PyCharm session. Never put tokens, .env
+contents or players' personal data here (the repo is public).
+
+==============================================================================
+2026-10-04  Test 1, run 1: voice capture, no transcription (DM only)
+==============================================================================
+Runbook     docs/LIVE_TEST.md, Test 1 (from branch docs/live-test-runbook at the time)
+Commit      development @ e40e3de
+Machine     Windows 11 Home 10.0.26200; Node 22.23.2; npm 10.9.8;
+            Python 3.12.14 (conda env "dmbot")
+Settings    TRANSCRIBER=none
+Speakers    1 (the DM). No second person in this run.
+Channel     "General Voice"; DM updates in #dm-screen
+
+Setup
+  - core's first start exited: "Transcription problem: Local Whisper is not installed."
+    Cause: TRANSCRIBER had the wrong value in .env (the owner's mistake, since fixed).
+    Not a bug; the runbook's hint for this error was correct.
+  - core started:
+      INFO dmbot.ears.server: Waiting for ears on ws://127.0.0.1:8765
+      WARNING discord.client: PyNaCl is not installed, voice will NOT be supported   (-> #38)
+      WARNING discord.client: davey is not installed, voice will NOT be supported    (-> #38)
+  - ears: npm ci (92 packages), then npm run dev:
+      [ears] logged in as DMbot#4185
+      [ears] connected to core
+    core: "ears connected"
+
+Discord (pasted by the owner; times are the owner's local time)
+  02:48  /table status -> Voice service: connected ✅ / Table: not listening /
+         Opted in: nobody yet / Transcription: 0 waiting
+  02:48  /table join -> "Joining General Voice. Updates for the DM will appear in this
+         channel, so keep it private to you."
+  02:48  #dm-screen: "✅ Listening in General Voice. 0 player(s) have opted in to recording."
+  02:48  /table status -> Table: General Voice (listening), DM @DM / Opted in: nobody yet
+  02:50  /consent give -> "Thanks — DMbot will now transcribe your voice..."
+  02:50  /table status -> Opted in: DM / Transcription: 0 waiting, last delay 0.0 s (-> #39)
+  02:50-02:51  Capture checks:
+         1. DM — 1 × speech, 2.6 s, audio 100%
+         2. DM — 1 × speech, 13.9 s, audio 91% ⚠️ audio gaps
+         3. DM — 2 × speech, 7.1 s, audio 100%
+         4. DM — 3 × speech, 12.9 s, audio 91% ⚠️ audio gaps
+         5. DM — 3 × speech, 11.0 s, audio 94% ⚠️ audio gaps
+         6. DM — 3 × speech, 4.9 s, audio 100%
+  02:51  /table leave -> "Stopped listening. 👋"
+
+Terminals during the session
+  No errors, tracebacks or "Could not post" warnings. Nothing was logged after
+  "ears connected", because session events aren't logged (-> #37).
+
+Results (LIVE_TEST.md step 5)
+  Both parts connected, bot online ...... PASS
+  Join messages ......................... PASS for #dm-screen; voice-chat notice inferred
+                                          (no "weren't told" warning, no post failure logged)
+  Audio % per speaker ................... BORDERLINE (two at 91%, one at 94%)
+  Every consenting speaker appears ...... PASS (1 of 1)
+  Revoked speaker disappears ............ NOT TESTED (needs a second person)
+  No errors in either terminal .......... PASS
+  Overall ............................... PARTIAL / BORDERLINE
+
+Analysis
+  Low % only on long speech. Clients send Opus silence frames and then stop during
+  pauses; ears counted pauses under 800 ms as lost frames.
+
+Issues filed: #36 (audio pauses counted as loss), #37, #38, #39. Tracking issue: #40.
+
+Follow-up
+  - #36 fixed in PR #46 (merged to development @ 0c7f9d9, CI green). Health is now
+    tracked per Opus packet; a gap after 3+ silence frames counts as a pause.
+    DMBOT_DEBUG_AUDIO=1 logs per-utterance health.
+  - Review follow-ups: #43 (DAVE loss right after a pause), #44 ("95% ⚠️" rounding),
+    #45 (decode errors and link drops not counted).
+  - Run 2 needs a second person, DMBOT_DEBUG_AUDIO=1, and ideally ~5% injected loss.
