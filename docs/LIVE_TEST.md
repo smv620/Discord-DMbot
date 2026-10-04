@@ -1,0 +1,145 @@
+# Live test runbook: voice capture
+
+A step-by-step script for testing DMbot against a real Discord voice channel on the
+owner's PC. Written so **both the owner and a Claude session** can follow it. Each step
+says who does it.
+
+- **Owner:** anything in Discord or the Developer Portal, editing `.env`, and talking.
+- **Claude (PyCharm session):** starting and watching the bot on the PC, reading logs,
+  and filing issues.
+
+Claude must **never read `.env`** or ask for the bot token. If something looks wrong
+with a setting, ask the owner to check it.
+
+---
+
+## Test 1: voice capture (no transcription)
+
+**Goal:** prove DMbot can capture each consenting speaker through Discord's DAVE
+encryption, with little or no audio loss, and that consent is enforced.
+
+### Prerequisites (owner, one time)
+
+- [ ] **Bot created** in the Discord Developer Portal, with its token copied.
+- [ ] **Install link** with scopes `bot` + `applications.commands` and permissions View
+      Channels, Send Messages, Connect, Speak. **Bot added** to the server.
+- [ ] **Developer Mode** turned on (User Settings → Advanced), and the **server ID**
+      copied.
+- [ ] **`#dm-screen` exists** as a **private text channel**, with DMbot added under
+      Permissions and **View Channel** and **Send Messages** set to ✅ (not neutral).
+      (Making this automatic is issue #30.)
+- [ ] **Test voice channel:** if it's private or restricted, DMbot has View Channel,
+      Connect, and Send Messages there.
+- [ ] **A second person** available for voice: a friend, or a second account on a phone.
+
+### Step 1: `.env` (owner)
+
+`.env` lives in the repo root and is copied from `.env.example`. If it was copied a
+while ago, compare it with `.env.example` and add any missing sections (see #31).
+
+Required for this test:
+```
+DISCORD_TOKEN=<bot token>
+DISCORD_DEV_GUILD_ID=<server ID>
+EARS_SHARED_SECRET=<long random string>
+TRANSCRIBER=none
+```
+To make a secret: `python -c "import secrets; print(secrets.token_hex(32))"`
+
+### Step 2: start core (Claude)
+
+The owner uses **conda**, in an environment named `dmbot` (Python 3.12, Node 22).
+Terminal 1:
+```
+conda activate dmbot
+git fetch origin && git checkout development && git pull
+cd core
+pip install -e ".[dev]"
+python -m dmbot
+```
+**Expect:** a log line `Waiting for ears on ws://127.0.0.1:8765`.
+**If it exits with "Missing required settings":** ask the owner to fill in `.env` (step 1).
+**If it says "Local Whisper is not installed":** `TRANSCRIBER` isn't set to `none`. Ask
+the owner to fix `.env`.
+
+### Step 3: start ears (Claude)
+
+Terminal 2:
+```
+conda activate dmbot
+cd ears
+npm ci
+npm run dev
+```
+**Expect:** `[ears] logged in as DMbot#…`, then `[ears] connected to core`. Core logs
+`ears connected`. In Discord, DMbot shows **online** (green dot).
+**If `npm ci` fails building `@discordjs/opus` on Windows:** install "Visual Studio Build
+Tools" with the C++ workload, then retry (see #8).
+
+Tell the owner: **"Both parts are running. Go ahead with step 4."**
+
+### Step 4: run the session (owner)
+
+1. **Join the voice channel,** both people.
+2. **Run `/table join` in #dm-screen.** Not in the voice channel's chat: running it there
+   sends DM updates where players can see them (#26). If the command doesn't appear,
+   press Ctrl+R in Discord.
+3. **Expect:**
+   - In #dm-screen: "✅ Listening in <channel>."
+   - In the voice channel's chat: "🔴 DMbot is listening in this channel…"
+   - If either is missing, the bot should now warn in #dm-screen about what to fix (#27).
+4. **Both people run `/consent give`.**
+5. **Talk for 2–3 minutes.** Take turns, use a few long sentences, and overlap once.
+6. **Watch #dm-screen.** Every 15 s:
+   ```
+   🎙️ Capture check
+   • Name — N × speech, X.X s, audio NN%
+   ```
+7. **Consent check:** the second person runs `/consent revoke` and keeps talking. They
+   must **disappear** from the following capture checks.
+8. **Run `/table status`,** then `/table leave`.
+
+### Step 5: judge the result (Claude and owner)
+
+| Check | Pass | Fail |
+|---|---|---|
+| Both parts connected, bot online | Yes | Any startup error |
+| Join messages in #dm-screen and voice chat | Both appear | Either missing |
+| Audio % per speaker | **95–100%** | Below 90%, or "⚠️ audio gaps" |
+| Every consenting speaker appears in capture checks | Yes | Someone missing |
+| Revoked speaker disappears | Yes | Still listed after revoke |
+| No errors in either terminal during the session | None | Any traceback or error |
+
+Audio between 90% and 95% is borderline. Repeat the test once before calling it.
+
+### Step 6: report (Claude)
+
+1. **Every failure or oddity becomes a GitHub issue** (CLAUDE.md, "Issue log"), labeled
+   `bug` and `session: pycharm`, with the exact log lines. Remove anything secret first.
+2. **Post a summary comment** on the tracking issue for live tests (create one titled
+   "Live test results" if none exists), including:
+   - date, `development` commit SHA, OS, and Node and Python versions;
+   - number of speakers and session length;
+   - audio % per speaker, from 2–3 capture checks;
+   - the `/table status` output;
+   - a pass or fail for each row of the table in step 5;
+   - links to any issues filed.
+3. **Stop both processes** with Ctrl+C in each terminal.
+
+---
+
+## Test 2: live transcription (after Test 1 passes)
+
+Same as Test 1, with these changes:
+
+- **Owner:** set `TRANSCRIBER=whisper-local` in `.env` (keep `WHISPER_MODEL=small` to
+  start).
+- **Claude:** `pip install -e ".[dev,whisper]"` in core before starting. The first start
+  downloads the Whisper model (a few hundred MB), so expect a delay.
+- **Extra checks:**
+  - Capture checks show `› <transcribed text>` lines that roughly match what was said.
+  - Note how long text takes to appear after someone speaks.
+  - Watch for "🐢 Transcription is falling behind" warnings.
+  - Note CPU or GPU model and usage. This decides the cloud server size.
+- **Report** as in Test 1, adding a few example transcriptions (said vs. heard) and the
+  delay.
