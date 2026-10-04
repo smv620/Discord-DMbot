@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 import time
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 import discord
@@ -32,6 +33,42 @@ if TYPE_CHECKING:
 VIEW_TIMEOUT_S = 600
 NO_PINGS = discord.AllowedMentions.none()
 VOICE_TYPES = [discord.ChannelType.voice, discord.ChannelType.stage_voice]
+
+
+Handler = Callable[[discord.Interaction], Awaitable[None]]
+
+
+class _Button(discord.ui.Button[Any]):
+    """A button that runs `handler` when pressed."""
+
+    def __init__(self, handler: Handler, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._handler = handler
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self._handler(interaction)
+
+
+class _Select(discord.ui.Select[Any]):
+    """A menu that runs `handler` when a choice is made."""
+
+    def __init__(self, handler: Handler, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._handler = handler
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self._handler(interaction)
+
+
+class _ChannelSelect(discord.ui.ChannelSelect[Any]):
+    """A channel menu that runs `handler` when a channel is picked."""
+
+    def __init__(self, handler: Handler, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._handler = handler
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self._handler(interaction)
 
 
 def _bot(interaction: discord.Interaction) -> DMBot:
@@ -65,22 +102,24 @@ class CampaignPicker(discord.ui.View):
         last = campaigns[0]  # list_campaigns() is most recently used first
         self.last_id = last.id
 
-        cont: discord.ui.Button[CampaignPicker] = discord.ui.Button(
-            label=logic.continue_label(last), style=discord.ButtonStyle.primary, row=0
+        cont = _Button(
+            self._continue,
+            label=logic.continue_label(last),
+            style=discord.ButtonStyle.primary,
+            row=0,
         )
-        cont.callback = self._continue
         self.add_item(cont)
 
-        new: discord.ui.Button[CampaignPicker] = discord.ui.Button(
-            label="＋ New campaign", style=discord.ButtonStyle.secondary, row=0
+        new = _Button(
+            self._new, label="＋ New campaign", style=discord.ButtonStyle.secondary, row=0
         )
-        new.callback = self._new
         self.add_item(new)
 
         others = campaigns[1 : 1 + logic.SELECT_OPTIONS_MAX]
         if others:
             now = _now()
-            pick: discord.ui.Select[CampaignPicker] = discord.ui.Select(
+            pick = _Select(
+                self._picked,
                 placeholder="Or pick another campaign…",
                 options=[
                     discord.SelectOption(
@@ -92,7 +131,6 @@ class CampaignPicker(discord.ui.View):
                 ],
                 row=1,
             )
-            pick.callback = self._picked
             self.pick = pick
             self.add_item(pick)
 
@@ -187,15 +225,6 @@ class NewCampaignSettings(discord.ui.View):
     def _select(
         self, row: int, placeholder: str, choices: dict[str, str], current: str, attr: str
     ) -> None:
-        select: discord.ui.Select[NewCampaignSettings] = discord.ui.Select(
-            placeholder=placeholder,
-            row=row,
-            options=[
-                discord.SelectOption(label=label, value=value, default=value == current)
-                for value, label in choices.items()
-            ],
-        )
-
         async def changed(interaction: discord.Interaction) -> None:
             value = select.values[0]
             if attr == "optional":
@@ -205,7 +234,15 @@ class NewCampaignSettings(discord.ui.View):
             self._build()
             await interaction.response.edit_message(content=self.text(), view=self)
 
-        select.callback = changed
+        select = _Select(
+            changed,
+            placeholder=placeholder,
+            row=row,
+            options=[
+                discord.SelectOption(label=label, value=value, default=value == current)
+                for value, label in choices.items()
+            ],
+        )
         self.add_item(select)
 
     def _build(self) -> None:
@@ -229,10 +266,9 @@ class NewCampaignSettings(discord.ui.View):
         self._select(
             3, "Who sees the DM screen", dict(DM_SCREEN_VISIBILITY), self.visibility, "visibility"
         )
-        create: discord.ui.Button[NewCampaignSettings] = discord.ui.Button(
-            label="✅ Create campaign", style=discord.ButtonStyle.success, row=4
+        create = _Button(
+            self._create, label="✅ Create campaign", style=discord.ButtonStyle.success, row=4
         )
-        create.callback = self._create
         self.add_item(create)
 
     async def _create(self, interaction: discord.Interaction) -> None:
@@ -266,7 +302,8 @@ class VoicePicker(discord.ui.View):
         self.campaign = campaign
         self.channel_id = default_id
 
-        pick: discord.ui.ChannelSelect[VoicePicker] = discord.ui.ChannelSelect(
+        pick = _ChannelSelect(
+            self._picked,
             channel_types=VOICE_TYPES,
             placeholder="Pick the table's voice channel",
             default_values=(
@@ -280,17 +317,16 @@ class VoicePicker(discord.ui.View):
             ),
             row=0,
         )
-        pick.callback = self._picked
         self.pick = pick
         self.add_item(pick)
 
-        start: discord.ui.Button[VoicePicker] = discord.ui.Button(
+        start = _Button(
+            self._start,
             label="▶ Start listening",
             style=discord.ButtonStyle.success,
             disabled=default_id is None,
             row=1,
         )
-        start.callback = self._start
         self.start_button = start
         self.add_item(start)
 
@@ -381,7 +417,8 @@ class BackupPicker(discord.ui.View):
     def __init__(self, campaigns: list[Campaign]) -> None:
         super().__init__(timeout=VIEW_TIMEOUT_S)
         now = _now()
-        pick: discord.ui.Select[BackupPicker] = discord.ui.Select(
+        pick = _Select(
+            self._picked,
             placeholder="Which campaign?",
             options=[
                 discord.SelectOption(
@@ -392,7 +429,6 @@ class BackupPicker(discord.ui.View):
                 for c in campaigns[: logic.SELECT_OPTIONS_MAX]
             ],
         )
-        pick.callback = self._picked
         self.pick = pick
         self.add_item(pick)
 
@@ -407,14 +443,17 @@ class RestoreChoice(discord.ui.View):
         self.name = name
         self.replace_id: str | None = None
 
-        new: discord.ui.Button[RestoreChoice] = discord.ui.Button(
-            label="Restore as a new campaign", style=discord.ButtonStyle.primary, row=0
+        new = _Button(
+            self._as_new,
+            label="Restore as a new campaign",
+            style=discord.ButtonStyle.primary,
+            row=0,
         )
-        new.callback = self._as_new
         self.add_item(new)
 
         if replaceable:
-            pick: discord.ui.Select[RestoreChoice] = discord.ui.Select(
+            pick = _Select(
+                self._picked,
                 placeholder="Or replace one of your campaigns…",
                 options=[
                     discord.SelectOption(
@@ -424,7 +463,6 @@ class RestoreChoice(discord.ui.View):
                 ],
                 row=1,
             )
-            pick.callback = self._picked
             self.pick = pick
             self.add_item(pick)
 
