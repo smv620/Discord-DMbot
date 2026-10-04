@@ -20,6 +20,12 @@ from discord.ext import commands
 
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.capture_log import CaptureLog
+from dmbot.channel_access import (
+    PostProblem,
+    join_blocked_message,
+    missing_post_permissions,
+    notice_failed_message,
+)
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.ears.protocol import (
@@ -59,6 +65,7 @@ class Table:
     segmenter: Segmenter
     capture_log: CaptureLog = field(default_factory=CaptureLog)
     listening: bool = False
+    notice_posted: bool = False
 
 
 class DMBot(commands.Bot):
@@ -144,13 +151,18 @@ class DMBot(commands.Bot):
         member = guild.get_member(user_id) if guild else None
         return member.display_name if member else f"<@{user_id}>"
 
-    async def post(self, channel_id: int, text: str) -> None:
+    async def post(self, channel_id: int, text: str) -> bool:
+        """Send a message; returns False (and logs) if it could not be posted."""
         channel = self.get_channel(channel_id)
-        if isinstance(channel, discord.abc.Messageable):
-            try:
-                await channel.send(text, allowed_mentions=NO_PINGS)
-            except discord.HTTPException as exc:
-                log.warning("Could not post to channel %s: %s", channel_id, exc)
+        if not isinstance(channel, discord.abc.Messageable):
+            log.warning("Could not post to channel %s: channel not found", channel_id)
+            return False
+        try:
+            await channel.send(text, allowed_mentions=NO_PINGS)
+        except discord.HTTPException as exc:
+            log.warning("Could not post to channel %s: %s", channel_id, exc)
+            return False
+        return True
 
     # ---- ears events -------------------------------------------------------
 
@@ -186,7 +198,6 @@ class DMBot(commands.Bot):
 
     async def _on_status(self, table: Table, status: Status) -> None:
         if status.state == "joined":
-            first_time = not table.listening
             table.listening = True
             count = len(await self.consent.consenting(table.guild_id))
             await self.post(
@@ -194,13 +205,19 @@ class DMBot(commands.Bot):
                 f"✅ Listening in <#{table.voice_channel_id}>. "
                 f"{count} player(s) have opted in to recording.",
             )
-            if first_time:
-                await self.post(
+            if not table.notice_posted:
+                # Players learn they're being recorded from this notice, so a failure
+                # must reach the DM; it is retried on the next join.
+                table.notice_posted = await self.post(
                     table.voice_channel_id,
                     "🔴 **DMbot is listening in this channel** to help the DM.\n"
                     "Only people who opt in with `/consent give` are recorded. "
                     "Change your mind any time with `/consent revoke`.",
                 )
+                if not table.notice_posted:
+                    await self.post(
+                        table.screen_channel_id, notice_failed_message(table.voice_channel_id)
+                    )
         elif status.state in ("left", "error"):
             table.listening = False
             detail = status.detail or "The voice connection ended."
@@ -259,6 +276,35 @@ def _bot(interaction: discord.Interaction) -> DMBot:
     return cast(DMBot, interaction.client)
 
 
+def _post_problems(
+    guild: discord.Guild,
+    screen_channel_id: int,
+    voice: discord.VoiceChannel | discord.StageChannel,
+) -> list[PostProblem]:
+    """Channels the bot must post in for `/table join`, with any missing permissions."""
+    me = guild.me
+    screen = guild.get_channel_or_thread(screen_channel_id)
+    checks: list[tuple[int, list[str], str]] = [
+        (
+            screen_channel_id,
+            (
+                missing_post_permissions(
+                    screen.permissions_for(me), in_thread=isinstance(screen, discord.Thread)
+                )
+                if screen is not None
+                else ["View Channel", "Send Messages"]
+            ),
+            "your DM updates go here.",
+        ),
+        (
+            voice.id,
+            missing_post_permissions(voice.permissions_for(me)),
+            "players need to see the recording notice in its chat.",
+        ),
+    ]
+    return [PostProblem(cid, tuple(missing), why) for cid, missing, why in checks if missing]
+
+
 table_group = app_commands.Group(
     name="table", description="Start or stop listening to your D&D table", guild_only=True
 )
@@ -287,6 +333,13 @@ async def table_join(interaction: discord.Interaction) -> None:
         return
 
     voice = member.voice.channel
+    problems = _post_problems(guild, interaction.channel_id, voice)
+    if problems:
+        await interaction.response.send_message(
+            join_blocked_message(problems), ephemeral=True, allowed_mentions=NO_PINGS
+        )
+        return
+
     table = Table(
         guild_id=guild.id,
         voice_channel_id=voice.id,
