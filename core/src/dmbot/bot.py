@@ -11,6 +11,7 @@ import contextlib
 import logging
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from typing import cast
 
 import discord
@@ -240,8 +241,7 @@ class DMBot(commands.Bot):
         while True:
             await asyncio.sleep(SUMMARY_INTERVAL_S)
             for table in list(self.tables.values()):
-                gid = table.guild_id
-                text = table.capture_log.render(lambda uid, gid=gid: self.name_of(gid, uid))
+                text = table.capture_log.render(partial(self.name_of, table.guild_id))
                 if text:
                     await self.post(table.screen_channel_id, text)
 
