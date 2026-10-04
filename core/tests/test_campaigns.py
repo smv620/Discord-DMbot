@@ -1,9 +1,12 @@
+import asyncio
 import json
 import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 
-from dmbot.campaigns import Campaign, CampaignError, CampaignStore
+from dmbot.campaigns import DEFAULT_DM_SCREEN_VISIBILITY, Campaign, CampaignError, CampaignStore
 from dmbot.campaigns.store import EXPORT_FORMAT, EXPORT_VERSION
 from dmbot.db import apply_migrations, connect
 
@@ -549,7 +552,7 @@ class DMScreenVisibility(StoreTest):
 
         bad = json.loads(json.dumps(backup))
         bad["campaign"]["dm_screen_visibility"] = "spoilers-for-all"
-        with self.assertRaisesRegex(CampaignError, "who can see the DM screen"):
+        with self.assertRaisesRegex(CampaignError, "damaged"):
             await self.store.import_backup(GUILD_B, bad, DM)
 
         replaced = await self.store.import_backup(GUILD_A, old, DM, replace_campaign_id=c.id)
@@ -558,9 +561,6 @@ class DMScreenVisibility(StoreTest):
 
 class UpgradeExistingDatabase(unittest.TestCase):
     def test_migration_002_adds_visibility_to_existing_campaigns(self) -> None:
-        import tempfile
-        from pathlib import Path
-
         from dmbot.campaigns.store import MIGRATIONS
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -575,10 +575,11 @@ class UpgradeExistingDatabase(unittest.TestCase):
             conn.close()
             store = CampaignStore(path)
             try:
-                import asyncio
-
                 c = asyncio.run(store.get(1, "c1"))
                 assert c is not None
-                self.assertEqual(c.dm_screen_visibility, "peek")
+                # The SQL default in campaigns_002 must match the Python default.
+                self.assertEqual(c.dm_screen_visibility, DEFAULT_DM_SCREEN_VISIBILITY)
+                with self.assertRaises(sqlite3.IntegrityError):
+                    store._db.execute("UPDATE campaigns SET dm_screen_visibility = 'nope'")
             finally:
                 store.close()

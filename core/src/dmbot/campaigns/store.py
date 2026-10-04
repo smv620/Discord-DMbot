@@ -25,6 +25,7 @@ from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_VISIBILITY,
     DEFAULT_FALLBACK,
     DEFAULT_TARGET,
+    DM_SCREEN_VISIBILITY,
     NAME_MAX,
     Campaign,
     CampaignError,
@@ -84,6 +85,7 @@ MIGRATIONS: Sequence[Migration] = (
         """
         ALTER TABLE campaigns
             ADD COLUMN dm_screen_visibility TEXT NOT NULL DEFAULT 'peek'
+            CHECK (dm_screen_visibility IN ('private', 'peek', 'open'))
         """,
     ),
 )
@@ -733,9 +735,8 @@ def _validate_backup(
         raise CampaignError(damaged)
     # Backups made before this setting existed fall back to the default.
     visibility = campaign.get("dm_screen_visibility", DEFAULT_DM_SCREEN_VISIBILITY)
-    if not isinstance(visibility, str):
+    if not isinstance(visibility, str) or visibility not in DM_SCREEN_VISIBILITY:
         raise CampaignError(damaged)
-    check_dm_screen_visibility(visibility)
 
     unknown = set(sections) - known_sections
     if unknown:

@@ -47,7 +47,7 @@ class Campaign:
     dm_user_ids: frozenset[int]
     dm_screen_channel_id: int | None
     last_voice_channel_id: int | None
-    dm_screen_visibility: str = DEFAULT_DM_SCREEN_VISIBILITY
+    dm_screen_visibility: str
 
     @property
     def last_active_at(self) -> int:
