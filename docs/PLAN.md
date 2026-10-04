@@ -99,8 +99,6 @@ Whisper runs on that server, its size decides transcription quality and speed: a
 server suits the `base`/`small` models; larger models need a GPU server, or switch to
 `TRANSCRIBER=cloud`. Deployment packaging (Docker) is a follow-up task.
 
-**License (decided 2026-10-03).** Public repository under PolyForm Strict 1.0.0.
-
 **Consent & retention.** `/consent` opt-in per player, an announcement when listening
 starts, configurable auto-delete of audio and transcripts, and player data removal.
 

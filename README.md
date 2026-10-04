@@ -58,8 +58,13 @@ Pick one with `TRANSCRIBER` in `.env`:
 | `cloud` | Pay per minute of speech | `CLOUD_STT_API_KEY` | Any OpenAI-compatible speech-to-text API. Best for servers without a GPU. |
 | `none` | Free | — | Capture checks only, no text. |
 
-On a CPU-only server use `WHISPER_MODEL=small` (or `base`) with `WHISPER_COMPUTE_TYPE=int8`.
-With an NVIDIA GPU use `large-v3` or `turbo` with `float16`.
+On a CPU-only server use `WHISPER_MODEL=small` (or `base` if it falls behind). With an
+NVIDIA GPU use `large-v3` or `turbo`. The default compute type (`auto`) picks the fastest
+precision for your hardware. If transcription falls behind, DMbot warns you in
+`#dm-screen`; `/table status` shows the backlog.
+
+When `TRANSCRIBER=cloud`, players are told during `/consent give` that their voice clips
+go to an outside service.
 
 ## Commands
 
