@@ -1,4 +1,4 @@
-"""DM screen: channel names, permission plans, exposure checks, wording, Peek on the notice."""
+"""DM screen: permission plans, exposure checks, wording, Peek on the notice."""
 
 import re
 
@@ -17,16 +17,13 @@ from dmbot.dm_screen.rules import (
     READ_ONLY,
     Exposure,
     Target,
-    channel_name,
     everyone,
     find_exposure,
     is_peeker,
-    is_screen_name,
     merge_overwrites,
     missing_required,
     overwrite_plan,
     restrict,
-    unique_channel_name,
 )
 from dmbot.ears.protocol import Status
 from dmbot.sessions import SessionStore
@@ -40,26 +37,7 @@ def member(user_id: int) -> Target:
     return Target("member", user_id)
 
 
-# ---- channel names -------------------------------------------------------------
-
-
-def test_channel_name_is_lowercase_and_dashed() -> None:
-    assert channel_name("Rime of the Frostmaiden") == "dm-screen-rime-of-the-frostmaiden"
-
-
-def test_channel_name_drops_punctuation_and_collapses_dashes() -> None:
-    assert channel_name("  Curse of Strahd: Part 2!! ") == "dm-screen-curse-of-strahd-part-2"
-
-
-def test_channel_name_without_usable_letters() -> None:
-    assert channel_name("!!!") == "dm-screen"
-
-
-def test_channel_name_fits_discord_limit() -> None:
-    name = channel_name("x" * 200)
-    assert len(name) == 100
-    assert not name.endswith("-")
-
+# Channel names are tested in test_channel_names.py.
 
 # ---- permission plans ------------------------------------------------------------
 
@@ -302,13 +280,6 @@ def test_needs_permissions_names_exactly_whats_missing() -> None:
     assert "turn them on" in m.needs_permissions(["Manage Channels", "Manage Roles"])
 
 
-def test_unique_channel_name_adds_a_number() -> None:
-    assert unique_channel_name("dm-screen-x", []) == "dm-screen-x"
-    assert unique_channel_name("dm-screen-x", ["dm-screen-x"]) == "dm-screen-x-2"
-    assert unique_channel_name("dm-screen-x", ["dm-screen-x", "dm-screen-x-2"]) == "dm-screen-x-3"
-    assert len(unique_channel_name("x" * 100, ["x" * 100])) <= 100
-
-
 def test_merge_keeps_server_roles_and_drops_stray_members() -> None:
     mods = Target("role", 77)
     current = {
@@ -337,13 +308,6 @@ def test_visibility_changed_says_who_can_see_now() -> None:
 def test_switching_peek_to_private_says_peekers_lost_access() -> None:
     assert "can't see it anymore" in m.visibility_changed("private", was="peek")
     assert "can't see it anymore" not in m.visibility_changed("private", was="open")
-
-
-def test_only_dm_screen_names_count_as_screens() -> None:
-    assert is_screen_name("dm-screen")
-    assert is_screen_name("dm-screen-frostmaiden")
-    assert not is_screen_name("general")
-    assert not is_screen_name("dm-screenshots")
 
 
 def test_visibility_button_custom_ids_round_trip() -> None:

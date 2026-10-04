@@ -1,8 +1,9 @@
 """setup_dm_screen against a fake Discord server: what it creates, edits and saves."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -53,7 +54,7 @@ class SetupTests(DatabaseTest):
         guild.get_role = lambda _id: None
         guild.get_member = lambda _id: None
         self.general = text_channel(GENERAL, "general", guild)
-        self.new = text_channel(NEW, "dm-screen-frostmaiden", guild)
+        self.new = text_channel(NEW, "dmb-dm-screen-frostmaiden", guild)
         guild.fetch_channel = AsyncMock(return_value=self.general)
         guild.create_text_channel = AsyncMock(return_value=self.new)
         guild.get_channel = lambda cid: self.new if cid == NEW else None
@@ -101,3 +102,86 @@ class SetupTests(DatabaseTest):
         await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="private")
         self.new.edit.assert_awaited_once()
         self.guild.create_text_channel.assert_not_called()
+        # Already correctly named, so no rename (Discord rate-limits renames).
+        assert "name" not in self.new.edit.call_args.kwargs
+
+    async def test_new_screen_gets_the_dmb_name(self) -> None:
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert self.guild.create_text_channel.call_args.args[0] == "dmb-dm-screen-frostmaiden"
+        stored = await self.store.get(GUILD, self.campaign.id)
+        assert stored is not None and stored.channel_number == 1
+
+    async def test_an_old_style_screen_is_renamed(self) -> None:
+        old = text_channel(NEW, "dm-screen-frostmaiden", self.guild)  # made before dmb-
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=old)
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        self.guild.create_text_channel.assert_not_called()
+        permissions, rename = old.edit.call_args_list
+        assert "overwrites" in permissions.kwargs and "name" not in permissions.kwargs
+        assert rename.kwargs["name"] == "dmb-dm-screen-frostmaiden"
+
+    async def test_a_failed_rename_still_applies_permissions(self) -> None:
+        old = text_channel(NEW, "dm-screen-frostmaiden", self.guild)
+
+        async def edit(**kwargs: Any) -> None:
+            if "name" in kwargs:  # Discord's rename rate limit, say
+                raise discord.HTTPException(MagicMock(status=429), "rate limited")
+
+        old.edit = AsyncMock(side_effect=edit)
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=old)
+        result = await setup_dm_screen(
+            self.guild, self.campaign.id, self.store, visibility="private"
+        )
+        assert result.channel is old  # no error for the DM
+        assert any("overwrites" in c.kwargs for c in old.edit.call_args_list)
+
+    async def test_a_rename_that_waits_too_long_is_skipped(self) -> None:
+        old = text_channel(NEW, "dm-screen-frostmaiden", self.guild)
+
+        async def edit(**kwargs: Any) -> None:
+            if "name" in kwargs:
+                await asyncio.sleep(60)  # discord.py waiting out a rate limit
+
+        old.edit = AsyncMock(side_effect=edit)
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=old)
+        with patch("dmbot.dm_screen.channel.RENAME_TIMEOUT_S", 0.05):
+            await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert any("overwrites" in c.kwargs for c in old.edit.call_args_list)
+
+    async def test_a_screen_shared_by_two_campaigns_is_never_renamed(self) -> None:
+        shared = text_channel(NEW, "dm-screen", self.guild)  # a hand-made #dm-screen
+        other = await self.store.create(GUILD, "Curse of Strahd", DM)
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        await self.store.set_dm_screen(GUILD, other.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=shared)
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert all("name" not in c.kwargs for c in shared.edit.call_args_list)
+
+    async def test_renaming_the_campaign_renames_its_screen_at_next_setup(self) -> None:
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=self.new)
+        await self.store.rename(GUILD, self.campaign.id, "Ice Queen")
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert self.new.edit.call_args.kwargs["name"] == "dmb-dm-screen-ice-queen"
+
+    async def test_a_stored_number_is_not_overwritten(self) -> None:
+        first = await self.store.set_channel_number(GUILD, self.campaign.id, 2)
+        again = await self.store.set_channel_number(GUILD, self.campaign.id, 3)
+        assert first.channel_number == again.channel_number == 2
+
+    async def test_a_clashing_campaign_gets_number_2_on_its_screen(self) -> None:
+        first = await self.store.create(GUILD, "Frozen Sick", DM)
+        await setup_dm_screen(self.guild, first.id, self.store)
+        second = await self.store.create(GUILD, "Frozens Cake", DM)  # also shortens to frznsck
+        await setup_dm_screen(self.guild, second.id, self.store)
+        assert self.guild.create_text_channel.call_args.args[0] == "dmb-dm-screen-2frozens-cake"
+        stored = await self.store.get(GUILD, second.id)
+        assert stored is not None and stored.channel_number == 2
+
+    async def test_channel_number_is_not_in_backups(self) -> None:
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        backup = await self.store.export(GUILD, self.campaign.id)
+        assert "channel_number" not in backup["campaign"]

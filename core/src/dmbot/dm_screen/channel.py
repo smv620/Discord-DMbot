@@ -17,18 +17,21 @@ import discord
 
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.dm_screen import messages
+from dmbot.dm_screen.names import (
+    clashes,
+    is_screen_name,
+    pick_channel_number,
+    screen_channel_name,
+)
 from dmbot.dm_screen.rules import (
     Perms,
     Target,
-    channel_name,
     find_exposure,
     is_peeker,
-    is_screen_name,
     merge_overwrites,
     missing_required,
     overwrite_plan,
     restrict,
-    unique_channel_name,
 )
 
 log = logging.getLogger(__name__)
@@ -37,7 +40,10 @@ OverwriteKey = discord.Role | discord.Member | discord.Object
 HELP_CARD_SCAN = 50  # recent messages searched for an old help card to replace
 CACHE_WAIT_STEPS, CACHE_WAIT_S = 30, 0.1  # up to 3 s for a new channel to reach the cache
 
+RENAME_TIMEOUT_S = 5  # give up on a rate-limited rename and retry at the next setup
+
 _locks: dict[str, asyncio.Lock] = {}
+_guild_locks: dict[int, asyncio.Lock] = {}
 
 
 def campaign_lock(campaign_id: str) -> asyncio.Lock:
@@ -171,12 +177,62 @@ async def _apply(
     held = held_permissions(me)
     merged = merge_overwrites(current, plan, guild_id=guild.id)
     sent: dict[Target, Perms] = {t: restrict(p, held) for t, p in merged.items()}
+    # Permissions only: a rename is a separate, best-effort step (`_try_rename`), so
+    # Discord's rename rate limit can never hold up who can see the screen.
     await channel.edit(
         overwrites=_discord_overwrites(guild, merged, held),
         topic=messages.topic(campaign.name, campaign.dm_screen_visibility),
-        reason=f"DMbot: DM screen visibility for {campaign.name}",
+        reason=f"DMbot: DM screen for {campaign.name}",
     )
     return sent
+
+
+async def _try_rename(channel: discord.TextChannel, campaign: Campaign) -> None:
+    """Give an old-style `dm-screen-…` screen, or a renamed campaign's, its current name.
+
+    Discord allows two renames per channel every 10 minutes and makes the bot wait
+    otherwise, so this gives up after a few seconds and tries again at the next setup.
+    """
+    name = screen_channel_name(campaign.name, campaign.channel_number or 1)
+    if channel.name == name:
+        return
+    try:
+        await asyncio.wait_for(
+            channel.edit(name=name, reason=f"DMbot: DM screen for {campaign.name}"),
+            RENAME_TIMEOUT_S,
+        )
+    except (TimeoutError, discord.HTTPException) as exc:
+        log.info("Rename of DM screen %s postponed: %s", channel.id, exc)
+
+
+def guild_lock(guild_id: int) -> asyncio.Lock:
+    """One lock per server around choosing channel numbers, so two campaigns set up at
+    the same moment can't both take the same number."""
+    return _guild_locks.setdefault(guild_id, asyncio.Lock())
+
+
+async def _with_channel_number(
+    guild_id: int, campaign: Campaign, store: CampaignStore
+) -> tuple[Campaign, bool]:
+    """The campaign with its clash number chosen, and whether its saved screen channel
+    is shared with another campaign (then DMbot never renames it).
+
+    A number is chosen once. It's only chosen again if the campaign itself was renamed
+    so that its names now clash with another campaign's; other campaigns never shift.
+    """
+    async with guild_lock(guild_id):
+        everyone_else = [c for c in await store.list_campaigns(guild_id) if c.id != campaign.id]
+        others = [(c.name, c.channel_number) for c in everyone_else]
+        shared = campaign.dm_screen_channel_id is not None and any(
+            c.dm_screen_channel_id == campaign.dm_screen_channel_id for c in everyone_else
+        )
+        if campaign.channel_number is None:
+            number = pick_channel_number(campaign.name, others)
+            campaign = await store.set_channel_number(guild_id, campaign.id, number)
+        elif clashes(campaign.name, campaign.channel_number, others):
+            number = pick_channel_number(campaign.name, others)
+            campaign = await store.set_channel_number(guild_id, campaign.id, number, replace=True)
+    return campaign, shared
 
 
 async def _update_help_card(
@@ -228,11 +284,14 @@ async def setup_dm_screen(
             campaign = await store.get(guild.id, campaign_id)
             if campaign is None:
                 raise DMScreenError(messages.CAMPAIGN_GONE)
+            campaign, shared = await _with_channel_number(guild.id, campaign, store)
             channel = await fresh_screen(guild, campaign)
             if channel is None:
                 channel, overwrites = await _create(guild, campaign, store, me, category)
             else:
                 overwrites = await _apply(channel, campaign, me)
+                if not shared:  # two campaigns renaming one channel would fight over it
+                    await _try_rename(channel, campaign)
             await _update_help_card(channel, campaign, me)
         except discord.Forbidden as exc:
             # The server-wide check passed, so something more local blocks it, such as
@@ -258,7 +317,7 @@ async def _create(
         bot_id=me.id,
         dm_ids=campaign.dm_user_ids,
     )
-    name = unique_channel_name(channel_name(campaign.name), (c.name for c in guild.channels))
+    name = screen_channel_name(campaign.name, campaign.channel_number or 1)
     channel = await guild.create_text_channel(
         name,
         category=category,
@@ -293,7 +352,7 @@ async def ensure_dm_screen(
 ) -> int:
     """The hook `/dmbot start` calls (#48): the campaign's DM screen channel ID.
 
-    Creates `#dm-screen-<campaign>` if the campaign has none (or it was deleted), and
+    Creates `#dmb-dm-screen-<campaign>` if the campaign has none (or it was deleted), and
     makes its permissions match the campaign's visibility. Call it again after changing
     the campaign's DMs or visibility. Raises DMScreenError with a message for the DM if
     something needs fixing. Anyone unexpected who can see the screen is warned about in

@@ -1,4 +1,4 @@
-"""Batches captured utterances into periodic summaries for #dm-screen.
+"""Batches captured utterances into periodic summaries for the DM screen.
 
 Posting every utterance would flood the DM, so Phase 0 reports one compact summary
 per interval: who spoke, how much, and audio health (frames received vs expected).

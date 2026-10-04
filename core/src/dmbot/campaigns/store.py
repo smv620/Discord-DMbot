@@ -162,6 +162,7 @@ _SETTABLE = frozenset(
         "last_played_at",
         "optional_rules_default",
         "dm_screen_visibility",
+        "channel_number",
     }
 )
 
@@ -351,6 +352,27 @@ class CampaignStore:
         self, guild_id: int, campaign_id: str, channel_id: int | None
     ) -> Campaign:
         return await self._set(guild_id, campaign_id, "last_voice_channel_id", channel_id)
+
+    async def set_channel_number(
+        self, guild_id: int, campaign_id: str, number: int, *, replace: bool = False
+    ) -> Campaign:
+        """The number in front of the campaign's channel names (1 = none).
+
+        Chosen once: unless `replace` is set, an already stored number is kept (and
+        returned), so two setups racing can't change it after the first one saved it.
+        """
+        if number < 1:
+            raise ValueError("channel number must be 1 or more")
+        if replace:
+            return await self._set(guild_id, campaign_id, "channel_number", number)
+        async with self._db.guild(guild_id) as conn:
+            await self._require(conn, guild_id, campaign_id)
+            await conn.execute(
+                "UPDATE campaigns SET channel_number = %s"
+                " WHERE guild_id = %s AND id = %s AND channel_number IS NULL",
+                (number, guild_id, campaign_id),
+            )
+            return await self._require(conn, guild_id, campaign_id)
 
     async def mark_played(self, guild_id: int, campaign_id: str) -> Campaign:
         return await self._set(guild_id, campaign_id, "last_played_at", int(self._clock()))
@@ -576,6 +598,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         dm_screen_channel_id=row_int(row, "dm_screen_channel_id"),
         last_voice_channel_id=row_int(row, "last_voice_channel_id"),
         dm_screen_visibility=row["dm_screen_visibility"],
+        channel_number=row_int(row, "channel_number"),
     )
 
 
