@@ -53,7 +53,7 @@ class SetupTests(DatabaseTest):
         guild.get_role = lambda _id: None
         guild.get_member = lambda _id: None
         self.general = text_channel(GENERAL, "general", guild)
-        self.new = text_channel(NEW, "dm-screen-frostmaiden", guild)
+        self.new = text_channel(NEW, "dmb-dm-screen-frostmaiden", guild)
         guild.fetch_channel = AsyncMock(return_value=self.general)
         guild.create_text_channel = AsyncMock(return_value=self.new)
         guild.get_channel = lambda cid: self.new if cid == NEW else None
@@ -101,3 +101,33 @@ class SetupTests(DatabaseTest):
         await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="private")
         self.new.edit.assert_awaited_once()
         self.guild.create_text_channel.assert_not_called()
+        # Already correctly named, so no rename (Discord rate-limits renames).
+        assert "name" not in self.new.edit.call_args.kwargs
+
+    async def test_new_screen_gets_the_dmb_name(self) -> None:
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert self.guild.create_text_channel.call_args.args[0] == "dmb-dm-screen-frostmaiden"
+        stored = await self.store.get(GUILD, self.campaign.id)
+        assert stored is not None and stored.channel_number == 1
+
+    async def test_an_old_style_screen_is_renamed(self) -> None:
+        old = text_channel(NEW, "dm-screen-frostmaiden", self.guild)  # made before dmb-
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=old)
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        self.guild.create_text_channel.assert_not_called()
+        assert old.edit.call_args.kwargs["name"] == "dmb-dm-screen-frostmaiden"
+
+    async def test_a_clashing_campaign_gets_number_2_on_its_screen(self) -> None:
+        first = await self.store.create(GUILD, "Frozen Sick", DM)
+        await setup_dm_screen(self.guild, first.id, self.store)
+        second = await self.store.create(GUILD, "Frozens Cake", DM)  # also shortens to frznsck
+        await setup_dm_screen(self.guild, second.id, self.store)
+        assert self.guild.create_text_channel.call_args.args[0] == "dmb-dm-screen-2frozens-cake"
+        stored = await self.store.get(GUILD, second.id)
+        assert stored is not None and stored.channel_number == 2
+
+    async def test_channel_number_is_not_in_backups(self) -> None:
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        backup = await self.store.export(GUILD, self.campaign.id)
+        assert "channel_number" not in backup["campaign"]

@@ -1,4 +1,6 @@
-"""DM-screen rules with no Discord dependency: channel names, permission plans, exposure.
+"""DM-screen rules with no Discord dependency: permission plans and exposure.
+
+Channel names are in `dmbot.dm_screen.names`.
 
 The DM screen's permission overwrites are planned here as plain data and applied by
 `dmbot.dm_screen.channel`. The bot owns the screen's *member* overwrites (DMs, itself,
@@ -11,9 +13,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal, NamedTuple
-
-CHANNEL_PREFIX = "dm-screen"
-CHANNEL_NAME_MAX = 100  # Discord's limit for channel names
 
 # Overwrite permission names are discord.py's, so the plan maps straight onto
 # discord.PermissionOverwrite(**perms). Discord only lets the bot allow or deny a
@@ -59,34 +58,6 @@ class Target(NamedTuple):
 def everyone(guild_id: int) -> Target:
     """@everyone is the role whose ID equals the server's ID."""
     return Target("role", guild_id)
-
-
-def channel_name(campaign_name: str) -> str:
-    """`dm-screen-<campaign>` in Discord's channel-name style (lowercase, dashes)."""
-    slug = "".join(c if c.isalnum() else "-" for c in campaign_name.casefold())
-    slug = "-".join(part for part in slug.split("-") if part)
-    name = f"{CHANNEL_PREFIX}-{slug}" if slug else CHANNEL_PREFIX
-    return name[:CHANNEL_NAME_MAX].rstrip("-")
-
-
-def is_screen_name(name: str) -> bool:
-    """Whether a channel is named like a DM screen DMbot makes. DMbot only changes the
-    permissions of such channels, never of an ordinary channel saved by mistake."""
-    return name == CHANNEL_PREFIX or name.startswith(f"{CHANNEL_PREFIX}-")
-
-
-def unique_channel_name(name: str, taken: Iterable[str]) -> str:
-    """`name`, or `name-2`, `name-3`… if a channel already uses it."""
-    used = set(taken)
-    if name not in used:
-        return name
-    n = 2
-    while True:
-        suffix = f"-{n}"
-        candidate = name[: CHANNEL_NAME_MAX - len(suffix)].rstrip("-") + suffix
-        if candidate not in used:
-            return candidate
-        n += 1
 
 
 def restrict(perms: Perms, held: Iterable[str]) -> dict[str, bool]:

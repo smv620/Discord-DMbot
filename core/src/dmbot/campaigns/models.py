@@ -48,6 +48,9 @@ class Campaign:
     dm_screen_channel_id: int | None
     last_voice_channel_id: int | None
     dm_screen_visibility: str
+    # Number in front of the campaign's channel names if they'd clash with another
+    # campaign's (1 = none); None until its first channel is made. See dmbot.dm_screen.names.
+    channel_number: int | None = None
 
     @property
     def last_active_at(self) -> int:

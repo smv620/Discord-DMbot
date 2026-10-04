@@ -17,18 +17,16 @@ import discord
 
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.dm_screen import messages
+from dmbot.dm_screen.names import is_screen_name, pick_channel_number, screen_channel_name
 from dmbot.dm_screen.rules import (
     Perms,
     Target,
-    channel_name,
     find_exposure,
     is_peeker,
-    is_screen_name,
     merge_overwrites,
     missing_required,
     overwrite_plan,
     restrict,
-    unique_channel_name,
 )
 
 log = logging.getLogger(__name__)
@@ -171,12 +169,30 @@ async def _apply(
     held = held_permissions(me)
     merged = merge_overwrites(current, plan, guild_id=guild.id)
     sent: dict[Target, Perms] = {t: restrict(p, held) for t, p in merged.items()}
-    await channel.edit(
-        overwrites=_discord_overwrites(guild, merged, held),
-        topic=messages.topic(campaign.name, campaign.dm_screen_visibility),
-        reason=f"DMbot: DM screen visibility for {campaign.name}",
-    )
+    # Renames an old-style `dm-screen-…` screen, or one whose campaign was renamed.
+    # Only when the name differs: Discord rate-limits channel renames.
+    name = screen_channel_name(campaign.name, campaign.channel_number or 1)
+    overwrites = _discord_overwrites(guild, merged, held)
+    topic = messages.topic(campaign.name, campaign.dm_screen_visibility)
+    reason = f"DMbot: DM screen for {campaign.name}"
+    if channel.name != name:
+        await channel.edit(name=name, overwrites=overwrites, topic=topic, reason=reason)
+    else:
+        await channel.edit(overwrites=overwrites, topic=topic, reason=reason)
     return sent
+
+
+async def _with_channel_number(guild_id: int, campaign: Campaign, store: CampaignStore) -> Campaign:
+    """Choose the campaign's clash number the first time it needs channel names."""
+    if campaign.channel_number is not None:
+        return campaign
+    others = [
+        (c.name, c.channel_number)
+        for c in await store.list_campaigns(guild_id)
+        if c.id != campaign.id
+    ]
+    number = pick_channel_number(campaign.name, others)
+    return await store.set_channel_number(guild_id, campaign.id, number)
 
 
 async def _update_help_card(
@@ -228,6 +244,7 @@ async def setup_dm_screen(
             campaign = await store.get(guild.id, campaign_id)
             if campaign is None:
                 raise DMScreenError(messages.CAMPAIGN_GONE)
+            campaign = await _with_channel_number(guild.id, campaign, store)
             channel = await fresh_screen(guild, campaign)
             if channel is None:
                 channel, overwrites = await _create(guild, campaign, store, me, category)
@@ -258,7 +275,7 @@ async def _create(
         bot_id=me.id,
         dm_ids=campaign.dm_user_ids,
     )
-    name = unique_channel_name(channel_name(campaign.name), (c.name for c in guild.channels))
+    name = screen_channel_name(campaign.name, campaign.channel_number or 1)
     channel = await guild.create_text_channel(
         name,
         category=category,
@@ -293,7 +310,7 @@ async def ensure_dm_screen(
 ) -> int:
     """The hook `/dmbot start` calls (#48): the campaign's DM screen channel ID.
 
-    Creates `#dm-screen-<campaign>` if the campaign has none (or it was deleted), and
+    Creates `#dmb-dm-screen-<campaign>` if the campaign has none (or it was deleted), and
     makes its permissions match the campaign's visibility. Call it again after changing
     the campaign's DMs or visibility. Raises DMScreenError with a message for the DM if
     something needs fixing. Anyone unexpected who can see the screen is warned about in

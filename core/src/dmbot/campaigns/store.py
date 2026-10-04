@@ -162,6 +162,7 @@ _SETTABLE = frozenset(
         "last_played_at",
         "optional_rules_default",
         "dm_screen_visibility",
+        "channel_number",
     }
 )
 
@@ -351,6 +352,12 @@ class CampaignStore:
         self, guild_id: int, campaign_id: str, channel_id: int | None
     ) -> Campaign:
         return await self._set(guild_id, campaign_id, "last_voice_channel_id", channel_id)
+
+    async def set_channel_number(self, guild_id: int, campaign_id: str, number: int) -> Campaign:
+        """The number in front of the campaign's channel names (1 = none). Chosen once."""
+        if number < 1:
+            raise ValueError("channel number must be 1 or more")
+        return await self._set(guild_id, campaign_id, "channel_number", number)
 
     async def mark_played(self, guild_id: int, campaign_id: str) -> Campaign:
         return await self._set(guild_id, campaign_id, "last_played_at", int(self._clock()))
@@ -576,6 +583,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         dm_screen_channel_id=row_int(row, "dm_screen_channel_id"),
         last_voice_channel_id=row_int(row, "last_voice_channel_id"),
         dm_screen_visibility=row["dm_screen_visibility"],
+        channel_number=row_int(row, "channel_number"),
     )
 
 
