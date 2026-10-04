@@ -44,11 +44,11 @@ They run side by side on the same computer and talk over a local, password-prote
    npm install
    npm run dev
    ```
-5. **In Discord:** make a private text channel (e.g. `#dm-screen`) and add the bot to it
-   with **View Channel** and **Send Messages** — a private channel hides the bot too, so
-   without this no updates appear. Join your voice channel and run `/table join` from
-   `#dm-screen`. Each player, including you, runs `/consent give`. Talk for a bit and
-   watch the capture check appear.
+5. **In Discord:** make a private text channel (e.g. `#dm-screen`) and, in the channel's
+   permissions, add the bot with **View Channel** and **Send Messages** — a private
+   channel hides the bot too, so without this no updates appear. Join your voice channel
+   and run `/table join` from `#dm-screen`. Each player runs `/consent give` (you too, if
+   you want your own voice transcribed). Talk for a bit and watch the capture check appear.
 
 ## Transcription engines
 
