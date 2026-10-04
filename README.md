@@ -53,12 +53,12 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
    npm ci
    npm run dev
    ```
-6. **In Discord:** make a private text channel (e.g. `#dm-screen`) and, in the channel's
-   permissions, add the bot with **View Channel** and **Send Messages** — a private
-   channel hides the bot too, so without this no updates appear. Join your voice channel
-   and run `/dmbot start` from `#dm-screen`. The first time, it asks you to name your
-   campaign; after that it offers the last campaign and voice channel you used. Each player runs `/consent give` (you too, if
-   you want your own voice transcribed). Talk for a bit and watch the capture check appear.
+6. **In Discord:** run `/dmbot start` in any text channel. The first time, it asks you to
+   name your campaign and who can see its DM screen; after that it offers the last
+   campaign and voice channel you used. DMbot makes a `#dm-screen-<campaign>` channel for
+   your notes, with buttons there to change who can see it. Each player runs
+   `/consent give` (you too, if you want your own voice transcribed). Talk for a bit and
+   watch the capture check appear in the DM screen.
 
 ## Database
 

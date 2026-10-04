@@ -33,7 +33,15 @@ from dmbot.channel_access import (
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
-from dmbot.dm_screen import ensure_dm_screen
+from dmbot.dm_screen import (
+    DMScreenError,
+    HideButton,
+    PeekButton,
+    VisibilityButton,
+    ensure_dm_screen,
+    peek_view,
+)
+from dmbot.dm_screen import messages as screen_messages
 from dmbot.ears.protocol import (
     AudioFrame,
     EarsMessage,

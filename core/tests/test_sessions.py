@@ -35,9 +35,21 @@ def member(user_id: int, *, manager: bool = False) -> Any:
     return m
 
 
+async def screen_from_invoking_channel(bot: DMBot, interaction: Any, campaign: Any) -> int:
+    """Stand-in for the real DM-screen hook (tested in test_dm_screen.py), so these tests
+    can focus on sessions: the saved screen if it still exists, else the invoking channel."""
+    saved = campaign.dm_screen_channel_id
+    if saved is not None and bot.get_channel(saved) is not None:
+        return int(saved)
+    return int(interaction.channel_id)
+
+
 class SessionTests(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        hook = patch("dmbot.bot.ensure_dm_screen", screen_from_invoking_channel)
+        hook.start()
+        self.addCleanup(hook.stop)
         self.consent = ConsentStore(self.db)
         self.campaigns = CampaignStore(self.db)
         self.bot = DMBot(Settings(discord_token="t", ears_secret="s"), self.consent, self.campaigns)
