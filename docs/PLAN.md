@@ -96,8 +96,9 @@ starts, configurable auto-delete of audio and transcripts, and player data remov
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
 
+**License (decided 2026-10-03).** Public repository under PolyForm Strict 1.0.0.
+
 ## Open decisions
 
 - Hosting: DM's PC during sessions vs cloud server
 - Transcription engine for Phase 1
-- License: private repo vs public with PolyForm Strict 1.0.0
