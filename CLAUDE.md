@@ -25,7 +25,16 @@ ruff check . && ruff format --check . && mypy && pytest
 CI runs all of the above on every pull request. Never merge red CI.
 
 ## Workflow
-- Work on a branch, open a PR, never push to `main`. The owner merges.
+- **Branches:**
+  - `development` (default): the lead branch for work in progress. Feature and fix
+    branches start here, and pull requests go back into it.
+  - `beta`: code ready for testing. `development` is promoted into it when the owner
+    wants to test, for example a live session on the test server.
+  - `main`: only code that has passed beta testing and looks ready to deploy. The
+    cloud server deploys from here.
+- Never push directly to `development`, `beta`, or `main`. The owner merges.
+- Promotions (`development` → `beta`, `beta` → `main`) are PRs, opened only when the
+  owner asks.
 - One concern per PR. Link the GitHub issue it closes.
 - Before opening a PR, run the reviewer agents in `.claude/agents/` (reviewer,
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
