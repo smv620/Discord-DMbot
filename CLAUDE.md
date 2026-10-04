@@ -80,9 +80,13 @@ session in PyCharm). They don't share memory, so **GitHub Issues are the shared 
 - **One voice channel:** the bot listens only to the configured table channel.
 - **DM authority:** the bot never posts rulings to players or public channels. Advice
   goes only to `#dm-screen` / the DM. PlotBot and NPCBot record only DM-confirmed facts.
-- **Transcripts are shared; the DM screen is not.** Every consenting participant may
-  view and download session transcripts. DM-screen content (rules alerts, house-rule
-  prompts, NPC and plot notes) never goes into transcripts or to players.
+- **Transcripts are shared; the DM screen is not pushed to players.** Every consenting
+  participant may view and download session transcripts. DM-screen content (rules alerts,
+  house-rule prompts, NPC and plot notes) never goes into transcripts, and the bot never
+  sends it to players. Players see the DM screen only if the campaign's DM-screen
+  visibility allows it: **private** (DM only), **opt-in peek** (the default: hidden, with a
+  "Peek behind the DM screen" button that warns about spoilers before granting access),
+  or **open**. See docs/PLAN.md.
 - **Citations:** every rules alert includes its source and confidence.
 - **Rules edition:** newest ruleset first, always — even in legacy adventures — for
   spells, rules, and monsters (currently 2024 PHB / 2025 MM). Use legacy content only
