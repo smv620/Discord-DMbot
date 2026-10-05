@@ -26,6 +26,7 @@ class Needed:
     flag: str  # discord.py's name, e.g. "view_channel"
     label: str  # Discord's name, as shown in Server Settings → Roles
     why: str  # one plain line for README and notes
+    optional: bool = False  # DMbot still works without it (it just can't do `why`)
 
 
 # The bot-wide list. Keep README "Create the bot" in step: a test checks the number.
@@ -34,11 +35,13 @@ PERMISSIONS: tuple[Needed, ...] = (
     Needed("send_messages", "Send Messages", "post in the DM screen and the voice chat"),
     Needed("read_message_history", "Read Message History", "find and update its own notes"),
     Needed("connect", "Connect", "join the table's voice channel"),
-    Needed("speak", "Speak", "stay connected to voice (DMbot stays muted)"),
-    Needed("manage_channels", "Manage Channels", "make its own dmb- channels"),
-    Needed("manage_roles", "Manage Roles", "choose who can see each DM screen"),
-    Needed("pin_messages", "Pin Messages", "pin the help card in each DM screen"),
+    # Possibly not needed just to listen; to be confirmed in a live test (#148).
+    Needed("speak", "Speak", "join voice (DMbot stays muted)"),
+    Needed("manage_channels", "Manage Channels", "make its DM screen channels"),
+    Needed("manage_roles", "Manage Roles", "set who can see each DM screen"),
+    Needed("pin_messages", "Pin Messages", "pin its help card", optional=True),
 )
+_BY_FLAG = {p.flag: p for p in PERMISSIONS}
 
 _application_id: int | None = None
 
@@ -78,7 +81,12 @@ def missing(perms: discord.Permissions, flags: Iterable[str] | None = None) -> l
 
 
 def label(flag: str) -> str:
-    return next(p.label for p in PERMISSIONS if p.flag == flag)
+    """Discord's name for a permission on the list (KeyError if it isn't on it)."""
+    return _BY_FLAG[flag].label
+
+
+def is_optional(label_: str) -> bool:
+    return any(p.label == label_ and p.optional for p in PERMISSIONS)
 
 
 def human_list(items: list[str]) -> str:
@@ -93,27 +101,41 @@ def fix_hint(link: str | None) -> str:
     """How to fix missing permissions: one click if we have the link."""
     if link:
         return (
-            f"A server admin can fix this in one click: open {link} , pick this server and "
-            "press **Authorize**."
+            f"A server admin can fix this in one click: [open the install link]({link}), "
+            "pick this server, then press **Continue** and **Authorize**."
         )
-    return "Ask a server admin to turn them on for DMbot (Server Settings → Roles → DMbot)."
+    return "Ask a server admin to turn these on: **Server Settings → Roles → DMbot → Permissions**."
+
+
+WELCOME_INTRO = (
+    "👋 **Thanks for adding DMbot!** It listens to your table and writes private notes "
+    "for the DM. It never invents story or makes rulings: the DM decides everything. "
+    "Players are only heard after they say yes."
+)
+HOW_TO_START = "**To start:** the DM joins a voice channel and runs `/dmbot start`."
 
 
 def welcome() -> str:
-    return (
-        "👋 **Thanks for adding DMbot!** It listens to your table and writes private notes "
-        "for the DM. It never makes rulings or story; the DM decides everything.\n"
-        "**To start:** the DM joins a voice channel and runs `/dmbot start`."
-    )
+    return f"{WELCOME_INTRO}\n{HOW_TO_START}"
 
 
 def missing_note(missing_labels: list[str], link: str | None) -> str:
-    """Posted when DMbot joins a server without everything it needs."""
-    return (
-        "👋 **Thanks for adding DMbot!** Before your first game, it still needs "
-        f"{human_list(missing_labels)}. {fix_hint(link)}\n"
-        "Then the DM joins a voice channel and runs `/dmbot start`."
-    )
+    """Posted when DMbot joins a server without everything it needs.
+
+    Needed permissions block the first game; optional ones (Pin Messages) don't, so
+    they're asked for more gently.
+    """
+    needed = [m for m in missing_labels if not is_optional(m)]
+    extra = [m for m in missing_labels if is_optional(m)]
+    asks = []
+    if needed:
+        asks.append(f"Before your first game, it still needs {human_list(needed)}.")
+    if extra:
+        asks.append(
+            f"{'It' if needed else 'Everything works, but it'} would also like "
+            f"{human_list(extra)} (to pin its help card)."
+        )
+    return f"{WELCOME_INTRO}\n{' '.join(asks)} {fix_hint(link)}\n{HOW_TO_START}"
 
 
 def first_postable(

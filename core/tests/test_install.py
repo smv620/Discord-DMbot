@@ -6,10 +6,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
+import pytest
 
 from dmbot import install
 from dmbot.dm_screen import messages
-from dmbot.dm_screen.rules import missing_required
+from dmbot.dm_screen.rules import REQUIRED_PERMISSIONS, missing_required
 
 APP_ID = 1234567890
 EVERYTHING = install.permissions()
@@ -40,6 +41,17 @@ def test_list_has_no_administrator_and_no_duplicates() -> None:
     flags = [p.flag for p in install.PERMISSIONS]
     assert "administrator" not in flags
     assert len(flags) == len(set(flags))
+
+
+def test_dm_screen_needs_are_all_on_the_bot_wide_list() -> None:
+    flags = {p.flag for p in install.PERMISSIONS}
+    assert set(REQUIRED_PERMISSIONS) <= flags
+    assert "pin_messages" not in REQUIRED_PERMISSIONS  # optional: the screen works without
+
+
+def test_unknown_permission_is_a_clear_error() -> None:
+    with pytest.raises(KeyError):
+        install.label("administrator")
 
 
 def test_dm_screen_uses_the_same_names() -> None:
@@ -119,20 +131,34 @@ def test_human_list() -> None:
 
 def test_missing_note_names_whats_missing_and_gives_the_link() -> None:
     link = install.install_link(APP_ID)
-    note = install.missing_note(["Manage Roles", "Pin Messages"], link)
-    assert "**Manage Roles** and **Pin Messages**" in note
-    assert str(link) in note and "Authorize" in note
+    note = install.missing_note(["Manage Channels", "Manage Roles"], link)
+    assert "still needs **Manage Channels** and **Manage Roles**" in note
+    assert f"]({link})" in note  # a readable link, not a bare URL
+    assert "**Continue** and **Authorize**" in note
     assert "/dmbot start" in note
 
 
+def test_pin_messages_alone_doesnt_sound_blocking() -> None:
+    note = install.missing_note(["Pin Messages"], None)
+    assert "still needs" not in note
+    assert "Everything works" in note and "**Pin Messages**" in note
+
+
+def test_needed_and_optional_together() -> None:
+    note = install.missing_note(["Manage Roles", "Pin Messages"], None)
+    assert "still needs **Manage Roles**." in note
+    assert "would also like **Pin Messages**" in note
+
+
 def test_without_a_link_the_note_says_where_to_click() -> None:
-    assert "Server Settings → Roles → DMbot" in install.fix_hint(None)
+    assert "Server Settings → Roles → DMbot → Permissions" in install.fix_hint(None)
 
 
-def test_welcome_says_what_dmbot_does_and_how_to_start() -> None:
+def test_welcome_says_what_dmbot_does_consent_and_how_to_start() -> None:
     text = install.welcome()
     assert "/dmbot start" in text
-    assert "never makes rulings or story" in text
+    assert "never invents story or makes rulings" in text
+    assert "only heard after they say yes" in text
 
 
 def test_dm_screen_permission_message_gives_the_link() -> None:

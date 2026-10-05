@@ -56,22 +56,27 @@ For a full, step-by-step live test (who does what, expected output, pass/fail, a
 report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
 
 1. **Create the bot.** In the [Discord Developer Portal](https://discord.com/developers/applications):
-   New Application → **Bot** → Reset Token (copy it). Then set up one-click install, so
-   whoever adds DMbot gives it every permission it needs in one go, with nothing to
-   switch on in Server Settings afterwards:
-   - **Installation** → *Installation Contexts*: tick **Guild Install**.
+   New Application → **Bot** → Reset Token (copy it). Leave **Public Bot** on: Discord's
+   install link needs it. Only people with Manage Server on a server can add DMbot there.
+   Then set up one-click install, so whoever adds DMbot gives it every permission it
+   needs in one go, with nothing to switch on in Server Settings afterwards:
+   - **Installation** → *Installation Contexts*: tick **Guild Install** (untick
+     **User Install**: DMbot only works inside a server).
    - *Install Link*: **Discord Provided Link**.
    - *Default Install Settings* → **Guild Install**: scopes **bot** and
-     **applications.commands**; permissions **View Channels**, **Send Messages**,
-     **Read Message History**, **Connect**, **Speak**, **Manage Channels**,
-     **Manage Roles**, and **Pin Messages** (permission number `2251800085335056`).
+     **applications.commands** (the permissions list appears once **bot** is ticked);
+     permissions **View Channels**, **Send Messages**, **Read Message History**,
+     **Connect**, **Speak**, **Manage Channels**, **Manage Roles**, and
+     **Pin Messages** (permission number `2251800085335056`).
    - Press **Save Changes**, then open the install link and add DMbot to your private
      test server.
 
    DMbot also writes its install link to the log when it starts ("Install link …").
    **Already added DMbot with fewer permissions?** Open the install link again, pick the
-   same server and press **Authorize**: Discord updates DMbot's permissions. When DMbot
-   joins a server it posts a short welcome, or says which permissions it still needs.
+   same server, then press **Continue** and **Authorize**: Discord updates DMbot's
+   permissions. (The admin can only give permissions they have themselves, and a
+   channel's own settings can still block DMbot there.) When DMbot joins a server it
+   posts a short welcome, or says which permissions it still needs.
    *Why Pin Messages:* DMbot pins the DM screen's help card so it's easy to find (the 📌
    icon at the top of the channel). Without it everything still works, and DMbot tells the
    DM how to turn it on.

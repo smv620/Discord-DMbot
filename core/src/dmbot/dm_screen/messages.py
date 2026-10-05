@@ -70,7 +70,7 @@ CANT_PIN = (
 def needs_permissions(missing: list[str]) -> str:
     return (
         f"I need {install.human_list(missing)} to set up the DM screen. "
-        f"{install.fix_hint(install.install_link())} Then try again."
+        f"{install.fix_hint(install.install_link())} Then run `/dmbot start` again."
     )
 
 

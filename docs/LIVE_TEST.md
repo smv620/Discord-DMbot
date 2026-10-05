@@ -26,8 +26,10 @@ encryption, with little or no audio loss, and that consent is enforced.
 - [ ] **One-click install set up** (README, "Create the bot"): Developer Portal →
       Installation → Default Install Settings → Guild Install with scopes `bot` +
       `applications.commands` and the eight permissions (number `2251800085335056`).
-      **Bot added** with that link. If it was added earlier with fewer permissions,
-      open the link again and press Authorize: nothing to change in Server Settings.
+      **Public Bot** stays on (the install link needs it). **Bot added** with that
+      link. If it was added earlier with fewer permissions, open the link again, pick
+      the server, then press **Continue** and **Authorize**: nothing to change in
+      Server Settings.
 - [ ] **Developer Mode** turned on (User Settings → Advanced), and the **server ID**
       copied.
 - [ ] **No DM screen to make by hand:** `/dmbot start` creates

@@ -688,10 +688,13 @@ class DMBot(commands.AutoShardedBot):
         self._resume_started = True
         # Log (don't post: restarts would spam) servers where DMbot lacks something.
         for guild in self.guilds:
-            me = guild.me
-            gaps = install.missing(me.guild_permissions) if me is not None else []
-            if gaps:
-                with log_context(guild_id=guild.id):
+            me = cast(discord.Member | None, guild.me)  # None while the guild is loading
+            with log_context(guild_id=guild.id):
+                if me is None:
+                    log.debug("Not checking permissions: server still loading")
+                    continue
+                gaps = install.missing(me.guild_permissions)
+                if gaps:
                     log.warning("Missing permissions here: %s", ", ".join(gaps))
         self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
 
