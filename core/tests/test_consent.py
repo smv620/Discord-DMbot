@@ -50,6 +50,19 @@ class ConsentTests(DatabaseTest):
         self.store.stop_now(1, 2)
         self.assertIsNone(await self.store.granted_at(1, 2))
 
+    async def test_a_stop_during_a_grant_wins(self) -> None:
+        lock = self.store._lock(1)
+        await lock.acquire()  # the grant's database work is under way
+        grant = asyncio.create_task(self.store.grant(1, 2))
+        await asyncio.sleep(0)
+        self.store.stop_now(1, 2)  # "No thanks" pressed meanwhile
+        lock.release()
+        await grant
+        self.assertFalse(self.store.has_consent(1, 2))
+        await self.store.revoke(1, 2)
+        self.assertFalse(self.store.has_consent(1, 2))
+        self.assertEqual(await ConsentStore(self.db).consenting(1), frozenset())
+
     async def test_concurrent_grants(self) -> None:
         await asyncio.gather(*(self.store.grant(1, u) for u in range(20)))
         self.assertEqual(len(await self.store.consenting(1)), 20)

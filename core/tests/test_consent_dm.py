@@ -197,6 +197,7 @@ class ConsentDMTests(DatabaseTest):
         old: Any = SimpleNamespace(channel=before)
         new: Any = SimpleNamespace(channel=after)
         await self.bot.on_voice_state_update(member, old, new)
+        await self.settle()
 
     async def test_someone_joining_later_is_asked_once(self) -> None:
         await self.joined()
@@ -377,6 +378,24 @@ class ConsentDMTests(DatabaseTest):
         assert "won't record you" in edit["content"]
         assert custom_ids(edit["view"]) == ["dmbot:consent:yes:1"]
 
+    async def test_yes_then_quick_no_leaves_ears_without_them(self) -> None:
+        lock = self.consent._lock(GUILD)
+        await lock.acquire()  # "I consent" is still saving...
+        yes = asyncio.create_task(self.bot.give_consent(GUILD, PLAYER))
+        await asyncio.sleep(0)
+        no = asyncio.create_task(self.bot.withdraw_consent(GUILD, PLAYER))  # ...No thanks
+        await asyncio.sleep(0)
+        lock.release()
+        await asyncio.gather(yes, no)
+        assert not self.consent.has_consent(GUILD, PLAYER)
+        assert str(PLAYER) not in self.allowlists()[-1]  # ears' latest list
+
+    async def test_voice_join_rounds_stop_when_dmbot_closes(self) -> None:
+        self.bot._closing = True
+        late = self.member(LATECOMER)
+        await self.voice_update(late, None, self.voice)
+        late.send.assert_not_called()
+
     async def test_buttons_for_a_server_not_served_here_change_nothing(self) -> None:
         # DMbot left it, or another process serves it: never claim success.
         await self.consent.grant(ELSEWHERE, PLAYER)
@@ -415,7 +434,8 @@ class ConsentDMTests(DatabaseTest):
         assert not self.consent.has_consent(GUILD, PLAYER)
 
     async def test_consent_give_after_a_yes_shows_when_and_how_to_stop(self) -> None:
-        await self.consent.grant(GUILD, PLAYER)
+        await ConsentStore(self.db).grant(GUILD, PLAYER)  # given before a restart
+        self.bot.consent = ConsentStore(self.db)  # fresh process: cache not loaded
         call = self.slash(PLAYER)
         await consent_give.callback(call)  # type: ignore[call-arg]
         args = call.followup.send.await_args

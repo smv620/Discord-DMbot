@@ -9,7 +9,8 @@ Revoking must never be undone by a race or a database failure:
 - Each change and the reload that follows it run in one transaction, under a lock per
   server, so an older reload can't overwrite a newer one.
 - A revoked player is held back from every reload until the revoke is saved (or they
-  give consent again), so a failed save can't quietly bring them back.
+  give consent again), so a failed save can't quietly bring them back. A grant that was
+  already running when the stop came doesn't count as giving consent again.
 """
 
 from __future__ import annotations
@@ -28,8 +29,12 @@ class ConsentStore:
         self._locks: dict[int, asyncio.Lock] = {}
         # Revoked here but not (yet) saved: never trust the database for these.
         self._held_back: dict[int, set[int]] = {}
+        # How many stops each player has had, so a grant that was already running when a
+        # stop arrived can't undo that stop.
+        self._stops: dict[tuple[int, int], int] = {}
 
     async def grant(self, guild_id: int, user_id: int) -> frozenset[int]:
+        stops_before = self._stops.get((guild_id, user_id), 0)
         async with self._lock(guild_id):
             async with self._db.guild(guild_id) as conn:
                 await conn.execute(
@@ -39,11 +44,15 @@ class ConsentStore:
                     (guild_id, user_id, int(time.time())),
                 )
                 users = await _select(conn, guild_id)
-            self._held_back.get(guild_id, set()).discard(user_id)
+            if self._stops.get((guild_id, user_id), 0) == stops_before:
+                self._held_back.get(guild_id, set()).discard(user_id)
+            # Otherwise a stop arrived while saving: it wins, and its revoke follows.
             return self._store(guild_id, users)
 
     def stop_now(self, guild_id: int, user_id: int) -> None:
         """Stop trusting this player's consent immediately, without the database."""
+        key = (guild_id, user_id)
+        self._stops[key] = self._stops.get(key, 0) + 1
         self._held_back.setdefault(guild_id, set()).add(user_id)
         if guild_id in self._cache:
             self._cache[guild_id] = self._cache[guild_id] - {user_id}

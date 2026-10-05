@@ -319,10 +319,17 @@ class DMBot(commands.AutoShardedBot):
         log.info("Consent withdrawn: user %s", user_id)
         with contextlib.suppress(Exception):
             await self.push_allowlist(guild_id)
-        await self.consent.revoke(guild_id, user_id)
+        try:
+            await self.consent.revoke(guild_id, user_id)
+        finally:
+            # Again, in case a grant that was saving meanwhile sent ears an older list.
+            with contextlib.suppress(Exception):
+                await self.push_allowlist(guild_id)
 
     def start_asking(self, table: Table, members: list[discord.Member]) -> None:
         """Ask in the background: Discord calls must never hold up the voice link."""
+        if self._closing:
+            return  # close() may already be gathering; a new task would never be cancelled
         task = asyncio.create_task(self.ask_for_consent(table, members), name="ask-consent")
         self._asking.add(task)
         task.add_done_callback(self._asking.discard)
@@ -383,8 +390,7 @@ class DMBot(commands.AutoShardedBot):
             return
         if before.channel is not None and before.channel.id == after.channel.id:
             return  # mute, deafen and the like: not a join
-        # discord.py runs each event in its own task, so awaiting here holds up nothing.
-        await self.ask_for_consent(table, [member])
+        self.start_asking(table, [member])  # tracked, so close() cancels it
 
     async def start_table(self, table: Table) -> bool:
         """Register the session, send ears the consent list, then the join.
@@ -1067,7 +1073,9 @@ async def consent_give(interaction: discord.Interaction) -> None:
             ephemeral=True,
         )
         return
-    if granted is not None and bot.consent.has_consent(guild.id, interaction.user.id):
+    # granted_at reads the database and skips unsaved revokes, so it is right even on a
+    # fresh process whose cache hasn't loaded this server yet.
+    if granted is not None:
         await interaction.followup.send(
             confirmed_text(guild.name, granted), view=stop_view(guild.id), ephemeral=True
         )
