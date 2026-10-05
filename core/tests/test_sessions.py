@@ -15,6 +15,7 @@ from dmbot.campaigns import CampaignStore
 from dmbot.channel_access import SAME_CHANNEL
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.consent_dm import ALREADY_RECORDED
 from dmbot.dm_screen import DMScreenError
 from dmbot.sessions import SessionStore
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
@@ -510,6 +511,22 @@ class SaveAndResume(SessionTests):
         lists = [json.loads(m) for m in self.ears.sent if '"allowlist"' in m]
         self.assertTrue(lists)
         self.assertNotIn(str(PLAYER), lists[0]["userIds"])
+        reply = interaction.followup.send.await_args
+        self.assertIn(ALREADY_RECORDED, reply.args[0])  # same words as the Stop button
+        self.assertTrue(reply.kwargs["ephemeral"])
+
+    async def test_a_revoke_that_cant_be_saved_still_stops_and_says_so(self) -> None:
+        from dmbot.bot import consent_revoke
+
+        await self.consent.grant(GUILD, PLAYER)
+        self.consent.revoke = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
+        interaction = self._consent_interaction(PLAYER)
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            await consent_revoke.callback(interaction)  # type: ignore[call-arg]
+        text = interaction.followup.send.await_args.args[0]
+        self.assertIn("couldn't save this yet", text)
+        self.assertNotIn(ALREADY_RECORDED, text)
+        self.assertFalse(self.consent.has_consent(GUILD, PLAYER))
 
     async def test_resume_starts_once(self) -> None:
         bot = await self.restart()

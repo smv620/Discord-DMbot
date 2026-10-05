@@ -40,7 +40,10 @@ def test_request_asks_first_and_says_dmbot_never_decides() -> None:
     assert "never decides anything" in text
     assert "ignores your voice" in text and "still play as normal" in text
     assert "If you say no, DMbot asks again next session" in text  # no false promise
-    assert "Anyone in this server can read and download that text" in text  # PLAN.md
+    assert (  # PLAN.md: the whole server, and it stays after a stop
+        "Anyone in this server can read and download that text. "
+        "It stays there even if you stop later." in text
+    )
     assert c.CLOUD_NOTE not in text
     assert c.CLOUD_NOTE in c.request_text("Dragon Club", voice=None, dm=None, cloud=True)
 
@@ -59,6 +62,8 @@ def test_reminder_is_short_and_shows_the_date() -> None:
     text = c.reminder_text("Dragon Club", "table", 1_760_000_000)
     assert "<t:1760000000:D>" in text  # each reader sees their own time zone
     assert "🛑" in text and text.count("\n") == 0
+    # Also reaches people who said yes before the whole server could read it (#35).
+    assert "Anyone in this server can read what it writes down" in text
 
 
 def test_unreachable_note_tells_dms_off_from_other_failures() -> None:
@@ -377,8 +382,16 @@ class ConsentDMTests(DatabaseTest):
         assert not self.consent.has_consent(GUILD, PLAYER)
         assert PLAYER not in await ConsentStore(self.db).consenting(GUILD)
         edit = press.edit_original_response.await_args.kwargs
-        assert "won't record you" in edit["content"]
+        assert "Stopped" in edit["content"]  # their yes was removed: say so
+        assert c.ALREADY_RECORDED in edit["content"]
         assert custom_ids(edit["view"]) == ["dmbot:consent:yes:1"]
+
+    async def test_a_plain_no_thanks_says_nothing_about_past_recordings(self) -> None:
+        press = self.button_press(PLAYER)
+        await c.DeclineButton(GUILD).callback(press)
+        content = press.edit_original_response.await_args.kwargs["content"]
+        assert "won't record you" in content
+        assert c.ALREADY_RECORDED not in content
 
     async def test_yes_then_quick_no_leaves_ears_without_them(self) -> None:
         lock = self.consent._lock(GUILD)

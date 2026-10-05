@@ -312,15 +312,15 @@ class DMBot(commands.AutoShardedBot):
         if table is not None:
             table.segmenter.drop(user_id)
 
-    async def withdraw_consent(self, guild_id: int, user_id: int) -> None:
-        """Stop capturing at once, then save. Raises if saving failed; the player stays
-        stopped in this process either way."""
+    async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
+        """Stop capturing at once, then save; True if they had consented. Raises if saving
+        failed; the player stays stopped in this process either way."""
         self.stop_recording(guild_id, user_id)
         log.info("Consent withdrawn: user %s", user_id)
         with contextlib.suppress(Exception):
             await self.push_allowlist(guild_id)
         try:
-            await self.consent.revoke(guild_id, user_id)
+            return await self.consent.revoke(guild_id, user_id)
         finally:
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):

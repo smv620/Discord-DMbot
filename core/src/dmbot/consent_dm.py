@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable
 from typing import Any, Literal, Protocol
 
 import discord
@@ -52,9 +51,10 @@ CLOUD_NOTE = (
     "Note: this server uses another company to turn speech into text, so your voice "
     "clips and Discord name are sent to them."
 )
-# What happens to what someone said before they stopped (docs/PLAN.md, Retention).
+# What happens to what someone said before they stopped: the whole server can read it
+# (docs/PLAN.md, Retention and "who can see what"; transcripts #124, #125).
 ALREADY_RECORDED = (
-    "What was already recorded stays in the transcript, which anyone in this server can still read."
+    "What DMbot already wrote down stays, and anyone in this server can still read it."
 )
 
 
@@ -78,7 +78,8 @@ def request_text(server: str, *, voice: str | None, dm: str | None, cloud: bool)
         "DMbot listens and gives the DM private notes. It never talks in the game and never "
         "decides anything. Your DM does.",
         f"• **{CONSENT_LABEL}:** DMbot records what you say and turns it into text. "
-        "Anyone in this server can read and download that text, even if you stop later.",
+        "Anyone in this server can read and download that text. It stays there even if you "
+        "stop later.",
         f"• **{DECLINE_LABEL}:** DMbot ignores your voice. You can still play as normal.",
         "DMbot is just for your game. Please don't use it or its text for anything else.",
         "A yes is remembered for this server. If you say no, DMbot asks again next session.",
@@ -99,8 +100,9 @@ def confirmed_text(server: str, granted_at: int) -> str:
 def reminder_text(server: str, voice: str | None, granted_at: int) -> str:
     where = f"**{_plain(voice)}** on " if voice else ""
     return (
-        f"🎙️ DMbot is recording you in {where}**{_plain(server)}**. You said yes on "
-        f"{_date(granted_at)}. Press 🛑 below to stop any time."
+        f"🎙️ DMbot is recording you in {where}**{_plain(server)}**. Anyone in this server "
+        f"can read what it writes down. You said yes on {_date(granted_at)}. Press 🛑 below "
+        "to stop any time."
     )
 
 
@@ -150,7 +152,7 @@ class ConsentActions(Protocol):
 
     def stop_recording(self, guild_id: int, user_id: int) -> None: ...
 
-    async def withdraw_consent(self, guild_id: int, user_id: int) -> None: ...
+    async def withdraw_consent(self, guild_id: int, user_id: int) -> bool: ...
 
 
 def _actions(interaction: discord.Interaction) -> ConsentActions:
@@ -228,10 +230,12 @@ class ConsentButton(
             )
 
 
-async def _stop(
-    interaction: discord.Interaction, guild_id: int, done_text: Callable[[str], str]
-) -> None:
-    """Shared by No thanks and Stop: never leave someone recorded after either."""
+async def _stop(interaction: discord.Interaction, guild_id: int) -> None:
+    """Shared by No thanks and Stop: never leave someone recorded after either.
+
+    Someone whose yes was removed is told what happens to what DMbot already wrote down;
+    a plain "no" isn't (nothing of theirs was ever recorded).
+    """
     with log_context(guild_id=guild_id):
         guild = _served_here(interaction, guild_id)
         if guild is None:
@@ -241,13 +245,14 @@ async def _stop(
         actions.stop_recording(guild_id, interaction.user.id)  # before any await
         await interaction.response.defer()
         try:
-            await actions.withdraw_consent(guild_id, interaction.user.id)
+            had_consented = await actions.withdraw_consent(guild_id, interaction.user.id)
         except Exception:
             log.exception("Couldn't save a consent revoke from a consent button")
             await interaction.followup.send(REVOKE_NOT_SAVED, ephemeral=True)
             return
+        done = stopped_text if had_consented else declined_text
         await interaction.edit_original_response(
-            content=done_text(guild.name), view=consent_view(guild_id)
+            content=done(guild.name), view=consent_view(guild_id)
         )
 
 
@@ -273,7 +278,7 @@ class DeclineButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         # An old request can be answered after a yes given elsewhere: "no" must stop it.
-        await _stop(interaction, self.guild_id, declined_text)
+        await _stop(interaction, self.guild_id)
 
 
 class StopButton(
@@ -298,7 +303,7 @@ class StopButton(
         return cls(int(match["guild"]))
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        await _stop(interaction, self.guild_id, stopped_text)
+        await _stop(interaction, self.guild_id)
 
 
 def request_view(guild_id: int) -> discord.ui.View:
