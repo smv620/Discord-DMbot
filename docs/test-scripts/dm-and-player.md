@@ -7,9 +7,8 @@ from DMbot. The DM reads first, when everyone is ready.
 
 - Don't read the words in **[ ]** or **(( ))** out loud. They tell you who reads and what to do.
 - Read at a normal pace, as if you were playing.
-- **(( dramatic pause ))**: stop and count to three in your head, then go on.
-- **(( whispering ))**: whisper until the end of that sentence, then use your normal voice
-  again.
+- **(( dramatic pause ))**: **mute** your mic, count slowly to three, unmute, then go on.
+- **(( whispering ))**: whisper the sentence in *italics*, then use your normal voice again.
 
 ## Part 1: everyday words
 
@@ -19,12 +18,13 @@ from DMbot. The DM reads first, when everyone is ready.
 
 **[DM]:** An old man opens the door. (( dramatic pause )) "Come inside," he says. "It's cold."
 
-**[Player]:** Thank you. (( whispering )) We need hot food and a warm bed.
+**[Player]:** Thank you.  
+(( whispering )) *We need hot food and a warm bed.*
 
 ## Part 2: D&D words
 
-Say the names like this: Bryn Shander (BRIN SHAN-der), Targos (TAR-gohs), Auril (AW-ril),
-Caer-Dineval (KAIR DIN-eh-vahl).
+**[Don't read this out loud.]** Say the names like this: Bryn Shander (BRIN SHAN-der),
+Targos (TAR-gohs), Auril (AW-ril), Caer-Dineval (KAIR DIN-eh-vahl).
 
 **[DM]:** Welcome to Bryn Shander, the biggest of the Ten-Towns. The road goes north to
 Targos and east to Easthaven.
