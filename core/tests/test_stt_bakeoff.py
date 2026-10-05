@@ -5,6 +5,7 @@ The service clients are tested against small fake WebSocket servers on localhost
 
 import asyncio
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from dataclasses import asdict
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
@@ -24,6 +26,8 @@ from dmbot.devtools.stt_bakeoff.audio import RATE, split
 from dmbot.devtools.stt_bakeoff.normalize import normalize, normalize_words
 from dmbot.devtools.stt_bakeoff.providers import (
     CHUNK_BYTES,
+    DEEPGRAM_URL,
+    SPEECHMATICS_URL,
     Deepgram,
     Speechmatics,
     deepgram_url,
@@ -297,6 +301,62 @@ async def with_server(
     async with serve(handler, "127.0.0.1", 0, process_request=process_request) as server:
         port = server.sockets[0].getsockname()[1]
         return await body(f"ws://127.0.0.1:{port}")
+
+
+class Endpoints(unittest.TestCase):
+    """Endpoints default to today's values and can be changed from .env (#157)."""
+
+    def test_defaults_when_unset_or_blank(self) -> None:
+        for value in (None, "", "  "):
+            env = {} if value is None else {"SPEECHMATICS_URL": value, "DEEPGRAM_URL": value}
+            with patch.dict(os.environ, env, clear=True):
+                self.assertEqual(Speechmatics("enhanced").url, SPEECHMATICS_URL)
+                self.assertEqual(Deepgram().base_url, DEEPGRAM_URL)
+
+    def test_env_overrides(self) -> None:
+        env = {"SPEECHMATICS_URL": "wss://eu.example/v2", "DEEPGRAM_URL": "wss://dg.example"}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(Speechmatics("enhanced").url, "wss://eu.example/v2")
+            self.assertEqual(Deepgram().base_url, "wss://dg.example")
+            self.assertTrue(deepgram_url([]).startswith("wss://dg.example?model=nova-3"))
+
+    def test_an_explicit_url_wins(self) -> None:
+        env = {"SPEECHMATICS_URL": "wss://env", "DEEPGRAM_URL": "wss://env"}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(Speechmatics("enhanced", url="wss://arg").url, "wss://arg")
+            self.assertEqual(Deepgram(base_url="wss://arg").base_url, "wss://arg")
+
+    def test_an_unencrypted_override_is_refused(self) -> None:
+        # The key goes in a header: ws:// would send it in the clear.
+        for var, make in (
+            ("SPEECHMATICS_URL", lambda: Speechmatics("enhanced")),
+            ("DEEPGRAM_URL", lambda: Deepgram()),
+        ):
+            with (
+                patch.dict(os.environ, {var: "ws://typo.example"}, clear=True),
+                self.assertRaisesRegex(ValueError, f"{var} must start with wss://"),
+            ):
+                make()
+
+    def test_an_override_is_trimmed(self) -> None:
+        with patch.dict(os.environ, {"SPEECHMATICS_URL": "  wss://eu.example/v2  "}, clear=True):
+            self.assertEqual(Speechmatics("enhanced").url, "wss://eu.example/v2")
+
+    def test_a_deepgram_override_with_its_own_query_keeps_one_question_mark(self) -> None:
+        url = deepgram_url(["Kael"], base="wss://dg.example/v1/listen?tier=dedicated")
+        self.assertEqual(url.count("?"), 1)
+        query = parse_qs(urlparse(url).query)
+        self.assertEqual(query["tier"], ["dedicated"])
+        self.assertEqual(query["keyterm"], ["Kael"])
+
+    def test_env_example_lists_every_setting_the_tool_reads(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "core/src/dmbot/devtools/stt_bakeoff/providers.py").read_text()
+        names = set(re.findall(r'(?:api_key|endpoint)\(\s*"([A-Z_]+)"', source))
+        self.assertGreaterEqual(names, {"SPEECHMATICS_API_KEY", "DEEPGRAM_API_KEY"})
+        example = (root / ".env.example").read_text()
+        for var in sorted(names):
+            self.assertRegex(example, rf"(?m)^{var}=$")  # listed, and left blank
 
 
 class FakeSpeechmatics(unittest.TestCase):

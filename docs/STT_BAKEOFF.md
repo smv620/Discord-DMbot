@@ -25,11 +25,26 @@ The questions to answer:
 | **PyCharm session** | Reviews the scoring and can re-score saved results offline. |
 | **Server session** | Runs the bake-off on the server (US East, close to both US endpoints), writes the report and the testing-log entries. |
 
-Keys (server `.env`, read by the tool, never printed or logged):
-```
-SPEECHMATICS_API_KEY=...
-DEEPGRAM_API_KEY=...
-```
+**Adding the keys (owner, on the server).** The tool reads them from the server's `.env`
+and never prints or logs them.
+1. Open the file: `nano ~/Discord-DMbot/.env`
+2. If your `.env` is older than this test, these lines aren't in it yet. Paste them at the
+   end and put your two keys after the `=` (no spaces, no quotes):
+   ```
+   SPEECHMATICS_API_KEY=paste-your-speechmatics-key-here
+   DEEPGRAM_API_KEY=paste-your-deepgram-key-here
+   SPEECHMATICS_URL=
+   DEEPGRAM_URL=
+   ```
+   Leave the last two lines blank. Set `SPEECHMATICS_URL` only if your Speechmatics portal
+   shows a real-time address other than `wss://us.rt.speechmatics.com/v2` (for example an
+   EU one); it must start with `wss://`. `DEEPGRAM_URL` isn't needed for this test.
+3. Save (Ctrl+O, Enter) and exit (Ctrl+X).
+4. Check: `$BAKEOFF check` (see "Running it") should say both keys work.
+
+No restart needed: every `$BAKEOFF` command starts a fresh container that reads `.env`
+again. Don't restart core for this; that would take the live bot offline. The keys stay in
+this one file on the server: never paste them into chat, issues or the repo.
 **Data settings:** Deepgram requests opt out of its model-improvement program
 (`mip_opt_out=true`). In the Speechmatics account, check the data-retention setting and
 turn off anything that keeps audio for training.
@@ -143,7 +158,7 @@ The tool is in the core image (`dmbot.devtools.stt_bakeoff`; DMbot never imports
 it in a one-off core container, with the recordings and results **outside the repo**:
 
 ```bash
-cd ~/Discord-DMbot && git fetch && git checkout feat/stt-bakeoff && git pull
+cd ~/Discord-DMbot && git checkout development && git pull   # the tool is merged (#145)
 docker compose build core
 mkdir -p ~/bakeoff-results
 BAKEOFF="docker compose run --rm --no-deps \

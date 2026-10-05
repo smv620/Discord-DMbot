@@ -50,6 +50,9 @@ services:
       DATABASE_URL: ""         # ears never touches the database
       POSTGRES_ADMIN_PASSWORD: ""
       DMBOT_DB_PASSWORD: ""
+      CLOUD_STT_API_KEY: ""    # speech-to-text keys are core's (and the bake-off's) only
+      SPEECHMATICS_API_KEY: ""
+      DEEPGRAM_API_KEY: ""
     depends_on:
       - core
     restart: unless-stopped
