@@ -14,6 +14,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal, NamedTuple
 
+from dmbot import install
+
 # Overwrite permission names are discord.py's, so the plan maps straight onto
 # discord.PermissionOverwrite(**perms). Discord only lets the bot allow or deny a
 # permission it holds itself, so plans are filtered with `restrict()` before use.
@@ -32,7 +34,8 @@ READ_ONLY: Perms = {
 }
 HIDDEN: Perms = {"view_channel": False}
 
-# What the bot needs server-wide to run a DM screen (README, "Create the bot").
+# The part of the bot-wide list (dmbot.install.PERMISSIONS) a DM screen can't work
+# without. Pin Messages is wanted too, but the screen still works if it's missing.
 REQUIRED_PERMISSIONS = (
     "view_channel",
     "send_messages",
@@ -40,14 +43,6 @@ REQUIRED_PERMISSIONS = (
     "manage_channels",
     "manage_roles",
 )
-# How Discord names them in Server Settings → Roles.
-PERMISSION_LABELS = {
-    "view_channel": "View Channels",
-    "send_messages": "Send Messages",
-    "read_message_history": "Read Message History",
-    "manage_channels": "Manage Channels",
-    "manage_roles": "Manage Roles",
-}
 
 
 class Target(NamedTuple):
@@ -69,7 +64,7 @@ def restrict(perms: Perms, held: Iterable[str]) -> dict[str, bool]:
 def missing_required(held: Iterable[str]) -> list[str]:
     """Discord's names for the required permissions the bot lacks."""
     have = set(held)
-    return [PERMISSION_LABELS[p] for p in REQUIRED_PERMISSIONS if p not in have]
+    return [install.label(p) for p in REQUIRED_PERMISSIONS if p not in have]
 
 
 def is_peeker(perms: Perms) -> bool:
