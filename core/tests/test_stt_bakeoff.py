@@ -16,8 +16,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
-from websockets.asyncio.server import Response, ServerConnection, serve
-from websockets.http11 import Request
+from websockets.asyncio.server import ServerConnection, serve
+from websockets.http11 import Request, Response
 
 from dmbot.devtools.stt_bakeoff import data
 from dmbot.devtools.stt_bakeoff.audio import RATE, split
