@@ -21,6 +21,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from dmbot import install
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.capture_log import CaptureLog
@@ -243,6 +244,13 @@ class DMBot(commands.AutoShardedBot):
     # ---- lifecycle ---------------------------------------------------------
 
     async def setup_hook(self) -> None:
+        # The application ID comes from Discord at login; messages use it for the
+        # one-click install link, and the log shows it to whoever runs DMbot.
+        install.configure(self.application_id)
+        log.info(
+            "Install link (add DMbot to a server, or fix its permissions): %s",
+            install.install_link(),
+        )
         self.tree.add_command(dmbot_group)
         self.tree.add_command(consent_group)
         # DM-screen buttons keep working after a restart.
@@ -678,6 +686,13 @@ class DMBot(commands.AutoShardedBot):
         if self._resume_started:
             return
         self._resume_started = True
+        # Log (don't post: restarts would spam) servers where DMbot lacks something.
+        for guild in self.guilds:
+            me = guild.me
+            gaps = install.missing(me.guild_permissions) if me is not None else []
+            if gaps:
+                with log_context(guild_id=guild.id):
+                    log.warning("Missing permissions here: %s", ", ".join(gaps))
         self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
 
     async def _resume_with_retries(self) -> None:
@@ -722,6 +737,11 @@ class DMBot(commands.AutoShardedBot):
         if resumed:
             log.info("Resumed %d session(s)", resumed)
         return failed
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """DMbot was just added to a server: say hello, or say what it still needs."""
+        with log_context(guild_id=guild.id):
+            log.info("Joined a server; %s", await install.post_welcome(guild))
 
     async def on_guild_available(self, guild: discord.Guild) -> None:
         """Discord made a server available again: resume its session if one was waiting."""

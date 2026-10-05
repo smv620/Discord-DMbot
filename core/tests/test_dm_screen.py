@@ -276,8 +276,10 @@ def test_missing_required_uses_discord_names() -> None:
 
 def test_needs_permissions_names_exactly_whats_missing() -> None:
     assert "**Manage Roles**" in m.needs_permissions(["Manage Roles"])
-    assert "turn it on" in m.needs_permissions(["Manage Roles"])
-    assert "turn them on" in m.needs_permissions(["Manage Channels", "Manage Roles"])
+    two = m.needs_permissions(["Manage Channels", "Manage Roles"])
+    assert "**Manage Channels** and **Manage Roles**" in two
+    # Before the install link is known, it says where to click instead.
+    assert "Server Settings → Roles → DMbot" in two
 
 
 def test_merge_keeps_server_roles_and_drops_stray_members() -> None:

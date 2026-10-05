@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dmbot import install
 from dmbot.dm_screen.rules import Exposure
 
 PEEK_LABEL = "Peek behind the DM screen"
@@ -58,6 +59,7 @@ FORBIDDEN_HERE = (
     "not let DMbot manage channels. Try running the command from a channel outside that "
     "category, or ask a server admin to check the category's permissions for DMbot."
 )
+# Fixed text: DMbot finds its earlier pin notes by matching it exactly.
 CANT_PIN = (
     "📌 I couldn't pin the 🛡️ DM screen card, so it may scroll out of sight. "
     "Ask a server admin to turn on **Pin Messages** for DMbot "
@@ -66,11 +68,9 @@ CANT_PIN = (
 
 
 def needs_permissions(missing: list[str]) -> str:
-    names = " and ".join(f"**{name}**" for name in missing)
     return (
-        f"I need {names} to set up the DM screen. Ask a server admin to turn "
-        f"{'it' if len(missing) == 1 else 'them'} on for DMbot "
-        "(Server Settings → Roles → DMbot), then try again."
+        f"I need {install.human_list(missing)} to set up the DM screen. "
+        f"{install.fix_hint(install.install_link())} Then try again."
     )
 
 
