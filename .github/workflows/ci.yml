@@ -15,7 +15,7 @@ concurrency:
 jobs:
   ears:
     name: ears (Node voice service)
-    runs-on: ubuntu-24.04  # pinned (#29); move to 26 on purpose
+    runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     defaults:
       run:
         working-directory: ears
@@ -45,7 +45,7 @@ jobs:
 
   core:
     name: core (Python)
-    runs-on: ubuntu-24.04  # pinned (#29); move to 26 on purpose
+    runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     defaults:
       run:
         working-directory: core
@@ -96,7 +96,7 @@ jobs:
 
   docker:
     name: docker images
-    runs-on: ubuntu-24.04  # pinned (#29); move to 26 on purpose
+    runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     steps:
       - uses: actions/checkout@v5
       - name: compose file is valid
