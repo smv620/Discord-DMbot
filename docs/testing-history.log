@@ -202,3 +202,81 @@ Follow-up
   - Reviews of the scripts found: #120 (capture check can drop audio counts), #121
     (ears may cut the start of each piece of speech), #109 comment (stop drops speech
     still being transcribed).
+
+==============================================================================
+2026-10-05  Server: #135 deployed, then an OS reboot (server session)
+==============================================================================
+  - 17:58 UTC  core rebuilt with #135 (consent text: anyone in the server can read
+    it, #132). Ears unchanged.
+  - 18:05 UTC  OS rebooted for a kernel update (7.0.0-34), at the owner's request.
+    All three containers came back on their own (restart: unless-stopped): postgres
+    ready 18:05:56, ears logged in 18:05:58, Whisper small loading 18:05:59, "ears
+    connected" 18:06:05. No errors.
+
+==============================================================================
+2026-10-05  Test 1, run 5: DM alone, free talk (meant to be the script)
+==============================================================================
+Setup       development @ 75ec854 (#135), whisper-local small, DMBOT_DEBUG_AUDIO=1. The
+            DM alone; read the reminder message aloud and talked instead of the script.
+Timeline (UTC)
+  18:35:37  Session started; consent list: 2 opted in; joined voice; notice posted
+  18:35-18:36  Capture checks 96%, 100%, 100%; no ⚠️
+  18:36:25  Whisper started a 1.04 s clip and started nothing else for 40 s
+  18:37:16  /dmbot stop
+Numbers     ears: 3389 of 3394 packets (99.9%), link_dropped_total=0, 15 audio lines.
+            One 22 s piece (10 short pauses, 1.7 s total) was cut at core's 15 s cap.
+Results
+  Audio % ................................ PASS (99.9%)
+  Reminder shows the new wording ......... PASS (read aloud; Whisper wrote "Anyone on
+                                           this can read what you write down")
+  Speech-to-text keeps up ................ FAIL: 40 s stall on a 1 s clip (#137)
+  Overall ................................ PARTIAL (no script, so no transcript score)
+Found
+  - #137 local Whisper can take ~40 s on a 1 s clip and stall every clip behind it.
+  - Seen live: #120 (capture checks due at ~18:36:49 and ~18:37:04 never posted, their
+    audio counts dropped) and #109 (a 13 s clip still queued at stop was dropped).
+  - #138 /dmbot help still says players use /consent give to agree.
+  - "Count to three" didn't make 0.8 s of silence, so a pause didn't split the speech.
+  - "One person" means the DM alone: one-person.md had Player lines. Replaced with
+    dm-only.md, and dramatic pauses became "mute, count to three, unmute" (#139, #140,
+    PR #141).
+
+==============================================================================
+2026-10-05  Test 1, run 6: DM alone, dm-only.md read-aloud script (first scored run)
+==============================================================================
+Setup       development @ 8bdb68f (#141), whisper-local small (device/compute auto,
+            beam 1), DMBOT_DEBUG_AUDIO=1. The DM alone, docs/test-scripts/dm-only.md,
+            dramatic pause = mute, count to three, unmute. Packet loss tool: none known.
+            (A 30 s session at 20:07 had only ~6 s of speech; not scored.)
+Timeline (UTC)
+  20:08:26  Session started; consent list: 2 opted in
+  20:08:27  Joined voice; capturing the DM; notice posted
+  20:08:35-20:09:36  4 capture checks, audio 100%, no ⚠️
+  20:09:41  /dmbot stop, after the last line had shown up
+Numbers     ears: 1845 of 1845 packets (100%), link_dropped_total=0. 9 pieces of speech
+            (expected about 7, plus one short piece at each end). Longest 10.8 s, none
+            near the 15 s cap. Whisper started each clip within ~5 s; no stall. 39 log
+            lines, all INFO.
+Score (docs/test-scripts/README.md)
+  script: dm-only   people: 1 (DM only)   commit: 8bdb68f
+  engine: whisper-local small (device/compute auto, beam 1)
+  packet loss added: none known      Discord noise suppression: not noted
+  audio: received/expected = 1845/1845 (100%)   pieces of speech: DM 9
+  part 1: 0 wrong, 0 missing, 0 added (of 33, whisper not included)
+  part 2: 7 of 12 right
+          right: Ten-Towns, Targos, Easthaven, Dexterity saving throw, frost giant,
+                 Frostmaiden ("frost maiden"), longsword ("long sword")
+          wrong: Bryn Shander ("Brinchander"), Detect Magic ("the tech magic"), Auril
+                 ("or all"), Lonelywood ("only wood"), Caer-Dineval ("care dino ball")
+  whisper: all, ring lit: not noted ("He gives you hot food and a warm bed.")
+  delay: about 3-5 s from speaking to text
+Notes
+  - 4 of 5 dramatic pauses split the speech. The first (between "opens the door" and
+    "Come inside") didn't; whether the DM muted there wasn't confirmed.
+  - Every first word after a split came through right ("Your wizard", "It's a trap",
+    "A frost giant", "The fighter", "He gives"): no sign of #121 in this run.
+  - Misses are campaign names and one spell. Whisper is only hinted the players'
+    display names today; campaign names (#126, #127) and spell names should help.
+  - The transcript text in these checks is shown in the DM screen; #134 (found in the
+    #132 review) moves it to the transcript channel when #124 lands.
+Overall ...................................... PASS (baseline for local Whisper small)
