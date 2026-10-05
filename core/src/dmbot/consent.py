@@ -69,6 +69,18 @@ class ConsentStore:
                     self._store(guild_id, users)
         return self._cache[guild_id]
 
+    async def granted_at(self, guild_id: int, user_id: int) -> int | None:
+        """When this player consented here (Unix seconds), or None if they haven't."""
+        if user_id in self._held_back.get(guild_id, set()):
+            return None
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT granted_at FROM consent WHERE guild_id = %s AND user_id = %s",
+                (guild_id, user_id),
+            )
+            row = await cur.fetchone()
+        return int(row["granted_at"]) if row else None
+
     def has_consent(self, guild_id: int, user_id: int) -> bool:
         """Fast, synchronous check for the audio path. Unknown servers deny."""
         return user_id in self._cache.get(guild_id, frozenset())

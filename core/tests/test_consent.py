@@ -36,6 +36,20 @@ class ConsentTests(DatabaseTest):
         self.assertEqual(await fresh.consenting(1), frozenset({2}))
         self.assertTrue(fresh.has_consent(1, 2))
 
+    async def test_granted_at_is_per_server_and_cleared_by_revoke(self) -> None:
+        self.assertIsNone(await self.store.granted_at(1, 2))
+        await self.store.grant(1, 2)
+        when = await self.store.granted_at(1, 2)
+        self.assertIsNotNone(when)
+        self.assertIsNone(await self.store.granted_at(9, 2))  # another server
+        await self.store.revoke(1, 2)
+        self.assertIsNone(await self.store.granted_at(1, 2))
+
+    async def test_granted_at_is_none_while_a_revoke_is_unsaved(self) -> None:
+        await self.store.grant(1, 2)
+        self.store.stop_now(1, 2)
+        self.assertIsNone(await self.store.granted_at(1, 2))
+
     async def test_concurrent_grants(self) -> None:
         await asyncio.gather(*(self.store.grant(1, u) for u in range(20)))
         self.assertEqual(len(await self.store.consenting(1)), 20)

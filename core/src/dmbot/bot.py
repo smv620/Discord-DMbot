@@ -34,6 +34,13 @@ from dmbot.channel_access import (
 )
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.consent_dm import (
+    ConsentButton,
+    DeclineButton,
+    StopButton,
+    send_prompt,
+    unreachable_text,
+)
 from dmbot.db import Database
 from dmbot.dm_screen import (
     DMScreenError,
@@ -156,6 +163,8 @@ class Table:
     dm_user_ids: frozenset[int] = frozenset()
     resumed: bool = False  # picked up again after a restart
     announce_resume: bool = True  # post "listening again" when voice is back
+    # Asked privately about recording (or reminded) this session: at most once each.
+    asked: set[int] = field(default_factory=set)
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
@@ -231,6 +240,8 @@ class DMBot(commands.AutoShardedBot):
         self.tree.add_command(consent_group)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton)
+        # Consent buttons in private messages, likewise.
+        self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -264,6 +275,79 @@ class DMBot(commands.AutoShardedBot):
     async def push_allowlist(self, guild_id: int) -> None:
         users = await self.consent.consenting(guild_id)
         await self.ears.send(allowlist_command(guild_id, users))
+
+    # ---- consent (slash commands and private-message buttons) ---------------
+
+    async def give_consent(self, guild_id: int, user_id: int) -> int:
+        """Save consent and start capturing at once. Returns when it was given.
+
+        Raises if it couldn't be saved; then nothing changed.
+        """
+        await self.consent.grant(guild_id, user_id)
+        log.info("Consent given: user %s", user_id)
+        # Always tell ears (if connected), even with no session here: it may still be
+        # in voice from before a restart.
+        with contextlib.suppress(Exception):
+            await self.push_allowlist(guild_id)
+        return await self.consent.granted_at(guild_id, user_id) or int(time.time())
+
+    def stop_recording(self, guild_id: int, user_id: int) -> None:
+        """Stop capturing this player now, without waiting for anything."""
+        self.consent.stop_now(guild_id, user_id)
+        table = self.tables.get(guild_id)
+        if table is not None:
+            table.segmenter.drop(user_id)
+
+    async def withdraw_consent(self, guild_id: int, user_id: int) -> None:
+        """Stop capturing at once, then save. Raises if saving failed; the player stays
+        stopped in this process either way."""
+        # Stop first, before anything that can be slow or fail.
+        self.stop_recording(guild_id, user_id)
+        log.info("Consent withdrawn: user %s", user_id)
+        with contextlib.suppress(Exception):
+            await self.push_allowlist(guild_id)
+        await self.consent.revoke(guild_id, user_id)
+
+    async def ask_for_consent(self, table: Table, members: list[discord.Member]) -> None:
+        """Privately ask each person about recording, or remind them they agreed.
+
+        Once per person per session; never bots. The DM is told in the DM screen about
+        anyone DMbot couldn't reach.
+        """
+        voice = self.get_channel(table.voice_channel_id)
+        voice_name = f"#{voice.name}" if isinstance(voice, discord.abc.GuildChannel) else ""
+        cloud = self.settings.transcription.engine == "cloud"
+        unreachable: list[str] = []
+        for member in members:
+            if member.bot or member.id in table.asked:
+                continue
+            table.asked.add(member.id)  # before any await, so nobody is asked twice
+            try:
+                granted_at = await self.consent.granted_at(table.guild_id, member.id)
+            except Exception:
+                log.exception("Couldn't look up consent for user %s", member.id)
+                table.asked.discard(member.id)  # try again when they next join
+                continue
+            if not await send_prompt(member, voice_name, granted_at, cloud=cloud):
+                unreachable.append(member.display_name)
+        if unreachable:
+            await self.post(table.screen_channel_id, unreachable_text(unreachable))
+
+    async def _ask_everyone_in_voice(self, table: Table) -> None:
+        voice = self.get_channel(table.voice_channel_id)
+        if isinstance(voice, discord.VoiceChannel | discord.StageChannel):
+            await self.ask_for_consent(table, list(voice.members))
+
+    async def on_voice_state_update(
+        self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
+    ) -> None:
+        table = self.tables.get(member.guild.id)
+        if table is None or after.channel is None or after.channel.id != table.voice_channel_id:
+            return
+        if before.channel is not None and before.channel.id == after.channel.id:
+            return  # mute, deafen and the like: not a join
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            await self.ask_for_consent(table, [member])
 
     async def start_table(self, table: Table) -> bool:
         """Register the session, send ears the consent list, then the join.
@@ -802,6 +886,9 @@ class DMBot(commands.AutoShardedBot):
             # recording notice below is still retried if it hasn't been posted yet.
             repeat = table.listening
             table.listening = True
+            # Ask everyone in the channel once, when a session starts. Not after a
+            # restart: they were asked before it, and newcomers are asked as they join.
+            first_join = not repeat and not table.resumed
             count = len(await self.consent.consenting(table.guild_id))
             campaign = f" for **{table.campaign_name}**" if table.campaign_name else ""
             if not repeat:
@@ -828,8 +915,10 @@ class DMBot(commands.AutoShardedBot):
                 table.notice_posted = await self.post(
                     table.voice_channel_id,
                     "🔴 **DMbot is listening in this channel** to help the DM.\n"
-                    "Only people who opt in with `/consent give` are recorded. "
-                    "Change your mind any time with `/consent revoke`.",
+                    "Everyone here gets a private message from DMbot asking if they agree "
+                    "to be recorded. Only people who agree are recorded.\n"
+                    "No message? Use `/consent give`. Change your mind any time with "
+                    "`/consent revoke`.",
                     view=peek,
                 )
                 table.peek_offered = table.notice_posted and peek is not None
@@ -841,6 +930,8 @@ class DMBot(commands.AutoShardedBot):
                     await self.post(
                         table.screen_channel_id, notice_failed_message(table.voice_channel_id)
                     )
+            if first_join:
+                await self._ask_everyone_in_voice(table)
         elif status.state in ("left", "error"):
             table.listening = False
             # The detail comes from ears' own fixed messages, never from users.
@@ -926,7 +1017,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
     gid = interaction.guild.id
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
-        await bot.consent.grant(gid, interaction.user.id)
+        await bot.give_consent(gid, interaction.user.id)
     except Exception:
         log.exception("Couldn't save consent in guild %s", gid)
         await interaction.followup.send(
@@ -935,11 +1026,6 @@ async def consent_give(interaction: discord.Interaction) -> None:
             ephemeral=True,
         )
         return
-    log.info("Consent given: user %s", interaction.user.id)
-    # Always tell ears (if connected), even with no session here: it may still be in
-    # voice from before a restart.
-    with contextlib.suppress(Exception):
-        await bot.push_allowlist(gid)
     message = (
         "Thanks — DMbot will now transcribe your voice in this server's table channel. "
         "Use `/consent revoke` to stop at any time."
@@ -961,19 +1047,10 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
         await interaction.response.send_message("Use this in a server.", ephemeral=True)
         return
     gid, uid = interaction.guild.id, interaction.user.id
-    # Stop first, before anything that can be slow or fail.
-    bot.consent.stop_now(gid, uid)
-    log.info("Consent withdrawn: user %s", uid)
-    table = bot.tables.get(gid)
-    if table is not None:
-        table.segmenter.drop(uid)
-    # Always tell ears (if connected), even with no session here: it may still be in
-    # voice from before a restart.
-    with contextlib.suppress(Exception):
-        await bot.push_allowlist(gid)
+    bot.stop_recording(gid, uid)  # before anything that can be slow or fail
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
-        await bot.consent.revoke(gid, uid)
+        await bot.withdraw_consent(gid, uid)
     except Exception:
         log.exception("Couldn't save a consent revoke in guild %s", gid)
         await interaction.followup.send(
