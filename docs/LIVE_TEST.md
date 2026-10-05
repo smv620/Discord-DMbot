@@ -96,8 +96,11 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    press Ctrl+R in Discord.
 3. **Expect:**
    - A new channel `#dmb-dm-screen-<campaign>` (the DM screen; for "Test Campaign":
-     `#dmb-dm-screen-test-campaign`) with a pinned help card, and in it: "✅ Listening in
-     <channel>."
+     `#dmb-dm-screen-test-campaign`) with a help card ("🛡️ DM screen for …") that shows
+     under the 📌 icon at the top of the channel, and in it: "✅ Listening in <channel>."
+     If Pin Messages wasn't turned on: the card isn't pinned, and a "📌 I couldn't pin…"
+     note appears in the DM screen once. That's expected. Turn it on, run `/dmbot start`
+     again, and check that the card is pinned and the note is gone.
    - No other `dmb-` channels and no category yet. That's normal (compact mode).
    - In the voice channel's chat: "🔴 DMbot is listening in this channel…" (with a 👀
      **Peek behind the DM screen** button under the default setting).

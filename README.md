@@ -60,8 +60,10 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
    `bot` and `applications.commands` scopes with permissions **View Channels**, **Send
    Messages**, **Read Message History**, **Connect**, **Speak**, **Manage Channels**,
    **Manage Roles**, and **Pin Messages**. Use the install link to add it to your private
-   test server. *Why Pin Messages:* DMbot pins its help card at the top of each channel it
-   makes. Without it everything still works, and DMbot tells the DM how to turn it on.
+   test server.
+   *Why Pin Messages:* DMbot pins the DM screen's help card so it's easy to find (the 📌
+   icon at the top of the channel). Without it everything still works, and DMbot tells the
+   DM how to turn it on.
    *Why Manage Channels and Manage Roles:* Discord grants these for the whole server, but
    DMbot only uses them on its own `dmb-` channels. It creates them, hides them from
    players unless you choose otherwise, and lets a player peek after a spoiler warning.

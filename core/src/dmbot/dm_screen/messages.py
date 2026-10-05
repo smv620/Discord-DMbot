@@ -59,9 +59,9 @@ FORBIDDEN_HERE = (
     "category, or ask a server admin to check the category's permissions for DMbot."
 )
 CANT_PIN = (
-    "📌 I couldn't pin the DM screen's help card, so it may get lost as notes come in. "
-    "To keep it at the top, ask a server admin to turn on **Pin Messages** for DMbot "
-    "(Server Settings → Roles → DMbot). I'll pin it the next time you run `/dmbot start`."
+    "📌 I couldn't pin the 🛡️ DM screen card, so it may scroll out of sight. "
+    "Ask a server admin to turn on **Pin Messages** for DMbot "
+    "(Server Settings → Roles → DMbot). I'll pin it next time you run `/dmbot start`."
 )
 
 

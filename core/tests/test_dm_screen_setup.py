@@ -12,6 +12,7 @@ from dmbot.dm_screen import messages, setup_dm_screen
 from tests.pg import DatabaseTest
 
 GUILD, BOT, DM, GENERAL, NEW = 1, 2, 3, 40, 50
+FORBIDDEN = discord.Forbidden(MagicMock(status=403), "Missing Permissions")
 BOT_PERMS = discord.Permissions(
     view_channel=True,
     send_messages=True,
@@ -186,20 +187,32 @@ class SetupTests(DatabaseTest):
         backup = await self.store.export(GUILD, self.campaign.id)
         assert "channel_number" not in backup["campaign"]
 
-    def with_current_card(self, *, pinned: bool) -> Any:
-        """Make the screen exist already, holding an up-to-date help card."""
-        card = MagicMock(spec=discord.Message)
-        card.author.id = BOT
-        card.content = messages.help_card("Frostmaiden", self.campaign.dm_screen_visibility)
-        card.pinned = pinned
-        card.pin = AsyncMock()
+    async def with_screen(self, *existing: Any) -> None:
+        """Make the screen exist already, with these bot messages in it (newest first)."""
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=self.new)
 
         async def history(**_: Any) -> AsyncIterator[discord.Message]:
-            yield card
+            for message in existing:
+                yield message
 
         self.new.history = history
-        self.guild.fetch_channel = AsyncMock(return_value=self.new)
-        return card
+
+    def bot_message(self, content: str, *, pinned: bool = False) -> Any:
+        message = MagicMock(spec=discord.Message)
+        message.author.id = BOT
+        message.content = content
+        message.pinned = pinned
+        message.pin = AsyncMock()
+        message.delete = AsyncMock()
+        return message
+
+    def current_card(self, *, pinned: bool) -> Any:
+        text = messages.help_card("Frostmaiden", self.campaign.dm_screen_visibility)
+        return self.bot_message(text, pinned=pinned)
+
+    def new_card_pin_fails(self, exc: discord.HTTPException) -> None:
+        self.new.send.return_value.pin = AsyncMock(side_effect=exc)
 
     async def test_a_new_help_card_is_pinned(self) -> None:
         result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
@@ -207,33 +220,79 @@ class SetupTests(DatabaseTest):
         assert result.warning is None
 
     async def test_a_card_that_cant_be_pinned_tells_the_dm_how_to_fix_it(self) -> None:
-        forbidden = discord.Forbidden(MagicMock(status=403), "Missing Permissions")
-        self.new.send.return_value.pin = AsyncMock(side_effect=forbidden)
+        self.new_card_pin_fails(FORBIDDEN)
         result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
         assert result.channel is self.new  # setup still works
         assert result.warning == messages.CANT_PIN
-        assert "Pin Messages" in messages.CANT_PIN
+
+    async def test_a_pin_failure_the_dm_cant_fix_is_only_logged(self) -> None:
+        # E.g. the channel's pin limit: "turn on Pin Messages" would be wrong advice.
+        self.new_card_pin_fails(
+            discord.HTTPException(MagicMock(status=400), "Maximum number of pins reached")
+        )
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert result.channel is self.new
+        assert result.warning is None
+
+    async def test_pin_note_and_exposure_warning_are_both_given(self) -> None:
+        exposed = MagicMock(spec=discord.Role)
+        exposed.id = 77
+        self.new.overwrites = {exposed: discord.PermissionOverwrite(view_channel=True)}
+        await self.with_screen()
+        self.new_card_pin_fails(FORBIDDEN)
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert result.warning is not None
+        exposure, pin = result.warning.split("\n\n")
+        assert "<@&77>" in exposure
+        assert pin == messages.CANT_PIN
 
     async def test_an_unpinned_current_card_is_pinned_without_reposting(self) -> None:
         # Pin Messages was turned on after the card was posted.
-        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
-        card = self.with_current_card(pinned=False)
+        card = self.current_card(pinned=False)
+        await self.with_screen(card)
         result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
         card.pin.assert_awaited_once()
         self.new.send.assert_not_called()
         assert result.warning is None
 
-    async def test_a_current_card_that_still_cant_be_pinned_stays_quiet(self) -> None:
-        # The DM was told when the card was posted; don't repeat it every session.
-        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
-        card = self.with_current_card(pinned=False)
-        card.pin.side_effect = discord.Forbidden(MagicMock(status=403), "Missing Permissions")
+    async def test_the_old_note_is_deleted_once_the_card_is_pinned(self) -> None:
+        card, note = self.current_card(pinned=False), self.bot_message(messages.CANT_PIN)
+        await self.with_screen(note, card)
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        note.delete.assert_awaited_once()
+
+    async def test_a_note_shared_with_another_warning_is_kept(self) -> None:
+        card = self.current_card(pinned=True)
+        note = self.bot_message("⚠️ These can see this DM screen: x.\n\n" + messages.CANT_PIN)
+        await self.with_screen(note, card)
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        note.delete.assert_not_called()
+
+    async def test_the_note_isnt_repeated_while_the_screen_shows_it(self) -> None:
+        # Each visibility change reposts the card; the DM was already told.
+        old_card = self.bot_message(messages.HELP_CARD_TITLE + "old")
+        note = self.bot_message(messages.CANT_PIN)
+        await self.with_screen(note, old_card)
+        self.new_card_pin_fails(FORBIDDEN)
         result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        old_card.delete.assert_awaited_once()
+        self.new.send.assert_awaited_once()
+        note.delete.assert_not_called()
         assert result.warning is None
 
+    async def test_an_unpinned_card_from_before_this_note_existed_gets_one(self) -> None:
+        # A screen made by an older DMbot: card unpinned, DM never told.
+        card = self.current_card(pinned=False)
+        card.pin.side_effect = FORBIDDEN
+        await self.with_screen(card)
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        self.new.send.assert_not_called()
+        assert result.warning == messages.CANT_PIN
+
     async def test_a_pinned_current_card_is_left_alone(self) -> None:
-        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
-        card = self.with_current_card(pinned=True)
-        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        card = self.current_card(pinned=True)
+        await self.with_screen(card)
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
         card.pin.assert_not_called()
         self.new.send.assert_not_called()
+        assert result.warning is None
