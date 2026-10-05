@@ -252,15 +252,24 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   entertainment only, other uses are prohibited, their voice will be recorded and
   transcribed, and consenting participants can view and download transcripts. It has a
   **✅ I consent** button (#33).
-- **Consent carries over** between sessions, per server. **Every time** a consented
-  person joins a channel where DMbot is listening, they get a private reminder with the
-  date and time they consented and how to revoke, plus a **🛑 Stop recording me**
-  button (#33, #34).
+- **Consent carries over** between sessions, per server. In **every session**, a consented
+  person gets one short private reminder with the date they consented, plus a
+  **🛑 Stop recording me** button (#33, #34). Rejoining in the same session doesn't send
+  another (built 2026-10-05: once per person per session, not once per join).
+- **No thanks** is not remembered: that person is asked again next session, and the
+  message says so. Pressing **No thanks** on an old message also removes any consent
+  given since, so an old message can never leave someone recorded after saying no.
 - Revoking takes effect immediately. Queued and in-flight audio and text for that person
   are discarded.
-- People with DMs off are nudged in the voice channel's chat. The DM sees who couldn't be
-  reached. Nobody is recorded without consent.
-- `/consent give` and `/consent revoke` remain as fallbacks.
+- People with DMs off are nudged by the public notice in the voice channel's chat ("No
+  message from DMbot? … type `/consent give`"). The DM screen names everyone who couldn't
+  be reached, and they're asked again if they rejoin. Nobody is recorded without consent.
+- `/consent give` and `/consent revoke` remain as fallbacks. `/consent give` shows the same
+  request and buttons privately, so everyone agrees to the same terms.
+- **More than one process (sharding):** buttons in private messages reach the process
+  serving shard 0. Until consent changes reach every process (see "Consent changes reach
+  every process" above), a button for a server another process serves changes nothing and
+  points to `/consent give` / `/consent revoke`, which Discord routes to the right process.
 - Consent records store the terms version, the UTC timestamp, and the method. Changing the
   consent wording re-prompts everyone (#35).
 - The public "DMbot is listening" notice in the voice channel's chat still posts once per

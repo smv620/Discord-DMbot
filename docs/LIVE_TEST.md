@@ -105,7 +105,19 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    - In the voice channel's chat: "🔴 DMbot is listening in this channel…" (with a 👀
      **Peek behind the DM screen** button under the default setting).
    - If either is missing, the bot should warn in the DM screen about what to fix (#27).
-4. **Both people run `/consent give`.**
+4. **Both people get a private message from DMbot** ("🎙️ Can DMbot record you for your
+   D&D game…") with **I consent** and **No thanks** buttons, and both press
+   **I consent**. The message changes to "✅ You said yes on …" with a
+   **Stop recording me** button.
+   - Someone who agreed in an earlier session gets a reminder with the date instead.
+   - Someone with DMs from server members turned off gets nothing; the DM screen says
+     "📭 Not recording: …". They use `/consent give` instead.
+   - Leaving and rejoining the voice channel in the same session doesn't send another
+     message.
+   - Check that someone already sitting in voice **before** `/dmbot start` gets the message
+     too, and that the phone notification preview starts with "Can DMbot record you…".
+   - Optional: a third person presses **No thanks**. They must never appear in capture
+     checks, and they're asked again next session.
 5. **Talk for 2–3 minutes.** Take turns, use a few long sentences, and overlap once.
 6. **Watch the DM screen.** Every 15 s:
    ```
@@ -116,7 +128,8 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    core logs `Session started`, `Consent given: user …` and a `Capture check: …` line
    every 15 s while someone is talking (low audio shows as `(audio gaps)`); ears logs `joined voice channel …` and `capturing user …` the first time
    each person is heard.
-7. **Consent check:** the second person runs `/consent revoke` and keeps talking. They
+7. **Consent check:** the second person presses **Stop recording me** in DMbot's private
+   message (or runs `/consent revoke`) and keeps talking. They
    must **disappear** from the following capture checks. In the terminals: core logs
    `Consent withdrawn: user …` and ears logs `not capturing user …: opted out`.
 8. **Run `/dmbot help` and press Status,** then `/dmbot stop`.

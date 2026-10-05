@@ -89,9 +89,11 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
 6. **In Discord:** run `/dmbot start` in any text channel. The first time, it asks you to
    name your campaign and who can see its DM screen; after that it offers the last
    campaign and voice channel you used. DMbot makes a `#dmb-dm-screen-<campaign>` channel for
-   your notes, with buttons there to change who can see it. Each player runs
-   `/consent give` (you too, if you want your own voice transcribed). Talk for a bit and
-   watch the capture check appear in the DM screen.
+   your notes, with buttons there to change who can see it. Everyone in the voice channel
+   (you too) gets a private message from DMbot asking if they agree to be recorded; they
+   press **I consent**. Their answer is remembered for the server, so next time they just
+   get a reminder with a **Stop recording me** button. Talk for a bit and watch the
+   capture check appear in the DM screen.
 
 ## Database
 
@@ -136,8 +138,8 @@ NVIDIA GPU use `large-v3` or `turbo`. The default compute type (`auto`) picks th
 precision for your hardware. If transcription falls behind, DMbot warns you in
 the DM screen; the **Status** button in `/dmbot help` shows the backlog.
 
-When `TRANSCRIBER=cloud`, players are told during `/consent give` that their voice clips
-go to an outside service.
+When `TRANSCRIBER=cloud`, players are told in the consent message (and by `/consent
+give`) that their voice clips go to an outside service.
 
 ## Commands
 
@@ -148,8 +150,8 @@ go to an outside service.
 | `/dmbot help` | What DMbot does and doesn't do, plus a **Status** button. |
 | `/dmbot backup` | Download a copy of a campaign you run. |
 | `/dmbot restore` | Bring a campaign back from a copy, as a new campaign or replacing one of yours. |
-| `/consent give` | Let DMbot record and transcribe your voice in this server. |
-| `/consent revoke` | Stop recording you and discard unprocessed audio. |
+| `/consent give` | Shows DMbot's recording question with the **I consent** button, for people who didn't get the private message (for example, DMs from server members turned off). |
+| `/consent revoke` | Stop recording you and discard unprocessed audio. Same as **Stop recording me** in DMbot's private message. |
 
 ## Development
 
