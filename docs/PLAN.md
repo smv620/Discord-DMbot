@@ -118,6 +118,29 @@ database.
   `guild_id` and `campaign_id`, so a row can never point into another campaign. Sound-codes
   are stored in an indexed column. (`pgvector` isn't in the stock Postgres image used for
   self-hosting; it's optional.)
+- **Built (#126, first step):** tables `memory_entities`, `memory_aliases`,
+  `memory_mentions`, `memory_relations`, `memory_corrections`, `memory_types`,
+  `memory_predicates`, `memory_flags` and `memory_changes`, and `dmbot.memory`
+  (`MemoryStore`, the only writer). Decided while building:
+  - **Sound-codes are computed in Python**, not by `fuzzystrmatch`, because the in-memory
+    copy must code each heard word without a database round trip, and both sides must
+    use the same code. They're kept in an indexed text-array column. So no Postgres
+    extension is needed yet: `CREATE EXTENSION` needs extra rights some self-hosters
+    won't have. `pg_trgm` is added only if a spelling search ever has to run in the
+    database.
+  - **Undo** works per operation ("batch"): each row change is logged with its before and
+    after values. Undo is refused if those rows changed again since, and a delete is
+    refused while anything still links to the row, so undo never removes later facts.
+  - **Backups** include everything except the change log (a restored campaign starts
+    with a fresh undo history) and mentions, which are most of the size (about 15 MB
+    for a long campaign) and are rebuilt as new sessions are transcribed.
+  - **Only the DM's word confirms** (`source="dm"`): other sources can only propose, or
+    drop a proposal. Saying something already known again only strengthens it (the
+    DM's confirmation, or "keep secret"); something the DM rejected stays rejected
+    unless the DM says it again.
+  - **Merges** of two confirmed entries, or of different kinds (a place into an NPC),
+    need the DM. Facts moved by a merge are checked again: duplicates are folded into
+    one and new problems are flagged.
 - **Speed:** during a session the active campaign's names, aliases, sound-codes,
   "don't change" rules and nearby relationships are held **in memory**, keyed by
   (server, campaign), so checking a line doesn't touch the database. Postgres stays the
