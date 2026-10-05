@@ -43,8 +43,9 @@ class DatabaseError(RuntimeError):
 
 
 class Database:
-    def __init__(self, pool: AsyncConnectionPool[Conn]) -> None:
+    def __init__(self, pool: AsyncConnectionPool[Conn], conninfo: str) -> None:
         self._pool = pool
+        self._conninfo = conninfo  # for connections outside the pool (listen)
 
     @classmethod
     async def open(
@@ -87,7 +88,7 @@ class Database:
             raise DatabaseError(
                 "Can't connect to the database. Check DATABASE_URL and that Postgres is running."
             ) from exc
-        db = cls(pool)
+        db = cls(pool, conninfo)
         try:
             await db._check_role()
             await db.migrate(migrations)
@@ -136,7 +137,7 @@ class Database:
         (IDs and versions only).
         """
         conn = await AsyncConnection.connect(
-            self._pool.conninfo,
+            self._conninfo,
             autocommit=True,
             connect_timeout=5,
             keepalives=1,
