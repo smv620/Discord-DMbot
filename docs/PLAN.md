@@ -174,7 +174,7 @@ than in separate volumes.
 | Phase | Deliverable | Notes |
 |---|---|---|
 | 0 | Scaffolding, CI, ears ↔ core audio pipeline | ✅ Done. Live capture works (#40) |
-| 1 | **Listener**: consent by DM buttons (#33–#35), cloud speech-to-text as the default (#128), live transcript in its own channel `#dmb-transcript-<short name>` (#124), stored session transcripts the DM and recorded players can download (as heard now; cleaned added in Phase 2b), with download buttons sent privately when DMbot stops (#41, #125), transcript format with speaker labels, end-of-session summary (#109) | No AI yet; useful on its own |
+| 1 | **Listener**: consent by DM buttons (#33–#35), cloud speech-to-text as the default (#128), live transcript in its own channel `#dmb-transcript-<short name>` (#124), stored session transcripts anyone in the server can download (as heard now; cleaned added in Phase 2b), with download buttons sent privately to the DM and recorded players when DMbot stops (#41, #125), transcript format with speaker labels, end-of-session summary (#109) | No AI yet; useful on its own |
 | 1.5 | **Campaigns and setup**: `/dmbot start · stop · help`, first-time guide, campaign picker, one DM screen per campaign, voice-channel picker, target/fallback rulesets, optional rules, campaign export/import, bring-your-own API keys | Foundation for everything after |
 | 2a | **Campaign memory (EntityBot)**: entities, aliases, relationships and the ontology in Postgres; entity resolution; names added by the DM, from characters, and from an after-session scan of the raw transcript (#126) | Built first: the Cleaner and every later helper read it |
 | 2b | **Transcript Cleaner** (live name fixing, off-topic hiding, #127), off-topic filter (#52), speaker tagging | Every helper depends on clean, labeled input |
@@ -200,7 +200,7 @@ screen channel (only the DM can see it) and optionally to DMs.
 | `/dmbot help` | A short, friendly guide with buttons |
 | `/houserules` | List, add, edit, and remove house rules for the current campaign |
 | `/optionalrules` | Turn optional rules (e.g. Xanathar's, Tasha's) on or off for the current campaign |
-| `/transcript` | Download a session transcript: **cleaned**, **as heard** (raw), or **both** (#125). If DMbot is still recording, the DM is told "This transcript ends at 19:42. To get the whole session, stop with `/dmbot stop` first." and a player is told "This transcript ends at 19:42. You'll get a message with the full transcript when the DM ends the session." [Download anyway] [Cancel] |
+| `/transcript` | Download a session transcript: **cleaned**, **as heard** (raw), or **both** (#125). Anyone in the server can use it. If DMbot is still recording, the DM is told "This transcript ends at 19:42. To get the whole session, stop with `/dmbot stop` first." and a player is told "This transcript ends at 19:42. You'll get a message with the full transcript when the DM ends the session." [Download anyway] [Cancel] |
 
 `/consent give · revoke` stay as hidden fallbacks for people with DMs off.
 
@@ -220,8 +220,7 @@ screen channel (only the DM can see it) and optionally to DMs.
   (see "DM-screen visibility" below; default **opt-in peek**). If a suitable channel
   already exists, setup offers to use it, after checking the bot can post there and that
   its visibility matches the campaign's setting. The DM may be someone other than the
-  server owner; `/dmbot` setup and a "change DM" option keep DM-screen and transcript
-  channel access in sync (#30).
+  server owner; `/dmbot` setup and a "change DM" option keep DM-screen access in sync (#30).
 
 **Campaigns (decided 2026-10-04).** Each campaign is a separate memory: house rules,
 optional-rule settings, rulesets, campaign memory (names, aliases, NPCs and relationships), game clock and
@@ -311,10 +310,11 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 - When `/dmbot start` starts a session, DMbot DMs everyone in the table voice channel
   (the DM included), and anyone who joins later. The message says DMbot is for
   entertainment only, other uses are prohibited, their voice will be recorded and
-  transcribed, and consenting participants can view and download transcripts. With the
-  2026-10-05 decisions it must also say, plainly (final wording: #33):
-  - **other people can read what you say:** the DM and the other players who agreed, live
-    in the campaign's transcript channel;
+  transcribed. With the 2026-10-05 decisions it must also say, plainly (final wording:
+  #33):
+  - **anyone in this Discord server can read the transcript,** live in the campaign's
+    transcript channel and as downloads, and that stays true for what was recorded even
+    if you stop recording later;
   - after the recording ends, **you can download the transcript as heard, cleaned, or
     both** (#125), and the "as heard" version keeps everything said, off-topic talk
     included;
@@ -350,7 +350,7 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 **Transcripts vs. the DM screen (decided 2026-10-04).**
 | Content | Who sees it |
 |---|---|
-| **Transcripts** (what was said at the table) | The DM **and the consenting players recorded in that campaign**: live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). **View only:** "Did they mean…?" prompts, Undo buttons, DM sidebar messages and all other DM-screen content never appear in the transcript channel or a transcript. |
+| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons, DM sidebar messages and all other DM-screen content never appear in the transcript channel or a transcript. |
 | **DM screen** (rules alerts, house-rule prompts, NPC and plot notes) | The DM, plus players only as the campaign's **DM-screen visibility** allows (below). The bot never *sends* DM-screen content to players. |
 
 **DM-screen visibility (decided 2026-10-04).** Each campaign's DM picks one; if none is
@@ -373,8 +373,8 @@ channel's chat.
   the screen to players, but it checks and tells the DM when a player can see the DM
   screen under the **private** setting.
 - Granting peek access needs the bot to manage that channel's permissions (Manage
-  Channels and Manage Roles); per least privilege it only does this in the DM screen and
-  transcript channels it created or was given.
+  Channels and Manage Roles); per least privilege it only does this in the DM screen it
+  created or was given.
 
 **Channel structure (decided 2026-10-04, #85).** Every channel DMbot creates starts with
 `dmb-`, so its channels group together in the sidebar and are clearly bot-managed.
@@ -422,13 +422,12 @@ so the docs always show names the way Discord does. For the campaign
   again at the next start rather than holding anything up. A channel used by two
   campaigns is never renamed.
 
-*Who can see what.* Channels are **controlled**, **participants**, or **unrestricted**:
+*Who can see what.* Channels are either **controlled** or **unrestricted**:
 
 | Kind | Channels | Players see it |
 |---|---|---|
 | **Controlled** | DM screen, rules, NPCs, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
-| **Participants** | Live transcript | The campaign's DMs, and players who agree to be recorded **and have been recorded in a session of this campaign** (consent is per server, so agreeing alone must never open another campaign's transcript). DMbot adds a player the first time they're recorded in this campaign, and removes them at once when they withdraw, press No thanks on an old message, or need to agree again after the terms change (decided 2026-10-05, #124). Permission changes use the channel ID from the database (consent buttons can arrive at another process) and are queued so a full table doesn't hit Discord's limits. The channel keeps past sessions, so someone added later can read earlier ones; see the open decision on #41. |
-| **Unrestricted** | Game time | Always, by everyone in the server |
+| **Unrestricted** | Game time, live transcript | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
 
 - Players can **read but never post** in any DMbot channel (no threads, reactions or
   commands either), the same read-only access as a DM-screen peek.
@@ -445,8 +444,8 @@ so the docs always show names the way Discord does. For the campaign
   only channels built (Phases 1–2).
 - **Every DMbot channel has a topic and a pinned "What's this channel?" card in every
   mode.** For the transcript: "Live transcript for **Rime of the Frostmaiden**. View only.
-  Visible to the DM and the players who agreed to be recorded. When a session ends,
-  you'll get a private message to download it."
+  Anyone in this server can read it. Only people who agreed are recorded. Use
+  `/transcript` to download it."
 - **The DM screen holds only what the DM needs to see or act on:** "Did they mean…?"
   questions and Undo buttons, rules alerts, later NPC, plot and time notes, warnings
   (audio gaps, speech-to-text falling behind), the start and stop messages, and the
@@ -481,7 +480,8 @@ plus the list of fixes between them.
   private message: "The session for **<campaign>** has ended. Download the transcript:"
   **[📄 Cleaned]** **[🎙 As heard]** **[Both (2 files)]**, with one line explaining each
   ("Cleaned: names spelled right, off-topic chat left out." "As heard: exactly what
-  DMbot heard, word for word."). It's a shortcut; `/transcript` offers the same choice.
+  DMbot heard, word for word."). It's a shortcut: **anyone in the server** can get the
+  same choice with `/transcript`.
   Until the Cleaner exists, it's one **[🎙 Download transcript]** button. The message adds
   "If the DM fixes names later, download again for the updated version."
 - **The cleaned file starts with a note:** "DMbot fixed the spelling of some names. The
@@ -498,10 +498,12 @@ an NPC or other in-game entity, `{narrating}` for the DM, `{table_talk}`, or
 `{non-game_content}`. DM voice messages to the bot are DM-screen content: they appear
 only in the DM screen, marked `[DM Sidebar Discussion]`, **never in a transcript**.
 - **Off-topic talk (decided 2026-10-05, #52):** in the **cleaned** transcript, talk that
-  is clearly unrelated (not the campaign, D&D, rules or table talk) is replaced by
-  `[timestamp] (Discord name) [non-relevant content ignored]`, so players can see the
-  transcript is working. A run of it from one person collapses into one line. When
-  unsure, the line is kept. The **as heard** transcript keeps everything.
+  is clearly unrelated (not the campaign, D&D, rules or table talk) is replaced by one
+  line saying how long it was: `[timestamp] (Discord name) [1m 22s of off-topic chat
+  skipped]` (`[8s of off-topic chat skipped]` for a short one), so players can see the
+  transcript is working. A run of it from one person collapses into one line with the
+  total time. When unsure, the line is kept. The **as heard** transcript keeps
+  everything.
 - **Players' lines:** players only speak in character, for a familiar or pet, as table
   talk, or off-topic, so the AI's best guess is used with no prompts.
 - **DM's lines:** when DMbot isn't confident who the DM is voicing (narration vs which
@@ -655,7 +657,7 @@ reads the campaign memory and never changes it.
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled
 `{non-game_content}` and not analyzed further, which saves cost. In the cleaned
-transcript, clearly unrelated talk shows as `[non-relevant content ignored]` (see
+transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]` (see
 "Transcript format"); table talk and anything unsure stay. A live line waits for the
 filter within the Cleaner's time budget; if the filter is late, the line is posted and
 then edited to the marker.
@@ -690,10 +692,9 @@ keeps a single "who pays for this call" seam so that switch stays small.
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's
 lines covers both versions, the fixes list, the mentions that point at those lines, and
-that person in any alias's "who uses it" field. When someone withdraws they lose access
-to the transcript channel at once and are told: "🛑 Stopped. DMbot won't record you
-anymore, and you can no longer see #dmb-transcript-…. Transcripts you already downloaded
-are still yours."
+that person in any alias's "who uses it" field. When someone withdraws, recording stops
+at once and they're told: "🛑 Stopped. DMbot won't record you anymore. What was already
+recorded stays in the transcript, which anyone in this server can still read."
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
 
@@ -703,10 +704,6 @@ are still yours."
 
 - Final wording of the consent DM and join reminder (#33)
 - Whether revoking consent also removes a person's past lines from stored transcripts (#34)
-- Whether consenting members who missed a session can download its transcript (#41).
-  The transcript channel keeps past sessions, so this also decides whether someone
-  added later can read earlier sessions there (or whether old live messages are removed
-  after each session)
 - Which cloud speech-to-text service (#128)
 - The Cleaner's confidence thresholds and target accuracy, set from the test set (#127)
 - Whether to use an embeddings provider for meaning-based matching, and which (#126)

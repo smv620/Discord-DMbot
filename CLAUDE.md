@@ -97,8 +97,10 @@ terminal output or Discord screenshots copied to it.
 - **One voice channel:** the bot listens only to the configured table channel.
 - **DM authority:** the bot never posts rulings to players or public channels. Advice
   goes only to `#dm-screen` / the DM. PlotBot and NPCBot record only DM-confirmed facts.
-- **Transcripts are shared; the DM screen is not pushed to players.** Every consenting
-  participant may view and download session transcripts. DM-screen content (rules alerts,
+- **Transcripts are shared; the DM screen is not pushed to players.** Anyone in the
+  Discord server may view and download a campaign's session transcripts (decided
+  2026-10-05). Only people who agreed are ever recorded, and the consent request tells
+  them the whole server can read the transcript. DM-screen content (rules alerts,
   house-rule prompts, NPC and plot notes) never goes into transcripts, and the bot never
   sends it to players. Players see the DM screen only if the campaign's DM-screen
   visibility allows it: **private** (DM only), **opt-in peek** (the default: hidden, with a
