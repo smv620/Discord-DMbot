@@ -55,8 +55,12 @@ def discord_like(pcm48: Pcm) -> Pcm | None:
         buf = io.BytesIO()
         with av.open(buf, "w", format="ogg") as oc:
             stream: Any = oc.add_stream("libopus", rate=DISCORD_RATE)
-            stream.bit_rate = DISCORD_BITRATE
-            stream.layout = "mono"
+            cc = stream.codec_context
+            cc.bit_rate = DISCORD_BITRATE
+            try:
+                cc.layout = "mono"
+            except (AttributeError, TypeError, ValueError):
+                cc.channels = 1  # older PyAV
             step = DISCORD_RATE * FRAME_MS // 1000
             pts = 0
             for start in range(0, len(pcm48), step):
@@ -90,8 +94,15 @@ def discord_like(pcm48: Pcm) -> Pcm | None:
 
 @dataclass(frozen=True, slots=True)
 class Segment:
-    start: int  # samples
+    start: int  # samples, including padding
     end: int
+    speech_end: int  # where the last loud frame ends (before the trailing padding)
+
+    @property
+    def tail_s(self) -> float:
+        """Seconds of padding after the speech: added to timings, so they count from the
+        end of speech rather than the end of the clip."""
+        return (self.end - self.speech_end) / RATE
 
     def seconds(self, rate: int = RATE) -> float:
         return (self.end - self.start) / rate
@@ -146,7 +157,7 @@ def split(
             continue  # a click or a bump, not a line
         s = max(0, a * step - int(pad_before_s * rate))
         e = min(len(pcm), b * step + int(pad_after_s * rate))
-        out.append(Segment(s, e))
+        out.append(Segment(s, e, min(e, b * step)))
     return out
 
 

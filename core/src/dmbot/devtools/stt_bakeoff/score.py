@@ -62,15 +62,19 @@ class LineScore:
     line: int
     names_expected: int = 0
     names_correct: int = 0
+    correct: list[str] = field(default_factory=list)
     missed: list[str] = field(default_factory=list)
     false_names: list[str] = field(default_factory=list)
     rules_expected: int = 0
     rules_correct: int = 0
     word_errors: int = 0
     ref_words: int = 0
-    # Of the missed names: how many came back with low confidence (None = not reported).
+    # How often names came back marked low-confidence, for missed and for correct names
+    # (a service that marks everything doubtful shouldn't look good).
     missed_low_conf: int = 0
     missed_conf_known: int = 0
+    correct_low_conf: int = 0
+    correct_conf_known: int = 0
 
 
 def _hyp_span(pairs: list[Pair], start: int, length: int) -> list[int]:
@@ -91,6 +95,26 @@ def _hyp_span(pairs: list[Pair], start: int, length: int) -> list[int]:
     return out
 
 
+def _trim_span(span: list[int], hyp: list[str], name: list[str]) -> list[int]:
+    """The run of heard words within `span` whose spelling is closest to the name.
+
+    Drops neighbouring words that alignment lumped in: "the quill on" -> "quill on",
+    "val zimmer please" -> "val zimmer". At most two extra words over the name's length.
+    """
+    target = "".join(name)
+    best: list[int] = span
+    best_key: tuple[int, int] | None = None
+    longest = len(name) + 2
+    for i in range(len(span)):
+        for j in range(i + 1, min(len(span), i + longest) + 1):
+            sub = span[i:j]
+            dist, _ = align(list(target), list("".join(hyp[h] for h in sub)))
+            key = (dist, len(sub))
+            if best_key is None or key < best_key:
+                best, best_key = sub, key
+    return best
+
+
 def score_line(line: Line, words: list[tuple[str, float | None]]) -> LineScore:
     hyp_tokens: list[Token] = normalize_words(words)
     hyp = [t for t, _ in hyp_tokens]
@@ -99,8 +123,15 @@ def score_line(line: Line, words: list[tuple[str, float | None]]) -> LineScore:
     s = LineScore(line.n, word_errors=errors, ref_words=len(ref))
     for canonical in line.names:
         s.names_expected += 1
-        if _said(hyp, _forms(canonical)):
+        found = next((f for f in _forms(canonical) if find(hyp, f) >= 0), None)
+        if found is not None:
             s.names_correct += 1
+            s.correct.append(canonical)
+            at = find(hyp, found)
+            known = [c for _, c in hyp_tokens[at : at + len(found)] if c is not None]
+            if known:
+                s.correct_conf_known += 1
+                s.correct_low_conf += min(known) < LOW_CONFIDENCE
             continue
         s.missed.append(canonical)
         start = find(ref, normalize(canonical))
@@ -110,8 +141,7 @@ def score_line(line: Line, words: list[tuple[str, float | None]]) -> LineScore:
             known = [c for c in confs if c is not None]
             if known:
                 s.missed_conf_known += 1
-                if min(known) < LOW_CONFIDENCE:
-                    s.missed_low_conf += 1
+                s.missed_low_conf += min(known) < LOW_CONFIDENCE
     for rule in line.rules:
         s.rules_expected += 1
         if find(hyp, normalize(rule)) >= 0:
@@ -126,6 +156,19 @@ def score_line(line: Line, words: list[tuple[str, float | None]]) -> LineScore:
 
 def score(line_n: int, words: list[tuple[str, float | None]]) -> LineScore:
     return score_line(LINE_BY_N[line_n], words)
+
+
+def heard_as(line: Line, words: list[tuple[str, float | None]], canonical: str) -> str:
+    """What the service wrote where `canonical` was said ("" if nothing)."""
+    hyp = [t for t, _ in normalize_words(words)]
+    ref = normalize(line.text)
+    _, pairs = align(ref, hyp)
+    phrase = normalize(canonical)
+    start = find(ref, phrase)
+    if start < 0:
+        return ""
+    span = _trim_span(_hyp_span(pairs, start, len(phrase)), hyp, phrase)
+    return " ".join(hyp[h] for h in span)
 
 
 def misheard_forms(line: Line, words: list[tuple[str, float | None]]) -> dict[str, str]:
@@ -144,7 +187,8 @@ def misheard_forms(line: Line, words: list[tuple[str, float | None]]) -> dict[st
         start = find(ref, phrase)
         if start < 0:
             continue
-        heard = " ".join(hyp[h] for h in _hyp_span(pairs, start, len(phrase)))
+        span = _trim_span(_hyp_span(pairs, start, len(phrase)), hyp, phrase)
+        heard = " ".join(hyp[h] for h in span)
         if heard and heard != " ".join(phrase) and not any(c.isdigit() for c in heard):
             out[canonical] = heard
     return out

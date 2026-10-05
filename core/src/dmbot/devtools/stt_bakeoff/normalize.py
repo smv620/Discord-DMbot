@@ -32,7 +32,16 @@ CONTRACTIONS = {
     "don't": "do not",
     "can't": "cannot",
     "won't": "will not",
+    "we're": "we are",
+    "they're": "they are",
+    "there's": "there is",
+    "you'll": "you will",
+    "didn't": "did not",
+    "isn't": "is not",
+    "wasn't": "was not",
 }
+SPELLINGS = {"ok": "okay"}
+_DICE_ROLL = re.compile(r"^(\d+)d(\d+)$")  # "2d6" -> "2", "d6"
 _UNITS = {
     "zero": 0,
     "one": 1,
@@ -86,7 +95,11 @@ def _word_tokens(word: str, conf: float | None) -> list[Token]:
         part = CONTRACTIONS.get(part, part)
         for piece in part.split():
             piece = re.sub(r"[^a-z0-9]", "", piece)  # apostrophes and stray marks
-            if piece:
+            piece = SPELLINGS.get(piece, piece)
+            roll = _DICE_ROLL.match(piece)
+            if roll:
+                out += [(roll[1], conf), ("d" + roll[2], conf)]
+            elif piece:
                 out.append((piece, conf))
     return out
 

@@ -20,10 +20,29 @@ from dmbot.devtools.stt_bakeoff import data
 AUDIO_SUFFIXES = {".wav", ".m4a", ".mp3", ".ogg", ".flac", ".aac", ".webm"}
 
 
+def inside_repo(path: Path) -> bool:
+    """True if `path` is inside a git checkout (recordings must never land in the repo)."""
+    full = path.resolve()
+    return any((p / ".git").exists() for p in [full, *full.parents])
+
+
+def _refuse_repo_paths(*paths: Path) -> bool:
+    for p in paths:
+        if inside_repo(p):
+            print(
+                f"{p} is inside a git checkout. Keep recordings and results outside the "
+                "repo (the repo is public), e.g. ~/bakeoff-audio and ~/bakeoff-results."
+            )
+            return True
+    return False
+
+
 def cmd_split(args: argparse.Namespace) -> int:
     from dmbot.devtools.stt_bakeoff import audio
 
     out: Path = args.out
+    if _refuse_repo_paths(Path(args.audio), out):
+        return 1
     manifest: dict[str, dict[str, object]] = {}
     ok = True
     files = sorted(p for p in Path(args.audio).iterdir() if p.suffix.lower() in AUDIO_SUFFIXES)
@@ -35,6 +54,12 @@ def cmd_split(args: argparse.Namespace) -> int:
         reader = path.stem
         clean = audio.decode(path, audio.RATE)
         discord = audio.discord_like(audio.decode(path, audio.DISCORD_RATE))
+        if discord is None and not args.allow_clean:
+            print(
+                "This PyAV can't encode Opus, so Discord-like audio can't be made. Use "
+                "--allow-clean to go on with clean audio only (the report will show it)."
+            )
+            return 1
         segments = audio.split(clean, min_silence_s=args.min_silence)
         lines = mapping.get(reader) or list(range(1, len(data.LINES) + 1))
         print(f"{reader}: {len(segments)} pieces of speech, {len(data.LINES)} script lines")
@@ -51,11 +76,11 @@ def cmd_split(args: argparse.Namespace) -> int:
         entry: dict[str, object] = {"variants": ["clean"], "lines": {}}
         if discord is not None:
             entry["variants"] = ["clean", "discord"]
-        files_by_line: dict[str, dict[str, str]] = {}
+        files_by_line: dict[str, dict[str, object]] = {}
         for seg, line in zip(segments, lines, strict=True):
             if line is None:
                 continue
-            rel: dict[str, str] = {}
+            rel: dict[str, object] = {"tail_s": round(seg.tail_s, 3)}
             for variant, pcm in (("clean", clean), ("discord", discord)):
                 if pcm is None:
                     continue
@@ -79,10 +104,12 @@ def cmd_check(_args: argparse.Namespace) -> int:
     from dmbot.devtools.stt_bakeoff.providers import Deepgram, MissingKey, Speechmatics
 
     silence = bytes(32_000)
+    # One custom word with a sounds-like hint, so a bad dictionary format shows up now.
+    vocab = [data.VocabEntry("Cerric", ("serik",))]
     worst = 0
     for provider in (Speechmatics("enhanced"), Deepgram("nova-3")):
         try:
-            res = asyncio.run(provider.transcribe(silence, [], realtime=False))
+            res = asyncio.run(provider.transcribe(silence, vocab, realtime=False))
         except MissingKey as exc:
             print(f"{provider.name}: {exc}")
             worst = 1
@@ -102,6 +129,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"Unknown setup(s): {unknown}. Choose from {list(runner.SETUPS)}.")
         return 1
     phases = list(runner.PHASES) if args.phase == "all" else [args.phase]
+    if _refuse_repo_paths(args.out):
+        return 1
 
     async def go() -> None:
         r = runner.Runner(args.out, concurrency=args.concurrency)
@@ -110,15 +139,19 @@ def cmd_run(args: argparse.Namespace) -> int:
             if phase == runner.MAIN:
                 await r.main(setups, limit=args.limit)
             elif phase == runner.CLEAN:
-                await r.clean(setups)
+                await r.clean(setups, limit=args.limit)
             elif phase == runner.LEARNED:
-                await r.learned(setups)
+                await r.learned(setups, limit=args.limit)
             elif phase == runner.RELISTEN:
                 await r.relisten(setups)
             elif phase == runner.TIMING:
                 await r.timing(setups)
 
-    asyncio.run(go())
+    try:
+        asyncio.run(go())
+    except runner.LearnedSourceMissing as exc:
+        print(exc)
+        return 1
     return 0
 
 
@@ -143,6 +176,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", type=Path, required=True)
     s.add_argument("--min-silence", type=float, default=1.2)
     s.add_argument("--map", help="JSON file mapping each reader's pieces to line numbers")
+    s.add_argument(
+        "--allow-clean",
+        action="store_true",
+        help="go on without Discord-like audio if Opus isn't available",
+    )
     s.set_defaults(fn=cmd_split)
     c = sub.add_parser("check", help="check the API keys with one second of silence")
     c.set_defaults(fn=cmd_check)
@@ -152,8 +190,13 @@ def main(argv: list[str] | None = None) -> int:
         "--phase", default="all", choices=["all", "main", "clean", "learned", "relisten", "timing"]
     )
     r.add_argument("--setups", nargs="*")
-    r.add_argument("--concurrency", type=int, default=4)
-    r.add_argument("--limit", type=int, help="only the first N clips (a quick trial)")
+    r.add_argument(
+        "--concurrency",
+        type=int,
+        default=2,
+        help="requests at once (timing always runs one at a time)",
+    )
+    r.add_argument("--limit", type=int, help="only the first N lines per reader (a trial)")
     r.set_defaults(fn=cmd_run)
     rep = sub.add_parser("report", help="print the results summary (numbers only)")
     rep.add_argument("--out", type=Path, required=True)
