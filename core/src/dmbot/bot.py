@@ -35,7 +35,7 @@ from dmbot.channel_access import (
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.consent_dm import (
-    THROWN_AWAY,
+    ALREADY_RECORDED,
     ConsentButton,
     DeclineButton,
     StopButton,
@@ -1114,7 +1114,7 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
         )
         return
     await interaction.followup.send(
-        f"Done. DMbot has stopped recording you. {THROWN_AWAY}",
+        f"Done. DMbot won't record you anymore. {ALREADY_RECORDED}",
         ephemeral=True,
     )
 

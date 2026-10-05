@@ -52,7 +52,10 @@ CLOUD_NOTE = (
     "Note: this server uses another company to turn speech into text, so your voice "
     "clips and Discord name are sent to them."
 )
-THROWN_AWAY = "Anything not yet written down was thrown away."
+# What happens to what someone said before they stopped (docs/PLAN.md, Retention).
+ALREADY_RECORDED = (
+    "What was already recorded stays in the transcript, which anyone in this server can still read."
+)
 
 
 def _plain(name: str) -> str:
@@ -75,7 +78,7 @@ def request_text(server: str, *, voice: str | None, dm: str | None, cloud: bool)
         "DMbot listens and gives the DM private notes. It never talks in the game and never "
         "decides anything. Your DM does.",
         f"• **{CONSENT_LABEL}:** DMbot records what you say and turns it into text. "
-        "Everyone who said yes can read and download that text.",
+        "Anyone in this server can read and download that text, even if you stop later.",
         f"• **{DECLINE_LABEL}:** DMbot ignores your voice. You can still play as normal.",
         "DMbot is just for your game. Please don't use it or its text for anything else.",
         "A yes is remembered for this server. If you say no, DMbot asks again next session.",
@@ -111,7 +114,8 @@ def declined_text(server: str) -> str:
 
 def stopped_text(server: str) -> str:
     return (
-        f"🛑 Stopped. DMbot no longer records you in **{_plain(server)}**. {THROWN_AWAY} "
+        f"🛑 Stopped. DMbot won't record you anymore in **{_plain(server)}**. "
+        f"{ALREADY_RECORDED} "
         f"Changed your mind? Press **{CONSENT_LABEL}** below."
     )
 

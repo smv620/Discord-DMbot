@@ -40,6 +40,7 @@ def test_request_asks_first_and_says_dmbot_never_decides() -> None:
     assert "never decides anything" in text
     assert "ignores your voice" in text and "still play as normal" in text
     assert "If you say no, DMbot asks again next session" in text  # no false promise
+    assert "Anyone in this server can read and download that text" in text  # PLAN.md
     assert c.CLOUD_NOTE not in text
     assert c.CLOUD_NOTE in c.request_text("Dragon Club", voice=None, dm=None, cloud=True)
 
@@ -346,6 +347,7 @@ class ConsentDMTests(DatabaseTest):
         assert str(PLAYER) not in self.allowlists()[-1]
         edit = press.edit_original_response.await_args.kwargs
         assert "Stopped" in edit["content"]
+        assert c.ALREADY_RECORDED in edit["content"]  # past lines stay readable
         assert custom_ids(edit["view"]) == ["dmbot:consent:yes:1"]
 
     async def test_stop_works_before_anything_slow(self) -> None:
