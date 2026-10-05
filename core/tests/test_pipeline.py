@@ -1,12 +1,15 @@
 import asyncio
 import unittest
 from collections.abc import Callable
+from types import SimpleNamespace
+from unittest import mock
 
 from dmbot.audio.segmenter import Utterance
 from dmbot.transcription.pipeline import (
     BACKLOG_WARN,
     FAILURES_BEFORE_ALERT,
     MIN_CLIP_BUDGET_S,
+    SKIP_ALERT_EVERY_S,
     SKIPPED_ALERT,
     TranscriptionPipeline,
     clip_budget_s,
@@ -204,7 +207,7 @@ class ClipBudgetTests(unittest.IsolatedAsyncioTestCase):
             hints=hints,
             deliver=lambda u, t: self.delivered.append((u, t)),
             alert=alert,
-            budget_s=lambda duration: 0.05,
+            budget_s=lambda duration: 0.5,
         )
 
     def test_budget_scales_with_clip_length(self) -> None:
@@ -230,6 +233,60 @@ class ClipBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.pipeline.skipped, 3)
         self.assertEqual(self.alerts, [SKIPPED_ALERT])  # once, not three times
 
+    async def test_skip_warning_returns_after_a_while_and_is_per_server(self) -> None:
+        now = [1000.0]
+        # Only the pipeline's clock: the event loop's must keep running for the budget.
+        fake_time = SimpleNamespace(monotonic=lambda: now[0])
+        with (
+            mock.patch("dmbot.transcription.pipeline.time", fake_time),
+            self.assertLogs("dmbot.transcription.pipeline", "WARNING"),
+        ):
+            await self.pipeline.process(utt(guild=1))
+            self.engine.hang_next = True
+            await self.pipeline.process(utt(guild=2))  # another server: its own alert
+            self.engine.hang_next = True
+            await self.pipeline.process(utt(guild=1))  # too soon: no alert
+            now[0] += SKIP_ALERT_EVERY_S
+            self.engine.hang_next = True
+            await self.pipeline.process(utt(guild=1))
+        self.assertEqual(self.alerts, [SKIPPED_ALERT] * 3)
+
+    async def test_engine_timeout_is_a_failure_not_a_skip(self) -> None:
+        # A cloud request timing out on its own is "not working", not "couldn't keep up".
+        async def times_out(utterance: Utterance, hints: list[str]) -> str | None:
+            raise TimeoutError("request timed out")
+
+        self.engine.transcribe = times_out  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.transcription.pipeline", "ERROR"):
+            await self.pipeline.process(utt())
+        self.assertEqual((self.pipeline.skipped, self.pipeline.consecutive_failures), (0, 1))
+        self.assertEqual(self.alerts, [])
+
+    async def test_name_lookup_error_does_not_stop_transcribing(self) -> None:
+        calls = [0]
+
+        async def flaky_hints(guild_id: int) -> list[str]:
+            calls[0] += 1
+            if calls[0] == 1:
+                raise ConnectionError("database unavailable")
+            return []
+
+        self.engine.hang_next = False
+        self.pipeline._hints = flaky_hints
+        for _ in range(2):
+            self.pipeline.enqueue(utt())
+        task = asyncio.create_task(self.pipeline.run())
+        try:
+            with self.assertLogs("dmbot.transcription.pipeline", "ERROR"):
+                for _ in range(200):
+                    if len(self.delivered) == 2:
+                        break
+                    await asyncio.sleep(0.01)
+        finally:
+            task.cancel()
+        self.assertEqual([t for _, t in self.delivered], [None, "I cast Shield"])
+        self.assertEqual(self.pipeline.total_failures, 1)
+
     async def test_queue_keeps_moving(self) -> None:
         for _ in range(3):
             self.pipeline.enqueue(utt())
@@ -244,5 +301,6 @@ class ClipBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([t for _, t in self.delivered], [None, "I cast Shield", "I cast Shield"])
 
     def test_skip_message_is_plain(self) -> None:
-        for jargon in ("whisper", "transcri", "timeout", "model", "engine"):
+        # "transcript" is the channel's everyday name; "transcribe" is jargon.
+        for jargon in ("whisper", "transcrib", "timeout", "model", "engine"):
             self.assertNotIn(jargon, SKIPPED_ALERT.lower())

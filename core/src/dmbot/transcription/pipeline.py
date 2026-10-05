@@ -36,8 +36,9 @@ SLOW_CLIP_S = 5.0
 # Tell the DM about skipped clips at most this often.
 SKIP_ALERT_EVERY_S = 600.0
 SKIPPED_ALERT = (
-    "⚠️ Writing things down: a piece of speech took too long and was skipped. "
-    "If this keeps happening, whoever hosts DMbot should switch to a faster setting."
+    "⚠️ Writing things down: DMbot couldn't keep up and skipped a bit of what was said, "
+    "so it won't be in the transcript. DMbot is still listening. If you see this often, "
+    "whoever hosts DMbot can pick a faster setting."
 )
 
 
@@ -80,8 +81,9 @@ class TranscriptionPipeline:
         self.total_failures = 0
         self.last_latency_s: float | None = None
         self.skipped = 0  # clips that ran over their time budget
+        self.slow = 0  # clips slower than SLOW_CLIP_S and their own length
         self._budget_s = budget_s
-        self._last_skip_alert: float | None = None
+        self._last_skip_alert: dict[int, float] = {}  # per Discord server
         self._backlog_warned = False
 
     @property
@@ -119,23 +121,40 @@ class TranscriptionPipeline:
             return
 
         text: str | None = None
-        hints = await self._hints(utterance.guild_id)
         budget = self._budget_s(utterance.duration_s)
+        # asyncio.timeout, not wait_for: an engine's own TimeoutError (a cloud request
+        # timing out) is a failure, not a skipped clip. Rescheduled once hints are in.
+        timer = asyncio.timeout(None)
         started = time.monotonic()
         try:
-            text = await asyncio.wait_for(
-                self.transcriber.transcribe(utterance, hints), timeout=budget
-            )
-        except TimeoutError:
-            await self._on_skip(utterance, budget)
+            async with timer:
+                hints = await self._hints(utterance.guild_id)
+                started = time.monotonic()
+                timer.reschedule(asyncio.get_running_loop().time() + budget)
+                text = await self.transcriber.transcribe(utterance, hints)
+        except TimeoutError as exc:
+            if timer.expired():
+                await self._on_skip(utterance, budget)
+            else:
+                await self._on_failure(utterance.guild_id, exc)
         except Exception as exc:
             await self._on_failure(utterance.guild_id, exc)
         else:
             await self._on_success(utterance.guild_id)
             took = time.monotonic() - started
             if took > max(SLOW_CLIP_S, utterance.duration_s):
-                log.warning(
-                    "Slow transcription: %.1f s clip took %.1f s", utterance.duration_s, took
+                self.slow += 1
+                level = (
+                    logging.WARNING
+                    if self.slow == 1 or self.slow % LOG_EVERY_NTH_FAILURE == 0
+                    else logging.DEBUG
+                )
+                log.log(
+                    level,
+                    "Slow transcription: %.1f s clip took %.1f s (%d slow so far)",
+                    utterance.duration_s,
+                    took,
+                    self.slow,
                 )
             else:
                 log.debug("Transcribed %.1f s clip in %.2f s", utterance.duration_s, took)
@@ -157,8 +176,9 @@ class TranscriptionPipeline:
             self.skipped,
         )
         now = time.monotonic()
-        if self._last_skip_alert is None or now - self._last_skip_alert >= SKIP_ALERT_EVERY_S:
-            self._last_skip_alert = now
+        last = self._last_skip_alert.get(utterance.guild_id)
+        if last is None or now - last >= SKIP_ALERT_EVERY_S:
+            self._last_skip_alert[utterance.guild_id] = now
             await self._alert(utterance.guild_id, SKIPPED_ALERT)
 
     async def _on_failure(self, guild_id: int, exc: Exception) -> None:
