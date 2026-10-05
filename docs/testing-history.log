@@ -98,3 +98,107 @@ Result
   connected"; ears: "logged in as DMbot#4185", "connected to core" (a few "core link
   down; retrying" lines first, expected while core loaded Whisper). No errors. No
   ports published to the host.
+
+==============================================================================
+2026-10-05  Server updates during the day (server session, no test run)
+==============================================================================
+  The server session (Claude Code on the test server) took over deploys and live
+  tests (owner decision, CLAUDE.md, #131). Each update: git pull on development, CI
+  green on the commit, docker compose up -d --build for the parts that changed.
+  - 04:20 UTC  core rebuilt with #105 (pin the DM screen help card, #102)
+  - 04:53 UTC  core + ears rebuilt with #111 (session-event logs, #37)
+  - 06:16 UTC  core rebuilt with #118 (consent by private message, #33)
+  - later      #123 and #130/#131 were docs only: pulled, no rebuild
+  Every restart: Whisper small loaded, "ears connected" after a few seconds of
+  "core link down; retrying" while core started. No errors.
+
+==============================================================================
+2026-10-05  Test 1, run 2: voice capture (server session watched the logs)
+==============================================================================
+Setup       Cloud test server, development @ 9603360 (#111 session-event logs),
+            TRANSCRIBER=whisper-local small, DMBOT_DEBUG_AUDIO=1. Owner (DM) and a second
+            person in voice. No injected packet loss reported.
+Timeline (UTC, from core/ears logs; IDs only)
+  05:39:03  Session started; consent list: 0 opted in; joined voice (encrypted);
+            recording notice posted
+  05:39:04  ears: not capturing the DM: not opted in
+  05:40:04  Consent given (/consent give) -> 05:40:05 ears capturing
+  05:40-05:41  7 capture checks, 1 speaker, audio 100% in every check, no ⚠️
+  05:41:57  /dmbot stop; ears left voice
+Numbers     20 ears audio lines, received = expected in all, link_dropped_total=0.
+            Whisper transcribed 19 utterances, about 5 s behind speech. 76 log lines,
+            all INFO: no warnings, no errors.
+Results
+  Session start, notice, DM screen ...... PASS
+  Consent gate ........................... PASS (not captured until opted in; ~1 s after)
+  Audio % ................................ PASS (100%)
+  Two speakers ........................... NOT TESTED (second person never consented)
+  Revoke ................................. NOT TESTED
+  Overall ................................ PARTIAL
+Found
+  - Players didn't notice they had to consent: the only prompt was the public notice.
+    -> owner asked for consent by private message: built in #118 (#33, #113-#117).
+  - New-campaign menus run off the screen on a phone (#112).
+
+==============================================================================
+2026-10-05  Test 1, run 3: two speakers, consent carried over
+==============================================================================
+Setup       development @ 3606569 (#118 consent by private message), whisper-local small.
+            DM and second person in voice; both had consented before the session (the
+            second person at 06:29 through the new /consent give buttons).
+Timeline (UTC)
+  06:40:12  Session started; consent list: 2 opted in
+  06:40:13  Joined voice; recording notice posted; ears capturing the DM
+  06:40:51  ears capturing the second person (first time they spoke)
+  06:40-06:41  7 capture checks; from 06:41:05 both speakers in every check;
+            audio 99-100%, no ⚠️
+  06:41:38  /dmbot stop; ears left voice
+Numbers     20 ears audio lines, link_dropped_total=0. Whisper transcribed 13; the other
+            7 were under the minimum clip length (skipped by design). 60 log lines, all
+            INFO. No "Couldn't message" lines (private messages sent; successful sends
+            aren't logged).
+Results
+  Two speakers captured .................. PASS
+  Audio % ................................ PASS (99-100%)
+  Consent carried over between sessions .. PASS
+  /consent give -> I consent ............. PASS
+  First-time consent question ............ NOT TESTED (everyone had already agreed)
+  Revoke ................................. NOT TESTED
+  No errors .............................. PASS
+  Overall ................................ PASS (for what it covered)
+
+==============================================================================
+2026-10-05  Test 1, run 4: Stop recording me, agree again
+==============================================================================
+Setup       development @ 3606569, whisper-local small. The session started a few
+            seconds before the log watch; earlier lines were read back afterwards.
+Timeline (UTC)
+  13:32:32  Session started; consent list: 2 opted in; joined voice; capturing the DM
+  13:33:09  Capture check: 1 speaker, audio 86% ⚠️ audio gaps
+  13:33:12  Consent withdrawn (the DM, Stop recording me); ears "opted out" the same
+            second, and nothing more was captured from them
+  13:34:09  Consent given again (I consent on the Stopped message); ears capturing the
+            same second
+  13:34:24  Capture check: 1 speaker, audio 98%
+  13:34:39  /dmbot stop (before the next check, so the last 15 s were never shown: #109, comment)
+Numbers (ears audio lines)
+  13:32:41-13:33:05  received 1017 of 1123 expected (~91%)
+  13:34:10-13:34:38  received 792 of 860 expected (~92%)
+  link_dropped_total=0: the loss is between Discord and ears. Short utterances lost
+  most of their audio with no pause recorded (3/23, 18/34, 18/35, pauses=0). Whether
+  packet loss was injected wasn't confirmed.
+Results
+  Stop recording me ...................... PASS (stops at once, in core and ears)
+  Agree again ............................ PASS (capture back within the second)
+  Audio % ................................ BORDERLINE (~91-92%)
+  Second speaker ......................... NOT TESTED (was on the list, never spoke)
+  Overall ................................ PARTIAL
+Follow-up
+  - Owner asked whether gaps are just pauses (D&D has long pauses). They aren't
+    counted: ears ends a piece of speech after 800 ms of silence, so pauses only split
+    speech. These losses are inside utterances.
+  - Read-aloud test scripts added so audio and speech-to-text can be judged against
+    known words and pauses: docs/test-scripts/ (#119, PR #123).
+  - Reviews of the scripts found: #120 (capture check can drop audio counts), #121
+    (ears may cut the start of each piece of speech), #109 comment (stop drops speech
+    still being transcribed).
