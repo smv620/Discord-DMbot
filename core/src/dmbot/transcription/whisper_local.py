@@ -9,16 +9,23 @@ Model guide (WHISPER_MODEL):
 
 Shutdown note: a transcription already running in its worker thread can't be
 interrupted, so stopping the bot may wait for the current clip (at most a few seconds).
+
+Time budget (#137): the pipeline skips a clip that runs over its budget, but the worker
+thread can't be stopped and finishes in the background. That's why each clip's decoding
+is bounded here (one pass, output length fitted to the clip): the budget is a safety
+net, not the fix.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot.audio.segmenter import Utterance
+from dmbot.ears.protocol import SAMPLE_RATE
 from dmbot.transcription.base import TranscriberUnavailable, build_prompt, clean_text
 from dmbot.transcription.config import TranscriptionSettings
 
@@ -27,6 +34,21 @@ log = logging.getLogger(__name__)
 # Whisper invents text ("Thanks for watching!") on noise. Drop segments it is unsure about.
 NO_SPEECH_MAX = 0.6
 AVG_LOGPROB_MIN = -1.0
+
+# Bounds on the work for one clip (#137). faster-whisper's defaults re-decode a clip up
+# to 6 times at rising temperatures and let each try run to ~448 tokens; on a short
+# clip, where Whisper tends to loop on invented text, that took 40 s on the test
+# server's CPU. Live play needs one pass whose length fits the clip.
+TEMPERATURE = 0.0  # one greedy pass, no retries
+TOKENS_PER_SECOND = 12  # speech is about 3-4 tokens a second: generous, never cuts real speech
+MIN_NEW_TOKENS = 24
+MAX_NEW_TOKENS = 224  # half Whisper's limit, leaving room for the names prompt
+
+
+def max_new_tokens(duration_s: float) -> int:
+    """How many tokens Whisper may write for a clip of this length."""
+    wanted = max(MIN_NEW_TOKENS, math.ceil(TOKENS_PER_SECOND * duration_s))
+    return min(MAX_NEW_TOKENS, wanted)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +112,8 @@ class LocalWhisperTranscriber:
             vad_filter=True,
             beam_size=self._settings.whisper_beam_size,
             condition_on_previous_text=False,
+            temperature=TEMPERATURE,
+            max_new_tokens=max_new_tokens(len(audio) / SAMPLE_RATE),
         )
         kept = [
             s.text

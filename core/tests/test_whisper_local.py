@@ -7,9 +7,12 @@ from dmbot.audio.segmenter import Utterance
 from dmbot.transcription.base import TranscriberUnavailable
 from dmbot.transcription.config import TranscriptionSettings
 from dmbot.transcription.whisper_local import (
+    MAX_NEW_TOKENS,
+    MIN_NEW_TOKENS,
     LocalWhisperTranscriber,
     SegmentScore,
     keep_segment,
+    max_new_tokens,
 )
 
 HAS_NUMPY = importlib.util.find_spec("numpy") is not None
@@ -30,6 +33,18 @@ class FakeModel:
     def transcribe(self, audio: Any, **kwargs: Any) -> tuple[list[FakeSegment], None]:
         self.calls.append({"samples": len(audio), "dtype": str(audio.dtype), **kwargs})
         return self.segments, None
+
+
+class DecodingBoundsTests(unittest.TestCase):
+    def test_token_budget_follows_clip_length(self) -> None:
+        # #137: a 1 s clip may not run to Whisper's full ~448 tokens.
+        self.assertEqual(max_new_tokens(0.2), MIN_NEW_TOKENS)
+        self.assertEqual(max_new_tokens(1.0), MIN_NEW_TOKENS)
+        self.assertEqual(max_new_tokens(10.0), 120)
+        self.assertEqual(max_new_tokens(15.0), 180)  # DMbot's longest piece of speech
+        self.assertEqual(max_new_tokens(60.0), MAX_NEW_TOKENS)
+        # Generous: 15 s of fast speech (~5 words/s, ~7 tokens/s) still fits.
+        self.assertGreater(max_new_tokens(15.0), 15 * 7)
 
 
 class KeepSegmentTests(unittest.TestCase):
@@ -61,6 +76,9 @@ class LocalWhisperTests(unittest.IsolatedAsyncioTestCase):
         call = model.calls[0]
         self.assertEqual((call["samples"], call["dtype"]), (16000, "float32"))
         self.assertEqual(call["initial_prompt"], "Names: Aria, Bram.")
+        # #137: one greedy pass, with output length bounded by the clip's length.
+        self.assertEqual(call["temperature"], 0.0)
+        self.assertEqual(call["max_new_tokens"], max_new_tokens(1.0))
         self.assertEqual(call["language"], "en")
         self.assertTrue(call["vad_filter"])
         self.assertEqual(call["beam_size"], 1)

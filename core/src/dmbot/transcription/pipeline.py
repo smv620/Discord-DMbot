@@ -5,6 +5,7 @@ Kept free of Discord so every rule here is unit-testable:
 - clips too short to matter are counted but not transcribed
 - repeated engine failures raise one alert to the DM, and one when service recovers
 - failures are logged with a throttle so a dead engine can't flood the logs
+- every clip has a time budget, so one stuck clip can't hold up the ones behind it (#137)
 """
 
 from __future__ import annotations
@@ -26,6 +27,22 @@ QUEUE_SIZE = 64
 BACKLOG_WARN = 16
 FAILURES_BEFORE_ALERT = 3
 LOG_EVERY_NTH_FAILURE = 50
+# Time budget per clip: generous for real work, short enough that the table doesn't
+# lose minutes of text to one stuck clip.
+MIN_CLIP_BUDGET_S = 10.0
+CLIP_BUDGET_PER_AUDIO_S = 3.0
+# A clip slower than this (and slower than its own length) is logged as slow.
+SLOW_CLIP_S = 5.0
+# Tell the DM about skipped clips at most this often.
+SKIP_ALERT_EVERY_S = 600.0
+SKIPPED_ALERT = (
+    "⚠️ Writing things down: a piece of speech took too long and was skipped. "
+    "If this keeps happening, whoever hosts DMbot should switch to a faster setting."
+)
+
+
+def clip_budget_s(duration_s: float) -> float:
+    return max(MIN_CLIP_BUDGET_S, CLIP_BUDGET_PER_AUDIO_S * duration_s)
 
 
 class ConsentChecker(Protocol):
@@ -49,6 +66,7 @@ class TranscriptionPipeline:
         deliver: Deliver,
         alert: Alert,
         queue_size: int = QUEUE_SIZE,
+        budget_s: Callable[[float], float] = clip_budget_s,
     ) -> None:
         self.transcriber = transcriber
         self._consent = consent
@@ -61,6 +79,9 @@ class TranscriptionPipeline:
         self.consecutive_failures = 0
         self.total_failures = 0
         self.last_latency_s: float | None = None
+        self.skipped = 0  # clips that ran over their time budget
+        self._budget_s = budget_s
+        self._last_skip_alert: float | None = None
         self._backlog_warned = False
 
     @property
@@ -97,20 +118,48 @@ class TranscriptionPipeline:
             self._deliver(utterance, None)
             return
 
-        text: str | None
+        text: str | None = None
+        hints = await self._hints(utterance.guild_id)
+        budget = self._budget_s(utterance.duration_s)
+        started = time.monotonic()
         try:
-            text = await self.transcriber.transcribe(
-                utterance, await self._hints(utterance.guild_id)
+            text = await asyncio.wait_for(
+                self.transcriber.transcribe(utterance, hints), timeout=budget
             )
+        except TimeoutError:
+            await self._on_skip(utterance, budget)
         except Exception as exc:
-            text = None
             await self._on_failure(utterance.guild_id, exc)
         else:
             await self._on_success(utterance.guild_id)
+            took = time.monotonic() - started
+            if took > max(SLOW_CLIP_S, utterance.duration_s):
+                log.warning(
+                    "Slow transcription: %.1f s clip took %.1f s", utterance.duration_s, took
+                )
+            else:
+                log.debug("Transcribed %.1f s clip in %.2f s", utterance.duration_s, took)
 
         # Re-check: transcription can take seconds, and consent may have been revoked.
         if self._allowed(utterance):
             self._deliver(utterance, text)
+
+    async def _on_skip(self, utterance: Utterance, budget: float) -> None:
+        """A clip ran over its budget: move on, and tell the DM (not too often).
+
+        The audio still counts in the capture check; only its text is missing.
+        """
+        self.skipped += 1
+        log.warning(
+            "Transcription skipped: %.1f s clip ran over its %.0f s budget (%d skipped so far)",
+            utterance.duration_s,
+            budget,
+            self.skipped,
+        )
+        now = time.monotonic()
+        if self._last_skip_alert is None or now - self._last_skip_alert >= SKIP_ALERT_EVERY_S:
+            self._last_skip_alert = now
+            await self._alert(utterance.guild_id, SKIPPED_ALERT)
 
     async def _on_failure(self, guild_id: int, exc: Exception) -> None:
         self.consecutive_failures += 1
