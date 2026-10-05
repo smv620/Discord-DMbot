@@ -4,6 +4,7 @@ from dmbot.campaigns import Campaign
 from dmbot.transcription.config import Engine
 from dmbot.ui.logic import (
     BUTTON_LABEL_MAX,
+    HELP_TEXT,
     ago,
     backup_filename,
     can_run,
@@ -177,3 +178,14 @@ class WritingStatus(unittest.TestCase):
             line = writing_status(engine, 0, None).lower()
             for jargon in ("transcri", "engine", "backlog", "whisper"):
                 self.assertNotIn(jargon, line)
+
+
+class HelpText(unittest.TestCase):
+    def test_consent_is_asked_by_private_message(self) -> None:
+        # #138: consent is a private message with buttons; the commands are fallbacks.
+        self.assertIn("private message", HELP_TEXT)
+        self.assertIn("Stop recording me", HELP_TEXT)
+        self.assertIn("anyone in this server can read", HELP_TEXT.lower())
+        self.assertNotIn("Players use `/consent give`", HELP_TEXT)
+        for line in HELP_TEXT.split("\n"):
+            self.assertLessEqual(len(line), 300)

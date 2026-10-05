@@ -198,8 +198,11 @@ HELP_TEXT = (
     "• `/dmbot backup`: download a copy of a campaign\n"
     "• `/dmbot restore`: bring a campaign back from a copy\n"
     "\n"
-    "**Recording:** only people who agree are recorded. Players use `/consent give` "
-    "to agree and `/consent revoke` to stop."
+    "**Recording:** only people who agree are recorded. When DMbot starts, it asks "
+    "everyone in the voice channel by private message, with a button to agree. "
+    "Anyone in this server can read what's recorded.\n"
+    "No message from DMbot? Check your DMs and Message Requests, or type `/consent give`. "
+    "To stop, press **Stop recording me** or type `/consent revoke`."
 )
 
 
