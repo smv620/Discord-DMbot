@@ -1,7 +1,7 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-04 evening by the web session (the plan changed after the
-day's merges; no new test was run)
+Last updated: 2026-10-05 by the PyCharm session (DMbot now runs on the cloud test
+server; no new test was run yet)
 
 What this file is
   The immediate live-testing picture: what's next, what's blocking it, and the latest
@@ -23,16 +23,23 @@ Why
     - the audio-pause fix from run 1 (#36)
   Passing run 2 is what lets development be promoted to beta.
 
+Where it runs (new, 2026-10-05)
+  The cloud test server (Ubuntu 26.04, 4 vCPU, 8 GB), with Docker Compose: postgres,
+  core, ears. It runs the development branch (owner's choice for testing; DEPLOY.md's
+  "servers run main" applies to the real deployment). TRANSCRIBER=whisper-local,
+  model small, so run 2 also shows transcribed text. Logs: docker compose logs -f.
+  Don't run DMbot on the PC at the same time: both would log in as the same bot.
+
 Before the test (owner)
-  [ ] Postgres set up on the PC, once (README, "Database"); DATABASE_URL in .env
-  [ ] Compare .env with .env.example and add anything missing (#31)
-  [ ] .env: TRANSCRIBER=none and DMBOT_DEBUG_AUDIO=1
+  [ ] Discord: DMbot's role has Manage Channels, Manage Roles and Read Message
+      History (needed to create #dmb-dm-screen-<campaign>)
   [ ] A second person in the voice channel (a phone with a second account is fine)
   [ ] Optional: the "clumsy" tool (Windows) to add ~5% packet loss
 
 Before the test (PyCharm session)
-  [ ] Follow LIVE_TEST.md steps 2-3 (pull development, pg_ctl start, pip install,
-      npm ci); confirm "ears connected"
+  [x] Server set up, images built, all three containers up, "ears connected"
+  [ ] Set DMBOT_DEBUG_AUDIO=1 in the server's .env and restart ears
+  [ ] git pull + docker compose up -d --build if development moved
 
 Commands to use
   /dmbot start, /consent give, /consent revoke, /dmbot help (Status), /dmbot stop
@@ -40,12 +47,13 @@ Commands to use
 
 What to check (in addition to LIVE_TEST.md step 5)
   - /dmbot start creates #dmb-dm-screen-<campaign> with a help card
-  - Debug line per utterance in the ears terminal (pauses=..., link_dropped_total=0)
+  - Debug line per utterance in the ears logs (pauses=..., link_dropped_total=0)
+  - Capture checks show transcribed text that roughly matches what was said
   - Long sentences with short pauses read 95-100%; with ~5% loss injected the % drops
   - The second person's /consent revoke removes them from the next capture checks
   - The ⚠️ flag, not the rounded %, decides pass or fail (#44)
-  - Optional extra: stop core with Ctrl+C mid-session and start it again. DMbot should
-    rejoin and post a note in the DM screen (#70)
+  - Optional extra: docker compose restart core mid-session. DMbot should rejoin and
+    post a note in the DM screen (#70)
 
 ------------------------------------------------------------------------------
 BLOCKED / WAITING

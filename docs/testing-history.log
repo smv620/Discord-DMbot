@@ -74,3 +74,27 @@ Follow-up
   - Review follow-ups: #43 (DAVE loss right after a pause), #44 ("95% ⚠️" rounding),
     #45 (decode errors and link drops not counted).
   - Run 2 needs a second person, DMBOT_DEBUG_AUDIO=1, and ideally ~5% injected loss.
+
+==============================================================================
+2026-10-05  Cloud test server set up (no test run)
+==============================================================================
+Machine     Ubuntu 26.04 LTS VM, 4 vCPU, 7.6 GB RAM, 72 GB disk (address kept out of the
+            public repo)
+Done by     PyCharm session over SSH, with the owner's go-ahead
+Steps
+  - apt update/upgrade, then rebooted; automatic security updates on
+  - Firewall (ufw): deny incoming except SSH. SSH password login was briefly turned
+    off, then restored at the owner's request (they may log in from another machine)
+  - Docker 29.8 + Compose from Docker's repository; hello-world OK
+  - Repo cloned, development @ 9ada841 (includes #92 dmb- names)
+  - .env made from .env.example, chmod 600. EARS_SHARED_SECRET and both database
+    passwords generated on the server and never shown. The owner added DISCORD_TOKEN
+    and DISCORD_DEV_GUILD_ID. TRANSCRIBER=whisper-local, WHISPER_MODEL=small,
+    LOG_FORMAT=json
+  - docker compose build (core 853 MB with Whisper, ears 381 MB), then up -d
+Result
+  postgres healthy; core: "Database updated: 0001_initial, 0002_active_sessions,
+  0003_channel_number", Whisper small loaded in ~12 s, connected to Discord, "ears
+  connected"; ears: "logged in as DMbot#4185", "connected to core" (a few "core link
+  down; retrying" lines first, expected while core loaded Whisper). No errors. No
+  ports published to the host.
