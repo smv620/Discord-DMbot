@@ -16,6 +16,7 @@ from psycopg import sql
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
+from dmbot.memory import notify
 from dmbot.memory._changes import (
     ALIASES,
     CORRECTIONS,
@@ -55,7 +56,6 @@ from dmbot.memory.ontology import (
 
 DAMAGED = "This backup file is damaged (bad campaign memory entry)."
 INT64_MAX = 2**63 - 1
-NOTIFY_CHANNEL = "dmbot_memory"
 
 # Tag in the file → table, in load order (anything a row links to comes first).
 _TAGS: dict[str, Table] = {
@@ -134,9 +134,7 @@ async def bump_version(conn: Conn, guild_id: int, campaign_id: str) -> None:
     )
     row = await cur.fetchone()
     if row is not None:
-        await conn.execute(
-            "SELECT pg_notify(%s, %s)", (NOTIFY_CHANNEL, f"{campaign_id}:{row['memory_version']}")
-        )
+        await notify.send(conn, campaign_id, int(row["memory_version"]), names_changed=True)
 
 
 class MemorySection:

@@ -14,9 +14,10 @@ row-level security. `Database.open` refuses otherwise.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -122,6 +123,21 @@ class Database:
         """
         async with self._pool.connection() as conn, conn.transaction():
             yield conn
+
+    async def listen(self, channel: str) -> AsyncGenerator[str, None]:
+        """Payloads of Postgres notifications on `channel`, until the connection fails.
+
+        Holds one pooled connection for as long as it runs. Notifications skip
+        row-level security, so they must never carry server data (IDs and versions only).
+        """
+        async with self._pool.connection() as conn:
+            await conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(channel)))
+            try:
+                async for note in conn.notifies():
+                    yield note.payload
+            finally:
+                with contextlib.suppress(Exception):
+                    await conn.execute("UNLISTEN *")
 
     async def _check_role(self) -> None:
         async with self.unscoped() as conn:

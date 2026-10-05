@@ -1,6 +1,8 @@
 """Campaign memory in Postgres: isolation, undo of every operation, rule flags, backups."""
 
-from collections.abc import Awaitable, Callable
+import asyncio
+import contextlib
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 
 from psycopg import errors as pg_errors
@@ -11,6 +13,7 @@ from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory._changes import ALL, scoped_select
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.checks import CONTRADICTION, TOO_MANY, WRONG_OBJECT, WRONG_SUBJECT
+from dmbot.memory.lookup import LookupCache
 from dmbot.memory.models import (
     CONFIRMED,
     KEEP,
@@ -179,14 +182,26 @@ class Isolation(MemoryTest):
         listener = await self.db._pool.getconn()
         try:
             await listener.execute("LISTEN dmbot_memory")
-            await self.add("Belleros")
-            version = await self.memory.version(GUILD_A, self.c)
-            gen = listener.notifies(timeout=5, stop_after=1)
+            a = await self.add("Belleros")
+            named = await self.memory.version(GUILD_A, self.c)
+            await self.memory.add_mention(
+                GUILD_A,
+                self.c,
+                a,
+                line_ref="s1:1",
+                span=(0, 4),
+                confidence=0.9,
+                method="exact",
+                source="cleaner",
+            )
+            mentioned = await self.memory.version(GUILD_A, self.c)
+            gen = listener.notifies(timeout=5, stop_after=2)
             payloads = [n.payload async for n in gen]
         finally:
             await listener.execute("UNLISTEN *")
             await self.db._pool.putconn(listener)
-        self.assertEqual(payloads, [f"{self.c}:{version}"])
+        # Names changed, then only a mention (copies of the names needn't reload).
+        self.assertEqual(payloads, [f"{self.c}:{named}:1", f"{self.c}:{mentioned}:0"])
 
     async def test_deleting_the_campaign_deletes_its_memory(self) -> None:
         await self.fill()
@@ -668,3 +683,62 @@ class Indexes(MemoryTest):
         self.assertGreater(len(rows), 5)
         missing = [(r["tbl"], r["cols"]) for r in rows if not r["indexed"]]
         self.assertEqual(missing, [])
+
+
+class LookupInPostgres(MemoryTest):
+    async def test_lookup_data_holds_what_matching_needs(self) -> None:
+        a, b = await self.add("Belleros", status=CONFIRMED), await self.add("Cerric")
+        gone = await self.add("Bellamy")
+        await self.memory.set_entity_status(GUILD_A, self.c, gone, REJECTED, source="dm")
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "the hooded stranger", kind="title", secret=True, source="dm"
+        )
+        await self.relate(a, "ally_of", b)
+        await self.relate(a, "enemy_of", b, secret=True)
+        await self.memory.add_correction(GUILD_A, self.c, "kale", action=KEEP, source="dm")
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertEqual(data.version, await self.memory.version(GUILD_A, self.c))
+        self.assertEqual({e.name for e in data.entities}, {"Belleros", "Cerric"})
+        self.assertEqual(
+            {(x.text, x.secret) for x in data.aliases},
+            {("Belleros", False), ("Cerric", False), ("the hooded stranger", True)},
+        )
+        self.assertEqual([r.predicate for r in data.relations], ["ally_of"])  # no secrets
+        self.assertEqual([c.heard for c in data.corrections], ["kale"])
+        stored = {x.text: x.sound_codes for x in data.aliases}
+        self.assertEqual(stored["Belleros"], ("PLRS",))
+
+    async def test_cache_follows_changes_live(self) -> None:
+        cache = LookupCache(self.memory)
+        ready = asyncio.Event()
+
+        async def listen(channel: str) -> AsyncGenerator[str, None]:
+            async with contextlib.aclosing(self.db.listen(channel)) as stream:
+                async for raw in stream:
+                    if raw == "ready":
+                        ready.set()
+                    yield raw
+
+        follower = asyncio.create_task(cache.follow(listen))
+        try:
+            for _ in range(50):  # until the listener is surely listening
+                async with self.db.unscoped() as conn:
+                    await conn.execute("SELECT pg_notify('dmbot_memory', 'ready')")
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(ready.wait(), 0.1)
+                if ready.is_set():
+                    break
+            a = await self.add("Belleros")
+            first = await cache.get(GUILD_A, self.c)
+            self.assertEqual([e.text for e in first.sounds_like("bell or us")], ["Belleros"])
+            await self.memory.add_alias(GUILD_A, self.c, a, "Bell", kind="nickname", source="dm")
+            for _ in range(50):
+                current = await cache.get(GUILD_A, self.c)
+                if current.exact("bell"):
+                    break
+                await asyncio.sleep(0.05)
+            self.assertEqual([e.entity_id for e in current.exact("bell")], [a])
+        finally:
+            follower.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await follower
