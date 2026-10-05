@@ -10,18 +10,19 @@ words, who said them, and where the silences are. That lets us check:
 
 | People testing | Script | Who reads |
 |---|---|---|
-| 1 (DM only) | [dm-only.md](dm-only.md) | The DM reads everything, narrating the players' actions |
+| 1 (DM only) | [dm-only.md](dm-only.md) | The DM reads every line (they're all `[DM]`; the script already narrates the players' actions) |
 | 2 (DM + 1 player) | [dm-and-player.md](dm-and-player.md) | The DM reads `[DM]`, the player reads `[Player]` |
-| 3 or more (DM + players) | [dm-and-player.md](dm-and-player.md) | The DM reads `[DM]`; the players take turns on the `[Player]` lines |
+| 3 or more (DM + players) | [dm-and-player.md](dm-and-player.md) | The DM reads `[DM]`. The players split the `[Player]` lines and agree who reads which before starting (for example, in voice-channel order) |
 
-Both scripts take under a minute and score the same 12 D&D terms.
+Both scripts take about a minute and score the same 12 D&D terms.
 
 **Sending it:** paste the script into a Discord message (it fits, and Discord shows the bold
 labels) rather than sending the file.
 
 ## What's in it
 
-1. **Part 1, everyday words** (43 words in dm-and-player, 42 in dm-only). Any
+1. **Part 1, everyday words** (35 scored words in dm-and-player, 33 in dm-only, plus the
+   whispered sentence). Any
    speech-to-text should get these right, so
    mistakes here point to audio problems, not hard vocabulary.
 2. **Part 2, D&D words.** Ten-Towns names from *Icewind Dale: Rime of the Frostmaiden*, a god,
@@ -29,12 +30,15 @@ labels) rather than sending the file.
    says them the same way.
 
 Stage directions:
-- **(( dramatic pause ))**, inside a line: 3 seconds of silence. DMbot ends a piece of
-  speech after less than a second of silence, so each dramatic pause should **split that line
-  into two pieces of speech**. Silence between pieces is never counted as lost audio. Short
+- **(( dramatic pause ))**, inside a line: the reader **mutes**, counts to three, and
+  unmutes. Muting stops Discord sending sound (just going quiet often doesn't: Discord keeps
+  sending for a moment, and room noise keeps it going). DMbot ends a piece of speech after
+  less than a second of silence, so each dramatic pause should **split that line into two
+  pieces of speech**. Pauses are spaced so no stretch of speech is longer than about 8 s:
+  even if one pause fails, the merged piece stays under DMbot's 15 s cut. Silence between pieces is never counted as lost audio. Short
   breaths inside a sentence are what DMbot counts as pauses (`pauses=` in the server logs).
-- **(( whispering ))**: an everyday sentence, said quietly. It has no scored D&D words, so a
-  miss is about quiet speech, not vocabulary. Note: Discord itself may not send a whisper
+- **(( whispering ))**: an everyday sentence in *italics*, said quietly. It has no scored
+  D&D words, so a miss is about quiet speech, not vocabulary. Note: Discord itself may not send a whisper
   (voice activity sensitivity, noise suppression such as Krisp). If the whisper is missing,
   check whether the reader's green speaking ring lit up.
 
@@ -59,12 +63,16 @@ Ignore capitals, punctuation and hyphens. "It's" = "it is", "3" = "three", "Ten 
 - **Audio:** from the ears `audio …` lines in the server logs (more complete than the DM
   screen's %): add up `received` and `expected` for the script. 95–100% passes; 90–94% is
   borderline, so repeat once; under 90% fails (same as LIVE_TEST.md).
-- **Pieces of speech:** dm-and-player: the DM about 6 (4 lines + 2 dramatic pauses), each
-  player about 4 between them. dm-only: about 5 (2 paragraphs + 3 dramatic pauses). Many
-  more, with no pause by the reader, hints at lost packets; fewer means a dramatic pause
-  didn't come through as silence (Discord kept sending sound).
+- **Pieces of speech:** count the ears `audio …` lines (core's own cut at 15 s adds pieces
+  ears doesn't see). dm-and-player: the DM about 6 (4 lines + 2 dramatic pauses) and the
+  players about 4 in total (one per `[Player]` line). dm-only: about 7 (2 paragraphs + 5
+  dramatic pauses); 7–9 is fine, since a slow reader's sentence breaks or the switch to a
+  whisper can add a piece. Fewer means a dramatic pause didn't split the speech. Any piece
+  of about 15 s means DMbot's cut split it, possibly mid-word. Judge lost audio from
+  `received`/`expected`, not from the number of pieces.
 - **Part 1:** count words wrong, missing, and **added** (for example "Thanks for watching"
-  during a pause). Out of 43 (dm-and-player) or 42 (dm-only).
+  during a pause), **leaving out the whispered sentence** (scored on its own below). Out of
+  35 (dm-and-player) or 33 (dm-only).
 - **Part 2:** count how many of these 12 came out right. Accepted variants are in brackets.
 
   | Term | Also OK |
@@ -83,9 +91,10 @@ Ignore capitals, punctuation and hyphens. "It's" = "it is", "3" = "three", "Ten 
   | Caer-Dineval | Care Dineval, Kair Dineval |
 
 - **Whispered sentence:** all / part / missing, and whether the speaking ring lit up.
-- **Errors on the first word after a dramatic pause:** worth noting separately. If they bunch
-  up there, the start of each piece of speech is being cut (an ears problem, not
-  speech-to-text).
+- **Errors on the first word after a dramatic pause:** worth noting separately, but only
+  where the pause really split the speech (an ears `audio …` line ends there). If errors
+  bunch up there, the start of each piece of speech is being cut (#121, an ears problem,
+  not speech-to-text).
 
 ## Record
 
@@ -96,7 +105,7 @@ script: dm-and-player | dm-only   people: N (1 = DM only)   commit: <sha>
 engine: whisper-local small (device/compute auto, beam 1) | cloud <model>
 packet loss added: none | clumsy N%      Discord noise suppression: on/off
 audio: received/expected = __/__ (__%)   pieces of speech: DM __, players __
-part 1: __ wrong, __ missing, __ added (of 43 or 42)
+part 1: __ wrong, __ missing, __ added (of 35 or 33, whisper not included)
 part 2: __ of 12 right
 whisper: all / part / missing (ring lit: y/n)
 delay: about __ s from speaking to text in the DM screen

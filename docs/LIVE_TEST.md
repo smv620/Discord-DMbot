@@ -111,6 +111,9 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    D&D game…") with **I consent** and **No thanks** buttons, and both press
    **I consent**. The message changes to "✅ You said yes on …" with a
    **Stop recording me** button.
+   - **Testing alone (DM only):** only one private message is expected, steps 5–6 have no
+     turn-taking or overlap, and the consent check (step 7) is the DM pressing
+     **Stop recording me**.
    - Someone who agreed in an earlier session gets a reminder with the date instead.
    - Someone with DMs from server members turned off gets nothing; the DM screen says
      "📭 Not recording: …". They use `/consent give` instead.
