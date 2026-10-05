@@ -70,14 +70,26 @@ class MissingKey(RuntimeError):
 
 
 def endpoint(var: str, default: str) -> str:
-    """An optional endpoint override from the environment (e.g. another region)."""
-    return os.environ.get(var, "").strip() or default
+    """An optional endpoint override from the environment (e.g. another region).
+
+    Only wss:// is accepted: the API key travels in a header, so a plain ws:// typo
+    would send it unencrypted. (Tests pass their local ws:// servers as arguments.)
+    """
+    value = os.environ.get(var, "").strip()
+    if not value:
+        return default
+    if not value.startswith("wss://"):
+        raise ValueError(f"{var} must start with wss:// (got a different scheme). Fix .env.")
+    return value
 
 
 def api_key(var: str) -> str:
     key = os.environ.get(var, "").strip()
     if not key:
-        raise MissingKey(f"{var} isn't set. Add it to the server's .env (never to the repo).")
+        raise MissingKey(
+            f"{var} isn't set. Add it to ~/Discord-DMbot/.env on the server (never to the "
+            "repo), then run `check` again."
+        )
     return key
 
 
@@ -185,7 +197,7 @@ class Speechmatics:
     ) -> None:
         self.name = f"sm-{operating_point.split('-')[0]}"
         self.operating_point = operating_point
-        self.url = url or endpoint("SPEECHMATICS_URL", SPEECHMATICS_URL)
+        self.url = url if url is not None else endpoint("SPEECHMATICS_URL", SPEECHMATICS_URL)
         self.max_delay = max_delay
         self._key = key
 
@@ -262,7 +274,9 @@ class Speechmatics:
 DEEPGRAM_URL = "wss://api.deepgram.com/v1/listen"
 
 
-def deepgram_url(keyterms: list[str], model: str = "nova-3", base: str = DEEPGRAM_URL) -> str:
+def deepgram_url(keyterms: list[str], model: str = "nova-3", base: str | None = None) -> str:
+    if base is None:
+        base = endpoint("DEEPGRAM_URL", DEEPGRAM_URL)
     params: list[tuple[str, str]] = [
         ("model", model),
         ("language", "en"),
@@ -275,7 +289,8 @@ def deepgram_url(keyterms: list[str], model: str = "nova-3", base: str = DEEPGRA
         ("mip_opt_out", "true"),  # don't keep the test audio for model training
     ]
     params += [("keyterm", k) for k in keyterms]
-    return f"{base}?{urlencode(params, quote_via=quote)}"
+    joiner = "&" if "?" in base else "?"  # an override may already carry a query
+    return f"{base}{joiner}{urlencode(params, quote_via=quote)}"
 
 
 def deepgram_words(message: dict[str, Any]) -> tuple[str, list[Word]]:
@@ -305,7 +320,7 @@ class Deepgram:
     ) -> None:
         self.name = "dg-" + model.replace("-", "")
         self.model = model
-        self.base_url = base_url or endpoint("DEEPGRAM_URL", DEEPGRAM_URL)
+        self.base_url = base_url if base_url is not None else endpoint("DEEPGRAM_URL", DEEPGRAM_URL)
         self.min_terms = min_terms
         self.finalize_timeout = finalize_timeout
         self._key = key

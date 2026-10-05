@@ -318,15 +318,44 @@ class Endpoints(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             self.assertEqual(Speechmatics("enhanced").url, "wss://eu.example/v2")
             self.assertEqual(Deepgram().base_url, "wss://dg.example")
-            self.assertTrue(deepgram_url([], base=Deepgram().base_url).startswith("wss://dg."))
+            self.assertTrue(deepgram_url([]).startswith("wss://dg.example?model=nova-3"))
 
     def test_an_explicit_url_wins(self) -> None:
-        with patch.dict(os.environ, {"SPEECHMATICS_URL": "wss://env"}, clear=True):
+        env = {"SPEECHMATICS_URL": "wss://env", "DEEPGRAM_URL": "wss://env"}
+        with patch.dict(os.environ, env, clear=True):
             self.assertEqual(Speechmatics("enhanced", url="wss://arg").url, "wss://arg")
+            self.assertEqual(Deepgram(base_url="wss://arg").base_url, "wss://arg")
+
+    def test_an_unencrypted_override_is_refused(self) -> None:
+        # The key goes in a header: ws:// would send it in the clear.
+        for var, make in (
+            ("SPEECHMATICS_URL", lambda: Speechmatics("enhanced")),
+            ("DEEPGRAM_URL", lambda: Deepgram()),
+        ):
+            with (
+                patch.dict(os.environ, {var: "ws://typo.example"}, clear=True),
+                self.assertRaisesRegex(ValueError, f"{var} must start with wss://"),
+            ):
+                make()
+
+    def test_an_override_is_trimmed(self) -> None:
+        with patch.dict(os.environ, {"SPEECHMATICS_URL": "  wss://eu.example/v2  "}, clear=True):
+            self.assertEqual(Speechmatics("enhanced").url, "wss://eu.example/v2")
+
+    def test_a_deepgram_override_with_its_own_query_keeps_one_question_mark(self) -> None:
+        url = deepgram_url(["Kael"], base="wss://dg.example/v1/listen?tier=dedicated")
+        self.assertEqual(url.count("?"), 1)
+        query = parse_qs(urlparse(url).query)
+        self.assertEqual(query["tier"], ["dedicated"])
+        self.assertEqual(query["keyterm"], ["Kael"])
 
     def test_env_example_lists_every_setting_the_tool_reads(self) -> None:
-        example = (Path(__file__).resolve().parents[2] / ".env.example").read_text()
-        for var in ("SPEECHMATICS_API_KEY", "DEEPGRAM_API_KEY", "SPEECHMATICS_URL", "DEEPGRAM_URL"):
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "core/src/dmbot/devtools/stt_bakeoff/providers.py").read_text()
+        names = set(re.findall(r'(?:api_key|endpoint)\(\s*"([A-Z_]+)"', source))
+        self.assertGreaterEqual(names, {"SPEECHMATICS_API_KEY", "DEEPGRAM_API_KEY"})
+        example = (root / ".env.example").read_text()
+        for var in sorted(names):
             self.assertRegex(example, rf"(?m)^{var}=$")  # listed, and left blank
 
 
