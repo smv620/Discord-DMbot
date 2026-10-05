@@ -1,38 +1,37 @@
 # DMbot test script: DM and Player
 
-Read this out loud in DMbot's voice channel, taking turns as marked. It takes about one
-minute.
+Read this out loud in DMbot's voice channel, taking turns. It takes under a minute.
 
-- Read at a normal speaking pace, as if you were playing.
-- **(( dramatic pause ))**: stop talking and stay silent for about **3 seconds**, then go on.
-- **(( whispering ))**: whisper the whole line.
-- Wait about one second after the other person finishes before you start your line.
+**Before you start:** join the voice channel and press **I consent** in your private message
+from DMbot. The DM reads first, when everyone is ready.
+
+- Don't read the words in **[ ]** or **(( ))** out loud. They tell you who reads and what to do.
+- Read at a normal pace, as if you were playing.
+- **(( dramatic pause ))**: stop and count to three in your head, then go on.
+- **(( whispering ))**: whisper until the end of that sentence, then use your normal voice
+  again.
 
 ## Part 1: everyday words
 
-**[DM]:** Good evening, everyone. Your story starts in a small town at the edge of the
-woods.
+**[DM]:** Your story starts in a small town at the edge of the woods.
 
-**[Player]:** I walk up to the front door and knock three times.
+**[Player]:** I knock on the front door three times.
 
-**[DM]:** (( dramatic pause )) An old man opens the door and says, come inside, it is
-getting cold.
+**[DM]:** An old man opens the door. (( dramatic pause )) "Come inside," he says. "It's cold."
 
-**[Player]:** Thank you. We need hot food and a warm bed.
+**[Player]:** Thank you. (( whispering )) We need hot food and a warm bed.
 
 ## Part 2: D&D words
+
+Say the names like this: Bryn Shander (BRIN SHAN-der), Targos (TAR-gohs), Auril (AW-ril),
+Caer-Dineval (KAIR DIN-eh-vahl).
 
 **[DM]:** Welcome to Bryn Shander, the biggest of the Ten-Towns. The road goes north to
 Targos and east to Easthaven.
 
-**[Player]:** (( whispering )) I cast Detect Magic on the frozen chest and check it for
-traps.
+**[Player]:** I cast Detect Magic on the frozen chest.
 
-**[DM]:** Make a Dexterity saving throw. (( dramatic pause )) The ice cracks. A frost
-giant walks out of the blizzard. Auril the Frostmaiden is watching.
+**[DM]:** Make a Dexterity saving throw. (( dramatic pause )) A frost giant walks out of the
+blizzard. Auril the Frostmaiden is watching.
 
-**[Player]:** I draw my longsword and shout, for Lonelywood and Caer-Dineval!
-
----
-
-*How to run the test and score it: [README.md](README.md).*
+**[Player]:** I draw my longsword and shout, "For Lonelywood and Caer-Dineval!"
