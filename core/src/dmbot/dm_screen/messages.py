@@ -58,6 +58,11 @@ FORBIDDEN_HERE = (
     "not let DMbot manage channels. Try running the command from a channel outside that "
     "category, or ask a server admin to check the category's permissions for DMbot."
 )
+CANT_PIN = (
+    "📌 I couldn't pin the 🛡️ DM screen card, so it may scroll out of sight. "
+    "Ask a server admin to turn on **Pin Messages** for DMbot "
+    "(Server Settings → Roles → DMbot). I'll pin it next time you run `/dmbot start`."
+)
 
 
 def needs_permissions(missing: list[str]) -> str:
