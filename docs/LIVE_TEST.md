@@ -1,12 +1,14 @@
 # Live test runbook: voice capture
 
-A step-by-step script for testing DMbot against a real Discord voice channel on the
-owner's PC. Written so **both the owner and a Claude session** can follow it. Each step
-says who does it.
+A step-by-step script for testing DMbot against a real Discord voice channel. Written
+so **both the owner and a Claude session** can follow it. Each step says who does it.
 
 - **Owner:** anything in Discord or the Developer Portal, editing `.env`, and talking.
-- **Claude (PyCharm session):** starting and watching the bot on the PC, reading logs,
-  and filing issues.
+- **Claude (server session):** DMbot runs on the cloud test server (CLAUDE.md, "Claude
+  sessions and who does what"). The server session updates and starts it there
+  (`git pull && docker compose up -d --build`), watches `docker compose logs -f core
+  ears`, judges the result, and files issues. Steps 2–3 below describe the older PC
+  setup; on the server they're replaced by those two commands.
 
 Claude must **never read `.env`** or ask for the bot token. If something looks wrong
 with a setting, ask the owner to check it.
@@ -155,7 +157,7 @@ calling it.
 ### Step 6: report (Claude)
 
 1. **Every failure or oddity becomes a GitHub issue** (CLAUDE.md, "Issue log"), labeled
-   `bug` and `session: pycharm`, with the exact log lines. Remove anything secret first.
+   `bug` and `session: server`, with the exact log lines. Remove anything secret first.
 2. **Post a summary comment** on the tracking issue for live tests (create one titled
    "Live test results" if none exists), including:
    - date, `development` commit SHA, OS, and Node and Python versions;

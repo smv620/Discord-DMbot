@@ -41,14 +41,27 @@ CI runs all of the above on every pull request. Never merge red CI.
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
 
+## Claude sessions and who does what (owner decision, 2026-10-05)
+DMbot runs on the cloud test server (VPS), not on the owner's PC: the PC no longer hosts
+Postgres, core or ears. Three Claude sessions work on this repo:
+- **Server session** (Claude Code on the test server): **every test that needs the
+  running server**: live tests in Discord, performance and timing, resource use, and
+  reading logs live (`docker compose logs`). It also deploys `development` to the server
+  for testing and maintains the testing logs (below).
+- **PyCharm session** (on the owner's PC): changes and checks that don't need the live
+  server: unit tests, and offline quality checks such as EntityBot resolution or
+  Transcript Cleaner accuracy on saved test sets. It never runs DMbot against Discord.
+- **Web session** (cloud): planning, design, issues, reviews and code changes.
+
+Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
+
 ## Issue log: shared memory between Claude sessions
-Several Claude sessions work on this repo (the cloud/web session and the Claude Code
-session in PyCharm). They don't share memory, so **GitHub Issues are the shared log.**
+The sessions don't share memory, so **GitHub Issues are the shared log.**
 - **Start of every task:** read open issues and recent `fix-log` issues, and anything
   touching the area you're about to change:
   `gh api "repos/smv620/Discord-DMbot/issues?state=all&per_page=30"`
 - **Every bug you find gets an issue**, opened before or while you fix it. Labels:
-  `bug` plus `session: web` or `session: pycharm`. Use the template in
+  `bug` plus `session: web`, `session: server` or `session: pycharm`. Use the template in
   `.github/ISSUE_TEMPLATE/bug.md`: Background (what you were doing), Symptom (exact
   error), Root cause, Fix, Watch for.
 - **Bugs found and fixed within the same piece of work** still get an issue: label it
@@ -69,9 +82,10 @@ terminal output or Discord screenshots copied to it.
   finished items to the history and trimming them here.
 - **`docs/testing-history.log`:** the complete record of every test run, append-only and
   oldest first. Fix mistakes with a new dated entry, never by rewriting.
-- **Maintainer:** the PyCharm session updates both after every live test and whenever
-  testing plans change. It copies in what the owner pastes from Discord. Other sessions
-  read them before planning test-related work.
+- **Maintainer:** the server session updates both after every live test and whenever
+  testing plans change, from the server logs and what the owner pastes from Discord. The
+  PyCharm session adds its offline test results the same way. Other sessions read them
+  before planning test-related work.
 - Same privacy rule as issues: no tokens, `.env` contents, or players' personal data.
 - **Log-only PRs may be merged by Claude** once CI passes (owner decision, 2026-10-04).
   A PR counts as log-only when it changes nothing but `docs/testing-status.log` and/or
