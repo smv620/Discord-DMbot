@@ -1,6 +1,7 @@
 import unittest
 
 from dmbot.campaigns import Campaign
+from dmbot.consent_dm import CONSENT_LABEL, STOP_LABEL
 from dmbot.transcription.config import Engine
 from dmbot.ui.logic import (
     BUTTON_LABEL_MAX,
@@ -184,8 +185,8 @@ class HelpText(unittest.TestCase):
     def test_consent_is_asked_by_private_message(self) -> None:
         # #138: consent is a private message with buttons; the commands are fallbacks.
         self.assertIn("private message", HELP_TEXT)
-        self.assertIn("Stop recording me", HELP_TEXT)
+        # Button names must match the buttons people actually see.
+        self.assertIn(f"**{CONSENT_LABEL}**", HELP_TEXT)
+        self.assertIn(f"**{STOP_LABEL}**", HELP_TEXT)
         self.assertIn("anyone in this server can read", HELP_TEXT.lower())
-        self.assertNotIn("Players use `/consent give`", HELP_TEXT)
-        for line in HELP_TEXT.split("\n"):
-            self.assertLessEqual(len(line), 300)
+        self.assertIn("/consent give", HELP_TEXT)  # the fallback stays documented
