@@ -22,8 +22,8 @@ encryption, with little or no audio loss, and that consent is enforced.
 
 - [ ] **Bot created** in the Discord Developer Portal, with its token copied.
 - [ ] **Install link** with scopes `bot` + `applications.commands` and permissions View
-      Channels, Send Messages, Read Message History, Connect, Speak, Manage Channels and
-      Manage Roles. **Bot added** to the server.
+      Channels, Send Messages, Read Message History, Connect, Speak, Manage Channels,
+      Manage Roles and Pin Messages. **Bot added** to the server.
 - [ ] **Developer Mode** turned on (User Settings → Advanced), and the **server ID**
       copied.
 - [ ] **No DM screen to make by hand:** `/dmbot start` creates
@@ -96,7 +96,7 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    press Ctrl+R in Discord.
 3. **Expect:**
    - A new channel `#dmb-dm-screen-<campaign>` (the DM screen; for "Test Campaign":
-     `#dmb-dm-screen-test-campaign`) with a help card, and in it: "✅ Listening in
+     `#dmb-dm-screen-test-campaign`) with a pinned help card, and in it: "✅ Listening in
      <channel>."
    - No other `dmb-` channels and no category yet. That's normal (compact mode).
    - In the voice channel's chat: "🔴 DMbot is listening in this channel…" (with a 👀

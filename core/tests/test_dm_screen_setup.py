@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 
 from dmbot.campaigns import CampaignStore
-from dmbot.dm_screen import setup_dm_screen
+from dmbot.dm_screen import messages, setup_dm_screen
 from tests.pg import DatabaseTest
 
 GUILD, BOT, DM, GENERAL, NEW = 1, 2, 3, 40, 50
@@ -185,3 +185,55 @@ class SetupTests(DatabaseTest):
         await setup_dm_screen(self.guild, self.campaign.id, self.store)
         backup = await self.store.export(GUILD, self.campaign.id)
         assert "channel_number" not in backup["campaign"]
+
+    def with_current_card(self, *, pinned: bool) -> Any:
+        """Make the screen exist already, holding an up-to-date help card."""
+        card = MagicMock(spec=discord.Message)
+        card.author.id = BOT
+        card.content = messages.help_card("Frostmaiden", self.campaign.dm_screen_visibility)
+        card.pinned = pinned
+        card.pin = AsyncMock()
+
+        async def history(**_: Any) -> AsyncIterator[discord.Message]:
+            yield card
+
+        self.new.history = history
+        self.guild.fetch_channel = AsyncMock(return_value=self.new)
+        return card
+
+    async def test_a_new_help_card_is_pinned(self) -> None:
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        self.new.send.return_value.pin.assert_awaited_once()
+        assert result.warning is None
+
+    async def test_a_card_that_cant_be_pinned_tells_the_dm_how_to_fix_it(self) -> None:
+        forbidden = discord.Forbidden(MagicMock(status=403), "Missing Permissions")
+        self.new.send.return_value.pin = AsyncMock(side_effect=forbidden)
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert result.channel is self.new  # setup still works
+        assert result.warning == messages.CANT_PIN
+        assert "Pin Messages" in messages.CANT_PIN
+
+    async def test_an_unpinned_current_card_is_pinned_without_reposting(self) -> None:
+        # Pin Messages was turned on after the card was posted.
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        card = self.with_current_card(pinned=False)
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        card.pin.assert_awaited_once()
+        self.new.send.assert_not_called()
+        assert result.warning is None
+
+    async def test_a_current_card_that_still_cant_be_pinned_stays_quiet(self) -> None:
+        # The DM was told when the card was posted; don't repeat it every session.
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        card = self.with_current_card(pinned=False)
+        card.pin.side_effect = discord.Forbidden(MagicMock(status=403), "Missing Permissions")
+        result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        assert result.warning is None
+
+    async def test_a_pinned_current_card_is_left_alone(self) -> None:
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        card = self.with_current_card(pinned=True)
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        card.pin.assert_not_called()
+        self.new.send.assert_not_called()

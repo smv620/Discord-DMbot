@@ -59,7 +59,9 @@ class DMScreenError(Exception):
 class ScreenResult:
     channel: discord.TextChannel
     campaign: Campaign  # as stored when the screen was set up
-    warning: str | None  # who unexpectedly can see the screen, for the DM
+    # For the DM: who unexpectedly can see the screen, and/or that the help card
+    # couldn't be pinned.
+    warning: str | None
 
 
 def _target(key: OverwriteKey) -> Target:
@@ -235,13 +237,24 @@ async def _with_channel_number(
     return campaign, shared
 
 
+async def _pin(card: discord.Message) -> bool:
+    """Pin the help card. Needs Pin Messages, which is optional: the card works unpinned."""
+    try:
+        await card.pin(reason="DMbot: DM screen help card")
+    except discord.HTTPException as exc:
+        log.info("Could not pin DM screen help card %s: %s", card.id, exc)
+        return False
+    return True
+
+
 async def _update_help_card(
     channel: discord.TextChannel, campaign: Campaign, me: discord.Member
-) -> None:
-    """Make sure the screen has one up-to-date help card.
+) -> str | None:
+    """Make sure the screen has one up-to-date, pinned help card.
 
-    Leaves a current card alone (so starting a session doesn't repost it). Otherwise
-    deletes old cards, whose text and buttons may be out of date, and posts a new one.
+    Leaves a current card alone (so starting a session doesn't repost it), only pinning
+    it if it isn't yet. Otherwise deletes old cards, whose text and buttons may be out of
+    date, and posts a new one. Returns a note for the DM if a new card couldn't be pinned.
     """
     from dmbot.dm_screen.buttons import card_view  # buttons imports this module
 
@@ -252,14 +265,16 @@ async def _update_help_card(
         if m.author.id == me.id and m.content.startswith(messages.HELP_CARD_TITLE)
     ]
     if len(old_cards) == 1 and old_cards[0].content == text:
-        return
+        if not old_cards[0].pinned:
+            # Pin Messages may have been turned on since. The DM was already told how
+            # to fix it when the card was posted, so a failure here stays quiet.
+            await _pin(old_cards[0])
+        return None
     for old in old_cards:
         with contextlib.suppress(discord.HTTPException):
             await old.delete()
     card = await channel.send(text, view=card_view(campaign))
-    # Pinning needs Pin Messages, which DMbot doesn't ask for; the card works unpinned.
-    with contextlib.suppress(discord.HTTPException):
-        await card.pin(reason="DMbot: DM screen help card")
+    return None if await _pin(card) else messages.CANT_PIN
 
 
 async def setup_dm_screen(
@@ -292,7 +307,7 @@ async def setup_dm_screen(
                 overwrites = await _apply(channel, campaign, me)
                 if not shared:  # two campaigns renaming one channel would fight over it
                     await _try_rename(channel, campaign)
-            await _update_help_card(channel, campaign, me)
+            pin_warning = await _update_help_card(channel, campaign, me)
         except discord.Forbidden as exc:
             # The server-wide check passed, so something more local blocks it, such as
             # the category's own permissions.
@@ -300,7 +315,8 @@ async def setup_dm_screen(
         except discord.HTTPException as exc:
             log.warning("DM screen setup failed: %s", exc)
             raise DMScreenError(messages.discord_error(exc.text or str(exc.status))) from exc
-    return ScreenResult(channel, campaign, _exposure_warning(overwrites, guild, me, campaign))
+    warnings = [_exposure_warning(overwrites, guild, me, campaign), pin_warning]
+    return ScreenResult(channel, campaign, "\n".join(w for w in warnings if w) or None)
 
 
 async def _create(
