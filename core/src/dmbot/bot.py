@@ -70,6 +70,7 @@ from dmbot.ears.protocol import (
 )
 from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
+from dmbot.memory.store import MemorySection
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber
@@ -1124,7 +1125,9 @@ async def run(settings: Settings) -> None:
     try:
         transcriber = build_transcriber(settings.transcription)
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
-        bot = DMBot(settings, ConsentStore(db), CampaignStore(db), SessionStore(db), transcriber)
+        campaigns = CampaignStore(db)
+        campaigns.register_section(MemorySection())  # campaign memory goes in backups
+        bot = DMBot(settings, ConsentStore(db), campaigns, SessionStore(db), transcriber)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)
