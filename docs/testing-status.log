@@ -1,7 +1,7 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-05 by the PyCharm session (DMbot now runs on the cloud test
-server; no new test was run yet)
+Last updated: 2026-10-05 by the PyCharm session (server ready for run 2; install test
+added for #104)
 
 What this file is
   The immediate live-testing picture: what's next, what's blocking it, and the latest
@@ -31,15 +31,17 @@ Where it runs (new, 2026-10-05)
   Don't run DMbot on the PC at the same time: both would log in as the same bot.
 
 Before the test (owner)
-  [ ] Discord: DMbot's role has Manage Channels, Manage Roles and Read Message
-      History (needed to create #dmb-dm-screen-<campaign>)
+  [ ] Discord: DMbot's role has Manage Channels, Manage Roles, Read Message History
+      and Pin Messages (by hand for now; automatic install is #104, see below)
   [ ] A second person in the voice channel (a phone with a second account is fine)
   [ ] Optional: the "clumsy" tool (Windows) to add ~5% packet loss
 
 Before the test (PyCharm session)
   [x] Server set up, images built, all three containers up, "ears connected"
-  [ ] Set DMBOT_DEBUG_AUDIO=1 in the server's .env and restart ears
-  [ ] git pull + docker compose up -d --build if development moved
+  [x] DMBOT_DEBUG_AUDIO=1 on the server
+  [x] Server on latest development (d3ec761; only logs changed since the 9ada841 build)
+  [x] Readiness check 2026-10-05: 0 errors in the last 2 h, Whisper small loaded,
+      6 GB RAM and 64 GB disk free
 
 Commands to use
   /dmbot start, /consent give, /consent revoke, /dmbot help (Status), /dmbot stop
@@ -54,6 +56,17 @@ What to check (in addition to LIVE_TEST.md step 5)
   - The ⚠️ flag, not the rounded %, decides pass or fail (#44)
   - Optional extra: docker compose restart core mid-session. DMbot should rejoin and
     post a note in the DM screen (#70)
+
+LATER TEST: one-click install (#104, not built yet)
+  The owner wants installing DMbot to set up every permission and channel it needs,
+  with no Server Settings visits. Once #104 lands:
+  - Remove DMbot from the test server, re-add it with the new install link: Discord's
+    permission screen lists View Channels, Send Messages, Read Message History,
+    Connect, Speak, Manage Channels, Manage Roles, Pin Messages. Press Authorize.
+  - DMbot posts a welcome; /dmbot start creates #dmb-dm-screen-<campaign> and pins
+    its help card, with no permission changes by hand.
+  - On a server where DMbot has fewer permissions, opening the link again fixes them,
+    and DMbot's note names anything still missing.
 
 ------------------------------------------------------------------------------
 BLOCKED / WAITING
