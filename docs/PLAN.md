@@ -62,24 +62,58 @@ the DM decides.**
   AI analysis, storage, integrations. Developed in PyCharm.
 - Both use the same Discord bot token. ears requests only the voice-state intent.
 
-**Understanding pipeline (decided 2026-10-04).** After transcription, each utterance
-passes through cheap steps first, so expensive AI is only spent on game content:
+**Understanding pipeline (decided 2026-10-04; updated 2026-10-05).** After transcription,
+each utterance passes through cheap steps first, so expensive AI is only spent on game
+content:
 
 ```
-voice → transcription → ① name fixing → ② off-topic filter → ③ speaker tagging
-                          (EntityBot)      (fast, cheap AI)     (who's talking)
-                                                   │ game content only
-                                                   ▼
-                     ④ helpers: Rules advisor · House rules · TimeBot · NPC tracker · PlotBot
+voice → speech-to-text → ① Transcript Cleaner → ② off-topic filter → ③ speaker tagging
+                               ▲    │ fixes made, unknown names       (who's talking)
+          names, aliases,      │    ▼                                        │
+          "don't change" rules └── EntityBot ──▶ campaign memory             ▼
+                                       ▲         (Postgres)   ④ helpers: Rules advisor ·
+                          DM answers, Undo, confirmed facts      House rules · TimeBot ·
+                                                                 NPC tracker · PlotBot
 ```
-1. **Name fixing (EntityBot):** corrects misheard fantasy names using the campaign's name
-   list (see below). Cheap sound-alike matching first, AI only for unclear cases.
-2. **Off-topic filter:** a very light, fast AI pass labels each stretch as in-game, table
-   talk, or non-game content. Only game content goes on to the helpers. Everything stays in
-   the transcript, labeled.
+1. **Transcript Cleaner (#127):** fixes misheard names in each line as it arrives, using
+   the campaign memory, and hides clearly off-topic talk in the cleaned version. It
+   **reads** the campaign memory and never changes it. See "Transcript Cleaner" below.
+2. **Off-topic filter (#52):** a very light, fast AI pass labels each stretch as in-game,
+   table talk, or non-game content. Only game content goes on to the helpers.
 3. **Speaker tagging:** labels who is speaking: the player's character, an NPC voiced by
    the DM, the DM narrating, table talk, or non-game content.
 4. **Helpers** consume the cleaned, labeled stream.
+
+**EntityBot (#126)** runs alongside the pipeline, not in it. It is the **only** part that
+writes the campaign memory: entities, aliases, relationships and the ontology. It learns
+from what the Cleaner reports and from the DM's answers, and pushes every update straight
+back to the Cleaner. See "Campaign memory (EntityBot)" below.
+
+**Build order (decided 2026-10-05):** EntityBot and the campaign memory first (Phase 2a),
+then the Transcript Cleaner on top of them (Phase 2b).
+
+**Campaign memory storage (decided 2026-10-05).** The campaign's memory is a
+**property graph** (things, plus typed relationships that carry details such as
+confidence, source and game time) **stored in Postgres tables**, not in a separate graph
+database.
+- **Why Postgres:** it keeps the per-server row-level security and per-campaign scoping
+  that already protect everything else; nothing extra to run, self-hosted or on
+  Kubernetes; fast sound-alike and spelling indexes (`pg_trgm`, `fuzzystrmatch` with
+  Double Metaphone; `pgvector` later for meaning); and a small, typed set of functions is
+  far safer for an AI to drive than free-form graph queries.
+- **Considered and not chosen:** Neo4j or another graph database (a second database
+  outside our isolation model, solving a deep-traversal problem DMbot doesn't have: a
+  campaign is a few thousand entities, and 1–3 step lookups take milliseconds in
+  Postgres); RDF and RDF-star triple stores (the same isolation issue, harder for an AI
+  to query correctly, and an "anything unstated may be true" model that clashes with
+  "only DM-confirmed facts count"). From RDF we keep the discipline: every type and
+  relationship is explicitly defined and every write is checked (SHACL-style).
+- **Speed:** during a session the active campaign's names, aliases, sound-codes,
+  "don't change" rules and nearby relationships are held **in memory**, so checking a line
+  doesn't touch the database. Postgres stays the single source of truth: changes are
+  written there first, then applied to the in-memory copy at once.
+- **Later, if ever needed:** Apache AGE adds graph queries on the same Postgres, after
+  checking it works with row-level security.
 
 **Hosting target: public bot, shard pods + workers (decided 2026-10-04, #57).** DMbot will
 be a public bot others can install, on a scalable Kubernetes platform. *This replaces the
@@ -90,7 +124,7 @@ than in separate volumes.
 | Piece | Job | Scales by |
 |---|---|---|
 | **Shard pods** (`core` + `ears`) | Commands, buttons, voice capture for the servers on their shards | `SHARD_COUNT` / `SHARD_IDS` settings (1 to start) |
-| **Transcription & AI workers** (later) | Whisper or cloud transcription, name fixing, rules advice, TimeBot | Live game sessions, via a job queue |
+| **Transcription & AI workers** (later) | Cloud (or Whisper) transcription, the Transcript Cleaner, EntityBot, rules advice, TimeBot | Live game sessions, via a job queue |
 | **Scheduler worker** (later, single) | Reminders, retention cleanup, timed jobs | One runner, so nothing is sent twice |
 | **Postgres** | All durable data: campaigns, consent, active sessions, and later house rules, NPCs, clock | Managed database |
 | **Redis** (later) | Short-lived coordination only: session leases, locks, queues, cooldowns | |
@@ -114,7 +148,7 @@ than in separate volumes.
   resumes them, rejoins voice, and tells the DM screen. A few seconds of audio during the
   gap can't be saved (#70).
 - **Structured JSON logs** with shard, server, and campaign IDs; never names or speech (#69).
-- Hosted deployments will mostly use cloud transcription with the customer's own key
+- Hosted deployments use cloud speech-to-text (the default since 2026-10-05, #128) with the customer's own key
   (#50); self-hosting with local Whisper stays supported (docs/DEPLOY.md, Docker).
 - A public bot needs a **privacy policy and terms of service**, and **Discord verification**
   once it's in 75+ servers.
@@ -124,12 +158,13 @@ than in separate volumes.
 | Phase | Deliverable | Notes |
 |---|---|---|
 | 0 | Scaffolding, CI, ears ↔ core audio pipeline | ✅ Done. Live capture works (#40) |
-| 1 | **Listener**: consent by DM buttons (#33–#35), live per-speaker transcript in the DM screen, stored session transcripts participants can download (#41), transcript format with speaker labels | No AI yet; useful on its own |
+| 1 | **Listener**: consent by DM buttons (#33–#35), cloud speech-to-text as the default (#128), live transcript in its own channel `#dmb-transcript-<short name>` (#124), stored session transcripts the DM and recorded players can download, raw or cleaned, with download buttons sent privately when DMbot stops (#41, #125), transcript format with speaker labels, end-of-session summary (#109) | No AI yet; useful on its own |
 | 1.5 | **Campaigns and setup**: `/dmbot start · stop · help`, first-time guide, campaign picker, one DM screen per campaign, voice-channel picker, target/fallback rulesets, optional rules, campaign export/import, bring-your-own API keys | Foundation for everything after |
-| 2 | **Understanding the table**: name fixing (EntityBot), off-topic filter, speaker tagging | Every helper depends on clean, labeled input |
+| 2a | **Campaign memory (EntityBot)**: entities, aliases, relationships and the ontology in Postgres; entity resolution; names added by the DM, from characters, and from an after-session scan of the raw transcript (#126) | Built first: the Cleaner and every later helper read it |
+| 2b | **Transcript Cleaner** (live name fixing, off-topic hiding, #127), off-topic filter (#52), speaker tagging | Every helper depends on clean, labeled input |
 | 3 | **Rules advisor + house rules**: alerts with ✅ Agree / 🙈 Ignore / ⚖️ Override, house rules by voice with DM approval, `/houserules` | Uses the rules hierarchy below |
 | 4 | **TimeBot**: game clock, effect durations, rests, dawn/noon/dusk, split-party clocks | |
-| 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Shares the EntityBot name list |
+| 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only |
 | 6 | **DM sidebar**: voice messages to DMbot, marked `[DM Sidebar Discussion]` | No install needed |
 | 7 | **Google Drive** (house-rules doc mirror) and **character data** from D&D Beyond links | |
 | later | Paid service billing (owner's key, per-server metering); D&D Beyond companion extension; optional DM hotkey helper | |
@@ -149,7 +184,7 @@ screen channel (only the DM can see it) and optionally to DMs.
 | `/dmbot help` | A short, friendly guide with buttons |
 | `/houserules` | List, add, edit, and remove house rules for the current campaign |
 | `/optionalrules` | Turn optional rules (e.g. Xanathar's, Tasha's) on or off for the current campaign |
-| `/transcript` | Download a session transcript. If DMbot is still recording: "This transcript may be incomplete. Use `/dmbot stop` first for the full session." [Download anyway] [Cancel] |
+| `/transcript` | Download a session transcript: **cleaned**, **as heard** (raw), or **both** (#125). If DMbot is still recording: "This transcript may be incomplete. Use `/dmbot stop` first for the full session." [Download anyway] [Cancel] |
 
 `/consent give · revoke` stay as hidden fallbacks for people with DMs off.
 
@@ -172,7 +207,7 @@ screen channel (only the DM can see it) and optionally to DMs.
   server owner; `/dmbot` setup and a "change DM" option keep DM-screen access in sync (#30).
 
 **Campaigns (decided 2026-10-04).** Each campaign is a separate memory: house rules,
-optional-rule settings, rulesets, name list, NPCs and relationships, game clock and
+optional-rule settings, rulesets, campaign memory (names, aliases, NPCs and relationships), game clock and
 effects, story events, sessions and transcripts, and its DM screen. It persists between
 Discord sessions. A server can have several campaigns. **Export** (backup to a file) and
 **import** (restore) are available per campaign to its DM.
@@ -231,18 +266,27 @@ happened). Ways in:
 Only the DM can declare or change a house rule. A player may suggest one; it becomes a
 proposal when the DM clearly agrees out loud, then goes through the same approval.
 
-**Transcription (decided 2026-10-03).** Per-speaker audio means no diarization is
-needed. Name hints (players now; characters, NPCs, places later) are fed to the
-transcriber. Default engine is **local Whisper** (faster-whisper). Every engine sits behind
-one `Transcriber` interface and is chosen by `TRANSCRIBER=` in config, so switching to a
-**cloud pay-as-you-go** API (any OpenAI-compatible endpoint) is a settings change, not a
-code change — for DMs without a GPU.
+**Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
+means no diarization is needed. Every engine sits behind one `Transcriber` interface and
+is chosen by `TRANSCRIBER=` in config.
+- **Default: a paid cloud speech-to-text service** (chosen in #128). Requirements:
+  - custom words sent **with each request**, in effect immediately, with no training or
+    pre-built vocabulary (about 50–300 per campaign, from the campaign memory);
+  - "sounds like" hints if possible;
+  - per-word confidence and timings (the Cleaner uses them to find doubtful words);
+  - short clips (1–15 s, 16 kHz mono) back within about 1 s;
+  - pay-as-you-go with the customer's own key, US data processing, and no training on
+    customers' audio.
+- **Local Whisper** (faster-whisper) stays supported **for self-hosting**, with relaxed
+  Cleaner deadlines (see "Transcript Cleaner").
+- The interface passes a **vocabulary** (terms, optional sounds-like) instead of a plain
+  name list, and returns per-word confidence.
 
 **Hosting, self-hosted (decided 2026-10-03).** A cloud server runs ears, core, and Postgres
-(decided 2026-10-04: Postgres everywhere, so self-hosting and hosting debug the same database). Because local
-Whisper runs on that server, its size decides transcription quality and speed: a CPU-only
-server suits the `base`/`small` models; larger models need a GPU server, or switch to
-`TRANSCRIBER=cloud`. Both parts ship as Docker containers started with one
+(decided 2026-10-04: Postgres everywhere, so self-hosting and hosting debug the same database). With cloud
+speech-to-text (the default) the server can be small. Self-hosters who choose local
+Whisper need a bigger server: a CPU-only server suits the `base`/`small` models; larger
+models need a GPU server. Both parts ship as Docker containers started with one
 `docker compose` command; see docs/DEPLOY.md.
 
 **Consent (decided 2026-10-04).** Consent is asked by **private message with buttons**,
@@ -250,8 +294,9 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 - When `/dmbot start` starts a session, DMbot DMs everyone in the table voice channel
   (the DM included), and anyone who joins later. The message says DMbot is for
   entertainment only, other uses are prohibited, their voice will be recorded and
-  transcribed, and consenting participants can view and download transcripts. It has a
-  **✅ I consent** button (#33).
+  transcribed, and consenting participants can view and download transcripts: they can
+  read the live transcript channel, and **after the recording ends they can download the
+  transcript as heard, cleaned, or both** (#125). It has a **✅ I consent** button (#33).
 - **Consent carries over** between sessions, per server. In **every session**, a consented
   person gets one short private reminder with the date they consented, plus a
   **🛑 Stop recording me** button (#33, #34). Rejoining in the same session doesn't send
@@ -279,7 +324,7 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 **Transcripts vs. the DM screen (decided 2026-10-04).**
 | Content | Who sees it |
 |---|---|
-| **Transcripts** (what was said at the table) | The DM **and every consenting participant** can view and download them (#41) |
+| **Transcripts** (what was said at the table) | The DM **and every consenting participant**: live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). **View only:** "Did they mean…?" prompts, Undo buttons and all other DM-screen content never appear in the transcript channel. |
 | **DM screen** (rules alerts, house-rule prompts, NPC and plot notes) | The DM, plus players only as the campaign's **DM-screen visibility** allows (below). The bot never *sends* DM-screen content to players. |
 
 **DM-screen visibility (decided 2026-10-04).** Each campaign's DM picks one; if none is
@@ -315,6 +360,7 @@ so the docs always show names the way Discord does. For the campaign
 | Channel | Name in Discord | Built in |
 |---|---|---|
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
+| Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124) |
 | Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
 | Game time (clock, effects, rests) | `dmb-time-rmfthfrstmdn` | Phase 4 |
 | NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Phase 5 |
@@ -349,11 +395,12 @@ so the docs always show names the way Discord does. For the campaign
   again at the next start rather than holding anything up. A channel used by two
   campaigns is never renamed.
 
-*Who can see what.* Channels are either **controlled** or **unrestricted**:
+*Who can see what.* Channels are **controlled**, **participants**, or **unrestricted**:
 
 | Kind | Channels | Players see it |
 |---|---|---|
 | **Controlled** | DM screen, rules, NPCs, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
+| **Participants** | Live transcript | The campaign's DMs and the players who have agreed to be recorded. DMbot adds each person when they agree and removes them when they withdraw (decided 2026-10-05, #124). |
 | **Unrestricted** | Game time | Always, by everyone in the server |
 
 - Players can **read but never post** in any DMbot channel (no threads, reactions or
@@ -365,8 +412,15 @@ so the docs always show names the way Discord does. For the campaign
 - Server owners and admins always see every channel (see above).
 
 *Modes.*
-- **Compact mode:** everything goes in the DM screen. This is the default while the DM
-  screen is the only channel built (Phases 1.5–2).
+- **Compact mode:** everything goes in the DM screen **except the live transcript**, which
+  always has its own channel (decided 2026-10-05: the DM screen was too noisy). This is
+  the default while the DM screen and transcript are the only channels built
+  (Phases 1–2).
+- **The DM screen holds only what the DM needs to see or act on:** "Did they mean…?"
+  questions and Undo buttons, rules alerts, later NPC, plot and time notes, warnings
+  (audio gaps, speech-to-text falling behind), the start and stop messages, and the
+  end-of-session summary (#109). The 15-second capture checks leave it; audio health
+  shows only as a warning when there's a problem, and in the summary.
 - **Organized mode:** each campaign gets a category, `📋 Rime of the Frostmaiden`
   (categories keep capitals and emoji), holding its `dmb-` channels. Each channel has a
   pinned "What's this channel?" card saying what it's for and who can see it. This
@@ -380,34 +434,156 @@ the table. Actionable alerts stay separate from reference information. Players c
 the clock and NPCs without seeing rulings, and each channel can be muted on its own.
 Code changes: #87.
 
-Sessions and their participants are stored, and each transcript can be downloaded as a
-file by its participants and the DM: from a 📄 button in the consent DMs, at session end,
-or with `/transcript`. Transcripts never contain DM-screen content.
+**Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
+participants are stored. Each line is kept in two versions: **as heard** (exactly what
+speech-to-text produced, never changed) and **cleaned** (after the Transcript Cleaner),
+plus the list of fixes between them.
+- **Live:** the cleaned lines stream into `#dmb-transcript-<short name>`, grouped into a
+  message every few seconds (Discord allows a bot about 5 messages per 5 seconds per
+  channel). Before the Cleaner exists (Phase 2b), lines appear as heard.
+- **When DMbot stops,** the DM(s) and every player recorded **in that session** get a
+  private message: "The session for **<campaign>** has ended. Download the transcript:"
+  **[📄 Cleaned]** **[🎙 As heard]** **[Both]**. It's a shortcut; `/transcript` offers the
+  same choice. Until the Cleaner exists, only "as heard" is offered.
+- Transcripts never contain DM-screen content, and neither version reveals a secret
+  identity (see "Transcript Cleaner").
 
 **Transcript format (decided 2026-10-04).** One line per utterance:
 `[timestamp] (Discord name) {entity}: text`, where `{entity}` is the in-game character,
 an NPC or other in-game entity, `{narrating}` for the DM, `{table_talk}`, or
-`{non-game_content}`. Off-topic talk stays in the transcript, labeled. DM voice messages
-to the bot appear as `[DM Sidebar Discussion]`.
+`{non-game_content}`. DM voice messages to the bot appear as `[DM Sidebar Discussion]`.
+- **Off-topic talk (decided 2026-10-05, #52):** in the **cleaned** transcript, talk that
+  is clearly unrelated (not the campaign, D&D, rules or table talk) is replaced by
+  `[timestamp] (Discord name) [non-relevant content ignored]`, so players can see the
+  transcript is working. A run of it from one person collapses into one line. When
+  unsure, the line is kept. The **as heard** transcript keeps everything.
 - **Players' lines:** players only speak in character, for a familiar or pet, as table
   talk, or off-topic, so the AI's best guess is used with no prompts.
 - **DM's lines:** when DMbot isn't confident who the DM is voicing (narration vs which
   NPC), it asks in the DM screen, because a wrong label can throw off plot and NPC tracking.
 
-**Name fixing (EntityBot) (decided 2026-10-04).** Speech engines miss fantasy names, so
-each campaign keeps a **name list** (characters, NPCs, places, monsters, spells, items)
-with nicknames ("Cerric the Brightshadow" = "Cerric"). It is the same list the NPC tracker
-uses.
-- The most relevant names are given to the speech engine as hints.
-- After transcription, names that sound close and fit the context are fixed ("Sarah" →
-  Cerric when Cerric is in the scene).
-- **Unsure?** The DM screen asks "Did they mean…?" with **at most 3 options** plus
-  **Type it**. Answers are remembered as nicknames for that campaign.
-- Retraining the speech engine per campaign is a later option, not the first step.
+**Campaign memory (EntityBot) (decided 2026-10-05, #126).** Each campaign remembers its
+characters, NPCs, creatures, places, factions, items, spells, deities and events: their
+names and nicknames, and how they relate. Users only ever see plain words ("DMbot
+remembers Belleros is Cerric's mentor"), never "graph", "entity" or "ontology".
+- **What's stored** (Postgres, scoped to server and campaign, all in backups):
+  - **entities**, with a status (`proposed`, `confirmed`, `rejected`, `merged`);
+  - **aliases**: every way a name is said or written, with sound-codes, a kind (`full`,
+    `short`, `nickname`, `title`, `misheard`), who uses it, and a `secret` flag;
+  - **mentions**: "this part of this line refers to this entity", with confidence and
+    how it was matched;
+  - **relationships**, with confidence, status, source mentions, and when they're true
+    (session and game time, from TimeBot), so history is kept, never overwritten;
+  - **corrections**, the **ontology** (below), and an **append-only change log**, so
+    every change can be undone.
+- **EntityBot is the only writer.** New names start as **proposed** and are used for
+  matching only. The NPC tracker and PlotBot read **confirmed** data only, which keeps
+  the rule that they record only DM-confirmed facts.
+- **Where names come from:** names the DM adds, characters, the DM's answers to "Did they
+  mean…?", Undo presses, the Transcript Cleaner's reports, and an after-session scan of
+  the raw transcript that proposes new names for the DM to confirm.
+- **Keeping it tidy (entity resolution):**
+  - Nicknames grow: when "Bell" keeps standing for Belleros, EntityBot proposes the alias.
+  - Merges: two proposed entities merge automatically only on strong evidence; proposed +
+    confirmed asks the DM; **two confirmed entities are never merged automatically**.
+    Merges and splits are logged and can be undone.
+  - Ambiguous names ("the captain") are resolved by scene and time, asking only when it
+    matters.
+  - **Secret identities** ("the hooded stranger" is Belleros) are DM-only links that never
+    appear in a transcript.
+  - An **after-session cleanup** clears stale proposals, flags likely duplicates, checks
+    the rules below, and sends the DM a short plain report of anything to decide.
+- **Speed:** the active campaign's names and nearby relationships are kept in memory
+  during a session, and every change reaches that copy at once, so a correction works on
+  the very next line.
 
-**Off-topic filter (decided 2026-10-04).** A very light, fast AI pass right after
-transcription. Scheduling, life updates, and other non-game talk are labeled
-`{non-game_content}` and not analyzed further, which saves cost.
+**Campaign memory rules (the ontology) (decided 2026-10-05).** EntityBot alone builds and
+maintains the ontology; there is no human graph engineer. So it is small, strict,
+versioned and self-checking:
+1. **A fixed core, defined in code:** types (character, split into player character and
+   NPC; creature; place; faction; item; spell; deity; event; concept) and relationships
+   (`located_in`, `member_of`, `ally_of`, `enemy_of`, kin, `owns`, `knows`, `serves`,
+   `appears_in`). EntityBot can extend the core but never change it; core changes come
+   only in code releases, after review.
+2. **Extensions belong to one campaign** and never cross campaigns or servers. A useful
+   pattern reaches the core only through a code release.
+3. **Reuse before creating:** before adding a relationship, search the existing ones by
+   name and meaning ("friends_with" maps to `ally_of`). Every new term needs a plain
+   description, a parent, a domain and range, examples, and a reason.
+4. **Only add, never silently rewrite:** terms are deprecated, not deleted, and every move
+   of existing data to another term is logged.
+5. **Checked on every write:** domain and range, how many are allowed ("one birthplace"),
+   contradictions (alive and dead at the same game time), and inverse consistency. A
+   failed check becomes a **flag** for review, never a silent fix.
+6. **Every fact has a source and a confidence,** and a status. The DM can always
+   override.
+7. **Facts are tied to game time,** so a change (ally to enemy) adds history.
+8. **AI proposes, rules decide:** AI may suggest aliases, merges and new terms;
+   deterministic checks accept or reject them. Only what was said or what the DM
+   confirmed is stored. DMbot never invents story.
+9. **Limited growth:** a cap on new terms per session (about 5), and health numbers
+   tracked (duplicates, orphans, unused terms, how often the DM is asked).
+10. **Plain words for users,** always.
+
+**Transcript Cleaner (decided 2026-10-05, #127).** Fixes misheard names in each line as
+it arrives, so the live transcript, the downloads and every helper get clean text. It
+reads the campaign memory and never changes it.
+- **Two hard rules:** fix the **spelling of what was said, never the meaning**; and
+  **never reveal a secret identity** in a transcript ("the hooded stranger" stays "the
+  hooded stranger").
+- **Suspicious first, match second.** A word is considered only if it isn't a real word
+  or known name, speech-to-text was unsure of it, or the sentence reads badly with it.
+  **A sentence that makes sense as heard is never changed.** In "Beleros has a serrated
+  blade so he will saw through the rope", only the name's spelling is fixed ("Belleros");
+  "serrated" is never compared with "Cerric".
+- **Finding candidates:** exact alias, sound-code (Double Metaphone, including runs of
+  1–3 words joined together, so "Bell or us" matches "Belleros"), and spelling similarity.
+- **Scoring:** speech sounds (phonemes, via a letters-to-sounds model, since invented
+  names have no dictionary pronunciation), spelling, context (who's in the scene, recently
+  mentioned, related to the speaker's character), and how unusual the word is. Meaning
+  (embeddings) is not used for sound; it helps EntityBot with descriptions and resolution
+  later.
+- **More evidence for riskier fixes:** a name's spelling (low risk); a broken phrase
+  joined into a name (the original must read badly and the fix clearly better); a real
+  word replaced by a name (strong context, or ask the DM). The fix must fit the grammar
+  (names go where names go).
+- **A wrong fix is worse than a missed one:** when unsure, leave the words as heard. An
+  Undo becomes a "don't change this" rule for the campaign. Target: wrong fixes at or
+  below 1%.
+- **Confidence:**
+  | Confidence | What happens |
+  |---|---|
+  | High | Fixed silently before the line appears |
+  | Medium | Fixed, plus a note with **Undo** in the DM screen |
+  | Low | Left as heard; the **DM screen** asks "Did they mean…?" (at most 3 options plus **Type it**); the line is fixed if the DM picks one |
+
+  "Did they mean…?" and Undo appear **only in the DM screen**, never in the transcript
+  channel.
+- **Rolling window:** one utterance at a time (DMbot already splits speech after a ~2 s
+  pause or 15 s of talk), with the last ~60–90 s of the table (all speakers, in spoken
+  order) and the session state (scene, recent mentions) as context. A **look-back pass**
+  checks the join with the same speaker's next piece ("…Bell or" | "us will…") and may
+  revise a line from the last ~30 s. Helpers read lines after a ~2 s settle time.
+- **Escalation:** rules, then **re-listen** (send that 1–2 s of audio back to
+  speech-to-text with a tiny hint list), then AI, then ask the DM. With cloud
+  speech-to-text, re-listen and AI have a **0.7 s deadline** per line. With local Whisper
+  the deadline relaxes to about 2.5 s and re-listen is off. After the deadline, the safe
+  version is shown and the line is updated when the answer arrives. Audio for re-listen
+  stays in memory for about 60 s only, is never stored, and is dropped at once on revoke.
+  Re-listen is added after the first version, once close calls can be measured.
+- **Learning is immediate:** a confirmed correction becomes a `misheard` alias and
+  reaches the Cleaner before the next line. Earlier lines of the same session with the
+  same mishearing are re-checked from "as heard" and fixed, with each change logged.
+  Previous sessions change only if the DM asks.
+- **Measured** on a test set of mishearings ("Sara" → Cerric, "Bell or us" → Belleros)
+  and traps (real words, nicknames, secret aliases, the serrated-blade sentence), plus
+  live timing (speech end → line shown).
+
+**Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
+right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled
+`{non-game_content}` and not analyzed further, which saves cost. In the cleaned
+transcript, clearly unrelated talk shows as `[non-relevant content ignored]` (see
+"Transcript format"); table talk and anything unsure stay.
 
 **TimeBot (decided 2026-10-04).** Tracks **game time** (not real time) quietly in the
 background.
@@ -448,5 +624,12 @@ keeps a single "who pays for this call" seam so that switch stays small.
 - Final wording of the consent DM and join reminder (#33)
 - Whether revoking consent also removes a person's past lines from stored transcripts (#34)
 - Whether consenting members who missed a session can download its transcript (#41)
+- Which cloud speech-to-text service (#128)
+- The Cleaner's confidence thresholds and target accuracy, set from the test set (#127)
+- Whether to use an embeddings provider for meaning-based matching, and which (#126)
+- Whether players may suggest corrections to their own transcript lines, with the DM
+  approving (#127)
+- Whether the downloadable cleaned transcript marks changed words (default: no marks;
+  the DM sees every fix)
 - Hosting provider and Kubernetes setup (Helm) for the public bot; GPU vs cloud transcription workers
 - Privacy policy and terms of service text for the public bot
