@@ -150,7 +150,7 @@ give`) that their voice clips go to an outside service.
 | `/dmbot help` | What DMbot does and doesn't do, plus a **Status** button. |
 | `/dmbot backup` | Download a copy of a campaign you run. |
 | `/dmbot restore` | Bring a campaign back from a copy, as a new campaign or replacing one of yours. |
-| `/consent give` | Let DMbot record and transcribe your voice in this server. For people who didn't get DMbot's private message (for example, DMs from server members turned off). |
+| `/consent give` | Shows DMbot's recording question with the **I consent** button, for people who didn't get the private message (for example, DMs from server members turned off). |
 | `/consent revoke` | Stop recording you and discard unprocessed audio. Same as **Stop recording me** in DMbot's private message. |
 
 ## Development

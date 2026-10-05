@@ -105,14 +105,19 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    - In the voice channel's chat: "🔴 DMbot is listening in this channel…" (with a 👀
      **Peek behind the DM screen** button under the default setting).
    - If either is missing, the bot should warn in the DM screen about what to fix (#27).
-4. **Both people get a private message from DMbot** ("🎙️ DMbot is listening in …") with
-   **I consent** and **No thanks** buttons, and both press **I consent**. The message
-   changes to "✅ You agreed on …" with a **Stop recording me** button.
+4. **Both people get a private message from DMbot** ("🎙️ Can DMbot record you for your
+   D&D game…") with **I consent** and **No thanks** buttons, and both press
+   **I consent**. The message changes to "✅ You said yes on …" with a
+   **Stop recording me** button.
    - Someone who agreed in an earlier session gets a reminder with the date instead.
    - Someone with DMs from server members turned off gets nothing; the DM screen says
-     "📭 I couldn't send a private message to …". They use `/consent give` instead.
+     "📭 Not recording: …". They use `/consent give` instead.
    - Leaving and rejoining the voice channel in the same session doesn't send another
      message.
+   - Check that someone already sitting in voice **before** `/dmbot start` gets the message
+     too, and that the phone notification preview starts with "Can DMbot record you…".
+   - Optional: a third person presses **No thanks**. They must never appear in capture
+     checks, and they're asked again next session.
 5. **Talk for 2–3 minutes.** Take turns, use a few long sentences, and overlap once.
 6. **Watch the DM screen.** Every 15 s:
    ```

@@ -3,6 +3,7 @@
 import asyncio
 import dataclasses
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -584,21 +585,19 @@ class SaveAndResume(SessionTests):
         )
 
     async def test_consent_is_logged_by_id(self) -> None:
-        from dmbot.bot import consent_give, consent_revoke
-
         with self.assertLogs("dmbot.bot", level="INFO") as logs:
-            await consent_give.callback(self._consent_interaction(PLAYER))  # type: ignore[call-arg]
-            await consent_revoke.callback(self._consent_interaction(PLAYER))  # type: ignore[call-arg]
+            await self.bot.give_consent(GUILD, PLAYER)
+            await self.bot.withdraw_consent(GUILD, PLAYER)
         text = "\n".join(logs.output)
         self.assertIn(f"Consent given: user {PLAYER}", text)
         self.assertIn(f"Consent withdrawn: user {PLAYER}", text)
 
     async def test_consent_not_logged_as_given_when_the_save_fails(self) -> None:
-        from dmbot.bot import consent_give
-
         self.consent.grant = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
         with self.assertLogs("dmbot.bot", level="INFO") as logs:
-            await consent_give.callback(self._consent_interaction(PLAYER))  # type: ignore[call-arg]
+            logging.getLogger("dmbot.bot").info("start")  # assertLogs needs a line
+            with self.assertRaises(RuntimeError):
+                await self.bot.give_consent(GUILD, PLAYER)
         self.assertNotIn("Consent given", "\n".join(logs.output))
 
     async def test_capture_check_is_logged_and_posted(self) -> None:

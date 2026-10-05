@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Iterable
 
 from dmbot.db import Conn, Database
 
@@ -69,17 +70,25 @@ class ConsentStore:
                     self._store(guild_id, users)
         return self._cache[guild_id]
 
-    async def granted_at(self, guild_id: int, user_id: int) -> int | None:
-        """When this player consented here (Unix seconds), or None if they haven't."""
-        if user_id in self._held_back.get(guild_id, set()):
-            return None
+    async def granted_times(self, guild_id: int, user_ids: Iterable[int]) -> dict[int, int]:
+        """When each of these players consented here (Unix seconds); absent if they haven't.
+
+        One query for a whole table. Players whose revoke isn't saved yet are absent.
+        """
+        ids = [u for u in set(user_ids) if u not in self._held_back.get(guild_id, set())]
+        if not ids:
+            return {}
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT granted_at FROM consent WHERE guild_id = %s AND user_id = %s",
-                (guild_id, user_id),
+                "SELECT user_id, granted_at FROM consent WHERE guild_id = %s AND user_id = ANY(%s)",
+                (guild_id, ids),
             )
-            row = await cur.fetchone()
-        return int(row["granted_at"]) if row else None
+            rows = await cur.fetchall()
+        return {int(r["user_id"]): int(r["granted_at"]) for r in rows}
+
+    async def granted_at(self, guild_id: int, user_id: int) -> int | None:
+        """When this player consented here (Unix seconds), or None if they haven't."""
+        return (await self.granted_times(guild_id, [user_id])).get(user_id)
 
     def has_consent(self, guild_id: int, user_id: int) -> bool:
         """Fast, synchronous check for the audio path. Unknown servers deny."""
