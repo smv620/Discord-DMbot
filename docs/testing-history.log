@@ -280,3 +280,43 @@ Notes
   - The transcript text in these checks is shown in the DM screen; #134 (found in the
     #132 review) moves it to the transcript channel when #124 lands.
 Overall ...................................... PASS (baseline for local Whisper small)
+
+==============================================================================
+2026-10-05  Speech-to-text quick comparison (offline, server session; not the bake-off)
+==============================================================================
+Why         A first look at the cloud services (#128) before the full bake-off, using
+            the two reference recordings from #143 (DM-only script read by the DM;
+            DM-and-player script read by the DM and a player). Both readers agreed to
+            their recordings being sent to Speechmatics and Deepgram (owner confirmed).
+Setup       development @ ec79442. Keys checked with the bake-off tool's `check`
+            (Speechmatics Enhanced OK, connect 2.77 s; Deepgram Nova-3 OK, 0.14 s).
+            Audio made Discord-like (Opus 64 kbps -> 16 kHz mono) with the tool's own
+            functions; each whole recording sent once per engine, twice: no hints, then
+            9 hints: Bryn Shander, Ten-Towns, Targos, Easthaven, Detect Magic, Auril,
+            Frostmaiden, Lonelywood, Caer-Dineval (9 of the 12 scored terms; Speechmatics
+            custom words, no sounds-like; Deepgram keyterms; Whisper prompt). One-off container; the live bot wasn't
+            touched; nothing added to the repo. Scored with docs/test-scripts/README.md.
+Recordings  DMOnlyAudio.m4a 53.7 s (dm-only.md); dm-and-player.m4a 43.5 s
+            (dm-and-player.md).
+Results     (Part 1 errors: DM-only of 33 + DM-and-player of 35; D&D terms: 12 + 12)
+  Deepgram Nova-3, names hinted ....... part 1: 2 + 0   whisper: all, all    terms: 12 + 11 = 23/24
+  Speechmatics Enhanced, names hinted . part 1: 0 + 0   whisper: all, all    terms: 11 + 12 = 23/24
+  Deepgram Nova-3, no hints ........... part 1: 2 + 0   whisper: all, all    terms:  9 + 10 = 19/24
+  Whisper small, names hinted ......... part 1: 3 + 0   whisper: all, part   terms: 10 +  9 = 19/24
+  Speechmatics Enhanced, no hints ..... part 1: 0 + 0   whisper: all, all    terms:  9 +  9 = 18/24
+  Whisper small, no hints ............. part 1: 3 + 0   whisper: part, part  terms:  8 +  8 = 16/24
+  Misses when hinted: Deepgram "Dexterity" -> "Exterity" (DM-and-player); Speechmatics
+  "Auril" -> "All" (DM-only); Whisper "Auril" (both), "Caer-Dineval" (both) and
+  "Dexterity" -> "sturdy" (DM-and-player), and the player's whispered sentence. Without hints every engine missed most made-up names
+  (Targos -> "Argos", Auril -> "All"/"Owl"/"Oral", Caer-Dineval -> "care din(oval)").
+Notes
+  - Part 1 errors were all in the DM-only recording: Deepgram dropped "at" and "he";
+    Whisper "An" -> "and", "inside" -> "and shide".
+  - Hints matter more than the engine: every engine gained 3-5 terms. The hints were
+    9 of the tested terms themselves (best case); the bake-off adds decoy names.
+  - Speed isn't comparable: Deepgram had to be streamed at real-time pace (it closes
+    the connection after ~10 s with no audio, NET-0001, if a long file is sent at once
+    and then waited on); Speechmatics and Whisper got each file at once.
+  - Small sample: two recordings, under 2 minutes, mostly one voice. Not a decision.
+Overall ...................................... First look: both cloud services well ahead
+                                               of local Whisper; hinted, they tie (23/24)

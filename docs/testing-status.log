@@ -1,6 +1,7 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-05 by the server session (run 6 scored; next: run 7, DM + player)
+Last updated: 2026-10-05 by the server session (run 6 scored, speech-to-text quick
+comparison done; next: run 7, DM + player)
 
 What this file is
   The immediate live-testing picture: what's next, what's blocking it, and the latest
@@ -28,28 +29,31 @@ Before the test (owner)
       first-time question is checked next session
   [ ] At each (( dramatic pause )): mute, count to three, unmute
   [ ] Note: packet loss tool on/off, each reader's Discord noise suppression
-  [ ] DMbot's role has Pin Messages (if not done yet; #102)
 
 What to check
   - Private message to everyone in voice; the new one gets "Can DMbot record
     you...?"; the phone preview reads well
   - I consent -> capture within seconds; Stop recording me -> gone from the next check
-  - Wait for the script's last line in a capture check before /dmbot stop (Whisper
-    can fall behind until #137 is fixed)
+  - Wait for the script's last line in a capture check before /dmbot stop
+  - Whisper keeps up (the stall fix #137 is live since 22:33): a slow clip shows as a
+    warning, not a freeze
   - Score it (docs/test-scripts/README.md): audio from ears lines, pieces of speech,
     Part 1 of 35 (dm-and-player) or 33 (dm-only), Part 2 of 12, whisper, first word
     after each split pause (#121)
   - Compare with run 6 (local Whisper small): Part 1 33/33, Part 2 7/12, whisper all
 
 LATER TESTS
-  - Same script on cloud speech-to-text once #128 picks a service, to compare engines
-  - One-click install (#104, not built yet)
+  - Speech-to-text bake-off (#128, docs/STT_BAKEOFF.md): keys in the server .env and
+    checked OK; needs 2-4 readers recording docs/test-scripts/stt-bakeoff.md (6-8 min
+    each) into ~/bakeoff-audio/. Quick comparison so far (2 short recordings, names
+    hinted): Deepgram 23/24 terms, Speechmatics 23/24, local Whisper 19/24
+  - One-click install (#104, merged in #150): live check of the install link and the
+    permission check when DMbot joins
 
 ------------------------------------------------------------------------------
 BLOCKED / WAITING
 ------------------------------------------------------------------------------
-  Nothing blocks run 7. #137 (Whisper stall) is worth fixing before many more scored
-  runs: a stall loses the end of the reading.
+  Nothing blocks run 7.
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 6 (2026-10-05 20:08), DM alone, dm-only.md: PASS
@@ -68,4 +72,4 @@ Open issues from testing
   #43 DAVE loss after a pause   #45 uncounted losses   #107 "0 opted in" line
   #109 no summary at stop / last speech dropped   #112 menus run off phone screens
   #120 capture check drops audio counts   #121 start of speech may be cut
-  #134 transcript text in the DM screen   #137 Whisper stall   #138 help text
+  #134 transcript text in the DM screen
