@@ -19,7 +19,7 @@ import asyncio
 import contextlib
 import logging
 from collections import defaultdict
-from collections.abc import AsyncGenerator, Callable, Iterable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -94,7 +94,9 @@ class CampaignLookup:
             for code in entry.codes:
                 by_sound[code].append(entry)
         fixes: dict[str, list[str]] = defaultdict(list)
-        keep: set[str] = set()
+        # A secret alias is never rewritten, even if a "change to" rule says so: that
+        # would put the real name over "the hooded stranger".
+        keep: set[str] = {entry.key for entry in names if entry.secret}
         for c in data.corrections:
             if c.action == KEEP:
                 keep.add(c.heard_key)
@@ -147,7 +149,10 @@ class LookupSource(Protocol):
     async def lookup_data(self, guild_id: int, campaign_id: str) -> LookupData: ...
 
 
-Listen = Callable[[str], AsyncGenerator[str, None]]
+# listen(channel, on_listening) yields notification payloads; it calls on_listening
+# once it's listening (see Database.listen).
+Listen = Callable[[str, Callable[[], None]], AsyncGenerator[str, None]]
+Sleep = Callable[[float], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -158,12 +163,16 @@ class _Slot:
 
 
 class LookupCache:
-    """One `CampaignLookup` per (server, campaign), reloaded when its memory changes."""
+    """One `CampaignLookup` per (server, campaign), reloaded when its memory changes.
 
-    def __init__(self, source: LookupSource) -> None:
+    Run `follow` for as long as the cache is used: without it, copies never notice
+    changes.
+    """
+
+    def __init__(self, source: LookupSource, *, sleep: Sleep = asyncio.sleep) -> None:
         self._source = source
+        self._sleep = sleep
         self._slots: dict[tuple[int, str], _Slot] = {}
-        self.loads = 0
 
     async def get(self, guild_id: int, campaign_id: str) -> CampaignLookup:
         """The campaign's lookup, loading it first if it's missing or out of date."""
@@ -173,9 +182,16 @@ class LookupCache:
         async with slot.lock:  # one load at a time per campaign
             if slot.lookup is None or slot.stale:
                 slot.stale = False  # a change arriving during the load marks it again
-                data = await self._source.lookup_data(guild_id, campaign_id)
-                slot.lookup = await asyncio.to_thread(CampaignLookup.build, data)
-                self.loads += 1
+                try:
+                    data = await self._source.lookup_data(guild_id, campaign_id)
+                    # Off the event loop's own turn, so voice keeps flowing while a big
+                    # campaign is indexed.
+                    slot.lookup = await asyncio.to_thread(CampaignLookup.build, data)
+                except BaseException:
+                    # Never keep serving the old copy as if it were current: a missed
+                    # change could be a name the DM just made secret.
+                    slot.stale = True
+                    raise
             return slot.lookup
 
     def changed(self, event: notify.MemoryChanged) -> None:
@@ -188,34 +204,43 @@ class LookupCache:
             ):
                 slot.stale = True
 
-    def forget(self, campaign_ids: Iterable[str] | None = None) -> None:
-        """Drop copies (all of them by default): a session ended, or notifications may
-        have been missed."""
-        wanted = None if campaign_ids is None else set(campaign_ids)
-        for (_, campaign_id), slot in self._slots.items():
-            if wanted is None or campaign_id in wanted:
-                slot.stale = True
+    def mark_all_stale(self) -> None:
+        """Changes may have been missed: reload every copy before its next use."""
+        for slot in self._slots.values():
+            slot.stale = True
+
+    def drop(self, campaign_ids: Iterable[str]) -> None:
+        """Free copies that aren't needed any more (a session ended, a campaign was
+        deleted)."""
+        gone = set(campaign_ids)
+        for key in [k for k in self._slots if k[1] in gone]:
+            del self._slots[key]
 
     async def follow(self, listen: Listen) -> None:
-        """Apply change notifications until cancelled. `listen(channel)` yields payloads;
-        when it fails, every copy is reloaded (changes may have been missed) and it's
-        opened again, waiting a little longer each time."""
+        """Apply change notifications until cancelled. Every time the listener is
+        (re)connected, every copy is reloaded, because changes committed while it wasn't
+        listening were never announced. If it fails, it's opened again, waiting a little
+        longer each time it fails without ever connecting."""
         failures = 0
+
+        def on_listening() -> None:
+            nonlocal failures
+            failures = 0
+            self.mark_all_stale()
+
         while True:
             try:
-                # Closed straight away when cancelled, so its connection goes back to
-                # the pool.
-                async with contextlib.aclosing(listen(notify.CHANNEL)) as stream:
+                # Closed straight away when cancelled, so its connection closes too.
+                async with contextlib.aclosing(listen(notify.CHANNEL, on_listening)) as stream:
                     async for raw in stream:
-                        failures = 0
                         event = notify.parse(raw)
                         if event is not None:
                             self.changed(event)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # the connection dropped; carry on without crashing
-                log.warning("Lost campaign memory updates (%s); reloading names", exc)
-            self.forget()
+                log.warning("Lost campaign memory updates (%s); will reload names", exc)
+            self.mark_all_stale()
             delay = RECONNECT_DELAY_S[min(failures, len(RECONNECT_DELAY_S) - 1)]
             failures += 1
-            await asyncio.sleep(delay)
+            await self._sleep(delay)

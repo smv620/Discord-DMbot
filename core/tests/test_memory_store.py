@@ -195,13 +195,14 @@ class Isolation(MemoryTest):
                 source="cleaner",
             )
             mentioned = await self.memory.version(GUILD_A, self.c)
-            gen = listener.notifies(timeout=5, stop_after=2)
+            gen = listener.notifies(timeout=1)  # both are already queued
             payloads = [n.payload async for n in gen]
         finally:
             await listener.execute("UNLISTEN *")
             await self.db._pool.putconn(listener)
         # Names changed, then only a mention (copies of the names needn't reload).
-        self.assertEqual(payloads, [f"{self.c}:{named}:1", f"{self.c}:{mentioned}:0"])
+        mine = [p for p in payloads if p.startswith(self.c)]  # the channel is database-wide
+        self.assertEqual(mine, [f"{self.c}:{named}:1", f"{self.c}:{mentioned}:0"])
 
     async def test_deleting_the_campaign_deletes_its_memory(self) -> None:
         await self.fill()
@@ -710,29 +711,27 @@ class LookupInPostgres(MemoryTest):
 
     async def test_cache_follows_changes_live(self) -> None:
         cache = LookupCache(self.memory)
-        ready = asyncio.Event()
+        listening = asyncio.Event()
 
-        async def listen(channel: str) -> AsyncGenerator[str, None]:
-            async with contextlib.aclosing(self.db.listen(channel)) as stream:
+        async def listen(
+            channel: str, on_listening: Callable[[], None]
+        ) -> AsyncGenerator[str, None]:
+            def ready() -> None:
+                on_listening()
+                listening.set()
+
+            async with contextlib.aclosing(self.db.listen(channel, ready)) as stream:
                 async for raw in stream:
-                    if raw == "ready":
-                        ready.set()
                     yield raw
 
         follower = asyncio.create_task(cache.follow(listen))
         try:
-            for _ in range(50):  # until the listener is surely listening
-                async with self.db.unscoped() as conn:
-                    await conn.execute("SELECT pg_notify('dmbot_memory', 'ready')")
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(ready.wait(), 0.1)
-                if ready.is_set():
-                    break
+            await asyncio.wait_for(listening.wait(), 10)
             a = await self.add("Belleros")
             first = await cache.get(GUILD_A, self.c)
             self.assertEqual([e.text for e in first.sounds_like("bell or us")], ["Belleros"])
             await self.memory.add_alias(GUILD_A, self.c, a, "Bell", kind="nickname", source="dm")
-            for _ in range(50):
+            for _ in range(100):
                 current = await cache.get(GUILD_A, self.c)
                 if current.exact("bell"):
                     break
@@ -742,3 +741,13 @@ class LookupInPostgres(MemoryTest):
             follower.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await follower
+
+    async def test_restored_sound_codes_are_worked_out_again(self) -> None:
+        await self.add("Belleros")
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        for row in backup["sections"]["memory"]:
+            if row["table"] == "alias":
+                row["sound_codes"] = ["FORGED"]
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        aliases = await self.memory.aliases(GUILD_B, restored.id)
+        self.assertEqual([x.sound_codes for x in aliases], [("PLRS",)])

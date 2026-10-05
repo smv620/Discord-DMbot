@@ -53,6 +53,7 @@ from dmbot.memory.ontology import (
     PredicateTerm,
     TypeTerm,
 )
+from dmbot.memory.sounds import sound_codes
 
 DAMAGED = "This backup file is damaged (bad campaign memory entry)."
 INT64_MAX = 2**63 - 1
@@ -164,6 +165,8 @@ class MemorySection:
                 raise CampaignError(DAMAGED)
             if table is RELATIONS and raw["mention_ids"]:
                 raise CampaignError(DAMAGED)
+            if table is ALIASES:  # worked out again, not taken from the file
+                raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
             by_tag[raw["table"]].append(raw)
         _check_terms(by_tag)
         try:

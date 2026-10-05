@@ -125,14 +125,14 @@ database.
   - **Sound codes (#126, step 2):** `dmbot.memory.sounds`, modelled on Double Metaphone
     but simplified and tuned for invented names read the English way: vowels dropped
     except at the start, silent letters dropped ("Hrothgar" = "Rothgar"), words joined
-    first ("Bell or us" = "Belleros"), and a second code where a letter has two likely
+    first ("Bell or us" = "Belleros"), and up to four codes where letters have two likely
     sounds. It matches all 59 "sounds like" spellings in the bake-off script, and no two
     of its names share a code. Codes find candidates only; the Transcript Cleaner
     decides.
   - **In-memory lookup (#126, step 2):** `dmbot.memory.lookup` keeps one read-only copy
     per (server, campaign), read in one snapshot. Writes notify with
     `campaign:version:names-changed`, so a mention or flag doesn't make copies reload;
-    after a dropped connection every copy reloads. Secret aliases are known words but
+    each time the listener (re)connects, every copy reloads. Secret aliases are known words but
     are never offered as fixes.
   - **Sound-codes are computed in Python**, not by `fuzzystrmatch`, because the in-memory
     copy must code each heard word without a database round trip, and both sides must

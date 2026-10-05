@@ -1,9 +1,9 @@
 """Sound codes and the in-memory name lookup, without a database."""
 
 import asyncio
+import contextlib
 import unittest
-from collections.abc import AsyncGenerator
-from unittest import mock
+from collections.abc import AsyncGenerator, Callable
 
 from dmbot.devtools.stt_bakeoff.data import NAMES
 from dmbot.memory import notify
@@ -43,6 +43,21 @@ class SoundCodes(unittest.TestCase):
         self.assertEqual(sound_codes("Saelith"), ("SL0",))  # inside a name: only one
         self.assertEqual(sound_codes("Éowyn"), sound_codes("Eowyn"))
         self.assertEqual(sound_codes("?!"), ())
+        self.assertEqual(sound_codes("Tiamat"), sound_codes("tea a mat"))
+        for a, b in (
+            ("Hal", "Al"),
+            ("Sapphire", "Safire"),
+            ("Matthew", "Mathew"),
+            ("Bacchus", "Backus"),
+            ("McCall", "Macall"),
+            ("Þorin", "Thorin"),
+            ("Æthelred", "Aethelred"),
+            ("Łukasz", "Lukasz"),
+            ("Accent", "aksent"),
+        ):
+            with self.subTest(a=a, b=b):
+                self.assertTrue(set(sound_codes(a)) & set(sound_codes(b)))
+        self.assertTrue(set(sound_codes("Gemaya")) & set(sound_codes("Jemaia")))
 
     def test_different_names_stay_apart(self) -> None:
         codes = {n.canonical: set(sound_codes(n.canonical)) for n in NAMES if not n.is_word}
@@ -115,6 +130,14 @@ class Lookup(unittest.TestCase):
         self.assertTrue(lookup.keep_as_heard("KALE"))
         self.assertEqual(lookup.fixes_for("kale"), ())
 
+    def test_a_secret_name_is_never_rewritten(self) -> None:
+        fix = Correction(
+            "1" * 32, "the hooded stranger", "the hooded stranger", BELLEROS, FIX, "dm", 0
+        )
+        lookup = CampaignLookup.build(data(corrections=(fix,)))
+        self.assertTrue(lookup.keep_as_heard("The Hooded Stranger"))
+        self.assertEqual(lookup.fixes_for("the hooded stranger"), ())
+
     def test_related_entries(self) -> None:
         rel = Relation("9" * 32, BELLEROS, "ally_of", CERRIC, "", 1.0, CONFIRMED, "dm", (),
                        None, None, None, None, False, 0)  # fmt: skip
@@ -128,7 +151,7 @@ class Notifications(unittest.TestCase):
         raw = notify.payload("f" * 32, 12, True)
         self.assertEqual(raw, "f" * 32 + ":12:1")
         self.assertEqual(notify.parse(raw), notify.MemoryChanged("f" * 32, 12, True))
-        for bad in ("", "x:y:1", "a:1", "a:1:2"):
+        for bad in ("", "x:y:1", "a:1", "a:1:2", "f" * 32 + ":²:1", "camp:1:1"):
             self.assertIsNone(notify.parse(bad))
 
 
@@ -136,10 +159,13 @@ class FakeSource:
     def __init__(self) -> None:
         self.version = 1
         self.calls = 0
+        self.fail = False
         self.gate: asyncio.Event | None = None
 
     async def lookup_data(self, guild_id: int, campaign_id: str) -> LookupData:
         self.calls += 1
+        if self.fail:
+            raise ConnectionError("database away")
         if self.gate is not None:
             await self.gate.wait()
         return data(self.version)
@@ -187,29 +213,65 @@ class Cache(unittest.IsolatedAsyncioTestCase):
         await self.cache.get(1, "camp")
         self.assertEqual(self.source.calls, 2)
 
-    async def test_follow_applies_changes_and_reloads_after_a_dropped_connection(self) -> None:
+    async def test_a_failed_reload_is_tried_again(self) -> None:
         await self.cache.get(1, "camp")
-        opened = 0
-        reconnected = asyncio.Event()
+        self.cache.changed(notify.MemoryChanged("camp", 2, names_changed=True))
+        self.source.fail = True
+        with self.assertRaises(ConnectionError):
+            await self.cache.get(1, "camp")
+        self.source.fail = False
+        self.source.version = 2
+        self.assertEqual((await self.cache.get(1, "camp")).version, 2)  # not the old copy
 
-        async def listen(channel: str) -> AsyncGenerator[str, None]:
+    async def test_drop_frees_copies(self) -> None:
+        await self.cache.get(1, "camp")
+        await self.cache.get(1, "other")
+        self.cache.drop(["camp"])
+        await self.cache.get(1, "camp")
+        await self.cache.get(1, "other")
+        self.assertEqual(self.source.calls, 3)
+
+    async def test_follow_reloads_on_every_connect_and_applies_changes(self) -> None:
+        camp = "d" * 32
+        await self.cache.get(1, camp)
+        connected = [asyncio.Event(), asyncio.Event()]
+        changed = asyncio.Event()
+        opened = 0
+        sleeps: list[float] = []
+
+        async def sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        async def listen(
+            channel: str, on_listening: Callable[[], None]
+        ) -> AsyncGenerator[str, None]:
             nonlocal opened
             opened += 1
             self.assertEqual(channel, notify.CHANNEL)
+            on_listening()
+            connected[opened - 1].set()
             if opened == 1:
-                yield notify.payload("camp", 1, True)  # not newer: ignored
                 yield "junk"
                 raise ConnectionError("server went away")
-            reconnected.set()
+            await changed.wait()
+            yield notify.payload(camp, 99, True)
             await asyncio.Event().wait()  # then quiet
-            yield ""  # never reached
 
-        with (
-            mock.patch("dmbot.memory.lookup.asyncio.sleep", new=mock.AsyncMock()),
-            self.assertLogs("dmbot.memory.lookup", "WARNING"),
-        ):
-            task = asyncio.create_task(self.cache.follow(listen))
-            await asyncio.wait_for(reconnected.wait(), 5)
-            task.cancel()
-        await self.cache.get(1, "camp")
-        self.assertEqual(self.source.calls, 2)  # reloaded: changes may have been missed
+        cache = LookupCache(self.source, sleep=sleep)
+        await cache.get(1, camp)
+        with self.assertLogs("dmbot.memory.lookup", "WARNING"):
+            task = asyncio.create_task(cache.follow(listen))
+            await asyncio.wait_for(connected[1].wait(), 5)
+        await cache.get(1, camp)  # reloaded: changes may have been missed while away
+        calls = self.source.calls
+        await cache.get(1, camp)
+        self.assertEqual(self.source.calls, calls)
+        changed.set()
+        for _ in range(100):
+            await asyncio.sleep(0)
+        await cache.get(1, camp)
+        self.assertEqual(self.source.calls, calls + 1)  # the change was applied
+        self.assertEqual(sleeps, [1.0])  # reconnect waited, then reset once connected
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task

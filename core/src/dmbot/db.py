@@ -17,7 +17,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -124,20 +124,36 @@ class Database:
         async with self._pool.connection() as conn, conn.transaction():
             yield conn
 
-    async def listen(self, channel: str) -> AsyncGenerator[str, None]:
+    async def listen(
+        self, channel: str, on_listening: Callable[[], None] | None = None
+    ) -> AsyncGenerator[str, None]:
         """Payloads of Postgres notifications on `channel`, until the connection fails.
 
-        Holds one pooled connection for as long as it runs. Notifications skip
-        row-level security, so they must never carry server data (IDs and versions only).
+        Uses its own connection (not one from the pool), with TCP keepalives so a link
+        that silently died is noticed within about a minute. `on_listening` is called
+        once LISTEN is in effect: anything committed before then must be re-read.
+        Notifications skip row-level security, so they must never carry server data
+        (IDs and versions only).
         """
-        async with self._pool.connection() as conn:
+        conn = await AsyncConnection.connect(
+            self._pool.conninfo,
+            autocommit=True,
+            connect_timeout=5,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=3,
+        )
+        try:
             await conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(channel)))
-            try:
-                async for note in conn.notifies():
+            if on_listening is not None:
+                on_listening()
+            # Closed before the connection, so nothing is left waiting on it.
+            async with contextlib.aclosing(conn.notifies()) as notes:
+                async for note in notes:
                     yield note.payload
-            finally:
-                with contextlib.suppress(Exception):
-                    await conn.execute("UNLISTEN *")
+        finally:
+            await conn.close()
 
     async def _check_role(self) -> None:
         async with self.unscoped() as conn:

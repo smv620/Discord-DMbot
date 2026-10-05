@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from dmbot.memory.models import is_id
+
 if TYPE_CHECKING:  # keeps this module (and the lookup) free of the database driver
     from dmbot.db import Conn
 
@@ -34,7 +36,12 @@ def payload(campaign_id: str, version: int, names_changed: bool) -> str:
 def parse(raw: str) -> MemoryChanged | None:
     """A notification's payload, or None if it isn't one of ours."""
     parts = raw.split(":")
-    if len(parts) != 3 or not parts[1].isdigit() or parts[2] not in ("0", "1"):
+    if (
+        len(parts) != 3
+        or not is_id(parts[0])
+        or not (parts[1].isascii() and parts[1].isdigit())
+        or parts[2] not in ("0", "1")
+    ):
         return None
     return MemoryChanged(parts[0], int(parts[1]), parts[2] == "1")
 

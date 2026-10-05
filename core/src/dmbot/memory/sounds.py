@@ -6,11 +6,13 @@ afterwards), so it errs on the side of matching.
 
 Modelled on Double Metaphone, simplified and tuned for invented fantasy names read the
 English way: vowels are dropped except at the start, silent letters (initial "h" in
-"Hrothgar", "w" in "Sorrowmere") are dropped, and letters with two likely sounds give a
-second code ("th" at the start, as in "thin" or "Thomas"; a "y" before a vowel inside a
-word, which may or may not be heard). Words are joined first, because
-speech-to-text often splits a name it doesn't know ("Ka Zeth").
+"Hrothgar", "w" in "Sorrowmere") are dropped, and letters with two likely sounds give
+more than one code: "th" at the start ("thin" or "Thomas"), a soft "g" ("Gerald" or
+"Gerda"), "ch" ("chair" or "chorus"), and a "y"
+before a vowel inside a word, which may or may not be heard. Words are joined first,
+because speech-to-text often splits a name it doesn't know ("Ka Zeth").
 
+Latin letters only: other scripts give no code (exact spelling still matches them).
 Pure Python, no database: the in-memory lookup codes every heard word with the same
 function as the stored names, so both sides always agree.
 """
@@ -21,10 +23,16 @@ import unicodedata
 
 VOWELS = frozenset("aeiou")
 _SOFT = frozenset("eiy")  # c and g before these sound like s and j
+MAX_CODES = 4
+# Letters NFKD doesn't split into a plain letter plus an accent.
+_SPELLED_OUT = str.maketrans(
+    {"æ": "ae", "œ": "oe", "ø": "o", "ł": "l", "đ": "d", "ð": "th", "þ": "th", "ı": "i", "ß": "ss"}
+)
 
 
 def _letters(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text.casefold())
+    folded = text.casefold().translate(_SPELLED_OUT)
+    decomposed = unicodedata.normalize("NFKD", folded)
     return "".join(c for c in decomposed if "a" <= c <= "z")
 
 
@@ -35,21 +43,41 @@ def _is_vowel(word: str, i: int) -> bool:
     c = word[i]
     if c in VOWELS:
         return True
-    return c == "y" and not _is_vowel_letter(word, i + 1)
+    return c == "y" and not (i + 1 < len(word) and word[i + 1] in VOWELS)
 
 
-def _is_vowel_letter(word: str, i: int) -> bool:
+def _vowel_after_h(word: str, i: int) -> bool:
+    """Is the next letter that isn't "h" a vowel ("wh" in "when")?"""
+    while i < len(word) and word[i] == "h":
+        i += 1
     return i < len(word) and word[i] in VOWELS
 
 
-def _next_skipping_h(word: str, i: int) -> int:
-    while i < len(word) and word[i] == "h":
-        i += 1
-    return i
+class _Codes:
+    """Every spelling variant so far (at most MAX_CODES), extended one sound at a time."""
+
+    def __init__(self) -> None:
+        self.variants = [""]
+        self.after_vowel = True  # a vowel since the last sound
+
+    def add(self, *options: str) -> None:
+        """Append one sound; several options mean "could be any of these"."""
+        grown: list[str] = []
+        for variant in self.variants:
+            for option in options:
+                # The same sound twice with no vowel between is heard once ("dt").
+                if option and not self.after_vowel and variant.endswith(option):
+                    option = ""
+                grown.append(variant + option)
+        self.variants = list(dict.fromkeys(grown))[:MAX_CODES]
+        self.after_vowel = False
+
+    def vowel(self) -> None:
+        self.after_vowel = True
 
 
 def sound_codes(text: str) -> tuple[str, ...]:
-    """One or two codes for how `text` sounds (the second only when it differs)."""
+    """Up to four codes for how `text` sounds, the most likely first."""
     word = _letters(text)
     if not word:
         return ()
@@ -59,130 +87,134 @@ def sound_codes(text: str) -> tuple[str, ...]:
             break
     if word.startswith("x"):
         word = "s" + word[1:]
-    first = word[0]
-    if first == "h" and len(word) > 1 and not _is_vowel(word, 1):
-        word = word[1:]  # "Hrothgar" sounds like "Rothgar"
-    elif first == "r" and word.startswith("rh"):
+    if len(word) > 1 and word[0] == "h":
+        word = word[1:]  # "Hrothgar" = "Rothgar", and "Hal" sounds much like "Al"
+    elif word.startswith("rh"):
         word = "r" + word[2:]
 
-    primary: list[str] = []
-    alternate: list[str] = []
-
-    def add(p: str, a: str | None = None) -> None:
-        primary.append(p)
-        alternate.append(p if a is None else a)
-
+    codes = _Codes()
     i = 0
     if _is_vowel(word, 0):
-        add("A")  # every name that starts with a vowel sound starts the same way
+        codes.add("A")  # every name that starts with a vowel sound starts the same way
+        codes.vowel()
         i = 1
     while i < len(word):
         c = word[i]
         nxt = word[i + 1] if i + 1 < len(word) else ""
-        if i > 0 and c == word[i - 1] and c != "c":
-            i += 1  # doubled letters sound once ("Belleros")
-            continue
+        after = word[i + 2 : i + 3]
         if _is_vowel(word, i):
+            codes.vowel()
             i += 1
+            continue
+        if c == nxt and after == "h" and c in "pts":
+            i += 1  # "Sapphire", "Matthew": the pair sounds as the "ph" or "th" alone
+            continue
+        pair_starts_digraph = c in "pts" and nxt == "h"
+        if (
+            i > 0
+            and c == word[i - 1]
+            and not (c == "c" and nxt in _SOFT)
+            and not pair_starts_digraph
+        ):
+            i += 1  # doubled letters sound once ("Belleros"), but "accent" is k-s
             continue
         step = 1
         if c == "b":
-            add("P")
+            codes.add("P")
         elif c == "c":
             if nxt == "h":
-                add("X", "K")  # "chair" or "chorus"
+                codes.add("X", "K")  # "chair" or "chorus"
                 step = 2
             elif nxt == "k":
-                add("K")
+                codes.add("K")
                 step = 2
             elif nxt in _SOFT:
-                add("S")
+                # Always "s": a "k" option too made Cerric sound like Gorrak.
+                codes.add("S")
             else:
-                add("K")
+                codes.add("K")
         elif c == "d":
-            if nxt == "g" and word[i + 2 : i + 3] in _SOFT and word[i + 2 : i + 3]:
-                add("J")
+            if nxt == "g" and after in _SOFT:
+                codes.add("J")
                 step = 2
             else:
-                add("T")
+                codes.add("T")
         elif c in "fv":
-            add("F")
+            codes.add("F")
         elif c == "g":
             if nxt == "h":
                 if i == 0:
-                    add("K")
+                    codes.add("K")
                 step = 2  # "gh" inside a word is silent or "f"; leave it out
             elif nxt == "n":
-                add("N")
+                codes.add("N")
                 step = 2
             elif nxt in _SOFT:
-                add("J", "K")  # "Gerald" or "Gerda"
+                codes.add("J", "K")  # "Gerald" or "Gerda"
             else:
-                add("K")
+                codes.add("K")
         elif c == "h":
             pass  # silent after the first letter, or merged with the letter before
         elif c == "j":
-            add("J")
+            codes.add("J")
         elif c == "k":
-            add("K")
+            codes.add("K")
             if nxt == "w":
                 step = 2  # "kw" is "qu"
         elif c == "l":
-            add("L")
+            codes.add("L")
         elif c == "m":
-            add("M")
+            codes.add("M")
         elif c == "n":
-            add("N")
+            codes.add("N")
         elif c == "p":
             if nxt == "h":
-                add("F")
+                codes.add("F")
                 step = 2
             else:
-                add("P")
+                codes.add("P")
         elif c == "q":
-            add("K")
+            codes.add("K")
             if nxt == "u":
                 step = 2
         elif c == "r":
-            add("R")
+            codes.add("R")
         elif c == "s":
-            if nxt == "h":
-                add("X")
+            if nxt == "c" and after == "h":
+                codes.add("SK")  # "Schmidt", "school"
+                step = 3
+            elif nxt == "h":
+                codes.add("X")
                 step = 2
             else:
-                add("S")
+                codes.add("S")
         elif c == "t":
             if nxt == "h":
                 # "thin", or at the start "Thomas"; inside names it's nearly always "th"
-                add("0", "T" if i == 0 else None)
+                codes.add(*(("0", "T") if i == 0 else ("0",)))
                 step = 2
-            elif word[i + 1 : i + 3] in ("io", "ia"):
-                add("X")
-            elif nxt == "c" and word[i + 2 : i + 3] == "h":
-                add("X")
+            elif i > 0 and word[i + 1 : i + 3] in ("io", "ia"):
+                codes.add("X")  # "Horatio"; but "Tiamat" starts with t
+            elif nxt == "c" and after == "h":
+                codes.add("X")
                 step = 3
             else:
-                add("T")
+                codes.add("T")
         elif c == "w":
-            if _is_vowel_letter(word, _next_skipping_h(word, i + 1)):
-                add("W")
+            if _vowel_after_h(word, i + 1):
+                codes.add("W")
                 if nxt == "h":
                     step = 2
         elif c == "x":
-            add("KS")
+            codes.add("KS")
         elif c == "y":
             # A vowel follows (or _is_vowel would have skipped it): "Yara" has a y
             # sound, but mid-word it's often just a vowel ("leery el" for "Lirael").
-            if i == 0:
-                add("Y")
-            else:
-                primary.append("Y")
+            codes.add(*(("Y",) if i == 0 else ("Y", "")))
         elif c == "z":
-            add("S")
+            codes.add("S")
         i += step
-
-    codes = ["".join(primary), "".join(alternate)]
-    return tuple(dict.fromkeys(c for c in codes if c))
+    return tuple(v for v in codes.variants if v)
 
 
 def word_runs(words: list[str], longest: int = 3) -> list[tuple[int, int, str]]:
