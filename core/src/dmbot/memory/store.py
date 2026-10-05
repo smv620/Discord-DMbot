@@ -8,6 +8,8 @@ EntityBot is the only writer, through this class. Every write:
 - bumps the campaign's `memory_version` and sends a Postgres NOTIFY carrying only the
   campaign ID and version (notifications skip row-level security, so never names), so
   copies held in memory can reload.
+
+Only the DM's word confirms anything (`source="dm"`); other sources propose.
 """
 
 from __future__ import annotations
@@ -15,30 +17,39 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import Any, LiteralString
+from typing import Any
 
-from psycopg import errors as pg_errors
-from psycopg import sql
-from psycopg.types.json import Jsonb
-
-from dmbot.campaigns.models import CampaignError
-from dmbot.db import Conn, Database
-from dmbot.memory.checks import FLAG_KINDS, check_relation, duplicate_of, ordered
+from dmbot.db import Database
+from dmbot.memory._changes import (
+    ALIASES,
+    CORRECTIONS,
+    ENTITIES,
+    FLAGS,
+    MENTIONS,
+    NOT_FOUND,
+    PREDICATES,
+    RELATIONS,
+    TYPES,
+    Changes,
+    Scope,
+    undo_batch,
+)
+from dmbot.memory.backup import NOTIFY_CHANNEL
+from dmbot.memory.checks import check_relation, duplicate_of, ordered
 from dmbot.memory.models import (
     ALIAS_KINDS,
     CONFIRMED,
     DESCRIPTION_MAX,
     DETAIL_MAX,
-    ENTITY_STATUSES,
+    DM,
     FACT_STATUSES,
     FIX,
     KEEP,
     LINE_REF_MAX,
+    LIST_MAX,
     LIVE,
     MENTION_METHODS,
     MERGED,
-    NAME_MAX,
     PROPOSED,
     REJECTED,
     SOURCES,
@@ -49,329 +60,27 @@ from dmbot.memory.models import (
     MemoryRuleError,
     Relation,
     Written,
+    check_status_change,
     clean_text,
     is_id,
-    name_key,
+    lookup_key,
     new_id,
 )
 from dmbot.memory.ontology import (
     ACTIVE,
-    CORE_PREDICATES,
-    CORE_TYPES,
     DEPRECATED,
-    LABEL_MAX,
     MAX_NEW_TERMS_PER_SESSION,
     Ontology,
     PredicateTerm,
     TypeTerm,
 )
 
-NOTIFY_CHANNEL = "dmbot_memory"
 NOT_HERE = "That campaign doesn't exist in this server."
-NOT_FOUND = "DMbot doesn't remember that any more."
-CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
 INT64_MAX = 2**63 - 1
-
-
-@dataclass(frozen=True, slots=True)
-class _Table:
-    name: str
-    key: str  # the column identifying a row within a campaign
-    columns: tuple[str, ...]  # excluding guild_id and campaign_id
-
-
-_TYPES = _Table(
-    "memory_types",
-    "key",
-    (
-        "key",
-        "parent",
-        "label",
-        "description",
-        "examples",
-        "reason",
-        "status",
-        "replaced_by",
-        "created_at",
-    ),
+_LIVE_ENTITY_IDS = (
+    " (SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+    " AND status IN ('proposed', 'confirmed'))"
 )
-_PREDICATES = _Table(
-    "memory_predicates",
-    "key",
-    (
-        "key",
-        "parent",
-        "label",
-        "description",
-        "examples",
-        "reason",
-        "subject_types",
-        "object_types",
-        "is_symmetric",
-        "max_per_subject",
-        "conflicts_with",
-        "status",
-        "replaced_by",
-        "created_at",
-    ),
-)
-_ENTITIES = _Table(
-    "memory_entities",
-    "id",
-    ("id", "type", "name", "description", "status", "merged_into", "source", "created_at"),
-)
-_ALIASES = _Table(
-    "memory_aliases",
-    "id",
-    (
-        "id",
-        "entity_id",
-        "text",
-        "key",
-        "kind",
-        "used_by",
-        "secret",
-        "status",
-        "sound_codes",
-        "source",
-        "created_at",
-    ),
-)
-_MENTIONS = _Table(
-    "memory_mentions",
-    "id",
-    (
-        "id",
-        "entity_id",
-        "session_started_at",
-        "line_ref",
-        "span_start",
-        "span_end",
-        "confidence",
-        "method",
-        "created_at",
-    ),
-)
-_RELATIONS = _Table(
-    "memory_relations",
-    "id",
-    (
-        "id",
-        "subject_id",
-        "predicate",
-        "object_id",
-        "detail",
-        "confidence",
-        "status",
-        "source",
-        "mention_ids",
-        "from_session_at",
-        "to_session_at",
-        "from_game_time",
-        "to_game_time",
-        "secret",
-        "created_at",
-    ),
-)
-_CORRECTIONS = _Table(
-    "memory_corrections",
-    "id",
-    ("id", "heard", "heard_key", "entity_id", "action", "source", "created_at"),
-)
-_FLAGS = _Table(
-    "memory_flags",
-    "id",
-    ("id", "kind", "relation_id", "other_id", "status", "created_at"),
-)
-# What links to a row (table, column, is the column a list), checked before deleting it.
-_DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
-    "memory_types": (
-        ("memory_types", "parent", False),
-        ("memory_entities", "type", False),
-        ("memory_predicates", "subject_types", True),
-        ("memory_predicates", "object_types", True),
-    ),
-    "memory_predicates": (
-        ("memory_predicates", "parent", False),
-        ("memory_predicates", "conflicts_with", True),
-        ("memory_relations", "predicate", False),
-    ),
-    "memory_entities": (
-        ("memory_entities", "merged_into", False),
-        ("memory_aliases", "entity_id", False),
-        ("memory_aliases", "used_by", False),
-        ("memory_mentions", "entity_id", False),
-        ("memory_relations", "subject_id", False),
-        ("memory_relations", "object_id", False),
-        ("memory_corrections", "entity_id", False),
-    ),
-    "memory_mentions": (("memory_relations", "mention_ids", True),),
-    "memory_relations": (
-        ("memory_flags", "relation_id", False),
-        ("memory_flags", "other_id", False),
-    ),
-}
-
-# Backup and load order: anything a row links to comes first.
-_BACKED_UP = (_TYPES, _PREDICATES, _ENTITIES, _ALIASES, _MENTIONS, _RELATIONS, _CORRECTIONS, _FLAGS)
-_BY_NAME = {t.name: t for t in _BACKED_UP}
-
-
-def _scoped(table: _Table, where: sql.Composable | None = None) -> sql.Composed:
-    """SELECT a table's columns for one server and campaign, plus `where`."""
-    return sql.SQL("SELECT {} FROM {} WHERE guild_id = %s AND campaign_id = %s{}").format(
-        sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
-        sql.Identifier(table.name),
-        where if where is not None else sql.SQL(""),
-    )
-
-
-def _by_key(table: _Table, *, lock: bool) -> sql.Composed:
-    return _scoped(
-        table,
-        sql.SQL(" AND {} = %s{}").format(
-            sql.Identifier(table.key), sql.SQL(" FOR UPDATE" if lock else "")
-        ),
-    )
-
-
-def _row(raw: dict[str, Any], table: _Table) -> dict[str, Any]:
-    return {c: raw[c] for c in table.columns}
-
-
-class _Op:
-    """One logged operation inside a campaign's transaction. Every row it touches is
-    recorded with its before and after values, under one batch number."""
-
-    def __init__(
-        self,
-        conn: Conn,
-        guild_id: int,
-        campaign_id: str,
-        source: str,
-        version: int,
-        now: int,
-        undoes: int | None,
-    ) -> None:
-        self.conn = conn
-        self.guild_id = guild_id
-        self.campaign_id = campaign_id
-        self.source = source
-        self.version = version
-        self.now = now
-        self.undoes = undoes
-        self.batch: int | None = None
-
-    @property
-    def scope(self) -> tuple[int, str]:
-        return self.guild_id, self.campaign_id
-
-    async def get(self, table: _Table, row_id: str, *, lock: bool = True) -> dict[str, Any] | None:
-        cur = await self.conn.execute(_by_key(table, lock=lock), (*self.scope, row_id))
-        raw = await cur.fetchone()
-        return None if raw is None else _row(raw, table)
-
-    async def select(
-        self, table: _Table, where: LiteralString = "", params: Sequence[Any] = ()
-    ) -> list[dict[str, Any]]:
-        cur = await self.conn.execute(_scoped(table, sql.SQL(where)), (*self.scope, *params))
-        return [_row(r, table) for r in await cur.fetchall()]
-
-    async def insert(self, table: _Table, row: dict[str, Any]) -> dict[str, Any]:
-        cols = ("guild_id", "campaign_id", *table.columns)
-        query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING {}").format(
-            sql.Identifier(table.name),
-            sql.SQL(", ").join(sql.Identifier(c) for c in cols),
-            sql.SQL(", ").join(sql.Placeholder() * len(cols)),
-            sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
-        )
-        cur = await self.conn.execute(query, (*self.scope, *(row[c] for c in table.columns)))
-        raw = await cur.fetchone()
-        assert raw is not None
-        after = _row(raw, table)
-        await self._log(table, after[table.key], "insert", None, after)
-        return after
-
-    async def update(self, table: _Table, row_id: str, changes: dict[str, Any]) -> dict[str, Any]:
-        before = await self.get(table, row_id)
-        if before is None:
-            raise MemoryRuleError(NOT_FOUND)
-        changes = {k: v for k, v in changes.items() if before[k] != v}
-        if not changes:
-            return before
-        if any(c not in table.columns or c == table.key for c in changes):
-            raise ValueError(f"Not an updatable column of {table.name}: {sorted(changes)}")
-        query = sql.SQL(
-            "UPDATE {} SET {} WHERE guild_id = %s AND campaign_id = %s AND {} = %s RETURNING {}"
-        ).format(
-            sql.Identifier(table.name),
-            sql.SQL(", ").join(sql.SQL("{} = %s").format(sql.Identifier(c)) for c in changes),
-            sql.Identifier(table.key),
-            sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
-        )
-        cur = await self.conn.execute(query, (*changes.values(), *self.scope, row_id))
-        raw = await cur.fetchone()
-        assert raw is not None
-        after = _row(raw, table)
-        await self._log(table, row_id, "update", before, after)
-        return after
-
-    async def delete(self, table: _Table, row_id: str) -> None:
-        """Delete one row. Refused while anything still links to it: the database would
-        otherwise delete those rows too, without logging them, and undo couldn't bring
-        them back."""
-        before = await self.get(table, row_id)
-        if before is None:
-            return
-        for dep_table, column, is_list in _DEPENDENTS.get(table.name, ()):
-            test = "%s = ANY({})" if is_list else "{} = %s"
-            cur = await self.conn.execute(
-                sql.SQL(
-                    "SELECT 1 FROM {} WHERE guild_id = %s AND campaign_id = %s AND "
-                    + test
-                    + " LIMIT 1"
-                ).format(sql.Identifier(dep_table), sql.Identifier(column)),
-                (*self.scope, row_id),
-            )
-            if await cur.fetchone() is not None:
-                raise MemoryRuleError(CHANGED_SINCE)
-        await self.conn.execute(
-            sql.SQL("DELETE FROM {} WHERE guild_id = %s AND campaign_id = %s AND {} = %s").format(
-                sql.Identifier(table.name), sql.Identifier(table.key)
-            ),
-            (*self.scope, row_id),
-        )
-        await self._log(table, row_id, "delete", before, None)
-
-    async def _log(
-        self,
-        table: _Table,
-        row_id: str,
-        op: str,
-        before: dict[str, Any] | None,
-        after: dict[str, Any] | None,
-    ) -> None:
-        self.version += 1
-        if self.batch is None:
-            self.batch = self.version
-        await self.conn.execute(
-            "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name,"
-            " row_id, op, before, after, source, undoes, made_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (
-                *self.scope,
-                self.version,
-                self.batch,
-                table.name,
-                row_id,
-                op,
-                None if before is None else Jsonb(before),
-                None if after is None else Jsonb(after),
-                self.source,
-                self.undoes,
-                self.now,
-            ),
-        )
 
 
 # ---- conversions ---------------------------------------------------------------------
@@ -379,51 +88,25 @@ class _Op:
 
 def _entity(r: dict[str, Any]) -> Entity:
     return Entity(
-        r["id"],
-        r["type"],
-        r["name"],
-        r["description"],
-        r["status"],
-        r["merged_into"],
-        r["source"],
-        r["created_at"],
-    )
+        r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
+        r["source"], r["created_at"],
+    )  # fmt: skip
 
 
 def _alias(r: dict[str, Any]) -> Alias:
     return Alias(
-        r["id"],
-        r["entity_id"],
-        r["text"],
-        r["key"],
-        r["kind"],
-        r["used_by"],
-        r["secret"],
-        r["status"],
-        tuple(r["sound_codes"]),
-        r["source"],
-        r["created_at"],
-    )
+        r["id"], r["entity_id"], r["text"], r["key"], r["kind"], r["used_by"], r["secret"],
+        r["status"], tuple(r["sound_codes"]), r["source"], r["created_at"],
+    )  # fmt: skip
 
 
 def _relation(r: dict[str, Any]) -> Relation:
     return Relation(
-        r["id"],
-        r["subject_id"],
-        r["predicate"],
-        r["object_id"],
-        r["detail"],
-        float(r["confidence"]),
-        r["status"],
-        r["source"],
-        tuple(r["mention_ids"]),
-        r["from_session_at"],
-        r["to_session_at"],
-        r["from_game_time"],
-        r["to_game_time"],
-        r["secret"],
-        r["created_at"],
-    )
+        r["id"], r["subject_id"], r["predicate"], r["object_id"], r["detail"],
+        float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
+        r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
+        r["secret"], r["created_at"],
+    )  # fmt: skip
 
 
 def _relation_row(rel: Relation) -> dict[str, Any]:
@@ -448,14 +131,9 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
 
 def _correction(r: dict[str, Any]) -> Correction:
     return Correction(
-        r["id"],
-        r["heard"],
-        r["heard_key"],
-        r["entity_id"],
-        r["action"],
-        r["source"],
+        r["id"], r["heard"], r["heard_key"], r["entity_id"], r["action"], r["source"],
         r["created_at"],
-    )
+    )  # fmt: skip
 
 
 def _flag(r: dict[str, Any]) -> Flag:
@@ -470,27 +148,13 @@ def _type_term(r: dict[str, Any]) -> TypeTerm:
 
 def _predicate_term(r: dict[str, Any]) -> PredicateTerm:
     return PredicateTerm(
-        r["key"],
-        r["label"],
-        r["description"],
-        tuple(r["subject_types"]),
-        tuple(r["object_types"]),
-        r["is_symmetric"],
-        r["max_per_subject"],
-        tuple(r["conflicts_with"]),
-        r["parent"],
-        False,
-        r["status"],
-        r["replaced_by"],
-    )
+        r["key"], r["label"], r["description"], tuple(r["subject_types"]),
+        tuple(r["object_types"]), r["is_symmetric"], r["max_per_subject"],
+        tuple(r["conflicts_with"]), r["parent"], False, r["status"], r["replaced_by"],
+    )  # fmt: skip
 
 
 # ---- checks on arguments -------------------------------------------------------------
-
-
-def _check_source(source: str) -> None:
-    if source not in SOURCES:
-        raise ValueError(f"Unknown memory source: {source!r}")
 
 
 def _check_choice(value: str, allowed: Sequence[str], what: str) -> None:
@@ -515,6 +179,17 @@ def _check_confidence(value: float) -> None:
         raise ValueError(f"Confidence must be between 0 and 1: {value}")
 
 
+def _check_list(values: Sequence[str], what: str) -> None:
+    if len(values) > LIST_MAX or any(not 0 < len(v) <= DESCRIPTION_MAX for v in values):
+        raise MemoryRuleError(f"Too many {what} (at most {LIST_MAX}).")
+
+
+def _stronger(status_a: str, status_b: str) -> str:
+    """The status a merged or repeated fact keeps: confirmed beats proposed beats rejected."""
+    order = {REJECTED: 0, PROPOSED: 1, CONFIRMED: 2}
+    return max(status_a, status_b, key=lambda s: order[s])
+
+
 class MemoryStore:
     """Reads and writes one campaign's memory at a time. See the module docstring."""
 
@@ -523,34 +198,41 @@ class MemoryStore:
         self._clock = clock
 
     @asynccontextmanager
-    async def _op(
+    async def _write(
         self, guild_id: int, campaign_id: str, source: str, *, undoes: int | None = None
-    ) -> AsyncIterator[_Op]:
-        _check_source(source)
+    ) -> AsyncIterator[Changes]:
+        if source not in SOURCES:
+            raise ValueError(f"Unknown memory source: {source!r}")
         async with self._db.guild(guild_id) as conn:
-            # Locks the campaign row: changes to one campaign's memory happen one at a
-            # time, so versions never clash.
+            # Changes to one campaign's memory happen one at a time, so versions never
+            # clash. NO KEY UPDATE still lets other tables add rows that link to the
+            # campaign (a session starting) while a long write runs.
             cur = await conn.execute(
-                "SELECT memory_version FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
+                "SELECT memory_version FROM campaigns WHERE guild_id = %s AND id = %s"
+                " FOR NO KEY UPDATE",
                 (guild_id, campaign_id),
             )
             row = await cur.fetchone()
             if row is None:
                 raise MemoryRuleError(NOT_HERE)
             start = int(row["memory_version"])
-            op = _Op(conn, guild_id, campaign_id, source, start, int(self._clock()), undoes)
-            yield op
-            if op.version != start:
+            changes = Changes(
+                conn, guild_id, campaign_id, start, source=source, now=int(self._clock()),
+                undoes=undoes,
+            )  # fmt: skip
+            yield changes
+            if changes.version != start:
                 await conn.execute(
                     "UPDATE campaigns SET memory_version = %s WHERE guild_id = %s AND id = %s",
-                    (op.version, guild_id, campaign_id),
+                    (changes.version, guild_id, campaign_id),
                 )
                 await conn.execute(
-                    "SELECT pg_notify(%s, %s)", (NOTIFY_CHANNEL, f"{campaign_id}:{op.version}")
+                    "SELECT pg_notify(%s, %s)",
+                    (NOTIFY_CHANNEL, f"{campaign_id}:{changes.version}"),
                 )
 
     @asynccontextmanager
-    async def _read(self, guild_id: int, campaign_id: str) -> AsyncIterator[_Op]:
+    async def _read(self, guild_id: int, campaign_id: str) -> AsyncIterator[Scope]:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT memory_version FROM campaigns WHERE guild_id = %s AND id = %s",
@@ -559,29 +241,29 @@ class MemoryStore:
             row = await cur.fetchone()
             if row is None:
                 raise MemoryRuleError(NOT_HERE)
-            yield _Op(conn, guild_id, campaign_id, "entitybot", int(row["memory_version"]), 0, None)
+            yield Scope(conn, guild_id, campaign_id, int(row["memory_version"]))
 
     # ---- reads -------------------------------------------------------------------------
 
     async def version(self, guild_id: int, campaign_id: str) -> int:
-        async with self._read(guild_id, campaign_id) as op:
-            return op.version
+        async with self._read(guild_id, campaign_id) as scope:
+            return scope.version
 
     async def ontology(self, guild_id: int, campaign_id: str) -> Ontology:
-        async with self._read(guild_id, campaign_id) as op:
-            return await _load_ontology(op)
+        async with self._read(guild_id, campaign_id) as scope:
+            return await _load_ontology(scope)
 
     async def entity(self, guild_id: int, campaign_id: str, entity_id: str) -> Entity | None:
-        async with self._read(guild_id, campaign_id) as op:
-            row = await op.get(_ENTITIES, entity_id, lock=False)
+        async with self._read(guild_id, campaign_id) as scope:
+            row = await scope.get(ENTITIES, entity_id, lock=False)
             return None if row is None else _entity(row)
 
     async def entities(
         self, guild_id: int, campaign_id: str, *, statuses: Sequence[str] = LIVE
     ) -> list[Entity]:
-        async with self._read(guild_id, campaign_id) as op:
-            rows = await op.select(
-                _ENTITIES, " AND status = ANY(%s) ORDER BY name, id", [list(statuses)]
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                ENTITIES, " AND status = ANY(%s) ORDER BY name, id", [list(statuses)]
             )
             return [_entity(r) for r in rows]
 
@@ -593,16 +275,15 @@ class MemoryStore:
         entity_id: str | None = None,
         include_secret: bool = False,
     ) -> list[Alias]:
-        """Live aliases. Secret ones (DM-only identities) only when asked for."""
-        where = " AND status <> 'rejected'"
-        params: list[Any] = []
-        if entity_id is not None:
-            where += " AND entity_id = %s"
-            params.append(entity_id)
-        if not include_secret:
-            where += " AND NOT secret"
-        async with self._read(guild_id, campaign_id) as op:
-            rows = await op.select(_ALIASES, where + " ORDER BY key, id", params)
+        """Aliases of live entries, not rejected. Secret ones (DM-only identities) only
+        when asked for."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                ALIASES,
+                " AND status <> 'rejected' AND (%s::text IS NULL OR entity_id = %s)"
+                " AND (%s OR NOT secret) AND entity_id IN" + _LIVE_ENTITY_IDS + " ORDER BY key, id",
+                [entity_id, entity_id, include_secret, *scope.ids],
+            )
             return [_alias(r) for r in rows]
 
     async def relations(
@@ -614,29 +295,48 @@ class MemoryStore:
         confirmed_only: bool = False,
         include_secret: bool = False,
     ) -> list[Relation]:
-        """Facts not rejected. Helpers that record story (NPC tracker, PlotBot) pass
-        `confirmed_only=True`; secret facts only when asked for."""
-        where = " AND status = 'confirmed'" if confirmed_only else " AND status <> 'rejected'"
-        params: list[Any] = []
-        if entity_id is not None:
-            where += " AND (subject_id = %s OR object_id = %s)"
-            params += [entity_id, entity_id]
-        if not include_secret:
-            where += " AND NOT secret"
-        async with self._read(guild_id, campaign_id) as op:
-            rows = await op.select(_RELATIONS, where + " ORDER BY created_at, id", params)
+        """Facts not rejected, between live entries. Helpers that record story (NPC
+        tracker, PlotBot) pass `confirmed_only=True`; secret facts only when asked for."""
+        statuses = [CONFIRMED] if confirmed_only else list(LIVE)
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                RELATIONS,
+                " AND status = ANY(%s) AND (%s::text IS NULL OR %s IN (subject_id, object_id))"
+                " AND (%s OR NOT secret) AND subject_id IN"
+                + _LIVE_ENTITY_IDS
+                + " AND object_id IN"
+                + _LIVE_ENTITY_IDS
+                + " ORDER BY created_at, id",
+                [statuses, entity_id, entity_id, include_secret, *scope.ids, *scope.ids],
+            )
             return [_relation(r) for r in rows]
 
     async def corrections(self, guild_id: int, campaign_id: str) -> list[Correction]:
-        async with self._read(guild_id, campaign_id) as op:
-            rows = await op.select(_CORRECTIONS, " ORDER BY heard_key, id")
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(CORRECTIONS, " ORDER BY heard_key, id")
             return [_correction(r) for r in rows]
 
     async def flags(self, guild_id: int, campaign_id: str, *, open_only: bool = True) -> list[Flag]:
-        where = " AND status = 'open'" if open_only else ""
-        async with self._read(guild_id, campaign_id) as op:
-            rows = await op.select(_FLAGS, where + " ORDER BY created_at, id")
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                FLAGS, " AND (NOT %s OR status = 'open') ORDER BY created_at, id", [open_only]
+            )
             return [_flag(r) for r in rows]
+
+    async def resolve(self, guild_id: int, campaign_id: str, entity_id: str) -> Entity | None:
+        """The entity an ID stands for now, following merges."""
+        async with self._read(guild_id, campaign_id) as scope:
+            seen: set[str] = set()
+            current: str | None = entity_id
+            while current is not None and current not in seen:
+                seen.add(current)
+                row = await scope.get(ENTITIES, current, lock=False)
+                if row is None:
+                    return None
+                if row["status"] != MERGED:
+                    return _entity(row)
+                current = row["merged_into"]
+            return None
 
     # ---- entities and aliases -----------------------------------------------------------
 
@@ -652,14 +352,15 @@ class MemoryStore:
         description: str = "",
     ) -> Written[Entity]:
         """A new person, place or thing, with its name as the first alias."""
-        _check_choice(status, (PROPOSED, CONFIRMED), "entity status")
+        _check_choice(status, LIVE, "entity status")
+        check_status_change(None, status, source)
         name = clean_text(name)
         if len(description) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
-        async with self._op(guild_id, campaign_id, source) as op:
-            (await _load_ontology(op)).active_type(type)
-            row = await op.insert(
-                _ENTITIES,
+        async with self._write(guild_id, campaign_id, source) as w:
+            (await _load_ontology(w)).active_type(type)
+            row = await w.insert(
+                ENTITIES,
                 {
                     "id": new_id(),
                     "type": type,
@@ -668,20 +369,21 @@ class MemoryStore:
                     "status": status,
                     "merged_into": None,
                     "source": source,
-                    "created_at": op.now,
+                    "created_at": w.now,
                 },
             )
-            await op.insert(_ALIASES, _new_alias(op, row["id"], name, "full", status, False, None))
-            return Written(_entity(row), op.batch)
+            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
+            return Written(_entity(row), w.batch)
 
     async def set_entity_status(
         self, guild_id: int, campaign_id: str, entity_id: str, status: str, *, source: str
     ) -> Written[Entity]:
         _check_choice(status, FACT_STATUSES, "entity status")
-        async with self._op(guild_id, campaign_id, source) as op:
-            await _live_entity(op, entity_id, allow_rejected=True)
-            row = await op.update(_ENTITIES, entity_id, {"status": status})
-            return Written(_entity(row), op.batch)
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await _entity_row(w, entity_id, allow_rejected=True)
+            check_status_change(current["status"], status, source)
+            row = await w.update(ENTITIES, entity_id, {"status": status})
+            return Written(_entity(row), w.batch)
 
     async def add_alias(
         self,
@@ -696,24 +398,27 @@ class MemoryStore:
         secret: bool = False,
         used_by: str | None = None,
     ) -> Written[Alias]:
-        """Another way this entity is said or written. Already known: nothing changes."""
+        """Another way this entity is said or written. If it's already known, only a
+        stronger status (from the DM) or secret=True is applied."""
         _check_choice(kind, ALIAS_KINDS, "alias kind")
-        _check_choice(status, (PROPOSED, CONFIRMED), "alias status")
+        _check_choice(status, LIVE, "alias status")
+        check_status_change(None, status, source)
         text = clean_text(text)
-        async with self._op(guild_id, campaign_id, source) as op:
-            await _live_entity(op, entity_id)
+        key = lookup_key(text)
+        async with self._write(guild_id, campaign_id, source) as w:
+            await _entity_row(w, entity_id)
             if used_by is not None:
-                await _live_entity(op, used_by)
-            key = name_key(text)
-            existing = await op.select(
-                _ALIASES, " AND entity_id = %s AND key = %s", [entity_id, key]
-            )
+                await _entity_row(w, used_by)
+            existing = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, key])
             if existing:
-                return Written(_alias(existing[0]), None)
-            row = await op.insert(
-                _ALIASES, _new_alias(op, entity_id, text, kind, status, secret, used_by)
+                old = existing[0]
+                upgrade = _upgrade(old, status, secret, source)
+                row = await w.update(ALIASES, old["id"], upgrade) if upgrade else old
+                return Written(_alias(row), w.batch)
+            row = await w.insert(
+                ALIASES, _new_alias(w, entity_id, text, kind, status, secret, used_by)
             )
-            return Written(_alias(row), op.batch)
+            return Written(_alias(row), w.batch)
 
     async def update_alias(
         self,
@@ -725,16 +430,23 @@ class MemoryStore:
         status: str | None = None,
         secret: bool | None = None,
     ) -> Written[Alias]:
-        """Confirm or reject an alias, or mark it DM-only ([🤫 Keep secret from players])."""
-        changes: dict[str, Any] = {}
-        if status is not None:
-            _check_choice(status, FACT_STATUSES, "alias status")
-            changes["status"] = status
-        if secret is not None:
-            changes["secret"] = secret
-        async with self._op(guild_id, campaign_id, source) as op:
-            row = await op.update(_ALIASES, alias_id, changes)
-            return Written(_alias(row), op.batch)
+        """Confirm or reject an alias, or mark it DM-only ([🤫 Keep secret from players]).
+        Only the DM confirms, or makes a secret visible again."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await w.get(ALIASES, alias_id)
+            if current is None:
+                raise MemoryRuleError(NOT_FOUND)
+            changes: dict[str, Any] = {}
+            if status is not None:
+                _check_choice(status, FACT_STATUSES, "alias status")
+                check_status_change(current["status"], status, source)
+                changes["status"] = status
+            if secret is not None:
+                if current["secret"] and not secret and source != DM:
+                    raise MemoryRuleError("Only the DM can stop keeping that secret.")
+                changes["secret"] = secret
+            row = await w.update(ALIASES, alias_id, changes)
+            return Written(_alias(row), w.batch)
 
     async def merge(
         self,
@@ -748,68 +460,32 @@ class MemoryStore:
     ) -> Written[Entity]:
         """Two entries are the same person or thing: move everything onto `keep_id`.
 
-        Two proposed entries may merge on strong evidence. If either is confirmed, only
-        the DM can say they're the same (`dm_said_same`). Undo splits them again.
+        Two proposed entries of the same kind may merge on strong evidence. If either is
+        confirmed, or their kinds differ, only the DM can say they're the same. Facts
+        moved over are checked again (duplicates folded, problems flagged). Undo splits
+        them again.
         """
         if keep_id == gone_id:
             raise MemoryRuleError("That's the same entry.")
-        async with self._op(guild_id, campaign_id, source) as op:
-            keep = await _live_entity(op, keep_id)
-            gone = await _live_entity(op, gone_id)
-            if CONFIRMED in (keep["status"], gone["status"]) and not dm_said_same:
+        if dm_said_same and source != DM:
+            raise ValueError("Only a DM source can say two entries are the same")
+        async with self._write(guild_id, campaign_id, source) as w:
+            keep = await _entity_row(w, keep_id)
+            gone = await _entity_row(w, gone_id)
+            needs_dm = CONFIRMED in (keep["status"], gone["status"]) or keep["type"] != gone["type"]
+            if needs_dm and not dm_said_same:
                 raise MemoryRuleError("Only the DM can say these two are the same.")
-            keep_keys = {
-                a["key"] for a in await op.select(_ALIASES, " AND entity_id = %s", [keep_id])
-            }
-            for alias in await op.select(_ALIASES, " AND entity_id = %s", [gone_id]):
-                if alias["key"] in keep_keys:
-                    await op.delete(_ALIASES, alias["id"])
-                else:
-                    await op.update(_ALIASES, alias["id"], {"entity_id": keep_id})
-            for alias in await op.select(_ALIASES, " AND used_by = %s", [gone_id]):
-                await op.update(_ALIASES, alias["id"], {"used_by": keep_id})
-            onto = await _load_ontology(op)
-            for rel in await op.select(
-                _RELATIONS, " AND (subject_id = %s OR object_id = %s)", [gone_id, gone_id]
-            ):
-                subject = keep_id if rel["subject_id"] == gone_id else rel["subject_id"]
-                obj = keep_id if rel["object_id"] == gone_id else rel["object_id"]
-                if subject == obj:  # "Bell is an ally of Belleros" says nothing any more
-                    for flag in await op.select(
-                        _FLAGS, " AND (relation_id = %s OR other_id = %s)", [rel["id"], rel["id"]]
-                    ):
-                        await op.delete(_FLAGS, flag["id"])
-                    await op.delete(_RELATIONS, rel["id"])
-                    continue
-                pred = onto.predicates.get(rel["predicate"])
-                if pred is not None:
-                    subject, obj = ordered(pred, subject, obj)
-                await op.update(_RELATIONS, rel["id"], {"subject_id": subject, "object_id": obj})
-            for table in (_MENTIONS, _CORRECTIONS):
-                for row in await op.select(table, " AND entity_id = %s", [gone_id]):
-                    await op.update(table, row["id"], {"entity_id": keep_id})
-            if gone["status"] == CONFIRMED and keep["status"] == PROPOSED:
-                await op.update(_ENTITIES, keep_id, {"status": CONFIRMED})
+            await _move_aliases(w, keep_id, gone_id)
+            await _move_relations(w, keep_id, gone_id)
+            for table in (MENTIONS, CORRECTIONS):
+                for row in await w.select(table, " AND entity_id = %s", [gone_id]):
+                    await w.update(table, row["id"], {"entity_id": keep_id})
+            await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
             # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
-            await op.update(_ENTITIES, gone_id, {"status": MERGED, "merged_into": keep_id})
-            row = await op.get(_ENTITIES, keep_id)
-            assert row is not None
-            return Written(_entity(row), op.batch)
-
-    async def resolve(self, guild_id: int, campaign_id: str, entity_id: str) -> Entity | None:
-        """The entity an ID stands for now, following merges."""
-        async with self._read(guild_id, campaign_id) as op:
-            seen: set[str] = set()
-            current: str | None = entity_id
-            while current is not None and current not in seen:
-                seen.add(current)
-                row = await op.get(_ENTITIES, current, lock=False)
-                if row is None:
-                    return None
-                if row["status"] != MERGED:
-                    return _entity(row)
-                current = row["merged_into"]
-            return None
+            await w.update(ENTITIES, gone_id, {"status": MERGED, "merged_into": keep_id})
+            kept = await w.get(ENTITIES, keep_id)
+            assert kept is not None
+            return Written(_entity(kept), w.batch)
 
     # ---- relationships ----------------------------------------------------------------
 
@@ -831,68 +507,47 @@ class MemoryStore:
         mention_ids: Sequence[str] = (),
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
-        review; the fact is stored as given either way. An identical fact already known
-        is returned unchanged."""
-        _check_choice(status, (PROPOSED, CONFIRMED), "relation status")
+        review; the fact is stored as given either way. A fact already known is only
+        upgraded (the DM's confirmation, or secret=True); one the DM rejected stays
+        rejected unless the DM says it again."""
+        _check_choice(status, LIVE, "relation status")
+        check_status_change(None, status, source)
         _check_confidence(confidence)
         _check_span(from_session_at, to_session_at)
+        _check_list(mention_ids, "mentions")
         if len(detail) > DETAIL_MAX:
             raise MemoryRuleError(f"That's too long (at most {DETAIL_MAX} characters).")
         if not all(is_id(m) for m in mention_ids):
             raise ValueError("Bad mention ID")
         if subject_id == object_id:
             raise MemoryRuleError("A relationship needs two different entries.")
-        async with self._op(guild_id, campaign_id, source) as op:
-            onto = await _load_ontology(op)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
             pred = onto.active_predicate(predicate)
-            subject = await _live_entity(op, subject_id)
-            obj = await _live_entity(op, object_id)
+            types = {
+                subject_id: (await _entity_row(w, subject_id))["type"],
+                object_id: (await _entity_row(w, object_id))["type"],
+            }
+            if mention_ids:
+                found = await w.select(MENTIONS, " AND id = ANY(%s)", [list(mention_ids)])
+                if len(found) != len(set(mention_ids)):
+                    raise MemoryRuleError(NOT_FOUND)
             s, o = ordered(pred, subject_id, object_id)
-            types = {subject_id: subject["type"], object_id: obj["type"]}
             new = Relation(
-                new_id(),
-                s,
-                predicate,
-                o,
-                " ".join(detail.split()),
-                confidence,
-                status,
-                source,
-                tuple(mention_ids),
-                from_session_at,
-                to_session_at,
-                None,
-                None,
-                secret,
-                op.now,
-            )
-            existing = [
-                _relation(r)
-                for r in await op.select(
-                    _RELATIONS,
-                    " AND status <> 'rejected' AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
-                    [[s, o], [s, o]],
-                )
-            ]
+                new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
+                tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
+            )  # fmt: skip
+            existing = await _relations_touching(w, s, o)
             same = duplicate_of(new, existing)
             if same is not None:
-                return Written((same, []), None)
-            await op.insert(_RELATIONS, _relation_row(new))
-            flags = []
-            for problem in check_relation(onto, new, types[s], types[o], existing):
-                flag = await op.insert(
-                    _FLAGS,
-                    {
-                        "id": new_id(),
-                        "kind": problem.kind,
-                        "relation_id": new.id,
-                        "other_id": problem.other_id,
-                        "status": "open",
-                        "created_at": op.now,
-                    },
-                )
-                flags.append(_flag(flag))
-            return Written((new, flags), op.batch)
+                upgrade = _upgrade(_relation_row(same), status, secret, source)
+                if not upgrade:
+                    return Written((same, []), w.batch)
+                row = await w.update(RELATIONS, same.id, upgrade)
+                return Written((_relation(row), []), w.batch)
+            await w.insert(RELATIONS, _relation_row(new))
+            flags = await _flag_problems(w, onto, new, types[s], types[o], existing)
+            return Written((new, flags), w.batch)
 
     async def update_relation(
         self,
@@ -907,28 +562,31 @@ class MemoryStore:
     ) -> Written[Relation]:
         """Confirm or reject a fact, mark it secret, or end it (history is kept: a new
         fact replaces it rather than overwriting it)."""
-        changes: dict[str, Any] = {}
-        if status is not None:
-            _check_choice(status, FACT_STATUSES, "relation status")
-            changes["status"] = status
-        if secret is not None:
-            changes["secret"] = secret
-        async with self._op(guild_id, campaign_id, source) as op:
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await w.get(RELATIONS, relation_id)
+            if current is None:
+                raise MemoryRuleError(NOT_FOUND)
+            changes: dict[str, Any] = {}
+            if status is not None:
+                _check_choice(status, FACT_STATUSES, "relation status")
+                check_status_change(current["status"], status, source)
+                changes["status"] = status
+            if secret is not None:
+                if current["secret"] and not secret and source != DM:
+                    raise MemoryRuleError("Only the DM can stop keeping that secret.")
+                changes["secret"] = secret
             if to_session_at is not None:
-                current = await op.get(_RELATIONS, relation_id)
-                if current is None:
-                    raise MemoryRuleError(NOT_FOUND)
                 _check_span(current["from_session_at"], to_session_at)
                 changes["to_session_at"] = to_session_at
-            row = await op.update(_RELATIONS, relation_id, changes)
-            return Written(_relation(row), op.batch)
+            row = await w.update(RELATIONS, relation_id, changes)
+            return Written(_relation(row), w.batch)
 
     async def resolve_flag(
         self, guild_id: int, campaign_id: str, flag_id: str, *, source: str
     ) -> Written[Flag]:
-        async with self._op(guild_id, campaign_id, source) as op:
-            row = await op.update(_FLAGS, flag_id, {"status": "resolved"})
-            return Written(_flag(row), op.batch)
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await w.update(FLAGS, flag_id, {"status": "resolved"})
+            return Written(_flag(row), w.batch)
 
     # ---- mentions and corrections -------------------------------------------------------
 
@@ -950,10 +608,10 @@ class MemoryStore:
         _check_time(session_started_at)
         if not 0 < len(line_ref) <= LINE_REF_MAX or not 0 <= span[0] < span[1] <= 2**31 - 1:
             raise ValueError("Bad line reference or span")
-        async with self._op(guild_id, campaign_id, source) as op:
-            await _live_entity(op, entity_id)
-            row = await op.insert(
-                _MENTIONS,
+        async with self._write(guild_id, campaign_id, source) as w:
+            await _entity_row(w, entity_id)
+            row = await w.insert(
+                MENTIONS,
                 {
                     "id": new_id(),
                     "entity_id": entity_id,
@@ -963,10 +621,10 @@ class MemoryStore:
                     "span_end": span[1],
                     "confidence": confidence,
                     "method": method,
-                    "created_at": op.now,
+                    "created_at": w.now,
                 },
             )
-            return Written(str(row["id"]), op.batch)
+            return Written(str(row["id"]), w.batch)
 
     async def add_correction(
         self,
@@ -979,20 +637,22 @@ class MemoryStore:
         entity_id: str | None = None,
     ) -> Written[Correction]:
         """A word heard should become an entity's name (`fix`), or must stay as heard
-        (`keep`: from an Undo or "Keep as heard"). Already known: nothing changes."""
+        (`keep`: from an Undo or "Keep as heard"). Already known: nothing changes.
+        When both exist for the same words, `keep` wins (a wrong fix is worse than a
+        missed one); the Transcript Cleaner applies that."""
         _check_choice(action, (FIX, KEEP), "correction action")
         if (action == FIX) != (entity_id is not None):
             raise ValueError("A fix needs an entity; a keep must not have one")
         heard = clean_text(heard)
-        async with self._op(guild_id, campaign_id, source) as op:
+        key = lookup_key(heard)
+        async with self._write(guild_id, campaign_id, source) as w:
             if entity_id is not None:
-                await _live_entity(op, entity_id)
-            key = name_key(heard)
-            for row in await op.select(_CORRECTIONS, " AND heard_key = %s", [key]):
+                await _entity_row(w, entity_id)
+            for row in await w.select(CORRECTIONS, " AND heard_key = %s", [key]):
                 if (row["action"], row["entity_id"]) == (action, entity_id):
-                    return Written(_correction(row), None)
-            row = await op.insert(
-                _CORRECTIONS,
+                    return Written(_correction(row), w.batch)
+            row = await w.insert(
+                CORRECTIONS,
                 {
                     "id": new_id(),
                     "heard": heard,
@@ -1000,10 +660,10 @@ class MemoryStore:
                     "entity_id": entity_id,
                     "action": action,
                     "source": source,
-                    "created_at": op.now,
+                    "created_at": w.now,
                 },
             )
-            return Written(_correction(row), op.batch)
+            return Written(_correction(row), w.batch)
 
     # ---- extending the rules ----------------------------------------------------------
 
@@ -1020,13 +680,14 @@ class MemoryStore:
     ) -> Written[TypeTerm]:
         """A new kind of thing for this campaign only. Refused when an existing one
         fits, or when this session already added its share of new terms."""
-        async with self._op(guild_id, campaign_id, source) as op:
-            onto = await _load_ontology(op)
+        _check_list(examples, "examples")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
             onto.check_new_term(term.key, term.label, term.description, examples, reason)
             onto.check_new_type(term)
-            await _check_growth(op, session_started_at)
-            row = await op.insert(
-                _TYPES,
+            await _check_growth(w, session_started_at)
+            row = await w.insert(
+                TYPES,
                 {
                     "key": term.key,
                     "parent": term.parent,
@@ -1036,10 +697,10 @@ class MemoryStore:
                     "reason": reason.strip(),
                     "status": ACTIVE,
                     "replaced_by": None,
-                    "created_at": op.now,
+                    "created_at": w.now,
                 },
             )
-            return Written(_type_term(row), op.batch)
+            return Written(_type_term(row), w.batch)
 
     async def add_predicate(
         self,
@@ -1053,13 +714,14 @@ class MemoryStore:
         session_started_at: int | None = None,
     ) -> Written[PredicateTerm]:
         """A new kind of relationship for this campaign only (see `add_type`)."""
-        async with self._op(guild_id, campaign_id, source) as op:
-            onto = await _load_ontology(op)
+        _check_list(examples, "examples")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
             onto.check_new_term(term.key, term.label, term.description, examples, reason)
             onto.check_new_predicate(term)
-            await _check_growth(op, session_started_at)
-            row = await op.insert(
-                _PREDICATES,
+            await _check_growth(w, session_started_at)
+            row = await w.insert(
+                PREDICATES,
                 {
                     "key": term.key,
                     "parent": term.parent,
@@ -1074,10 +736,10 @@ class MemoryStore:
                     "conflicts_with": list(term.conflicts_with),
                     "status": ACTIVE,
                     "replaced_by": None,
-                    "created_at": op.now,
+                    "created_at": w.now,
                 },
             )
-            return Written(_predicate_term(row), op.batch)
+            return Written(_predicate_term(row), w.batch)
 
     async def deprecate_term(
         self,
@@ -1090,62 +752,38 @@ class MemoryStore:
     ) -> Written[None]:
         """Retire a campaign's own term. It stays, so old facts still read; the core
         can't be retired here."""
-        async with self._op(guild_id, campaign_id, source) as op:
-            onto = await _load_ontology(op)
-            table = _TYPES if key in onto.types else _PREDICATES
-            term = onto.types.get(key) or onto.predicates.get(key)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            term: TypeTerm | PredicateTerm | None = onto.types.get(key) or onto.predicates.get(key)
             if term is None or term.core:
                 raise MemoryRuleError(f"{key} can't be retired.")
-            if replaced_by is not None:
-                if table is _TYPES:
+            if isinstance(term, TypeTerm):
+                if replaced_by is not None:
                     onto.active_type(replaced_by)
-                else:
+                await w.update(TYPES, key, {"status": DEPRECATED, "replaced_by": replaced_by})
+            else:
+                if replaced_by is not None:
                     onto.active_predicate(replaced_by)
-            await op.update(table, key, {"status": DEPRECATED, "replaced_by": replaced_by})
-            return Written(None, op.batch)
+                await w.update(PREDICATES, key, {"status": DEPRECATED, "replaced_by": replaced_by})
+            return Written(None, w.batch)
 
     # ---- undo -------------------------------------------------------------------------
 
     async def undo(
         self, guild_id: int, campaign_id: str, batch: int, *, source: str = "undo"
     ) -> Written[None]:
-        """Reverse every row change of one operation, newest first. Refused if those
-        rows changed again since (undo the later change first) or it was already
-        undone. Undoing an undo redoes it."""
-        async with self._op(guild_id, campaign_id, source, undoes=batch) as op:
-            cur = await op.conn.execute(
-                "SELECT 1 FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
-                " AND undoes = %s LIMIT 1",
-                (*op.scope, batch),
-            )
-            if await cur.fetchone() is not None:
-                raise MemoryRuleError("That was already undone.")
-            cur = await op.conn.execute(
-                "SELECT table_name, row_id, op, before, after FROM memory_changes"
-                " WHERE guild_id = %s AND campaign_id = %s AND batch = %s"
-                " ORDER BY version DESC",
-                (*op.scope, batch),
-            )
-            changes = await cur.fetchall()
-            if not changes:
-                raise MemoryRuleError(NOT_FOUND)
-            for change in changes:
-                table = _BY_NAME[change["table_name"]]
-                current = await op.get(table, change["row_id"])
-                if current != change["after"]:
-                    raise MemoryRuleError(CHANGED_SINCE)
-                before = change["before"]
-                if change["op"] == "insert":
-                    await op.delete(table, change["row_id"])
-                elif change["op"] == "update":
-                    await op.update(table, change["row_id"], before)
-                else:
-                    await op.insert(table, before)
-            return Written(None, op.batch)
+        """Reverse one operation (see `undo_batch`). Returns the undo's own batch, which
+        can be undone in turn to redo."""
+        async with self._write(guild_id, campaign_id, source, undoes=batch) as w:
+            await undo_batch(w, batch)
+            return Written(None, w.batch)
+
+
+# ---- helpers (inside a write) ----------------------------------------------------------
 
 
 def _new_alias(
-    op: _Op,
+    w: Changes,
     entity_id: str,
     text: str,
     kind: str,
@@ -1157,217 +795,141 @@ def _new_alias(
         "id": new_id(),
         "entity_id": entity_id,
         "text": text,
-        "key": name_key(text) or text.casefold(),
+        "key": lookup_key(text),
         "kind": kind,
         "used_by": used_by,
         "secret": secret,
         "status": status,
         "sound_codes": [],  # filled by the matching step (Transcript Cleaner, #127)
-        "source": op.source,
-        "created_at": op.now,
+        "source": w.source,
+        "created_at": w.now,
     }
 
 
-async def _live_entity(op: _Op, entity_id: str, *, allow_rejected: bool = False) -> dict[str, Any]:
-    row = await op.get(_ENTITIES, entity_id)
+def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dict[str, Any]:
+    """What saying something already known again changes: a stronger status (only the
+    DM confirms or un-rejects) and secret=True. Never weakens anything."""
+    changes: dict[str, Any] = {}
+    if secret and not old["secret"]:
+        changes["secret"] = True
+    if old["status"] == REJECTED:
+        if source == DM and status != REJECTED:
+            changes["status"] = status
+    elif _stronger(old["status"], status) != old["status"]:
+        changes["status"] = status
+    return changes
+
+
+async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False) -> dict[str, Any]:
+    row = await w.get(ENTITIES, entity_id)
     allowed = (*LIVE, REJECTED) if allow_rejected else LIVE
     if row is None or row["status"] not in allowed:
         raise MemoryRuleError(NOT_FOUND)
     return row
 
 
-async def _load_ontology(op: _Op) -> Ontology:
-    types = [_type_term(r) for r in await op.select(_TYPES)]
-    predicates = [_predicate_term(r) for r in await op.select(_PREDICATES)]
+async def _load_ontology(scope: Scope) -> Ontology:
+    types = [_type_term(r) for r in await scope.select(TYPES)]
+    predicates = [_predicate_term(r) for r in await scope.select(PREDICATES)]
     return Ontology.build(types, predicates)
 
 
-async def _check_growth(op: _Op, session_started_at: int | None) -> None:
+async def _relations_touching(w: Scope, *entity_ids: str) -> list[Relation]:
+    rows = await w.select(
+        RELATIONS,
+        " AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+        [list(entity_ids), list(entity_ids)],
+    )
+    return [_relation(r) for r in rows]
+
+
+async def _flag_problems(
+    w: Changes,
+    onto: Ontology,
+    rel: Relation,
+    subject_type: str,
+    object_type: str,
+    existing: Sequence[Relation],
+) -> list[Flag]:
+    flags = []
+    for problem in check_relation(onto, rel, subject_type, object_type, existing):
+        row = await w.insert(
+            FLAGS,
+            {
+                "id": new_id(),
+                "kind": problem.kind,
+                "relation_id": rel.id,
+                "other_id": problem.other_id,
+                "status": "open",
+                "created_at": w.now,
+            },
+        )
+        flags.append(_flag(row))
+    return flags
+
+
+async def _delete_relation(w: Changes, relation_id: str) -> None:
+    for flag in await w.select(
+        FLAGS, " AND (relation_id = %s OR other_id = %s)", [relation_id, relation_id]
+    ):
+        await w.delete(FLAGS, flag["id"])
+    await w.delete(RELATIONS, relation_id)
+
+
+async def _move_aliases(w: Changes, keep_id: str, gone_id: str) -> None:
+    keep_aliases = {a["key"]: a for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
+    for alias in await w.select(ALIASES, " AND entity_id = %s", [gone_id]):
+        twin = keep_aliases.get(alias["key"])
+        if twin is None:
+            await w.update(ALIASES, alias["id"], {"entity_id": keep_id})
+            continue
+        # Both have it: keep one, with the stronger status and any secret mark.
+        upgrade = _upgrade(twin, alias["status"], alias["secret"], DM)
+        await w.delete(ALIASES, alias["id"])
+        if upgrade:
+            await w.update(ALIASES, twin["id"], upgrade)
+    for alias in await w.select(ALIASES, " AND used_by = %s", [gone_id]):
+        await w.update(ALIASES, alias["id"], {"used_by": keep_id})
+
+
+async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
+    onto = await _load_ontology(w)
+    for row in await w.select(
+        RELATIONS, " AND (subject_id = %s OR object_id = %s)", [gone_id, gone_id]
+    ):
+        subject = keep_id if row["subject_id"] == gone_id else row["subject_id"]
+        obj = keep_id if row["object_id"] == gone_id else row["object_id"]
+        if subject == obj:  # "Bell is an ally of Belleros" says nothing any more
+            await _delete_relation(w, row["id"])
+            continue
+        pred = onto.predicates.get(row["predicate"])
+        if pred is not None:
+            subject, obj = ordered(pred, subject, obj)
+        moved = _relation(
+            await w.update(RELATIONS, row["id"], {"subject_id": subject, "object_id": obj})
+        )
+        others = [r for r in await _relations_touching(w, subject, obj) if r.id != moved.id]
+        twin = duplicate_of(moved, others)
+        if twin is not None:  # both said the same: keep one, with the stronger status
+            upgrade = _upgrade(_relation_row(twin), moved.status, moved.secret, DM)
+            await _delete_relation(w, moved.id)
+            if upgrade:
+                await w.update(RELATIONS, twin.id, upgrade)
+            continue
+        if pred is not None and moved.status != REJECTED:
+            types = {e: (await _entity_row(w, e))["type"] for e in (subject, obj)}
+            await _flag_problems(w, onto, moved, types[subject], types[obj], others)
+
+
+async def _check_growth(w: Changes, session_started_at: int | None) -> None:
     if session_started_at is None:
         return
-    cur = await op.conn.execute(
+    cur = await w.conn.execute(
         "SELECT (SELECT count(*) FROM memory_types WHERE guild_id = %s AND campaign_id = %s"
         " AND created_at >= %s) + (SELECT count(*) FROM memory_predicates"
         " WHERE guild_id = %s AND campaign_id = %s AND created_at >= %s) AS n",
-        (*op.scope, session_started_at, *op.scope, session_started_at),
+        (*w.ids, session_started_at, *w.ids, session_started_at),
     )
     row = await cur.fetchone()
     if row is not None and row["n"] >= MAX_NEW_TERMS_PER_SESSION:
         raise MemoryRuleError("Enough new kinds of things for one session; review them first.")
-
-
-# ---- backups -------------------------------------------------------------------------
-
-DAMAGED = "This backup file is damaged (bad campaign memory entry)."
-_KIND_OF = {
-    "memory_types": "type",
-    "memory_predicates": "predicate",
-    "memory_entities": "entity",
-    "memory_aliases": "alias",
-    "memory_mentions": "mention",
-    "memory_relations": "relation",
-    "memory_corrections": "correction",
-    "memory_flags": "flag",
-}
-_TABLE_OF = {kind: _BY_NAME[name] for name, kind in _KIND_OF.items()}
-
-_TEXT_LIMITS = {
-    "label": LABEL_MAX,
-    "description": DESCRIPTION_MAX,
-    "reason": DESCRIPTION_MAX,
-    "name": NAME_MAX,
-    "text": NAME_MAX,
-    "key": NAME_MAX,
-    "heard": NAME_MAX,
-    "heard_key": NAME_MAX,
-    "detail": DETAIL_MAX,
-    "line_ref": LINE_REF_MAX,
-    "parent": 40,
-    "replaced_by": 40,
-    "type": 40,
-    "predicate": 40,
-}
-_CHOICES: dict[str, Sequence[str]] = {
-    "status": (*ENTITY_STATUSES, ACTIVE, DEPRECATED, "open", "resolved"),
-    "kind": (*ALIAS_KINDS, *FLAG_KINDS),
-    "method": MENTION_METHODS,
-    "action": (FIX, KEEP),
-    "source": SOURCES,
-}
-_IDS = {
-    "id",
-    "entity_id",
-    "merged_into",
-    "used_by",
-    "subject_id",
-    "object_id",
-    "relation_id",
-    "other_id",
-}
-_INTS = {
-    "created_at",
-    "session_started_at",
-    "span_start",
-    "span_end",
-    "from_session_at",
-    "to_session_at",
-    "from_game_time",
-    "to_game_time",
-    "max_per_subject",
-}
-_LISTS = {
-    "examples",
-    "subject_types",
-    "object_types",
-    "conflicts_with",
-    "sound_codes",
-    "mention_ids",
-}
-_NULLABLE = {
-    "merged_into",
-    "used_by",
-    "other_id",
-    "entity_id",
-    "replaced_by",
-    "parent",
-    "session_started_at",
-    "from_session_at",
-    "to_session_at",
-    "from_game_time",
-    "to_game_time",
-    "max_per_subject",
-}
-_LIST_MAX = 50
-
-
-def _valid(column: str, value: object) -> bool:
-    """Is a value from an untrusted backup file the right shape for its column?"""
-    if value is None:
-        return column in _NULLABLE
-    if column in _IDS:
-        return is_id(value)
-    if column in _INTS:
-        return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= INT64_MAX
-    if column in _LISTS:
-        return (
-            isinstance(value, list)
-            and len(value) <= _LIST_MAX
-            and all(isinstance(v, str) and 0 < len(v) <= DESCRIPTION_MAX for v in value)
-        )
-    if column in ("secret", "is_symmetric"):
-        return isinstance(value, bool)
-    if column == "confidence":
-        return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
-    if column in _CHOICES:
-        return isinstance(value, str) and value in _CHOICES[column]
-    limit = _TEXT_LIMITS.get(column)
-    return limit is not None and isinstance(value, str) and len(value) <= limit
-
-
-class MemorySection:
-    """Campaign memory in backups (an `ExportSection`). The change log isn't included:
-    a restored campaign starts with a fresh undo history."""
-
-    name = "memory"
-
-    async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
-        out: list[Any] = []
-        for table in _BACKED_UP:
-            order = sql.SQL(" ORDER BY {}").format(sql.Identifier(table.key))
-            cur = await conn.execute(_scoped(table, order), (guild_id, campaign_id))
-            out += [{"kind": _KIND_OF[table.name], **_row(r, table)} for r in await cur.fetchall()]
-        return out
-
-    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: list[Any]) -> None:
-        by_kind: dict[str, list[dict[str, Any]]] = {kind: [] for kind in _TABLE_OF}
-        for raw in rows:
-            if not isinstance(raw, dict) or raw.get("kind") not in _TABLE_OF:
-                raise CampaignError(DAMAGED)
-            table = _TABLE_OF[raw["kind"]]
-            if set(raw) != {"kind", *table.columns}:
-                raise CampaignError(DAMAGED)
-            if not all(_valid(c, raw[c]) for c in table.columns):
-                raise CampaignError(DAMAGED)
-            by_kind[raw["kind"]].append(raw)
-        _check_terms(by_kind)
-        try:
-            for kind, table in _TABLE_OF.items():
-                for raw in by_kind[kind]:
-                    cols = ("guild_id", "campaign_id", *table.columns)
-                    await conn.execute(
-                        sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
-                            sql.Identifier(table.name),
-                            sql.SQL(", ").join(sql.Identifier(c) for c in cols),
-                            sql.SQL(", ").join(sql.Placeholder() * len(cols)),
-                        ),
-                        (guild_id, campaign_id, *(raw[c] for c in table.columns)),
-                    )
-            # Check links now, not at commit, so a broken file gives a plain message.
-            await conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
-        except (pg_errors.IntegrityError, pg_errors.DataError) as exc:
-            raise CampaignError(DAMAGED) from exc
-
-    async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
-        for name in ("memory_changes", *(t.name for t in reversed(_BACKED_UP))):
-            await conn.execute(
-                sql.SQL("DELETE FROM {} WHERE guild_id = %s AND campaign_id = %s").format(
-                    sql.Identifier(name)
-                ),
-                (guild_id, campaign_id),
-            )
-
-
-def _check_terms(by_kind: dict[str, list[dict[str, Any]]]) -> None:
-    """Entities and facts in a backup must use known kinds; extensions can't replace
-    the core."""
-    core = {t.key for t in CORE_TYPES} | {p.key for p in CORE_PREDICATES}
-    if any(r["key"] in core for r in (*by_kind["type"], *by_kind["predicate"])):
-        raise CampaignError(DAMAGED)
-    onto = Ontology.build(
-        (_type_term(r) for r in by_kind["type"]),
-        (_predicate_term(r) for r in by_kind["predicate"]),
-    )
-    if any(r["type"] not in onto.types for r in by_kind["entity"]):
-        raise CampaignError(DAMAGED)
-    if any(r["predicate"] not in onto.predicates for r in by_kind["relation"]):
-        raise CampaignError(DAMAGED)

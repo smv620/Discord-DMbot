@@ -59,17 +59,21 @@ def ordered(p: PredicateTerm, subject_id: str, object_id: str) -> tuple[str, str
 
 
 def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None:
-    """An existing live fact saying the same thing at the same time."""
-    for old in existing:
-        if (
-            old.status != REJECTED
-            and old.predicate == new.predicate
-            and (old.subject_id, old.object_id) == (new.subject_id, new.object_id)
-            and old.detail.casefold() == new.detail.casefold()
-            and same_time(old, new)
-        ):
-            return old
-    return None
+    """An existing fact saying the same thing at the same time: a live one if there is
+    one, else a rejected one (so a fact the DM rejected doesn't quietly come back)."""
+    same = [
+        old
+        for old in existing
+        if old.id != new.id
+        and old.predicate == new.predicate
+        and (old.subject_id, old.object_id) == (new.subject_id, new.object_id)
+        and old.detail.casefold() == new.detail.casefold()
+        and same_time(old, new)
+    ]
+    live = [r for r in same if r.status != REJECTED]
+    if live:
+        return live[0]
+    return same[0] if same else None
 
 
 def check_relation(
@@ -89,15 +93,18 @@ def check_relation(
         problems.append(Problem(WRONG_OBJECT))
     live = [r for r in existing if r.status != REJECTED and r.id != new.id and same_time(r, new)]
     if p.max_per_subject is not None:
-        others = [
-            r
-            for r in live
-            if r.predicate == p.key
-            and r.subject_id == new.subject_id
-            and r.object_id != new.object_id
-        ]
-        if len(others) >= p.max_per_subject:
-            problems += [Problem(TOO_MANY, r.id) for r in others]
+        # Two-way facts are stored smaller ID first, so count each side either way.
+        ends = (new.subject_id, new.object_id) if p.symmetric else (new.subject_id,)
+        for end in ends:
+            others = [
+                r
+                for r in live
+                if r.predicate == p.key
+                and not same_pair(r, new)
+                and (end in (r.subject_id, r.object_id) if p.symmetric else r.subject_id == end)
+            ]
+            if len(others) >= p.max_per_subject:
+                problems += [Problem(TOO_MANY, r.id) for r in others]
     problems += [
         Problem(CONTRADICTION, r.id)
         for r in live

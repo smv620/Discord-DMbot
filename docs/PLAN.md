@@ -131,8 +131,16 @@ database.
   - **Undo** works per operation ("batch"): each row change is logged with its before and
     after values. Undo is refused if those rows changed again since, and a delete is
     refused while anything still links to the row, so undo never removes later facts.
-  - **Backups** include everything except the change log: a restored campaign starts
-    with a fresh undo history.
+  - **Backups** include everything except the change log (a restored campaign starts
+    with a fresh undo history) and mentions, which are most of the size (about 15 MB
+    for a long campaign) and are rebuilt as new sessions are transcribed.
+  - **Only the DM's word confirms** (`source="dm"`): other sources can only propose, or
+    drop a proposal. Saying something already known again only strengthens it (the
+    DM's confirmation, or "keep secret"); something the DM rejected stays rejected
+    unless the DM says it again.
+  - **Merges** of two confirmed entries, or of different kinds (a place into an NPC),
+    need the DM. Facts moved by a merge are checked again: duplicates are folded into
+    one and new problems are flagged.
 - **Speed:** during a session the active campaign's names, aliases, sound-codes,
   "don't change" rules and nearby relationships are held **in memory**, keyed by
   (server, campaign), so checking a line doesn't touch the database. Postgres stays the

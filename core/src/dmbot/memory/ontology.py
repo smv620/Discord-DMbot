@@ -238,7 +238,8 @@ class Ontology:
         label_key = re.sub(r"[^a-z0-9]+", "_", label.casefold()).strip("_")
         if label_key in SYNONYMS:
             return SYNONYMS[label_key]
-        for existing in (*self.types.values(), *self.predicates.values()):
+        terms: list[TypeTerm | PredicateTerm] = [*self.types.values(), *self.predicates.values()]
+        for existing in terms:
             if existing.status != ACTIVE:
                 continue
             existing_label = re.sub(r"[^a-z0-9]+", "_", existing.label.casefold()).strip("_")

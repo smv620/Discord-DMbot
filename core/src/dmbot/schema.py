@@ -235,7 +235,10 @@ CAMPAIGN_MEMORY = f"""
         {_entity_link("used_by", cascade=False)}
     );
     CREATE INDEX memory_aliases_by_key ON memory_aliases (guild_id, campaign_id, key);
-    CREATE INDEX memory_aliases_by_sound ON memory_aliases USING gin (sound_codes);
+    CREATE INDEX memory_aliases_by_used_by ON memory_aliases (guild_id, campaign_id, used_by)
+        WHERE used_by IS NOT NULL;
+    CREATE INDEX memory_entities_by_merged_into
+        ON memory_entities (guild_id, campaign_id, merged_into) WHERE merged_into IS NOT NULL;
 
     -- "This part of this line refers to this entity." Lines will get their own table
     -- with the transcript channel (#124); until then a mention names its line.
@@ -254,6 +257,7 @@ CAMPAIGN_MEMORY = f"""
         PRIMARY KEY (guild_id, campaign_id, id),
         {_entity_link("entity_id")}
     );
+    CREATE INDEX memory_mentions_by_entity ON memory_mentions (guild_id, campaign_id, entity_id);
 
     -- Facts are never overwritten: a change (ally to enemy) ends one and adds another.
     -- Times are when the fact holds: session start times now, game time with TimeBot.
@@ -301,6 +305,8 @@ CAMPAIGN_MEMORY = f"""
     );
     CREATE INDEX memory_corrections_by_key
         ON memory_corrections (guild_id, campaign_id, heard_key);
+    CREATE INDEX memory_corrections_by_entity
+        ON memory_corrections (guild_id, campaign_id, entity_id) WHERE entity_id IS NOT NULL;
 
     -- A failed rule check, kept for review: never fixed silently.
     CREATE TABLE memory_flags (
@@ -318,6 +324,9 @@ CAMPAIGN_MEMORY = f"""
         FOREIGN KEY (guild_id, campaign_id, other_id)
             REFERENCES memory_relations (guild_id, campaign_id, id) ON DELETE CASCADE
     );
+    CREATE INDEX memory_flags_by_relation ON memory_flags (guild_id, campaign_id, relation_id);
+    CREATE INDEX memory_flags_by_other ON memory_flags (guild_id, campaign_id, other_id)
+        WHERE other_id IS NOT NULL;
 
     -- Append-only log of every change, so any operation can be undone. One operation
     -- (a "batch") may change several rows. Not part of backups.

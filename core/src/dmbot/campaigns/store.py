@@ -379,6 +379,12 @@ class CampaignStore:
 
     async def delete(self, guild_id: int, campaign_id: str) -> None:
         async with self._db.guild(guild_id) as conn:
+            # Lock the campaign first, as campaign-memory writes do, so the two can't
+            # deadlock while the sections clear their rows.
+            await conn.execute(
+                "SELECT 1 FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
+                (guild_id, campaign_id),
+            )
             await self._require(conn, guild_id, campaign_id)
             for section in self._sections.values():
                 await section.clear(conn, guild_id, campaign_id)

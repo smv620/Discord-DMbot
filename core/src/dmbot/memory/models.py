@@ -29,6 +29,8 @@ NAME_MAX = 100
 DESCRIPTION_MAX = 300
 DETAIL_MAX = 100
 LINE_REF_MAX = 100
+LIST_MAX = 50  # examples, mention IDs: the same cap on write and in backups
+DM = "dm"
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -65,6 +67,24 @@ def name_key(text: str) -> str:
     letters = "".join(c for c in decomposed if not unicodedata.combining(c))
     letters = re.sub(r"['’`\-]", "", letters)
     return " ".join(re.sub(r"[^\w\s]", " ", letters).split())
+
+
+def lookup_key(text: str) -> str:
+    """`name_key`, falling back to plain lower case for names that are all punctuation,
+    so every name has a key. Raises MemoryRuleError when the key is too long."""
+    key = name_key(text) or " ".join(text.casefold().split())
+    if not 0 < len(key) <= NAME_MAX:
+        raise MemoryRuleError(f"That's too long (at most {NAME_MAX} characters).")
+    return key
+
+
+def check_status_change(old: str | None, new: str, source: str) -> None:
+    """Only the DM confirms, un-rejects, or changes something confirmed. Anything else
+    may only propose, or drop a proposal ("Only DM-confirmed facts count")."""
+    if source == DM or old == new:
+        return
+    if new == CONFIRMED or old in (CONFIRMED, REJECTED):
+        raise MemoryRuleError("Only the DM can confirm or change that.")
 
 
 @dataclass(frozen=True, slots=True)

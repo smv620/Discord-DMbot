@@ -70,7 +70,7 @@ from dmbot.ears.protocol import (
 )
 from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
-from dmbot.memory.store import MemorySection
+from dmbot.memory.backup import MemorySection
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber

@@ -13,7 +13,16 @@ from dmbot.memory.checks import (
     ordered,
     same_time,
 )
-from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED, MemoryRuleError, Relation, name_key
+from dmbot.memory.models import (
+    CONFIRMED,
+    PROPOSED,
+    REJECTED,
+    MemoryRuleError,
+    Relation,
+    check_status_change,
+    lookup_key,
+    name_key,
+)
 from dmbot.memory.ontology import (
     CORE_PREDICATES,
     CORE_TYPES,
@@ -52,6 +61,24 @@ class NameKeys(unittest.TestCase):
         self.assertNotEqual(name_key("Ka Zeth"), name_key("Ka'zeth"))
 
 
+class StatusRules(unittest.TestCase):
+    def test_only_the_dm_confirms(self) -> None:
+        check_status_change(None, PROPOSED, "scan")
+        check_status_change(PROPOSED, REJECTED, "entitybot")  # dropping a proposal
+        check_status_change(PROPOSED, CONFIRMED, "dm")
+        check_status_change(REJECTED, PROPOSED, "dm")
+        for old, new in ((None, CONFIRMED), (PROPOSED, CONFIRMED), (CONFIRMED, REJECTED),
+                         (REJECTED, PROPOSED)):  # fmt: skip
+            with self.subTest(old=old, new=new), self.assertRaises(MemoryRuleError):
+                check_status_change(old, new, "cleaner")
+
+    def test_every_name_has_a_key(self) -> None:
+        self.assertEqual(lookup_key("Ka'zeth"), "kazeth")
+        self.assertEqual(lookup_key("?!"), "?!")
+        with self.assertRaises(MemoryRuleError):
+            lookup_key("ﷺ" * 100)  # grows past the limit when spelled out
+
+
 class CoreOntology(unittest.TestCase):
     def setUp(self) -> None:
         self.onto = Ontology.build()
@@ -71,7 +98,8 @@ class CoreOntology(unittest.TestCase):
             self.assertIn(target, {q.key for q in CORE_PREDICATES}, synonym)
 
     def test_plain_labels(self) -> None:
-        for term in (*CORE_TYPES, *CORE_PREDICATES):
+        terms: list[TypeTerm | PredicateTerm] = [*CORE_TYPES, *CORE_PREDICATES]
+        for term in terms:
             for word in ("ontology", "entity", "predicate", "graph"):
                 self.assertNotIn(word, term.label.lower())
                 self.assertNotIn(word, term.description.lower())
@@ -177,6 +205,17 @@ class Checks(unittest.TestCase):
         old = rel(A, "born_in", B, rid="1" * 32, status=REJECTED)
         self.assertEqual(check_relation(self.onto, rel(A, "born_in", C), "npc", "place", [old]), [])
 
+    def test_a_two_way_limit_counts_both_sides(self) -> None:
+        married = PredicateTerm(
+            "married_to", "is married to", "Married.", ("character",), ("character",),
+            symmetric=True, max_per_subject=1, core=False,
+        )  # fmt: skip
+        onto = Ontology.build(extra_predicates=[married])
+        # Stored smaller ID first: B is on the object side of the first fact.
+        first = rel(A, "married_to", B, rid="1" * 32)
+        problems = check_relation(onto, rel(B, "married_to", C), "npc", "npc", [first])
+        self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, first.id)])
+
     def test_ally_and_enemy_at_once_is_a_contradiction(self) -> None:
         ally = rel(A, "ally_of", B, rid="1" * 32)
         enemy = rel(B, "enemy_of", A)  # either direction
@@ -204,4 +243,7 @@ class Checks(unittest.TestCase):
         old = rel(A, "ally_of", B, rid="1" * 32)
         self.assertEqual(duplicate_of(rel(A, "ally_of", B), [old]), old)
         self.assertIsNone(duplicate_of(rel(A, "enemy_of", B), [old]))
-        self.assertIsNone(duplicate_of(rel(A, "ally_of", B), [replace(old, status=REJECTED)]))
+        # A rejected one is found too, so a fact the DM rejected doesn't come back.
+        rejected = replace(old, status=REJECTED)
+        self.assertEqual(duplicate_of(rel(A, "ally_of", B), [rejected]), rejected)
+        self.assertEqual(duplicate_of(rel(A, "ally_of", B), [rejected, old]), old)
