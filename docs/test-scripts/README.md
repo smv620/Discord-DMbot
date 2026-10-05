@@ -12,6 +12,7 @@ words, who said them, and where the silences are. That lets us check:
 |---|---|
 | [dm-and-player.md](dm-and-player.md) | Two people: one reads `[DM]`, the other `[Player]` |
 | [one-person.md](one-person.md) | One person reads every line |
+| [stt-bakeoff.md](stt-bakeoff.md) | The speech-to-text bake-off (#128): each reader reads every line, recorded on their own device. About 6–8 minutes |
 
 Both scripts have the **same lines**, so one score sheet fits both. They take under a minute.
 With more than two people, two read and the rest stay quiet.
