@@ -13,6 +13,7 @@ words, who said them, and where the silences are. That lets us check:
 | 1 (DM only) | [dm-only.md](dm-only.md) | The DM reads every line (they're all `[DM]`; the script already narrates the players' actions) |
 | 2 (DM + 1 player) | [dm-and-player.md](dm-and-player.md) | The DM reads `[DM]`, the player reads `[Player]` |
 | 3 or more (DM + players) | [dm-and-player.md](dm-and-player.md) | The DM reads `[DM]`. The players split the `[Player]` lines and agree who reads which before starting (for example, in voice-channel order) |
+| Speech-to-text bake-off (#128), 2–4 readers | [stt-bakeoff.md](stt-bakeoff.md) | Each reader reads every line, recorded on their own device (not through DMbot). About 6–8 minutes |
 
 Both scripts take about a minute and score the same 12 D&D terms.
 
