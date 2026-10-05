@@ -17,7 +17,8 @@ class ConsentTests(DatabaseTest):
     async def test_grant_and_revoke(self) -> None:
         self.assertEqual(await self.store.grant(1, 2), frozenset({2}))
         self.assertTrue(self.store.has_consent(1, 2))
-        self.assertEqual(await self.store.revoke(1, 2), frozenset())
+        self.assertTrue(await self.store.revoke(1, 2))  # a saved consent was removed
+        self.assertFalse(await self.store.revoke(1, 2))  # nothing left to remove
         self.assertFalse(self.store.has_consent(1, 2))
 
     async def test_per_guild(self) -> None:

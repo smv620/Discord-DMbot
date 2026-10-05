@@ -57,18 +57,23 @@ class ConsentStore:
         if guild_id in self._cache:
             self._cache[guild_id] = self._cache[guild_id] - {user_id}
 
-    async def revoke(self, guild_id: int, user_id: int) -> frozenset[int]:
-        """Revoke and save. If saving fails, the player stays stopped in this process."""
+    async def revoke(self, guild_id: int, user_id: int) -> bool:
+        """Revoke and save; True if a saved consent was removed.
+
+        If saving fails, the player stays stopped in this process.
+        """
         self.stop_now(guild_id, user_id)
         async with self._lock(guild_id):
             async with self._db.guild(guild_id) as conn:
-                await conn.execute(
-                    "DELETE FROM consent WHERE guild_id = %s AND user_id = %s",
+                cur = await conn.execute(
+                    "DELETE FROM consent WHERE guild_id = %s AND user_id = %s RETURNING user_id",
                     (guild_id, user_id),
                 )
+                removed = await cur.fetchone() is not None
                 users = await _select(conn, guild_id)
             self._held_back[guild_id].discard(user_id)
-            return self._store(guild_id, users)
+            self._store(guild_id, users)
+            return removed
 
     async def consenting(self, guild_id: int) -> frozenset[int]:
         if guild_id not in self._cache:

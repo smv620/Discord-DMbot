@@ -693,8 +693,9 @@ keeps a single "who pays for this call" seam so that switch stays small.
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's
 lines covers both versions, the fixes list, the mentions that point at those lines, and
 that person in any alias's "who uses it" field. When someone withdraws, recording stops
-at once and they're told: "🛑 Stopped. DMbot won't record you anymore. What was already
-recorded stays in the transcript, which anyone in this server can still read."
+at once and they're told: "🛑 Stopped. DMbot won't record you anymore in <server>. What
+DMbot already wrote down stays, and anyone in this server can still read it." (When
+"Delete my past transcripts" ships, that message must also say how to use it.)
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
 
