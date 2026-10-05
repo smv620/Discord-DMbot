@@ -121,7 +121,7 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    - Optional: a third person presses **No thanks**. They must never appear in capture
      checks, and they're asked again next session.
 5. **Read the test script, then talk for 1–2 minutes.** First read the matching script in
-   [`docs/test-scripts/`](test-scripts/README.md) (one person, or DM and Player), so audio
+   [`docs/test-scripts/`](test-scripts/README.md) (DM only, or DM and players), so audio
    and speech-to-text can be judged against known words and pauses. Wait until its last
    line shows up in a capture check, then talk freely: take turns, use a few long
    sentences, and overlap once. Score the script as its README says.

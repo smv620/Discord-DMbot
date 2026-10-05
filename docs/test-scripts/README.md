@@ -8,27 +8,28 @@ words, who said them, and where the silences are. That lets us check:
 - **Speech-to-text:** how well does Whisper (or a cloud service) write it down? Use the same
   script on every run so results can be compared.
 
-| Script | Who reads |
-|---|---|
-| [dm-and-player.md](dm-and-player.md) | Two people: one reads `[DM]`, the other `[Player]` |
-| [one-person.md](one-person.md) | One person reads every line |
+| People testing | Script | Who reads |
+|---|---|---|
+| 1 (DM only) | [dm-only.md](dm-only.md) | The DM reads everything, narrating the players' actions |
+| 2 (DM + 1 player) | [dm-and-player.md](dm-and-player.md) | The DM reads `[DM]`, the player reads `[Player]` |
+| 3 or more (DM + players) | [dm-and-player.md](dm-and-player.md) | The DM reads `[DM]`; the players take turns on the `[Player]` lines |
 
-Both scripts have the **same lines**, so one score sheet fits both. They take under a minute.
-With more than two people, two read and the rest stay quiet.
+Both scripts take under a minute and score the same 12 D&D terms.
 
 **Sending it:** paste the script into a Discord message (it fits, and Discord shows the bold
 labels) rather than sending the file.
 
 ## What's in it
 
-1. **Part 1, everyday words (43 words).** Any speech-to-text should get these right, so
+1. **Part 1, everyday words** (43 words in dm-and-player, 42 in dm-only). Any
+   speech-to-text should get these right, so
    mistakes here point to audio problems, not hard vocabulary.
 2. **Part 2, D&D words.** Ten-Towns names from *Icewind Dale: Rime of the Frostmaiden*, a god,
    a monster, a spell, a weapon and a rules term, with a pronunciation guide so every reader
    says them the same way.
 
 Stage directions:
-- **(( dramatic pause ))**, inside the DM's lines: 3 seconds of silence. DMbot ends a piece of
+- **(( dramatic pause ))**, inside a line: 3 seconds of silence. DMbot ends a piece of
   speech after less than a second of silence, so each dramatic pause should **split that line
   into two pieces of speech**. Silence between pieces is never counted as lost audio. Short
   breaths inside a sentence are what DMbot counts as pauses (`pauses=` in the server logs).
@@ -40,7 +41,7 @@ Stage directions:
 ## Running the test
 
 1. **Before:** on the server, `DMBOT_DEBUG_AUDIO=1` in `.env` (ears logs one `audio …` line per
-   piece of speech). Ask: one reader or several?
+   piece of speech). Ask: how many people (1 = DM only)?
 2. `/dmbot start`, and every reader presses **I consent** (or already has).
 3. Read the script once, start to finish.
 4. **Wait until the last line ("…Lonelywood and Caer-Dineval") shows up in a capture check**,
@@ -58,11 +59,12 @@ Ignore capitals, punctuation and hyphens. "It's" = "it is", "3" = "three", "Ten 
 - **Audio:** from the ears `audio …` lines in the server logs (more complete than the DM
   screen's %): add up `received` and `expected` for the script. 95–100% passes; 90–94% is
   borderline, so repeat once; under 90% fails (same as LIVE_TEST.md).
-- **Pieces of speech:** the DM should have about 6 (4 lines + 2 dramatic pauses) and the
-  Player about 4 (one reader: anywhere from 4 to 10, depending on gaps between lines). Many
-  more than that, with no pause by the reader, hints at lost packets.
+- **Pieces of speech:** dm-and-player: the DM about 6 (4 lines + 2 dramatic pauses), each
+  player about 4 between them. dm-only: about 5 (2 paragraphs + 3 dramatic pauses). Many
+  more, with no pause by the reader, hints at lost packets; fewer means a dramatic pause
+  didn't come through as silence (Discord kept sending sound).
 - **Part 1:** count words wrong, missing, and **added** (for example "Thanks for watching"
-  during a pause). Out of 43.
+  during a pause). Out of 43 (dm-and-player) or 42 (dm-only).
 - **Part 2:** count how many of these 12 came out right. Accepted variants are in brackets.
 
   | Term | Also OK |
@@ -90,11 +92,11 @@ Ignore capitals, punctuation and hyphens. "It's" = "it is", "3" = "three", "Ten 
 One entry per run in `docs/testing-history.log`:
 
 ```
-script: two-person | one-person   readers: N   commit: <sha>
+script: dm-and-player | dm-only   people: N (1 = DM only)   commit: <sha>
 engine: whisper-local small (device/compute auto, beam 1) | cloud <model>
 packet loss added: none | clumsy N%      Discord noise suppression: on/off
-audio: received/expected = __/__ (__%)   pieces of speech: DM __, Player __
-part 1: __ wrong, __ missing, __ added (of 43)
+audio: received/expected = __/__ (__%)   pieces of speech: DM __, players __
+part 1: __ wrong, __ missing, __ added (of 43 or 42)
 part 2: __ of 12 right
 whisper: all / part / missing (ring lit: y/n)
 delay: about __ s from speaking to text in the DM screen
