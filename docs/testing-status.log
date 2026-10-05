@@ -1,92 +1,68 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-05 by the PyCharm session (server ready for run 2; install test
-added for #104)
+Last updated: 2026-10-05 by the server session (runs 2-4 done; next: run 5 with the
+read-aloud script)
 
 What this file is
   The immediate live-testing picture: what's next, what's blocking it, and the latest
   result. It is kept SHORT: finished items move to docs/testing-history.log (the full
-  record, append-only), and this file is trimmed. The PyCharm session maintains both.
-  The web session reads them; it doesn't need copied terminal output.
-  Never put tokens, .env contents or players' personal data here (the repo is public).
+  record, append-only), and this file is trimmed. The server session maintains both
+  (CLAUDE.md, #131); the PyCharm session adds offline results; the web session reads
+  them. Never put tokens, .env contents or players' personal data here (public repo).
 
 ------------------------------------------------------------------------------
-NEXT TEST: Test 1, run 2: voice capture with 2 people (docs/LIVE_TEST.md)
+NEXT TEST: Test 1, run 5: read-aloud script, first-time consent, second person stops
 ------------------------------------------------------------------------------
 Why
-  Run 1 had only the DM, so consent revoke and two speakers weren't tested. Since then
-  a lot has landed on development, and run 2 is its first live check:
-    - Postgres storage (#68), shard-ready startup and JSON logs (#69)
-    - /dmbot start . stop . help . backup . restore, with campaigns (#47, #48)
-    - DM screen made automatically, named #dmb-dm-screen-<campaign> (#30, #87)
-    - picking a session back up after a restart (#70)
-    - the audio-pause fix from run 1 (#36)
-  Passing run 2 is what lets development be promoted to beta.
+  Runs 2-4 passed capture, two speakers, consent carry-over, Stop and agree again.
+  Still open: the first-time consent question, a second person stopping, and a
+  judgement of the audio losses seen in run 4 against known words and pauses.
 
-Where it runs (new, 2026-10-05)
-  The cloud test server (Ubuntu 26.04, 4 vCPU, 8 GB), with Docker Compose: postgres,
-  core, ears. It runs the development branch (owner's choice for testing; DEPLOY.md's
-  "servers run main" applies to the real deployment). TRANSCRIBER=whisper-local,
-  model small, so run 2 also shows transcribed text. Logs: docker compose logs -f.
-  Don't run DMbot on the PC at the same time: both would log in as the same bot.
+Where it runs
+  Cloud test server, Docker Compose (postgres, core, ears), development branch,
+  TRANSCRIBER=whisper-local small, DMBOT_DEBUG_AUDIO=1. Server session watches logs.
 
 Before the test (owner)
-  [ ] Discord: DMbot's role has Manage Channels, Manage Roles, Read Message History
-      and Pin Messages (by hand for now; automatic install is #104, see below)
-  [ ] A second person in the voice channel (a phone with a second account is fine)
-  [ ] Optional: the "clumsy" tool (Windows) to add ~5% packet loss
+  [ ] Merge PR #135 (#132: consent text says anyone in this server can read it),
+      then the server session deploys it
+  [ ] Tell the server session: 1 person or several? Send the matching script from
+      docs/test-scripts/ (paste it into Discord)
+  [ ] Someone who has NOT agreed yet (ideally a third account), already in voice
+      before /dmbot start. If only two people: the second person stops during the
+      session, and the first-time question is checked in the session after.
+  [ ] Note: packet loss tool on/off, and each reader's Discord noise suppression
+  [ ] DMbot's role has Pin Messages (if not done yet; #102)
 
-Before the test (PyCharm session)
-  [x] Server set up, images built, all three containers up, "ears connected"
-  [x] DMBOT_DEBUG_AUDIO=1 on the server
-  [x] Server on latest development (d3ec761; only logs changed since the 9ada841 build)
-  [x] Readiness check 2026-10-05: 0 errors in the last 2 h, Whisper small loaded,
-      6 GB RAM and 64 GB disk free
-
-Commands to use
-  /dmbot start, /consent give, /consent revoke, /dmbot help (Status), /dmbot stop
-  (/table join and /table status are gone)
-
-What to check (in addition to LIVE_TEST.md step 5)
-  - /dmbot start creates #dmb-dm-screen-<campaign> with a help card
-  - Debug line per utterance in the ears logs (pauses=..., link_dropped_total=0)
-  - Capture checks show transcribed text that roughly matches what was said
-  - Long sentences with short pauses read 95-100%; with ~5% loss injected the % drops
-  - The second person's /consent revoke removes them from the next capture checks
-  - The ⚠️ flag, not the rounded %, decides pass or fail (#44)
-  - Optional extra: docker compose restart core mid-session. DMbot should rejoin and
-    post a note in the DM screen (#70)
+What to check
+  - Everyone in voice gets a private message; the new one gets "Can DMbot record
+    you...?" and the phone preview reads well
+  - I consent -> capture within seconds; Stop recording me -> gone from the next check
+  - Read the script, wait for its last line in a capture check, then /dmbot stop
+  - Score it (docs/test-scripts/README.md): audio from ears lines, pieces of speech,
+    Part 1 errors of 43, Part 2 terms of 12, whisper
+  - First word after each dramatic pause (#121)
 
 LATER TEST: one-click install (#104, not built yet)
-  The owner wants installing DMbot to set up every permission and channel it needs,
-  with no Server Settings visits. Once #104 lands:
-  - Remove DMbot from the test server, re-add it with the new install link: Discord's
-    permission screen lists View Channels, Send Messages, Read Message History,
-    Connect, Speak, Manage Channels, Manage Roles, Pin Messages. Press Authorize.
-  - DMbot posts a welcome; /dmbot start creates #dmb-dm-screen-<campaign> and pins
-    its help card, with no permission changes by hand.
-  - On a server where DMbot has fewer permissions, opening the link again fixes them,
-    and DMbot's note names anything still missing.
+  Re-add DMbot with the new install link; it should get every permission and pin its
+  help card with no Server Settings visits.
 
 ------------------------------------------------------------------------------
 BLOCKED / WAITING
 ------------------------------------------------------------------------------
-  Nothing blocks run 2. Being fixed first by the web session so the result is easier
-  to judge: #37 (session events in the terminals), #38 (misleading PyNaCl/davey
-  warnings), #39 ("Keeping up: yes" with transcription off), #44 (95% ⚠️ rounding).
-  Worth waiting for if they land the same day; not required.
+  Nothing blocks run 5. PR #135 (consent text) should land first so testers see the
+  current wording.
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test 1, run 1 (2026-10-04), PARTIAL / BORDERLINE
+LATEST RESULT: Test 1, run 4 (2026-10-05 13:32), PARTIAL
 ------------------------------------------------------------------------------
-  Connected, bot online ................ PASS
-  Join messages ......................... PASS (voice-chat notice inferred)
-  Audio % ............................... BORDERLINE 100/91/100/91/94/100; cause fixed (#36)
-  Consenting speaker appears ............ PASS (1 of 1)
-  Revoked speaker disappears ............ NOT TESTED
-  No terminal errors .................... PASS
-  Details: docs/testing-history.log and issue #40.
+  Stop recording me ..................... PASS (core and ears stop in the same second)
+  Agree again ........................... PASS
+  Audio % ............................... BORDERLINE ~91-92% (loss before ears)
+  Second speaker ........................ NOT TESTED
+  Earlier today: run 2 PARTIAL (1 speaker, 100%), run 3 PASS (2 speakers, 99-100%,
+  consent carried over). Details: docs/testing-history.log.
 
 Open issues from testing
-  #37 #38 #39 #44 (being fixed now)   #43 DAVE loss right after a pause
-  #45 uncounted audio losses
+  #43 DAVE loss after a pause   #45 uncounted losses   #107 "0 opted in" line
+  #109 no summary at stop / last speech dropped   #112 menus run off phone screens
+  #120 capture check drops audio counts   #121 start of speech may be cut
