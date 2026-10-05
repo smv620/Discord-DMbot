@@ -69,6 +69,11 @@ class MissingKey(RuntimeError):
     pass
 
 
+def endpoint(var: str, default: str) -> str:
+    """An optional endpoint override from the environment (e.g. another region)."""
+    return os.environ.get(var, "").strip() or default
+
+
 def api_key(var: str) -> str:
     key = os.environ.get(var, "").strip()
     if not key:
@@ -121,6 +126,7 @@ def _error_text(exc: BaseException) -> str:
 
 # ---- Speechmatics ------------------------------------------------------------------
 
+# Override with SPEECHMATICS_URL in .env, e.g. for an account in another region.
 SPEECHMATICS_URL = "wss://us.rt.speechmatics.com/v2"
 
 
@@ -173,13 +179,13 @@ class Speechmatics:
         self,
         operating_point: str,
         *,
-        url: str = SPEECHMATICS_URL,
+        url: str | None = None,
         max_delay: float = 1.0,
         key: str | None = None,
     ) -> None:
         self.name = f"sm-{operating_point.split('-')[0]}"
         self.operating_point = operating_point
-        self.url = url
+        self.url = url or endpoint("SPEECHMATICS_URL", SPEECHMATICS_URL)
         self.max_delay = max_delay
         self._key = key
 
@@ -252,6 +258,7 @@ class Speechmatics:
 
 # ---- Deepgram ----------------------------------------------------------------------
 
+# Override with DEEPGRAM_URL in .env, e.g. for a dedicated or self-hosted endpoint.
 DEEPGRAM_URL = "wss://api.deepgram.com/v1/listen"
 
 
@@ -292,13 +299,13 @@ class Deepgram:
         model: str = "nova-3",
         *,
         key: str | None = None,
-        base_url: str = DEEPGRAM_URL,
+        base_url: str | None = None,
         min_terms: int = 0,
         finalize_timeout: float = 10.0,
     ) -> None:
         self.name = "dg-" + model.replace("-", "")
         self.model = model
-        self.base_url = base_url
+        self.base_url = base_url or endpoint("DEEPGRAM_URL", DEEPGRAM_URL)
         self.min_terms = min_terms
         self.finalize_timeout = finalize_timeout
         self._key = key

@@ -25,11 +25,16 @@ The questions to answer:
 | **PyCharm session** | Reviews the scoring and can re-score saved results offline. |
 | **Server session** | Runs the bake-off on the server (US East, close to both US endpoints), writes the report and the testing-log entries. |
 
-Keys (server `.env`, read by the tool, never printed or logged):
+Keys (server `.env`, read by the tool, never printed or logged; the section is in
+`.env.example`):
 ```
 SPEECHMATICS_API_KEY=...
 DEEPGRAM_API_KEY=...
+# optional, blank = default:
+SPEECHMATICS_URL=   # default wss://us.rt.speechmatics.com/v2; set it for another region
+DEEPGRAM_URL=       # default wss://api.deepgram.com/v1/listen
 ```
+Core reads `.env` when it starts, so recreate it after adding keys: `docker compose up -d core`.
 **Data settings:** Deepgram requests opt out of its model-improvement program
 (`mip_opt_out=true`). In the Speechmatics account, check the data-retention setting and
 turn off anything that keeps audio for training.
