@@ -112,8 +112,13 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    🎙️ Capture check
    • Name — N × speech, X.X s, audio NN%
    ```
+   **The terminals show the same picture** (IDs and numbers only, no names or words):
+   core logs `Session started`, `Consent given: user …` and a `Capture check: …` line
+   every 15 s while someone is talking (low audio shows as `(audio gaps)`); ears logs `joined voice channel …` and `capturing user …` the first time
+   each person is heard.
 7. **Consent check:** the second person runs `/consent revoke` and keeps talking. They
-   must **disappear** from the following capture checks.
+   must **disappear** from the following capture checks. In the terminals: core logs
+   `Consent withdrawn: user …` and ears logs `not capturing user …: opted out`.
 8. **Run `/dmbot help` and press Status,** then `/dmbot stop`.
 
 ### Step 5: judge the result (Claude and owner)
@@ -142,7 +147,9 @@ calling it.
    - the Status output (from `/dmbot help`);
    - a pass or fail for each row of the table in step 5;
    - links to any issues filed.
-3. **Update the testing logs** (CLAUDE.md, "Testing logs"):
+3. **Update the testing logs** (CLAUDE.md, "Testing logs"). The logs are public:
+   when copying terminal lines, replace Discord user IDs with "DM", "player A",
+   "player B", and so on.
    - Append the full record, including anything the owner pasted from Discord, to
      `docs/testing-history.log`.
    - Rewrite `docs/testing-status.log` so it shows only the next test, any blockers and
