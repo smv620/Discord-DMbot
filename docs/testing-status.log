@@ -1,7 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-05 by the server session (runs 2-4 done; next: run 5 with the
-read-aloud script)
+Last updated: 2026-10-05 by the server session (run 6 scored; next: run 7, DM + player)
 
 What this file is
   The immediate live-testing picture: what's next, what's blocking it, and the latest
@@ -11,58 +10,62 @@ What this file is
   them. Never put tokens, .env contents or players' personal data here (public repo).
 
 ------------------------------------------------------------------------------
-NEXT TEST: Test 1, run 5: read-aloud script, first-time consent, second person stops
+NEXT TEST: Test 1, run 7: DM + player script, first-time consent, player stops
 ------------------------------------------------------------------------------
 Why
-  Runs 2-4 passed capture, two speakers, consent carry-over, Stop and agree again.
-  Still open: the first-time consent question, a second person stopping, and a
-  judgement of the audio losses seen in run 4 against known words and pauses.
+  Run 6 gave the first scored baseline with the DM alone. Still open: a scored run
+  with two speakers, the first-time consent question, and a player stopping.
 
 Where it runs
   Cloud test server, Docker Compose (postgres, core, ears), development branch,
   TRANSCRIBER=whisper-local small, DMBOT_DEBUG_AUDIO=1. Server session watches logs.
 
 Before the test (owner)
-  [ ] Merge PR #135 (#132: consent text says anyone in this server can read it),
-      then the server session deploys it
-  [ ] Tell the server session: 1 person or several? Send the matching script from
-      docs/test-scripts/ (paste it into Discord)
-  [ ] Someone who has NOT agreed yet (ideally a third account), already in voice
-      before /dmbot start. If only two people: the second person stops during the
-      session, and the first-time question is checked in the session after.
-  [ ] Note: packet loss tool on/off, and each reader's Discord noise suppression
+  [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...)
+      and send the matching script from docs/test-scripts/ (paste it into Discord)
+  [ ] Someone who has NOT agreed yet (ideally a third account) in voice before
+      /dmbot start; or the player presses Stop recording me during this run and the
+      first-time question is checked next session
+  [ ] At each (( dramatic pause )): mute, count to three, unmute
+  [ ] Note: packet loss tool on/off, each reader's Discord noise suppression
   [ ] DMbot's role has Pin Messages (if not done yet; #102)
 
 What to check
-  - Everyone in voice gets a private message; the new one gets "Can DMbot record
-    you...?" and the phone preview reads well
+  - Private message to everyone in voice; the new one gets "Can DMbot record
+    you...?"; the phone preview reads well
   - I consent -> capture within seconds; Stop recording me -> gone from the next check
-  - Read the script, wait for its last line in a capture check, then /dmbot stop
+  - Wait for the script's last line in a capture check before /dmbot stop (Whisper
+    can fall behind until #137 is fixed)
   - Score it (docs/test-scripts/README.md): audio from ears lines, pieces of speech,
-    Part 1 errors of 43, Part 2 terms of 12, whisper
-  - First word after each dramatic pause (#121)
+    Part 1 of 35 (dm-and-player) or 33 (dm-only), Part 2 of 12, whisper, first word
+    after each split pause (#121)
+  - Compare with run 6 (local Whisper small): Part 1 33/33, Part 2 7/12, whisper all
 
-LATER TEST: one-click install (#104, not built yet)
-  Re-add DMbot with the new install link; it should get every permission and pin its
-  help card with no Server Settings visits.
+LATER TESTS
+  - Same script on cloud speech-to-text once #128 picks a service, to compare engines
+  - One-click install (#104, not built yet)
 
 ------------------------------------------------------------------------------
 BLOCKED / WAITING
 ------------------------------------------------------------------------------
-  Nothing blocks run 5. PR #135 (consent text) should land first so testers see the
-  current wording.
+  Nothing blocks run 7. #137 (Whisper stall) is worth fixing before many more scored
+  runs: a stall loses the end of the reading.
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test 1, run 4 (2026-10-05 13:32), PARTIAL
+LATEST RESULT: Test 1, run 6 (2026-10-05 20:08), DM alone, dm-only.md: PASS
 ------------------------------------------------------------------------------
-  Stop recording me ..................... PASS (core and ears stop in the same second)
-  Agree again ........................... PASS
-  Audio % ............................... BORDERLINE ~91-92% (loss before ears)
-  Second speaker ........................ NOT TESTED
-  Earlier today: run 2 PARTIAL (1 speaker, 100%), run 3 PASS (2 speakers, 99-100%,
-  consent carried over). Details: docs/testing-history.log.
+  Audio ................................. 1845/1845 (100%), no drops, no ⚠️
+  Pieces of speech ...................... 9, longest 10.8 s (4 of 5 pauses split)
+  Part 1 (everyday words) ............... 0 errors of 33
+  Part 2 (D&D terms) .................... 7 of 12 (missed Bryn Shander, Detect Magic,
+                                          Auril, Lonelywood, Caer-Dineval)
+  Whispered sentence .................... all
+  Speech-to-text delay .................. about 3-5 s, no stall
+  Earlier today: runs 2-4 (capture, two speakers, consent), run 5 (99.9% audio, 40 s
+  Whisper stall, no script). Details: docs/testing-history.log.
 
 Open issues from testing
   #43 DAVE loss after a pause   #45 uncounted losses   #107 "0 opted in" line
   #109 no summary at stop / last speech dropped   #112 menus run off phone screens
   #120 capture check drops audio counts   #121 start of speech may be cut
+  #134 transcript text in the DM screen   #137 Whisper stall   #138 help text
