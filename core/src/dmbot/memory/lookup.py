@@ -69,6 +69,8 @@ class CampaignLookup:
     keep_keys: frozenset[str]  # words that must stay as heard
     fixes: dict[str, tuple[str, ...]]  # heard key → entity IDs the DM said it means
     neighbours: dict[str, frozenset[str]]  # entity → entities it's related to
+    # Only links the DM confirmed: what scene hints follow (docs/PLAN.md).
+    confirmed_neighbours: dict[str, frozenset[str]]
 
     @classmethod
     def build(cls, data: LookupData) -> CampaignLookup:
@@ -103,10 +105,14 @@ class CampaignLookup:
             elif c.action == FIX and c.entity_id in entities:
                 fixes[c.heard_key].append(c.entity_id)
         neighbours: dict[str, set[str]] = defaultdict(set)
+        confirmed_links: dict[str, set[str]] = defaultdict(set)
         for r in data.relations:
             if r.subject_id in entities and r.object_id in entities:
                 neighbours[r.subject_id].add(r.object_id)
                 neighbours[r.object_id].add(r.subject_id)
+                if r.status == CONFIRMED and not r.secret:
+                    confirmed_links[r.subject_id].add(r.object_id)
+                    confirmed_links[r.object_id].add(r.subject_id)
         return cls(
             data.version,
             entities,
@@ -116,6 +122,7 @@ class CampaignLookup:
             frozenset(keep),
             {k: tuple(v) for k, v in fixes.items() if k not in keep},  # keep wins
             {k: frozenset(v) for k, v in neighbours.items()},
+            {k: frozenset(v) for k, v in confirmed_links.items()},
         )
 
     def exact(self, heard: str) -> tuple[NameEntry, ...]:
@@ -143,6 +150,10 @@ class CampaignLookup:
 
     def related(self, entity_id: str) -> frozenset[str]:
         return self.neighbours.get(entity_id, frozenset())
+
+    def linked(self, entity_id: str) -> frozenset[str]:
+        """Entries the DM confirmed are linked to this one."""
+        return self.confirmed_neighbours.get(entity_id, frozenset())
 
 
 class LookupSource(Protocol):

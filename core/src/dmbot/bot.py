@@ -82,9 +82,11 @@ from dmbot.ears.protocol import (
 from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
 from dmbot.memory.backup import MemorySection
-from dmbot.memory.lookup import LookupCache
+from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import MemoryRuleError, name_key
 from dmbot.memory.scan import find_new_names
+from dmbot.memory.scene import HintParts, SceneTracker, scene_hints
+from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcript import stream as transcript_lines
@@ -107,7 +109,6 @@ SUMMARY_INTERVAL_S = 15
 TRANSCRIPT_FLUSH_S = 2.0
 TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this often
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
-HINTS_MAX = 100  # names offered to speech-to-text (engines cut this down further)
 HINTS_FAIL_LOG_S = 60.0
 TRANSCRIPT_POST_TIMEOUT_S = 10.0  # one stuck post can't hold the others up for long
 TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel can't stall all)
@@ -194,6 +195,11 @@ class Table:
     dm_user_id: int
     segmenter: Segmenter
     capture_log: CaptureLog = field(default_factory=CaptureLog)
+    # Names said lately, for hints that follow the scene (#126, #127), and the campaign's
+    # names as last loaded (matching a line needs them without waiting).
+    scene: SceneTracker = field(default_factory=SceneTracker)
+    name_lookup: CampaignLookup | None = None
+    hint_parts: HintParts | None = None
     # The whole session's numbers, for the summary when it ends (#109).
     totals: SessionTotals = field(default_factory=SessionTotals)
     listening: bool = False
@@ -442,6 +448,7 @@ class DMBot(commands.AutoShardedBot):
             table.transcript.drop_speaker(user_id)  # words not posted yet are discarded
             table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
             table.unsaved.drop_speaker(user_id)  # and never saved
+            table.scene.forget_speaker(user_id)  # and no longer shape the hints
 
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
@@ -1415,6 +1422,8 @@ class DMBot(commands.AutoShardedBot):
             return
         table.capture_log.add_utterance(utterance)
         table.totals.add_utterance(utterance)
+        if text and table.name_lookup is not None:
+            table.scene.note_line(table.name_lookup, text, utterance.user_id, time.monotonic())
         if text and self.transcripts is not None:
             table.unsaved.add(Line(utterance.start_ms, utterance.user_id, text, text))
         if text and len(table.heard) < HEARD_MAX:
@@ -1434,21 +1443,25 @@ class DMBot(commands.AutoShardedBot):
         if table is not None:
             await self.post(table.screen_channel_id, message)
 
-    async def _name_hints(self, guild_id: int) -> list[str]:
-        """Names speech-to-text should expect, most useful first (engines keep as many as
-        they can, from the front): players' characters, then the names the DM confirmed,
-        then names DMbot suggested, then the players' display names. Never secret names:
-        an outside service mustn't be nudged towards a hidden identity."""
+    async def _name_hints(self, utterance: Utterance) -> list[str]:
+        """Names speech-to-text should expect for this clip, most useful first, from the
+        session that heard it (a stopped one still finishing keeps its own campaign's
+        names): characters, the players, names said lately, names connected to them,
+        then the rest (dmbot.memory.scene). Never secret names."""
+        guild_id = utterance.guild_id
         users = await self.consent.consenting(guild_id)
         names = (self.name_of(guild_id, uid) for uid in users)
         # A member DMbot can't look up comes back as "<@id>": no use as a hint, and an
         # outside service shouldn't get IDs.
         people = [name for name in names if not name.startswith("<@")]
-        table = self.tables.get(guild_id)
+        table = self._table_for(utterance)
         if self.lookup is None or table is None or table.campaign_id is None:
             return people
         try:
             lookup = await self.lookup.get(guild_id, table.campaign_id)
+            if table.hint_parts is None or table.hint_parts.version != lookup.version:
+                # Up to ~150 ms for a big campaign: off the event loop, once per change.
+                table.hint_parts = await asyncio.to_thread(prepare_hints, lookup)
         except Exception:
             # Asked for every connection to speech-to-text: say so at most once a minute.
             now = time.monotonic()
@@ -1456,25 +1469,8 @@ class DMBot(commands.AutoShardedBot):
                 self._hints_failed_at = now
                 log.exception("Couldn't load the campaign's names for hints")
             return people
-        characters: list[str] = []
-        confirmed: list[str] = []
-        suggested: list[str] = []
-        for entry in lookup.names:
-            if entry.secret:
-                continue
-            entity = lookup.entities.get(entry.entity_id)
-            if entity is not None and entity.type == "player_character":
-                characters.append(entry.text)
-            elif entry.confirmed:
-                confirmed.append(entry.text)
-            else:
-                suggested.append(entry.text)
-        # People before suggestions: a guess shouldn't push out a real name. One hint per
-        # name however it's capitalized.
-        ordered: dict[str, str] = {}
-        for name in [*characters, *confirmed, *people, *suggested]:
-            ordered.setdefault(name_key(name), name)
-        return list(ordered.values())[:HINTS_MAX]
+        table.name_lookup = lookup  # for matching written-down lines to the scene
+        return scene_hints(lookup, table.hint_parts, table.scene, time.monotonic(), people=people)
 
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to

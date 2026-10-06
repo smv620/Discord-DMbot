@@ -60,7 +60,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.delivered: list[tuple[Utterance, str | None]] = []
         self.alerts: list[str] = []
 
-        async def hints(guild_id: int) -> list[str]:
+        async def hints(utterance: Utterance) -> list[str]:
             return ["Aria"]
 
         async def alert(guild_id: int, message: str) -> None:
@@ -253,7 +253,7 @@ class BacklogTests(unittest.IsolatedAsyncioTestCase):
         async def alert(guild_id: int, message: str) -> None:
             alerts.append(message)
 
-        async def hints(guild_id: int) -> list[str]:
+        async def hints(utterance: Utterance) -> list[str]:
             return []
 
         p = TranscriptionPipeline(
@@ -284,7 +284,7 @@ class BacklogTests(unittest.IsolatedAsyncioTestCase):
         async def alert(guild_id: int, message: str) -> None:
             alerts.append(message)
 
-        async def hints(guild_id: int) -> list[str]:
+        async def hints(utterance: Utterance) -> list[str]:
             return []
 
         p = TranscriptionPipeline(
@@ -327,7 +327,7 @@ class ClipBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.delivered: list[tuple[Utterance, str | None]] = []
         self.alerts: list[str] = []
 
-        async def hints(guild_id: int) -> list[str]:
+        async def hints(utterance: Utterance) -> list[str]:
             return []
 
         async def alert(guild_id: int, message: str) -> None:
@@ -398,7 +398,7 @@ class ClipBudgetTests(unittest.IsolatedAsyncioTestCase):
     async def test_name_lookup_error_does_not_stop_transcribing(self) -> None:
         calls = [0]
 
-        async def flaky_hints(guild_id: int) -> list[str]:
+        async def flaky_hints(utterance: Utterance) -> list[str]:
             calls[0] += 1
             if calls[0] == 1:
                 raise ConnectionError("database unavailable")

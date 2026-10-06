@@ -819,7 +819,8 @@ names panel nor the speech-to-text hints can be a fixed list.
      a name stays in the scene past 10 minutes only after two mentions or a second
      speaker.
   3. **The tip of the tongue:** names connected to the scene's names by confirmed,
-     non-secret connections, ranked by how many scene names point at them. If the table talks
+     non-secret connections, ranked by how strongly the scene points at them (each
+     scene name pointing counts, weighted by how recently it was said). If the table talks
      about the Frostwolf tribe, its chief's name is already a hint before anyone says
      it.
   4. **Recently:** confirmed names from the last session or two.
@@ -843,6 +844,16 @@ names panel nor the speech-to-text hints can be a fixed list.
   1–4 words, exact and "fixed" spellings) and the scene-based hints, ahead of the
   Cleaner, which will reuse the matcher; (2) the name card, find and **Connect to…**;
   (3) browse by kind, add many and download all.
+- **Step 1 built (2026-10-06, `dmbot.memory.scene`):** the line matcher and the scene
+  tiers 1–3, with tier 4 as "names said earlier this session" and fill as confirmed
+  names A–Z, until the stored mentions land (next: written at the end of a session, so
+  "the last session or two", "most-heard" and "never heard yet counts as recent" can
+  rank). Lines from someone who stops being recorded stop counting at once. The fixed
+  parts of the list are prepared once per change to the names, not per clip. Until the
+  DM can add connections (step 2), the tip-of-the-tongue tier stays empty. Hints are worked
+  out for the session that heard the clip (a stopped session still finishing keeps its
+  own campaign's names). "Or a second speaker" isn't needed as a separate rule: each
+  mention fades on its own, so only a name said again stays in the scene.
 
 **Campaign memory rules (the ontology) (decided 2026-10-05).** EntityBot alone builds and
 maintains the ontology; there is no human graph engineer. So it is small, strict,
