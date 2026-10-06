@@ -8,6 +8,7 @@ import discord
 
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import messages
+from dmbot.dm_screen.rules import READ_ONLY
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -66,6 +67,8 @@ class TranscriptChannelTests(DatabaseTest):
         self.assertFalse(everyone.send_messages)
         self.assertFalse(everyone.add_reactions)
         self.assertFalse(everyone.create_public_threads)
+        # Slash commands aren't blocked (#188): /consent revoke must work here.
+        self.assertIsNone(everyone.use_application_commands)
         self.assertTrue(self.overwrite_for(BOT).send_messages)
         self.assertIn("Anyone in this server can read it", self.created()["topic"])
         saved = await self.store.get(GUILD, self.campaign.id)
@@ -75,7 +78,8 @@ class TranscriptChannelTests(DatabaseTest):
         await setup_transcript_channel(self.guild, self.campaign.id, self.store)
         card = self.new.send.await_args.args[0]
         self.assertTrue(card.startswith(messages.TRANSCRIPT_CARD_TITLE))
-        self.assertIn("Only DMbot writes here", card)
+        self.assertIn("Only DMbot posts here", card)
+        self.assertIn("`/consent revoke` here or in any channel", card)  # works here (#188)
         self.new.send.return_value.pin.assert_awaited_once()
 
     async def test_an_existing_channel_is_made_view_only_again_not_recreated(self) -> None:
@@ -87,6 +91,18 @@ class TranscriptChannelTests(DatabaseTest):
         sent = self.new.edit.await_args_list[0].kwargs["overwrites"]
         everyone = next(ow for key, ow in sent.items() if key.id == GUILD)
         self.assertFalse(everyone.send_messages)
+
+    async def test_a_channel_made_before_188_gets_its_command_block_lifted(self) -> None:
+        self.new.overwrites = {
+            discord.Object(GUILD, type=discord.Role): discord.PermissionOverwrite(**READ_ONLY)
+        }
+        await self.store.set_transcript_channel(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=self.new)
+        await setup_transcript_channel(self.guild, self.campaign.id, self.store)
+        sent = self.new.edit.await_args_list[0].kwargs["overwrites"]
+        everyone = next(ow for key, ow in sent.items() if key.id == GUILD)
+        self.assertIsNone(everyone.use_application_commands)  # inherited again
+        self.assertFalse(everyone.send_messages)  # still view-only
 
     async def test_an_ordinary_saved_channel_is_never_taken_over(self) -> None:
         await self.store.set_transcript_channel(GUILD, self.campaign.id, GENERAL)

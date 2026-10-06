@@ -1,9 +1,13 @@
 """Create a campaign's live transcript channel and keep it view-only (#124).
 
 `#dmb-transcript-<short name>` (docs/PLAN.md, "Channel structure"): unrestricted, so
-anyone in the server can read it, and only DMbot posts (no threads, reactions or
-commands either). It sits next to the DM screen, in the same category, with a topic and
-a pinned "what's this channel?" card. DMbot only ever changes a channel it named like a
+anyone in the server can read it, and only DMbot posts (no threads or reactions
+either). Slash commands work there (#188): their replies are private, the pinned card
+tells players to type `/consent revoke`, and a DM's first try is often `/dmbot` in the
+channel they're looking at.
+
+It sits next to the DM screen, in the same category, with a topic and a pinned "what's
+this channel?" card. DMbot only ever changes a channel it named like a
 transcript channel, and only edits it when something is actually different (Discord
 allows few channel edits per ten minutes).
 
@@ -63,9 +67,15 @@ def is_transcript_name(name: str) -> bool:
     return name.startswith(NAME_PREFIX)
 
 
+# Read-only, but slash commands left alone (inherited, so the server's own setting
+# applies): a blocked command can hang on "Sending command..." with no explanation.
+VIEW_AND_COMMANDS: Perms = {k: v for k, v in READ_ONLY.items() if k != "use_application_commands"}
+
+
 def transcript_plan(*, guild_id: int, bot_id: int) -> dict[Target, Perms]:
-    """Everyone reads, nobody posts; DMbot posts. DMs read like everyone else."""
-    return {everyone(guild_id): READ_ONLY, Target("member", bot_id): FULL}
+    """Everyone reads and can use slash commands, nobody posts; DMbot posts. DMs read
+    like everyone else."""
+    return {everyone(guild_id): VIEW_AND_COMMANDS, Target("member", bot_id): FULL}
 
 
 async def _fresh(guild: discord.Guild, campaign: Campaign) -> discord.TextChannel | None:
@@ -126,7 +136,9 @@ async def _repair(
     current = current_overwrites(channel)
     merged = merge_overwrites(current, plan, guild_id=guild.id)
     wanted = {t: restrict(p, held) for t, p in merged.items()}
-    have = {t: dict(p) for t, p in current.items()}
+    # Compared as DMbot could set it: a permission it doesn't hold can't be changed, so a
+    # stale value there mustn't trigger an edit at every start.
+    have = {t: restrict(p, held) for t, p in current.items()}
     timeout = RENAME_TIMEOUT_S * 2
     if have != wanted:
         overwrites = _discord_overwrites(guild, merged, held)
