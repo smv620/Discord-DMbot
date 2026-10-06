@@ -896,6 +896,28 @@ names panel nor the speech-to-text hints can be a fixed list.
   connection reads the same sentence on both cards for now ("Ulfgar is a member of
   the Frostwolf tribe"); the reversed wording ("members include Ulfgar") comes with
   🧭 Connect to….
+- **Step 3 built (2026-10-06):** **📚 Browse by kind** (pick a kind, last heard first
+  or A to Z, up to 20 a page with ◀ ▶, a menu to open a card), **📥 Add many** (📋 paste
+  a list, or upload a .txt file with `/dmbot names file:`; **📄 Get the template**, a file
+  whose `###` lines explain the format, with examples to edit, as the owner asked) and
+  **📤 Download all** (the same format, so it can be edited and added back; secret names
+  only for the campaign's DMs). One name per line: `name | kind | other names | secret
+  names` (the fourth part so a DM's download reads back with its secret names; only the
+  campaign's DMs may add them, and managers get a template without it). Other names are
+  separated by `,` or `;`, as in the ➕ Add a name form; lines starting with `#` are
+  skipped. Decided while building:
+  - the whole list is saved as **one change** (one Undo, one reload for live
+    transcription) rather than batches of 200, since a list is capped at 2,000 lines; a
+    long list holds the campaign's memory writes for a few seconds (a bulk insert can
+    shorten that later);
+  - **Undo** takes the list back only while none of its names were checked, changed,
+    connected or heard since;
+  - a name with no kind, or that sounds like a known name, is saved as a suggestion
+    waiting in 📝 Check new names (the summary's button); names DMbot already knows are
+    skipped and counted, checked again inside the save so two lists at once never
+    duplicate a name;
+  - for anyone but the campaign's DMs, a clash with a secret name looks exactly like no
+    clash.
 - **Step 2, second part built (2026-10-06):** **Edit other names** (pick one: ⭐ make it
   the main name, where the old main name stays one of its other names and a secret name
   never can be; 🤫 keep it secret or 👁️ stop, for the campaign's DMs only; ✖ not this
