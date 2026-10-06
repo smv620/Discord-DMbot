@@ -1,7 +1,5 @@
-# ---- build: compile TypeScript, install deps (with build tools for native opus) ----
+# ---- build: compile TypeScript and install deps ----
 FROM node:22-slim AS build
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --no-audit --no-fund
