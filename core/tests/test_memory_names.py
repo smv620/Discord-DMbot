@@ -181,7 +181,9 @@ class NameCards(NamesTest):
         form.name = SimpleNamespace(value="Bellaros")  # type: ignore[assignment]
         it = self.it()
         await form.on_submit(it)
-        self.assertIn("Now spelled **Bellaros**", it.response.sent[0][0])
+        text = it.response.edited[0][0]  # the card, redrawn in place, read fresh
+        self.assertIn("Now spelled **Bellaros**", text)
+        self.assertIn("🪪 **Bellaros**", text)
         keys = {a.key for a in await self.memory.aliases(GUILD, self.campaign.id)}
         self.assertIn("bellaros", keys)
         self.assertNotIn("belleros", keys)
@@ -222,18 +224,36 @@ class NameCards(NamesTest):
         (dynamic,) = undo_view.children
         custom_id = dynamic.item.custom_id
         template = name_card.UndoButton.__discord_ui_compiled_template__
-        undo = await name_card.UndoButton.from_custom_id(
-            self.it(), dynamic.item, template.fullmatch(custom_id)
-        )
+        match = template.fullmatch(custom_id)
+        assert match is not None
+        undo = await name_card.UndoButton.from_custom_id(self.it(), dynamic.item, match)
         it = self.it()
         await undo.callback(it)
-        self.assertIn("Undone", it.response.edited[0][0])
+        self.assertIn("↩️ **Belleros** is back", it.response.edited[0][0])
         self.assertIn("Belleros", await self.names())
+
+    async def test_change_what_it_is_shows_at_once(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.card()  # loads the copy
+        view = name_card.KindChange(self.campaign.id, self.bell.id, "Belleros")
+        view.pick = SimpleNamespace(values=["place"])  # type: ignore[assignment]
+        it = self.it()
+        await view._picked(it)
+        self.assertIn("🪪 **Belleros** · place", it.response.edited[0][0])
+
+    async def test_a_manager_adding_a_name_never_learns_of_a_secret_one(self) -> None:
+        form = ui.AddNameForm(self.campaign.id, secrets=False)
+        self.assertNotIn(form.secret, form.children)  # no secret-name field
+        form.name = SimpleNamespace(value="the hooded stranger")  # type: ignore[assignment]
+        form.others = SimpleNamespace(value="")  # type: ignore[assignment]
+        it = self.it(MANAGER)
+        await form.on_submit(it)
+        self.assertNotIn("already knows", it.response.sent[0][0])  # just "What is …?"
 
     async def test_find_opens_the_card_when_one_name_matches(self) -> None:
         from dmbot.ui import name_card
 
-        self.fresh()
         it = self.it()
         await name_card.show_matches(it, self.campaign.id, "bell or us")  # how it sounds
         self.assertIn("🪪 **Belleros**", it.response.sent[0][0])
@@ -244,12 +264,13 @@ class NameCards(NamesTest):
     async def test_the_type_ahead_suggests_nothing_to_strangers(self) -> None:
         from dmbot.ui import name_card
 
-        self.fresh()
         self.assertEqual(await name_card.find_typeahead(self.it(STRANGER), "bell"), [])
         choices = await name_card.find_typeahead(self.it(), "bell")
         self.assertEqual([c.value for c in choices], [self.bell.id])
         hidden = await name_card.find_typeahead(self.it(MANAGER), "hooded")
         self.assertEqual(hidden, [])  # secret names only for the campaign's DMs
+        plain = await name_card.find_typeahead(self.it(MANAGER), "bell")
+        self.assertEqual([c.value for c in plain], [self.bell.id])  # the rest, yes
 
 
 class Adding(NamesTest):
@@ -292,7 +313,7 @@ class Adding(NamesTest):
 
     async def test_a_name_it_already_knows_is_not_added_twice(self) -> None:
         await ui.save_name(self.memory, self.campaign, "Belleros", "npc", ["Bell"], [])
-        form = ui.AddNameForm(self.campaign.id)
+        form = ui.AddNameForm(self.campaign.id, secrets=True)
         form.name = SimpleNamespace(value="bell")  # type: ignore[assignment]
         form.others = SimpleNamespace(value="")  # type: ignore[assignment]
         form.secret = SimpleNamespace(value="")  # type: ignore[assignment]

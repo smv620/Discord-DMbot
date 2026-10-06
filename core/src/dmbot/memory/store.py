@@ -480,14 +480,30 @@ class MemoryStore:
             old_key = lookup_key(current["name"])
             own = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, old_key])
             clash = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, key])
+            if clash and clash[0]["secret"]:
+                # Never turn a secret name into the name everyone hears.
+                raise MemoryRuleError("Pick another spelling.")
             row = await w.update(ENTITIES, entity_id, {"name": name})
             if own and (not clash or clash[0]["id"] == own[0]["id"]):
+                # The same name, spelled right (listened for, and never secret).
                 await w.update(
                     ALIASES,
                     own[0]["id"],
-                    {"text": name, "key": key, "sound_codes": list(sound_codes(name))},
+                    {
+                        "text": name,
+                        "key": key,
+                        "sound_codes": list(sound_codes(name)),
+                        "status": CONFIRMED,
+                        "secret": False,
+                    },
                 )
-            elif not clash:
+            elif clash:
+                # The right spelling was already one of its other names: that becomes
+                # its name, and the misspelling stops being listened for.
+                await w.update(ALIASES, clash[0]["id"], {"text": name, "status": CONFIRMED})
+                if own:
+                    await w.update(ALIASES, own[0]["id"], {"status": REJECTED})
+            else:
                 await w.insert(
                     ALIASES, _new_alias(w, entity_id, name, "full", CONFIRMED, False, None)
                 )

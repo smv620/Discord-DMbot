@@ -754,6 +754,52 @@ class HeardNames(MemoryTest):
         self.assertEqual(await self.count("memory_heard", GUILD_B), 0)
 
 
+class Renaming(MemoryTest):
+    async def keys(self, entity: str) -> dict[str, str]:
+        aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=entity, include_secret=True)
+        return {x.key: x.status for x in aliases}
+
+    async def test_fix_spelling_and_undo_it(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        written = await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        self.assertEqual(written.value.name, "Belleros")
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.c, written.batch)  # one change, one undo
+        entity = await self.memory.entity(GUILD_A, self.c, a)
+        assert entity is not None
+        self.assertEqual((entity.name, await self.keys(a)), ("Beleros", {"beleros": CONFIRMED}))
+
+    async def test_the_right_spelling_already_another_name_becomes_the_name(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        for text in ("Beleros", "Belleros"):
+            await self.memory.add_alias(
+                GUILD_A, self.c, a, text, kind="full", source="dm", status=CONFIRMED
+            )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED, "beleros": REJECTED})
+
+    async def test_never_onto_a_secret_name_and_only_by_the_dm(self) -> None:
+        a = await self.add("Belleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A,
+            self.c,
+            a,
+            "the hooded stranger",
+            kind="title",
+            source="dm",
+            status=CONFIRMED,
+            secret=True,
+        )
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.rename_entity(GUILD_A, self.c, a, "The Hooded Stranger", source="dm")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.rename_entity(GUILD_A, self.c, a, "Bel", source="entitybot")
+
+
 class LookupInPostgres(MemoryTest):
     async def test_lookup_data_holds_what_matching_needs(self) -> None:
         a, b = await self.add("Belleros", status=CONFIRMED), await self.add("Cerric")

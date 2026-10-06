@@ -104,6 +104,19 @@ def split_names(raw: str) -> list[str]:
     return out
 
 
+def sees_secrets(campaign: Campaign, user_id: int) -> bool:
+    """Secret names are for the campaign's DMs only: a server manager who isn't one of
+    them may be at the table. They never see, search, add or even hear of one."""
+    return user_id in campaign.dm_user_ids
+
+
+def changed(interaction: discord.Interaction, campaign: Campaign) -> None:
+    """After DMbot's own change to the names: the next card or search reads fresh."""
+    cache = _bot(interaction).lookup
+    if cache is not None:
+        cache.mark_stale(campaign.guild_id, campaign.id)
+
+
 async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
     """The campaign, if this person may manage its names; tells them otherwise."""
     guild = interaction.guild
@@ -136,7 +149,7 @@ def ranked_same_as(heard: str, entities: list[Entity]) -> list[Entity]:
 
 def home_text(
     names: CampaignLookup, campaign: Campaign, waiting: int
-) -> tuple[str, list[tuple[str, str]]]:
+) -> tuple[str, list[tuple[str, str, str]]]:
     """The overview (about 15 lines, under Discord's limit): how many names of each
     kind, the waiting check, names heard last session and names added lately. Returns
     the text and the names shown, for the "Open a name…" menu. No secret names: those
@@ -151,13 +164,18 @@ def home_text(
         )
     else:
         kinds: dict[str, int] = {}
+        other = 0
         for e in confirmed:
-            kinds[KIND_SHORT.get(e.type, e.type)] = kinds.get(KIND_SHORT.get(e.type, e.type), 0) + 1
+            kind = KIND_SHORT.get(e.type, e.type)
+            if kind == "other":
+                other += 1
+            else:
+                kinds[kind] = kinds.get(kind, 0) + 1
         top = sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0]))
         parts = [
             f"{n} {kind}{'s' if n != 1 and not kind.endswith('s') else ''}" for kind, n in top[:3]
         ]
-        rest = sum(n for _, n in top[3:])
+        rest = sum(n for _, n in top[3:]) + other
         if rest:
             parts.append(f"{rest} other")
         lines.append(f"**{_plural(len(confirmed), 'name')}:** {', '.join(parts)}")
@@ -166,27 +184,29 @@ def home_text(
         )
     if waiting:
         lines.append(f"📝 **{_plural(waiting, 'new name')} from your sessions to check.**")
-    shown: list[tuple[str, str]] = []
+    shown: list[tuple[str, str, str]] = []
 
     def section(title: str, ids: list[str]) -> None:
-        fresh = [e for e in ids if e not in {i for i, _ in shown}]
+        taken = {i for i, _ in shown}
+        fresh = [e for e in ids if e not in taken]
         if not fresh:
             return
         listed = fresh[:SHOWN_PER_SECTION]
         text = ", ".join(f"**{_md(names.entities[e].name)}**" for e in listed)
         more = f" … and {len(fresh) - len(listed)} more" if len(fresh) > len(listed) else ""
         lines.append(f"{title} {text}{more}")
-        shown.extend((e, names.entities[e].name) for e in listed)
+        shown.extend(
+            (e, names.entities[e].name, KIND_SHORT.get(names.entities[e].type, "other"))
+            for e in listed
+        )
 
     last = names.recent_sessions[0] if names.recent_sessions else None
     heard = sorted(
         (h for h in names.heard.values() if last is not None and h.last_session_at == last),
         key=lambda h: -h.times,
     )
-    section(
-        "👂 **Heard last session:**",
-        [h.entity_id for h in heard if h.entity_id in {e.id for e in confirmed}],
-    )
+    ids = {e.id for e in confirmed}
+    section("👂 **Heard last session:**", [h.entity_id for h in heard if h.entity_id in ids])
     section("🆕 **Added lately:**", [e.id for e in sorted(confirmed, key=lambda e: -e.created_at)])
     text = "\n".join(lines)
     return (text if len(text) <= PANEL_MAX else text[: PANEL_MAX - 1] + "…"), shown
@@ -194,7 +214,7 @@ def home_text(
 
 class NamesHome(_Menu):
     def __init__(
-        self, campaign_id: str, waiting: int, shown: list[tuple[str, str]] | None = None
+        self, campaign_id: str, waiting: int, shown: list[tuple[str, str, str]] | None = None
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -206,7 +226,7 @@ class NamesHome(_Menu):
             _Button(
                 self._check,
                 label=f"📝 Check new names ({waiting})",
-                style=discord.ButtonStyle.secondary,
+                style=discord.ButtonStyle.primary if waiting else discord.ButtonStyle.secondary,
                 disabled=waiting == 0,
             )
         )
@@ -223,8 +243,10 @@ class NamesHome(_Menu):
                 self._open,
                 placeholder="Open a name…",
                 options=[
-                    discord.SelectOption(label=logic.shorten(name, logic.OPTION_LABEL_MAX), value=e)
-                    for e, name in shown[: logic.SELECT_OPTIONS_MAX]
+                    discord.SelectOption(
+                        label=logic.shorten(name, logic.OPTION_LABEL_MAX), value=e, description=kind
+                    )
+                    for e, name, kind in shown[: logic.SELECT_OPTIONS_MAX]
                 ],
                 row=2,
             )
@@ -242,8 +264,10 @@ class NamesHome(_Menu):
         await show_card(interaction, self.campaign_id, self.open.values[0])
 
     async def _add(self, interaction: discord.Interaction) -> None:
-        if await _campaign_for(interaction, self.campaign_id):
-            await interaction.response.send_modal(AddNameForm(self.campaign_id))
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign:
+            secrets = sees_secrets(campaign, interaction.user.id)
+            await interaction.response.send_modal(AddNameForm(self.campaign_id, secrets=secrets))
 
     async def _character(self, interaction: discord.Interaction) -> None:
         if await _campaign_for(interaction, self.campaign_id):
@@ -263,15 +287,21 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    names = await cache.get(campaign.guild_id, campaign.id)
+    try:
+        names = await cache.get(campaign.guild_id, campaign.id)
+    except Exception:
+        log.exception("Couldn't load the campaign's names")
+        await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
+        return
     waiting = len(await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED]))
     text, shown = home_text(names, campaign, waiting)
     await _send(interaction, text, NamesHome(campaign.id, waiting, shown))
 
 
 class CampaignChoice(_Menu):
-    def __init__(self, campaigns: list[Campaign]) -> None:
+    def __init__(self, campaigns: list[Campaign], find: str | None = None) -> None:
         super().__init__()
+        self.find = find
         now = int(time.time())
         self.pick = _Select(
             self._picked,
@@ -289,7 +319,12 @@ class CampaignChoice(_Menu):
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         self.stop()
-        await show_home(interaction, self.pick.values[0])
+        if self.find:  # the name typed with /dmbot names find:, now the campaign is known
+            from dmbot.ui.name_card import open_found
+
+            await open_found(interaction, self.pick.values[0], self.find)
+        else:
+            await show_home(interaction, self.pick.values[0])
 
 
 async def _find_typeahead(
@@ -331,7 +366,7 @@ async def dmbot_names(interaction: discord.Interaction, find: str | None = None)
     elif len(mine) == 1:
         await show_home(interaction, mine[0].id)
     else:
-        await _send(interaction, "**Which campaign's names?**", CampaignChoice(mine))
+        await _send(interaction, "**Which campaign's names?**", CampaignChoice(mine, find))
 
 
 # ---- adding a name ---------------------------------------------------------------------
@@ -354,9 +389,11 @@ class AddNameForm(discord.ui.Modal, title="Add a name"):
         max_length=400,
     )
 
-    def __init__(self, campaign_id: str) -> None:
+    def __init__(self, campaign_id: str, *, secrets: bool) -> None:
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign_id = campaign_id
+        if not secrets:  # only the campaign's DMs deal in secret names
+            self.remove_item(self.secret)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -364,14 +401,36 @@ class AddNameForm(discord.ui.Modal, title="Add a name"):
         if campaign is None or memory is None:
             return
         name = " ".join(self.name.value.split())
-        known = await memory.aliases(campaign.guild_id, campaign.id, include_secret=True)
-        if any(a.key == name_key(name) for a in known):
-            await _tell(interaction, f"DMbot already knows **{_md(name)}**.")
+        # Only names everyone may know about: a secret one is never confirmed here.
+        clash = await known_as(memory, campaign, name)
+        if clash is not None:
+            await _tell(interaction, already_known(name, clash))
             return
-        view = KindPicker(
-            self.campaign_id, name, split_names(self.others.value), split_names(self.secret.value)
+        secret = (
+            split_names(self.secret.value) if sees_secrets(campaign, interaction.user.id) else []
         )
+        view = KindPicker(self.campaign_id, name, split_names(self.others.value), secret)
         await _send(interaction, f"**What is {_md(name)}?**", view)
+
+
+async def known_as(memory: MemoryStore, campaign: Campaign, name: str) -> str | None:
+    """The confirmed entry already called `name` (by a name everyone may know), if any."""
+    key = name_key(name)
+    for a in await memory.aliases(campaign.guild_id, campaign.id):
+        if a.key == key and a.status == CONFIRMED:
+            entity = await memory.entity(campaign.guild_id, campaign.id, a.entity_id)
+            if entity is not None and entity.status == CONFIRMED:
+                return entity.name
+    return None
+
+
+def already_known(name: str, entry: str) -> str:
+    if name_key(name) == name_key(entry):
+        return f"DMbot already knows **{_md(entry)}**. Open it with 🔍 Find a name."
+    return (
+        f"DMbot already knows **{_md(name)}** (another name for **{_md(entry)}**). Open it "
+        "with 🔍 Find a name."
+    )
 
 
 class KindPicker(_Menu):
@@ -405,6 +464,7 @@ class KindPicker(_Menu):
         except MemoryRuleError as exc:
             await _replace(interaction, f"Couldn't save that: {exc}", None)
             return
+        changed(interaction, campaign)
         await _replace(interaction, saved_text(entity, self.others, self.secret), None)
 
 
@@ -511,6 +571,7 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't save that: {exc}")
             return
+        changed(interaction, campaign)
         await _tell(
             interaction,
             f"✅ DMbot will remember **{_md(entity.name)}**, played by "

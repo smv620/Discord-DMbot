@@ -233,6 +233,13 @@ class LookupCache:
             ):
                 slot.stale = True
 
+    def mark_stale(self, guild_id: int, campaign_id: str) -> None:
+        """DMbot itself just changed this campaign's names: reload before next use,
+        without waiting for the change notification."""
+        slot = self._slots.get((guild_id, campaign_id))
+        if slot is not None:
+            slot.stale = True
+
     def mark_all_stale(self) -> None:
         """Changes may have been missed: reload every copy before its next use."""
         for slot in self._slots.values():

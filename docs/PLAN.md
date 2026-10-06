@@ -868,7 +868,16 @@ names panel nor the speech-to-text hints can be a fixed list.
   a secret-name field for the campaign's DMs only), Change what it is, and Remove
   (asks first; Undo). Still to come in step 2: Edit other names, Same as…, 🧭 Connect
   to…, and "Show all" on long sections. The type-ahead answers from the copy the
-  session already keeps (no expiry for search-only copies yet).
+  session already keeps (no expiry for search-only copies yet). Decided while building:
+  after DMbot's own change the copy is marked stale at once (not waiting for the change
+  notification), so the redrawn card and the next search are right; Fix spelling and
+  Add another name redraw the card in place with what changed on top; Fix spelling
+  and adding a name refuse a name another entry already has (checked against names
+  everyone may know, so the reply never reveals a secret one) and never turn a secret
+  name into the main name; Undo works only to bring back that forgotten name. A
+  connection reads the same sentence on both cards for now ("Ulfgar is a member of
+  the Frostwolf tribe"); the reversed wording ("members include Ulfgar") comes with
+  🧭 Connect to….
 
 **Campaign memory rules (the ontology) (decided 2026-10-05).** EntityBot alone builds and
 maintains the ontology; there is no human graph engineer. So it is small, strict,
