@@ -3,8 +3,8 @@
 The DM adds names, nicknames, secret identities and players' characters, and checks
 the names DMbot suggests after a session. Plain words only ("names DMbot knows"),
 never "entity", "graph" or "ontology". Only the campaign's DMs (or a server manager)
-can see or change them; every button re-checks, since a menu can be pressed minutes
-later. Everything the DM says here is saved as the DM's word (confirmed).
+can see or change them: every button re-checks, since a menu can be pressed minutes
+later, and everything here is private to the DM. What the DM says counts as confirmed.
 """
 
 from __future__ import annotations
@@ -18,11 +18,12 @@ from typing import TYPE_CHECKING, Any
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory.models import CONFIRMED, DM, PROPOSED, Entity, MemoryRuleError, name_key
+from dmbot.memory.models import CONFIRMED, DM, PROPOSED, REJECTED, Entity, MemoryRuleError, name_key
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
+    VIEW_TIMEOUT_S,
     _bot,
     _Button,
     _is_manager,
@@ -40,24 +41,27 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 SHOWN_NAMES = 15
+SHOWN_OTHER_NAMES = 3
+PANEL_MAX = 1900  # under Discord's 2,000 characters
 SAME_AS_CHOICES = 25  # Discord's limit for a menu
+PC = "player_character"
 
 # What the DM can say a name is, in plain words. Keys are the memory rules' kinds.
 KINDS: dict[str, str] = {
-    "npc": "Someone the DM plays (NPC)",
-    "player_character": "A player's character",
+    "npc": "Someone you play (NPC)",
+    PC: "A player's character",
     "place": "A place",
     "faction": "A group (guild, cult, family…)",
     "creature": "A creature or monster",
     "item": "An item",
-    "deity": "A god",
+    "deity": "A god or other power",
     "spell": "A spell or magic",
-    "event": "An event",
+    "event": "Something that happened (event)",
     "concept": "Something else",
 }
 KIND_SHORT: dict[str, str] = {
     "npc": "NPC",
-    "player_character": "player's character",
+    PC: "player's character",
     "character": "character",
     "place": "place",
     "faction": "group",
@@ -68,12 +72,23 @@ KIND_SHORT: dict[str, str] = {
     "event": "event",
     "concept": "other",
 }
-NOT_AVAILABLE = "Remembering names isn't switched on for this DMbot yet."
-GONE = "That name isn't waiting any more (maybe already checked). Run `/dmbot names` again."
+NOT_AVAILABLE = (
+    "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
+)
+GONE = "That name was just changed or removed. Run `/dmbot names` to try again."
 
 
 def _memory(interaction: discord.Interaction) -> MemoryStore | None:
     return _bot(interaction).memory
+
+
+def _md(text: str) -> str:
+    """A name as typed or heard, shown as-is (no stray bold or italics)."""
+    return discord.utils.escape_markdown(text)
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
 def split_names(raw: str) -> list[str]:
@@ -104,7 +119,7 @@ async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> C
 
 
 def ranked_same_as(heard: str, entities: list[Entity]) -> list[Entity]:
-    """Confirmed names most likely to be the same as `heard`: sound first, then spelling."""
+    """Known names most likely to be the same as `heard`: sound first, then spelling."""
     codes = set(sound_codes(heard))
     key = name_key(heard)
 
@@ -119,35 +134,51 @@ def ranked_same_as(heard: str, entities: list[Entity]) -> list[Entity]:
 
 
 async def home_text(memory: MemoryStore, campaign: Campaign) -> tuple[str, int]:
+    """The panel: names DMbot knows (with other and secret names; it's private to the
+    DM), kept under Discord's message limit."""
     gid, cid = campaign.guild_id, campaign.id
     confirmed = await memory.entities(gid, cid, statuses=[CONFIRMED])
     waiting = await memory.entities(gid, cid, statuses=[PROPOSED])
-    aliases = await memory.aliases(gid, cid, include_secret=False)
+    aliases = await memory.aliases(gid, cid, include_secret=True)
     others: dict[str, list[str]] = {}
-    names_by_id = {e.id: e for e in confirmed}
+    secrets: dict[str, list[str]] = {}
+    by_id = {e.id: e for e in confirmed}
     for a in aliases:
-        entity = names_by_id.get(a.entity_id)
-        if entity is not None and a.key != name_key(entity.name):
-            others.setdefault(a.entity_id, []).append(a.text)
-    lines = [f"🧠 **Names DMbot knows for {campaign.name}**"]
+        entity = by_id.get(a.entity_id)
+        if entity is None or a.key == name_key(entity.name) or a.status != CONFIRMED:
+            continue
+        (secrets if a.secret else others).setdefault(a.entity_id, []).append(_md(a.text))
+    lines = [f"🧠 **Names DMbot knows for {_md(campaign.name)}**"]
     if confirmed:
         lines.append(
             "DMbot listens for these names and spells them right in the transcript. "
             "It never makes up story."
         )
-        newest = sorted(confirmed, key=lambda e: -e.created_at)[:SHOWN_NAMES]
-        for e in newest:
-            also = f" (also: {', '.join(others[e.id])})" if others.get(e.id) else ""
-            lines.append(f"• **{e.name}**, {KIND_SHORT.get(e.type, e.type)}{also}")
-        if len(confirmed) > SHOWN_NAMES:
-            lines.append(f"…and {len(confirmed) - SHOWN_NAMES} more.")
     else:
         lines.append(
-            "None yet. Add the names your table uses (characters, places, NPCs), and "
-            "DMbot will listen for them and spell them right."
+            "None yet. Add the names your table says out loud (characters, NPCs, places). "
+            "DMbot listens for them so the transcript spells them right: **Belleros**, not "
+            '"Bell Eros". It never makes up story.'
         )
     if waiting:
-        lines.append(f"📝 **{len(waiting)} new name(s) from your sessions to check.**")
+        lines.append(f"📝 **{_plural(len(waiting), 'new name')} from your sessions to check.**")
+    shown = 0
+    for e in sorted(confirmed, key=lambda e: -e.created_at)[:SHOWN_NAMES]:
+        line = f"• **{_md(e.name)}**, {KIND_SHORT.get(e.type, e.type)}"
+        also = others.get(e.id, [])
+        if also:
+            extra = (
+                f" +{len(also) - SHOWN_OTHER_NAMES} more" if len(also) > SHOWN_OTHER_NAMES else ""
+            )
+            line += f" (also: {', '.join(also[:SHOWN_OTHER_NAMES])}{extra})"
+        if secrets.get(e.id):
+            line += f" 🤫 secret: {', '.join(secrets[e.id][:SHOWN_OTHER_NAMES])}"
+        if len("\n".join([*lines, line])) > PANEL_MAX - 40:
+            break
+        lines.append(line)
+        shown += 1
+    if len(confirmed) > shown:
+        lines.append(f"…and {len(confirmed) - shown} more.")
     return "\n".join(lines), len(waiting)
 
 
@@ -216,10 +247,13 @@ class CampaignChoice(_Menu):
         self.add_item(self.pick)
 
     async def _picked(self, interaction: discord.Interaction) -> None:
+        self.stop()
         await show_home(interaction, self.pick.values[0])
 
 
-@dmbot_group.command(name="names", description="The names DMbot listens for in your campaign")
+@dmbot_group.command(
+    name="names", description="Teach DMbot your campaign's names so it spells them right"
+)
 async def dmbot_names(interaction: discord.Interaction) -> None:
     guild = interaction.guild
     if guild is None:
@@ -256,26 +290,30 @@ class AddNameForm(discord.ui.Modal, title="Add a name"):
         max_length=400,
     )
     secret: discord.ui.TextInput[AddNameForm] = discord.ui.TextInput(
-        label="Secret names (optional, only you see these)",
-        placeholder="A disguise players don't know about. Never shown to players.",
+        label="Disguises or secret identities (optional)",
+        placeholder="Example: the hooded stranger. Players never learn who it really is.",
         required=False,
         max_length=400,
     )
 
     def __init__(self, campaign_id: str) -> None:
-        super().__init__()
+        super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign_id = campaign_id
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if await _campaign_for(interaction, self.campaign_id) is None:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        memory = _memory(interaction)
+        if campaign is None or memory is None:
+            return
+        name = " ".join(self.name.value.split())
+        known = await memory.aliases(campaign.guild_id, campaign.id, include_secret=True)
+        if any(a.key == name_key(name) for a in known):
+            await _tell(interaction, f"DMbot already knows **{_md(name)}**.")
             return
         view = KindPicker(
-            self.campaign_id,
-            self.name.value,
-            split_names(self.others.value),
-            split_names(self.secret.value),
+            self.campaign_id, name, split_names(self.others.value), split_names(self.secret.value)
         )
-        await _send(interaction, f"**What is {view.name_shown}?**", view)
+        await _send(interaction, f"**What is {_md(name)}?**", view)
 
 
 class KindPicker(_Menu):
@@ -283,7 +321,6 @@ class KindPicker(_Menu):
         super().__init__()
         self.campaign_id = campaign_id
         self.name = name
-        self.name_shown = discord.utils.escape_markdown(" ".join(name.split()))
         self.others = others
         self.secret = secret
         self.pick = _Select(
@@ -292,7 +329,7 @@ class KindPicker(_Menu):
             options=[
                 discord.SelectOption(label=label, value=kind)
                 for kind, label in KINDS.items()
-                if kind != "player_character"  # those are added with their player
+                if kind != PC  # those are added with their player
             ],
         )
         self.add_item(self.pick)
@@ -302,6 +339,7 @@ class KindPicker(_Menu):
         memory = _memory(interaction)
         if campaign is None or memory is None:
             return
+        self.stop()
         try:
             entity = await save_name(
                 memory, campaign, self.name, self.pick.values[0], self.others, self.secret
@@ -340,15 +378,14 @@ async def save_name(
 
 
 def saved_text(entity: Entity, others: list[str], secret: list[str]) -> str:
-    lines = [
-        f"✅ DMbot will remember **{entity.name}** ({KIND_SHORT.get(entity.type, entity.type)})."
-    ]
+    kind = KIND_SHORT.get(entity.type, entity.type)
+    lines = [f"✅ DMbot will remember **{_md(entity.name)}** ({kind})."]
     if others:
-        lines.append(f"It also listens for: {', '.join(others)}.")
+        lines.append(f"It also listens for: {', '.join(map(_md, others))}.")
     if secret:
         lines.append(
-            f"🤫 Secret names, only for you: {', '.join(secret)}. DMbot never reveals "
-            "these in the transcript."
+            f"🤫 Kept secret: **{', '.join(map(_md, secret))}** is really "
+            f"**{_md(entity.name)}**. Only you see this. DMbot never puts it in the transcript."
         )
     return "\n".join(lines)
 
@@ -357,19 +394,19 @@ def saved_text(entity: Entity, others: list[str], secret: list[str]) -> str:
 
 
 class _UserSelect(discord.ui.UserSelect[Any]):
-    def __init__(self, picker: PlayerPicker) -> None:
+    def __init__(self, on_pick: Any) -> None:
         super().__init__(placeholder="Pick the player…")
-        self.picker = picker
+        self.on_pick = on_pick
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await self.picker.picked(interaction, self.values[0])
+        await self.on_pick(interaction, self.values[0])
 
 
 class PlayerPicker(_Menu):
     def __init__(self, campaign_id: str) -> None:
         super().__init__()
         self.campaign_id = campaign_id
-        self.add_item(_UserSelect(self))
+        self.add_item(_UserSelect(self.picked))
 
     async def picked(
         self, interaction: discord.Interaction, player: discord.User | discord.Member
@@ -378,6 +415,7 @@ class PlayerPicker(_Menu):
             await _tell(interaction, "Pick a person, not a bot.")
             return
         if await _campaign_for(interaction, self.campaign_id):
+            self.stop()
             await interaction.response.send_modal(
                 CharacterForm(self.campaign_id, player.id, player.display_name)
             )
@@ -395,7 +433,9 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
     )
 
     def __init__(self, campaign_id: str, player_id: int, player_name: str) -> None:
-        super().__init__()
+        super().__init__(
+            title=logic.shorten(f"{player_name}'s character", 45), timeout=VIEW_TIMEOUT_S
+        )
         self.campaign_id = campaign_id
         self.player_id = player_id
         self.player_name = player_name
@@ -408,22 +448,16 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
         others = split_names(self.others.value)
         try:
             entity = await save_name(
-                memory,
-                campaign,
-                self.name.value,
-                "player_character",
-                others,
-                [],
-                played_by=self.player_id,
+                memory, campaign, self.name.value, PC, others, [], played_by=self.player_id
             )
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't save that: {exc}")
             return
-        player = discord.utils.escape_markdown(self.player_name)
         await _tell(
             interaction,
-            f"✅ DMbot will remember **{entity.name}**, played by **{player}**."
-            + (f" It also listens for: {', '.join(others)}." if others else ""),
+            f"✅ DMbot will remember **{_md(entity.name)}**, played by "
+            f"**{_md(self.player_name)}**."
+            + (f" It also listens for: {', '.join(map(_md, others))}." if others else ""),
         )
 
 
@@ -431,12 +465,9 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
 
 
 def suggestion_text(entity: Entity, left: int) -> str:
-    heard = f" {entity.description}." if entity.description else ""
-    more = f"\n_{left - 1} more after this one._" if left > 1 else ""
-    return (
-        f"📝 **{entity.name}**: a new name DMbot heard.{heard} "
-        f"Someone or something in your game?{more}"
-    )
+    heard = f" ({entity.description.lower()})" if entity.description else ""
+    more = f"\n_{_plural(left - 1, 'more name')} after this one._" if left > 1 else ""
+    return f"📝 **{_md(entity.name)}**{heard}\nIs this a name in your game?{more}"
 
 
 async def start_review(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -449,9 +480,7 @@ async def start_review(interaction: discord.Interaction, campaign_id: str) -> No
         return
     waiting = await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED])
     if not waiting:
-        await _tell(
-            interaction, "✅ No new names to check. DMbot suggests some after each session."
-        )
+        await _tell(interaction, "✅ No new names to check. DMbot suggests some after a session.")
         return
     waiting.sort(key=lambda e: (e.created_at, e.name))
     view = SuggestionReview(campaign.id, [e.id for e in waiting])
@@ -465,13 +494,16 @@ class SuggestionReview(_Menu):
         super().__init__()
         self.campaign_id = campaign_id
         self.queue = entity_ids
+        self.later = 0  # left for another time this round
         self._buttons()
 
     def _buttons(self) -> None:
         self.clear_items()
         self.add_item(_Button(self._yes, label="✅ Yes, add it", style=discord.ButtonStyle.success))
-        self.add_item(_Button(self._same, label="🔗 Same as…", style=discord.ButtonStyle.primary))
-        self.add_item(_Button(self._no, label="🚫 Not a name", style=discord.ButtonStyle.danger))
+        self.add_item(
+            _Button(self._same, label="🔗 Same as a known name…", style=discord.ButtonStyle.primary)
+        )
+        self.add_item(_Button(self._no, label="🚫 Not a name", style=discord.ButtonStyle.secondary))
         self.add_item(_Button(self._later, label="Later", style=discord.ButtonStyle.secondary))
 
     async def _current(
@@ -479,7 +511,10 @@ class SuggestionReview(_Menu):
     ) -> tuple[Campaign, MemoryStore, Entity] | None:
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
-        if campaign is None or memory is None or not self.queue:
+        if campaign is None or memory is None:
+            return None
+        if not self.queue:
+            await self._finish(interaction, None)
             return None
         entity = await memory.entity(campaign.guild_id, campaign.id, self.queue[0])
         if entity is None or entity.status != PROPOSED:
@@ -505,8 +540,28 @@ class SuggestionReview(_Menu):
                 await _replace(interaction, f"{note}\n\n{text}" if note else text, self)
                 return
             self.queue.pop(0)
-        done = "✅ All checked. DMbot will listen for the names you said yes to."
+        await self._finish(interaction, note)
+
+    async def _finish(self, interaction: discord.Interaction, note: str | None) -> None:
+        self.stop()
+        if self.later:
+            done = (
+                f"Done for now. {_plural(self.later, 'name')} still waiting: run "
+                "`/dmbot names` to check them later."
+            )
+        else:
+            done = "✅ All checked. DMbot will listen for the names you said yes to."
         await _replace(interaction, f"{note}\n\n{done}" if note else done, None)
+
+    async def _saved(
+        self,
+        interaction: discord.Interaction,
+        campaign: Campaign,
+        memory: MemoryStore,
+        note: str,
+    ) -> None:
+        self.queue.pop(0)
+        await self._next(interaction, campaign, memory, note=note)
 
     async def _yes(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
@@ -516,28 +571,53 @@ class SuggestionReview(_Menu):
         self.clear_items()
         self.kind = _Select(
             self._kind_picked,
-            placeholder=f"What is {entity.name}?",
+            placeholder=logic.shorten(f"What is {entity.name}?", 150),
             options=[
-                discord.SelectOption(label=label, value=kind)
-                for kind, label in KINDS.items()
-                if kind != "player_character"
+                discord.SelectOption(label=label, value=kind) for kind, label in KINDS.items()
             ],
         )
         self.add_item(self.kind)
-        await _replace(interaction, f"**What is {entity.name}?**", self)
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
+        await _replace(interaction, f"**What is {_md(entity.name)}?**", self)
 
     async def _kind_picked(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
         if current is None:
             return
         campaign, memory, entity = current
-        gid, cid = campaign.guild_id, campaign.id
-        await memory.set_entity_type(gid, cid, entity.id, self.kind.values[0], source=DM)
-        await memory.set_entity_status(gid, cid, entity.id, CONFIRMED, source=DM)
-        for alias in await memory.aliases(gid, cid, entity_id=entity.id, include_secret=True):
-            await memory.update_alias(gid, cid, alias.id, status=CONFIRMED, source=DM)
-        self.queue.pop(0)
-        await self._next(interaction, campaign, memory, note=f"✅ Added **{entity.name}**.")
+        kind = self.kind.values[0]
+        if kind == PC:  # who plays them?
+            self.clear_items()
+            self.add_item(_UserSelect(self._player_picked))
+            self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
+            await _replace(interaction, f"**Who plays {_md(entity.name)}?**", self)
+            return
+        try:
+            await memory.confirm_entity(campaign.guild_id, campaign.id, entity.id, kind, source=DM)
+        except MemoryRuleError:
+            await _tell(interaction, GONE)
+            return
+        await self._saved(interaction, campaign, memory, f"✅ Added **{_md(entity.name)}**.")
+
+    async def _player_picked(
+        self, interaction: discord.Interaction, player: discord.User | discord.Member
+    ) -> None:
+        if player.bot:
+            await _tell(interaction, "Pick a person, not a bot.")
+            return
+        current = await self._current(interaction)
+        if current is None:
+            return
+        campaign, memory, entity = current
+        try:
+            await memory.confirm_entity(
+                campaign.guild_id, campaign.id, entity.id, PC, source=DM, played_by=player.id
+            )
+        except MemoryRuleError:
+            await _tell(interaction, GONE)
+            return
+        note = f"✅ Added **{_md(entity.name)}**, played by **{_md(player.display_name)}**."
+        await self._saved(interaction, campaign, memory, note)
 
     async def _same(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
@@ -546,12 +626,14 @@ class SuggestionReview(_Menu):
         campaign, memory, entity = current
         known = await memory.entities(campaign.guild_id, campaign.id, statuses=[CONFIRMED])
         if not known:
-            await _tell(interaction, "DMbot doesn't know any names yet to match it with.")
+            await _tell(
+                interaction, "DMbot doesn't know any names yet. Press ✅ Yes, add it instead."
+            )
             return
         self.clear_items()
         self.same = _Select(
             self._same_picked,
-            placeholder=f"{entity.name} is the same as…",
+            placeholder=logic.shorten(f"{entity.name} is the same as…", 150),
             options=[
                 discord.SelectOption(
                     label=logic.shorten(e.name, logic.OPTION_LABEL_MAX),
@@ -563,7 +645,11 @@ class SuggestionReview(_Menu):
         )
         self.add_item(self.same)
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
-        await _replace(interaction, f"**Who or what is {entity.name}?**", self)
+        await _replace(
+            interaction,
+            f"Which name is **{_md(entity.name)}** the same as? Not in the list? Press Back.",
+            self,
+        )
 
     async def _same_picked(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
@@ -572,41 +658,43 @@ class SuggestionReview(_Menu):
         campaign, memory, entity = current
         gid, cid = campaign.guild_id, campaign.id
         keep = await memory.entity(gid, cid, self.same.values[0])
-        if keep is None:
+        if keep is None or keep.status != CONFIRMED:
             await _tell(interaction, GONE)
             return
-        await memory.merge(gid, cid, keep.id, entity.id, source=DM, dm_said_same=True)
-        heard = name_key(entity.name)
-        for alias in await memory.aliases(gid, cid, entity_id=keep.id, include_secret=True):
-            if alias.key == heard and alias.status != CONFIRMED:
-                await memory.update_alias(gid, cid, alias.id, status=CONFIRMED, source=DM)
-        self.queue.pop(0)
-        note = f"🔗 **{entity.name}** now means **{keep.name}**. DMbot will spell it that way."
-        await self._next(interaction, campaign, memory, note=note)
+        try:
+            await memory.merge(gid, cid, keep.id, entity.id, source=DM, dm_said_same=True)
+            heard = name_key(entity.name)
+            for alias in await memory.aliases(gid, cid, entity_id=keep.id, include_secret=True):
+                if alias.key == heard and alias.status != CONFIRMED:
+                    await memory.update_alias(gid, cid, alias.id, status=CONFIRMED, source=DM)
+        except MemoryRuleError:
+            await _tell(interaction, GONE)
+            return
+        note = f"🔗 Got it: **{_md(entity.name)}** is another name for **{_md(keep.name)}**."
+        await self._saved(interaction, campaign, memory, note)
 
     async def _no(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
         if current is None:
             return
         campaign, memory, entity = current
-        await memory.set_entity_status(
-            campaign.guild_id, campaign.id, entity.id, "rejected", source=DM
-        )
-        self.queue.pop(0)
-        note = f"🚫 OK, **{entity.name}** isn't a name. DMbot won't suggest it again."
-        await self._next(interaction, campaign, memory, note=note)
+        try:
+            await memory.set_entity_status(
+                campaign.guild_id, campaign.id, entity.id, REJECTED, source=DM
+            )
+        except MemoryRuleError:
+            await _tell(interaction, GONE)
+            return
+        note = f"🚫 OK, **{_md(entity.name)}** isn't a name. DMbot won't suggest it again."
+        await self._saved(interaction, campaign, memory, note)
 
     async def _later(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
         if current is None:
             return
         campaign, memory, _ = current
-        self.queue.append(self.queue.pop(0))
-        if len(self.queue) == 1:
-            await _replace(
-                interaction, "OK, it'll wait. Run `/dmbot names` to check it later.", None
-            )
-            return
+        self.later += 1
+        self.queue.pop(0)  # this round only; it's still waiting next time
         await self._next(interaction, campaign, memory, note=None)
 
     async def _back(self, interaction: discord.Interaction) -> None:
@@ -621,8 +709,8 @@ class ReviewButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:names:review:(?P<campaign>[0-9a-f]{32})",
 ):
-    """On the DM screen after a session: opens the check privately for the DM. Works
-    after a restart (the campaign is in the button's ID)."""
+    """On the DM screen after a session: opens the check privately for whoever runs the
+    campaign. Works after a restart (the campaign is in the button's ID)."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
@@ -651,10 +739,12 @@ def review_view(campaign_id: str) -> discord.ui.View:
 
 
 def after_session_text(names: list[str]) -> str:
-    shown = ", ".join(f"**{discord.utils.escape_markdown(n)}**" for n in names[:5])
+    """For the DM screen (players may see it under peek; the names come from the
+    transcript anyone can read, so nothing is spoiled)."""
+    shown = ", ".join(f"**{_md(n)}**" for n in names[:5])
     more = f" and {len(names) - 5} more" if len(names) > 5 else ""
     return (
-        f"📝 **After the session: {len(names)} new name(s) to check:** {shown}{more}. "
-        "Tell DMbot which are people, places or things in your game, so it listens for "
-        "them and spells them right. Only the DM can press this."
+        f"📝 **{_plural(len(names), 'new name')} to check** from this session: {shown}{more}.\n"
+        "Say which are in your game, so DMbot spells them right. The check opens privately "
+        "for the DM."
     )

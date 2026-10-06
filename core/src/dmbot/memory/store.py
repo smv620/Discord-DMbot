@@ -437,9 +437,40 @@ class MemoryStore:
             (await _load_ontology(w)).active_type(type)
             current = await _entity_row(w, entity_id)
             changes: dict[str, Any] = {"type": type}
-            if current["played_by"] is not None and type != "player_character":
+            if current["played_by"] is not None and not onto_is_pc(await _load_ontology(w), type):
                 changes["played_by"] = None
             row = await w.update(ENTITIES, entity_id, changes)
+            return Written(_entity(row), w.batch)
+
+    async def confirm_entity(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        type: str,
+        *,
+        source: str,
+        played_by: int | None = None,
+    ) -> Written[Entity]:
+        """The DM says a suggested name is real: what it is, confirmed with all its
+        names, in one change (one undo, one reload)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can confirm that.")
+        if played_by is not None and not 0 < played_by <= INT64_MAX:
+            raise ValueError("Bad Discord user ID")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            onto.active_type(type)
+            if played_by is not None and not onto.is_a(type, "player_character"):
+                raise MemoryRuleError("Only a player character is played by someone.")
+            await _entity_row(w, entity_id)
+            row = await w.update(
+                ENTITIES, entity_id, {"type": type, "status": CONFIRMED, "played_by": played_by}
+            )
+            for alias in await w.select(
+                ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
+            ):
+                await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
             return Written(_entity(row), w.batch)
 
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
@@ -860,6 +891,10 @@ class MemoryStore:
 
 
 # ---- helpers (inside a write) ----------------------------------------------------------
+
+
+def onto_is_pc(onto: Ontology, type_key: str) -> bool:
+    return onto.is_a(type_key, "player_character")
 
 
 def _new_alias(

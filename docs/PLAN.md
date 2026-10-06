@@ -631,20 +631,24 @@ remembers Belleros is Cerric's mentor"), never "graph", "entity" or "ontology".
 **Campaign memory step 3: built (2026-10-06, #126).**
 - **`/dmbot names`** (the campaign's DMs and server managers only, private): the names
   DMbot knows, with **➕ Add a name** (a short form: name, other names or nicknames,
-  secret names only the DM sees; then "What is it?"), **🧑 Add a player's character**
-  (pick the player, then the name; stored with who plays it, for speaker labels later),
+  disguises or secret identities; then "What is it?"), **🧑 Add a player's character**
+  (pick the player, then the name; stored with who plays it, for speaker labels later;
+  like the DM list, a backup keeps that player as a Discord user ID),
   and **📝 Check new names**. Everything the DM says here counts as confirmed.
 - **After each session** DMbot reads what it heard (only from people who still agree)
   and suggests up to 10 names it doesn't know: capitalized mid-sentence, heard at least
   twice, never in lower case, not a common word or game term, and not anything DMbot
   already has an answer for (known names, "Not a name", "keep as heard", people at the
-  table). The DM screen shows "📝 After the session: N new names to check" with a
+  table, each word of their display names included). The DM screen shows "📝 N new
+  names to check from this session" (the check itself opens privately for the DM) with a
   button that works after a restart. Suggestions are stored as proposed, kind "other".
 - **Checking a suggestion:** ✅ Yes, add it (then what it is), 🔗 Same as… (a known
   name, sound-alikes first: it becomes another way to say that name), 🚫 Not a name
-  (never suggested again), Later.
+  (never suggested again), Later (ends this round; it's still waiting next time). A
+  suggestion can also be marked as a player's character.
 - **Speech-to-text hints** now come from the campaign's names, most useful first:
-  players' characters, confirmed names, suggested names, then players' display names.
+  players' characters, confirmed names, players' display names, then suggested names
+  (one hint per name, however it's capitalized).
   Secret names are never sent. The in-memory copy follows changes live.
 
 **Campaign memory rules (the ontology) (decided 2026-10-05).** EntityBot alone builds and

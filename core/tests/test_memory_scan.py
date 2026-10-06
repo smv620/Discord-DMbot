@@ -3,10 +3,10 @@
 import unittest
 
 from dmbot.devtools.stt_bakeoff.data import LINES, NAMES
-from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names
+from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names
 
 
-def names(found: list) -> list[str]:  # type: ignore[type-arg]
+def names(found: list[Suggestion]) -> list[str]:
     return [s.name for s in found]
 
 
@@ -33,8 +33,29 @@ class Scan(unittest.TestCase):
         self.assertEqual(find_new_names(lines), [])
 
     def test_known_answers_are_never_suggested_again(self) -> None:
-        lines = ["I see Hrothgar now.", "Ask Hrothgar again.", "Then Mia laughs.", "Ask Mia."]
+        lines = ["I see Hrothgar now.", "We ask Hrothgar again.", "So Mia laughs.", "I tell Mia."]
+        self.assertEqual(names(find_new_names(lines)), ["Hrothgar", "Mia"])  # without skips
         self.assertEqual(names(find_new_names(lines, skip_keys=["hrothgar", "Mia"])), [])
+
+    def test_possessives_count_as_the_name(self) -> None:
+        lines = ["I meet Hrothgar's men.", "We see Hrothgar’s axe.", "I ask Ka'zeth twice."]
+        self.assertEqual(names(find_new_names(lines)), ["Hrothgar"])
+
+    def test_a_name_after_a_capitalized_first_word_is_found(self) -> None:
+        lines = ["Ask Hrothgar now.", "Tell Hrothgar now."]
+        self.assertEqual(names(find_new_names(lines)), ["Hrothgar"])
+
+    def test_long_runs_are_dropped_not_chopped(self) -> None:
+        lines = ["We reach Caer Dineval Ice Fortress.", "Back to Caer Dineval Ice Fortress."]
+        self.assertEqual(find_new_names(lines), [])
+
+    def test_names_in_any_script(self) -> None:
+        self.assertEqual(
+            names(find_new_names(["Wir sehen Łódź heute.", "Dann Łódź wieder."])), ["Łódź"]
+        )
+
+    def test_classes_and_species_are_game_words(self) -> None:
+        self.assertEqual(find_new_names(["I am a Paladin.", "My Paladin and the Elf."] * 2), [])
 
     def test_leading_words_are_trimmed_from_a_name(self) -> None:
         lines = ["They serve The Ashen Crown.", "Beware The Ashen Crown."]

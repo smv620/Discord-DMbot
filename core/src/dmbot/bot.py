@@ -102,6 +102,7 @@ SUMMARY_INTERVAL_S = 15
 TRANSCRIPT_FLUSH_S = 2.0
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_MAX = 100  # names offered to speech-to-text (engines cut this down further)
+HINTS_FAIL_LOG_S = 60.0
 TRANSCRIPT_POST_TIMEOUT_S = 10.0  # one stuck post can't hold the others up for long
 TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel can't stall all)
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
@@ -254,6 +255,7 @@ class DMBot(commands.AutoShardedBot):
         # an in-memory copy of each campaign's names, kept up to date by notifications.
         self.memory = memory
         self.lookup = LookupCache(memory) if memory is not None else None
+        self._hints_failed_at = -HINTS_FAIL_LOG_S
         self.tables: dict[int, Table] = {}
         self.pipeline = TranscriptionPipeline(
             transcriber or PlaceholderTranscriber(),
@@ -391,6 +393,7 @@ class DMBot(commands.AutoShardedBot):
         if table is not None:
             table.segmenter.drop(user_id)
             table.transcript.drop_speaker(user_id)  # words not posted yet are discarded
+            table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
 
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
@@ -1185,6 +1188,8 @@ class DMBot(commands.AutoShardedBot):
         table.capture_log.add_utterance(utterance)
         if text and len(table.heard) < HEARD_MAX:
             table.heard.append((utterance.user_id, text))
+            if len(table.heard) == HEARD_MAX:
+                log.info("Name scan: kept the first %d lines of this session", HEARD_MAX)
         if text and table.transcript_channel_id is not None:
             guild = self.get_guild(utterance.guild_id)
             member = guild.get_member(utterance.user_id) if guild else None
@@ -1214,9 +1219,15 @@ class DMBot(commands.AutoShardedBot):
         try:
             lookup = await self.lookup.get(guild_id, table.campaign_id)
         except Exception:
-            log.exception("Couldn't load the campaign's names for hints")
+            # Asked for every connection to speech-to-text: say so at most once a minute.
+            now = time.monotonic()
+            if now - self._hints_failed_at > HINTS_FAIL_LOG_S:
+                self._hints_failed_at = now
+                log.exception("Couldn't load the campaign's names for hints")
             return people
-        characters, confirmed, suggested = [], [], []
+        characters: list[str] = []
+        confirmed: list[str] = []
+        suggested: list[str] = []
         for entry in lookup.names:
             if entry.secret:
                 continue
@@ -1227,8 +1238,12 @@ class DMBot(commands.AutoShardedBot):
                 confirmed.append(entry.text)
             else:
                 suggested.append(entry.text)
-        ordered = dict.fromkeys([*characters, *confirmed, *suggested, *people])
-        return list(ordered)[:HINTS_MAX]
+        # People before suggestions: a guess shouldn't push out a real name. One hint per
+        # name however it's capitalized.
+        ordered: dict[str, str] = {}
+        for name in [*characters, *confirmed, *people, *suggested]:
+            ordered.setdefault(name_key(name), name)
+        return list(ordered.values())[:HINTS_MAX]
 
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to
@@ -1238,12 +1253,22 @@ class DMBot(commands.AutoShardedBot):
             return
         gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
-            lines = [text for uid, text in table.heard if self.consent.has_consent(gid, uid)]
+            agreed = await self.consent.consenting(gid)
+            lines = [text for uid, text in table.heard if uid in agreed]
             speakers = {uid for uid, _ in table.heard}
-            people = [self.name_of(gid, uid) for uid in speakers | {table.dm_user_id}]
-            skip = await self.memory.known_keys(gid, cid) | {
-                name_key(p) for p in people if not p.startswith("<@")
-            }
+            table.heard = []  # the session is over; free it
+            if not lines:
+                return
+            # People at the table aren't story names: skip their whole display names and
+            # each word of them ("Mia Stone" → "Mia", "Stone").
+            users = speakers | agreed | {table.dm_user_id}
+            users |= table.dm_user_ids
+            skip = set(await self.memory.known_keys(gid, cid))
+            for uid in users:
+                name = self.name_of(gid, uid)
+                if not name.startswith("<@"):
+                    skip.add(name_key(name))
+                    skip.update(name_key(word) for word in name.split())
             found = find_new_names(lines, skip)
             added: list[str] = []
             for suggestion in found:
@@ -1261,6 +1286,10 @@ class DMBot(commands.AutoShardedBot):
                     continue
                 added.append(suggestion.name)
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
+            if self.lookup is not None and not any(
+                t.campaign_id == cid for t in self.tables.values()
+            ):
+                self.lookup.drop([cid])  # the session's copy isn't needed any more
             if added:
                 await self.post(
                     table.screen_channel_id,

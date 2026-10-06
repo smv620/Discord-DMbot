@@ -28,7 +28,8 @@ MAX_SUGGESTIONS = 10
 MAX_WORDS = 3  # "Oskar Vane", "Ten Towns", "Caer Dineval"
 
 _SENTENCE = re.compile(r"(?<=[.!?…])\s+|\n+")
-_WORD = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’-]*")
+_WORD = re.compile(r"[^\W\d_](?:[^\W\d_]|['’-](?=[^\W\d_]))*")  # letters, any script
+_POSSESSIVE = re.compile(r"['’]s$")
 
 
 def _words(text: str) -> frozenset[str]:
@@ -55,6 +56,8 @@ GAME_TERMS = _words(
     advantage disadvantage inspiration concentration blinded charmed deafened exhaustion
     frightened grappled incapacitated invisible paralyzed petrified poisoned prone
     restrained stunned unconscious ac hp dc xp
+    barbarian bard cleric druid fighter monk paladin ranger rogue sorcerer warlock wizard
+    artificer dwarf elf elves halfling human gnome dragonborn tiefling orc goliath aasimar
     """
 )
 
@@ -69,32 +72,37 @@ def _sentences(lines: Iterable[str]) -> list[list[str]]:
     out = []
     for line in lines:
         for sentence in _SENTENCE.split(line):
-            words = _WORD.findall(sentence)
+            words = [_POSSESSIVE.sub("", w) for w in _WORD.findall(sentence)]
             if words:
                 out.append(words)
     return out
 
 
-def _runs(words: list[str], skip: set[str] | frozenset[str]) -> list[tuple[int, int]]:
-    """Each run of capitalized words as (start, end). A common word ("The") ends a run
-    and isn't part of it, and runs are at most MAX_WORDS long."""
-    runs = []
+def _is_name_word(word: str, skip: frozenset[str], lower_words: set[str]) -> bool:
+    return word[:1].isupper() and name_key(word) not in skip and word.casefold() not in lower_words
+
+
+def _candidates(
+    words: list[str], skip: frozenset[str], lower_words: set[str]
+) -> list[tuple[str, bool]]:
+    """Each run of name-like words as (text, said mid-sentence). Runs longer than
+    MAX_WORDS are dropped, not chopped (no "Caer Dineval Ice"). A run that starts the
+    sentence also offers its tail, so "Ask Hrothgar" still finds Hrothgar."""
+    out = []
     i = 0
     while i < len(words):
-        if words[i][0].isupper() and name_key(words[i]) not in skip:
-            j = i
-            while (
-                j < len(words)
-                and words[j][0].isupper()
-                and name_key(words[j]) not in skip
-                and j - i < MAX_WORDS
-            ):
-                j += 1
-            runs.append((i, j))
-            i = j
-        else:
+        if not _is_name_word(words[i], skip, lower_words):
             i += 1
-    return runs
+            continue
+        j = i
+        while j < len(words) and _is_name_word(words[j], skip, lower_words):
+            j += 1
+        if j - i <= MAX_WORDS:
+            out.append((" ".join(words[i:j]), i > 0))
+            if i == 0 and j - i > 1:
+                out.append((" ".join(words[1:j]), True))
+        i = j
+    return out
 
 
 def find_new_names(
@@ -102,26 +110,19 @@ def find_new_names(
 ) -> list[Suggestion]:
     """Names in these lines (as heard) worth asking the DM about, most heard first."""
     sentences = _sentences(lines)
-    skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
-    lower_words = {w.casefold() for words in sentences for w in words if w[0].islower()}
+    skip = frozenset({name_key(k) for k in skip_keys} | COMMON | GAME_TERMS)
+    lower_words = {w.casefold() for words in sentences for w in words if w[:1].islower()}
     counts: Counter[str] = Counter()
     spellings: dict[str, Counter[str]] = {}
     mid_sentence: set[str] = set()
     for words in sentences:
-        for start, end in _runs(words, skip):
-            run = words[start:end]
-            text = " ".join(run)
+        for text, mid in _candidates(words, skip, lower_words):
             key = name_key(text)
-            if (
-                not key
-                or len(text) > NAME_MAX
-                or key in skip
-                or any(name_key(w) in skip or w.casefold() in lower_words for w in run)
-            ):
+            if not key or len(text) > NAME_MAX or key in skip:
                 continue
             counts[key] += 1
             spellings.setdefault(key, Counter())[text] += 1
-            if start > 0:
+            if mid:
                 mid_sentence.add(key)
     found = [
         Suggestion(spellings[key].most_common(1)[0][0], times)
