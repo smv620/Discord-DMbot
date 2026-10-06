@@ -360,7 +360,10 @@ class ConsentDMTests(DatabaseTest):
     async def test_name_hints_leave_out_people_dmbot_cant_look_up(self) -> None:
         await self.consent.grant(GUILD, DM)
         await self.consent.grant(GUILD, PLAYER)  # not in the member cache in this test
-        self.assertEqual(await self.bot._name_hints(GUILD), [f"user{DM}"])
+        from dmbot.audio.segmenter import Utterance
+
+        said = Utterance(GUILD, DM, 0, 0, b"")
+        self.assertEqual(await self.bot._name_hints(said), [f"user{DM}"])
 
     async def test_a_yes_from_before_the_switch_is_asked_again_and_not_recorded(self) -> None:
         await self.consent.grant(GUILD, PLAYER)  # agreed under local Whisper

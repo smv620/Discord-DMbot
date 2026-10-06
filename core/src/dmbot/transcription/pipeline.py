@@ -58,7 +58,7 @@ class ConsentChecker(Protocol):
 
 Deliver = Callable[[Utterance, str | None], None]
 Alert = Callable[[int, str], Awaitable[None]]
-Hints = Callable[[int], Awaitable[list[str]]]
+Hints = Callable[[Utterance], Awaitable[list[str]]]  # for the session that heard it
 IsActive = Callable[[Utterance], bool]  # is the session that heard it still on?
 
 
@@ -179,7 +179,7 @@ class TranscriptionPipeline:
         started = time.monotonic()
         try:
             async with timer:
-                hints = await self._hints(utterance.guild_id)
+                hints = await self._hints(utterance)
                 started = time.monotonic()
                 timer.reschedule(asyncio.get_running_loop().time() + budget)
                 text = await self.transcriber.transcribe(utterance, hints)

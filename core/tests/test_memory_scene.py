@@ -14,7 +14,14 @@ from dmbot.memory.models import (
     Relation,
     name_key,
 )
-from dmbot.memory.scene import MAX_HINTS, SCENE_WINDOW_S, SceneTracker, mentions, scene_hints
+from dmbot.memory.scene import (
+    MAX_HINTS,
+    SCENE_WINDOW_S,
+    SceneTracker,
+    mentions,
+    prepare,
+    scene_hints,
+)
 
 TRIBE, CHIEF, CAMP, TOWN, CERRIC, GUESS, STRANGER = (c * 32 for c in "abcdefg")
 MIA, DEE = 8, 9
@@ -32,8 +39,9 @@ def alias(eid: str, text: str, *, secret: bool = False, status: str = CONFIRMED)
 def link(
     a: str, b: str, status: str = CONFIRMED, n: str = "1", *, secret: bool = False
 ) -> Relation:
-    return Relation(n * 32, a, "member_of", b, "", 1.0, status, "dm", (),
-                    None, None, None, None, secret, 0)  # fmt: skip
+    return Relation(
+        n * 32, a, "member_of", b, "", 1.0, status, "dm", (), None, None, None, None, secret, 0
+    )
 
 
 def lookup(
@@ -92,7 +100,7 @@ class Hints(unittest.TestCase):
         names = lookup(link(CHIEF, TRIBE), link(CAMP, TRIBE, n="2"))
         scene = SceneTracker()
         scene.note_line(names, "The Frostwolf tribe is camped by the river.", MIA, 100.0)
-        hints = scene_hints(names, scene, 101.0, people=["Mia"])
+        hints = scene_hints(names, prepare(names), scene, 101.0, people=["Mia"])
         self.assertEqual(hints[:2], ["Cerric", "Mia"])  # characters and players always
         self.assertEqual(hints[2:4], ["Frostwolf tribe", "the Frostwolves"])  # the scene
         self.assertEqual(hints[4:6], ["Ulfgar", "the chief"])  # the tip of the tongue
@@ -105,7 +113,7 @@ class Hints(unittest.TestCase):
         names = lookup(link(CHIEF, TRIBE, status=PROPOSED))
         scene = SceneTracker()
         scene.note_line(names, "Frostwolf tribe", MIA, 0.0)
-        hints = scene_hints(names, scene, 1.0, people=["Mia"])
+        hints = scene_hints(names, prepare(names), scene, 1.0, people=["Mia"])
         self.assertLess(hints.index("Bryn Shander"), hints.index("Ulfgar"))  # not pulled in
 
     def test_saying_a_secret_name_never_brings_in_the_real_one(self) -> None:
@@ -118,7 +126,7 @@ class Hints(unittest.TestCase):
         names = lookup(link(CHIEF, TRIBE, secret=True))
         scene = SceneTracker()
         scene.note_line(names, "Frostwolf tribe", MIA, 0.0)
-        hints = scene_hints(names, scene, 1.0)
+        hints = scene_hints(names, prepare(names), scene, 1.0)
         self.assertLess(hints.index("Bryn Shander"), hints.index("Ulfgar"))
 
     def test_someone_who_stops_being_recorded_no_longer_counts(self) -> None:
@@ -134,11 +142,11 @@ class Hints(unittest.TestCase):
         scene = SceneTracker()
         scene.note_line(names, "Bryn Shander", MIA, 0.0)
         scene.note_line(names, "Ulfgar", MIA, 300.0)
-        hints = scene_hints(names, scene, 301.0)
+        hints = scene_hints(names, prepare(names), scene, 301.0)
         self.assertLess(hints.index("Ulfgar"), hints.index("Bryn Shander"))
         for t in (302.0, 303.0, 304.0):
             scene.note_line(names, "Bryn Shander", MIA, t)
-        hints = scene_hints(names, scene, 305.0)
+        hints = scene_hints(names, prepare(names), scene, 305.0)
         self.assertLess(hints.index("Bryn Shander"), hints.index("Ulfgar"))
 
     def test_names_fade_out_of_the_scene_but_stay_ahead_of_the_rest(self) -> None:
@@ -148,14 +156,14 @@ class Hints(unittest.TestCase):
         later = SCENE_WINDOW_S + 1
         self.assertEqual(scene.scene(later), {})
         self.assertEqual(scene.earlier(later), [CAMP])
-        hints = scene_hints(names, scene, later, people=["Mia"])
+        hints = scene_hints(names, prepare(names), scene, later, people=["Mia"])
         self.assertLess(hints.index("Mia"), hints.index("Wolf Hollow"))
         self.assertLess(hints.index("Wolf Hollow"), hints.index("Bryn Shander"))
 
     def test_one_hint_per_name_and_never_more_than_the_limit(self) -> None:
         many = tuple(entity(f"{i:032x}", f"Name{i}") for i in range(200))
         names = lookup(more=many)
-        hints = scene_hints(names, SceneTracker(), 0.0, people=["cerric", "Mia"])
+        hints = scene_hints(names, prepare(names), SceneTracker(), 0.0, people=["cerric", "Mia"])
         self.assertEqual(len(hints), MAX_HINTS)
         self.assertEqual(len({name_key(h) for h in hints}), len(hints))
         self.assertNotIn("cerric", hints)  # same name as the character, already there
@@ -165,4 +173,94 @@ class Hints(unittest.TestCase):
         scene = SceneTracker()
         for t in range(1000):
             scene.note_line(names, "Ulfgar", MIA, float(t))
-        self.assertLessEqual(len(scene.said[CHIEF].times), 50)
+        self.assertLessEqual(len(scene.said[CHIEF]), 20)
+
+
+class Guesses(unittest.TestCase):
+    def guessed(self) -> CampaignLookup:
+        names = lookup()
+        data = LookupData(
+            2,
+            tuple(names.entities.values()),
+            (
+                *(
+                    alias(e.entity_id, e.text, secret=e.secret, status=CONFIRMED)
+                    for e in names.names
+                    if e.confirmed or e.entity_id != GUESS
+                ),
+                alias(CHIEF, "Ulfy", status=PROPOSED),
+                alias(GUESS, "Hrothgar", status=PROPOSED),
+            ),
+            (),
+            (),
+        )
+        return CampaignLookup.build(data)
+
+    def test_a_suggested_other_name_never_counts_or_jumps_ahead(self) -> None:
+        names = self.guessed()
+        self.assertEqual(mentions(names, "ask Ulfy"), set())
+        scene = SceneTracker()
+        scene.note_line(names, "Ulfgar", MIA, 0.0)
+        hints = scene_hints(names, prepare(names), scene, 1.0)
+        self.assertLess(hints.index("Wolf Hollow"), hints.index("Ulfy"))  # guesses last
+        self.assertLess(hints.index("Bryn Shander"), hints.index("Hrothgar"))
+
+    def test_a_shorter_name_inside_a_secret_one_adds_nothing(self) -> None:
+        names = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(STRANGER, "Belleros"),),
+                (
+                    alias(STRANGER, "Belleros"),
+                    alias(STRANGER, "Vane"),
+                    alias(STRANGER, "Lord Vane", secret=True),
+                ),
+                (),
+                (),
+            )
+        )
+        self.assertEqual(mentions(names, "Lord Vane arrives"), set())
+        self.assertEqual(mentions(names, "Vane arrives"), {STRANGER})
+
+    def test_at_most_three_names_per_entry(self) -> None:
+        many = tuple(alias(CHIEF, f"Ulfgar the {w}") for w in ("Red", "Bold", "Tall", "Old"))
+        base = lookup()
+        names = CampaignLookup.build(
+            LookupData(
+                1,
+                tuple(base.entities.values()),
+                (
+                    *(
+                        alias(
+                            e.entity_id,
+                            e.text,
+                            secret=e.secret,
+                            status=CONFIRMED if e.confirmed else PROPOSED,
+                        )
+                        for e in base.names
+                    ),
+                    *many,
+                ),
+                (),
+                (),
+            )
+        )
+        scene = SceneTracker()
+        scene.note_line(names, "Ulfgar", MIA, 0.0)
+        hints = scene_hints(names, prepare(names), scene, 1.0)
+        chief = [h for h in hints if h.startswith("Ulfgar") or h == "the chief"]
+        self.assertEqual(hints[0:3], ["Cerric", "Ulfgar", chief[1]])
+        self.assertEqual(hints.index("Ulfgar"), 1)
+        self.assertEqual(len([h for h in hints[1:4] if h in chief]), 3)
+
+    def test_no_hints_when_the_limit_is_zero(self) -> None:
+        names = lookup()
+        self.assertEqual(scene_hints(names, prepare(names), SceneTracker(), 0.0, limit=0), [])
+
+    def test_forgetting_one_speaker_keeps_the_others(self) -> None:
+        names = lookup()
+        scene = SceneTracker()
+        scene.note_line(names, "Ulfgar", MIA, 0.0)
+        scene.note_line(names, "Ulfgar", DEE, 1.0)
+        scene.forget_speaker(MIA)
+        self.assertEqual(scene.said[CHIEF], [(1.0, DEE)])

@@ -304,6 +304,13 @@ def make_table(campaign_id: str) -> Table:
     )
 
 
+def clip(table: Table) -> Any:
+    """A piece of speech from this table's session, as the pipeline asks hints for it."""
+    from dmbot.audio.segmenter import Utterance
+
+    return Utterance(GUILD, PLAYER, 0, 0, bytes(32000), table.segmenter.session)
+
+
 class AfterSession(NamesTest):
     def table(self) -> Table:
         return make_table(self.campaign.id)
@@ -379,7 +386,7 @@ class Hints(NamesTest):
         )
         table = make_table(self.campaign.id)
         self.bot.tables[GUILD] = table
-        hints = await self.bot._name_hints(GUILD)
+        hints = await self.bot._name_hints(clip(table))
         self.assertEqual(hints[0], "Cerric")
         self.assertLess(hints.index("Belleros"), hints.index("Hrothgar"))
         self.assertIn("Bell", hints)
@@ -392,13 +399,16 @@ class Hints(NamesTest):
             await ui.save_name(self.memory, self.campaign, name, "npc", [], [])
         table = make_table(self.campaign.id)
         self.bot.tables[GUILD] = table
-        before = await self.bot._name_hints(GUILD)  # also loads the names for matching
+        before = await self.bot._name_hints(clip(table))  # also loads the names to match
         self.assertLess(before.index("Aldric"), before.index("Zephyr"))
-        await self.consent.grant(GUILD, PLAYER)
         said = Utterance(GUILD, PLAYER, 0, 0, bytes(32000), table.segmenter.session)
         self.bot._deliver_transcript(said, "Let's ask Zephyr about it.")
-        after = await self.bot._name_hints(GUILD)
+        after = await self.bot._name_hints(clip(table))
         self.assertEqual(after[0], "Zephyr")  # in the scene now
+        self.bot.stop_recording(GUILD, PLAYER)  # their lines stop counting at once
+        self.assertEqual(table.scene.said, {})
+        moved = await self.bot._name_hints(clip(table))
+        self.assertLess(moved.index("Aldric"), moved.index("Zephyr"))
 
 
 class Store(NamesTest):
