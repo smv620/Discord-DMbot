@@ -773,8 +773,41 @@ class SaveAndResume(SessionTests):
         assert call is not None
         self.assertIn("live transcript stopped", call.args[1])
 
+    async def test_speech_still_being_written_down_at_stop_is_kept(self) -> None:
+        # #109: the last words used to vanish when the DM pressed stop.
+        from dmbot.audio.segmenter import Utterance
+
+        await self.consent.grant(GUILD, PLAYER)
+        table, sent = await self.joined_with_transcript()
+        release = asyncio.Event()
+
+        async def slow(utterance: Any, hints: list[str]) -> str:
+            await release.wait()
+            return "Last words before we stop."
+
+        self.bot.pipeline.transcriber.transcribe = slow  # type: ignore[method-assign]
+        worker = asyncio.create_task(self.bot.pipeline.run())
+        self.addCleanup(worker.cancel)
+        await asyncio.sleep(0)
+        start_ms = table.started_at * 1000 + 5000
+        self.bot.pipeline.enqueue(
+            Utterance(GUILD, PLAYER, start_ms, start_ms, bytes(32000), table.segmenter.session)
+        )
+        await self.bot.stop_table(GUILD, "test")
+        release.set()
+        await asyncio.gather(*self.bot._finishing)
+        text = "\n".join(sent)
+        self.assertIn("Last words before we stop.", text)
+        self.assertLess(text.index("Last words"), text.index("Session ended"))
+        summaries = [
+            c.args[1] for c in self.bot.post.await_args_list if "Session over" in c.args[1]
+        ]  # type: ignore[attr-defined]
+        self.assertEqual(len(summaries), 1)
+        self.assertIn("(under a minute of speech)", summaries[0])
+        self.assertIn("No problems", summaries[0])
+
     async def test_the_session_end_is_marked_in_the_transcript(self) -> None:
         _, sent = await self.joined_with_transcript()
         await self.bot.stop_table(GUILD, "test")  # answers at once; posts in the background
-        await asyncio.gather(*self.bot._asking)
+        await asyncio.gather(*self.bot._finishing)
         self.assertIn("Session ended", sent[-1])

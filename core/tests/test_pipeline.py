@@ -168,6 +168,43 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.delivered), 2)
         self.assertIsNotNone(self.pipeline.last_latency_s)
 
+    async def test_drain_waits_for_the_last_words(self) -> None:
+        # #109: a stopping session waits for speech already queued.
+        task = asyncio.create_task(self.pipeline.run())
+        await asyncio.sleep(0)
+        self.pipeline.enqueue(utt())
+        self.pipeline.enqueue(utt())
+        self.assertTrue(await self.pipeline.drain(5))
+        self.assertEqual(len(self.delivered), 2)
+        task.cancel()
+
+    async def test_drain_gives_up_after_its_time(self) -> None:
+        release = asyncio.Event()
+
+        async def stuck(utterance: Utterance, hints: list[str]) -> str | None:
+            await release.wait()
+            return "late"
+
+        self.engine.transcribe = stuck  # type: ignore[method-assign]
+        task = asyncio.create_task(self.pipeline.run())
+        await asyncio.sleep(0)
+        self.pipeline.enqueue(utt())
+        self.assertFalse(await self.pipeline.drain(0.2))
+        release.set()
+        task.cancel()
+
+    async def test_drain_without_a_worker_does_not_wait(self) -> None:
+        self.pipeline.enqueue(utt())
+        self.assertFalse(await self.pipeline.drain(30))
+
+    async def test_missed_and_failed_clips_are_counted_per_server(self) -> None:
+        for _ in range(6):
+            self.pipeline.enqueue(utt(guild=2))
+        self.assertEqual(self.pipeline.missed_in[2], 2)  # the queue holds 4
+        self.engine.fail = True
+        await self.pipeline.process(utt())
+        self.assertEqual((self.pipeline.failed_in[1], self.pipeline.failed_in[2]), (1, 0))
+
 
 class BacklogTests(unittest.IsolatedAsyncioTestCase):
     async def test_warns_once_when_falling_behind(self) -> None:

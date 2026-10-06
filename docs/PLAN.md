@@ -545,6 +545,24 @@ Code changes: #87.
   person, again only if it gets 10 points worse or after 10 minutes (#134).
 - The card mentions `/transcript` now that downloads exist (#125).
 
+**End of a session: built (2026-10-06, #109).** When the DM stops DMbot:
+- Nothing said before the stop is lost: speech still being heard is closed off and
+  queued, and the session stays "ending" until everything queued is written down (up
+  to 60 seconds; the summary says so if it gave up). Only then does it post the
+  "Session ended" divider, save the last lines, send the download messages, post the
+  last capture warning and the summary, and suggest new names. `/dmbot stop` still
+  answers at once; all of this runs in the background, and each step runs even if an
+  earlier one fails. Pressing Stop recording during this time still drops that
+  person's words.
+- **The summary** goes to the DM screen: "📋 Session over: Frostmaiden", when it
+  started (in each reader's own time) and how long it ran, who was recorded and how
+  long each spoke (with ⚠️ if under 90% of their voice got through), anything that
+  went wrong (speech missed because writing fell behind, writing failures, last words
+  not finished), and a pointer to the transcript downloads. Numbers and names only,
+  never anything that was said.
+- Only `/dmbot stop` ends a session today; a resume that gives up after a restart has no
+  summary yet. An AI recap of what happened is a later phase.
+
 **Stored transcripts and downloads: built (2026-10-06, #41, #125).** Decided while
 building:
 - Each session has a row (kept after a restart: same campaign and start time) and each

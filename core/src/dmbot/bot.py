@@ -25,7 +25,7 @@ from discord.ext import commands
 from dmbot import install
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.campaigns import Campaign, CampaignStore
-from dmbot.capture_log import CaptureLog
+from dmbot.capture_log import CaptureLog, SessionTotals
 from dmbot.channel_access import (
     SAME_CHANNEL,
     STARTING_UP,
@@ -109,6 +109,7 @@ HINTS_MAX = 100  # names offered to speech-to-text (engines cut this down furthe
 HINTS_FAIL_LOG_S = 60.0
 TRANSCRIPT_POST_TIMEOUT_S = 10.0  # one stuck post can't hold the others up for long
 TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel can't stall all)
+STOP_DRAIN_TIMEOUT_S = 60.0  # at stop, wait this long for the last words to be written
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
 IDLE_SWEEP_INTERVAL_S = 1
 NO_PINGS = discord.AllowedMentions.none()
@@ -191,6 +192,10 @@ class Table:
     dm_user_id: int
     segmenter: Segmenter
     capture_log: CaptureLog = field(default_factory=CaptureLog)
+    # The whole session's numbers, for the summary when it ends (#109).
+    totals: SessionTotals = field(default_factory=SessionTotals)
+    missed_at_start: int = 0  # the pipeline's per-server counts when the session began
+    failed_at_start: int = 0
     listening: bool = False
     notice_posted: bool = False
     peek_offered: bool = False  # players have been shown the Peek button this session
@@ -274,7 +279,8 @@ class DMBot(commands.AutoShardedBot):
         self.pipeline = TranscriptionPipeline(
             transcriber or PlaceholderTranscriber(),
             consent,
-            is_active=lambda guild_id: guild_id in self.tables,
+            # Stopped sessions stay active while their last words are written (#109).
+            is_active=lambda guild_id: guild_id in self.tables or guild_id in self._ending,
             hints=self._name_hints,
             deliver=self._deliver_transcript,
             alert=self._alert_dm,
@@ -291,7 +297,9 @@ class DMBot(commands.AutoShardedBot):
         )
         self._background: list[asyncio.Task[None]] = []
         self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
-        self._finishing: set[asyncio.Task[None]] = set()  # stored transcripts being ended
+        self._finishing: set[asyncio.Task[None]] = set()  # stopped sessions winding down
+        # Stopped sessions still writing down their last words, by server.
+        self._ending: dict[int, list[Table]] = {}
         self._session_locks: dict[int, asyncio.Lock] = {}
         self._resume_started = False
         self._closing = False
@@ -418,8 +426,9 @@ class DMBot(commands.AutoShardedBot):
         Callers run this before their first await; `withdraw_consent` repeats it.
         """
         self.consent.stop_now(guild_id, user_id)
-        table = self.tables.get(guild_id)
-        if table is not None:
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if table is None:
+                continue
             table.segmenter.drop(user_id)
             table.transcript.drop_speaker(user_id)  # words not posted yet are discarded
             table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
@@ -561,6 +570,8 @@ class DMBot(commands.AutoShardedBot):
         If the consent list can't be loaded, nothing is left half-started.
         """
         self.tables[table.guild_id] = table
+        table.missed_at_start = self.pipeline.missed_in[table.guild_id]
+        table.failed_at_start = self.pipeline.failed_in[table.guild_id]
         try:
             await self.push_allowlist(table.guild_id)
         except BaseException:
@@ -585,24 +596,78 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
         await self.ears.send(leave_command(guild_id))
-        if table.transcript_channel_id is not None:
-            table.transcript.add_divider(
-                transcript_lines.ended(table.campaign_name), at_ms=_now_ms() + 1
-            )
-            # In the background: /dmbot stop must answer within Discord's 3 seconds, and
-            # a rate-limited channel can take longer than that.
-            self._track(
-                asyncio.wait_for(self.flush_transcript(table), FINAL_FLUSH_TIMEOUT_S),
-                "final-transcript",
-            )
-        self._track(self.suggest_names(table), "name-scan")
-        # Tracked separately, so a shutdown right after a stop still saves the end.
-        task = asyncio.create_task(
-            self._guarded(self.finish_transcript(table)), name="transcript-end"
-        )
+        # Speech still being heard or written down is finished, not dropped (#109): the
+        # session stays "ending" until the pipeline has caught up.
+        self._ending.setdefault(guild_id, []).append(table)
+        for utterance in table.segmenter.flush_all():
+            self.pipeline.enqueue(utterance)
+        # In the background: /dmbot stop must answer within Discord's 3 seconds. Kept
+        # apart from other background work, so a shutdown right after a stop still
+        # saves the end of the transcript.
+        task = asyncio.create_task(self.wind_down(table, int(time.time())), name="wind-down")
         self._finishing.add(task)
         task.add_done_callback(self._finishing.discard)
         return table
+
+    async def wind_down(self, table: Table, ended_at: int) -> None:
+        """After a stop: wait for the last words, then end the transcript channel, the
+        stored transcript (private download messages), post the summary, and suggest
+        new names. Each step runs even if an earlier one fails."""
+        gid = table.guild_id
+        with log_context(guild_id=gid, campaign_id=table.campaign_id):
+            caught_up = await self.pipeline.drain(STOP_DRAIN_TIMEOUT_S)
+            if not caught_up:
+                log.warning("Stopped before the last speech was written down")
+            ending = self._ending.get(gid, [])
+            if table in ending:
+                ending.remove(table)
+            if not ending:
+                self._ending.pop(gid, None)
+            steps: list[tuple[str, Awaitable[Any]]] = [("capture check", self.post_summary(table))]
+            if table.transcript_channel_id is not None:
+                table.transcript.add_divider(
+                    transcript_lines.ended(table.campaign_name), at_ms=_now_ms() + 1
+                )
+                steps.append(
+                    (
+                        "final transcript",
+                        asyncio.wait_for(self.flush_transcript(table), FINAL_FLUSH_TIMEOUT_S),
+                    )
+                )
+            steps += [
+                ("stored transcript", self.finish_transcript(table)),
+                ("summary", self.post_session_summary(table, ended_at, caught_up)),
+                ("name scan", self.suggest_names(table)),
+            ]
+            for name, step in steps:
+                try:
+                    await step
+                except Exception:
+                    log.exception("After the session: %s failed", name)
+
+    async def post_session_summary(self, table: Table, ended_at: int, caught_up: bool) -> None:
+        """One plain summary in the DM screen (#109): how long, who was recorded and how
+        much, and anything that went wrong. Never anything that was said."""
+        gid = table.guild_id
+        spoke = [
+            screen_messages.Spoke(self.name_of(gid, user_id), total.seconds, total.percent)
+            for user_id, total in table.totals.speakers.items()
+            if total.seconds > 0
+        ]
+        problems = screen_messages.summary_problems(
+            self.pipeline.missed_in[gid] - table.missed_at_start,
+            self.pipeline.failed_in[gid] - table.failed_at_start,
+            caught_up,
+        )
+        text = screen_messages.session_summary(
+            table.campaign_name,
+            table.started_at or ended_at,
+            ended_at,
+            spoke,
+            problems,
+            downloads=table.transcript_session_id is not None,
+        )
+        await self.post(table.screen_channel_id, text)
 
     # ---- sessions (used by /dmbot start · stop · help) ---------------------
 
@@ -1145,6 +1210,9 @@ class DMBot(commands.AutoShardedBot):
                 table.capture_log.add_health(
                     message.user_id, message.frames_received, message.frames_expected
                 )
+                table.totals.add_health(
+                    message.user_id, message.frames_received, message.frames_expected
+                )
 
     async def _on_status(self, table: Table, status: Status) -> None:
         if status.state == "joined":
@@ -1222,6 +1290,15 @@ class DMBot(commands.AutoShardedBot):
             detail = status.detail or "The voice connection ended."
             await self.post(table.screen_channel_id, f"⚠️ {detail}")
 
+    def _table_for(self, utterance: Utterance) -> Table | None:
+        for table in [
+            self.tables.get(utterance.guild_id),
+            *self._ending.get(utterance.guild_id, []),
+        ]:
+            if table is not None and table.segmenter.session == utterance.session:
+                return table
+        return None
+
     def _on_audio(self, frame: AudioFrame) -> None:
         table = self.tables.get(frame.guild_id)
         # Defence in depth: ears enforces consent too, but core re-checks every frame.
@@ -1235,12 +1312,13 @@ class DMBot(commands.AutoShardedBot):
 
     def _deliver_transcript(self, utterance: Utterance, text: str | None) -> None:
         """A piece of speech, written down. The pipeline has just re-checked consent."""
-        table = self.tables.get(utterance.guild_id)
-        # Only the session that heard it: speech still queued when a session stopped
-        # must never land in the next one (perhaps another campaign's transcript).
-        if table is None or utterance.session != table.segmenter.session:
+        # Only the session that heard it (a stopped one still finishing counts): speech
+        # from one session must never land in the next (perhaps another campaign's).
+        table = self._table_for(utterance)
+        if table is None:
             return
         table.capture_log.add_utterance(utterance)
+        table.totals.add_utterance(utterance)
         if text and self.transcripts is not None:
             table.unsaved.add(Line(utterance.start_ms, utterance.user_id, text, text))
         if text and len(table.heard) < HEARD_MAX:

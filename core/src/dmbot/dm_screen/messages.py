@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from dmbot import install
+from dmbot.capture_log import DM_WARN_PERCENT
 from dmbot.dm_screen.rules import Exposure
+from dmbot.transcript.export import duration
 
 PEEK_LABEL = "Peek behind the DM screen"
 HIDE_LABEL = "Hide the DM screen from me"
@@ -222,3 +226,72 @@ def transcript_stopped(channel_id: int) -> str:
         "more. Give DMbot **Send Messages** there, or delete that channel and DMbot makes "
         "a new one at the next `/dmbot start`."
     )
+
+
+# ---- end-of-session summary (#109) ------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Spoke:
+    name: str  # display name, or a <@id> mention if DMbot can't look it up
+    seconds: float  # how long they spoke
+    percent: int | None  # how much of their audio got through; None if not measured
+
+
+def _who(name: str) -> str:
+    return name if name.startswith("<@") else _escape(name)
+
+
+def _escape(text: str) -> str:
+    for char in "\\*_~`|>[":
+        text = text.replace(char, "\\" + char)
+    return text
+
+
+def session_summary(
+    campaign_name: str,
+    started_at: int,
+    ended_at: int,
+    spoke: list[Spoke],
+    problems: list[str],
+    *,
+    downloads: bool,
+) -> str:
+    """One plain summary for the DM screen when a session ends. Numbers and names only:
+    never anything that was said."""
+    lines = [
+        f"📋 **Session over: {_escape(campaign_name)}**",
+        f"Started <t:{started_at}:t>, ran {duration(ended_at - started_at)}.",
+    ]
+    if spoke:
+        parts = []
+        for person in sorted(spoke, key=lambda p: -p.seconds):
+            part = f"{_who(person.name)} ({duration(int(person.seconds))} of speech"
+            if person.percent is not None and person.percent < DM_WARN_PERCENT:
+                part += f", ⚠️ only {person.percent}% of their voice got through"
+            parts.append(part + ")")
+        lines.append("🎙 **Recorded:** " + ", ".join(parts) + ".")
+    else:
+        lines.append("🎙 Nobody was recorded this session.")
+    lines.extend(f"⚠️ {problem}" for problem in problems)
+    if spoke and not problems:
+        lines.append("✅ No problems writing things down.")
+    if downloads and spoke:
+        lines.append(
+            "📄 Everyone recorded got a private message to download the transcript. "
+            "Anyone in the server can use `/transcript`."
+        )
+    return "\n".join(lines)
+
+
+def summary_problems(missed: int, failed: int, caught_up: bool) -> list[str]:
+    problems = []
+    if missed:
+        pieces = "1 piece" if missed == 1 else f"{missed} pieces"
+        problems.append(f"DMbot missed {pieces} of speech because writing things down fell behind.")
+    if failed:
+        times = "once" if failed == 1 else f"{failed} times"
+        problems.append(f"Writing things down failed {times}, so the transcript has gaps.")
+    if not caught_up:
+        problems.append("DMbot stopped before it finished writing down the last few words.")
+    return problems

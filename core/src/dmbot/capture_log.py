@@ -110,3 +110,34 @@ class CaptureLog:
             return f"⚠️ **{name}'s voice is cutting out for DMbot** ({percent}% got through). {tail}"
         who = ", ".join(f"{name} {percent}%" for name, percent in gaps)
         return f"⚠️ **Voices cutting out for DMbot:** {who}. {tail}"
+
+
+@dataclass(slots=True)
+class SpeakerTotal:
+    seconds: float = 0.0
+    frames_received: int = 0
+    frames_expected: int = 0
+
+    @property
+    def percent(self) -> int | None:
+        """How much of their audio got through, or None if nothing was measured."""
+        if self.frames_expected == 0:
+            return None
+        return audio_health(self.frames_received, self.frames_expected)[0]
+
+
+class SessionTotals:
+    """How much each person spoke in the whole session, and how much of their audio got
+    through, for the end-of-session summary (#109). Never reset; numbers only."""
+
+    def __init__(self) -> None:
+        self.speakers: dict[int, SpeakerTotal] = {}
+
+    def add_utterance(self, utterance: Utterance) -> None:
+        total = self.speakers.setdefault(utterance.user_id, SpeakerTotal())
+        total.seconds += utterance.duration_s
+
+    def add_health(self, user_id: int, received: int, expected: int) -> None:
+        total = self.speakers.setdefault(user_id, SpeakerTotal())
+        total.frames_received += max(0, min(received, expected))
+        total.frames_expected += max(0, expected)
