@@ -706,15 +706,15 @@ class SaveAndResume(SessionTests):
         await self.start()
         button = StopListeningButton(self.campaign.id)
         player = self.press_stop(member(PLAYER))
-        await button.callback(player)  # type: ignore[arg-type]
+        await button.callback(player)
         self.assertIn("Only the DM can stop", player.followup.send.await_args.args[0])
         self.assertIn(GUILD, self.bot.tables)  # still listening
         dm = self.press_stop(member(DM))
-        await button.callback(dm)  # type: ignore[arg-type]
+        await button.callback(dm)
         self.assertIn("Stopped listening", dm.followup.send.await_args.args[0])
         self.assertNotIn(GUILD, self.bot.tables)
         again = self.press_stop(member(DM))  # an old message, pressed later
-        await button.callback(again)  # type: ignore[arg-type]
+        await button.callback(again)
         again.response.send_message.assert_awaited_once()
         self.assertEqual(again.response.send_message.await_args.args[0], m.NOT_LISTENING_NOW)
         again.message.edit.assert_awaited_with(view=None)
@@ -725,10 +725,10 @@ class SaveAndResume(SessionTests):
         await self.start()
         other = await self.campaigns.create(GUILD, "Strahd", DM)
         wrong = self.press_stop(member(OTHER_PERSON, manager=True))
-        await StopListeningButton(other.id).callback(wrong)  # type: ignore[arg-type]
+        await StopListeningButton(other.id).callback(wrong)
         self.assertIn(GUILD, self.bot.tables)  # an old button never stops a newer session
         manager = self.press_stop(member(OTHER_PERSON, manager=True))
-        await StopListeningButton(self.campaign.id).callback(manager)  # type: ignore[arg-type]
+        await StopListeningButton(self.campaign.id).callback(manager)
         self.assertIn("Stopped listening", manager.followup.send.await_args.args[0])
         self.assertNotIn(GUILD, self.bot.tables)
 
