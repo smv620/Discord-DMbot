@@ -521,7 +521,7 @@ class Lists(NamesTest):
         text, kw = it.response.sent[0]
         self.assertIn("pick a kind", text)
         view = kw["view"]
-        view.pick = SimpleNamespace(values=["place"])  # type: ignore[assignment]
+        view.pick = SimpleNamespace(values=["place"])
         it = self.it()
         await view._kind_picked(it)
         text, page = it.response.edited[0]

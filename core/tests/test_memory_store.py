@@ -620,6 +620,7 @@ class Lists(MemoryTest):
             source="dm",
         )
         a, b = written.value
+        assert a is not None and b is not None
         aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=a, include_secret=True)
         self.assertEqual(
             {(x.text, x.secret) for x in aliases},

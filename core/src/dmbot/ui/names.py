@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 SHOWN_PER_SECTION = 10
-MAX_UPLOAD_BYTES = 256 * 1024  # a names list (dmbot.memory.name_list.MAX_FILE_BYTES)
 PANEL_MAX = 1900  # under Discord's 2,000 characters
 SAME_AS_CHOICES = 25  # Discord's limit for a menu
 PC = "player_character"
@@ -274,10 +273,12 @@ class NamesHome(_Menu):
         await show_browse(interaction, self.campaign_id)
 
     async def _add_many(self, interaction: discord.Interaction) -> None:
-        from dmbot.ui.name_lists import FORMAT_HELP, AddMany
+        from dmbot.ui.name_lists import AddMany, format_help
 
-        if await _campaign_for(interaction, self.campaign_id):
-            await _send(interaction, FORMAT_HELP, AddMany(self.campaign_id))
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign:
+            secrets = sees_secrets(campaign, interaction.user.id)
+            await _send(interaction, format_help(secrets=secrets), AddMany(self.campaign_id))
 
     async def _download(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_lists import send_download
@@ -381,11 +382,15 @@ async def dmbot_names(
         await _tell(interaction, NOT_IN_SERVER)
         return
     bot = _bot(interaction)
+    mine = logic.runnable(
+        await bot.campaigns.list_campaigns(guild.id), interaction.user.id, _is_manager(interaction)
+    )
     upload = None
-    if file is not None:
+    if file is not None and mine:  # only read a file for someone who may use it
+        from dmbot.memory.name_list import MAX_FILE_BYTES
         from dmbot.ui.name_lists import read_upload
 
-        if file.size > MAX_UPLOAD_BYTES:
+        if file.size > MAX_FILE_BYTES:
             await _tell(interaction, "That file is too big (up to 256 KB). Split it up.")
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -398,6 +403,8 @@ async def dmbot_names(
         if problem is not None:
             await _tell(interaction, problem)
             return
+        if find:
+            await _tell(interaction, "Adding the list first. Search for a name afterwards.")
     if find and upload is None:
         from dmbot.ui.name_card import open_found, typeahead_campaign
 
@@ -405,9 +412,6 @@ async def dmbot_names(
         if campaign is not None:
             await open_found(interaction, campaign.id, find)
             return
-    mine = logic.runnable(
-        await bot.campaigns.list_campaigns(guild.id), interaction.user.id, _is_manager(interaction)
-    )
     playing = bot.active_campaign_id(guild.id)
     only = playing if any(c.id == playing for c in mine) else None
     if only is None and len(mine) == 1:
