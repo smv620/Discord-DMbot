@@ -1,8 +1,43 @@
-# Story memory: continuity, reputations and module guidance (proposed)
+# Story memory: continuity, reputations and the shared story
 
-**Status: proposed (2026-10-06), waiting for the owner's decision.** Nothing here is
-decided until the owner says so; `docs/PLAN.md` stays the source of truth and links
-here. Summary and rationale: #227.
+**Status: decided (owner, 2026-10-06, #227).** The owner's decisions are in the next
+section and take precedence over anything below that disagrees. `docs/PLAN.md` stays
+the source of truth and links here. Build issues: 5a–5d and the measurement work (see
+"Build order").
+
+## Decisions (owner, 2026-10-06)
+
+1. **The design and the 5a–5d split are accepted.**
+2. **The Shared story switch stays,** for any adventure the DM runs from something
+   written: a published adventure, their own homebrew, or a fan-fiction version they
+   want DMbot to help them keep to. Turning it on shows a warning: "Only give DMbot
+   material you have the right to use. DMbot doesn't check this." DMbot does no legal
+   review. **Only after the DM confirms** may DMbot copy chunks of the material into that
+   campaign's storage and AI prompts to build the story plan's nodes and edges (the IP
+   rule in CLAUDE.md, changed by the owner on 2026-10-06). It never goes into the
+   repository and never leaves that campaign.
+3. **Reputations are hierarchical from the start** (section 5): a character's standing
+   and the party's affect each other, and someone who has never met them (the guard at
+   the gate) judges them by what their groups and their town think of the party, of the
+   character's people (elf, dwarf, tabaxi…), and the town's general mood. Built to
+   scale in the graph, not as one field in a table.
+4. **Continuity warnings** (section 4):
+   - **Quiet while the story is thin.** None until the campaign reaches a minimum
+     amount of confirmed story, unless the Shared story switch is on (the story plan
+     gives something to check against from the start).
+   - **Three levels**, with probabilities kept in the backend: **possible** (about 25%
+     and up), **probable** (over 50%), **likely** (about 80% and up). DMbot warns at
+     **probable** by default; the DM can change that (likely only, possible too, or off).
+   - **What the DM says is what the characters perceive,** not a canon declaration:
+     "the keep is abandoned" means it *appears* abandoned. Narration and NPC speech carry
+     the same uncertainty. The plot hole to catch is the DM contradicting their own
+     earlier description of something the party saw (a temple in town in Session 3,
+     "there's no temple" in Session 6). Warning the DM is fine: players remind the DM of
+     these at any table.
+   - **Not speed-critical:** a warning may come several seconds late; transcription and
+     names come first.
+5. **Models and the cost cap per session** are chosen after measuring tokens per call
+   and the "how it was said" accuracy on saved test sets.
 
 This extends the campaign memory (EntityBot, #126) from *names and connections* into a
 **story memory**: what happened, what's still open, who knows what, and how people feel
@@ -19,9 +54,9 @@ Postgres property graph we already have. Users never see these words: to them, D
 3. **Track evolving reputations** of each player character and the party with NPCs,
    groups and places.
 4. **Track evolving plots**: threads, hooks, promises, clues, and what's gone untouched.
-5. **A "switch" for published adventures:** when the DM runs a module, DMbot can also
-   compare the table to the book and, if the DM turns it on, point to what the book has
-   next.
+5. **A "Shared story" switch:** when the DM runs an adventure written down somewhere
+   (published, their own homebrew, a fan-fiction version), DMbot can also compare the
+   table to it and, if the DM turns it on, point to what the story has next.
 6. **DMbot maintains all of this itself.** AI roles act as the ontology engineer, graph
    engineer, curator and summarizer; deterministic code checks every write; the DM only
    ever answers plain questions.
@@ -51,7 +86,7 @@ That is a strong base. The gaps for the goals above:
 | **No "who knows what".** `knows` points at a thing, not at a fact. | "Mira can't know the baron is dead" and secret-leak warnings need it. |
 | **No "who said it, and how".** A relationship has mentions, but not whether the DM narrated it as true, an NPC claimed it (maybe lying), a player believes it, or someone was making plans. | Players' and NPCs' words aren't world truth. Treating them as truth would create false conflicts and break "only DM-confirmed facts count". |
 | **No reputation model.** | Goal 3. |
-| **No published-adventure layer** and no switch. | Goal 5. |
+| **No shared-story layer** and no switch. | Goal 5. |
 | **No retrieval design for helpers** beyond hints, and no summaries. | Every helper (NPC tracker, PlotBot, sidebar questions, pre-session notes) needs the same grounded, campaign-scoped, secret-aware context. |
 | **"EntityBot" is one undivided AI job.** | Hard to test, hard to budget, and too much power in one prompt. |
 
@@ -66,8 +101,10 @@ even on the same server.
 1. **Claims: what was said.** Each claim is one statement pulled from the cleaned,
    labeled transcript, or typed by the DM: subject, relationship, object, details,
    the lines it came from, and **how it was said**:
-   - `narrated`: the DM narrating, as world truth;
-   - `npc_said`: an NPC voiced by the DM (may lie or be wrong);
+   - `dm_said`: the DM narrating or voicing an NPC. Both are what the characters
+     perceive or are told, never canon by themselves ("the keep is abandoned" means it
+     appears so); an NPC may also lie. (Owner's decision 4: narration and NPC speech
+     carry the same uncertainty, so DMbot doesn't need to tell them apart.)
    - `player_said`: a player character's words or belief;
    - `plan`: intent or a hypothetical ("we'll go to Targos tomorrow");
    - `dm_typed`: the DM's own entry on the DM screen.
@@ -78,7 +115,7 @@ even on the same server.
    to the claims that support it. Each fact is **bitemporal**: *when it's true in the
    story* (session, and game time once TimeBot exists) and *when DMbot recorded it* (the
    change log). So "it changed" adds history; nothing is overwritten.
-3. **The book's plan (module mode only):** what the published adventure expects, kept
+3. **The story plan (Shared story on only):** what the written adventure expects, kept
    apart from facts and never mixed into them (section 6).
 
 Derived on top, never a source of truth: **reputations** (section 5) and **summaries**
@@ -157,8 +194,8 @@ campaign, the server or the audience.
 | **Ontology steward** | ontology engineer | After the session | New campaign terms (description, parent, domain, range, examples, reason), deprecations, synonym maps; health report |
 | **Graph curator** | graph engineer | After the session | Merges to ask about, stale proposals cleared, orphans, flags whose facts no longer clash (#164), thread states (`stalled`) |
 | **Summarizer** | archivist | After the session, and when confirmed facts change | Entity, thread, group and session summaries, each sentence citing fact IDs |
-| **Module cartographer** | adventure reader | Once per chapter, when the DM loads module material | The book's plan (section 6) |
-| **Story guide** | navigator | Live, module mode "Guide" only | Suggestions, citing the book |
+| **Story-plan cartographer** | adventure reader | Once per chapter, when the DM gives the adventure's material | The story plan (section 6) |
+| **Story guide** | navigator | Live, Shared story "Guide me" only | Suggestions, citing the story plan |
 
 Rules for every role:
 - **AI proposes, rules decide.** Output is parsed into typed objects and checked by
@@ -180,6 +217,23 @@ Rules for every role:
   version is recorded with what it wrote.
 
 ### 4. Continuity warnings
+
+**When warnings start, and how sure they must be (decided).**
+- **Critical mass:** no warnings until the campaign has enough confirmed story to check
+  against (a starting point to tune in live tests: about 50 confirmed facts across at
+  least 3 sessions). With the Shared story switch on, the story plan counts from the
+  first session.
+- **Levels:** every possible conflict gets a probability; DMbot shows it as **possible**
+  (≥ 25%), **probable** (> 50%) or **likely** (≥ 80%). The DM picks the lowest level that
+  interrupts during play (default **probable**); lower ones wait for the after-session
+  report. The numbers are backend settings, tuned on the golden set.
+- **The main plot hole:** the DM contradicting an earlier description of something the
+  party perceived ("You see a temple" in Session 3; "There's no temple here" in
+  Session 6). The warning quotes the earlier line: "⚠️ **Probable:** in Session 3 you
+  described a **temple** in **Bryn Shander** ("a squat stone temple to Lathander"). [It's
+  gone now] [I misspoke then] [Ignore]".
+- **Timing:** a warning may lag the talk by several seconds; it runs behind
+  transcription and name hints.
 
 Three levels, cheapest first:
 1. **On write (code only, instant):** the checks in section 2 run on every new claim
@@ -213,42 +267,79 @@ Three levels, cheapest first:
   most likely to walk into tonight: NPCs in tonight's places who are dead or elsewhere,
   promises due, threads waiting on someone who's gone.
 
-### 5. Reputations
+### 5. Reputations (hierarchical, decided)
 
 Reputation is **derived**, not stored as truth, so it can always be explained and
-rebuilt.
-- **Deeds:** confirmed events with an actor (a player character or the party), who was
-  affected, and who witnessed it. The extractor proposes a deed and its likely effect
-  ("helped", "harmed", "insulted", "kept/broke a promise"); the DM confirms deeds in the
-  after-session report, in batches ("3 things the Frostwolves will remember: [All
-  right] [Let me check]").
-- **Standing** of each player character and the party with each NPC, group and place,
-  in five plain steps: **Hostile · Unfriendly · Wary · Friendly · Devoted** (internally
-  a score from −100 to 100, with a small, documented rule table per kind of deed).
-- **Spread through the graph, with limits:** witnesses feel it fully; the group they
-  belong to feels it partly; allies of that group a little; places by who lives there.
-  At most 2 steps, weaker each step, and only along confirmed, non-secret connections.
-  Groups hear late (the next session) unless someone was there.
-- **The DM always wins:** "Set standing…" on a card overrides the number, and the
-  override is kept as a fact. Reputation changes are shown with their reasons:
-  "**Frostwolves**: Wary → Friendly (you saved Ulfgar's son, Session 7)."
+rebuilt. It works on **two ladders** that already exist in the graph:
+- **Who is judged:** a character → their party → the groups they're known to belong to
+  → their **people** (species, ancestry or culture: elf, dwarf, tabaxi…).
+- **Who is judging:** an NPC → the groups they belong to (the town watch) → the place
+  they live (Bryn Shander) → the wider region (Ten-Towns), through `member_of` and
+  `located_in` (places nest).
+
+**What's stored (sparse, only where there's something to say):**
+1. **Deeds:** confirmed events with an actor (a character or the party), who was
+   affected and who witnessed them. The extractor proposes a deed and its likely effect
+   ("helped", "harmed", "insulted", "kept/broke a promise"); the DM confirms deeds in the
+   after-session report, in batches.
+2. **Impressions:** a directed edge *viewer → subject* at any rung of either ladder
+   ("the Frostwolves → the party", "Ulfgar → Kesh"), with a score from −100 to 100 and how
+   much evidence is behind it. Made from deeds (witnesses fully, the affected fully, the
+   actor's party partly) or set by the DM. History is kept, so "Wary until Session 6,
+   then Friendly" can be shown.
+3. **Attitudes:** a group's or place's standing feeling toward a whole people or kind
+   ("Bryn Shander distrusts tabaxi", "the town is wary of outsiders"). Set by the DM, or
+   proposed from what's said and confirmed by the DM.
+4. **New ontology (core v2):** kind `people` (species, ancestry or culture), the party as
+   a group, and the connection `of_people` (character → people).
+
+**Worked out when it's needed, never stored for every pair:** standing(viewer,
+subject) blends
+- the direct impression, if there is one, weighted by how much evidence it has;
+- the impressions and attitudes one or two rungs up either ladder (the watch → the
+  party; Bryn Shander → tabaxi; the town's general mood), each rung up counting about half
+  as much as the one below;
+- so **direct experience gradually outweighs prejudice**: a guard who has never met
+  Kesh judges by the town's view of tabaxi and of Kesh's party; after Kesh saves the
+  guard's daughter, his own impression decides.
+
+A character's and the party's standing affect each other without loops: a deed counts
+fully for the character who did it and partly for the party; a stranger's view of a
+character starts from their view of the party, and the reverse.
+
+**Why it scales:** only impressions and attitudes that exist are stored (dozens to
+hundreds per campaign, not NPCs × characters). Standing is worked out only for the NPCs
+in the current scene and the party (a few dozen pairs), each from at most a few rungs
+on each side, read from the in-memory copy with no database query per line. The
+after-session report recomputes only the groups and places a confirmed deed touched.
+
+**What the DM sees:** five plain steps, **Hostile · Unfriendly · Wary · Friendly ·
+Devoted**, always with the reasons: "**Gate guard** (Bryn Shander) → **Kesh**: Wary.
+Bryn Shander distrusts tabaxi (you set it), but has heard the party saved Ulfgar's son
+(Session 7)."
+- **Word spreads only with the DM's say-so:** a deed reaches groups and places beyond
+  the witnesses as a "might have heard" suggestion the DM confirms.
+- **The DM always wins:** "Set standing…" works at any rung (a person, a group, a town,
+  a people) and is kept as a fact with its date.
 - Shown in the NPC channel and on name cards; never decides an NPC's behaviour, only
   reminds the DM.
 
-### 6. The switch: published adventures (module mode)
+### 6. The Shared story switch
 
-A per-campaign setting, **"Story guide"**, on the DM screen's help card:
+(Below, "the book" means the written adventure, whatever it is.)
+
+A per-campaign setting, **"Shared story"**, on the DM screen's help card:
 
 | Setting | What DMbot does |
 |---|---|
 | **Off** (default) | Remembers and warns about the table's own story only. Never suggests story. |
-| **Watch the book** | Also compares the table to the book: "The book needs **Captain Varn** alive for Chapter 3; he died in Session 4. The book's other ways to that: **the harbour ledger**, **Mother Ilse**." Never suggests what to do next. |
+| **Watch the story** | Also compares the table to the book: "The book needs **Captain Varn** alive for Chapter 3; he died in Session 4. The book's other ways to that: **the harbour ledger**, **Mother Ilse**." Never suggests what to do next. |
 | **Guide me** | Also, at scene changes and when the DM asks, says what the book has next for this place or thread, with the page or section. |
 
 - The DM can flip it at any time, per campaign (also per chapter later), and it can be
-  turned on mid-campaign: everything already confirmed stays; the book's plan is
+  turned on mid-campaign: everything already confirmed stays; the story plan is
   matched to it.
-- **The book's plan** is a separate layer: chapters, places, NPCs and what the book
+- **The story plan** is a separate layer: chapters, places, NPCs and what the book
   expects of them (where they are, what they know, what must happen before what), and
   "depends on" links (Chapter 3 needs Captain Varn alive and the party in the harbour town).
   Book entities are linked to table entities with a `same_as` the DM confirms, so "the
@@ -256,14 +347,17 @@ A per-campaign setting, **"Story guide"**, on the DM screen's help card:
 - **Divergence** is the difference between the book's expectations and the table's
   facts. It's normal, never an error. It's only raised when something the book still
   needs is no longer possible.
-- **Where the book's plan comes from (copyright rule):** never bulk text. The DM
-  provides it chapter by chapter (their own notes, or a short outline they type or
-  upload). The cartographer keeps only structured facts (names, places, links, short
-  DM-visible labels) and discards the source text; quotes are never stored. Adventures
-  under an open license (SRD/CC-BY content) may be stored with attribution. **This needs
-  the owner's decision** before it's built (Open decisions).
+- **Where the story plan comes from (decided):** any written adventure the DM runs:
+  published, their own homebrew, or a fan-fiction version. Turning the switch on shows:
+  "Only give DMbot material you have the right to use. DMbot doesn't check this." DMbot
+  does no legal review. **After the DM confirms** (who and when are recorded), DMbot
+  may copy chunks of the text into that campaign's storage and AI prompts to build the
+  story plan: chapters, places, NPCs, what the book expects, "depends on" links, and
+  short quotes as evidence (IP rule in CLAUDE.md). It stays in that one campaign, never
+  in the repository; the DM can delete it, and it goes with the campaign. Open-licence
+  adventures (SRD/CC-BY content) may be stored with attribution.
 - **It still never invents story.** "Guide me" points to what the book says, with a
-  citation, labeled as the book's plan. It never makes up a bridge; for a broken
+  citation, labeled as the story plan. It never makes up a bridge; for a broken
   dependency it only lists what already exists in the book or the table.
 
 ### 7. Retrieval (the "RAG" part)
@@ -304,7 +398,7 @@ on embeddings. Apache AGE is still not needed: these are 1–2 hop lookups.
 - Every new table follows the campaign-memory pattern: `guild_id` + `campaign_id`,
   forced row-level security, composite foreign keys, an `ExportSection`, and undo
   through the change log. Claims are kept out of backups like mentions are (rebuilt from
-  transcripts); facts, threads, deeds and the book's plan are in backups.
+  transcripts); facts, threads, deeds and the story plan are in backups.
 - Cost: a live extractor every 30–60 s is roughly 240–480 calls in a 4-hour session.
   Before live extraction is approved, measure the tokens per call on saved transcripts
   and write down a cost per session; until bring-your-own keys (#50) exist it's the
@@ -328,8 +422,8 @@ Each step is useful on its own and ships behind the existing phases.
    deeds, standing, the NPC channel, the recall service.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
-4. **Phase 5d: Story guide (module mode):** the book's plan, `same_as` links,
-   divergence ("Watch the book"), then "Guide me".
+4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch
+   the story"), then "Guide me".
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.
@@ -337,18 +431,8 @@ Each step is useful on its own and ships behind the existing phases.
 TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by session,
 as today.
 
-## Open decisions for the owner
+## Decided
 
-Before any of these: **measure the hardest part first.** Live warnings depend on telling
-"the DM narrates" from "the DM voices an NPC" from "a player guesses", from audio alone.
-Build a saved test set (PyCharm session) and measure how often the extractor gets the
-"how it was said" right before 5a depends on it.
-
-- Accept this design as the plan for Phase 5 (and the split into 5a–5d)?
-- Where the book's plan may come from (DM-supplied outline only, or also structured
-  extraction from an owned PDF with the text discarded), and whether it needs legal
-  review first.
-- Reputation: five steps per character and the party, or the party only at first?
-- Live warnings default: on (quiet) or after-session only for the first release?
-- Which models for the cheap live roles and the after-session roles, and the default
-  cost cap per session.
+All of the open decisions were answered by the owner on 2026-10-06: see "Decisions"
+at the top. Still to measure before 5a is built: the "how it was said" accuracy (player
+or DM, statement or plan) and the tokens per call, on saved test sets (PyCharm session).

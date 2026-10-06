@@ -93,12 +93,14 @@ back to the Cleaner. Later helpers (NPC tracker, PlotBot) send **proposals** to 
 their DM-confirmation step is what marks a fact confirmed. See "Campaign memory
 (EntityBot)" below.
 
-**Story memory (proposed 2026-10-06, not yet decided; docs/STORY_MEMORY.md, #227).** Phase 5
+**Story memory (decided 2026-10-06; docs/STORY_MEMORY.md, #227).** Phase 5
 grows the campaign memory from names and connections into what happened: claims (what
-was said, and how: narrated, an NPC's words, a player's belief, a plan) kept apart from
-DM-confirmed facts; state facts (alive, dead, missing); story threads, promises and
-clues; who knows what; reputations derived from deeds; and, behind a per-campaign
-**Story guide** switch, a separate layer for a published adventure's plan. EntityBot
+was said, and how: the DM's narration or an NPC, which both describe what the
+characters perceive, a player's belief, a plan) kept apart from DM-confirmed facts;
+state facts (alive, dead, missing); story threads, promises and clues; who knows what;
+hierarchical reputations derived from deeds; and, behind a per-campaign **Shared
+story** switch, a separate layer for the plan of a written adventure (published,
+homebrew or fan fiction). EntityBot
 stays the only writer, split into small AI roles (extractor, continuity checker,
 ontology steward, graph curator, summarizer) behind deterministic checks.
 
@@ -224,7 +226,7 @@ than in separate volumes.
 | 2b | **Transcript Cleaner** (live name fixing, off-topic hiding, #127), off-topic filter (#52), speaker tagging | Every helper depends on clean, labeled input |
 | 3 | **Rules advisor + house rules**: alerts with ✅ Agree / 🙈 Ignore / ⚖️ Override, house rules by voice with DM approval, `/houserules` | Uses the rules hierarchy below |
 | 4 | **TimeBot**: game clock, effect durations, rests, dawn/noon/dusk, split-party clocks | |
-| 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only. *Proposed split (docs/STORY_MEMORY.md):* 5a claims, state facts and the first continuity warnings · 5b NPC tracker, who knows what, reputations · 5c PlotBot: threads, promises, summaries, pre-session note · 5d Story guide for published adventures |
+| 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only. *Split (decided 2026-10-06, docs/STORY_MEMORY.md):* 5a claims, state facts and the first continuity warnings · 5b NPC tracker, who knows what, hierarchical reputations · 5c PlotBot: threads, promises, summaries, pre-session note · 5d the Shared story switch |
 | 6 | **DM sidebar**: voice messages to DMbot, marked `[DM Sidebar Discussion]` | No install needed |
 | 7 | **Google Drive** (house-rules doc mirror) and **character data** from D&D Beyond links | |
 | later | Paid service billing (owner's key, per-server metering); D&D Beyond companion extension; optional DM hotkey helper | |
@@ -282,7 +284,14 @@ also stores its DM-screen visibility (`private` / `peek` / `open`, default `peek
 
 **Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are
-sent per query.
+sent per query, **unless the DM shares the book** (decided 2026-10-06, IP rule in
+CLAUDE.md): a DM can share a rulebook or supplement for their campaign and confirm they
+have the right to use it (the warning says DMbot doesn't check; who and when are
+recorded). DMbot may then copy chunks of it into that campaign's rules data and AI
+prompts, so rules alerts can cite it. It stays in that one campaign, never in the
+repository, and the DM can remove it. It follows the rules edition and precedence below:
+a shared book is matched to its edition (2024, 2014 or other) and is a sourcebook in the
+target or fallback ruleset, not a house rule.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
@@ -784,7 +793,7 @@ names panel nor the speech-to-text hints can be a fixed list.
     names (a form holds 4,000 characters) or upload a file (UTF-8, up to 256 KB and
     2,000 lines; each name up to 100 characters). **Names only:** lines with
     descriptions or other columns are refused as unclear, and DMbot never offers
-    ready-made sourcebook name lists (copyright rule). It writes only into the chosen
+    ready-made sourcebook name lists (IP rule). It writes only into the chosen
     campaign, through the normal memory rules (checks, change log), **saved in one go**
     (batches of about 200 for a big file, with live transcription reloading its names
     once, after the last batch). Imported names count as confirmed (the DM gave them);
@@ -1018,24 +1027,37 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
 filter within the Cleaner's time budget; if the filter is late, the line is posted and
 then edited to the marker.
 
-**Story memory: continuity, reputations, published adventures (proposed 2026-10-06).**
+**Story memory: continuity, reputations, the shared story (decided 2026-10-06, #227).**
 Full design and rationale: docs/STORY_MEMORY.md. In short:
 - **Continuity warnings** in the DM screen, quiet by default, always with the source:
   "⚠️ Heads-up: **Ulfgar** died in Session 4. He was just voiced talking. [He's alive
   after all] [It's not really him] [Ignore]". Code checks first, AI only for close calls,
   the rest in the after-session report. A secret said out loud asks "Is it revealed
-  now?".
-- **Reputations:** each player character's and the party's standing with NPCs, groups
-  and places (Hostile · Unfriendly · Wary · Friendly · Devoted), worked out from deeds
-  the DM confirmed, spreading at most two steps through confirmed connections. The DM
-  can always set it.
+  now?" and who learned it. **None until the campaign has enough confirmed story**
+  (unless the Shared story switch is on). Each warning is **possible**, **probable** or
+  **likely**; DMbot interrupts at **probable** by default (the DM can change it). What
+  the DM narrates is what the characters perceive, not canon ("the keep is abandoned"
+  means it looks that way); the main catch is the DM contradicting an earlier
+  description ("a temple in town" in Session 3, "no temple" in Session 6). Warnings may
+  lag by several seconds.
+- **Reputations, hierarchical:** standing (Hostile · Unfriendly · Wary · Friendly ·
+  Devoted) is worked out when needed from deeds the DM confirmed, along two ladders:
+  who is judged (character → party → groups → their people: elf, dwarf, tabaxi…) and
+  who judges (NPC → their groups → their town → region). A stranger at the gate judges
+  by the town's view of the party, of the character's people and its general mood;
+  direct experience gradually outweighs that. Only existing impressions and attitudes
+  are stored, so it scales. The DM can set standing at any rung.
 - **Plots:** story threads (hinted, open, active, stalled, resolved, abandoned),
   promises with due dates, clues, and cause and effect; a pre-session note of what's
   open and what could clash tonight.
-- **Story guide switch** per campaign: **Off** (default; never suggests story),
-  **Watch the book** (warns when the table breaks something the adventure still needs),
-  **Guide me** (says what the book has next, with the section). The book's plan comes
-  from the DM, chapter by chapter, as structured facts only (copyright rule).
+- **Shared story switch** per campaign: **Off** (default; never suggests story),
+  **Watch the story** (warns when the table breaks something the adventure still needs),
+  **Guide me** (says what the story has next, with the section). For any written
+  adventure: published, homebrew or fan fiction. Turning it on warns: "Only give DMbot
+  material you have the right to use. DMbot doesn't check this." The story plan comes
+  from the DM, chapter by chapter; only after the DM confirms the right to use it may
+  DMbot copy chunks of it into that campaign's storage and prompts to build the graph
+  (IP rule, CLAUDE.md, 2026-10-06).
 - **One retrieval path** for every helper: seed from the scene, 1–2 hops over
   confirmed facts true at the current story time, secrets filtered by code per audience,
   summaries plus quoted lines, every item cited.
@@ -1093,8 +1115,6 @@ DMbot already wrote down stays, and anyone in this server can still read it." (W
   the DM sees every fix)
 - Hosting provider and Kubernetes setup (Helm) for the public bot (transcription is cloud by default; GPU workers only for self-hosters who want them)
 - Privacy policy and terms of service text for the public bot
-- Story memory (docs/STORY_MEMORY.md): accept the design and the Phase 5a–5d split;
-  where a published adventure's plan may come from (DM outline only, or structured
-  extraction from an owned copy with the text discarded); reputation per character or
-  party only at first; live continuity warnings on or after-session only at first;
-  models and the per-session cost cap for the AI roles
+- Story memory: models and the per-session cost cap for the AI roles, after measuring
+  tokens per call and the "how it was said" accuracy (the rest was decided 2026-10-06,
+  #227)
