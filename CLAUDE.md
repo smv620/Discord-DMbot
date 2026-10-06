@@ -132,17 +132,17 @@ terminal output or Discord screenshots copied to it.
     text, and no players' or DMs' shared material.
   - **Open licences:** SRD 5.2 (CC-BY-4.0) and other open-licence content may be stored
     with attribution.
-  - **Shared content, only after the DM confirms the right to use it:** when a DM turns
-    on the Shared story switch (or otherwise shares material) and confirms they have the
-    right to use it (the warning says DMbot doesn't check; DMbot does no legal review),
+  - **Shared content, only after the DM confirms the right to use it:** when a DM shares
+    material (an adventure through the Shared story switch, or a rulebook or supplement
+    for the rules advisor) and confirms they have the right to use it (the warning says DMbot doesn't check; DMbot does no legal review),
     DMbot may copy chunks of that text into that campaign's storage and AI prompts to
-    build the knowledge graph: its structures, nodes and edges, with short quotes as
-    evidence. Record who confirmed and when. It stays in that one campaign (never shared
+    build the knowledge graph (its structures, nodes and edges) or the campaign's rules
+    data, with short quotes as evidence and citations. Record who confirmed and when. It stays in that one campaign (never shared
     between campaigns or servers), and the DM can delete it; it goes when the campaign is
     deleted.
   - **Everything else:** without that confirmation, nothing is bulk-copied into the
-    database or prompts; send only short, relevant excerpts per query (rules lookups,
-    D&D Beyond).
+    database or prompts; send only short, relevant excerpts per query (rules lookups
+    without a shared rulebook, D&D Beyond).
 - **D&D Beyond:** no server-side storage of the user's D&D Beyond password or session
   cookies. Use public character links; campaign access comes later via a browser
   extension running in the DM's own session.

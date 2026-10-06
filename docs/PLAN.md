@@ -284,8 +284,14 @@ also stores its DM-screen visibility (`private` / `peek` / `open`, default `peek
 
 **Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are
-sent per query. (IP rule in CLAUDE.md: bulk copying is allowed only for shared content
-the DM has confirmed the right to use, such as a Shared story adventure.)
+sent per query, **unless the DM shares the book** (decided 2026-10-06, IP rule in
+CLAUDE.md): a DM can share a rulebook or supplement for their campaign and confirm they
+have the right to use it (the warning says DMbot doesn't check; who and when are
+recorded). DMbot may then copy chunks of it into that campaign's rules data and AI
+prompts, so rules alerts can cite it. It stays in that one campaign, never in the
+repository, and the DM can remove it. It follows the rules edition and precedence below:
+a shared book is matched to its edition (2024, 2014 or other) and is a sourcebook in the
+target or fallback ruleset, not a house rule.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
