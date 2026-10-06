@@ -547,9 +547,10 @@ Code changes: #87.
 - The card mentions `/transcript` now that downloads exist (#125).
 
 **Starting and stopping, as the DM sees it (2026-10-06, #107, #108).** The DM screen's
-"✅ Listening in …" message names who in the voice channel is being recorded and how
-many were just asked privately, and a line follows for each yes ("🎙 Mia said yes") and
-each stop during the session, so it's always a true picture of who is recorded. The
+"✅ Listening in …" message names who in the voice channel is being recorded and who
+isn't yet (DMbot is asking them privately), and a line follows for each yes that counts
+("🎙 Mia said yes"), each stop, and each person joining (recorded or not), so it stays a
+true picture of who is recorded. Only people at the table get these lines. The
 message carries a **⏹ Stop listening** button (the same as `/dmbot stop`: this
 campaign's DMs or a server manager; anyone else is told how to stop recording
 themselves). Only the newest listening message has the button, it comes off when the
