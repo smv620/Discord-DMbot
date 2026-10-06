@@ -15,4 +15,8 @@ def build_transcriber(settings: TranscriptionSettings) -> Transcriber:
         from dmbot.transcription.cloud import CloudTranscriber
 
         return CloudTranscriber(settings)
+    if settings.engine == "deepgram":
+        from dmbot.transcription.deepgram import DeepgramTranscriber
+
+        return DeepgramTranscriber(settings)
     return PlaceholderTranscriber()

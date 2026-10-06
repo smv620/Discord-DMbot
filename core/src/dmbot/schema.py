@@ -349,6 +349,14 @@ CAMPAIGN_MEMORY = f"""
         WHERE undoes IS NOT NULL;
     """ + "".join(_isolate(t) for t in _MEMORY_TABLES)
 
+CONSENT_OUTSIDE = """
+    -- Which outside speech-to-text engine (deepgram, cloud) the consent request named
+    -- when this yes was given; NULL = it named none (local Whisper). While the server
+    -- uses an outside engine, only yeses for that same engine count; everyone else is
+    -- asked again (#170, docs/PLAN.md "Consent"). Existing yeses: NULL.
+    ALTER TABLE consent ADD COLUMN IF NOT EXISTS outside_to TEXT;
+    """
+
 CONSENT_TERMS = """
     -- Which wording each person agreed to, and how (#35). Rows from before this are
     -- treated as version 1 (before "anyone in this server can read the transcript"):
@@ -366,6 +374,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0003_channel_number", CHANNEL_NUMBER),
     ("0004_campaign_memory", CAMPAIGN_MEMORY),
     ("0005_consent_terms", CONSENT_TERMS),
+    ("0006_consent_outside", CONSENT_OUTSIDE),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

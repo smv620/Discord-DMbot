@@ -2,7 +2,7 @@
 
 DMbot runs as two containers (core and ears) on one Linux server. Nothing is opened to
 the internet: the bot only makes outgoing connections to Discord (and to your
-speech-to-text provider, if you use cloud transcription).
+speech-to-text company, if you use `TRANSCRIBER=deepgram` or `cloud`).
 
 ## 1. Choose a server
 
@@ -11,11 +11,13 @@ Vultr, AWS Lightsail, …). Pick **Ubuntu 24.04 LTS**.
 
 | Transcription | Suggested size | Notes |
 |---|---|---|
-| `TRANSCRIBER=cloud` or `none` | 1–2 vCPU, 2 GB RAM | Cheapest. Build with `CORE_EXTRAS=dev`. |
+| `TRANSCRIBER=deepgram`, `cloud` or `none` | 1–2 vCPU, 2 GB RAM | Cheapest server. With `deepgram` or `cloud` you pay that company separately, per minute of speech. Build with `CORE_EXTRAS=dev`. |
 | `whisper-local`, model `small` | 4+ vCPU, 8 GB RAM | Works for a typical table; a few seconds of delay. Prefer dedicated CPU over shared. |
 | `whisper-local`, `large-v3`/`turbo` | NVIDIA GPU server | Best accuracy; costs much more. Needs the NVIDIA container toolkit (not covered here). |
 
-Start small: you can switch `TRANSCRIBER` later without redeploying code.
+Start small. You can switch `TRANSCRIBER` later by editing `.env` and running
+`docker compose up -d`. Moving to `whisper-local` from a `CORE_EXTRAS=dev` build also
+needs a rebuild (`--build`) without that line.
 
 ## 2. Install Docker
 
@@ -35,8 +37,9 @@ work in progress and `beta` is for testing; see CLAUDE.md.)
 git clone --branch main https://github.com/smv620/Discord-DMbot.git
 cd Discord-DMbot
 cp .env.example .env
-nano .env        # fill in DISCORD_TOKEN, EARS_SHARED_SECRET, TRANSCRIBER,
-                 # POSTGRES_ADMIN_PASSWORD, DMBOT_DB_PASSWORD, …
+nano .env        # fill in DISCORD_TOKEN, EARS_SHARED_SECRET, TRANSCRIBER (and
+                 # DEEPGRAM_API_KEY for deepgram), POSTGRES_ADMIN_PASSWORD,
+                 # DMBOT_DB_PASSWORD, …
 chmod 600 .env   # only you can read your secrets
 ```
 
@@ -47,8 +50,8 @@ database is not reachable from outside the server.
 Leave `DISCORD_DEV_GUILD_ID` set to your server's ID — slash commands appear there
 instantly. (Without it, commands register globally, which can take up to an hour.)
 
-For cloud-only transcription, also add `CORE_EXTRAS=dev` to `.env` for a much smaller
-image.
+If you use `TRANSCRIBER=deepgram`, `cloud` or `none`, also add `CORE_EXTRAS=dev` to
+`.env` for a much smaller image.
 
 ## 4. Start it
 
