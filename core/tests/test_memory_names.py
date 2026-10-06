@@ -503,12 +503,13 @@ class Lists(NamesTest):
     async def test_a_list_that_fits_is_added_without_the_ai(self) -> None:
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        fake: Any = SimpleNamespace(complete=AsyncMock())
+        self.bot.ai = fake
         self.fresh()
         it = self.it()
         await name_lists.take_list(it, self.campaign.id, name_lists.Upload("Ulfgar | NPC", "x"))
         self.assertIn("Added 1 name", it.followup.send.call_args.args[0])
-        self.bot.ai.complete.assert_not_called()
+        fake.complete.assert_not_called()
 
     async def test_a_document_goes_to_the_ai_and_the_dm_sees_the_list_first(self) -> None:
         from dmbot.ui import name_lists
@@ -516,9 +517,8 @@ class Lists(NamesTest):
         reply = (
             "Here you go:\nUlfgar | NPC | Ulf\nBryn Shander | place\nKesh | NPC | | the stranger"
         )
-        self.bot.ai = SimpleNamespace(  # type: ignore[assignment]
-            complete=AsyncMock(return_value=Reply(reply, cut=False))
-        )
+        fake: Any = SimpleNamespace(complete=AsyncMock(return_value=Reply(reply, cut=False)))
+        self.bot.ai = fake
         self.fresh()
         it = self.it(MANAGER)  # not one of the campaign's DMs: no secret names
         upload = name_lists.Upload(
@@ -532,7 +532,7 @@ class Lists(NamesTest):
         it = self.it(MANAGER)
         it.edit_original_response = AsyncMock()
         await offer._read(it)
-        system, sent = self.bot.ai.complete.call_args.args
+        system, sent = fake.complete.call_args.args
         self.assertIn("<document>", sent)
         self.assertIn("Leave out disguises", system)
         preview = it.edit_original_response.call_args.kwargs
@@ -548,9 +548,8 @@ class Lists(NamesTest):
         from dmbot.ai import BUSY, AIError
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(  # type: ignore[assignment]
-            complete=AsyncMock(side_effect=AIError(BUSY))
-        )
+        fake: Any = SimpleNamespace(complete=AsyncMock(side_effect=AIError(BUSY)))
+        self.bot.ai = fake
         self.fresh()
         it = self.it()
         upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
@@ -565,7 +564,8 @@ class Lists(NamesTest):
     async def test_an_empty_list_or_a_managers_secret_line_never_goes_to_the_ai(self) -> None:
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        fake: Any = SimpleNamespace(complete=AsyncMock())
+        self.bot.ai = fake
         self.fresh()
         it = self.it()
         await name_lists.take_list(it, self.campaign.id, name_lists.Upload("# only notes", "x"))
@@ -574,12 +574,13 @@ class Lists(NamesTest):
         text = "Kesh | NPC\nTarn | NPC | | a disguise"
         await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "x"))
         self.assertIn("Added 1 name", it.followup.send.call_args.args[0])
-        self.bot.ai.complete.assert_not_called()
+        fake.complete.assert_not_called()
 
     async def test_a_list_with_errors_goes_to_the_ai_with_the_option_to_add_what_fits(self) -> None:
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        fake: Any = SimpleNamespace(complete=AsyncMock())
+        self.bot.ai = fake
         self.fresh()
         it = self.it()
         text = "Ulfgar | NPC\nBryn Shander | place | Bryn | x | notes about the town"
