@@ -38,6 +38,7 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentMethod, ConsentStore
 from dmbot.consent_dm import (
     ALREADY_RECORDED,
+    REASK_INTRO,
     ConsentButton,
     DeclineButton,
     StopButton,
@@ -232,6 +233,9 @@ class DMBot(commands.AutoShardedBot):
             tree_cls=DMBotTree,
         )
         self.settings = settings
+        # With an outside speech-to-text company, only yeses given knowing that count
+        # (#170). Set here, from the same settings, so the two can never disagree.
+        consent.outside = settings.transcription.outside_engine
         self.consent = consent
         self.campaigns = campaigns
         self.sessions = sessions
@@ -243,6 +247,7 @@ class DMBot(commands.AutoShardedBot):
             hints=self._name_hints,
             deliver=self._deliver_transcript,
             alert=self._alert_dm,
+            outside=settings.transcription.sends_audio_out,
         )
         self.ears = EarsServer(
             host=settings.ears_host,
@@ -321,12 +326,28 @@ class DMBot(commands.AutoShardedBot):
 
     # ---- consent (slash commands and private-message buttons) ---------------
 
-    async def give_consent(self, guild_id: int, user_id: int, method: ConsentMethod) -> int:
+    @property
+    def sends_audio_out(self) -> bool:
+        """Another company writes things down (TRANSCRIBER=deepgram or cloud)."""
+        return self.settings.transcription.sends_audio_out
+
+    @property
+    def outside_engine(self) -> str | None:
+        return self.settings.transcription.outside_engine
+
+    @property
+    def company(self) -> str | None:
+        return self.settings.transcription.company
+
+    async def give_consent(
+        self, guild_id: int, user_id: int, method: ConsentMethod, *, outside_to: str | None
+    ) -> int:
         """Save consent and start capturing at once. Returns when it was given.
 
+        `outside_to`: the outside engine the request they agreed to named, if any.
         Raises if it couldn't be saved; then nothing changed.
         """
-        await self.consent.grant(guild_id, user_id, method=method)
+        await self.consent.grant(guild_id, user_id, method=method, outside_to=outside_to)
         log.info("Consent given: user %s", user_id)
         # Always tell ears (if connected), even with no session here: it may still be
         # in voice from before a restart.
@@ -414,7 +435,7 @@ class DMBot(commands.AutoShardedBot):
                 log.exception("Couldn't look up consent; they'll be asked when they rejoin")
                 table.asked.difference_update(m.id for m in people)
                 return
-            times, renew = status.granted, status.outdated
+            times, renew = status.granted, status.ask_again
             if only_renewals:
                 table.asked.difference_update(m.id for m in people if m.id not in renew)
                 people = [m for m in people if m.id in renew]
@@ -423,7 +444,8 @@ class DMBot(commands.AutoShardedBot):
             voice = self.get_channel(table.voice_channel_id)
             voice_name = voice.name if isinstance(voice, discord.abc.GuildChannel) else None
             dm_name = self.name_of(gid, table.dm_user_id)
-            cloud = self.settings.transcription.engine == "cloud"
+            cloud = self.sends_audio_out
+            company = self.company
             dms_off: list[str] = []
             failed: list[str] = []
             for member in people:
@@ -433,16 +455,20 @@ class DMBot(commands.AutoShardedBot):
                 granted = times.get(member.id)
                 server = member.guild.name
                 if granted is not None and self.consent.has_consent(gid, member.id):
-                    text, view = reminder_text(server, voice_name, granted), stop_view(gid)
+                    text = reminder_text(server, voice_name, granted, cloud=cloud, company=company)
+                    view = stop_view(gid)
                 else:
                     text = request_text(
                         server,
                         voice=voice_name,
                         dm=dm_name,
                         cloud=cloud,
-                        renewed=member.id in renew,
+                        renewed=member.id in status.outdated,  # the "What's new" note
+                        company=company,
                     )
-                    view = request_view(gid)
+                    if cloud and member.id in status.other_company:
+                        text = f"{REASK_INTRO}\n\n{text}"  # why they're asked again
+                    view = request_view(gid, outside=self.outside_engine)
                 result = await send_prompt(member, text, view)
                 if result != "sent":
                     table.asked.discard(member.id)  # try again if they rejoin
@@ -1153,7 +1179,10 @@ class DMBot(commands.AutoShardedBot):
         Later phases add character, NPC, and place names.
         """
         users = await self.consent.consenting(guild_id)
-        return [self.name_of(guild_id, uid) for uid in users]
+        names = (self.name_of(guild_id, uid) for uid in users)
+        # A member DMbot can't look up comes back as "<@id>": no use as a hint, and an
+        # outside service shouldn't get IDs.
+        return [name for name in names if not name.startswith("<@")]
 
     async def _idle_sweeper(self) -> None:
         while True:
@@ -1338,10 +1367,13 @@ async def consent_give(interaction: discord.Interaction) -> None:
         guild.name,
         voice=voice.name if isinstance(voice, discord.abc.GuildChannel) else None,
         dm=bot.name_of(guild.id, table.dm_user_id) if table else None,
-        cloud=bot.settings.transcription.engine == "cloud",
+        cloud=bot.sends_audio_out,
         renewed=renewed,
+        company=bot.company,
     )
-    await interaction.followup.send(text, view=request_view(guild.id), ephemeral=True)
+    await interaction.followup.send(
+        text, view=request_view(guild.id, outside=bot.outside_engine), ephemeral=True
+    )
 
 
 @consent_group.command(
@@ -1379,7 +1411,9 @@ async def run(settings: Settings) -> None:
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
         campaigns = CampaignStore(db)
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
-        bot = DMBot(settings, ConsentStore(db), campaigns, SessionStore(db), transcriber)
+        # DMBot sets this too; passing it here means the store never starts out wrong.
+        consent = ConsentStore(db, outside=settings.transcription.outside_engine)
+        bot = DMBot(settings, consent, campaigns, SessionStore(db), transcriber)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

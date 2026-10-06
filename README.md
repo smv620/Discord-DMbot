@@ -147,7 +147,8 @@ Pick one with `TRANSCRIBER` in `.env`:
 | Engine | Cost | Needs | Notes |
 |---|---|---|---|
 | `whisper-local` (default) | Free | `pip install -e ".[whisper]"`; a strong CPU or an NVIDIA GPU | Audio never leaves your server. Model downloads on first run. |
-| `cloud` | Pay per minute of speech | `CLOUD_STT_API_KEY` | Any OpenAI-compatible speech-to-text API. Best for servers without a GPU. |
+| `deepgram` | Pay per minute of speech | A Deepgram account; `DEEPGRAM_API_KEY` | Deepgram Nova-3. Players' voices and names go to Deepgram (told not to use them for training). Sends the names DMbot expects as hints; in a quick test it got 23 of 24 D&D names right, against 19 for local Whisper (the full comparison is #128). Fast (well under a second per clip). Best for servers without a GPU. |
+| `cloud` | Pay per minute of speech | `CLOUD_STT_API_KEY` | Any OpenAI-compatible speech-to-text API. |
 | `none` | Free | — | No text: only the capture-check counts in the core log. |
 
 On a CPU-only server use `WHISPER_MODEL=small` (or `base` if it falls behind). With an
@@ -155,8 +156,14 @@ NVIDIA GPU use `large-v3` or `turbo`. The default compute type (`auto`) picks th
 precision for your hardware. If transcription falls behind, DMbot warns you in
 the DM screen; the **Status** button in `/dmbot help` shows the backlog.
 
-When `TRANSCRIBER=cloud`, players are told in the consent message (and by `/consent
-give`) that their voice clips go to an outside service.
+**Switch to Deepgram:** in `.env` set `TRANSCRIBER=deepgram` and `DEEPGRAM_API_KEY=<your
+key>` (leave `DEEPGRAM_MODEL` and `DEEPGRAM_LISTEN_URL` blank), then restart with
+`docker compose up -d`.
+
+When `TRANSCRIBER=deepgram` or `cloud`, players' voice clips and Discord names go to that
+company. The consent message, `/consent give` and the reminder each session say so.
+People who said yes before the switch are **asked again**: their earlier yes doesn't
+count until they agree to the new wording, and DMbot doesn't record them until then.
 
 ## Commands
 

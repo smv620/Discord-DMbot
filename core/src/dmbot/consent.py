@@ -16,6 +16,10 @@ Each consent records the wording it was given under (`TERMS_VERSION`) and how (#
 Only consent under the current wording counts: when what DMbot does with recordings
 changes, the version goes up, and everyone who agreed before is asked again. Until they
 say yes again they are not recorded.
+
+While the server sends voices to an outside company (TRANSCRIBER=deepgram or cloud),
+a yes also has to name that company's engine (#170): a yes given under local Whisper,
+or for another company, doesn't count, and that person is asked again.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from dmbot.db import Conn, Database
@@ -46,11 +50,21 @@ CONSENT_COMMAND: ConsentMethod = "consent_command"
 class ConsentStatus:
     granted: dict[int, int]  # user → when they said yes under the current wording
     outdated: set[int]  # said yes only under older wording: ask again
+    # Said yes under the current wording, but not for the outside company in use now
+    # (or under local Whisper): ask again (#170).
+    other_company: set[int] = field(default_factory=set)
+
+    @property
+    def ask_again(self) -> set[int]:
+        return self.outdated | self.other_company
 
 
 class ConsentStore:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, *, outside: str | None = None) -> None:
+        """`outside`: the outside engine (deepgram, cloud) the server sends voices to, or
+        None for local Whisper. Then only yeses given for that engine count."""
         self._db = db
+        self._outside = outside
         self._cache: dict[int, frozenset[int]] = {}
         self._locks: dict[int, asyncio.Lock] = {}
         # Revoked here but not (yet) saved: never trust the database for these.
@@ -59,23 +73,42 @@ class ConsentStore:
         # stop arrived can't undo that stop.
         self._stops: dict[tuple[int, int], int] = {}
 
+    @property
+    def outside(self) -> str | None:
+        return self._outside
+
+    @outside.setter
+    def outside(self, value: str | None) -> None:
+        """Changing which yeses count drops the cache, so nothing stale is trusted."""
+        if value != self._outside:
+            self._outside = value
+            self._cache.clear()
+
     async def grant(
-        self, guild_id: int, user_id: int, *, method: ConsentMethod = PRIVATE_MESSAGE
+        self,
+        guild_id: int,
+        user_id: int,
+        *,
+        method: ConsentMethod = PRIVATE_MESSAGE,
+        outside_to: str | None = None,
     ) -> frozenset[int]:
-        """Save consent under the current wording. `method`: how they said yes."""
+        """Save consent under the current wording. `method`: how they said yes.
+        `outside_to`: the outside engine the request they agreed to named, if any."""
         if method not in (PRIVATE_MESSAGE, CONSENT_COMMAND):
             raise ValueError(f"Unknown consent method: {method!r}")
         stops_before = self._stops.get((guild_id, user_id), 0)
         async with self._lock(guild_id):
             async with self._db.guild(guild_id) as conn:
                 await conn.execute(
-                    "INSERT INTO consent (guild_id, user_id, granted_at, terms_version, method)"
-                    " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (guild_id, user_id)"
+                    "INSERT INTO consent"
+                    " (guild_id, user_id, granted_at, terms_version, method, outside_to)"
+                    " VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (guild_id, user_id)"
                     " DO UPDATE SET granted_at = EXCLUDED.granted_at,"
-                    " terms_version = EXCLUDED.terms_version, method = EXCLUDED.method",
-                    (guild_id, user_id, int(time.time()), TERMS_VERSION, method),
+                    " terms_version = EXCLUDED.terms_version, method = EXCLUDED.method,"
+                    " outside_to = EXCLUDED.outside_to",
+                    (guild_id, user_id, int(time.time()), TERMS_VERSION, method, outside_to),
                 )
-                users = await _select(conn, guild_id)
+                users = await _select(conn, guild_id, self._outside)
             if self._stops.get((guild_id, user_id), 0) == stops_before:
                 self._held_back.get(guild_id, set()).discard(user_id)
             # Otherwise a stop arrived while saving: it wins, and its revoke follows.
@@ -102,7 +135,7 @@ class ConsentStore:
                     (guild_id, user_id),
                 )
                 removed = await cur.fetchone() is not None
-                users = await _select(conn, guild_id)
+                users = await _select(conn, guild_id, self._outside)
             self._held_back[guild_id].discard(user_id)
             self._store(guild_id, users)
             return removed
@@ -112,7 +145,7 @@ class ConsentStore:
             async with self._lock(guild_id):
                 if guild_id not in self._cache:
                     async with self._db.guild(guild_id) as conn:
-                        users = await _select(conn, guild_id)
+                        users = await _select(conn, guild_id, self._outside)
                     self._store(guild_id, users)
         return self._cache[guild_id]
 
@@ -130,18 +163,27 @@ class ConsentStore:
             return ConsentStatus({}, set())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT user_id, granted_at, terms_version FROM consent"
+                "SELECT user_id, granted_at, terms_version, outside_to FROM consent"
                 " WHERE guild_id = %s AND user_id = ANY(%s)",
                 (guild_id, ids),
             )
             rows = await cur.fetchall()
+        # A yes under the current wording that names another company (or none, while an
+        # outside engine is in use) is neither granted nor outdated: they simply get
+        # the question again, which names the company now in use.
         granted = {
             int(r["user_id"]): int(r["granted_at"])
             for r in rows
             if r["terms_version"] == TERMS_VERSION
+            and (self._outside is None or r["outside_to"] == self._outside)
         }
         outdated = {int(r["user_id"]) for r in rows if r["terms_version"] < TERMS_VERSION}
-        return ConsentStatus(granted, outdated)
+        other_company = {
+            int(r["user_id"])
+            for r in rows
+            if r["terms_version"] == TERMS_VERSION and int(r["user_id"]) not in granted
+        }
+        return ConsentStatus(granted, outdated, other_company)
 
     async def granted_times(self, guild_id: int, user_ids: Iterable[int]) -> dict[int, int]:
         """When each of these players said yes here under the current wording (Unix
@@ -169,9 +211,10 @@ class ConsentStore:
         return users
 
 
-async def _select(conn: Conn, guild_id: int) -> frozenset[int]:
+async def _select(conn: Conn, guild_id: int, outside: str | None) -> frozenset[int]:
     cur = await conn.execute(
-        "SELECT user_id FROM consent WHERE guild_id = %s AND terms_version = %s",
-        (guild_id, TERMS_VERSION),
+        "SELECT user_id FROM consent WHERE guild_id = %s AND terms_version = %s"
+        " AND (%s::text IS NULL OR outside_to = %s)",
+        (guild_id, TERMS_VERSION, outside, outside),
     )
     return frozenset(int(r["user_id"]) for r in await cur.fetchall())

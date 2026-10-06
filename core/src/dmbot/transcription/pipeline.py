@@ -18,7 +18,7 @@ from typing import Protocol
 
 from dmbot.audio.segmenter import Utterance
 from dmbot.logs import log_context
-from dmbot.transcription.base import MIN_UTTERANCE_S, Transcriber
+from dmbot.transcription.base import MIN_UTTERANCE_S, Transcriber, TranscriptionProblem
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +39,10 @@ SKIPPED_ALERT = (
     "⚠️ Writing things down: DMbot couldn't keep up and skipped a bit of what was said, "
     "so it won't be in the transcript. DMbot is still listening. If you see this often, "
     "whoever hosts DMbot can pick a faster setting."
+)
+SKIPPED_ALERT_OUTSIDE = (
+    "⚠️ Writing things down: the speech-to-text company was slow, so DMbot skipped a bit "
+    "of what was said; it won't be in the transcript. DMbot is still listening."
 )
 
 
@@ -68,7 +72,11 @@ class TranscriptionPipeline:
         alert: Alert,
         queue_size: int = QUEUE_SIZE,
         budget_s: Callable[[float], float] = clip_budget_s,
+        outside: bool = False,
     ) -> None:
+        # True when another company does the writing down (TRANSCRIBER=deepgram or cloud):
+        # slowness is theirs, so alerts don't suggest a smaller Whisper model.
+        self._outside = outside
         self.transcriber = transcriber
         self._consent = consent
         self._is_active = is_active
@@ -179,7 +187,9 @@ class TranscriptionPipeline:
         last = self._last_skip_alert.get(utterance.guild_id)
         if last is None or now - last >= SKIP_ALERT_EVERY_S:
             self._last_skip_alert[utterance.guild_id] = now
-            await self._alert(utterance.guild_id, SKIPPED_ALERT)
+            await self._alert(
+                utterance.guild_id, SKIPPED_ALERT_OUTSIDE if self._outside else SKIPPED_ALERT
+            )
 
     async def _on_failure(self, guild_id: int, exc: Exception) -> None:
         self.consecutive_failures += 1
@@ -187,12 +197,24 @@ class TranscriptionPipeline:
         if self.total_failures == 1 or self.total_failures % LOG_EVERY_NTH_FAILURE == 0:
             log.error("Transcription failed (%d so far): %s", self.total_failures, exc)
         if self.consecutive_failures == FAILURES_BEFORE_ALERT:
-            await self._alert(
-                guild_id,
-                f"⚠️ Transcription isn't working ({type(exc).__name__}: {exc}). "
-                "Capture continues without text. Check the server log and your "
-                "TRANSCRIBER settings.",
-            )
+            if isinstance(exc, TranscriptionProblem):
+                advice = (
+                    "Whoever hosts DMbot: check the speech-to-text settings in .env, then "
+                    "restart DMbot."
+                    if exc.host_can_fix
+                    else "This is on the speech-to-text company's side; DMbot keeps trying."
+                )
+                text = (
+                    f"⚠️ **No transcript right now:** {exc}. DMbot still records, but writes "
+                    f"nothing down. {advice}"
+                )
+            else:
+                text = (
+                    f"⚠️ Transcription isn't working ({type(exc).__name__}: {exc}). "
+                    "Capture continues without text. Check the server log and your "
+                    "TRANSCRIBER settings."
+                )
+            await self._alert(guild_id, text)
 
     async def _on_success(self, guild_id: int) -> None:
         if self.consecutive_failures >= FAILURES_BEFORE_ALERT:
@@ -207,7 +229,12 @@ class TranscriptionPipeline:
             await self._alert(
                 guild_id,
                 f"🐢 Transcription is falling behind ({depth} clips waiting). "
-                "Try a smaller WHISPER_MODEL or TRANSCRIBER=cloud.",
+                + (
+                    "The speech-to-text company is slow right now; DMbot will catch up."
+                    if self._outside
+                    else "Whoever hosts DMbot can try a smaller WHISPER_MODEL or "
+                    "TRANSCRIBER=deepgram."
+                ),
             )
         elif depth < BACKLOG_WARN // 2:
             self._backlog_warned = False

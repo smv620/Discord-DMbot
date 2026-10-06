@@ -320,7 +320,12 @@ proposal when the DM clearly agrees out loud, then goes through the same approva
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
 is chosen by `TRANSCRIBER=` in config.
-- **Default: a paid cloud speech-to-text service** (chosen in #128). Requirements:
+- **Default: a paid cloud speech-to-text service** (chosen in #128). **Built first:
+  Deepgram Nova-3, `TRANSCRIBER=deepgram`** (owner decision, 2026-10-06, #170), after a
+  quick comparison where it and Speechmatics tied with names hinted (23/24 D&D terms,
+  local Whisper 19/24; docs/testing-history.log). The full bake-off (#128) still runs to
+  confirm. It doesn't yet pass per-word confidence through: the `Transcriber` interface
+  returns text only, which the Cleaner work (#127) changes. Requirements:
   - custom words sent **with each request**, in effect immediately, with no training or
     pre-built vocabulary (about 50–300 per campaign, from the campaign memory);
   - "sounds like" hints if possible;
@@ -357,6 +362,12 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
     runs local Whisper).
 
   This changes the terms, so the terms version goes up and everyone is asked again (#35).
+  **Built for the switch to an outside company (#170):** each yes records whether the
+  request said another company writes things down. While the server uses one
+  (`TRANSCRIBER=deepgram` or `cloud`), only those yeses count; everyone else isn't
+  recorded and gets the question again. An old "I consent" button from before the switch
+  shows the new question instead of saving a yes. The general terms version (#35) still
+  covers other wording changes.
   It has a **✅ I consent** button (#33).
 - **Consent carries over** between sessions, per server. In **every session**, a consented
   person gets one short private reminder with the date they consented, plus a
@@ -769,7 +780,8 @@ DMbot already wrote down stays, and anyone in this server can still read it." (W
 
 - Final wording of the consent DM and join reminder (#33)
 - Whether revoking consent also removes a person's past lines from stored transcripts (#34)
-- Which cloud speech-to-text service (#128)
+- Which cloud speech-to-text service (#128): Deepgram built first (#170); the bake-off
+  confirms or changes it
 - The Cleaner's confidence thresholds and target accuracy, set from the test set (#127)
 - Whether to use an embeddings provider for meaning-based matching, and which (#126)
 - Whether players may suggest corrections to their own transcript lines, with the DM
