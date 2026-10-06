@@ -475,6 +475,30 @@ class Lists(NamesTest):
         )
         self.assertNotIn("Bryn Shander", await self.names())
 
+    async def test_an_unknown_kind_is_asked_once_for_all_its_names(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.fresh()
+        it = self.it()
+        lines = "\n".join(f"Mage {n} | wizard" for n in range(3)) + "\nTarn | wizard"
+        await name_lists.import_list(it, self.campaign.id, lines)
+        sent = it.followup.send.call_args
+        self.assertIn("**wizard** (4)", sent.args[0])
+        (select,) = [
+            c for c in sent.kwargs["view"].children if isinstance(c, name_lists.KindSelect)
+        ]
+        it = self.it()
+        it.message = SimpleNamespace(content=sent.args[0])
+        await sent.kwargs["view"].picked(
+            SimpleNamespace(values=["npc"], ids=select.ids, word=select.word),  # type: ignore[arg-type]
+            it,
+        )
+        self.assertIn("Every **wizard**: 4 names set to", it.response.edited[0][0])
+        self.assertEqual(
+            {f"Mage {n}" for n in range(3)} | {"Tarn"},
+            set(await self.names()) - {"Belleros"},
+        )
+
     async def test_a_manager_never_learns_of_or_adds_secret_names(self) -> None:
         from dmbot.ui import name_lists
 

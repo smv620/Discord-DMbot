@@ -918,6 +918,11 @@ names panel nor the speech-to-text hints can be a fixed list.
     duplicate a name;
   - for anyone but the campaign's DMs, a clash with a secret name looks exactly like no
     clash.
+  - **a kind DMbot doesn't know is asked once per word** (owner's decision): the summary
+    shows a menu for each of up to 4 unknown words ("What is every “wizard” (50)?"), and
+    picking one confirms all those names as that kind in one change; the template lists
+    the other words that work (town, monster…). The list file has **no emoji**: kinds and
+    instructions are plain words.
 - **Step 2, second part built (2026-10-06):** **Edit other names** (pick one: ⭐ make it
   the main name, where the old main name stays one of its other names and a secret name
   never can be; 🤫 keep it secret or 👁️ stop, for the campaign's DMs only; ✖ not this

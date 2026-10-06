@@ -668,6 +668,26 @@ class Lists(MemoryTest):
         with self.assertRaises(MemoryRuleError):  # not a list of names
             await self.memory.undo_names(GUILD_A, self.c, renamed.batch)
 
+    async def test_a_whole_group_gets_its_kind_in_one_change(self) -> None:
+        from dmbot.memory.models import NewName
+
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [NewName(f"Mage {n}", "concept", PROPOSED, (f"M{n}",)) for n in range(3)],
+            source="dm",
+        )
+        ids = [i for i in written.value if i is not None]
+        await self.memory.set_entity_status(GUILD_A, self.c, ids[0], REJECTED, source="dm")
+        done = await self.memory.confirm_kinds(GUILD_A, self.c, ids, "npc", source="dm")
+        self.assertEqual(done.value, 2)  # one was removed in between
+        confirmed = await self.memory.entities(GUILD_A, self.c, statuses=[CONFIRMED])
+        self.assertEqual(
+            {(e.name, e.type) for e in confirmed}, {("Mage 1", "npc"), ("Mage 2", "npc")}
+        )
+        aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=ids[1])
+        self.assertTrue(all(a.status == CONFIRMED for a in aliases))
+
     async def test_only_the_dm_and_never_a_players_character(self) -> None:
         from dmbot.memory.models import NewName
 

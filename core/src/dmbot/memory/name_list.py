@@ -76,8 +76,11 @@ def header(*, secrets: bool) -> str:
         "###",
         "### - Only the name is needed. To skip a part, leave it empty: Ulfgar | | Ulf",
         "### - kind: NPC, place, group, creature, item, god, spell, event or other.",
-        "###   No kind, or one DMbot doesn't know? The name waits in 📝 Check new names",
-        "###   so you can pick one.",
+        "###   These work too: person or character (NPC); town, city or location (place);",
+        "###   faction or guild (group); monster or beast (creature); object or weapon",
+        "###   (item); deity (god); magic (spell); thing (other).",
+        "###   Another word, or no kind? DMbot asks you once for each word after you add",
+        "###   the list (every wizard at once), or the names wait in Check new names.",
         "### - other names: nicknames, titles or short forms people say.",
         "###   Put a , or ; between them: Bell, the old knight",
     ]
@@ -89,7 +92,7 @@ def header(*, secrets: bool) -> str:
         ]
     lines += [
         "### - Names only: no descriptions or notes. Each name is up to 100 characters.",
-        "### - Player's characters: add them with 🧑 Add a player's character instead.",
+        "### - Player's characters: add them with Add a player's character instead.",
         "### - Lines starting with # are notes. DMbot skips them, so you can leave these.",
         "### - Names DMbot already knows are skipped. Up to 2,000 lines per file.",
         "### - If DMbot can't read a line, it adds the rest and tells you the line number.",
@@ -97,7 +100,7 @@ def header(*, secrets: bool) -> str:
         "### To use it: change the examples to your own names and save it as a .txt file",
         "### (Notepad on Windows; TextEdit on a Mac: Format > Make Plain Text).",
         '### Then in Discord type /dmbot names and add the file in the "file" box.',
-        "### On a phone? Copy the lines instead, then press 📥 Add many > 📋 Paste a list.",
+        "### On a phone? Copy the lines instead, then press Add many > Paste a list.",
     ]
     return "\n".join(lines) + "\n"
 

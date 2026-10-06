@@ -23,6 +23,7 @@ class Template(unittest.TestCase):
         self.assertEqual(names["Frostwolf tribe"].kind, "faction")
         self.assertEqual(names["Auril"].kind, "deity")
         self.assertIsNone(names["Ulfgar"].kind)  # no kind: DMbot asks later
+        self.assertTrue(all(ord(c) < 0x2000 for c in TEMPLATE))  # no emoji in a text file
 
 
 class Reading(unittest.TestCase):

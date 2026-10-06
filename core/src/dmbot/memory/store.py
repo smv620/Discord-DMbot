@@ -660,6 +660,32 @@ class MemoryStore:
                 await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
             return Written(_entity(row), w.batch)
 
+    async def confirm_kinds(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str], type: str, *, source: str
+    ) -> Written[int]:
+        """The DM says what a whole group of suggested names is (📥 Add many: "every
+        'wizard' is an NPC"): each still waiting is confirmed as that kind, with its names,
+        in one change. Returns how many were confirmed."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can confirm that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            onto.active_type(type)
+            if onto_is_pc(onto, type):
+                raise MemoryRuleError("A player's character needs its player.")
+            done = 0
+            for entity_id in entity_ids:
+                current = await w.get(ENTITIES, entity_id)
+                if current is None or current["status"] != PROPOSED:
+                    continue  # checked or removed since
+                await w.update(ENTITIES, entity_id, {"type": type, "status": CONFIRMED})
+                for alias in await w.select(
+                    ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
+                ):
+                    await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
+                done += 1
+            return Written(done, w.batch)
+
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
         """Every name and word DMbot already has an answer for in this campaign, whatever
         the answer: names (rejected ones too, so "Not a name" sticks) and "keep as heard"

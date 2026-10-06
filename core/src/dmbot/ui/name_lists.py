@@ -34,7 +34,9 @@ from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import NO_PINGS, _bot, _Button, _Menu, _replace, _Select, _send, _tell
 from dmbot.ui.names import (
     KIND_SHORT,
+    KINDS,
     NOT_AVAILABLE,
+    PC,
     ReviewButton,
     _campaign_for,
     _md,
@@ -374,6 +376,7 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
     # name looks exactly like no clash: they never learn one exists.
     taken = {e.key for e in names.names if secrets_ok or not e.secret}
     new: list[NewName] = []
+    groups: dict[str, list[int]] = {}  # kind word ("" for none) → positions in `new`
     known = look = dropped = 0
     for line in parsed.lines:
         key = name_key(line.name)
@@ -385,8 +388,12 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
         dropped += len(line.others) - len(others) + len(line.secrets) - len(secret)
         # No kind, or it sounds like a known name: saved as a suggestion, waiting in
         # 📝 Check new names.
-        unclear = line.kind is None or _sounds_known(names, line.name)
+        sounds_known = _sounds_known(names, line.name)
+        unclear = line.kind is None or sounds_known
         look += unclear
+        if line.kind is None and not sounds_known:
+            # Asked once per word after saving: "every wizard is an NPC".
+            groups.setdefault(" ".join(line.kind_word.casefold().split()), []).append(len(new))
         new.append(
             NewName(
                 line.name, line.kind or "concept", PROPOSED if unclear else CONFIRMED,
@@ -424,7 +431,13 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
             1 for n, i in zip(new, written.value, strict=True) if i is None and n.status == PROPOSED
         )
         changed(interaction, campaign)
-    await _send_summary(interaction, campaign, parsed, added, look, known, dropped, batch)
+    saved = written.value if new else []
+    kinds = {
+        word: ids
+        for word, positions in groups.items()
+        if (ids := [i for p in positions if (i := saved[p]) is not None])
+    }
+    await _send_summary(interaction, campaign, parsed, added, look, known, dropped, batch, kinds)
 
 
 async def _send_summary(
@@ -436,13 +449,29 @@ async def _send_summary(
     known: int,
     dropped: int,
     batch: int | None,
+    kinds: dict[str, list[str]],
 ) -> None:
     lines = [summary_text(added, look, known, parsed.repeated, dropped, parsed.refused)]
-    view = discord.ui.View(timeout=None)  # both buttons work after a restart
+    asked = sorted(kinds.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:KIND_QUESTIONS]
+    if asked:
+        words = ", ".join(
+            f"**{_md(w)}** ({len(ids)})" if w else f"no kind ({len(ids)})" for w, ids in asked
+        )
+        lines.append(
+            f"❓ DMbot doesn't know these kinds: {words}. Pick what each one is below to set "
+            "all its names at once."
+        )
+        if len(kinds) > len(asked):
+            lines.append(f"{len(kinds) - len(asked)} more wait in 📝 Check new names.")
+    # The buttons keep working after a restart; the kind menus while DMbot keeps running.
+    view = KindQuestions(campaign.id, asked)
     if look:
         view.add_item(ReviewButton(campaign.id))
     if batch is not None and added:
         view.add_item(UndoListButton(campaign.id, batch))
+    for item in view.children:
+        if not isinstance(item, KindSelect):
+            item.row = 4
     await interaction.followup.send(
         "\n".join(lines),
         view=view,
@@ -495,6 +524,65 @@ def summary_text(
             "those names."
         )
     return "\n".join(lines)
+
+
+KIND_QUESTIONS = 4  # one menu per unknown kind word; the 5th row holds the buttons
+
+
+class KindSelect(discord.ui.Select["KindQuestions"]):
+    def __init__(self, questions: KindQuestions, word: str, ids: list[str], row: int) -> None:
+        what = f"every “{logic.shorten(word, 40)}”" if word else "the names with no kind"
+        super().__init__(
+            placeholder=logic.shorten(f"What is {what} ({len(ids)})?", 150),
+            options=[
+                discord.SelectOption(label=label, value=kind)
+                for kind, label in KINDS.items()
+                if kind != PC
+            ],
+            row=row,
+        )
+        self.questions = questions
+        self.word = word
+        self.ids = ids
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self.questions.picked(self, interaction)
+
+
+class KindQuestions(discord.ui.View):
+    """ "wizard (50): what is it?" once per unknown kind word, under the summary."""
+
+    def __init__(self, campaign_id: str, asked: list[tuple[str, list[str]]]) -> None:
+        super().__init__(timeout=60 * 60)
+        self.campaign_id = campaign_id
+        for row, (word, ids) in enumerate(asked):
+            self.add_item(KindSelect(self, word, ids, row))
+
+    async def picked(self, select: KindSelect, interaction: discord.Interaction) -> None:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        memory = _memory(interaction)
+        if campaign is None or memory is None:
+            return
+        kind = select.values[0]
+        try:
+            written = await memory.confirm_kinds(
+                campaign.guild_id, campaign.id, select.ids, kind, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change them. {exc}")
+            return
+        changed(interaction, campaign)
+        self.remove_item(select)
+        what = f"Every **{_md(select.word)}**" if select.word else "The names with no kind"
+        done = written.value
+        note = (
+            f"✅ {what}: {done} name{'' if done == 1 else 's'} set to **{_md(KINDS[kind])}**."
+            + ("" if done == len(select.ids) else " (The rest were checked or changed already.)")
+        )
+        content = (interaction.message.content if interaction.message else "") + "\n" + note
+        await interaction.response.edit_message(
+            content=content[:2000], view=self, allowed_mentions=NO_PINGS
+        )
 
 
 class UndoListButton(
