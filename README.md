@@ -87,8 +87,8 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
 2. **Configure.** Copy `.env.example` to `.env` in the repo root and fill in
    `DISCORD_TOKEN`, `DISCORD_DEV_GUILD_ID`, a long random `EARS_SHARED_SECRET`, and
    `DATABASE_URL` (see [Database](#database)). Pulling updates never changes your
-   `.env`: when new settings appear in `.env.example`, core's log names them at start-up
-   so you can copy them over.
+   `.env`. When `.env.example` gains new settings, core's log names them at start-up so
+   you can copy them over.
 3. **Start Postgres** (once per PC restart; see [Database](#database)).
 4. **Start core** (PyCharm terminal, Python 3.12+):
    ```bash

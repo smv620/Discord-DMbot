@@ -1,5 +1,6 @@
 """Warn when .env is missing settings that .env.example has (#31)."""
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,10 +38,13 @@ class EnvCheckTests(unittest.TestCase):
             text = env_check.check(env, path)
         assert text is not None
         self.assertIn("TRANSCRIBER, WHISPER_MODEL", text)
-        self.assertIn("2 setting(s)", text)
+        self.assertIn("missing 2 settings", text)
         self.assertIn(".env.example", text)  # tells them what to do next
         self.assertNotIn("secret-token-123", text)
         self.assertNotIn("DISCORD_TOKEN", text)  # it's set, so not listed
+
+    def test_one_setting_is_singular(self) -> None:
+        self.assertIn("missing 1 setting that", env_check.warning(["TRANSCRIBER"]))
 
     def test_nothing_missing_is_quiet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -51,6 +55,20 @@ class EnvCheckTests(unittest.TestCase):
     def test_unreadable_example_never_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(env_check.check({}, Path(tmp) / "missing.env.example"))
+            # Docker makes a folder when a mounted file is missing on the host.
+            self.assertIsNone(env_check.check({}, Path(tmp)))
+
+    def test_finds_the_example_in_a_parent_folder(self) -> None:
+        here = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / ".env.example").write_text("A=\n", encoding="utf-8")
+            (root / "core").mkdir()
+            os.chdir(root / "core")
+            try:
+                self.assertEqual(env_check.find_example(), root / ".env.example")
+            finally:
+                os.chdir(here)
 
     def test_repo_example_parses(self) -> None:
         root = Path(__file__).resolve().parents[2]

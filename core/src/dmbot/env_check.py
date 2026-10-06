@@ -35,15 +35,18 @@ def missing_settings(example: list[str], env: Mapping[str, str]) -> list[str]:
 
 
 def warning(missing: list[str]) -> str:
+    noun = "setting" if len(missing) == 1 else "settings"
     return (
-        f"Your .env is missing {len(missing)} setting(s) added since you copied it: "
-        f"{', '.join(missing)}. DMbot is using the defaults for these. Compare your .env "
-        "with .env.example and copy over any you want to set."
+        f"Your .env is missing {len(missing)} {noun} that are in .env.example: "
+        f"{', '.join(missing)}. DMbot is running and uses the default for these. "
+        "Copy the lines from .env.example into .env (leave a value blank to keep "
+        "the default), then restart."
     )
 
 
 def find_example() -> Path | None:
     """.env.example in the current folder or the nearest one above it."""
+    # usecwd: Docker Compose mounts it at /app/.env.example, core's working folder.
     found = find_dotenv(".env.example", usecwd=True)
     return Path(found) if found else None
 
