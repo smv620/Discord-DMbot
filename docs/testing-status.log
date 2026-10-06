@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-06 by the server session (server on 6bfb3cb; next: run 8, DM +
+Last updated: 2026-10-06 by the server session (server on a184882; next: run 8, DM +
 player, which also checks what's been deployed since run 7)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -11,16 +11,16 @@ NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
 ------------------------------------------------------------------------------
 Why: run 7 gave the Deepgram baseline with the DM alone. Still open: two speakers, a
 player stopping, a first-time question, and a first live look at PRs #192 (#188),
-#184, #194, #195 (#190), #196 and #202. Nothing blocks it.
+#184, #194, #195 (#190), #196, #202, #206 (#107), #207 (#108), #208 (#99) and #214
+(scene hints). Nothing blocks it.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1. Deployed: 6bfb3cb. On development but NOT deployed yet: #206
-(who is recorded, kept up to date: #107), #207 (Stop listening button: #108), #208
-(plain transcription alerts: #99). The server session redeploys before run 8.
+DMBOT_DEBUG_AUDIO=1. Deployed: a184882 (16:13 UTC), the tip of development.
 
 Before the test (owner)
-  [ ] Ask the server session to redeploy, and say how many people (1 = DM only,
-      2 = DM + player, ...); paste the matching docs/test-scripts/ script into Discord
+  [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
+      paste the matching docs/test-scripts/ script into Discord. If development has
+      moved since a184882, ask it to redeploy first
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
   [ ] Add Auril and Caer-Dineval with /dmbot names -> Add a name (run 7's two misses)
@@ -36,6 +36,8 @@ What to check
     no pop-ups (#194); the DM screen stays quiet
   - Stop recording me -> no more lines from that player
   - A player peeking at the DM screen can use /consent revoke there (#190)
+  - The DM screen's list of who is recorded changes as people agree or stop (#107)
+  - The Stop listening button ends the session like /dmbot stop (#108)
   - Wait for the script's last line in the transcript channel, then /dmbot stop:
     last words kept and a session summary posted (#202), a download offered (#196),
     and, if DMbot heard names it doesn't know, "Check new names" (#184)
@@ -58,4 +60,4 @@ LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram:
 Open issues from testing
   #43 DAVE loss after a pause   #45 uncounted losses   #112 menus run off phone screens
   #120 capture check drops audio counts   #121 start of speech may be cut
-  #209 Deepgram 400 on too many keyterm tokens   #107 (fixed in #206, not deployed)
+  #209 Deepgram 400 on too many keyterm tokens

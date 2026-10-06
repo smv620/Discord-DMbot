@@ -166,22 +166,22 @@ calling it.
 
 1. **Every failure or oddity becomes a GitHub issue** (CLAUDE.md, "Issue log"), labeled
    `bug` and `session: server`, with the exact log lines. Remove anything secret first.
-2. **Post a summary comment** on the tracking issue for live tests (create one titled
-   "Live test results" if none exists), including:
-   - date, `development` commit SHA, OS, and Node and Python versions;
-   - number of speakers and session length;
-   - audio % per speaker, from the core log's capture checks or the ears `audio …` lines;
-   - the Status output (from `/dmbot help`);
-   - a pass or fail for each row of the table in step 5;
-   - links to any issues filed.
-3. **Update the testing logs** (CLAUDE.md, "Testing logs"). The logs are public:
+2. **Update the testing logs** (CLAUDE.md, "Testing logs"). They are the record of
+   every run; results are no longer posted on a GitHub issue. The logs are public:
    when copying terminal lines, replace Discord user IDs with "DM", "player A",
    "player B", and so on.
    - Append the full record, including anything the owner pasted from Discord, to
-     `docs/testing-history.log`.
+     `docs/testing-history.log`. Include:
+     - date, `development` commit SHA, OS, and Node and Python versions;
+     - number of speakers and session length;
+     - audio % per speaker, from the core log's capture checks or the ears `audio …`
+       lines;
+     - the Status output (from `/dmbot help`);
+     - a pass or fail for each row of the table in step 5;
+     - the numbers of any issues filed.
    - Rewrite `docs/testing-status.log` so it shows only the next test, any blockers and
      the latest result.
-4. **Stop both processes** with Ctrl+C in each terminal.
+3. **Stop both processes** with Ctrl+C in each terminal.
 
 ---
 
