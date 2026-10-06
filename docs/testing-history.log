@@ -395,3 +395,17 @@ Notes
   - Transcript channel: pinned card, session start/end dividers, one line per piece,
     labelled with the speaker. Works as designed, apart from #188.
 Overall ...................................... PASS (Deepgram baseline: 33/33, 10/12)
+
+==============================================================================
+2026-10-06  Server: two more deploys (server session, no test run)
+==============================================================================
+  - 05:38 UTC  development @ 9c3092c: #192 (slash commands work in the transcript
+    channel, #188) and #184 (campaign memory step 3: /dmbot names, after-session name
+    suggestions, campaign names as speech-to-text hints). Migration 0008_played_by.
+  - 14:27 UTC  development @ 6bfb3cb: #194 (transcript lines post silently), #195
+    (slash commands work for DM-screen peekers, #190), #196 (stored session transcripts
+    and downloads, #41/#125), #202 (last words kept at stop and a session summary,
+    #109). Migration 0009_transcripts.
+  Each: database backed up first (kept on the server, outside the repo), core rebuilt,
+  "ears connected" within seconds, no errors. Ears and postgres unchanged.
+  Not yet live-tested: all of the above. Run 8's checklist covers them.
