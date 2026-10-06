@@ -93,7 +93,7 @@ back to the Cleaner. Later helpers (NPC tracker, PlotBot) send **proposals** to 
 their DM-confirmation step is what marks a fact confirmed. See "Campaign memory
 (EntityBot)" below.
 
-**Story memory (proposed 2026-10-06, not yet decided; docs/STORY_MEMORY.md).** Phase 5
+**Story memory (proposed 2026-10-06, not yet decided; docs/STORY_MEMORY.md, #227).** Phase 5
 grows the campaign memory from names and connections into what happened: claims (what
 was said, and how: narrated, an NPC's words, a player's belief, a plan) kept apart from
 DM-confirmed facts; state facts (alive, dead, missing); story threads, promises and

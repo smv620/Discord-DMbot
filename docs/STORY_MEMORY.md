@@ -2,7 +2,7 @@
 
 **Status: proposed (2026-10-06), waiting for the owner's decision.** Nothing here is
 decided until the owner says so; `docs/PLAN.md` stays the source of truth and links
-here. Summary and rationale: the "Story memory" GitHub issue.
+here. Summary and rationale: #227.
 
 This extends the campaign memory (EntityBot, #126) from *names and connections* into a
 **story memory**: what happened, what's still open, who knows what, and how people feel
