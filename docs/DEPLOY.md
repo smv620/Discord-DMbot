@@ -46,14 +46,17 @@ chmod 600 .env   # only you can read your secrets
 To add or change a key later, for example from your phone over SSH, skip the editor:
 
 ```bash
+cd Discord-DMbot
 scripts/set-key                    # pick from a list of keys and tokens
 scripts/set-key DEEPGRAM_API_KEY   # or name the one you want
 ```
 
-Paste the key when asked. It stays hidden, and only its last 4 characters are shown
-back. The helper keeps `.env` at `chmod 600`, and if DMbot is running it offers to
-restart it. Keys go into the server's `.env` only: never paste them into chat or issues.
-It won't change the two database passwords, because Postgres keeps the old ones.
+Paste the key when asked. You won't see it as you paste; that's normal. Paste once, then
+press Enter. The helper shows back only the key's length and last 4 characters, and
+keeps `.env` at `chmod 600`. If DMbot is running it offers to restart it, which drops the
+bot from voice for about a minute, so don't do it mid-session. Keys go into the server's
+`.env` only: never paste them into chat or issues. It sets only keys, tokens and secrets;
+edit `.env` for anything else, including the database passwords (see below).
 
 Make both database passwords long, random, and letters and numbers only
 (`openssl rand -hex 24`). Compose runs Postgres for you and sets `DATABASE_URL`; the
