@@ -22,7 +22,7 @@ from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
 from tests.pg import DatabaseTest
 
 GUILD, VOICE, SCREEN, OTHER_TEXT, TRANSCRIPT = 1, 2, 3, 4, 5
-DM, PLAYER = 7, 8
+DM, PLAYER, OTHER_PERSON = 7, 8, 9
 CAN_POST = discord.Permissions(view_channel=True, send_messages=True, connect=True)
 
 
@@ -567,7 +567,7 @@ class SaveAndResume(SessionTests):
         text = "\n".join(logs.output)
         for expected in (
             f"Session started: voice channel {VOICE}, DM screen {SCREEN}",
-            "In the voice channel; 0 player(s) opted in",
+            "In the voice channel; 0 of 0 there opted in",
             "Recording notice posted",
             "WARNING:dmbot.bot:Voice error: Lost the voice connection.",
             f"Session ended: /dmbot stop by user {DM}",
@@ -616,6 +616,42 @@ class SaveAndResume(SessionTests):
         text = "\n".join(logs.output)
         self.assertIn(f"Consent given: user {PLAYER}", text)
         self.assertIn(f"Consent withdrawn: user {PLAYER}", text)
+
+    async def test_the_dm_screen_shows_each_yes_and_stop_during_a_session(self) -> None:
+        # #107: the DM screen used to say "0 player(s) have opted in" and never update.
+        await self.start()
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        await self.bot.give_consent(GUILD, PLAYER, "private_message", outside_to=None)
+        await self.bot.give_consent(GUILD, PLAYER, "consent_command", outside_to=None)  # again
+        await self.bot.withdraw_consent(GUILD, PLAYER)
+        await self.bot.withdraw_consent(GUILD, PLAYER)  # already stopped: nothing new
+        await asyncio.gather(*self.bot._asking)
+        notes = [c.args[1] for c in posted.await_args_list if c.args[0] == SCREEN]
+        self.assertEqual(len(notes), 2, notes)
+        self.assertIn("said yes: DMbot is recording them now", notes[0])
+        self.assertIn("stopped being recorded", notes[1])
+
+    async def test_the_listening_message_names_who_is_recorded(self) -> None:
+        from dmbot.ears.protocol import Status
+
+        await self.consent.grant(GUILD, PLAYER)
+        self.voice.members = [member(PLAYER), member(OTHER_PERSON)]
+        for m in self.voice.members:
+            m.bot = False
+            m.display_name = {PLAYER: "Mia", OTHER_PERSON: "Dee"}[m.id]
+        self.guild.get_member = lambda uid: next(
+            (m for m in self.voice.members if m.id == uid), None
+        )
+        self.bot.get_guild = lambda gid: self.guild  # type: ignore[method-assign]
+        await self.start()
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        await self.bot._on_ears_message(Status("joined", guild_id=GUILD))
+        text = next(c.args[1] for c in posted.await_args_list if "Listening in" in c.args[1])
+        self.assertIn("🎙 Recording: Mia.", text)
+        self.assertIn("DMbot just asked the other 1 person here", text)
+        self.assertNotIn("0 player", text)
 
     async def test_consent_not_logged_as_given_when_the_save_fails(self) -> None:
         self.consent.grant = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]

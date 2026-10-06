@@ -409,8 +409,11 @@ class DMBot(commands.AutoShardedBot):
         `outside_to`: the outside engine the request they agreed to named, if any.
         Raises if it couldn't be saved; then nothing changed.
         """
+        already = self.consent.has_consent(guild_id, user_id)
         await self.consent.grant(guild_id, user_id, method=method, outside_to=outside_to)
         log.info("Consent given: user %s", user_id)
+        if not already:
+            self._tell_dm_about_consent(guild_id, user_id, agreed=True)
         # Always tell ears (if connected), even with no session here: it may still be
         # in voice from before a restart.
         with contextlib.suppress(Exception):
@@ -443,7 +446,10 @@ class DMBot(commands.AutoShardedBot):
         with contextlib.suppress(Exception):
             await self.push_allowlist(guild_id)
         try:
-            return await self.consent.revoke(guild_id, user_id)
+            had = await self.consent.revoke(guild_id, user_id)
+            if had:
+                self._tell_dm_about_consent(guild_id, user_id, agreed=False)
+            return had
         finally:
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
@@ -542,6 +548,27 @@ class DMBot(commands.AutoShardedBot):
             notes = [n for n in (renewed_text(renewed), unreachable_text(dms_off, failed)) if n]
             if notes and self.tables.get(gid) is table:
                 await self.post(table.screen_channel_id, "\n".join(notes))
+
+    def _people_in_voice(self, table: Table) -> list[int]:
+        """People (not bots) in the session's voice channel right now."""
+        voice = self.get_channel(table.voice_channel_id)
+        if not isinstance(voice, discord.VoiceChannel | discord.StageChannel):
+            return []
+        return [m.id for m in voice.members if not m.bot]
+
+    def _tell_dm_about_consent(self, guild_id: int, user_id: int, *, agreed: bool) -> None:
+        """During a session, the DM screen shows each yes and each stop as it happens
+        (#107), so it stays a true picture of who is recorded."""
+        table = self.tables.get(guild_id)
+        if table is None or self._closing:
+            return
+        name = self.name_of(guild_id, user_id)
+        text = (
+            screen_messages.agreed_message(name)
+            if agreed
+            else screen_messages.stopped_message(name)
+        )
+        self._track(self.post(table.screen_channel_id, text), "consent-note")
 
     def _ask_everyone_in_voice(self, table: Table, *, only_renewals: bool = False) -> None:
         voice = self.get_channel(table.voice_channel_id)
@@ -1244,10 +1271,11 @@ class DMBot(commands.AutoShardedBot):
                     ),
                     at_ms=_now_ms(),
                 )
-            count = len(await self.consent.consenting(table.guild_id))
-            campaign = f" for **{table.campaign_name}**" if table.campaign_name else ""
+            agreed = await self.consent.consenting(table.guild_id)
+            here = self._people_in_voice(table)
+            recorded = [uid for uid in here if uid in agreed]
             if not repeat:
-                log.info("In the voice channel; %d player(s) opted in", count)
+                log.info("In the voice channel; %d of %d there opted in", len(recorded), len(here))
             if repeat:
                 pass
             elif table.resumed:
@@ -1260,8 +1288,12 @@ class DMBot(commands.AutoShardedBot):
             else:
                 await self.post(
                     table.screen_channel_id,
-                    f"✅ Listening in <#{table.voice_channel_id}>{campaign}. "
-                    f"{count} player(s) have opted in to recording.",
+                    screen_messages.listening_message(
+                        table.voice_channel_id,
+                        table.campaign_name,
+                        sorted(self.name_of(table.guild_id, uid) for uid in recorded),
+                        len(here) - len(recorded),
+                    ),
                 )
             if not table.notice_posted:
                 # Players learn they're being recorded from this notice, so a failure
