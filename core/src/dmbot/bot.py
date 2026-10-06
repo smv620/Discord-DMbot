@@ -294,12 +294,12 @@ class DMBot(commands.AutoShardedBot):
 
     # ---- consent (slash commands and private-message buttons) ---------------
 
-    async def give_consent(self, guild_id: int, user_id: int) -> int:
+    async def give_consent(self, guild_id: int, user_id: int, method: str) -> int:
         """Save consent and start capturing at once. Returns when it was given.
 
         Raises if it couldn't be saved; then nothing changed.
         """
-        await self.consent.grant(guild_id, user_id)
+        await self.consent.grant(guild_id, user_id, method=method)
         log.info("Consent given: user %s", user_id)
         # Always tell ears (if connected), even with no session here: it may still be
         # in voice from before a restart.
@@ -357,6 +357,7 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=gid, campaign_id=table.campaign_id):
             try:
                 times = await self.consent.granted_times(gid, [m.id for m in people])
+                renew = await self.consent.outdated(gid, [m.id for m in people])
             except Exception:
                 log.exception("Couldn't look up consent; they'll be asked when they rejoin")
                 table.asked.difference_update(m.id for m in people)
@@ -376,7 +377,13 @@ class DMBot(commands.AutoShardedBot):
                 if granted is not None and self.consent.has_consent(gid, member.id):
                     text, view = reminder_text(server, voice_name, granted), stop_view(gid)
                 else:
-                    text = request_text(server, voice=voice_name, dm=dm_name, cloud=cloud)
+                    text = request_text(
+                        server,
+                        voice=voice_name,
+                        dm=dm_name,
+                        cloud=cloud,
+                        renewed=member.id in renew,
+                    )
                     view = request_view(gid)
                 result = await send_prompt(member, text, view)
                 if result != "sent":
@@ -1090,6 +1097,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
         granted = await bot.consent.granted_at(guild.id, interaction.user.id)
+        renewed = bool(await bot.consent.outdated(guild.id, [interaction.user.id]))
     except Exception:
         log.exception("Couldn't look up consent in guild %s", guild.id)
         await interaction.followup.send(
@@ -1111,6 +1119,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
         voice=voice.name if isinstance(voice, discord.abc.GuildChannel) else None,
         dm=bot.name_of(guild.id, table.dm_user_id) if table else None,
         cloud=bot.settings.transcription.engine == "cloud",
+        renewed=renewed,
     )
     await interaction.followup.send(text, view=request_view(guild.id), ephemeral=True)
 

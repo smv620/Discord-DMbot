@@ -376,8 +376,13 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   serving shard 0. Until consent changes reach every process (see "Consent changes reach
   every process" above), a button for a server another process serves changes nothing and
   points to `/consent give` / `/consent revoke`, which Discord routes to the right process.
-- Consent records store the terms version, the UTC timestamp, and the method. Changing the
-  consent wording re-prompts everyone (#35).
+- Consent records store the terms version, the UTC timestamp, and the method
+  (`private_message`, or `consent_command` for the reply to `/consent give`). Changing the
+  consent wording re-prompts everyone (#35, built 2026-10-06): a yes under older wording
+  stops counting at once, so that person isn't recorded until they agree again, and the
+  new request starts with "What DMbot does with recordings has changed since you last said
+  yes…". Version 2 is the "anyone in this server can read it" wording; every yes saved
+  before it is version 1. A test pins the request's wording to the version number.
 - The public "DMbot is listening" notice in the voice channel's chat still posts once per
   `/dmbot start`, is not repeated after a voice-service reconnect, and the DM is warned if
   it can't be posted.

@@ -349,11 +349,22 @@ CAMPAIGN_MEMORY = f"""
         WHERE undoes IS NOT NULL;
     """ + "".join(_isolate(t) for t in _MEMORY_TABLES)
 
+CONSENT_TERMS = """
+    -- Which wording each person agreed to, and how (#35). Rows from before this were
+    -- given under version 1 (before "anyone in this server can read the transcript"),
+    -- so they no longer count and those people are asked again.
+    ALTER TABLE consent ADD COLUMN terms_version INTEGER NOT NULL DEFAULT 1
+        CHECK (terms_version >= 1);
+    ALTER TABLE consent ADD COLUMN method TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (method IN ('private_message', 'consent_command', 'unknown'));
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
     ("0003_channel_number", CHANNEL_NUMBER),
     ("0004_campaign_memory", CAMPAIGN_MEMORY),
+    ("0005_consent_terms", CONSENT_TERMS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

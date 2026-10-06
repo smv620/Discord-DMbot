@@ -13,7 +13,7 @@ from dmbot.audio.segmenter import Segmenter
 from dmbot.bot import DMBot, Table, consent_give
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
-from dmbot.consent import ConsentStore
+from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.ears.protocol import Status
 from dmbot.sessions import SessionStore
 from dmbot.transcription.config import TranscriptionSettings
@@ -171,6 +171,51 @@ class ConsentDMTests(DatabaseTest):
         assert "You said yes on <t:" in self.sent_text(self.player)
         assert custom_ids(self.player.send.await_args.kwargs["view"]) == ["dmbot:consent:stop:1"]
 
+    async def age_consent(self, user_id: int) -> None:
+        """Make a saved yes look as if it was given under older wording (#35)."""
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE guild_id = %s AND user_id = %s",
+                (TERMS_VERSION - 1, GUILD, user_id),
+            )
+        self.bot.consent = self.consent = ConsentStore(self.db)  # fresh cache
+
+    async def test_a_yes_under_older_wording_is_asked_again(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.age_consent(PLAYER)
+        assert not await self.consent.consenting(GUILD)  # not recorded meanwhile
+        await self.joined()
+        text = self.sent_text(self.player)
+        assert "Can DMbot record you" in text and c.RENEWED in text
+        assert "You said yes" not in text
+        assert c.RENEWED not in self.sent_text(self.dm)  # never asked before: no note
+
+    async def test_saying_yes_again_counts_under_the_new_wording(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.age_consent(PLAYER)
+        await c.ConsentButton(GUILD).callback(self.button_press(PLAYER))
+        assert PLAYER in await ConsentStore(self.db).consenting(GUILD)
+        assert not await self.consent.outdated(GUILD, [PLAYER])
+
+    async def test_how_consent_was_given_is_recorded(self) -> None:
+        await c.ConsentButton(GUILD).callback(self.button_press(PLAYER))
+        await c.ConsentButton(GUILD).callback(self.button_press(DM, guild=self.guild))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, method, terms_version FROM consent ORDER BY user_id"
+            )
+            rows = {r["user_id"]: (r["method"], r["terms_version"]) for r in await cur.fetchall()}
+        assert rows[PLAYER] == ("private_message", TERMS_VERSION)
+        assert rows[DM] == ("consent_command", TERMS_VERSION)
+
+    async def test_consent_give_after_older_wording_explains_why(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.age_consent(PLAYER)
+        call = self.slash(PLAYER)
+        await consent_give.callback(call)  # type: ignore[call-arg]
+        text = call.followup.send.await_args.args[0]
+        assert c.RENEWED in text and "Can DMbot record you" in text
+
     async def test_people_are_asked_once_per_session(self) -> None:
         await self.joined()
         self.table.listening = False  # the voice connection dropped and came back
@@ -290,9 +335,11 @@ class ConsentDMTests(DatabaseTest):
 
     # ---- buttons -------------------------------------------------------------
 
-    def button_press(self, user_id: int) -> Any:
+    def button_press(self, user_id: int, guild: Any = None) -> Any:
+        """A button press: in a private message, or (with `guild`) in the server."""
         return SimpleNamespace(
             client=self.bot,
+            guild=guild,
             user=SimpleNamespace(id=user_id),
             response=SimpleNamespace(
                 defer=AsyncMock(), send_message=AsyncMock(), edit_message=AsyncMock()
@@ -396,7 +443,7 @@ class ConsentDMTests(DatabaseTest):
     async def test_yes_then_quick_no_leaves_ears_without_them(self) -> None:
         lock = self.consent._lock(GUILD)
         await lock.acquire()  # "I consent" is still saving...
-        yes = asyncio.create_task(self.bot.give_consent(GUILD, PLAYER))
+        yes = asyncio.create_task(self.bot.give_consent(GUILD, PLAYER, "private_message"))
         await asyncio.sleep(0)
         no = asyncio.create_task(self.bot.withdraw_consent(GUILD, PLAYER))  # ...No thanks
         await asyncio.sleep(0)

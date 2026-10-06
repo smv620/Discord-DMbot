@@ -23,6 +23,7 @@ from typing import Any, Literal, Protocol
 
 import discord
 
+from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
@@ -68,10 +69,22 @@ def _date(timestamp: int) -> str:
     return f"<t:{timestamp}:D>"
 
 
-def request_text(server: str, *, voice: str | None, dm: str | None, cloud: bool) -> str:
+RENEWED = (
+    "What DMbot does with recordings has changed since you last said yes, so it needs "
+    "to ask you again. Until you choose, it isn't recording you."
+)
+
+
+def request_text(
+    server: str, *, voice: str | None, dm: str | None, cloud: bool, renewed: bool = False
+) -> str:
+    """The consent request. Changing what it says people agree to means bumping
+    consent.TERMS_VERSION, so everyone who agreed before is asked again (#35)."""
     lines = [
         f"🎙️ **Can DMbot record you for your D&D game on {_plain(server)}?** Please choose below."
     ]
+    if renewed:
+        lines.append(RENEWED)
     if voice and dm:
         lines.append(f"**{_plain(dm)}** turned on DMbot in the **{_plain(voice)}** voice channel.")
     lines += [
@@ -148,7 +161,7 @@ class ConsentActions(Protocol):
 
     def get_guild(self, guild_id: int, /) -> discord.Guild | None: ...
 
-    async def give_consent(self, guild_id: int, user_id: int) -> int: ...
+    async def give_consent(self, guild_id: int, user_id: int, method: str) -> int: ...
 
     def stop_recording(self, guild_id: int, user_id: int) -> None: ...
 
@@ -218,8 +231,10 @@ class ConsentButton(
                 )
                 return
             try:
+                # In a private message, or in the reply to /consent give in the server.
+                method = PRIVATE_MESSAGE if interaction.guild is None else CONSENT_COMMAND
                 granted_at = await _actions(interaction).give_consent(
-                    self.guild_id, interaction.user.id
+                    self.guild_id, interaction.user.id, method
                 )
             except Exception:
                 log.exception("Couldn't save consent from a consent button")
