@@ -14,9 +14,10 @@ row-level security. `Database.open` refuses otherwise.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -42,8 +43,9 @@ class DatabaseError(RuntimeError):
 
 
 class Database:
-    def __init__(self, pool: AsyncConnectionPool[Conn]) -> None:
+    def __init__(self, pool: AsyncConnectionPool[Conn], conninfo: str) -> None:
         self._pool = pool
+        self._conninfo = conninfo  # for connections outside the pool (listen)
 
     @classmethod
     async def open(
@@ -86,7 +88,7 @@ class Database:
             raise DatabaseError(
                 "Can't connect to the database. Check DATABASE_URL and that Postgres is running."
             ) from exc
-        db = cls(pool)
+        db = cls(pool, conninfo)
         try:
             await db._check_role()
             await db.migrate(migrations)
@@ -122,6 +124,37 @@ class Database:
         """
         async with self._pool.connection() as conn, conn.transaction():
             yield conn
+
+    async def listen(
+        self, channel: str, on_listening: Callable[[], None] | None = None
+    ) -> AsyncGenerator[str, None]:
+        """Payloads of Postgres notifications on `channel`, until the connection fails.
+
+        Uses its own connection (not one from the pool), with TCP keepalives so a link
+        that silently died is noticed within about a minute. `on_listening` is called
+        once LISTEN is in effect: anything committed before then must be re-read.
+        Notifications skip row-level security, so they must never carry server data
+        (IDs and versions only).
+        """
+        conn = await AsyncConnection.connect(
+            self._conninfo,
+            autocommit=True,
+            connect_timeout=5,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=3,
+        )
+        try:
+            await conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(channel)))
+            if on_listening is not None:
+                on_listening()
+            # Closed before the connection, so nothing is left waiting on it.
+            async with contextlib.aclosing(conn.notifies()) as notes:
+                async for note in notes:
+                    yield note.payload
+        finally:
+            await conn.close()
 
     async def _check_role(self) -> None:
         async with self.unscoped() as conn:

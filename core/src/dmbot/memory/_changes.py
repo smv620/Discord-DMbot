@@ -171,6 +171,7 @@ class Changes(Scope):
         self.now = now
         self.undoes = undoes
         self.batch: int | None = None
+        self.tables: set[str] = set()  # tables this write changed
 
     async def insert(self, table: Table, row: dict[str, Any]) -> dict[str, Any]:
         cols = ("guild_id", "campaign_id", *table.columns)
@@ -244,6 +245,7 @@ class Changes(Scope):
         after: dict[str, Any] | None,
     ) -> None:
         self.version += 1
+        self.tables.add(table.name)
         if self.batch is None:
             self.batch = self.version
         await self.conn.execute(

@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory import notify
 from dmbot.memory._changes import (
     ALIASES,
     CORRECTIONS,
@@ -34,8 +35,8 @@ from dmbot.memory._changes import (
     Scope,
     undo_batch,
 )
-from dmbot.memory.backup import NOTIFY_CHANNEL
 from dmbot.memory.checks import check_relation, duplicate_of, ordered
+from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import (
     ALIAS_KINDS,
     CONFIRMED,
@@ -74,6 +75,7 @@ from dmbot.memory.ontology import (
     PredicateTerm,
     TypeTerm,
 )
+from dmbot.memory.sounds import sound_codes
 
 NOT_HERE = "That campaign doesn't exist in this server."
 INT64_MAX = 2**63 - 1
@@ -226,10 +228,8 @@ class MemoryStore:
                     "UPDATE campaigns SET memory_version = %s WHERE guild_id = %s AND id = %s",
                     (changes.version, guild_id, campaign_id),
                 )
-                await conn.execute(
-                    "SELECT pg_notify(%s, %s)",
-                    (NOTIFY_CHANNEL, f"{campaign_id}:{changes.version}"),
-                )
+                names_changed = bool(changes.tables & notify.LOOKUP_TABLES)
+                await notify.send(conn, campaign_id, changes.version, names_changed)
 
     @asynccontextmanager
     async def _read(self, guild_id: int, campaign_id: str) -> AsyncIterator[Scope]:
@@ -310,6 +310,44 @@ class MemoryStore:
                 [statuses, entity_id, entity_id, include_secret, *scope.ids, *scope.ids],
             )
             return [_relation(r) for r in rows]
+
+    async def lookup_data(self, guild_id: int, campaign_id: str) -> LookupData:
+        """Everything the in-memory lookup needs, read at one moment (so a write landing
+        part-way can't give a half-updated copy)."""
+        async with self._db.guild(guild_id, snapshot=True) as conn:
+            cur = await conn.execute(
+                "SELECT memory_version FROM campaigns WHERE guild_id = %s AND id = %s",
+                (guild_id, campaign_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise MemoryRuleError(NOT_HERE)
+            scope = Scope(conn, guild_id, campaign_id, int(row["memory_version"]))
+            entities = await scope.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed') ORDER BY id"
+            )
+            aliases = await scope.select(
+                ALIASES,
+                " AND status <> 'rejected' AND entity_id IN" + _LIVE_ENTITY_IDS + " ORDER BY id",
+                scope.ids,
+            )
+            corrections = await scope.select(CORRECTIONS, " ORDER BY id")
+            relations = await scope.select(
+                RELATIONS,
+                " AND status IN ('proposed', 'confirmed') AND NOT secret AND subject_id IN"
+                + _LIVE_ENTITY_IDS
+                + " AND object_id IN"
+                + _LIVE_ENTITY_IDS
+                + " ORDER BY id",
+                [*scope.ids, *scope.ids],
+            )
+            return LookupData(
+                scope.version,
+                tuple(_entity(r) for r in entities),
+                tuple(_alias(r) for r in aliases),
+                tuple(_correction(r) for r in corrections),
+                tuple(_relation(r) for r in relations),
+            )
 
     async def corrections(self, guild_id: int, campaign_id: str) -> list[Correction]:
         async with self._read(guild_id, campaign_id) as scope:
@@ -800,7 +838,7 @@ def _new_alias(
         "used_by": used_by,
         "secret": secret,
         "status": status,
-        "sound_codes": [],  # filled by the matching step (Transcript Cleaner, #127)
+        "sound_codes": list(sound_codes(text)),
         "source": w.source,
         "created_at": w.now,
     }
