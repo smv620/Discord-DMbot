@@ -466,6 +466,33 @@ class MemoryStore:
             row = await w.update(ENTITIES, entity_id, changes)
             return Written(_entity(row), w.batch)
 
+    async def rename_entity(
+        self, guild_id: int, campaign_id: str, entity_id: str, name: str, *, source: str
+    ) -> Written[Entity]:
+        """Fix how a name is spelled (the DM's call): the entry's name and the name it's
+        listened for change together, in one change (one undo)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change a name.")
+        name = clean_text(name)
+        key = lookup_key(name)
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await _entity_row(w, entity_id)
+            old_key = lookup_key(current["name"])
+            own = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, old_key])
+            clash = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, key])
+            row = await w.update(ENTITIES, entity_id, {"name": name})
+            if own and (not clash or clash[0]["id"] == own[0]["id"]):
+                await w.update(
+                    ALIASES,
+                    own[0]["id"],
+                    {"text": name, "key": key, "sound_codes": list(sound_codes(name))},
+                )
+            elif not clash:
+                await w.insert(
+                    ALIASES, _new_alias(w, entity_id, name, "full", CONFIRMED, False, None)
+                )
+            return Written(_entity(row), w.batch)
+
     async def confirm_entity(
         self,
         guild_id: int,

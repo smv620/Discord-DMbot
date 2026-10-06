@@ -16,8 +16,10 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import discord
+from discord import app_commands
 
 from dmbot.campaigns import Campaign
+from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, PROPOSED, REJECTED, Entity, MemoryRuleError, name_key
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import logic
@@ -40,8 +42,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-SHOWN_NAMES = 15
-SHOWN_OTHER_NAMES = 3
+SHOWN_PER_SECTION = 10
 PANEL_MAX = 1900  # under Discord's 2,000 characters
 SAME_AS_CHOICES = 25  # Discord's limit for a menu
 PC = "player_character"
@@ -133,67 +134,74 @@ def ranked_same_as(heard: str, entities: list[Entity]) -> list[Entity]:
 # ---- home ------------------------------------------------------------------------------
 
 
-async def home_text(memory: MemoryStore, campaign: Campaign) -> tuple[str, int]:
-    """The panel: names DMbot knows (with other and secret names; it's private to the
-    DM), kept under Discord's message limit."""
-    gid, cid = campaign.guild_id, campaign.id
-    confirmed = await memory.entities(gid, cid, statuses=[CONFIRMED])
-    waiting = await memory.entities(gid, cid, statuses=[PROPOSED])
-    aliases = await memory.aliases(gid, cid, include_secret=True)
-    others: dict[str, list[str]] = {}
-    secrets: dict[str, list[str]] = {}
-    by_id = {e.id: e for e in confirmed}
-    for a in aliases:
-        entity = by_id.get(a.entity_id)
-        if entity is None or a.key == name_key(entity.name) or a.status != CONFIRMED:
-            continue
-        (secrets if a.secret else others).setdefault(a.entity_id, []).append(_md(a.text))
+def home_text(
+    names: CampaignLookup, campaign: Campaign, waiting: int
+) -> tuple[str, list[tuple[str, str]]]:
+    """The overview (about 15 lines, under Discord's limit): how many names of each
+    kind, the waiting check, names heard last session and names added lately. Returns
+    the text and the names shown, for the "Open a name…" menu. No secret names: those
+    are on each name's card, for the campaign's DMs."""
+    confirmed = [e for e in names.entities.values() if e.status == CONFIRMED]
     lines = [f"🧠 **Names DMbot knows for {_md(campaign.name)}**"]
-    if confirmed:
-        lines.append(
-            "DMbot listens for these names and spells them right in the transcript. "
-            "It never makes up story."
-        )
-    else:
+    if not confirmed:
         lines.append(
             "None yet. Add the names your table says out loud (characters, NPCs, places). "
             "DMbot listens for them so the transcript spells them right: **Belleros**, not "
             '"Bell Eros". It never makes up story.'
         )
+    else:
+        kinds: dict[str, int] = {}
+        for e in confirmed:
+            kinds[KIND_SHORT.get(e.type, e.type)] = kinds.get(KIND_SHORT.get(e.type, e.type), 0) + 1
+        top = sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0]))
+        parts = [
+            f"{n} {kind}{'s' if n != 1 and not kind.endswith('s') else ''}" for kind, n in top[:3]
+        ]
+        rest = sum(n for _, n in top[3:])
+        if rest:
+            parts.append(f"{rest} other")
+        lines.append(f"**{_plural(len(confirmed), 'name')}:** {', '.join(parts)}")
+        lines.append(
+            "DMbot listens for these names and spells them right. It never makes up story."
+        )
     if waiting:
-        lines.append(f"📝 **{_plural(len(waiting), 'new name')} from your sessions to check.**")
-    shown = 0
-    for e in sorted(confirmed, key=lambda e: -e.created_at)[:SHOWN_NAMES]:
-        line = f"• **{_md(e.name)}**, {KIND_SHORT.get(e.type, e.type)}"
-        also = others.get(e.id, [])
-        if also:
-            extra = (
-                f" +{len(also) - SHOWN_OTHER_NAMES} more" if len(also) > SHOWN_OTHER_NAMES else ""
-            )
-            line += f" (also: {', '.join(also[:SHOWN_OTHER_NAMES])}{extra})"
-        if secrets.get(e.id):
-            line += f" 🤫 secret: {', '.join(secrets[e.id][:SHOWN_OTHER_NAMES])}"
-        if len("\n".join([*lines, line])) > PANEL_MAX - 40:
-            break
-        lines.append(line)
-        shown += 1
-    if len(confirmed) > shown:
-        lines.append(f"…and {len(confirmed) - shown} more.")
-    return "\n".join(lines), len(waiting)
+        lines.append(f"📝 **{_plural(waiting, 'new name')} from your sessions to check.**")
+    shown: list[tuple[str, str]] = []
+
+    def section(title: str, ids: list[str]) -> None:
+        fresh = [e for e in ids if e not in {i for i, _ in shown}]
+        if not fresh:
+            return
+        listed = fresh[:SHOWN_PER_SECTION]
+        text = ", ".join(f"**{_md(names.entities[e].name)}**" for e in listed)
+        more = f" … and {len(fresh) - len(listed)} more" if len(fresh) > len(listed) else ""
+        lines.append(f"{title} {text}{more}")
+        shown.extend((e, names.entities[e].name) for e in listed)
+
+    last = names.recent_sessions[0] if names.recent_sessions else None
+    heard = sorted(
+        (h for h in names.heard.values() if last is not None and h.last_session_at == last),
+        key=lambda h: -h.times,
+    )
+    section(
+        "👂 **Heard last session:**",
+        [h.entity_id for h in heard if h.entity_id in {e.id for e in confirmed}],
+    )
+    section("🆕 **Added lately:**", [e.id for e in sorted(confirmed, key=lambda e: -e.created_at)])
+    text = "\n".join(lines)
+    return (text if len(text) <= PANEL_MAX else text[: PANEL_MAX - 1] + "…"), shown
 
 
 class NamesHome(_Menu):
-    def __init__(self, campaign_id: str, waiting: int) -> None:
+    def __init__(
+        self, campaign_id: str, waiting: int, shown: list[tuple[str, str]] | None = None
+    ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
-        self.add_item(_Button(self._add, label="➕ Add a name", style=discord.ButtonStyle.success))
         self.add_item(
-            _Button(
-                self._character,
-                label="🧑 Add a player's character",
-                style=discord.ButtonStyle.primary,
-            )
+            _Button(self._find, label="🔍 Find a name", style=discord.ButtonStyle.primary)
         )
+        self.add_item(_Button(self._add, label="➕ Add a name", style=discord.ButtonStyle.success))
         self.add_item(
             _Button(
                 self._check,
@@ -202,6 +210,36 @@ class NamesHome(_Menu):
                 disabled=waiting == 0,
             )
         )
+        self.add_item(
+            _Button(
+                self._character,
+                label="🧑 Add a player's character",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+            )
+        )
+        if shown:
+            self.open = _Select(
+                self._open,
+                placeholder="Open a name…",
+                options=[
+                    discord.SelectOption(label=logic.shorten(name, logic.OPTION_LABEL_MAX), value=e)
+                    for e, name in shown[: logic.SELECT_OPTIONS_MAX]
+                ],
+                row=2,
+            )
+            self.add_item(self.open)
+
+    async def _find(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.name_card import FindForm
+
+        if await _campaign_for(interaction, self.campaign_id):
+            await interaction.response.send_modal(FindForm(self.campaign_id))
+
+    async def _open(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.name_card import show_card
+
+        await show_card(interaction, self.campaign_id, self.open.values[0])
 
     async def _add(self, interaction: discord.Interaction) -> None:
         if await _campaign_for(interaction, self.campaign_id):
@@ -218,14 +256,17 @@ class NamesHome(_Menu):
 
 async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
     memory = _memory(interaction)
-    if memory is None:
+    cache = _bot(interaction).lookup
+    if memory is None or cache is None:
         await _tell(interaction, NOT_AVAILABLE)
         return
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    text, waiting = await home_text(memory, campaign)
-    await _send(interaction, text, NamesHome(campaign.id, waiting))
+    names = await cache.get(campaign.guild_id, campaign.id)
+    waiting = len(await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED]))
+    text, shown = home_text(names, campaign, waiting)
+    await _send(interaction, text, NamesHome(campaign.id, waiting, shown))
 
 
 class CampaignChoice(_Menu):
@@ -251,15 +292,32 @@ class CampaignChoice(_Menu):
         await show_home(interaction, self.pick.values[0])
 
 
+async def _find_typeahead(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    from dmbot.ui.name_card import find_typeahead
+
+    return await find_typeahead(interaction, current)
+
+
 @dmbot_group.command(
     name="names", description="Teach DMbot your campaign's names so it spells them right"
 )
-async def dmbot_names(interaction: discord.Interaction) -> None:
+@app_commands.describe(find="Open one name: type part of it, a nickname, or how it sounds")
+@app_commands.autocomplete(find=_find_typeahead)
+async def dmbot_names(interaction: discord.Interaction, find: str | None = None) -> None:
     guild = interaction.guild
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
         return
     bot = _bot(interaction)
+    if find:
+        from dmbot.ui.name_card import open_found, typeahead_campaign
+
+        campaign = await typeahead_campaign(interaction)
+        if campaign is not None:
+            await open_found(interaction, campaign.id, find)
+            return
     mine = logic.runnable(
         await bot.campaigns.list_campaigns(guild.id), interaction.user.id, _is_manager(interaction)
     )
