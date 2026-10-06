@@ -240,9 +240,8 @@ async def show_card(
     if entity is not None and entity.played_by is not None:
         player = _bot(interaction).name_of(campaign.guild_id, entity.played_by)
     note = cut(note, NOTE_MAX) if note else None
+    # On every card, so whether a name has a secret one can't be told from the card.
     where = secrets_elsewhere(campaign, interaction)
-    if where and not any(e.entity_id == entity_id and e.secret for e in names.names):
-        where = None  # nothing hidden on this card
     limit = CARD_MAX - (len(note) + 2 if note else 0) - (len(where) + 1 if where else 0)
     text = card_text(
         names, entity_id, connections, secrets=secrets, player=player, full=full, limit=limit
@@ -814,7 +813,11 @@ class OneName(_Menu):
             return
         campaign, alias, _ = found
         if not sees_secrets(campaign, interaction):
-            await _tell(interaction, "Only the campaign's DMs can change secret names.")
+            await _tell(
+                interaction,
+                secrets_elsewhere(campaign, interaction)
+                or "Only the campaign's DMs can change secret names.",
+            )
             return
         try:
             await memory.update_alias(
@@ -1199,6 +1202,9 @@ async def show_matches(interaction: discord.Interaction, campaign_id: str, typed
     view = Matches(campaign.id, typed, options)
     if not matches:
         text = f"No name like **{_md(typed)}**."
+        where = secrets_elsewhere(campaign, interaction)
+        if where:
+            text = f"{text}\n{where}"
     elif len(matches) >= MAX_RESULTS:
         text = (
             f"**Names like {_md(typed)}:** the closest {MAX_RESULTS}. Type more of the name to "

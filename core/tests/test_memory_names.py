@@ -191,6 +191,19 @@ class NameCards(NamesTest):
         await ui.NamesHome(self.campaign.id, 0)._add(it)
         self.assertNotIn(it.response.modal.secret, it.response.modal.children)
 
+    async def test_a_thread_in_the_dm_screen_counts_and_managers_never_see_secrets(self) -> None:
+        from dmbot.ui import name_card
+
+        self.fresh()
+        it = self.it(channel_id=99)
+        it.channel = SimpleNamespace(parent_id=SCREEN)  # a thread under the DM screen
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        self.assertIn("hooded", it.response.sent[0][0])
+        it = self.it(MANAGER)  # in the DM screen, but not one of the campaign's DMs
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        self.assertNotIn("hooded", it.response.sent[0][0])
+        self.assertNotIn("🤫", it.response.sent[0][0])
+
     async def test_fix_spelling_changes_the_name_it_listens_for(self) -> None:
         from dmbot.ui import name_card
 
