@@ -710,7 +710,53 @@ remembers Belleros is Cerric's mentor"), never "graph", "entity" or "ontology".
 - **Speech-to-text hints** now come from the campaign's names, most useful first:
   players' characters, confirmed names, players' display names, then suggested names
   (one hint per name, however it's capitalized).
-  Secret names are never sent. The in-memory copy follows changes live.
+  Secret names are never sent. The in-memory copy follows changes live. (This fixed
+  order is a placeholder: hints follow the scene next, see below.)
+
+**Names at scale and hints that follow the scene (decided 2026-10-06, #126, #127).** A
+long campaign has hundreds or a thousand names, so neither the names panel nor the
+speech-to-text hints can be a fixed list.
+- **`/dmbot names` becomes an overview and a search, not a list.** Discord allows 2,000
+  characters per message and 25 choices per menu, so:
+  - **Overview:** totals by kind ("🧠 412 names · 212 NPCs · 87 places · 41 groups"),
+    the waiting check, and only what matters now: the last 10 added and the names heard
+    in the latest session.
+  - **🔍 Find a name:** `/dmbot names find:` with Discord's type-ahead (up to 25 matches
+    as the DM types), matching other names and sound-alikes too. Picking one opens a
+    **name card**: what it is, other names, secret names, what it's linked to, when it
+    was last heard, with **Add another name**, **Same as…**, **Linked to…**, **Change
+    what it is** and **Remove**.
+  - **Browse by kind:** pick a kind, page through 20 at a time (◀ ▶).
+  - **Bring names in / take them out:** paste a list or upload a simple file (one name
+    per line: name, kind, other names; DMbot asks only about unclear lines), and
+    download every name as a file.
+  - Nothing is deleted by itself. The check stays capped (10 suggestions a session).
+- **Links between names.** Hints and helpers need to know that Ulfgar leads the
+  Frostwolf tribe. Links come from the DM (**Linked to…** on a name card, in plain
+  words: "leads", "is a member of", "lives in", "is an enemy of") and from EntityBot
+  suggesting them after a session ("Ulfgar seems to lead the Frostwolf tribe. Right?").
+  As always, only links the DM confirmed are used.
+- **Hints follow the scene** (replacing the fixed order). Hints go with every piece of
+  speech sent to speech-to-text, so they can change clip by clip at no extra cost. Up
+  to 50 per clip, filled in this order, never secret names:
+  1. **Always:** the players' characters.
+  2. **The scene:** names said in about the last 10 minutes, most recent and most often
+     first. Each written-down line is matched against the campaign's names (the same
+     in-memory matching the Cleaner uses, microseconds per line); a name fades out after
+     about 10 minutes unsaid.
+  3. **The tip of the tongue:** names linked to the scene's names, ranked by how many
+     scene names point at them. If the table talks about the Frostwolf tribe, its
+     chief's name is already a hint before anyone says it.
+  4. **Recently:** names from the last session or two.
+  5. **Fill:** the most-heard confirmed names, then players' display names.
+  No AI call: it's instant and free. A later, optional layer could ask an AI every few
+  minutes where the scene is heading (names with no link yet), only if tests show the
+  links alone miss too much. Watch for: a hinted name is more likely to be heard even
+  when it wasn't said, so the list follows the scene rather than filling every slot;
+  live tests decide whether 50 is too many. Names unsaid for months drop out of hints
+  until they're heard again.
+- **Order of work:** (1) scene-based hints; (2) the name card, find and **Linked to…**;
+  (3) browse by kind, bring in and take out.
 
 **Campaign memory rules (the ontology) (decided 2026-10-05).** EntityBot alone builds and
 maintains the ontology; there is no human graph engineer. So it is small, strict,
