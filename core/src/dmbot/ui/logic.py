@@ -19,6 +19,10 @@ OPTION_LABEL_MAX = 100
 SELECT_OPTIONS_MAX = 25
 
 NO_CAMPAIGN_ACCESS = "Only this campaign's DM (or a server manager) can do that."
+ONLY_DMS_BACKUP = (
+    "Only this campaign's DM can download a copy: it holds their secret notes. A server "
+    "manager can't, in case they're a player at the table."
+)
 
 
 def shorten(text: str, limit: int) -> str:

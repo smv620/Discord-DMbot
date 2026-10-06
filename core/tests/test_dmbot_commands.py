@@ -114,3 +114,14 @@ class CommandTests(DatabaseTest):
         it = fake_interaction(self.bot)
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         self.assertIn("not the DM of any campaign", it.response.sent[0][0])
+
+    async def test_a_server_manager_cannot_download_a_campaign_they_dont_run(self) -> None:
+        theirs = await self.campaigns.create(GUILD, "Theirs", OTHER_DM)
+        it = fake_interaction(self.bot)
+        it.user.guild_permissions = discord.Permissions(manage_guild=True)
+        await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
+        self.assertIn("not the DM of any campaign", it.response.sent[0][0])
+        it = fake_interaction(self.bot)
+        it.user.guild_permissions = discord.Permissions(manage_guild=True)
+        await cmds.send_backup(it, theirs.id)  # a pressed button is checked again
+        self.assertIn("Only this campaign's DM can download a copy", it.response.sent[0][0])

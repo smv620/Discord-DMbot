@@ -426,10 +426,10 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         return
     bot = _bot(interaction)
     campaign = await bot.campaigns.get(guild.id, campaign_id)
-    if campaign is None or not logic.can_run(
-        campaign, interaction.user.id, _is_manager(interaction)
-    ):
-        await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
+    # Only the campaign's DMs: a copy holds the secret names and notes, and a server
+    # manager may be a player at the table (#229).
+    if campaign is None or interaction.user.id not in campaign.dm_user_ids:
+        await _tell(interaction, logic.ONLY_DMS_BACKUP)
         return
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -638,15 +638,16 @@ async def dmbot_backup(interaction: discord.Interaction) -> None:
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
         return
-    mine = logic.runnable(
-        await _bot(interaction).campaigns.list_campaigns(guild.id),
-        interaction.user.id,
-        _is_manager(interaction),
-    )
+    mine = [
+        c
+        for c in await _bot(interaction).campaigns.list_campaigns(guild.id)
+        if interaction.user.id in c.dm_user_ids
+    ]
     if not mine:
         await _tell(
             interaction,
-            "You're not the DM of any campaign here. Use `/dmbot start` to set one up.",
+            "You're not the DM of any campaign here, and only a campaign's DM can download "
+            "a copy (it holds their secret notes). Use `/dmbot start` to set one up.",
         )
     elif len(mine) == 1:
         await send_backup(interaction, mine[0].id)
