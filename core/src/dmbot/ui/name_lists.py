@@ -406,7 +406,9 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
     added = 0
     if new:
         try:
-            written = await memory.add_names(campaign.guild_id, campaign.id, new, source=DM)
+            written = await memory.add_names(
+                campaign.guild_id, campaign.id, new, source=DM, secret_clashes=secrets_ok
+            )
         except MemoryRuleError as exc:
             await _tell(interaction, f"Nothing was added. {exc}")
             return

@@ -454,14 +454,22 @@ class MemoryStore:
             return Written(_entity(row), w.batch)
 
     async def add_names(
-        self, guild_id: int, campaign_id: str, names: Sequence[NewName], *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        names: Sequence[NewName],
+        *,
+        source: str,
+        secret_clashes: bool = True,
     ) -> Written[list[str | None]]:
         """Many names at once (📥 Add many), each with its other and secret names, in one
         change: one Undo (`undo_names`) takes the whole list back, and live transcription
         reloads its names once. Only the DM gives lists. Returns the new entries' IDs, in
         order; None for a name that another entry already has by now (two lists saved at
         once: memory writes for a campaign happen one at a time, so this check is exact).
-        Other names already used elsewhere are left out the same way."""
+        Other names already used elsewhere are left out the same way. `secret_clashes`:
+        whether a secret name counts as used (False for anyone but the campaign's DMs, who
+        must never learn one exists)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can add a list of names.")
         for n in names:
@@ -470,8 +478,9 @@ class MemoryStore:
             onto = await _load_ontology(w)
             cur = await w.conn.execute(
                 "SELECT key FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
-                " AND status <> 'rejected' AND entity_id IN" + _LIVE_ENTITY_IDS,
-                (*w.ids, *w.ids),
+                " AND status <> 'rejected' AND (%s OR NOT secret) AND entity_id IN"
+                + _LIVE_ENTITY_IDS,
+                (*w.ids, secret_clashes, *w.ids),
             )
             used = {str(r["key"]) for r in await cur.fetchall()}
             ids: list[str | None] = []
