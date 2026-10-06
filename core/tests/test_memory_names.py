@@ -234,7 +234,7 @@ class Review(NamesTest):
         view.kind = SimpleNamespace(values=[ui.PC])  # type: ignore[assignment]
         it = self.it()
         await view._kind_picked(it)
-        self.assertIn("Who plays **Cerric**?", it.response.edited[0][0])
+        self.assertIn("**Who plays Cerric?**", it.response.edited[0][0])
         player = SimpleNamespace(id=PLAYER, bot=False, display_name="Mia")
         it = self.it()
         await view._player_picked(it, player)  # type: ignore[arg-type]
