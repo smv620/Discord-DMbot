@@ -86,6 +86,8 @@ from dmbot.memory.scan import find_new_names
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcript import stream as transcript_lines
+from dmbot.transcript.models import Line, TranscriptBuffer
+from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber
@@ -93,6 +95,7 @@ from dmbot.transcription.pipeline import TranscriptionPipeline
 from dmbot.ui import logic as ui_logic
 from dmbot.ui.dmbot_commands import dmbot_group
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
+from dmbot.ui.transcripts import DownloadButton, download_view, ended_text, transcript_command
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +103,7 @@ SUMMARY_INTERVAL_S = 15
 # Lines for the transcript channel are grouped and posted this often (#124): well inside
 # Discord's 5 messages per 5 seconds per channel, and still feels live.
 TRANSCRIPT_FLUSH_S = 2.0
+TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this often
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_MAX = 100  # names offered to speech-to-text (engines cut this down further)
 HINTS_FAIL_LOG_S = 60.0
@@ -204,6 +208,13 @@ class Table:
     # What was heard this session (speaker, text as heard), for the after-session scan
     # that suggests new names to the DM (#126). Kept in memory only, capped.
     heard: list[tuple[int, str]] = field(default_factory=list)
+    # The stored transcript (#41, #125): this session's row, and lines not saved yet.
+    started_at: int = 0  # Unix seconds; the same after a restart
+    transcript_session_id: str | None = None  # set at the first save
+    unsaved: TranscriptBuffer = field(default_factory=TranscriptBuffer)
+    transcript_warned: bool = False  # told the DM saving isn't working
+    dropped_logged: bool = False
+    save_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
@@ -232,6 +243,7 @@ class DMBot(commands.AutoShardedBot):
         sessions: SessionStore,
         transcriber: Transcriber | None = None,
         memory: MemoryStore | None = None,
+        transcripts: TranscriptStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -256,6 +268,8 @@ class DMBot(commands.AutoShardedBot):
         self.memory = memory
         self.lookup = LookupCache(memory) if memory is not None else None
         self._hints_failed_at = -HINTS_FAIL_LOG_S
+        # Stored session transcripts anyone in the server can download (#41, #125).
+        self.transcripts = transcripts
         self.tables: dict[int, Table] = {}
         self.pipeline = TranscriptionPipeline(
             transcriber or PlaceholderTranscriber(),
@@ -277,6 +291,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self._background: list[asyncio.Task[None]] = []
         self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
+        self._finishing: set[asyncio.Task[None]] = set()  # stored transcripts being ended
         self._session_locks: dict[int, asyncio.Lock] = {}
         self._resume_started = False
         self._closing = False
@@ -295,12 +310,15 @@ class DMBot(commands.AutoShardedBot):
         )
         self.tree.add_command(dmbot_group)
         self.tree.add_command(consent_group)
+        self.tree.add_command(transcript_command)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton)
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
         # "Check new names" on the DM screen after a session.
         self.add_dynamic_items(ReviewButton)
+        # "Download transcript" in the private message when a session ends.
+        self.add_dynamic_items(DownloadButton)
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -320,6 +338,7 @@ class DMBot(commands.AutoShardedBot):
                 else []
             ),
             asyncio.create_task(self._transcript_poster(), name="transcripts"),
+            asyncio.create_task(self._transcript_saver(), name="transcript-saves"),
         ]
 
     async def close(self) -> None:
@@ -331,6 +350,16 @@ class DMBot(commands.AutoShardedBot):
         with contextlib.suppress(Exception):
             await asyncio.wait_for(
                 asyncio.gather(*(self.flush_transcript(t) for t in list(self.tables.values()))),
+                FINAL_FLUSH_TIMEOUT_S / 3,
+            )
+        # Save what's waiting for the stored transcripts likewise (not ended: they
+        # carry on after the restart), and finish sessions that were just stopped.
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *(self.save_transcript(t) for t in list(self.tables.values())),
+                    *self._finishing,
+                ),
                 FINAL_FLUSH_TIMEOUT_S / 3,
             )
         for task in [*self._background, *self._asking]:
@@ -394,6 +423,7 @@ class DMBot(commands.AutoShardedBot):
             table.segmenter.drop(user_id)
             table.transcript.drop_speaker(user_id)  # words not posted yet are discarded
             table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
+            table.unsaved.drop_speaker(user_id)  # and never saved
 
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
@@ -408,6 +438,13 @@ class DMBot(commands.AutoShardedBot):
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
+
+    @staticmethod
+    async def _guarded(work: Awaitable[Any]) -> None:
+        try:
+            await work
+        except Exception:
+            log.exception("Finishing the transcript failed")
 
     def _track(self, work: Awaitable[Any], name: str) -> None:
         """Run `work` in the background; close() cancels it. Failures are logged."""
@@ -559,6 +596,12 @@ class DMBot(commands.AutoShardedBot):
                 "final-transcript",
             )
         self._track(self.suggest_names(table), "name-scan")
+        # Tracked separately, so a shutdown right after a stop still saves the end.
+        task = asyncio.create_task(
+            self._guarded(self.finish_transcript(table)), name="transcript-end"
+        )
+        self._finishing.add(task)
+        task.add_done_callback(self._finishing.discard)
         return table
 
     # ---- sessions (used by /dmbot start · stop · help) ---------------------
@@ -676,6 +719,7 @@ class DMBot(commands.AutoShardedBot):
         await self.campaigns.set_dm_screen(guild.id, campaign.id, screen_id)
         await self.campaigns.set_last_voice_channel(guild.id, campaign.id, voice.id)
         campaign = await self.campaigns.mark_played(guild.id, campaign.id)
+        started_at = int(time.time())
         table = Table(
             guild_id=guild.id,
             voice_channel_id=voice.id,
@@ -686,6 +730,7 @@ class DMBot(commands.AutoShardedBot):
             campaign_name=campaign.name,
             dm_user_ids=campaign.dm_user_ids,
             transcript_channel_id=transcript_id,
+            started_at=started_at,
         )
         # Save before joining, so a restart can always pick the session up again.
         try:
@@ -696,7 +741,7 @@ class DMBot(commands.AutoShardedBot):
                     voice_channel_id=voice.id,
                     screen_channel_id=screen_id,
                     started_by=user.id,
-                    started_at=int(time.time()),
+                    started_at=started_at,
                     notice_posted=False,
                 )
             )
@@ -746,7 +791,16 @@ class DMBot(commands.AutoShardedBot):
                 return STOP_FAILED
             await self.stop_table(guild_id, f"/dmbot stop by user {user_id}")
         name = f" to **{table.campaign_name}**" if table.campaign_name else ""
-        return f"Stopped listening{name}. See you next session! 👋"
+        saved = self.transcripts is not None and (
+            table.transcript_session_id is not None or bool(table.unsaved)
+        )
+        download = (
+            " Everyone recorded will get a private message with a button to download the "
+            "transcript. Anyone in the server can also use `/transcript`."
+            if saved
+            else ""
+        )
+        return f"Stopped listening{name}.{download} See you next session! 👋"
 
     async def status_lines(self, guild_id: int) -> list[str]:
         """Plain-language status for the Status button. Raw counters go to the log."""
@@ -976,6 +1030,7 @@ class DMBot(commands.AutoShardedBot):
             resumed=True,
             announce_resume=not recently,
             transcript_channel_id=self._usable_transcript(guild, campaign),
+            started_at=saved.started_at,
         )
         if campaign.transcript_channel_id is not None and table.transcript_channel_id is None:
             await self.post(
@@ -1186,6 +1241,8 @@ class DMBot(commands.AutoShardedBot):
         if table is None or utterance.session != table.segmenter.session:
             return
         table.capture_log.add_utterance(utterance)
+        if text and self.transcripts is not None:
+            table.unsaved.add(Line(utterance.start_ms, utterance.user_id, text, text))
         if text and len(table.heard) < HEARD_MAX:
             table.heard.append((utterance.user_id, text))
             if len(table.heard) == HEARD_MAX:
@@ -1418,6 +1475,124 @@ class DMBot(commands.AutoShardedBot):
                 return channel.id
         return None
 
+    # ---- stored transcripts (#41, #125) ------------------------------------
+
+    async def _open_transcript(self, table: Table) -> bool:
+        """Start (or, after a restart, pick up) the session's stored transcript. Tried
+        at each save until it works, so a passing database problem loses nothing; the DM
+        is told once if it fails."""
+        if table.transcript_session_id is not None:
+            return True
+        if self.transcripts is None or table.campaign_id is None:
+            return False
+        try:
+            table.transcript_session_id = await self.transcripts.open_session(
+                table.guild_id, table.campaign_id, table.started_at or int(time.time())
+            )
+        except Exception:
+            log.exception("Couldn't start saving the transcript; will retry")
+            if not table.transcript_warned:
+                table.transcript_warned = True
+                await self.post(table.screen_channel_id, screen_messages.TRANSCRIPT_NOT_SAVED)
+            return False
+        return True
+
+    async def save_transcript(self, table: Table) -> None:
+        """Save the lines waiting for this session's stored transcript.
+
+        Consent is checked when the batch is taken and again after it's saved: lines of
+        someone who pressed Stop while they were being saved are taken back out. A failed
+        save is retried next time.
+        """
+        if self.transcripts is None:
+            return
+        gid = table.guild_id
+        async with table.save_lock:
+            if not table.unsaved or not await self._open_transcript(table):
+                return
+            session_id = table.transcript_session_id
+            assert session_id is not None
+            agreed = await self.consent.consenting(gid)  # loads the list if it's missing
+            batch = table.unsaved.take(lambda uid: uid in agreed)
+            if not batch:
+                return
+            try:
+                ids = await self.transcripts.add_lines(gid, session_id, batch)
+            except Exception:
+                log.exception("Couldn't save %d transcript line(s); will retry", len(batch))
+                still = await self.consent.consenting(gid)
+                table.unsaved.put_back([x for x in batch if x.user_id in still])
+                self._note_dropped(table)
+                return
+            still = await self.consent.consenting(gid)
+            stopped = [i for i, x in zip(ids, batch, strict=True) if x.user_id not in still]
+            if stopped:
+                await self.transcripts.remove_lines(gid, session_id, stopped)
+
+    def _note_dropped(self, table: Table) -> None:
+        if table.unsaved.dropped and not table.dropped_logged:
+            table.dropped_logged = True
+            log.error("Saving the transcript keeps failing; the oldest unsaved lines are lost")
+
+    async def _transcript_saver(self) -> None:
+        limit = asyncio.Semaphore(TRANSCRIPT_PARALLEL)
+
+        async def one(table: Table) -> None:
+            async with limit:
+                with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                    try:
+                        await self.save_transcript(table)
+                    except Exception:  # never let one campaign stop everyone's saves
+                        log.exception("Couldn't save the transcript")
+
+        while True:
+            await asyncio.sleep(TRANSCRIPT_SAVE_S)
+            await asyncio.gather(*(one(t) for t in list(self.tables.values())))
+
+    async def finish_transcript(self, table: Table) -> None:
+        """After a session: save the last lines, mark it ended, and send the DM(s) and
+        everyone recorded a private message with a download button."""
+        if self.transcripts is None:
+            return
+        gid = table.guild_id
+        with log_context(guild_id=gid, campaign_id=table.campaign_id):
+            await self.save_transcript(table)
+            session_id = table.transcript_session_id
+            if session_id is None:
+                return  # never opened: nothing was saved
+            if table.unsaved:
+                log.warning("%d transcript line(s) couldn't be saved", len(table.unsaved))
+                await self.post(table.screen_channel_id, screen_messages.TRANSCRIPT_END_LOST)
+            try:
+                await self.transcripts.end_session(gid, session_id, int(time.time()))
+                session = await self.transcripts.session(gid, session_id)
+            except Exception:
+                log.exception("Couldn't finish the stored transcript")
+                return
+            if session is None or session.lines == 0:
+                return
+            people = {table.dm_user_id, *table.dm_user_ids, *session.speakers}
+            sent = 0
+            for user_id in sorted(people):
+                sent += await self._send_download(user_id, table, session_id)
+            log.info("Transcript download offered privately to %d of %d", sent, len(people))
+
+    async def _send_download(self, user_id: int, table: Table, session_id: str) -> int:
+        """1 if the private message went out; people with private messages off use
+        `/transcript` instead."""
+        try:
+            user = self.get_user(user_id) or await self.fetch_user(user_id)
+            if user.bot:
+                return 0
+            await user.send(
+                ended_text(table.campaign_name),
+                view=download_view(table.guild_id, session_id),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.HTTPException:
+            return 0
+        return 1
+
     async def post_summary(self, table: Table) -> None:
         """Log one capture-check line (IDs and numbers); warn the DM screen only if audio
         went missing."""
@@ -1528,7 +1703,15 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
-        bot = DMBot(settings, consent, campaigns, SessionStore(db), transcriber, MemoryStore(db))
+        bot = DMBot(
+            settings,
+            consent,
+            campaigns,
+            SessionStore(db),
+            transcriber,
+            MemoryStore(db),
+            TranscriptStore(db),
+        )
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

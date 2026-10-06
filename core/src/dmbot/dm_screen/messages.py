@@ -190,10 +190,21 @@ def transcript_card(campaign_name: str) -> str:
             "`/consent revoke` here or in any channel. Only you see the answer. What's "
             "already here stays.",
             "DMbot's notes for the DM never appear here.",
+            "To download a session as a text file, type `/transcript`.",
             "No pop-ups from here. To hide the unread dot too, mute this channel "
             "(right-click it, or long-press on a phone).",
         ]
     )
+
+
+TRANSCRIPT_NOT_SAVED = (
+    "⚠️ **DMbot can't save this session's transcript right now.** It keeps trying, so "
+    "nothing is lost yet. The live transcript and these notes still work."
+)
+TRANSCRIPT_END_LOST = (
+    "⚠️ DMbot couldn't save the last part of this session's transcript, so the download "
+    "is missing it. The live transcript channel still has it."
+)
 
 
 def transcript_failed(cause: str) -> str:
