@@ -427,6 +427,24 @@ TRANSCRIPTS = (
     + _isolate("transcript_lines")
 )
 
+MEMORY_HEARD = f"""
+    -- How often each known name was said, per session and speaker (#126, #127): kept at
+    -- the end of a session to rank speech-to-text hints. Counts, not words: small (one
+    -- row per name, session and speaker), deleted with the name (no undo entry: these
+    -- are observations, not edits) and with the campaign. The speaker is kept so a
+    -- person's counts can be removed with their lines (Retention).
+    CREATE TABLE memory_heard (
+        {_memory_scope()}
+        entity_id          TEXT NOT NULL,
+        session_started_at BIGINT NOT NULL,
+        speaker_id         BIGINT NOT NULL,
+        times              INTEGER NOT NULL CHECK (times > 0),
+        PRIMARY KEY (guild_id, campaign_id, session_started_at, entity_id, speaker_id),
+        {_entity_link("entity_id")}
+    );
+    CREATE INDEX memory_heard_by_speaker ON memory_heard (guild_id, speaker_id);
+    """ + _isolate("memory_heard")
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -437,6 +455,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0007_transcript_channel", TRANSCRIPT_CHANNEL),
     ("0008_played_by", PLAYED_BY),
     ("0009_transcripts", TRANSCRIPTS),
+    ("0010_memory_heard", MEMORY_HEARD),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -450,6 +469,7 @@ ISOLATED_TABLES = (
     *_MEMORY_TABLES,
     "transcript_sessions",
     "transcript_lines",
+    "memory_heard",
 )
 # Hold only server IDs (see the rules at the top of this file).
 ROUTING_TABLES = ("live_session_guilds",)

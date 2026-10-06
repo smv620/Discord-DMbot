@@ -424,11 +424,23 @@ class KeptAfterTheSession(NamesTest):
         for who in (PLAYER, STRANGER):
             said = Utterance(GUILD, who, 0, 0, bytes(32000), table.segmenter.session)
             self.bot._deliver_transcript(said, "Ask Zephyr. Zephyr knows.")
-        self.assertEqual(len(table.heard_names), 4)
+        self.assertEqual(sum(table.heard_counts.values()), 2)  # once per line
         await self.bot.keep_heard_names(table)
         data = await self.memory.lookup_data(GUILD, self.campaign.id)
-        self.assertEqual([(h.entity_id, h.times) for h in data.heard], [(zephyr.id, 2)])
-        self.assertEqual(table.heard_names, [])
+        self.assertEqual([(h.entity_id, h.times) for h in data.heard], [(zephyr.id, 1)])
+        self.assertEqual(table.heard_counts, {})
+
+    async def test_stopping_drops_their_counts_at_once(self) -> None:
+        from dmbot.audio.segmenter import Utterance
+
+        await ui.save_name(self.memory, self.campaign, "Zephyr", "npc", [], [])
+        table = make_table(self.campaign.id)
+        self.bot.tables[GUILD] = table
+        await self.bot._name_hints(clip(table))
+        said = Utterance(GUILD, PLAYER, 0, 0, bytes(32000), table.segmenter.session)
+        self.bot._deliver_transcript(said, "Zephyr!")
+        self.bot.stop_recording(GUILD, PLAYER)
+        self.assertEqual(table.heard_counts, {})
 
 
 class Store(NamesTest):

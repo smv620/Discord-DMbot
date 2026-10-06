@@ -304,7 +304,7 @@ class StoredMentions(unittest.TestCase):
             [Found(CHIEF, (4, 11), "spelling"), Found(TOWN, (18, 30), "exact")],
         )
 
-    def test_last_sessions_then_never_said_then_most_said(self) -> None:
+    def test_last_sessions_then_most_said_then_old_names_never_said(self) -> None:
         last, before, old = int(NOW - 7 * DAY), int(NOW - 14 * DAY), int(NOW - 60 * DAY)
         names = with_heard(
             lookup(),
@@ -318,11 +318,11 @@ class StoredMentions(unittest.TestCase):
         )
         hints = scene_hints(names, prepare(names, NOW), SceneTracker(), 0.0)
         order = [
-            hints.index(n) for n in ("Bryn Shander", "Frostwolf tribe", "Ulfgar", "Wolf Hollow")
+            hints.index(n) for n in ("Bryn Shander", "Frostwolf tribe", "Wolf Hollow", "Ulfgar")
         ]
         self.assertEqual(
             order, sorted(order)
-        )  # last session, the one before, never said, most said
+        )  # last session, the one before, most said, then old never-said
         self.assertNotIn("Belleros", hints)  # dropped until said again
 
     def test_never_said_names_come_newest_first(self) -> None:

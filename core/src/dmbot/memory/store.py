@@ -349,10 +349,13 @@ class MemoryStore:
                 + " ORDER BY id",
                 [*scope.ids, *scope.ids],
             )
+            # Counts follow merges (a merged-away name counts for the one it became).
             cur = await conn.execute(
-                "SELECT entity_id, count(*) AS times, max(session_started_at) AS last_at"
-                " FROM memory_mentions WHERE guild_id = %s AND campaign_id = %s"
-                " GROUP BY entity_id",
+                "SELECT coalesce(e.merged_into, h.entity_id) AS entity_id,"
+                " sum(h.times) AS times, max(h.session_started_at) AS last_at"
+                " FROM memory_heard h JOIN memory_entities e ON e.guild_id = h.guild_id"
+                " AND e.campaign_id = h.campaign_id AND e.id = h.entity_id"
+                " WHERE h.guild_id = %s AND h.campaign_id = %s GROUP BY 1",
                 scope.ids,
             )
             heard = tuple(
@@ -360,8 +363,8 @@ class MemoryStore:
                 for r in await cur.fetchall()
             )
             cur = await conn.execute(
-                "SELECT DISTINCT session_started_at FROM memory_mentions"
-                " WHERE guild_id = %s AND campaign_id = %s AND session_started_at IS NOT NULL"
+                "SELECT DISTINCT session_started_at FROM memory_heard"
+                " WHERE guild_id = %s AND campaign_id = %s"
                 " ORDER BY session_started_at DESC LIMIT 2",
                 scope.ids,
             )
@@ -725,45 +728,42 @@ class MemoryStore:
     async def add_session_heard(
         self, guild_id: int, campaign_id: str, session_started_at: int, heard: Sequence[Heard]
     ) -> int:
-        """Keep the names said in a session, written once at its end; how many were kept.
+        """Keep how often names were said in a session, written once at its end; how
+        many rows were written.
 
         Observations, not edits: no change log (nothing to undo) and no version change,
-        so writing them never makes running copies reload. Names removed meanwhile are
+        so running copies don't reload (the caller drops its copy for next time). A name
+        merged meanwhile counts for the one it was merged into; removed names are
         skipped. The caller has already left out people who stopped being recorded.
         """
         _check_time(session_started_at)
         rows = [
             h
             for h in heard
-            if h.method in MENTION_METHODS
-            and 0 < len(h.line_ref) <= LINE_REF_MAX
-            and 0 <= h.span[0] < h.span[1] <= 2**31 - 1
-            and is_id(h.entity_id)
+            if is_id(h.entity_id) and 0 < h.times <= 2**31 - 1 and 0 < h.speaker_id <= INT64_MAX
         ]
         if not rows:
             return 0
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "INSERT INTO memory_mentions (guild_id, campaign_id, id, entity_id,"
-                " session_started_at, line_ref, span_start, span_end, confidence, method,"
-                " created_at)"
-                " SELECT %s, %s, m.id, m.entity_id, %s, m.line_ref, m.span_start, m.span_end,"
-                " 1.0, m.method, %s"
-                " FROM unnest(%s::text[], %s::text[], %s::text[], %s::int[], %s::int[],"
-                " %s::text[]) AS m(id, entity_id, line_ref, span_start, span_end, method)"
-                " WHERE EXISTS (SELECT 1 FROM memory_entities e WHERE e.guild_id = %s"
-                " AND e.campaign_id = %s AND e.id = m.entity_id)",
+                "INSERT INTO memory_heard"
+                " (guild_id, campaign_id, entity_id, session_started_at, speaker_id, times)"
+                " SELECT %s, %s, coalesce(e.merged_into, e.id), %s, h.speaker_id,"
+                " sum(h.times)"
+                " FROM unnest(%s::text[], %s::bigint[], %s::int[])"
+                " AS h(entity_id, speaker_id, times)"
+                " JOIN memory_entities e ON e.guild_id = %s AND e.campaign_id = %s"
+                " AND e.id = h.entity_id AND e.status IN ('proposed', 'confirmed', 'merged')"
+                " GROUP BY 3, 5"
+                " ON CONFLICT (guild_id, campaign_id, session_started_at, entity_id, speaker_id)"
+                " DO UPDATE SET times = memory_heard.times + EXCLUDED.times",
                 (
                     guild_id,
                     campaign_id,
                     session_started_at,
-                    int(self._clock()),
-                    [new_id() for _ in rows],
                     [h.entity_id for h in rows],
-                    [h.line_ref for h in rows],
-                    [h.span[0] for h in rows],
-                    [h.span[1] for h in rows],
-                    [h.method for h in rows],
+                    [h.speaker_id for h in rows],
+                    [h.times for h in rows],
                     guild_id,
                     campaign_id,
                 ),

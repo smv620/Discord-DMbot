@@ -13,7 +13,8 @@ each clip then go, most useful first:
    them (each scene name pointing counts, weighted by how recently it was said): talk
    of the Frostwolf tribe hints its chief before anyone says his name;
 4. **recently:** names said earlier this session, then in the last session or two, then
-   names never said yet (newest first: a prepared NPC list helps from the start);
+   names never said yet that were added since then (newest first: a prepared NPC list
+   helps from the start);
 5. **fill:** the other confirmed names, most said first (names unsaid for about six
    months drop out until they're said again), then guesses (names DMbot only
    suggested, and suggested other names of known entries): a guess never pushes out a
@@ -143,14 +144,23 @@ def prepare(lookup: CampaignLookup, now: float) -> HintParts:
     )
     # Names never said yet (just added, or imported before the first session) count as
     # recent, newest first, so a prepared NPC list helps from the first session.
+    # Only names added since the older of the last two sessions: an old import of 300
+    # never-said NPCs mustn't keep the most-said names out for good.
     never = sorted(
-        (e for e in confirmed if e.id not in heard), key=lambda e: (-e.created_at, own[e.id])
+        (e for e in confirmed if e.id not in heard and (since is None or e.created_at >= since)),
+        key=lambda e: (-e.created_at, own[e.id]),
     )
     taken = {e.id for e in recently} | {e.id for e in never}
     fill = sorted(
-        (e for e in confirmed if e.id not in taken and last(e.id) >= now - LONG_UNSAID_S),
+        (
+            e
+            for e in confirmed
+            if e.id not in taken and e.id in heard and last(e.id) >= now - LONG_UNSAID_S
+        ),
         key=lambda e: (-heard[e.id].times, own[e.id]),
     )
+    # Older names never said yet come last among the real names.
+    fill += [e for e in by_name if e.id not in taken and e.id not in heard]
     return HintParts(
         version=lookup.version,
         names=ordered,

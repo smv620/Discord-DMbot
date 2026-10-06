@@ -41,14 +41,12 @@ class MemoryRuleError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class Heard:
-    """One time a name was said, kept at the end of a session (memory_mentions) for
-    ranking hints: how often and when each name comes up. `line_ref` points at the
-    stored transcript line ("t:<session>:<started ms>:<speaker>")."""
+    """How many lines of one speaker named an entry in a session, kept at its end
+    (memory_heard) for ranking hints."""
 
     entity_id: str
-    line_ref: str
-    span: tuple[int, int]  # characters in the line
-    method: str  # "exact" (a name or other name) or "spelling" (a spelling the DM fixed)
+    speaker_id: int
+    times: int
 
 
 @dataclass(frozen=True, slots=True)

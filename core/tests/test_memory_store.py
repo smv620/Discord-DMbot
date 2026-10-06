@@ -112,6 +112,9 @@ class Isolation(MemoryTest):
         await self.memory.add_correction(
             GUILD_A, self.c, "bell or us", action="fix", entity_id=a, source="dm"
         )
+        from dmbot.memory.models import Heard
+
+        await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, DM, 1)])
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
@@ -687,49 +690,68 @@ class Indexes(MemoryTest):
 
 
 class HeardNames(MemoryTest):
-    """Names said in a session, kept at its end for ranking hints (#126, #127)."""
+    """How often names were said, kept at the end of a session for hints (#126, #127)."""
 
-    async def test_kept_counted_and_never_a_new_version(self) -> None:
+    async def test_counted_per_session_and_never_a_new_version(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup
         from dmbot.memory.models import Heard
 
         a, b = await self.add("Belleros", status=CONFIRMED), await self.add("Cerric")
-        gone = await self.add("Bellamy")  # rejected: still kept, the lookup skips it
+        gone = await self.add("Bellamy")
         await self.memory.set_entity_status(GUILD_A, self.c, gone, REJECTED, source="dm")
         version = await self.memory.version(GUILD_A, self.c)
-        heard = [
-            Heard(a, "t:x:1000:8", (0, 8), "exact"),
-            Heard(a, "t:x:2000:8", (4, 12), "spelling"),
-            Heard(b, "t:x:3000:9", (0, 6), "exact"),
-            Heard(gone, "t:x:4000:9", (0, 7), "exact"),
-            Heard(b, "", (0, 6), "exact"),  # bad: left out
-        ]
-        kept = await self.memory.add_session_heard(GUILD_A, self.c, 1_000, heard)
-        self.assertEqual(kept, 4)  # the bad one left out
+        kept = await self.memory.add_session_heard(
+            GUILD_A,
+            self.c,
+            1_000,
+            [Heard(a, 8, 2), Heard(a, 9, 1), Heard(b, 8, 1), Heard(gone, 8, 5), Heard(b, 8, 0)],
+        )
+        self.assertEqual(kept, 3)  # a rejected name and a zero count left out
         self.assertEqual(await self.memory.version(GUILD_A, self.c), version)  # no reload
-        await self.memory.add_session_heard(GUILD_A, self.c, 2_000, heard[:1])
+        await self.memory.add_session_heard(GUILD_A, self.c, 2_000, [Heard(a, 8, 4)])
         data = await self.memory.lookup_data(GUILD_A, self.c)
         counts = {h.entity_id: (h.times, h.last_session_at) for h in data.heard}
-        self.assertEqual(counts[a], (3, 2_000))
-        self.assertEqual(counts[b], (1, 1_000))
-        from dmbot.memory.lookup import CampaignLookup
-
-        self.assertNotIn(gone, CampaignLookup.build(data).heard)  # only live names count
+        self.assertEqual(counts, {a: (7, 2_000), b: (1, 1_000)})
         self.assertEqual(data.recent_sessions, (2_000, 1_000))
+        self.assertIn(a, CampaignLookup.build(data).heard)
+
+    async def test_merged_names_count_for_the_one_kept(self) -> None:
+        from dmbot.memory.models import Heard
+
+        keep, gone = await self.add("Belleros", status=CONFIRMED), await self.add("Bellaros")
+        await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(gone, 8, 3)])
+        await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True)
+        await self.memory.add_session_heard(GUILD_A, self.c, 2_000, [Heard(gone, 8, 1)])
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertEqual([(h.entity_id, h.times) for h in data.heard], [(keep, 4)])
+
+    async def test_undo_still_works_after_a_name_was_said(self) -> None:
+        from dmbot.memory.models import Heard
+
+        written = await self.memory.add_entity(
+            GUILD_A, self.c, type="npc", name="Zephyr", source="dm", status=CONFIRMED
+        )
+        await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(written.value.id, 8, 2)])
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.c, written.batch)  # never refused
+        self.assertEqual((await self.memory.lookup_data(GUILD_A, self.c)).heard, ())
+        self.assertEqual(await self.count("memory_heard"), 0)
 
     async def test_another_campaign_or_server_never_sees_them(self) -> None:
         from dmbot.memory.models import Heard
 
         a = await self.add("Belleros", status=CONFIRMED)
         other = (await self.campaigns.create(GUILD_A, "Strahd", DM)).id
-        await self.memory.add_session_heard(
-            GUILD_A, self.c, 1_000, [Heard(a, "t:x:1:8", (0, 8), "exact")]
-        )
+        await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, 8, 1)])
         self.assertEqual((await self.memory.lookup_data(GUILD_A, other)).heard, ())
-        # An entity ID from this campaign written under another one is skipped.
-        kept = await self.memory.add_session_heard(
-            GUILD_A, other, 1_000, [Heard(a, "t:x:1:8", (0, 8), "exact")]
+        # This campaign's name written under another campaign or server is skipped.
+        self.assertEqual(
+            await self.memory.add_session_heard(GUILD_A, other, 1, [Heard(a, 8, 1)]), 0
         )
-        self.assertEqual(kept, 0)
+        far = (await self.campaigns.create(GUILD_B, "Far Away", DM)).id
+        skipped = await self.memory.add_session_heard(GUILD_B, far, 1, [Heard(a, 8, 1)])
+        self.assertEqual(skipped, 0)
+        self.assertEqual(await self.count("memory_heard", GUILD_B), 0)
 
 
 class LookupInPostgres(MemoryTest):
