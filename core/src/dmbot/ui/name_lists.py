@@ -6,6 +6,7 @@ managers, privately; secret names only for the campaign's DMs.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import re
@@ -16,30 +17,30 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory.lookup import CampaignLookup
+from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, DM, PROPOSED, MemoryRuleError, NewName, name_key
 from dmbot.memory.name_list import (
     MAX_FILE_BYTES,
     MAX_LINES,
     MAX_NAMES,
-    TEMPLATE,
     OutName,
     Parsed,
     parse,
     render,
+    template,
 )
-from dmbot.memory.search import SOUND, find
+from dmbot.memory.sounds import sound_codes
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import NO_PINGS, _bot, _Button, _Menu, _replace, _Select, _send, _tell
 from dmbot.ui.names import (
     KIND_SHORT,
     NOT_AVAILABLE,
+    ReviewButton,
     _campaign_for,
     _md,
     _memory,
     changed,
     sees_secrets,
-    start_review,
 )
 
 log = logging.getLogger(__name__)
@@ -138,6 +139,8 @@ class Browse(_Menu):
         self.by_heard = by_heard
         self.page = page
         counts = kinds_in(names)
+        self.empty = not counts
+        self.open: _Select | None = None
         self.pick = _Select(
             self._kind_picked,
             placeholder="Pick a kind…",
@@ -148,7 +151,8 @@ class Browse(_Menu):
                 for k, n in counts[: logic.SELECT_OPTIONS_MAX]
             ],
         )
-        self.add_item(self.pick)
+        if counts:  # Discord needs at least one choice in a menu
+            self.add_item(self.pick)
         self.shown: list[str] = []
         self.total = 0
         if kind is not None:
@@ -186,7 +190,7 @@ class Browse(_Menu):
             self.add_item(
                 _Button(
                     self._sort,
-                    label="Sort: A to Z" if by_heard else "Sort: last heard",
+                    label="Show A to Z" if by_heard else "Show last heard first",
                     style=grey,
                     row=2,
                 )
@@ -194,8 +198,11 @@ class Browse(_Menu):
 
     def text(self, names: CampaignLookup, campaign: Campaign) -> str:
         if self.kind is None:
-            if not self.pick.options:
-                return "📚 DMbot doesn't know any names yet. Add some with ➕ Add a name."
+            if self.empty:
+                return (
+                    "📚 DMbot doesn't know any names yet. Add some with ➕ Add a name or "
+                    "📥 Add many."
+                )
             return f"📚 **Names for {_md(campaign.name)}:** pick a kind."
         kind = KIND_SHORT.get(self.kind, self.kind)
         order = "last heard first" if self.by_heard else "A to Z"
@@ -236,7 +243,8 @@ class Browse(_Menu):
     async def _open(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import show_card
 
-        await show_card(interaction, self.campaign_id, self.open.values[0])
+        if self.open is not None:
+            await show_card(interaction, self.campaign_id, self.open.values[0])
 
 
 async def show_browse(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -249,20 +257,24 @@ async def show_browse(interaction: discord.Interaction, campaign_id: str) -> Non
     counts = kinds_in(names)
     kind = counts[0][0] if len(counts) == 1 else None  # one kind: straight to its names
     view = Browse(campaign.id, names, kind)
+    if view.empty:
+        await _tell(interaction, view.text(names, campaign))
+        return
     await _send(interaction, view.text(names, campaign), view)
 
 
 # ---- 📥 Add many ------------------------------------------------------------------------
 
-FORMAT_HELP = (
-    "📥 **Add many names at once:** one name per line, like this:\n"
-    "`name | kind | other names | secret names`\n"
-    "Only the name is needed. Kinds: NPC, place, group, creature, item, god, spell, event, "
-    "other. Separate other names with `;`. Names only, no notes.\n"
-    "**📋 Paste a list** (up to about 200 names), or upload a file: type `/dmbot names` and "
-    "add it in the **file** box (up to 2,000 lines). **📄 Get the template** has an example "
-    "to fill in."
-)
+
+def format_help(*, secrets: bool) -> str:
+    parts = "name | kind | other names | secret names" if secrets else "name | kind | other names"
+    return (
+        "📥 **Add many names at once.** Press **📋 Paste a list**, or **📄 Get the template** "
+        "to fill in and upload with `/dmbot names` (the **file** box).\n"
+        f"One name per line: `{parts}`. Only the name is needed. Put a `,` or `;` between "
+        "several other names. Kinds: NPC, place, group, creature, item, god, spell, event, "
+        "other. A name with no kind waits in 📝 Check new names."
+    )
 
 
 class AddMany(_Menu):
@@ -287,12 +299,14 @@ class AddMany(_Menu):
             )
 
     async def _template(self, interaction: discord.Interaction) -> None:
-        if await _campaign_for(interaction, self.campaign_id):
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign:
+            secrets = sees_secrets(campaign, interaction.user.id)
             await interaction.response.send_message(
                 "📄 **The names template.** Lines starting with `###` explain it. Change the "
-                "examples to your own names, save it, then type `/dmbot names` and add the file "
-                "in the **file** box.",
-                file=_file(TEMPLATE, TEMPLATE_FILE),
+                "examples to your own names, save it as a .txt file, then type `/dmbot names` "
+                "and add the file in the **file** box.",
+                file=_file(template(secrets=secrets), TEMPLATE_FILE),
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
             )
@@ -302,12 +316,12 @@ class PasteForm(discord.ui.Modal, title="Add many names"):
     lines: discord.ui.TextInput[PasteForm] = discord.ui.TextInput(
         label="One name per line",
         style=discord.TextStyle.paragraph,
-        placeholder="Belleros | NPC | Bell; the old knight\nBryn Shander | place\nUlfgar",
+        placeholder="Belleros | NPC | Bell, the old knight\nBryn Shander | place\nUlfgar",
         max_length=PASTE_MAX,
     )
 
     def __init__(self, campaign_id: str, *, secrets: bool) -> None:
-        super().__init__(timeout=None)
+        super().__init__(timeout=30 * 60)
         self.campaign_id = campaign_id
         if not secrets:
             self.lines.label = "One name per line (no secret names)"
@@ -323,18 +337,23 @@ def read_upload(raw: bytes) -> tuple[str | None, str | None]:
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        return None, "DMbot can't read that file. Save it as plain text (UTF-8) and try again."
+        return (
+            None,
+            "DMbot can't read that file. Save it as a .txt file (not Word or PDF) and try again.",
+        )
     if len(text.splitlines()) > MAX_LINES:
         return None, f"That file has more than {MAX_LINES:,} lines. Split it into smaller files."
     return text, None
 
 
-def _needs_look(names: CampaignLookup, name: str) -> bool:
-    """It sounds like a different name DMbot knows (Bell Eros and Belleros)."""
+def _sounds_known(names: CampaignLookup, name: str) -> bool:
+    """It sounds like a different name everyone may know (Bell Eros and Belleros). Uses
+    the copy's sound index: one look-up per sound, never a scan of every name."""
     key = name_key(name)
     return any(
-        m.how == SOUND and name_key(m.matched) != key
-        for m in find(names, name, secrets=False, limit=5)
+        entry.confirmed and not entry.secret and entry.key != key
+        for code in sound_codes(name)
+        for entry in names.by_sound.get(code, ())
     )
 
 
@@ -351,8 +370,9 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
         return
     secrets_ok = sees_secrets(campaign, interaction.user.id)
     parsed = parse(text, secrets=secrets_ok)
+    # Names everyone may know. For anyone but the campaign's DMs, a clash with a secret
+    # name looks exactly like no clash: they never learn one exists.
     taken = {e.key for e in names.names if secrets_ok or not e.secret}
-    hidden = {e.key for e in names.names if e.secret}
     new: list[NewName] = []
     known = look = dropped = 0
     for line in parsed.lines:
@@ -361,38 +381,48 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
             known += 1
             continue
         others = tuple(o for o in line.others if name_key(o) not in taken)
-        secret = tuple(s for s in line.secrets if name_key(s) not in taken)
+        secret = tuple(x for x in line.secrets if name_key(x) not in taken)
         dropped += len(line.others) - len(others) + len(line.secrets) - len(secret)
-        # Unclear kind, a clash only the DM can see, or sounds like a known name: it's
-        # saved as a suggestion, waiting in 📝 Check new names.
-        unclear = line.kind is None or key in hidden or _needs_look(names, line.name)
+        # No kind, or it sounds like a known name: saved as a suggestion, waiting in
+        # 📝 Check new names.
+        unclear = line.kind is None or _sounds_known(names, line.name)
         look += unclear
         new.append(
             NewName(
-                line.name,
-                line.kind or "concept",
-                PROPOSED if unclear else CONFIRMED,
-                others,
-                secret,
+                line.name, line.kind or "concept", PROPOSED if unclear else CONFIRMED,
+                others, secret,
             )
-        )
+        )  # fmt: skip
         taken.update({key, *map(name_key, others), *map(name_key, secret)})
-    if len(names.entities) + len(new) > MAX_NAMES:
+    room = MAX_NAMES - len(names.entities)
+    if len(new) > room:
         await _tell(
             interaction,
-            f"That's too many: a campaign holds up to {MAX_NAMES:,} names. Nothing was added.",
+            f"Nothing was added: this campaign has room for {max(room, 0):,} more names (up to "
+            f"{MAX_NAMES:,}). Split the list and add part of it.",
         )
         return
     batch = None
+    added = 0
     if new:
         try:
             written = await memory.add_names(campaign.guild_id, campaign.id, new, source=DM)
         except MemoryRuleError as exc:
             await _tell(interaction, f"Nothing was added. {exc}")
             return
+        except Exception:
+            log.exception("Adding a list of names failed")
+            await _tell(interaction, "Nothing was added: something went wrong. Try again.")
+            return
         batch = written.batch
+        added = sum(1 for i in written.value if i is not None)
+        # Saved by someone else at the same moment: counted as already known.
+        known += len(new) - added
+        look -= sum(
+            1 for n, i in zip(new, written.value, strict=True) if i is None and n.status == PROPOSED
+        )
         changed(interaction, campaign)
-    await _send_summary(interaction, campaign, parsed, len(new), look, known, dropped, batch)
+    await _send_summary(interaction, campaign, parsed, added, look, known, dropped, batch)
 
 
 async def _send_summary(
@@ -406,10 +436,10 @@ async def _send_summary(
     batch: int | None,
 ) -> None:
     lines = [summary_text(added, look, known, parsed.repeated, dropped, parsed.refused)]
-    view = discord.ui.View(timeout=None)
+    view = discord.ui.View(timeout=None)  # both buttons work after a restart
     if look:
-        view.add_item(_CheckNow(campaign.id))
-    if batch is not None:
+        view.add_item(ReviewButton(campaign.id))
+    if batch is not None and added:
         view.add_item(UndoListButton(campaign.id, batch))
     await interaction.followup.send(
         "\n".join(lines),
@@ -427,14 +457,26 @@ def summary_text(
     dropped: int,
     refused: list[tuple[int, str]],
 ) -> str:
+    """What happened, what needs doing first."""
+
     def n(count: int, word: str) -> str:
         return f"{count:,} {word}{'' if count == 1 else 's'}"
 
     lines = [f"📥 **Added {n(added, 'name')}.**" if added else "📥 **No new names were added.**"]
-    if look:
+    if refused:
         lines.append(
-            f"📝 {n(look, 'name')} {'needs' if look == 1 else 'need'} a look (no kind, or it "
-            "sounds like a name DMbot knows). They're waiting in 📝 Check new names."
+            f"⚠️ **{n(len(refused), 'line')} {'wasn' if len(refused) == 1 else 'weren'}'t "
+            "added.** Fix them and add just those lines again:"
+        )
+        lines += [f"• line {line}: {why}." for line, why in refused[:SHOWN_PROBLEMS]]
+        if len(refused) > SHOWN_PROBLEMS:
+            lines.append(f"• … and {len(refused) - SHOWN_PROBLEMS} more.")
+    if look:
+        they = "it sounds" if look == 1 else "they sound"
+        lines.append(
+            f"📝 **{n(look, 'name')} {'needs' if look == 1 else 'need'} you to check "
+            f"{'it' if look == 1 else 'them'}** (no kind, or {they} like a name DMbot already "
+            "knows). Press 📝 Check new names."
         )
     skipped = []
     if known:
@@ -445,26 +487,12 @@ def summary_text(
         skipped.append(f"{n(dropped, 'other name')} already used by another name")
     if skipped:
         lines.append(f"Skipped: {', '.join(skipped)}.")
-    if refused:
-        shown = "; ".join(f"line {line}: {why}" for line, why in refused[:SHOWN_PROBLEMS])
-        more = (
-            f" … and {len(refused) - SHOWN_PROBLEMS} more" if len(refused) > SHOWN_PROBLEMS else ""
-        )
-        lines.append(
-            f"Couldn't read {n(len(refused), 'line')} ({shown}{more}). Fix them and add them again."
-        )
     if added:
-        lines.append("Wrong list? **Undo** takes the whole list back.")
+        lines.append(
+            "Wrong list? **Undo** takes the whole list back, until you check or change any of "
+            "those names."
+        )
     return "\n".join(lines)
-
-
-class _CheckNow(discord.ui.Button[discord.ui.View]):
-    def __init__(self, campaign_id: str) -> None:
-        super().__init__(label="📝 Check them now", style=discord.ButtonStyle.primary)
-        self.campaign_id = campaign_id
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        await start_review(interaction, self.campaign_id)
 
 
 class UndoListButton(
@@ -495,17 +523,19 @@ class UndoListButton(
         memory = _memory(interaction)
         if campaign is None or memory is None:
             return
+        await interaction.response.defer()  # a long list takes a while to take back
         try:
-            await memory.undo(campaign.guild_id, campaign.id, self.batch)
+            await memory.undo_names(campaign.guild_id, campaign.id, self.batch)
         except MemoryRuleError:
             await _tell(
                 interaction,
-                "Couldn't undo the whole list: some of those names were changed or used since "
-                "(or it was already undone). Remove the wrong ones from their cards instead.",
+                "Couldn't undo the whole list: some of those names were checked, changed or "
+                "heard since (or it was already undone). Remove the wrong ones from their cards "
+                "instead.",
             )
             return
         changed(interaction, campaign)
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content="↩️ Took the whole list back.", view=None, allowed_mentions=NO_PINGS
         )
 
@@ -514,13 +544,18 @@ class UndoListButton(
 
 
 def download_text(names: CampaignLookup, campaign: Campaign, *, secrets: bool) -> tuple[str, int]:
-    """The campaign's confirmed names as a list file (the same format Add many reads)."""
+    """The campaign's confirmed names as a list file (the same format Add many reads).
+    Misheard spellings DMbot learned aren't other names, so they're left out."""
+    by_entity: dict[str, list[NameEntry]] = {}
+    for a in names.names:
+        if a.confirmed and a.kind != "misheard":
+            by_entity.setdefault(a.entity_id, []).append(a)
     out: list[OutName] = []
     for e in names.entities.values():
         if e.status != CONFIRMED:
             continue
         own = name_key(e.name)
-        mine = [a for a in names.names if a.entity_id == e.id and a.confirmed]
+        mine = by_entity.get(e.id, [])
         others = tuple(a.text for a in mine if not a.secret and a.key != own)
         hidden = tuple(a.text for a in mine if a.secret) if secrets else ()
         out.append(OutName(e.name, e.type, others, hidden))
@@ -531,17 +566,25 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
+    await interaction.response.defer(ephemeral=True, thinking=True)
     names = await _names(interaction, campaign)
     if names is None:
         return
     secrets = sees_secrets(campaign, interaction.user.id)
-    text, count = download_text(names, campaign, secrets=secrets)
+    text, count = await asyncio.to_thread(download_text, names, campaign, secrets=secrets)
+    if not count:
+        await _tell(
+            interaction,
+            f"DMbot doesn't know any names for {_md(campaign.name)} yet. Press 📥 Add many to "
+            "start from the template.",
+        )
+        return
     day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
-    warning = " This file includes secret names. Don't share it with players." if secrets else ""
-    await interaction.response.send_message(
-        f"📤 **All {count:,} name{'' if count == 1 else 's'} for {_md(campaign.name)}.**"
-        f"{warning} You can edit it and add it again with `/dmbot names` (names DMbot "
-        "already knows are skipped).",
+    warning = "⚠️ Includes secret names: don't share this file with players. " if secrets else ""
+    await interaction.followup.send(
+        f"📤 **All {count:,} name{'' if count == 1 else 's'} for {_md(campaign.name)}.** "
+        f"{warning}Names still waiting in 📝 Check new names aren't included. Edit it and add "
+        "it again with `/dmbot names` (names DMbot already knows are skipped).",
         file=_file(text, f"names-{_slug(campaign.name)}-{day}.txt"),
         ephemeral=True,
         allowed_mentions=NO_PINGS,

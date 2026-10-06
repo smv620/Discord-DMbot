@@ -628,8 +628,44 @@ class Lists(MemoryTest):
         thing = await self.memory.entity(GUILD_A, self.c, b)
         assert thing is not None and written.batch is not None
         self.assertEqual(thing.status, PROPOSED)
-        await self.memory.undo(GUILD_A, self.c, written.batch)
+        await self.memory.undo_names(GUILD_A, self.c, written.batch)
         self.assertEqual(await self.memory.entities(GUILD_A, self.c), [])
+
+    async def test_names_already_used_are_skipped_inside_the_save(self) -> None:
+        from dmbot.memory.models import NewName
+
+        await self.add("Belleros", status=CONFIRMED)
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [
+                NewName("belleros", "npc", CONFIRMED),
+                NewName("Kesh", "npc", CONFIRMED, ("Belleros",)),
+            ],
+            source="dm",
+        )
+        skipped, kesh = written.value
+        self.assertIsNone(skipped)
+        assert kesh is not None
+        keys = {x.key for x in await self.memory.aliases(GUILD_A, self.c, entity_id=kesh)}
+        self.assertEqual(keys, {"kesh"})  # its other name was already Belleros's
+
+    async def test_undoing_a_list_is_refused_after_a_connection_or_for_other_changes(self) -> None:
+        from dmbot.memory.models import NewName
+
+        written = await self.memory.add_names(
+            GUILD_A, self.c, [NewName("Kesh", "npc", CONFIRMED)], source="dm"
+        )
+        (kesh,) = written.value
+        assert kesh is not None and written.batch is not None
+        other = await self.add("Ulfgar")
+        await self.relate(kesh, "knows", other)
+        with self.assertRaises(MemoryRuleError):  # never deletes the connection silently
+            await self.memory.undo_names(GUILD_A, self.c, written.batch)
+        renamed = await self.memory.rename_entity(GUILD_A, self.c, other, "Ulf", source="dm")
+        assert renamed.batch is not None
+        with self.assertRaises(MemoryRuleError):  # not a list of names
+            await self.memory.undo_names(GUILD_A, self.c, renamed.batch)
 
     async def test_only_the_dm_and_never_a_players_character(self) -> None:
         from dmbot.memory.models import NewName

@@ -45,6 +45,9 @@ class FakeResponse:
         self.done = True
         self.modal = modal
 
+    async def defer(self, **_: Any) -> None:
+        self.done = True
+
 
 class NamesTest(DatabaseTest):
     async def asyncSetUp(self) -> None:
@@ -458,15 +461,18 @@ class Lists(NamesTest):
         await name_lists.import_list(it, self.campaign.id, text)
         summary = it.followup.send.call_args.args[0]
         self.assertIn("Added 3 names", summary)
-        self.assertIn("2 names need a look", summary)  # no kind; sounds like Belleros
+        self.assertIn("2 names need you to check them", summary)  # no kind; sounds like Belleros
         self.assertIn("1 name DMbot already knows", summary)
         self.assertIn("Bryn Shander", await self.names())
         self.assertIn("Ulfgar", await self.names((PROPOSED,)))
         view = it.followup.send.call_args.kwargs["view"]
         (undo,) = [c for c in view.children if isinstance(c, name_lists.UndoListButton)]
         it = self.it()
+        it.edit_original_response = AsyncMock()
         await undo.callback(it)
-        self.assertIn("Took the whole list back", it.response.edited[0][0])
+        self.assertIn(
+            "Took the whole list back", it.edit_original_response.call_args.kwargs["content"]
+        )
         self.assertNotIn("Bryn Shander", await self.names())
 
     async def test_a_manager_never_learns_of_or_adds_secret_names(self) -> None:
@@ -478,14 +484,18 @@ class Lists(NamesTest):
             it, self.campaign.id, "the stranger | npc\nKesh | npc | | a secret"
         )
         summary = it.followup.send.call_args.args[0]
-        self.assertNotIn("already knows", summary)  # a secret name's clash isn't revealed
+        # A clash with a secret name looks exactly like no clash: saved like any other.
+        self.assertIn("Added 1 name.", summary)
+        self.assertNotIn("need you to check", summary)
         self.assertIn("only the campaign's DM can add secret names", summary)
         self.fresh()
         it = self.it(MANAGER)
         await name_lists.send_download(it, self.campaign.id)
-        text, kw = it.response.sent[0]
+        text = it.followup.send.call_args.args[0]
+        body = it.followup.send.call_args.kwargs["file"].fp.getvalue()
         self.assertNotIn("secret", text)
-        self.assertNotIn(b"the stranger | ", kw["file"].fp.getvalue())
+        self.assertNotIn(b"secret names", body)  # not even the column's instructions
+        self.assertNotIn(b"Belleros | NPC | the stranger", body)
 
     async def test_download_has_the_secrets_for_the_dm_and_reads_back(self) -> None:
         from dmbot.memory.name_list import parse
@@ -494,9 +504,9 @@ class Lists(NamesTest):
         self.fresh()
         it = self.it()
         await name_lists.send_download(it, self.campaign.id)
-        text, kw = it.response.sent[0]
-        self.assertIn("includes secret names", text)
-        body = kw["file"].fp.getvalue().decode()
+        text = it.followup.send.call_args.args[0]
+        self.assertIn("Includes secret names", text)
+        body = it.followup.send.call_args.kwargs["file"].fp.getvalue().decode()
         (line,) = parse(body, secrets=True).lines
         self.assertEqual((line.name, line.secrets), ("Belleros", ("the stranger",)))
 
@@ -534,6 +544,16 @@ class Lists(NamesTest):
         await name_lists.AddMany(self.campaign.id)._template(it)
         _, kw = it.response.sent[0]
         self.assertTrue(kw["file"].fp.getvalue().startswith(b"### DMbot names list"))
+
+    async def test_browse_with_no_names_says_so(self) -> None:
+        from dmbot.ui import name_lists
+
+        other = await self.campaigns.create(GUILD, "Empty", DM)
+        it = self.it()
+        await name_lists.show_browse(it, other.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("doesn't know any names yet", text)
+        self.assertNotIn("view", kw)
 
 
 class Adding(NamesTest):
