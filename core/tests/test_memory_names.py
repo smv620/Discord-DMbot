@@ -411,6 +411,26 @@ class Hints(NamesTest):
         self.assertLess(moved.index("Aldric"), moved.index("Zephyr"))
 
 
+class KeptAfterTheSession(NamesTest):
+    async def test_names_said_are_kept_only_from_people_who_still_agree(self) -> None:
+        from dmbot.audio.segmenter import Utterance
+
+        zephyr = await ui.save_name(self.memory, self.campaign, "Zephyr", "npc", [], [])
+        table = make_table(self.campaign.id)
+        table.started_at = 1_700_000_000
+        self.bot.tables[GUILD] = table
+        await self.bot._name_hints(clip(table))  # loads the names for matching
+        await self.consent.grant(GUILD, PLAYER)
+        for who in (PLAYER, STRANGER):
+            said = Utterance(GUILD, who, 0, 0, bytes(32000), table.segmenter.session)
+            self.bot._deliver_transcript(said, "Ask Zephyr. Zephyr knows.")
+        self.assertEqual(len(table.heard_names), 4)
+        await self.bot.keep_heard_names(table)
+        data = await self.memory.lookup_data(GUILD, self.campaign.id)
+        self.assertEqual([(h.entity_id, h.times) for h in data.heard], [(zephyr.id, 2)])
+        self.assertEqual(table.heard_names, [])
+
+
 class Store(NamesTest):
     async def test_only_the_dm_says_what_something_is(self) -> None:
         written = await self.memory.add_entity(

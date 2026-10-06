@@ -11,13 +11,16 @@ from dmbot.memory.models import (
     Alias,
     Correction,
     Entity,
+    HeardCount,
     Relation,
     name_key,
 )
 from dmbot.memory.scene import (
     MAX_HINTS,
     SCENE_WINDOW_S,
+    Found,
     SceneTracker,
+    find_mentions,
     mentions,
     prepare,
     scene_hints,
@@ -25,6 +28,8 @@ from dmbot.memory.scene import (
 
 TRIBE, CHIEF, CAMP, TOWN, CERRIC, GUESS, STRANGER = (c * 32 for c in "abcdefg")
 MIA, DEE = 8, 9
+NOW = 1_800_000_000.0  # Unix seconds
+DAY = 86400
 
 
 def entity(eid: str, name: str, kind: str = "npc", status: str = CONFIRMED) -> Entity:
@@ -100,7 +105,7 @@ class Hints(unittest.TestCase):
         names = lookup(link(CHIEF, TRIBE), link(CAMP, TRIBE, n="2"))
         scene = SceneTracker()
         scene.note_line(names, "The Frostwolf tribe is camped by the river.", MIA, 100.0)
-        hints = scene_hints(names, prepare(names), scene, 101.0, people=["Mia"])
+        hints = scene_hints(names, prepare(names, NOW), scene, 101.0, people=["Mia"])
         self.assertEqual(hints[:2], ["Cerric", "Mia"])  # characters and players always
         self.assertEqual(hints[2:4], ["Frostwolf tribe", "the Frostwolves"])  # the scene
         self.assertEqual(hints[4:6], ["Ulfgar", "the chief"])  # the tip of the tongue
@@ -113,7 +118,7 @@ class Hints(unittest.TestCase):
         names = lookup(link(CHIEF, TRIBE, status=PROPOSED))
         scene = SceneTracker()
         scene.note_line(names, "Frostwolf tribe", MIA, 0.0)
-        hints = scene_hints(names, prepare(names), scene, 1.0, people=["Mia"])
+        hints = scene_hints(names, prepare(names, NOW), scene, 1.0, people=["Mia"])
         self.assertLess(hints.index("Bryn Shander"), hints.index("Ulfgar"))  # not pulled in
 
     def test_saying_a_secret_name_never_brings_in_the_real_one(self) -> None:
@@ -126,7 +131,7 @@ class Hints(unittest.TestCase):
         names = lookup(link(CHIEF, TRIBE, secret=True))
         scene = SceneTracker()
         scene.note_line(names, "Frostwolf tribe", MIA, 0.0)
-        hints = scene_hints(names, prepare(names), scene, 1.0)
+        hints = scene_hints(names, prepare(names, NOW), scene, 1.0)
         self.assertLess(hints.index("Bryn Shander"), hints.index("Ulfgar"))
 
     def test_someone_who_stops_being_recorded_no_longer_counts(self) -> None:
@@ -142,11 +147,11 @@ class Hints(unittest.TestCase):
         scene = SceneTracker()
         scene.note_line(names, "Bryn Shander", MIA, 0.0)
         scene.note_line(names, "Ulfgar", MIA, 300.0)
-        hints = scene_hints(names, prepare(names), scene, 301.0)
+        hints = scene_hints(names, prepare(names, NOW), scene, 301.0)
         self.assertLess(hints.index("Ulfgar"), hints.index("Bryn Shander"))
         for t in (302.0, 303.0, 304.0):
             scene.note_line(names, "Bryn Shander", MIA, t)
-        hints = scene_hints(names, prepare(names), scene, 305.0)
+        hints = scene_hints(names, prepare(names, NOW), scene, 305.0)
         self.assertLess(hints.index("Bryn Shander"), hints.index("Ulfgar"))
 
     def test_names_fade_out_of_the_scene_but_stay_ahead_of_the_rest(self) -> None:
@@ -156,14 +161,16 @@ class Hints(unittest.TestCase):
         later = SCENE_WINDOW_S + 1
         self.assertEqual(scene.scene(later), {})
         self.assertEqual(scene.earlier(later), [CAMP])
-        hints = scene_hints(names, prepare(names), scene, later, people=["Mia"])
+        hints = scene_hints(names, prepare(names, NOW), scene, later, people=["Mia"])
         self.assertLess(hints.index("Mia"), hints.index("Wolf Hollow"))
         self.assertLess(hints.index("Wolf Hollow"), hints.index("Bryn Shander"))
 
     def test_one_hint_per_name_and_never_more_than_the_limit(self) -> None:
         many = tuple(entity(f"{i:032x}", f"Name{i}") for i in range(200))
         names = lookup(more=many)
-        hints = scene_hints(names, prepare(names), SceneTracker(), 0.0, people=["cerric", "Mia"])
+        hints = scene_hints(
+            names, prepare(names, NOW), SceneTracker(), 0.0, people=["cerric", "Mia"]
+        )
         self.assertEqual(len(hints), MAX_HINTS)
         self.assertEqual(len({name_key(h) for h in hints}), len(hints))
         self.assertNotIn("cerric", hints)  # same name as the character, already there
@@ -201,7 +208,7 @@ class Guesses(unittest.TestCase):
         self.assertEqual(mentions(names, "ask Ulfy"), set())
         scene = SceneTracker()
         scene.note_line(names, "Ulfgar", MIA, 0.0)
-        hints = scene_hints(names, prepare(names), scene, 1.0)
+        hints = scene_hints(names, prepare(names, NOW), scene, 1.0)
         self.assertLess(hints.index("Wolf Hollow"), hints.index("Ulfy"))  # guesses last
         self.assertLess(hints.index("Bryn Shander"), hints.index("Hrothgar"))
 
@@ -247,7 +254,7 @@ class Guesses(unittest.TestCase):
         )
         scene = SceneTracker()
         scene.note_line(names, "Ulfgar", MIA, 0.0)
-        hints = scene_hints(names, prepare(names), scene, 1.0)
+        hints = scene_hints(names, prepare(names, NOW), scene, 1.0)
         chief = [h for h in hints if h.startswith("Ulfgar") or h == "the chief"]
         self.assertEqual(hints[0:3], ["Cerric", "Ulfgar", chief[1]])
         self.assertEqual(hints.index("Ulfgar"), 1)
@@ -255,7 +262,7 @@ class Guesses(unittest.TestCase):
 
     def test_no_hints_when_the_limit_is_zero(self) -> None:
         names = lookup()
-        self.assertEqual(scene_hints(names, prepare(names), SceneTracker(), 0.0, limit=0), [])
+        self.assertEqual(scene_hints(names, prepare(names, NOW), SceneTracker(), 0.0, limit=0), [])
 
     def test_forgetting_one_speaker_keeps_the_others(self) -> None:
         names = lookup()
@@ -264,3 +271,63 @@ class Guesses(unittest.TestCase):
         scene.note_line(names, "Ulfgar", DEE, 1.0)
         scene.forget_speaker(MIA)
         self.assertEqual(scene.said[CHIEF], [(1.0, DEE)])
+
+
+def with_heard(
+    names: CampaignLookup, heard: tuple[HeardCount, ...], recent: tuple[int, ...]
+) -> CampaignLookup:
+    data = LookupData(
+        names.version + 1,
+        tuple(names.entities.values()),
+        tuple(
+            alias(
+                e.entity_id, e.text, secret=e.secret, status=CONFIRMED if e.confirmed else PROPOSED
+            )
+            for e in names.names
+        ),
+        (),
+        (),
+        heard,
+        recent,
+    )
+    return CampaignLookup.build(data)
+
+
+class StoredMentions(unittest.TestCase):
+    def test_the_matcher_says_where_and_how(self) -> None:
+        names = lookup(
+            corrections=(Correction("1" * 32, "Ulf Gar", "ulf gar", CHIEF, FIX, "dm", 0),)
+        )
+        found = find_mentions(names, "Ask ulf gar about Bryn Shander.")
+        self.assertEqual(
+            sorted(found, key=lambda f: f.span),
+            [Found(CHIEF, (4, 11), "spelling"), Found(TOWN, (18, 30), "exact")],
+        )
+
+    def test_last_sessions_then_never_said_then_most_said(self) -> None:
+        last, before, old = int(NOW - 7 * DAY), int(NOW - 14 * DAY), int(NOW - 60 * DAY)
+        names = with_heard(
+            lookup(),
+            (
+                HeardCount(TOWN, 3, last),
+                HeardCount(TRIBE, 9, before),
+                HeardCount(CAMP, 40, old),  # said a lot, but not lately
+                HeardCount(STRANGER, 1, int(NOW - 400 * DAY)),  # unsaid for over a year
+            ),
+            (last, before),
+        )
+        hints = scene_hints(names, prepare(names, NOW), SceneTracker(), 0.0)
+        order = [
+            hints.index(n) for n in ("Bryn Shander", "Frostwolf tribe", "Ulfgar", "Wolf Hollow")
+        ]
+        self.assertEqual(
+            order, sorted(order)
+        )  # last session, the one before, never said, most said
+        self.assertNotIn("Belleros", hints)  # dropped until said again
+
+    def test_never_said_names_come_newest_first(self) -> None:
+        newer = entity("9" * 32, "Zed")
+        newer = Entity(newer.id, "npc", "Zed", "", CONFIRMED, None, "dm", 99)
+        names = lookup(more=(newer,))
+        hints = scene_hints(names, prepare(names, NOW), SceneTracker(), 0.0)
+        self.assertLess(hints.index("Zed"), hints.index("Belleros"))

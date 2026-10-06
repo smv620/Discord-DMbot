@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
-from dmbot.db import Database
+from dmbot.db import Database, row_int
 from dmbot.memory import notify
 from dmbot.memory._changes import (
     ALIASES,
@@ -58,6 +58,8 @@ from dmbot.memory.models import (
     Correction,
     Entity,
     Flag,
+    Heard,
+    HeardCount,
     MemoryRuleError,
     Relation,
     Written,
@@ -347,12 +349,31 @@ class MemoryStore:
                 + " ORDER BY id",
                 [*scope.ids, *scope.ids],
             )
+            cur = await conn.execute(
+                "SELECT entity_id, count(*) AS times, max(session_started_at) AS last_at"
+                " FROM memory_mentions WHERE guild_id = %s AND campaign_id = %s"
+                " GROUP BY entity_id",
+                scope.ids,
+            )
+            heard = tuple(
+                HeardCount(r["entity_id"], int(r["times"]), row_int(r, "last_at"))
+                for r in await cur.fetchall()
+            )
+            cur = await conn.execute(
+                "SELECT DISTINCT session_started_at FROM memory_mentions"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_started_at IS NOT NULL"
+                " ORDER BY session_started_at DESC LIMIT 2",
+                scope.ids,
+            )
+            recent = tuple(int(r["session_started_at"]) for r in await cur.fetchall())
             return LookupData(
                 scope.version,
                 tuple(_entity(r) for r in entities),
                 tuple(_alias(r) for r in aliases),
                 tuple(_correction(r) for r in corrections),
                 tuple(_relation(r) for r in relations),
+                heard,
+                recent,
             )
 
     async def corrections(self, guild_id: int, campaign_id: str) -> list[Correction]:
@@ -700,6 +721,54 @@ class MemoryStore:
             return Written(_flag(row), w.batch)
 
     # ---- mentions and corrections -------------------------------------------------------
+
+    async def add_session_heard(
+        self, guild_id: int, campaign_id: str, session_started_at: int, heard: Sequence[Heard]
+    ) -> int:
+        """Keep the names said in a session, written once at its end; how many were kept.
+
+        Observations, not edits: no change log (nothing to undo) and no version change,
+        so writing them never makes running copies reload. Names removed meanwhile are
+        skipped. The caller has already left out people who stopped being recorded.
+        """
+        _check_time(session_started_at)
+        rows = [
+            h
+            for h in heard
+            if h.method in MENTION_METHODS
+            and 0 < len(h.line_ref) <= LINE_REF_MAX
+            and 0 <= h.span[0] < h.span[1] <= 2**31 - 1
+            and is_id(h.entity_id)
+        ]
+        if not rows:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO memory_mentions (guild_id, campaign_id, id, entity_id,"
+                " session_started_at, line_ref, span_start, span_end, confidence, method,"
+                " created_at)"
+                " SELECT %s, %s, m.id, m.entity_id, %s, m.line_ref, m.span_start, m.span_end,"
+                " 1.0, m.method, %s"
+                " FROM unnest(%s::text[], %s::text[], %s::text[], %s::int[], %s::int[],"
+                " %s::text[]) AS m(id, entity_id, line_ref, span_start, span_end, method)"
+                " WHERE EXISTS (SELECT 1 FROM memory_entities e WHERE e.guild_id = %s"
+                " AND e.campaign_id = %s AND e.id = m.entity_id)",
+                (
+                    guild_id,
+                    campaign_id,
+                    session_started_at,
+                    int(self._clock()),
+                    [new_id() for _ in rows],
+                    [h.entity_id for h in rows],
+                    [h.line_ref for h in rows],
+                    [h.span[0] for h in rows],
+                    [h.span[1] for h in rows],
+                    [h.method for h in rows],
+                    guild_id,
+                    campaign_id,
+                ),
+            )
+            return cur.rowcount
 
     async def add_mention(
         self,

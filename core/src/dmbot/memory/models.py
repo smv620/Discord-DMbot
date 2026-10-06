@@ -39,6 +39,25 @@ class MemoryRuleError(ValueError):
     """A write the memory rules refuse. The message is plain enough to show a DM."""
 
 
+@dataclass(frozen=True, slots=True)
+class Heard:
+    """One time a name was said, kept at the end of a session (memory_mentions) for
+    ranking hints: how often and when each name comes up. `line_ref` points at the
+    stored transcript line ("t:<session>:<started ms>:<speaker>")."""
+
+    entity_id: str
+    line_ref: str
+    span: tuple[int, int]  # characters in the line
+    method: str  # "exact" (a name or other name) or "spelling" (a spelling the DM fixed)
+
+
+@dataclass(frozen=True, slots=True)
+class HeardCount:
+    entity_id: str
+    times: int
+    last_session_at: int | None  # when the last session it was said in started
+
+
 def new_id() -> str:
     return uuid.uuid4().hex
 

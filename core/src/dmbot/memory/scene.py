@@ -12,10 +12,15 @@ each clip then go, most useful first:
    (confirmed, non-secret connections), ranked by how strongly the scene points at
    them (each scene name pointing counts, weighted by how recently it was said): talk
    of the Frostwolf tribe hints its chief before anyone says his name;
-4. **recently:** names said earlier this session (names from the last sessions come with
-   the stored mentions, next);
-5. **fill:** the other confirmed names, then guesses (names DMbot only suggested, and
-   suggested other names of known entries): a guess never pushes out a real name.
+4. **recently:** names said earlier this session, then in the last session or two, then
+   names never said yet (newest first: a prepared NPC list helps from the start);
+5. **fill:** the other confirmed names, most said first (names unsaid for about six
+   months drop out until they're said again), then guesses (names DMbot only
+   suggested, and suggested other names of known entries): a guess never pushes out a
+   real name.
+
+How often and when names were said comes from the stored mentions, written once at the
+end of each session.
 
 Never a secret name, and a match on a secret name adds nothing: saying "the hooded
 stranger" must not pull in the real name or anything connected to it, not even through
@@ -39,18 +44,27 @@ SCENE_WINDOW_S = 600.0  # a name said once fades out of the scene after this lon
 LONGEST_NAME_WORDS = 4  # "Caer Dineval", "the Frostwolf tribe"
 NAMES_PER_ENTRY = 3  # an entry's own name and up to two other names
 MAX_TIMES_KEPT = 20  # per entry: plenty to rank a scene, bounded in a long session
+LONG_UNSAID_S = 180 * 86400  # names unsaid for about six months drop out of hints
 MAX_HINTS = 50  # Deepgram's limit (deepgram.MAX_KEYTERMS); local Whisper cuts by length
 PLAYER_CHARACTER = "player_character"
 
 _WORD = re.compile(r"[^\W_](?:[^\W_]|['’-](?=[^\W_]))*")
 
 
-def mentions(lookup: CampaignLookup, text: str) -> set[str]:
-    """Confirmed entries named in a line, spelled as the campaign knows them: their
-    confirmed names and other names, or a spelling the DM said means them. A secret
-    name (and any shorter name inside it), a name DMbot only suggested, and words the
-    DM said to keep as heard don't count."""
-    keys = [name_key(w) for w in _WORD.findall(text)]  # once per word, not per group
+@dataclass(frozen=True, slots=True)
+class Found:
+    entity_id: str
+    span: tuple[int, int]  # characters in the line
+    method: str  # "exact": a name or other name; "spelling": a spelling the DM fixed
+
+
+def find_mentions(lookup: CampaignLookup, text: str) -> list[Found]:
+    """Confirmed entries named in a line, where, and how: their confirmed names and
+    other names, or a spelling the DM said means them. A secret name (and any shorter
+    name inside it), a name DMbot only suggested, and words the DM said to keep as heard
+    don't count. One find per entry per place."""
+    words = list(_WORD.finditer(text))
+    keys = [name_key(w.group()) for w in words]  # once per word, not per group
     n = len(keys)
     groups = [
         (start, end, " ".join(keys[start:end]))
@@ -61,15 +75,27 @@ def mentions(lookup: CampaignLookup, text: str) -> set[str]:
     for start, end, key in groups:
         if any(e.secret for e in lookup.by_key.get(key, ())):
             hidden[start:end] = [True] * (end - start)
-    found: set[str] = set()
+    found: dict[tuple[str, int, int], Found] = {}
     for start, end, key in groups:
         if any(hidden[start:end]) or key in lookup.keep_keys:
             continue
-        for entry in lookup.by_key.get(key, ()):
-            if entry.confirmed and not entry.secret:
-                found.add(entry.entity_id)
-        found.update(lookup.fixes.get(key, ()))
-    return {e for e in found if (ent := lookup.entities.get(e)) and ent.status == CONFIRMED}
+        span = (words[start].start(), words[end - 1].end())
+        hits = [
+            (e.entity_id, "exact")
+            for e in lookup.by_key.get(key, ())
+            if e.confirmed and not e.secret
+        ]
+        hits += [(entity_id, "spelling") for entity_id in lookup.fixes.get(key, ())]
+        for entity_id, method in hits:
+            entity = lookup.entities.get(entity_id)
+            if entity is not None and entity.status == CONFIRMED:
+                found.setdefault((entity_id, *span), Found(entity_id, span, method))
+    return list(found.values())
+
+
+def mentions(lookup: CampaignLookup, text: str) -> set[str]:
+    """The entries named in a line (see `find_mentions`)."""
+    return {f.entity_id for f in find_mentions(lookup, text)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,11 +106,13 @@ class HintParts:
     version: int
     names: dict[str, tuple[str, ...]]  # confirmed entry → its confirmed names, own first
     characters: tuple[str, ...]
-    confirmed: tuple[str, ...]  # A to Z
+    recent: tuple[str, ...]  # said in the last session or two, then never said yet
+    fill: tuple[str, ...]  # the rest, most said first; long-unsaid ones left out
     guesses: tuple[str, ...]  # suggested names, never secret
 
 
-def prepare(lookup: CampaignLookup) -> HintParts:
+def prepare(lookup: CampaignLookup, now: float) -> HintParts:
+    """`now`: Unix seconds, to leave out names unsaid for months."""
     entities = lookup.entities
     own = {e.id: name_key(e.name) for e in entities.values()}
     names: dict[str, list[str]] = {}
@@ -101,14 +129,34 @@ def prepare(lookup: CampaignLookup) -> HintParts:
     for entity_id, texts in names.items():
         mine = own.get(entity_id, "")
         ordered[entity_id] = tuple(sorted(texts, key=lambda t: name_key(t) != mine))
-    by_name = sorted(
-        (e for e in entities.values() if e.status == CONFIRMED), key=lambda e: (own[e.id], e.id)
+    confirmed = [e for e in entities.values() if e.status == CONFIRMED]
+    by_name = sorted(confirmed, key=lambda e: (own[e.id], e.id))
+    heard = lookup.heard
+    since = min(lookup.recent_sessions) if lookup.recent_sessions else None
+
+    def last(entity_id: str) -> int:
+        return heard[entity_id].last_session_at or 0
+
+    recently = sorted(
+        (e for e in confirmed if since is not None and e.id in heard and last(e.id) >= since),
+        key=lambda e: (-last(e.id), -heard[e.id].times, own[e.id]),
+    )
+    # Names never said yet (just added, or imported before the first session) count as
+    # recent, newest first, so a prepared NPC list helps from the first session.
+    never = sorted(
+        (e for e in confirmed if e.id not in heard), key=lambda e: (-e.created_at, own[e.id])
+    )
+    taken = {e.id for e in recently} | {e.id for e in never}
+    fill = sorted(
+        (e for e in confirmed if e.id not in taken and last(e.id) >= now - LONG_UNSAID_S),
+        key=lambda e: (-heard[e.id].times, own[e.id]),
     )
     return HintParts(
         version=lookup.version,
         names=ordered,
         characters=tuple(e.id for e in by_name if e.type == PLAYER_CHARACTER),
-        confirmed=tuple(e.id for e in by_name),
+        recent=tuple(e.id for e in [*recently, *never]),
+        fill=tuple(e.id for e in fill),
         guesses=tuple(sorted(guesses, key=name_key)),
     )
 
@@ -193,7 +241,8 @@ def scene_hints(
         entries(in_scene),
         entries(connected),
         entries(tracker.earlier(now)),
-        entries(parts.confirmed),
+        entries(parts.recent),
+        entries(parts.fill),
         parts.guesses,
     ]
     for tier in tiers:

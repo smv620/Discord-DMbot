@@ -686,6 +686,52 @@ class Indexes(MemoryTest):
         self.assertEqual(missing, [])
 
 
+class HeardNames(MemoryTest):
+    """Names said in a session, kept at its end for ranking hints (#126, #127)."""
+
+    async def test_kept_counted_and_never_a_new_version(self) -> None:
+        from dmbot.memory.models import Heard
+
+        a, b = await self.add("Belleros", status=CONFIRMED), await self.add("Cerric")
+        gone = await self.add("Bellamy")  # rejected: still kept, the lookup skips it
+        await self.memory.set_entity_status(GUILD_A, self.c, gone, REJECTED, source="dm")
+        version = await self.memory.version(GUILD_A, self.c)
+        heard = [
+            Heard(a, "t:x:1000:8", (0, 8), "exact"),
+            Heard(a, "t:x:2000:8", (4, 12), "spelling"),
+            Heard(b, "t:x:3000:9", (0, 6), "exact"),
+            Heard(gone, "t:x:4000:9", (0, 7), "exact"),
+            Heard(b, "", (0, 6), "exact"),  # bad: left out
+        ]
+        kept = await self.memory.add_session_heard(GUILD_A, self.c, 1_000, heard)
+        self.assertEqual(kept, 4)  # the bad one left out
+        self.assertEqual(await self.memory.version(GUILD_A, self.c), version)  # no reload
+        await self.memory.add_session_heard(GUILD_A, self.c, 2_000, heard[:1])
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        counts = {h.entity_id: (h.times, h.last_session_at) for h in data.heard}
+        self.assertEqual(counts[a], (3, 2_000))
+        self.assertEqual(counts[b], (1, 1_000))
+        from dmbot.memory.lookup import CampaignLookup
+
+        self.assertNotIn(gone, CampaignLookup.build(data).heard)  # only live names count
+        self.assertEqual(data.recent_sessions, (2_000, 1_000))
+
+    async def test_another_campaign_or_server_never_sees_them(self) -> None:
+        from dmbot.memory.models import Heard
+
+        a = await self.add("Belleros", status=CONFIRMED)
+        other = (await self.campaigns.create(GUILD_A, "Strahd", DM)).id
+        await self.memory.add_session_heard(
+            GUILD_A, self.c, 1_000, [Heard(a, "t:x:1:8", (0, 8), "exact")]
+        )
+        self.assertEqual((await self.memory.lookup_data(GUILD_A, other)).heard, ())
+        # An entity ID from this campaign written under another one is skipped.
+        kept = await self.memory.add_session_heard(
+            GUILD_A, other, 1_000, [Heard(a, "t:x:1:8", (0, 8), "exact")]
+        )
+        self.assertEqual(kept, 0)
+
+
 class LookupInPostgres(MemoryTest):
     async def test_lookup_data_holds_what_matching_needs(self) -> None:
         a, b = await self.add("Belleros", status=CONFIRMED), await self.add("Cerric")

@@ -83,9 +83,9 @@ from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
-from dmbot.memory.models import MemoryRuleError, name_key
+from dmbot.memory.models import Heard, MemoryRuleError, name_key
 from dmbot.memory.scan import find_new_names
-from dmbot.memory.scene import HintParts, SceneTracker, scene_hints
+from dmbot.memory.scene import HintParts, SceneTracker, find_mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SavedSession, SessionStore
@@ -108,6 +108,7 @@ SUMMARY_INTERVAL_S = 15
 # Discord's 5 messages per 5 seconds per channel, and still feels live.
 TRANSCRIPT_FLUSH_S = 2.0
 TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this often
+HEARD_NAMES_MAX = 20_000  # name mentions kept per session for ranking hints
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
 TRANSCRIPT_POST_TIMEOUT_S = 10.0  # one stuck post can't hold the others up for long
@@ -219,6 +220,9 @@ class Table:
     # What was heard this session (speaker, text as heard), for the after-session scan
     # that suggests new names to the DM (#126). Kept in memory only, capped.
     heard: list[tuple[int, str]] = field(default_factory=list)
+    # Each time a known name was said (speaker, where), kept at the end of the session
+    # so hints can rank names by how often and when they come up. In memory, capped.
+    heard_names: list[tuple[int, Heard]] = field(default_factory=list)
     # The stored transcript (#41, #125): this session's row, and lines not saved yet.
     started_at: int = 0  # Unix seconds; the same after a restart
     transcript_session_id: str | None = None  # set at the first save
@@ -449,6 +453,7 @@ class DMBot(commands.AutoShardedBot):
             table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
+            table.heard_names = [h for h in table.heard_names if h[0] != user_id]
 
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
@@ -711,6 +716,7 @@ class DMBot(commands.AutoShardedBot):
             ("capture check", lambda: self.post_summary(table)),
             ("final transcript", channel),
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
+            ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
         ]
         for name, step in steps:
@@ -1423,7 +1429,15 @@ class DMBot(commands.AutoShardedBot):
         table.capture_log.add_utterance(utterance)
         table.totals.add_utterance(utterance)
         if text and table.name_lookup is not None:
-            table.scene.note_line(table.name_lookup, text, utterance.user_id, time.monotonic())
+            found = find_mentions(table.name_lookup, text)
+            table.scene.note({f.entity_id for f in found}, utterance.user_id, time.monotonic())
+            line_ref = (
+                f"t:{table.transcript_session_id or '-'}:{utterance.start_ms}:{utterance.user_id}"
+            )
+            for f in found[: max(0, HEARD_NAMES_MAX - len(table.heard_names))]:
+                table.heard_names.append(
+                    (utterance.user_id, Heard(f.entity_id, line_ref, f.span, f.method))
+                )
         if text and self.transcripts is not None:
             table.unsaved.add(Line(utterance.start_ms, utterance.user_id, text, text))
         if text and len(table.heard) < HEARD_MAX:
@@ -1461,7 +1475,7 @@ class DMBot(commands.AutoShardedBot):
             lookup = await self.lookup.get(guild_id, table.campaign_id)
             if table.hint_parts is None or table.hint_parts.version != lookup.version:
                 # Up to ~150 ms for a big campaign: off the event loop, once per change.
-                table.hint_parts = await asyncio.to_thread(prepare_hints, lookup)
+                table.hint_parts = await asyncio.to_thread(prepare_hints, lookup, time.time())
         except Exception:
             # Asked for every connection to speech-to-text: say so at most once a minute.
             now = time.monotonic()
@@ -1471,6 +1485,19 @@ class DMBot(commands.AutoShardedBot):
             return people
         table.name_lookup = lookup  # for matching written-down lines to the scene
         return scene_hints(lookup, table.hint_parts, table.scene, time.monotonic(), people=people)
+
+    async def keep_heard_names(self, table: Table) -> None:
+        """After a session: keep how often and when each known name was said, for
+        ranking hints next time. Only lines from people who still agree, checked now."""
+        if self.memory is None or table.campaign_id is None or not table.heard_names:
+            return
+        agreed = await self.consent.consenting(table.guild_id)
+        rows = [heard for speaker, heard in table.heard_names if speaker in agreed]
+        table.heard_names = []
+        kept = await self.memory.add_session_heard(
+            table.guild_id, table.campaign_id, table.started_at, rows
+        )
+        log.info("Kept %d name mention(s) from the session", kept)
 
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to
