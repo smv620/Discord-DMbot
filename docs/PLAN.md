@@ -720,7 +720,129 @@ remembers Belleros is Cerric's mentor"), never "graph", "entity" or "ontology".
 - **Speech-to-text hints** now come from the campaign's names, most useful first:
   players' characters, confirmed names, players' display names, then suggested names
   (one hint per name, however it's capitalized).
-  Secret names are never sent. The in-memory copy follows changes live.
+  Secret names are never sent. The in-memory copy follows changes live. (This fixed
+  order is a placeholder: hints follow the scene next, see below.)
+
+**Names at scale and hints that follow the scene (decided 2026-10-06, #126, #127;
+reviewed in #203).** A long campaign has hundreds or a thousand names, so neither the
+names panel nor the speech-to-text hints can be a fixed list.
+- **Who and which campaign, everywhere below:** only the campaign's DMs and server
+  managers, in private replies. The campaign is the one being played, otherwise the
+  DM's only campaign, otherwise DMbot asks which (the type-ahead can't ask, so it
+  suggests nothing until that's settled). Every action is checked again when it's used
+  (server and campaign), never trusted from a button or a typed value. **Secret names
+  and secret connections are shown, searched and downloaded only for the campaign's
+  DMs:** a server manager who isn't one of its DMs gets the panel, cards, browsing and
+  download without them (they may be at the table).
+- **`/dmbot names` becomes an overview and a search, not a list.** Discord allows 2,000
+  characters per message, 25 choices per menu and 5 fields per form, so:
+  - **Overview, about 15 lines:** "🧠 **412 names**: 212 NPCs, 87 places, 41 groups, 72
+    other" (top 3 kinds, then other), the waiting check, "Heard last session:" up to 10
+    names and "… and N more", "Added lately:" up to 10 (no repeats). An **Open a
+    name…** menu lists the names shown, for a two-tap jump to a card.
+  - **Buttons:** row 1 **🔍 Find a name**, **➕ Add a name**, **📝 Check new names (N)**;
+    row 2 **🧑 Add a player's character**, **📚 Browse by kind**, **📥 Add many** /
+    **📤 Download all**.
+  - **🔍 Find a name, two ways:** the button opens a one-field form ("Type part of a
+    name, a nickname, or how it sounds"): one match opens its card, otherwise a menu of
+    up to 25 with **Search again** and **➕ Add it as a new name** ("No name like
+    **Xyz**." if none). And `/dmbot names find:` with Discord's type-ahead: with
+    nothing typed it offers the 25 names said most recently; each choice reads like
+    "Belleros · NPC (matched "Bell")" and carries the name's ID, not its text.
+    **The type-ahead runs the same DM check as the panel and suggests nothing to anyone
+    else** (Discord runs it for anyone who can see the command, peekers included).
+    Secret names appear only to the campaign's DMs, marked 🤫. It answers from the
+    in-memory copy, never a database query per keystroke; copies loaded only for
+    searching expire after a while.
+  - **Name card**, under 2,000 characters, each section about 3 entries then "… and N
+    more [Show all]": what it is, last heard, **Also called**, **🤫 Secret**,
+    **Connections**. Buttons: **✏️ Fix spelling** (one field, filled in), **Edit other
+    names** (each: ⭐ make it the main name, 🤫 make it secret or not, ✖ not this
+    name, which also undoes a wrong **Same as**), **Add another name** (with a secret-name field, as when adding
+    a name), **Same as…**, **🧭 Connect to…**, **Change what it is**, and **Remove**
+    last, in grey. **Remove asks first and can be undone:** "Forget **Belleros**?
+    DMbot stops listening for it and its other names (Bell, the old knight). Past
+    transcripts don't change. [Forget it] [Keep it]", then "Forgot **Belleros**.
+    [Undo]". Its other names, secret names and connections go with it, and come back
+    with Undo (which keeps working after a restart, like DMbot's other buttons); a
+    player's character loses its link to the player the same way.
+  - **📚 Browse by kind:** pick a kind, sort by **Last heard** (default) or **A–Z**,
+    "Page 3 of 11" with ◀ ▶, up to 20 names a page (fewer if lines are long), and a
+    menu of the page's names to open a card.
+  - **📥 Add many / 📤 Download all:** one name per line, `name | kind | other names`,
+    with other names separated by `;` and the kind optional, in plain words (NPC,
+    place, group, creature, item, god, spell, event, other). Paste up to about 200
+    names (a form holds 4,000 characters) or upload a file (UTF-8, up to 256 KB and
+    2,000 lines; each name up to 100 characters). **Names only:** lines with
+    descriptions or other columns are refused as unclear, and DMbot never offers
+    ready-made sourcebook name lists (copyright rule). It writes only into the chosen
+    campaign, through the normal memory rules (checks, change log), **saved in one go**
+    (batches of about 200 for a big file, with live transcription reloading its names
+    once, after the last batch). Imported names count as confirmed (the DM gave them);
+    a line needs a look when its kind is unclear or it sounds like a different known
+    name. Then a summary: "Added 260 names. 40 need a look. [Check them now] [Later]";
+    one **Undo** removes the whole import, every batch. The download is a file, sent privately:
+    "This file includes secret names. Don't share it with players." A campaign holds
+    up to about 10,000 names.
+  - Nothing is deleted by itself. The after-session check stays capped at 10
+    suggestions a session, link suggestions included.
+- **Connections between names.** Hints and helpers need to know that Ulfgar belongs to
+  the Frostwolf tribe. They come from the DM (**🧭 Connect to…** on a name card) and
+  from DMbot suggesting them after a session, with what was heard ("**Ulfgar** seems to
+  be part of the **Frostwolf tribe** (heard: "Ulfgar, chief of the Frostwolves").
+  Right? [Yes] [No] [Later]"), only from speakers who still agree to be recorded. A
+  connection reads as one sentence, and the other name's card shows it the other way
+  round ("Frostwolf tribe: members include Ulfgar"). The plain words map onto the fixed
+  core: lives in / is in (`located_in`), is a member of (`member_of`), is a friend or
+  ally of (`ally_of`), is an enemy of (`enemy_of`), is family of (`kin_of`), owns (`owns`),
+  knows (`knows`), works for (`serves`). "Leads" isn't in the core; it would be added
+  in a code release (character → faction) if live use shows it's needed. `appears_in`
+  isn't offered to the DM. Connections never use 🔗 (that's **Same as**). **Only
+  connections the DM confirmed are used**, in hints and anywhere else, **and secret
+  connections never feed hints**: today's lookup also loads suggested ones, so step 1
+  adds a map of confirmed, non-secret connections.
+- **Hints follow the scene** (replacing the fixed order). Hints go with every piece of
+  speech sent to speech-to-text, so they can change clip by clip. Up to 50 per clip
+  for Deepgram (fewer when names are long; local Whisper keeps about 600 characters),
+  taken from the front, so the order is what matters. **Never secret names, and a
+  match on a secret name adds nothing:** saying "the hooded stranger" must not pull
+  Belleros, or anything connected to Belleros, into the hints.
+  1. **Always:** the players' characters and the players' display names (players call
+     each other by name), each capped at a few nicknames.
+  2. **The scene:** confirmed names said in about the last 10 minutes, newest and most
+     said first. Each written-down line, only after the per-line consent check, is
+     matched against the campaign's non-secret names (exact names, other names and
+     "fixed" spellings; "keep as heard" is skipped; no sound-alikes, which would match
+     almost anything). A name said once fades after about 10 minutes; when someone
+     stops being recorded, their lines stop counting. To keep a hint from feeding
+     itself (a hinted name is more likely to be written down even if it wasn't said),
+     a name stays in the scene past 10 minutes only after two mentions or a second
+     speaker.
+  3. **The tip of the tongue:** names connected to the scene's names by confirmed,
+     non-secret connections, ranked by how many scene names point at them. If the table talks
+     about the Frostwolf tribe, its chief's name is already a hint before anyone says
+     it.
+  4. **Recently:** confirmed names from the last session or two.
+  5. **Fill:** the most-heard confirmed names, then suggested names (a guess never
+     pushes out a real name). Whether to fill every slot or stop after the scene is a
+     setting the live tests decide, with fill as the default.
+  How it's built: the scene lives with the running session, in memory, per campaign,
+  cleared when the session ends; hints are worked out per clip from memory (no
+  database query per clip), with the fixed tiers prepared once per change to the
+  names. How often and when each name was heard is written once at the end of the
+  session (the `memory_mentions` table), from the lines of people who still agree to
+  be recorded when it's written (checked then, after any wait), kept in backups and
+  removed with the campaign (and with a person's lines, see Retention); writing it
+  never triggers a reload. No AI call: it's instant and free. A
+  later, optional layer could ask an AI every few minutes where the scene is heading,
+  only if tests show the connections miss too much. Names unsaid for months drop out
+  of hints until they're heard again; names never heard yet (freshly added or
+  imported) count as recent, so a prepared NPC list helps from the first session. Deepgram refusing a list that's too long is
+  handled separately (#209). Hints are never shown to the DM or players.
+- **Order of work:** (1) a line matcher (finds names in a written-down line: groups of
+  1–4 words, exact and "fixed" spellings) and the scene-based hints, ahead of the
+  Cleaner, which will reuse the matcher; (2) the name card, find and **Connect to…**;
+  (3) browse by kind, add many and download all.
 
 **Campaign memory rules (the ontology) (decided 2026-10-05).** EntityBot alone builds and
 maintains the ontology; there is no human graph engineer. So it is small, strict,
