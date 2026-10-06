@@ -187,7 +187,7 @@ def home_text(
     shown: list[tuple[str, str, str]] = []
 
     def section(title: str, ids: list[str]) -> None:
-        taken = {i for i, _ in shown}
+        taken = {item[0] for item in shown}
         fresh = [e for e in ids if e not in taken]
         if not fresh:
             return

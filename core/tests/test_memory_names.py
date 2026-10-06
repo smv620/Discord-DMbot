@@ -102,7 +102,7 @@ class Panel(NamesTest):
         self.assertIn("not the DM of any campaign", it.response.sent[0][0])
         self.assertIsNone(await ui._campaign_for(self.it(STRANGER), self.campaign.id))
 
-    async def overview(self) -> tuple[str, list[tuple[str, str]]]:
+    async def overview(self) -> tuple[str, list[tuple[str, str, str]]]:
         from dmbot.memory.lookup import CampaignLookup
 
         names = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
@@ -129,7 +129,7 @@ class Panel(NamesTest):
         await self.memory.add_session_heard(GUILD, self.campaign.id, 1_000, [Heard(said.id, 8, 3)])
         text, shown = await self.overview()
         self.assertIn("👂 **Heard last session:** **Zephyr**", text)
-        self.assertEqual([name for _, name in shown], ["Zephyr", "Aldric"])  # no repeats
+        self.assertEqual([item[1] for item in shown], ["Zephyr", "Aldric"])  # no repeats
 
     async def test_the_panel_fits_one_message(self) -> None:
         for i in range(40):
