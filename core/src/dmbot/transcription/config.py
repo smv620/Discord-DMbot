@@ -49,6 +49,11 @@ class TranscriptionSettings:
         return self.engine in OUTSIDE_ENGINES
 
     @property
+    def outside_engine(self) -> str | None:
+        """The outside engine's name (deepgram, cloud), or None for local or none."""
+        return self.engine if self.sends_audio_out else None
+
+    @property
     def company(self) -> str | None:
         """The outside company's name when DMbot knows it (for the consent message)."""
         return "Deepgram" if self.engine == "deepgram" else None

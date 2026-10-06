@@ -123,11 +123,11 @@ CHANNEL_NUMBER = """
 
 
 CONSENT_OUTSIDE = """
-    -- Whether this yes was given knowing that another company turns speech into text
-    -- (the consent request said so). When the server uses such a company (TRANSCRIBER=
-    -- deepgram or cloud), only these yeses count; everyone else is asked again (#170,
-    -- docs/PLAN.md "Consent"). Existing yeses were given under local Whisper: false.
-    ALTER TABLE consent ADD COLUMN outside_ok BOOLEAN NOT NULL DEFAULT FALSE;
+    -- Which outside speech-to-text engine (deepgram, cloud) the consent request named
+    -- when this yes was given; NULL = local Whisper only. While the server uses an
+    -- outside engine, only yeses for that same engine count; everyone else is asked
+    -- again (#170, docs/PLAN.md "Consent"). Existing yeses: NULL.
+    ALTER TABLE consent ADD COLUMN outside_to TEXT;
     """
 
 

@@ -23,9 +23,10 @@ from dmbot.db import Conn, Database
 
 
 class ConsentStore:
-    def __init__(self, db: Database, *, outside: bool = False) -> None:
-        """`outside`: the server sends voices to another company to be written down, so
-        only yeses given knowing that count (the others are asked again)."""
+    def __init__(self, db: Database, *, outside: str | None = None) -> None:
+        """`outside`: the outside engine (deepgram, cloud) the server sends voices to, or
+        None for local Whisper. Then only yeses given for that engine count; the others
+        are asked again."""
         self._db = db
         self._outside = outside
         self._cache: dict[int, frozenset[int]] = {}
@@ -37,31 +38,31 @@ class ConsentStore:
         self._stops: dict[tuple[int, int], int] = {}
 
     @property
-    def outside(self) -> bool:
+    def outside(self) -> str | None:
         return self._outside
 
     @outside.setter
-    def outside(self, value: bool) -> None:
+    def outside(self, value: str | None) -> None:
         """Changing which yeses count drops the cache, so nothing stale is trusted."""
         if value != self._outside:
             self._outside = value
             self._cache.clear()
 
     async def grant(
-        self, guild_id: int, user_id: int, *, outside_ok: bool = False
+        self, guild_id: int, user_id: int, *, outside_to: str | None = None
     ) -> frozenset[int]:
-        """Save a yes. `outside_ok`: the request they agreed to said another company
-        writes things down."""
+        """Save a yes. `outside_to`: the outside engine the request they agreed to named
+        (None: it didn't name one)."""
         stops_before = self._stops.get((guild_id, user_id), 0)
         async with self._lock(guild_id):
             async with self._db.guild(guild_id) as conn:
                 await conn.execute(
-                    "INSERT INTO consent (guild_id, user_id, granted_at, outside_ok)"
+                    "INSERT INTO consent (guild_id, user_id, granted_at, outside_to)"
                     " VALUES (%s, %s, %s, %s)"
                     " ON CONFLICT (guild_id, user_id)"
                     " DO UPDATE SET granted_at = EXCLUDED.granted_at,"
-                    " outside_ok = EXCLUDED.outside_ok",
-                    (guild_id, user_id, int(time.time()), outside_ok),
+                    " outside_to = EXCLUDED.outside_to",
+                    (guild_id, user_id, int(time.time()), outside_to),
                 )
                 users = await _select(conn, guild_id, self._outside)
             if self._stops.get((guild_id, user_id), 0) == stops_before:
@@ -115,8 +116,8 @@ class ConsentStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT user_id, granted_at FROM consent WHERE guild_id = %s"
-                " AND user_id = ANY(%s) AND (outside_ok OR NOT %s)",
-                (guild_id, ids, self._outside),
+                " AND user_id = ANY(%s) AND (%s::text IS NULL OR outside_to = %s)",
+                (guild_id, ids, self._outside, self._outside),
             )
             rows = await cur.fetchall()
         return {int(r["user_id"]): int(r["granted_at"]) for r in rows}
@@ -138,9 +139,9 @@ class ConsentStore:
         return users
 
 
-async def _select(conn: Conn, guild_id: int, outside: bool) -> frozenset[int]:
+async def _select(conn: Conn, guild_id: int, outside: str | None) -> frozenset[int]:
     cur = await conn.execute(
-        "SELECT user_id FROM consent WHERE guild_id = %s AND (outside_ok OR NOT %s)",
-        (guild_id, outside),
+        "SELECT user_id FROM consent WHERE guild_id = %s AND (%s::text IS NULL OR outside_to = %s)",
+        (guild_id, outside, outside),
     )
     return frozenset(int(r["user_id"]) for r in await cur.fetchall())

@@ -117,7 +117,9 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.pipeline.consecutive_failures, 0)
 
     async def test_a_plain_engine_problem_is_shown_in_plain_words(self) -> None:
-        problem = TranscriptionProblem("Deepgram didn't accept DEEPGRAM_API_KEY (HTTP 401)")
+        problem = TranscriptionProblem(
+            "Deepgram didn't accept DEEPGRAM_API_KEY (HTTP 401)", host_can_fix=True
+        )
 
         async def fail(utterance: Utterance, hints: list[str]) -> str | None:
             raise problem
@@ -129,6 +131,17 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(alert.startswith("⚠️ **No transcript right now:** Deepgram didn't accept"))
         self.assertNotIn("TranscriptionProblem", alert)  # no class names for the DM
         self.assertIn("check the speech-to-text settings in .env", alert)
+
+    async def test_an_outage_doesnt_send_the_host_to_env(self) -> None:
+        async def fail(utterance: Utterance, hints: list[str]) -> str | None:
+            raise TranscriptionProblem("Deepgram had a problem (HTTP 503)")
+
+        self.engine.transcribe = fail  # type: ignore[method-assign]
+        for _ in range(FAILURES_BEFORE_ALERT):
+            await self.pipeline.process(utt())
+        (alert,) = self.alerts
+        self.assertIn("company's side", alert)
+        self.assertNotIn(".env", alert)
 
     async def test_single_failure_no_alert(self) -> None:
         self.engine.fail = True

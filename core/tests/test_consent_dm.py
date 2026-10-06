@@ -79,7 +79,8 @@ def test_the_outside_note_names_the_company_when_known() -> None:
 
 
 def test_a_request_with_the_outside_note_marks_its_consent_button() -> None:
-    assert custom_ids(c.request_view(GUILD, outside=True))[0] == "dmbot:consent:yes:1:out"
+    marked = custom_ids(c.request_view(GUILD, outside="deepgram"))[0]
+    assert marked == "dmbot:consent:yes:1:out:deepgram"
     assert custom_ids(c.request_view(GUILD))[0] == "dmbot:consent:yes:1"
     # After Stop or No thanks no note is shown, so that button is never marked.
     assert custom_ids(c.consent_view(GUILD)) == ["dmbot:consent:yes:1"]
@@ -275,15 +276,16 @@ class ConsentDMTests(DatabaseTest):
             ears_secret="s",
             transcription=TranscriptionSettings(engine="deepgram", deepgram_api_key="k"),
         )
-        self.consent.outside = True  # as DMBot sets it from the same settings
+        self.consent.outside = "deepgram"  # as DMBot sets it from the same settings
 
     async def test_deepgram_is_named_in_the_message_and_reminder(self) -> None:
         self.use_deepgram()
-        await self.consent.grant(GUILD, PLAYER, outside_ok=True)
+        await self.consent.grant(GUILD, PLAYER, outside_to="deepgram")
         await self.joined()
         question = self.sent_text(self.dm)
         assert "This server uses Deepgram" in question
-        assert custom_ids(self.dm.send.await_args.kwargs["view"])[0] == "dmbot:consent:yes:1:out"
+        view = self.dm.send.await_args.kwargs["view"]
+        assert custom_ids(view)[0] == "dmbot:consent:yes:1:out:deepgram"
         assert "go to Deepgram" in self.sent_text(self.player)  # the reminder
 
     async def test_name_hints_leave_out_people_dmbot_cant_look_up(self) -> None:
@@ -307,13 +309,47 @@ class ConsentDMTests(DatabaseTest):
         edit = press.edit_original_response.await_args.kwargs
         assert edit["content"].startswith(c.REASK_INTRO)
         assert "This server uses Deepgram" in edit["content"]
-        assert custom_ids(edit["view"])[0] == "dmbot:consent:yes:1:out"
+        assert custom_ids(edit["view"])[0] == "dmbot:consent:yes:1:out:deepgram"
 
     async def test_a_marked_consent_button_counts_after_the_switch(self) -> None:
         self.use_deepgram()
-        await c.ConsentButton(GUILD, outside=True).callback(self.button_press(PLAYER))
+        await c.ConsentButton(GUILD, outside="deepgram").callback(self.button_press(PLAYER))
         assert self.consent.has_consent(GUILD, PLAYER)
         assert PLAYER in await self.consent.consenting(GUILD)
+
+    async def test_a_button_marked_for_another_company_asks_again(self) -> None:
+        self.use_deepgram()
+        press = self.button_press(PLAYER)
+        await c.ConsentButton(GUILD, outside="cloud").callback(press)
+        assert await self.consent.granted_at(GUILD, PLAYER) is None
+        assert press.edit_original_response.await_args.kwargs["content"].startswith(c.REASK_INTRO)
+
+    async def test_a_marked_yes_under_whisper_is_saved_and_an_unmarked_one_downgrades(
+        self,
+    ) -> None:
+        await c.ConsentButton(GUILD, outside="deepgram").callback(self.button_press(PLAYER))
+        assert PLAYER in await ConsentStore(self.db, outside="deepgram").consenting(GUILD)
+        await c.ConsentButton(GUILD).callback(self.button_press(PLAYER))  # no note shown
+        assert PLAYER in await self.consent.consenting(GUILD)  # still counts under Whisper
+        assert PLAYER not in await ConsentStore(self.db, outside="deepgram").consenting(GUILD)
+
+    async def test_consent_give_while_outside_names_the_company_and_marks_the_button(
+        self,
+    ) -> None:
+        from dmbot.bot import consent_give
+
+        self.use_deepgram()
+        call: Any = SimpleNamespace(
+            client=self.bot,
+            guild=self.guild,
+            user=SimpleNamespace(id=PLAYER),
+            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+        await consent_give.callback(call)  # type: ignore[call-arg]
+        args = call.followup.send.await_args
+        assert "This server uses Deepgram" in args.args[0]
+        assert custom_ids(args.kwargs["view"])[0] == "dmbot:consent:yes:1:out:deepgram"
 
     async def test_cloud_transcription_is_mentioned_in_the_message(self) -> None:
         self.bot.settings = Settings(
@@ -462,7 +498,7 @@ class ConsentDMTests(DatabaseTest):
     async def test_yes_then_quick_no_leaves_ears_without_them(self) -> None:
         lock = self.consent._lock(GUILD)
         await lock.acquire()  # "I consent" is still saving...
-        yes = asyncio.create_task(self.bot.give_consent(GUILD, PLAYER, outside_ok=False))
+        yes = asyncio.create_task(self.bot.give_consent(GUILD, PLAYER, outside_to=None))
         await asyncio.sleep(0)
         no = asyncio.create_task(self.bot.withdraw_consent(GUILD, PLAYER))  # ...No thanks
         await asyncio.sleep(0)
@@ -485,6 +521,13 @@ class ConsentDMTests(DatabaseTest):
             await button(ELSEWHERE).callback(press)
             press.response.send_message.assert_awaited_once_with(c.NOT_HERE, ephemeral=True)
         assert await self.consent.granted_at(ELSEWHERE, PLAYER) is not None
+
+    async def test_a_marked_button_id_is_parsed_back_with_its_engine(self) -> None:
+        custom_id = str(c.ConsentButton(123, outside="deepgram").custom_id)
+        match = c.ConsentButton.__discord_ui_compiled_template__.fullmatch(custom_id)
+        assert match is not None
+        button = await c.ConsentButton.from_custom_id(MagicMock(), MagicMock(), match)
+        assert (button.guild_id, button.outside) == (123, "deepgram")
 
     async def test_button_ids_are_parsed_back_to_the_server(self) -> None:
         for button in (c.ConsentButton, c.DeclineButton, c.StopButton):

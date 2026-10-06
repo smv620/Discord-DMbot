@@ -23,11 +23,11 @@ from dmbot.transcription.config import TranscriptionSettings
 
 log = logging.getLogger(__name__)
 
-# Well inside the pipeline's 10 s minimum budget per clip (#155), so a hung Deepgram
-# shows up as a failure ("isn't working"), not as "couldn't keep up". Replies took
-# 0.15-0.4 s in testing.
-REQUEST_TIMEOUT_S = 6
-CONNECT_TIMEOUT_S = 3
+# Two tries (4 s + 1 s pause + 4 s) fit inside the pipeline's 10 s minimum budget per
+# clip (#155), so a hung Deepgram shows up as a failure ("isn't working"), not as
+# "couldn't keep up". Replies took 0.12-0.6 s in testing.
+REQUEST_TIMEOUT_S = 4
+CONNECT_TIMEOUT_S = 2
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 RETRY_DELAY_S = 1.0
 # Plain reasons the DM screen can show (the alert adds what to do next).
@@ -37,6 +37,8 @@ STATUS_REASONS = {
     402: "the Deepgram account is out of credit",
     403: "Deepgram didn't accept DEEPGRAM_API_KEY",
 }
+# Statuses the host can fix in .env or their Deepgram account (not an outage).
+HOST_FIXABLE = frozenset({400, 401, 402, 403})
 # Deepgram rejects keyterm lists over about 500 tokens. Names are short, so a cap on the
 # count and total length keeps well inside it.
 MAX_KEYTERMS = 50
@@ -124,14 +126,20 @@ class DeepgramTranscriber:
                         continue
                     # Status only: error bodies can echo request details.
                     reason = STATUS_REASONS.get(resp.status, "Deepgram had a problem")
-                    raise DeepgramError(f"{reason} (HTTP {resp.status})")
+                    raise DeepgramError(
+                        f"{reason} (HTTP {resp.status})",
+                        host_can_fix=resp.status in HOST_FIXABLE,
+                    )
             except aiohttp.ClientConnectionError as exc:
                 # A dropped or stale connection, or a slow connect: worth one more try.
-                # The overall request timeout isn't retried: it raises a plain
-                # TimeoutError, which the pipeline counts as a failure.
                 if attempt == 1:
                     continue
                 raise DeepgramError(f"couldn't reach Deepgram ({type(exc).__name__})") from None
+            except TimeoutError:
+                # The whole request took too long: not retried (a second wait would run
+                # past the clip budget). The pipeline's own budget cancels the task
+                # instead (CancelledError), which isn't caught here.
+                raise DeepgramError("Deepgram took too long to answer") from None
             except aiohttp.ClientError as exc:
                 # aiohttp's own messages can include the request URL, whose query holds
                 # players' names (keyterms): keep only the error's type.

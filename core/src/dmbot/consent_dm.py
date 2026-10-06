@@ -179,12 +179,12 @@ class ConsentActions(Protocol):
     def get_guild(self, guild_id: int, /) -> discord.Guild | None: ...
 
     @property
-    def sends_audio_out(self) -> bool: ...
+    def outside_engine(self) -> str | None: ...
 
     @property
     def company(self) -> str | None: ...
 
-    async def give_consent(self, guild_id: int, user_id: int, *, outside_ok: bool) -> int: ...
+    async def give_consent(self, guild_id: int, user_id: int, *, outside_to: str | None) -> int: ...
 
     def stop_recording(self, guild_id: int, user_id: int) -> None: ...
 
@@ -221,18 +221,19 @@ async def _is_member(interaction: discord.Interaction, guild: discord.Guild) -> 
 
 class ConsentButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:consent:yes:{_GUILD}(?P<out>:out)?",
+    template=rf"dmbot:consent:yes:{_GUILD}(?::out:(?P<out>[a-z-]{{1,20}}))?",
 ):
-    """`outside`: the message this button sits on said another company writes things
-    down. Only such a yes counts while the server uses one (#170)."""
+    """`outside`: the outside engine the message this button sits on named, if any. While
+    the server uses an outside engine, only a yes for that same engine counts (#170)."""
 
-    def __init__(self, guild_id: int, *, outside: bool = False) -> None:
+    def __init__(self, guild_id: int, *, outside: str | None = None) -> None:
+        marker = f":out:{outside}" if outside else ""
         super().__init__(
             discord.ui.Button(
                 label=CONSENT_LABEL,
                 emoji="✅",
                 style=discord.ButtonStyle.success,
-                custom_id=f"dmbot:consent:yes:{guild_id}{':out' if outside else ''}",
+                custom_id=f"dmbot:consent:yes:{guild_id}{marker}",
             )
         )
         self.guild_id = guild_id
@@ -242,7 +243,7 @@ class ConsentButton(
     async def from_custom_id(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> ConsentButton:
-        return cls(int(match["guild"]), outside=bool(match["out"]))
+        return cls(int(match["guild"]), outside=match["out"] or None)
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         with log_context(guild_id=self.guild_id):
@@ -258,20 +259,21 @@ class ConsentButton(
                 )
                 return
             actions = _actions(interaction)
-            if actions.sends_audio_out and not self.outside:
-                # This message didn't say another company writes things down: show the
-                # current question instead of saving a yes to terms they never saw.
+            engine = actions.outside_engine
+            if engine is not None and self.outside != engine:
+                # This message didn't name the company that writes things down now: show
+                # the current question instead of saving a yes to terms they never saw.
                 text = request_text(
                     guild.name, voice=None, dm=None, cloud=True, company=actions.company
                 )
                 await interaction.edit_original_response(
                     content=f"{REASK_INTRO}\n\n{text}",
-                    view=request_view(self.guild_id, outside=True),
+                    view=request_view(self.guild_id, outside=engine),
                 )
                 return
             try:
                 granted_at = await actions.give_consent(
-                    self.guild_id, interaction.user.id, outside_ok=self.outside
+                    self.guild_id, interaction.user.id, outside_to=self.outside
                 )
             except Exception:
                 log.exception("Couldn't save consent from a consent button")
@@ -358,8 +360,8 @@ class StopButton(
         await _stop(interaction, self.guild_id)
 
 
-def request_view(guild_id: int, *, outside: bool = False) -> discord.ui.View:
-    """`outside`: the request shown with it includes the outside-company note."""
+def request_view(guild_id: int, *, outside: str | None = None) -> discord.ui.View:
+    """`outside`: the outside engine the request shown with it names, if any."""
     view = discord.ui.View(timeout=None)
     view.add_item(ConsentButton(guild_id, outside=outside))
     view.add_item(DeclineButton(guild_id))

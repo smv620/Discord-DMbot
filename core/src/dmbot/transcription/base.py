@@ -26,7 +26,15 @@ class TranscriberUnavailable(RuntimeError):
 
 class TranscriptionProblem(RuntimeError):
     """A failure whose message is plain words, safe to show the DM and to log: no keys,
-    no players' names, no reply bodies. Engines raise it for problems a host can fix."""
+    no players' names, no reply bodies.
+
+    `host_can_fix`: the cause is in the host's settings (a wrong key, no credit), not an
+    outage on the company's side, so the DM screen tells the host where to look.
+    """
+
+    def __init__(self, message: str, *, host_can_fix: bool = False) -> None:
+        super().__init__(message)
+        self.host_can_fix = host_can_fix
 
 
 class Transcriber(Protocol):

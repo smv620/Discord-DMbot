@@ -114,6 +114,7 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             await self.t.transcribe(clip(), [])
         self.assertIn("401", str(ctx.exception))
         self.assertIn("didn't accept DEEPGRAM_API_KEY", str(ctx.exception))  # plain reason
+        self.assertTrue(ctx.exception.host_can_fix)  # the DM screen points at .env
         self.assertNotIn("dg-test", str(ctx.exception))
         self.assertNotIn("Invalid", str(ctx.exception))  # provider body is not echoed
         self.assertEqual(self.hits, 1)  # 401 is not retried
@@ -177,10 +178,11 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             session,
         )
         try:
-            with self.assertRaises(TimeoutError):
+            with self.assertRaisesRegex(DeepgramError, "took too long"):
                 await t.transcribe(clip(), [])
         finally:
             await session.close()
+        self.assertFalse(DeepgramError("x").host_can_fix)  # an outage, not .env
 
     async def test_unreachable_is_retried_once_then_names_stay_out_of_the_error(self) -> None:
         dead = DeepgramTranscriber(

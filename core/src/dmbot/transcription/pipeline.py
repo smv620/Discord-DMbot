@@ -198,10 +198,15 @@ class TranscriptionPipeline:
             log.error("Transcription failed (%d so far): %s", self.total_failures, exc)
         if self.consecutive_failures == FAILURES_BEFORE_ALERT:
             if isinstance(exc, TranscriptionProblem):
+                advice = (
+                    "Whoever hosts DMbot: check the speech-to-text settings in .env, then "
+                    "restart DMbot."
+                    if exc.host_can_fix
+                    else "This is on the speech-to-text company's side; DMbot keeps trying."
+                )
                 text = (
                     f"⚠️ **No transcript right now:** {exc}. DMbot still records, but writes "
-                    "nothing down. Whoever hosts DMbot: check the speech-to-text settings in "
-                    ".env, then restart DMbot."
+                    f"nothing down. {advice}"
                 )
             else:
                 text = (

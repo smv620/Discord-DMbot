@@ -215,7 +215,7 @@ class DMBot(commands.AutoShardedBot):
         self.settings = settings
         # With an outside speech-to-text company, only yeses given knowing that count
         # (#170). Set here, from the same settings, so the two can never disagree.
-        consent.outside = settings.transcription.sends_audio_out
+        consent.outside = settings.transcription.outside_engine
         self.consent = consent
         self.campaigns = campaigns
         self.sessions = sessions
@@ -304,16 +304,20 @@ class DMBot(commands.AutoShardedBot):
         return self.settings.transcription.sends_audio_out
 
     @property
+    def outside_engine(self) -> str | None:
+        return self.settings.transcription.outside_engine
+
+    @property
     def company(self) -> str | None:
         return self.settings.transcription.company
 
-    async def give_consent(self, guild_id: int, user_id: int, *, outside_ok: bool) -> int:
+    async def give_consent(self, guild_id: int, user_id: int, *, outside_to: str | None) -> int:
         """Save consent and start capturing at once. Returns when it was given.
 
-        `outside_ok`: the request they agreed to said another company writes things down.
+        `outside_to`: the outside engine the request they agreed to named, if any.
         Raises if it couldn't be saved; then nothing changed.
         """
-        await self.consent.grant(guild_id, user_id, outside_ok=outside_ok)
+        await self.consent.grant(guild_id, user_id, outside_to=outside_to)
         log.info("Consent given: user %s", user_id)
         # Always tell ears (if connected), even with no session here: it may still be
         # in voice from before a restart.
@@ -395,7 +399,7 @@ class DMBot(commands.AutoShardedBot):
                     text = request_text(
                         server, voice=voice_name, dm=dm_name, cloud=cloud, company=company
                     )
-                    view = request_view(gid, outside=cloud)
+                    view = request_view(gid, outside=self.outside_engine)
                 result = await send_prompt(member, text, view)
                 if result != "sent":
                     table.asked.discard(member.id)  # try again if they rejoin
@@ -1135,7 +1139,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
         company=bot.company,
     )
     await interaction.followup.send(
-        text, view=request_view(guild.id, outside=bot.sends_audio_out), ephemeral=True
+        text, view=request_view(guild.id, outside=bot.outside_engine), ephemeral=True
     )
 
 
@@ -1174,7 +1178,9 @@ async def run(settings: Settings) -> None:
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
         campaigns = CampaignStore(db)
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
-        bot = DMBot(settings, ConsentStore(db), campaigns, SessionStore(db), transcriber)
+        # DMBot sets this too; passing it here means the store never starts out wrong.
+        consent = ConsentStore(db, outside=settings.transcription.outside_engine)
+        bot = DMBot(settings, consent, campaigns, SessionStore(db), transcriber)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)
