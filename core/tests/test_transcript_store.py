@@ -217,7 +217,7 @@ class BotTests(DatabaseTest):
             await release.wait()
             return await real(*args)
 
-        self.store.add_lines = slow  # type: ignore[method-assign]
+        self.store.add_lines = slow  # type: ignore[method-assign,assignment]
         save = asyncio.create_task(self.bot.save_transcript(table))
         await saving.wait()
         self.bot.stop_recording(GUILD, DM)
