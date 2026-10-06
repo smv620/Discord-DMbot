@@ -37,7 +37,7 @@ class FakeResponse:
         self.done = True
         self.sent.append((text, kw))
 
-    async def edit_message(self, *, content: str, view: Any, **_: Any) -> None:
+    async def edit_message(self, *, content: str = "", view: Any = None, **_: Any) -> None:
         self.done = True
         self.edited.append((content, view))
 
@@ -498,6 +498,65 @@ class Lists(NamesTest):
             {f"Mage {n}" for n in range(3)} | {"Tarn"},
             set(await self.names()) - {"Belleros"},
         )
+
+    async def test_a_list_that_fits_is_added_without_the_ai(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        it = self.it()
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload("Ulfgar | NPC", "x"))
+        self.assertIn("Added 1 name", it.followup.send.call_args.args[0])
+        self.bot.ai.complete.assert_not_called()
+
+    async def test_a_document_goes_to_the_ai_and_the_dm_sees_the_list_first(self) -> None:
+        from dmbot.ui import name_lists
+
+        reply = (
+            "Here you go:\nUlfgar | NPC | Ulf\nBryn Shander | place\nKesh | NPC | | the stranger"
+        )
+        self.bot.ai = SimpleNamespace(complete=AsyncMock(return_value=reply))  # type: ignore[assignment]
+        self.fresh()
+        it = self.it(MANAGER)  # not one of the campaign's DMs: no secret names
+        upload = name_lists.Upload(
+            "Ulfgar, chief of the Frostwolves, lives in Bryn Shander.", "npcs.pdf", True
+        )
+        await name_lists.take_list(it, self.campaign.id, upload)
+        text, kw = it.response.sent[0]
+        self.assertIn("sent to Anthropic", text)
+        self.assertIn("right to use", text)
+        offer = kw["view"]
+        it = self.it(MANAGER)
+        it.edit_original_response = AsyncMock()
+        await offer._read(it)
+        system, sent = self.bot.ai.complete.call_args.args
+        self.assertIn("<document>", sent)
+        self.assertIn("Leave out disguises", system)
+        preview = it.edit_original_response.call_args.kwargs
+        self.assertIn("found 2 names", preview["content"])  # the secret line was refused
+        self.assertIn("Nothing is added until you press", preview["content"])
+        self.assertNotIn("Ulfgar", await self.names())  # nothing saved yet
+        it = self.it(MANAGER)
+        await preview["view"]._add(it)
+        self.assertIn("Added 2 names", it.followup.send.call_args.args[0])
+        self.assertIn("Ulfgar", await self.names())
+
+    async def test_a_list_with_errors_goes_to_the_ai_with_the_option_to_add_what_fits(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        it = self.it()
+        text = "Ulfgar | NPC\nBryn Shander | place | Bryn | x | notes about the town"
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
+        message, kw = it.response.sent[0]
+        self.assertIn("1 line in your list doesn't fit", message)
+        labels = [getattr(c, "label", "") for c in kw["view"].children]
+        self.assertIn("Add the 1 that fit", labels)
+        self.bot.ai = None
+        it = self.it()  # no AI switched on: what fits is added, the rest explained
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
+        self.assertIn("1 line wasn't added", it.followup.send.call_args.args[0])
 
     async def test_a_manager_never_learns_of_or_adds_secret_names(self) -> None:
         from dmbot.ui import name_lists

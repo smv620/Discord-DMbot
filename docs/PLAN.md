@@ -918,6 +918,19 @@ names panel nor the speech-to-text hints can be a fixed list.
     duplicate a name;
   - for anyone but the campaign's DMs, a clash with a secret name looks exactly like no
     clash.
+  - **names from any document** (owner's decision): `/dmbot names` takes a .txt, .pdf or
+    .docx file, or `link:` a Google Doc shared with anyone who has the link. A list
+    DMbot can read all of is added straight away; anything else (a document, or a list
+    with any line that doesn't fit) goes to the AI (Anthropic, `ANTHROPIC_API_KEY`,
+    `AI_MODEL`, a cheap model by default), which writes the names list. The DM first
+    confirms the right to use the material and that its text goes to Anthropic (one
+    press, logged with who and when: the IP rule), then sees the list (the start in the
+    message, all of it as a file to edit) and adds it with **Add these names**. The
+    document is treated as untrusted data: quoted, with the AI told to ignore
+    instructions in it, and its answer read by the same strict parser; secret names are
+    asked for only for the campaign's DMs. Without a key, documents are refused with a
+    pointer to the template, and a list adds what fits. Up to 10 MB and about 100
+    pages, in pieces of 40,000 characters;
   - **a kind DMbot doesn't know is asked once per word** (owner's decision): the summary
     shows a menu for each of up to 4 unknown words ("What is every “wizard” (50)?"), and
     picking one confirms all those names as that kind in one change; the template lists

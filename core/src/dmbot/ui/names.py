@@ -39,6 +39,7 @@ from dmbot.ui.dmbot_commands import (
 
 if TYPE_CHECKING:
     from dmbot.memory.store import MemoryStore
+    from dmbot.ui.name_lists import Upload
 
 log = logging.getLogger(__name__)
 
@@ -322,7 +323,7 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
 
 class CampaignChoice(_Menu):
     def __init__(
-        self, campaigns: list[Campaign], find: str | None = None, upload: str | None = None
+        self, campaigns: list[Campaign], find: str | None = None, upload: Upload | None = None
     ) -> None:
         super().__init__()
         self.find = find
@@ -345,9 +346,9 @@ class CampaignChoice(_Menu):
     async def _picked(self, interaction: discord.Interaction) -> None:
         self.stop()
         if self.upload is not None:
-            from dmbot.ui.name_lists import import_list
+            from dmbot.ui.name_lists import take_list
 
-            await import_list(interaction, self.pick.values[0], self.upload)
+            await take_list(interaction, self.pick.values[0], self.upload)
         elif self.find:  # the name typed with /dmbot names find:, now the campaign is known
             from dmbot.ui.name_card import open_found
 
@@ -369,13 +370,15 @@ async def _find_typeahead(
 )
 @app_commands.describe(
     find="Open one name: type part of it, a nickname, or how it sounds",
-    file="Add many names from a list (get the template with 📥 Add many)",
+    file="Names to add: a list (📥 Add many has a template), or a .txt, .pdf or .docx document",
+    link="Names to add from a Google Doc shared with anyone who has the link",
 )
 @app_commands.autocomplete(find=_find_typeahead)
 async def dmbot_names(
     interaction: discord.Interaction,
     find: str | None = None,
     file: discord.Attachment | None = None,
+    link: str | None = None,
 ) -> None:
     guild = interaction.guild
     if guild is None:
@@ -386,22 +389,16 @@ async def dmbot_names(
         await bot.campaigns.list_campaigns(guild.id), interaction.user.id, _is_manager(interaction)
     )
     upload = None
-    if file is not None and mine:  # only read a file for someone who may use it
-        from dmbot.memory.name_list import MAX_FILE_BYTES
-        from dmbot.ui.name_lists import read_upload
+    if (file is not None or link) and mine:  # only read for someone who may use it
+        from dmbot.ui.name_lists import read_attachment, read_link
 
-        if file.size > MAX_FILE_BYTES:
-            await _tell(interaction, "That file is too big (up to 256 KB). Split it up.")
-            return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            raw = await file.read()
-        except discord.HTTPException:
-            await _tell(interaction, "DMbot couldn't download that file. Try again.")
-            return
-        upload, problem = read_upload(raw)
-        if problem is not None:
-            await _tell(interaction, problem)
+        if file is not None:
+            upload, problem = await read_attachment(file)
+        else:
+            upload, problem = await read_link(link or "")
+        if upload is None:
+            await _tell(interaction, problem or "DMbot couldn't read that.")
             return
         if find:
             await _tell(interaction, "Adding the list first. Search for a name afterwards.")
@@ -417,9 +414,9 @@ async def dmbot_names(
     if only is None and len(mine) == 1:
         only = mine[0].id
     if upload is not None and only is not None:
-        from dmbot.ui.name_lists import import_list
+        from dmbot.ui.name_lists import take_list
 
-        await import_list(interaction, only, upload)
+        await take_list(interaction, only, upload)
     elif playing is not None and any(c.id == playing for c in mine):
         await show_home(interaction, playing)
     elif not mine:

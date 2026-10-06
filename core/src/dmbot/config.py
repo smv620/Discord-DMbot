@@ -33,6 +33,9 @@ class Settings:
     shards: ShardSettings = field(default_factory=ShardSettings)
     log_format: str = "text"
     log_level: str = "INFO"
+    # AI text calls (reading a document into a names list). Empty: switched off.
+    ai_key: str = field(default="", repr=False)
+    ai_model: str = "claude-haiku-4-5-20251001"
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -85,4 +88,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         shards=shards,
         log_format=log_format,
         log_level=log_level,
+        ai_key=get("ANTHROPIC_API_KEY"),
+        ai_model=get("AI_MODEL") or "claude-haiku-4-5-20251001",
     )

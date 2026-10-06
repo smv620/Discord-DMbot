@@ -11,20 +11,35 @@ import io
 import logging
 import re
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import aiohttp
 import discord
 
+from dmbot.ai import AIError, AnthropicClient
 from dmbot.campaigns import Campaign
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, DM, PROPOSED, MemoryRuleError, NewName, name_key
+from dmbot.memory.name_documents import (
+    MAX_DOCUMENT_BYTES,
+    DocumentError,
+    chunks,
+    clean_reply,
+    google_doc_export,
+    instructions,
+    kind_of_file,
+    request_text,
+    text_of,
+)
 from dmbot.memory.name_list import (
     MAX_FILE_BYTES,
     MAX_LINES,
     MAX_NAMES,
     OutName,
     Parsed,
+    header,
     parse,
     render,
     template,
@@ -329,7 +344,75 @@ class PasteForm(discord.ui.Modal, title="Add many names"):
             self.lines.label = "One name per line (no secret names)"
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        await import_list(interaction, self.campaign_id, self.lines.value)
+        await take_list(interaction, self.campaign_id, Upload(self.lines.value, "your list"))
+
+
+@dataclass(frozen=True, slots=True)
+class Upload:
+    """Names to add: a list (pasted or a .txt file), or a document's text."""
+
+    text: str
+    label: str  # "report.pdf", "your list", "the Google Doc"
+    document: bool = False  # not meant as a names list: straight to the AI
+
+
+async def read_attachment(file: discord.Attachment) -> tuple[Upload | None, str | None]:
+    """(upload, problem) for `/dmbot names file:`: a list, or a document's text."""
+    label = logic.shorten(file.filename, 60)
+    kind = kind_of_file(file.filename)
+    limit = MAX_FILE_BYTES if kind == "text" else MAX_DOCUMENT_BYTES
+    if kind == "unknown":
+        return None, "DMbot can read .txt, .pdf and .docx (Word) files. Save it as one of those."
+    if file.size > limit:
+        size = "256 KB" if kind == "text" else "10 MB"
+        return None, f"That file is too big (up to {size}). Split it into smaller files."
+    try:
+        raw = await file.read()
+    except discord.HTTPException:
+        return None, "DMbot couldn't download that file. Try again."
+    if kind == "text":
+        text, problem = read_upload(raw)
+        return (Upload(text, label) if text is not None else None), problem
+    try:
+        return Upload(await asyncio.to_thread(text_of, file.filename, raw), label, True), None
+    except DocumentError as exc:
+        return None, str(exc)
+
+
+async def read_link(link: str) -> tuple[Upload | None, str | None]:
+    """(upload, problem) for `/dmbot names link:`: a Google Doc shared with anyone who has
+    the link. Fetches only from Google Docs, with a size cap."""
+    url = google_doc_export(link)
+    if url is None:
+        return None, (
+            "That isn't a Google Docs link. Copy it from the doc's **Share** button (it starts "
+            "with https://docs.google.com/document/)."
+        )
+    not_shared = (
+        "DMbot can't open that doc. In Google Docs press **Share**, set General access to "
+        "**Anyone with the link**, and try again. Or download it as .docx or .txt and add the "
+        "file instead."
+    )
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with (
+            aiohttp.ClientSession(timeout=timeout) as session,
+            session.get(url) as resp,
+        ):
+            host = resp.url.host or ""
+            if resp.status != 200 or not (
+                host == "docs.google.com" or host.endswith(".googleusercontent.com")
+            ):
+                return None, not_shared
+            if not resp.content_type.startswith("text/plain"):
+                return None, not_shared
+            raw = await resp.content.read(MAX_DOCUMENT_BYTES + 1)
+    except (aiohttp.ClientError, TimeoutError):
+        return None, "DMbot couldn't reach Google Docs. Try again in a minute."
+    try:
+        return Upload(text_of("doc.txt", raw), "the Google Doc", True), None
+    except DocumentError as exc:
+        return None, str(exc)
 
 
 def read_upload(raw: bytes) -> tuple[str | None, str | None]:
@@ -357,6 +440,195 @@ def _sounds_known(names: CampaignLookup, name: str) -> bool:
         for code in sound_codes(name)
         for entry in names.by_sound.get(code, ())
     )
+
+
+async def take_list(interaction: discord.Interaction, campaign_id: str, upload: Upload) -> None:
+    """A list DMbot can read all of is added straight away. Anything else (a document, or
+    a list with any line it can't read) goes to the AI, which writes the list for the DM
+    to check first (owner's decision, 2026-10-06)."""
+    campaign = await _campaign_for(interaction, campaign_id)
+    if campaign is None:
+        return
+    if not upload.document:
+        parsed = parse(upload.text, secrets=sees_secrets(campaign, interaction.user.id))
+        if parsed.lines and not parsed.refused:
+            await import_list(interaction, campaign.id, upload.text)
+            return
+    if _bot(interaction).ai is None:
+        if upload.document:
+            await _tell(
+                interaction,
+                "Reading documents with AI isn't switched on for this DMbot. Put the names in "
+                "the template (📥 Add many > 📄 Get the template) and add that instead.",
+            )
+        else:
+            await import_list(interaction, campaign.id, upload.text)  # what fits, and why not
+        return
+    await offer_ai(interaction, campaign, upload)
+
+
+def _ai_offer_text(upload: Upload, fits: int, unread: int) -> str:
+    if upload.document:
+        first = f"📄 **DMbot can find the names in {_md(upload.label)} with AI.**"
+    else:
+        first = (
+            f"📄 **{unread} line{'' if unread == 1 else 's'} in {_md(upload.label)} "
+            f"{'doesn' if unread == 1 else 'don'}'t fit the names-list format**, so DMbot "
+            "can have its AI read it and write the list for you."
+        )
+    return (
+        f"{first}\nThe text is sent to Anthropic, the AI company, to read it. Only use material "
+        "you have the right to use: DMbot doesn't check. You'll see the list before anything "
+        "is added." + (f"\nOr add just the {fits} lines that fit, as they are." if fits else "")
+    )
+
+
+async def offer_ai(interaction: discord.Interaction, campaign: Campaign, upload: Upload) -> None:
+    secrets = sees_secrets(campaign, interaction.user.id)
+    parsed = None if upload.document else parse(upload.text, secrets=secrets)
+    fits = len(parsed.lines) if parsed else 0
+    unread = len(parsed.refused) if parsed else 0
+    view = AIOffer(campaign.id, upload, fits)
+    await _send(interaction, _ai_offer_text(upload, fits, unread), view)
+
+
+class AIOffer(_Menu):
+    def __init__(self, campaign_id: str, upload: Upload, fits: int) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.upload = upload
+        self.add_item(
+            _Button(
+                self._read,
+                label="🤖 Find the names (I may use this)",
+                style=discord.ButtonStyle.primary,
+            )
+        )
+        if fits:
+            self.add_item(
+                _Button(
+                    self._as_is,
+                    label=f"Add the {fits} that fit",
+                    style=discord.ButtonStyle.secondary,
+                )
+            )
+        self.add_item(_Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary))
+
+    async def _read(self, interaction: discord.Interaction) -> None:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        ai = _bot(interaction).ai
+        if campaign is None or ai is None:
+            return
+        self.stop()
+        await interaction.response.edit_message(
+            content=f"🤖 Reading {_md(self.upload.label)}… this can take a minute.",
+            view=None,
+            allowed_mentions=NO_PINGS,
+        )
+        # The IP rule (CLAUDE.md): who confirmed the right to use it, and when.
+        log.info(
+            "Shared material confirmed for AI reading: user=%s campaign=%s source=%s",
+            interaction.user.id,
+            campaign.id,
+            self.upload.label,
+        )
+        secrets = sees_secrets(campaign, interaction.user.id)
+        try:
+            listed = await ai_names_list(ai, self.upload.text, secrets=secrets)
+        except AIError as exc:
+            await interaction.edit_original_response(content=str(exc))
+            return
+        await show_ai_list(interaction, campaign, self.upload, listed, secrets=secrets)
+
+    async def _as_is(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await interaction.response.edit_message(
+            content="Adding the lines that fit…", view=None, allowed_mentions=NO_PINGS
+        )
+        await import_list(interaction, self.campaign_id, self.upload.text)
+
+    async def _cancel(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await interaction.response.edit_message(
+            content="Cancelled. Nothing was sent or added.", view=None
+        )
+
+
+async def ai_names_list(ai: AnthropicClient, text: str, *, secrets: bool) -> str:
+    """The AI's names list for a document, piece by piece, in the list format."""
+    system = instructions(secrets=secrets)
+    replies = [clean_reply(await ai.complete(system, request_text(c))) for c in chunks(text)]
+    return "\n".join(r for r in replies if r)
+
+
+PREVIEW_LINES = 15
+
+
+async def show_ai_list(
+    interaction: discord.Interaction,
+    campaign: Campaign,
+    upload: Upload,
+    listed: str,
+    *,
+    secrets: bool,
+) -> None:
+    """The AI's list, in full as a file and the start in the message, with Add and Cancel.
+    Nothing is saved until the DM presses Add."""
+    parsed = parse(listed, secrets=secrets)
+    if not parsed.lines:
+        await interaction.edit_original_response(
+            content=f"🤖 DMbot's AI found no names in {_md(upload.label)}. Nothing was added."
+        )
+        return
+    lines = [line for line in listed.splitlines() if line.strip()]
+    shown = "\n".join(logic.shorten(line, 90) for line in lines[:PREVIEW_LINES]).replace("`", "'")
+    more = (
+        f"\n… and {len(lines) - PREVIEW_LINES} more in the file."
+        if len(lines) > PREVIEW_LINES
+        else ""
+    )
+    count = len(parsed.lines)
+    text = (
+        f"🤖 **DMbot's AI found {count} name{'' if count == 1 else 's'} in "
+        f"{_md(upload.label)}.** Here's the list it made. Nothing is added until you press "
+        "**Add these names**. Want to change something? Edit the attached file and add it "
+        f"with `/dmbot names` instead.\n```\n{shown}\n```{more}"
+    )
+    body = (
+        header(secrets=secrets)
+        + f"###\n### Made by DMbot's AI from {' '.join(upload.label.split())}. Check it before "
+        "adding.\n" + "\n".join(lines) + "\n"
+    )
+    view = AIPreview(campaign.id, listed)
+    await interaction.edit_original_response(
+        content=text[:2000],
+        attachments=[_file(body, f"names-from-{_slug(upload.label)}.txt")],
+        view=view,
+        allowed_mentions=NO_PINGS,
+    )
+    view.origin = interaction
+
+
+class AIPreview(_Menu):
+    def __init__(self, campaign_id: str, listed: str) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.listed = listed
+        self.add_item(
+            _Button(self._add, label="✅ Add these names", style=discord.ButtonStyle.success)
+        )
+        self.add_item(_Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary))
+
+    async def _add(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await interaction.response.edit_message(view=None)
+        await import_list(interaction, self.campaign_id, self.listed)
+
+    async def _cancel(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await interaction.response.edit_message(
+            content="Cancelled. Nothing was added.", view=None, attachments=[]
+        )
 
 
 async def import_list(interaction: discord.Interaction, campaign_id: str, text: str) -> None:
