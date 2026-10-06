@@ -242,7 +242,7 @@ screen channel (only the DM can see it) and optionally to DMs.
 |---|---|
 | `/dmbot start` | Start listening: pick the campaign and the voice channel (both default to last time). Replaces `/table join` |
 | `/dmbot stop` | Stop listening and close the session. Replaces `/table leave` |
-| `/dmbot backup` · `/dmbot restore` | Download a copy of a campaign (anyone in the server, so a campaign isn't lost if its DM disappears; only the campaign's DMs get its secret names and connections, #229; whoever restores a copy becomes its DM); bring one back from a copy (restore needs a file, which only a command can take) |
+| `/dmbot backup` · `/dmbot restore` | Download a copy of a campaign (its DMs only, not server managers: it holds secret names, #229); bring one back from a copy (restore needs a file, which only a command can take) |
 | `/dmbot help` | A short, friendly guide with buttons |
 | `/houserules` | List, add, edit, and remove house rules for the current campaign |
 | `/optionalrules` | Turn optional rules (e.g. Xanathar's, Tasha's) on or off for the current campaign |

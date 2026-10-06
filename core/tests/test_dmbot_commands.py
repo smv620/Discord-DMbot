@@ -109,18 +109,24 @@ class CommandTests(DatabaseTest):
         self.assertIsInstance(view, cmds.RestoreChoice)
         self.assertEqual(view.replaceable_ids, [mine.id])
 
-    async def test_backup_needs_a_campaign(self) -> None:
+    async def test_backup_needs_a_campaign_you_run(self) -> None:
+        await self.campaigns.create(GUILD, "Theirs", OTHER_DM)
         it = fake_interaction(self.bot)
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
-        self.assertIn("no campaigns here yet", it.response.sent[0][0])
+        self.assertIn("not the DM of any campaign", it.response.sent[0][0])
 
-    async def test_anyone_can_download_a_copy_without_the_secrets(self) -> None:
-        await self.campaigns.create(GUILD, "Theirs", OTHER_DM)
-        it = fake_interaction(self.bot)  # not this campaign's DM
+    async def test_a_server_manager_cannot_download_a_campaign_they_dont_run(self) -> None:
+        theirs = await self.campaigns.create(GUILD, "Theirs", OTHER_DM)
+        it = fake_interaction(self.bot)
+        it.user.guild_permissions = discord.Permissions(manage_guild=True)
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
-        kw = it.followup.send.call_args.kwargs
-        self.assertTrue(kw["file"].filename.endswith(".dmbot.json"))
-        self.assertIn("leaves out the DM's secret names", it.followup.send.call_args.args[0])
+        self.assertIn("not the DM of any campaign", it.response.sent[0][0])
+        it.followup.send.assert_not_called()
+        it = fake_interaction(self.bot)
+        it.user.guild_permissions = discord.Permissions(manage_guild=True)
+        await cmds.send_backup(it, theirs.id)  # a pressed button is checked again
+        self.assertIn("Only this campaign's DM can download a copy", it.response.sent[0][0])
+        it.followup.send.assert_not_called()
 
     async def test_the_dm_gets_the_file(self) -> None:
         await self.campaigns.create(GUILD, "Mine", DM)

@@ -401,19 +401,14 @@ class CampaignStore:
 
     # ---- backups -------------------------------------------------------------
 
-    async def export(
-        self, guild_id: int, campaign_id: str, *, secrets: bool = True
-    ) -> dict[str, Any]:
-        """A JSON-friendly backup of one campaign, read from one consistent moment.
-        `secrets=False`: leave out the DM's secrets (a copy made by someone who isn't one
-        of the campaign's DMs). A section that holds secrets has `without_secrets(rows)`."""
+    async def export(self, guild_id: int, campaign_id: str) -> dict[str, Any]:
+        """A JSON-friendly backup of one campaign, read from one consistent moment."""
         async with self._db.guild(guild_id, snapshot=True) as conn:
             campaign = await self._require(conn, guild_id, campaign_id)
-            sections: dict[str, list[Any]] = {}
-            for name, section in self._sections.items():
-                rows = await section.dump(conn, guild_id, campaign_id)
-                strip = getattr(section, "without_secrets", None)
-                sections[name] = rows if secrets or strip is None else strip(rows)
+            sections = {
+                name: await section.dump(conn, guild_id, campaign_id)
+                for name, section in self._sections.items()
+            }
         return {
             "format": EXPORT_FORMAT,
             "version": EXPORT_VERSION,

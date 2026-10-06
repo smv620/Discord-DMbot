@@ -426,28 +426,23 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         return
     bot = _bot(interaction)
     campaign = await bot.campaigns.get(guild.id, campaign_id)
+    # Only the campaign's DMs: a copy holds the secret names and notes, and a server
+    # manager may be a player at the table (#229).
     if campaign is None:
         await _tell(interaction, "That campaign isn't here any more.")
         return
-    # Anyone in the server may make a copy, so a campaign isn't lost if its DM
-    # disappears (owner decision, 2026-10-06). Only the campaign's DMs get the secret
-    # names and connections: anyone else may be playing in it (#229).
-    dm = interaction.user.id in campaign.dm_user_ids
+    if interaction.user.id not in campaign.dm_user_ids:
+        await _tell(interaction, logic.ONLY_DMS_BACKUP)
+        return
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True, thinking=True)
-    data = await bot.campaigns.export(guild.id, campaign.id, secrets=dm)
+    data = await bot.campaigns.export(guild.id, campaign.id)
     raw = await asyncio.to_thread(encode_backup, data)
     file = discord.File(io.BytesIO(raw), filename=logic.backup_filename(campaign.name, _now()))
-    note = (
-        "Keep it somewhere safe, and don't share it publicly: it holds the campaign's secret notes."
-        if dm
-        else "It leaves out the DM's secret names and connections, so a campaign restored "
-        "from it won't have them."
-    )
     await interaction.followup.send(
-        f"💾 Here's a copy of **{campaign.name}**. {note}\n"
-        "Use `/dmbot restore` to bring it back, here or in another server. Whoever restores "
-        "it becomes its DM.",
+        f"💾 Here's a copy of **{campaign.name}**. Keep it somewhere safe, and don't share it "
+        "publicly: it holds the campaign's secret notes.\n"
+        "Use `/dmbot restore` to bring it back, here or in another server.",
         file=file,
         ephemeral=True,
         allowed_mentions=NO_PINGS,
@@ -646,10 +641,16 @@ async def dmbot_backup(interaction: discord.Interaction) -> None:
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
         return
-    mine = await _bot(interaction).campaigns.list_campaigns(guild.id)
+    mine = [
+        c
+        for c in await _bot(interaction).campaigns.list_campaigns(guild.id)
+        if interaction.user.id in c.dm_user_ids
+    ]
     if not mine:
         await _tell(
-            interaction, "There are no campaigns here yet. Use `/dmbot start` to set one up."
+            interaction,
+            "Only a campaign's DM can download a copy, and you're not the DM of any campaign "
+            "here. Ask the DM, or use `/dmbot start` to set up your own.",
         )
     elif len(mine) == 1:
         await send_backup(interaction, mine[0].id)
