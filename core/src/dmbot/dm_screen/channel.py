@@ -47,7 +47,8 @@ _guild_locks: dict[int, asyncio.Lock] = {}
 
 
 def campaign_lock(campaign_id: str) -> asyncio.Lock:
-    """One lock per campaign for anything that changes its DM screen's permissions."""
+    """One lock per campaign for anything that changes its channels' permissions (the DM
+    screen, the transcript channel)."""
     return _locks.setdefault(campaign_id, asyncio.Lock())
 
 
@@ -237,7 +238,7 @@ async def _with_channel_number(
     return campaign, shared
 
 
-async def _pin(card: discord.Message) -> bool | None:
+async def _pin(card: discord.Message, reason: str = "DMbot: DM screen help card") -> bool | None:
     """Pin the help card: True if pinned, False if DMbot isn't allowed, None otherwise.
 
     Needs Pin Messages, which is optional: the card works unpinned. Other failures (the
@@ -245,12 +246,12 @@ async def _pin(card: discord.Message) -> bool | None:
     logged; the next setup tries again.
     """
     try:
-        await card.pin(reason="DMbot: DM screen help card")
+        await card.pin(reason=reason)
     except discord.Forbidden as exc:
-        log.info("Could not pin DM screen help card %s: %s", card.id, exc)
+        log.info("Could not pin card %s: %s", card.id, exc)
         return False
     except discord.HTTPException as exc:
-        log.warning("Could not pin DM screen help card %s: %s", card.id, exc)
+        log.warning("Could not pin card %s: %s", card.id, exc)
         return None
     return True
 

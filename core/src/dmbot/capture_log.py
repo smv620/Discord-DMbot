@@ -1,7 +1,10 @@
-"""Batches captured utterances into periodic summaries for the DM screen.
+"""Counts captured speech per interval: who spoke, how much, and audio health (frames
+received vs expected).
 
-Posting every utterance would flood the DM, so Phase 0 reports one compact summary
-per interval: who spoke, how much, and audio health (frames received vs expected).
+Every interval goes to the log as one line of IDs and numbers (`log_line`). The DM
+screen only hears about it when audio went missing (`render`): what was said goes to
+the transcript channel (#124), never here, and a screen full of "all fine" checks hid
+the notes that need the DM (#134).
 """
 
 from __future__ import annotations
@@ -11,8 +14,14 @@ from dataclasses import dataclass
 
 from dmbot.audio.segmenter import Utterance
 
-# Below this percentage of expected frames, audio quality is flagged to the DM.
+# Below this percentage of expected frames, audio is flagged (logs, test scoring).
 HEALTH_WARN_PERCENT = 95
+# The DM screen is only told below this (90-94% rarely costs real words), once per
+# person, and again only if it gets clearly worse or after a while: a phone on bad
+# Wi-Fi mustn't bury the notes that need the DM.
+DM_WARN_PERCENT = 90
+WARN_AGAIN_DROP = 10
+WARN_AGAIN_AFTER_S = 600.0
 
 
 def audio_health(received: int, expected: int) -> tuple[int, bool]:
@@ -33,24 +42,20 @@ class _SpeakerStats:
     seconds: float = 0.0
     frames_received: int = 0
     frames_expected: int = 0
-    transcripts: list[str] | None = None
 
 
 class CaptureLog:
     def __init__(self) -> None:
         self._stats: dict[int, _SpeakerStats] = {}
+        self._warned: dict[int, tuple[int, float]] = {}  # user → (percent, when)
 
     def _get(self, user_id: int) -> _SpeakerStats:
         return self._stats.setdefault(user_id, _SpeakerStats())
 
-    def add_utterance(self, utterance: Utterance, text: str | None) -> None:
+    def add_utterance(self, utterance: Utterance) -> None:
         stats = self._get(utterance.user_id)
         stats.utterances += 1
         stats.seconds += utterance.duration_s
-        if text:
-            if stats.transcripts is None:
-                stats.transcripts = []
-            stats.transcripts.append(text)
 
     def add_health(self, user_id: int, received: int, expected: int) -> None:
         stats = self._get(user_id)
@@ -74,23 +79,34 @@ class CaptureLog:
             return None
         return f"Capture check: {len(parts)} speaker(s); " + "; ".join(parts)
 
-    def render(self, name_of: Callable[[int], str]) -> str | None:
-        """Render and reset the summary. Returns None if nothing was captured."""
-        if not any(s.utterances for s in self._stats.values()):
-            self._stats.clear()
-            return None
-
-        lines = ["🎙️ **Capture check**"]
+    def render(self, name_of: Callable[[int], str], now: float = 0.0) -> str | None:
+        """A warning for the DM screen if someone's voice is cutting out, then reset.
+        None (and still reset) otherwise. `now` is a monotonic time in seconds."""
+        gaps: list[tuple[str, int]] = []
         for user_id, s in sorted(self._stats.items(), key=lambda kv: -kv[1].seconds):
-            if s.utterances == 0:
+            if s.utterances == 0 or s.frames_expected == 0:
                 continue
-            line = f"• **{name_of(user_id)}** — {s.utterances} × speech, {s.seconds:.1f} s"
-            if s.frames_expected > 0:
-                percent, flagged = audio_health(s.frames_received, s.frames_expected)
-                flag = " ⚠️ audio gaps" if flagged else ""
-                line += f", audio {percent}%{flag}"
-            lines.append(line)
-            for text in s.transcripts or []:
-                lines.append(f"  › {text}")
+            percent, _ = audio_health(s.frames_received, s.frames_expected)
+            if percent >= DM_WARN_PERCENT:
+                continue
+            last = self._warned.get(user_id)
+            if (
+                last is None
+                or percent <= last[0] - WARN_AGAIN_DROP
+                or now - last[1] >= WARN_AGAIN_AFTER_S
+            ):
+                self._warned[user_id] = (percent, now)
+                gaps.append((name_of(user_id), percent))
         self._stats.clear()
-        return "\n".join(lines)
+        if not gaps:
+            return None
+        tail = (
+            "Some of their words may be missing from the transcript. If it keeps up, ask "
+            "them to check their internet or rejoin voice. DMbot only mentions it again "
+            "if it gets worse."
+        )
+        if len(gaps) == 1:
+            name, percent = gaps[0]
+            return f"⚠️ **{name}'s voice is cutting out for DMbot** ({percent}% got through). {tail}"
+        who = ", ".join(f"{name} {percent}%" for name, percent in gaps)
+        return f"⚠️ **Voices cutting out for DMbot:** {who}. {tail}"

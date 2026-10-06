@@ -4,7 +4,7 @@ TRANSCRIBER picks the engine:
 - ``whisper-local`` (default): faster-whisper on this machine's CPU or GPU. Free, private.
 - ``cloud``: any OpenAI-compatible speech-to-text API. Pay as you go; no GPU needed.
 - ``deepgram``: Deepgram Nova-3, with campaign names as keyterms (#170). Pay as you go.
-- ``none``: no transcription (capture checks only).
+- ``none``: no transcription (no text; only capture-check counts in the log).
 """
 
 from __future__ import annotations

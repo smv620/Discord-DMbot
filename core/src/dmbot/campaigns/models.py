@@ -51,6 +51,8 @@ class Campaign:
     # Number in front of the campaign's channel names if they'd clash with another
     # campaign's (1 = none); None until its first channel is made. See dmbot.dm_screen.names.
     channel_number: int | None = None
+    # The live transcript channel (#124); None until the first session.
+    transcript_channel_id: int | None = None
 
     @property
     def last_active_at(self) -> int:

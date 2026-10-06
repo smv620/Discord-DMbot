@@ -125,25 +125,26 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
      message.
    - Check that someone already sitting in voice **before** `/dmbot start` gets the message
      too, and that the phone notification preview starts with "Can DMbot record you…".
-   - Optional: a third person presses **No thanks**. They must never appear in capture
-     checks, and they're asked again next session.
+   - Optional: a third person presses **No thanks**. They must never appear in the
+     transcript channel or the core log's capture checks, and they're asked again next
+     session.
 5. **Read the test script, then talk for 1–2 minutes.** First read the matching script in
    [`docs/test-scripts/`](test-scripts/README.md) (DM only, or DM and players), so audio
    and speech-to-text can be judged against known words and pauses. Wait until its last
-   line shows up in a capture check, then talk freely: take turns, use a few long
+   line shows up in the transcript channel, then talk freely: take turns, use a few long
    sentences, and overlap once. Score the script as its README says.
-6. **Watch the DM screen.** Every 15 s:
-   ```
-   🎙️ Capture check
-   • Name — N × speech, X.X s, audio NN%
-   ```
-   **The terminals show the same picture** (IDs and numbers only, no names or words):
+6. **Watch the transcript channel** (`#dmb-transcript-<short name>`, next to the DM
+   screen, #124): what each person says appears a few seconds later as
+   `**Name:** text`, between "Session started" and "Session ended" dividers. The DM
+   screen stays quiet unless audio went missing ("⚠️ Some of what was said didn't reach
+   DMbot…").
+   **The terminals show the numbers** (IDs and numbers only, no names or words):
    core logs `Session started`, `Consent given: user …` and a `Capture check: …` line
    every 15 s while someone is talking (low audio shows as `(audio gaps)`); ears logs `joined voice channel …` and `capturing user …` the first time
    each person is heard.
 7. **Consent check:** the second person presses **Stop recording me** in DMbot's private
    message (or runs `/consent revoke`) and keeps talking. They
-   must **disappear** from the following capture checks. In the terminals: core logs
+   must **disappear** from the transcript channel and the following capture checks. In the terminals: core logs
    `Consent withdrawn: user …` and ears logs `not capturing user …: opted out`.
 8. **Run `/dmbot help` and press Status,** then `/dmbot stop`.
 
@@ -153,8 +154,8 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
 |---|---|---|
 | Both parts connected, bot online | Yes | Any startup error |
 | Join messages in the DM screen and voice chat | Both appear | Either missing |
-| Audio % per speaker | **95–100%** | Below 90% |
-| Every consenting speaker appears in capture checks | Yes | Someone missing |
+| Audio % per speaker (core log `Capture check` lines, or ears `audio …` lines) | **95–100%** | Below 90% |
+| Every consenting speaker appears in the transcript channel (or, with `TRANSCRIBER=none`, in the core log's capture checks) | Yes | Someone missing |
 | Revoked speaker disappears | Yes | Still listed after revoke |
 | No errors in either terminal during the session | None | Any traceback or error |
 
@@ -169,7 +170,7 @@ calling it.
    "Live test results" if none exists), including:
    - date, `development` commit SHA, OS, and Node and Python versions;
    - number of speakers and session length;
-   - audio % per speaker, from 2–3 capture checks;
+   - audio % per speaker, from the core log's capture checks or the ears `audio …` lines;
    - the Status output (from `/dmbot help`);
    - a pass or fail for each row of the table in step 5;
    - links to any issues filed.
@@ -193,7 +194,7 @@ Same as Test 1, with these changes:
 - **Claude:** `pip install -e ".[dev,whisper]"` in core before starting. The first start
   downloads the Whisper model (a few hundred MB), so expect a delay.
 - **Extra checks:**
-  - Capture checks show `› <transcribed text>` lines that roughly match what was said.
+  - The transcript channel shows `**Name:** text` lines that roughly match what was said.
   - Note how long text takes to appear after someone speaks.
   - Watch for "🐢 Transcription is falling behind" warnings.
   - Note CPU or GPU model and usage. This decides the cloud server size.

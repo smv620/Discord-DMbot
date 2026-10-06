@@ -21,7 +21,7 @@ from dmbot.sessions import SessionStore
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
 from tests.pg import DatabaseTest
 
-GUILD, VOICE, SCREEN, OTHER_TEXT = 1, 2, 3, 4
+GUILD, VOICE, SCREEN, OTHER_TEXT, TRANSCRIPT = 1, 2, 3, 4, 5
 DM, PLAYER = 7, 8
 CAN_POST = discord.Permissions(view_channel=True, send_messages=True, connect=True)
 
@@ -50,12 +50,20 @@ async def screen_from_invoking_channel(bot: DMBot, interaction: Any, campaign: A
     return int(interaction.channel_id)
 
 
+async def transcript_channel(*_: Any, **__: Any) -> Any:
+    """Stand-in for the real transcript-channel setup (tested in test_transcript_channel)."""
+    return SimpleNamespace(id=TRANSCRIPT)
+
+
 class SessionTests(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         hook = patch("dmbot.bot.ensure_dm_screen", screen_from_invoking_channel)
         hook.start()
         self.addCleanup(hook.stop)
+        transcript_hook = patch("dmbot.bot.setup_transcript_channel", transcript_channel)
+        transcript_hook.start()
+        self.addCleanup(transcript_hook.stop)
         self.consent = ConsentStore(self.db)
         self.campaigns = CampaignStore(self.db)
         self.sessions = SessionStore(self.db)
@@ -617,14 +625,14 @@ class SaveAndResume(SessionTests):
                 await self.bot.give_consent(GUILD, PLAYER, "private_message", outside_to=None)
         self.assertNotIn("Consent given", "\n".join(logs.output))
 
-    async def test_capture_check_is_logged_and_posted(self) -> None:
+    async def test_capture_check_is_logged_and_only_gaps_reach_the_dm(self) -> None:
         from dmbot.audio.segmenter import Utterance
 
         await self.start()
         posted = AsyncMock(return_value=True)
         self.bot.post = posted  # type: ignore[method-assign]
         table = self.bot.tables[GUILD]
-        table.capture_log.add_utterance(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)), None)
+        table.capture_log.add_utterance(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)))
         table.capture_log.add_health(PLAYER, 50, 50)
         with self.assertLogs("dmbot.bot", level="INFO") as logs:
             await self.bot.post_summary(table)
@@ -632,7 +640,131 @@ class SaveAndResume(SessionTests):
             f"Capture check: 1 speaker(s); user {PLAYER}: 1 x speech, 1.0 s, audio 100%",
             "\n".join(logs.output),
         )
+        posted.assert_not_awaited()  # all fine: nothing in the DM screen (#134)
+        table.capture_log.add_utterance(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)))
+        table.capture_log.add_health(PLAYER, 30, 50)
+        await self.bot.post_summary(table)
         posted.assert_awaited_once()
         call = posted.await_args
         assert call is not None
-        self.assertIn("Capture check", call.args[1])
+        self.assertEqual(call.args[0], SCREEN)
+        self.assertIn("voice is cutting out for DMbot", call.args[1])
+
+    # ---- the live transcript channel (#124) ------------------------------------
+
+    async def test_start_sets_up_the_transcript_channel(self) -> None:
+        ok, message = await self.start()
+        self.assertTrue(ok, message)
+        self.assertEqual(self.bot.tables[GUILD].transcript_channel_id, TRANSCRIPT)
+        self.assertIn(f"<#{TRANSCRIPT}>", message)
+
+    async def test_a_transcript_channel_problem_never_stops_the_session(self) -> None:
+        from dmbot.dm_screen.transcript_channel import TranscriptChannelError
+
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        failing = AsyncMock(side_effect=TranscriptChannelError("Discord said: full."))
+        with patch("dmbot.bot.setup_transcript_channel", failing):
+            ok, message = await self.start()
+        self.assertTrue(ok, message)
+        self.assertIn("No live transcript this time", message)
+        self.assertIsNone(self.bot.tables[GUILD].transcript_channel_id)
+        notes = [c.args[1] for c in posted.await_args_list if c.args[0] == SCREEN]
+        self.assertTrue(any("No live transcript this session" in n and "full" in n for n in notes))
+
+    async def joined_with_transcript(self) -> tuple[Any, list[str]]:
+        """A started, joined session whose transcript posts are collected."""
+        from dmbot.ears.protocol import Status
+
+        await self.start()
+        table = self.bot.tables[GUILD]
+        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        await self.bot._on_status(table, Status("joined", guild_id=GUILD))
+        sent: list[str] = []
+
+        async def fake_post(channel_id: int, text: str) -> str:
+            self.assertEqual(channel_id, TRANSCRIPT)
+            sent.append(text)
+            return "posted"
+
+        self.bot._post_transcript = fake_post  # type: ignore[method-assign]
+        return table, sent
+
+    def said(self, table: Any, text: str, user: int = PLAYER) -> None:
+        from dmbot.audio.segmenter import Utterance
+
+        utterance = Utterance(GUILD, user, 0, 0, bytes(32000), table.segmenter.session)
+        self.bot._deliver_transcript(utterance, text)
+
+    async def test_what_is_said_goes_to_the_transcript_channel_not_the_dm_screen(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table, sent = await self.joined_with_transcript()
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        self.said(table, "I cast Shield")
+        await self.bot.flush_transcript(table)
+        await self.bot.post_summary(table)
+        posted.assert_not_awaited()  # nothing for the DM screen
+        text = "\n".join(sent)
+        self.assertIn("Session started", text)
+        self.assertIn("I cast Shield", text)
+
+    async def test_someone_who_stops_loses_their_unposted_words(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table, sent = await self.joined_with_transcript()
+        self.said(table, "secret plan")
+        self.bot.stop_recording(GUILD, PLAYER)
+        await self.bot.flush_transcript(table)
+        self.assertNotIn("secret plan", "\n".join(sent))
+
+    async def test_speech_from_a_stopped_session_never_reaches_the_next(self) -> None:
+        from dmbot.audio.segmenter import Utterance
+
+        await self.consent.grant(GUILD, PLAYER)
+        table, sent = await self.joined_with_transcript()
+        old = Utterance(GUILD, PLAYER, 0, 0, bytes(32000), table.segmenter.session - 1)
+        self.bot._deliver_transcript(old, "from the last session")
+        await self.bot.flush_transcript(table)
+        self.assertNotIn("from the last session", "\n".join(sent))
+
+    async def test_a_failed_post_is_tried_again(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table, sent = await self.joined_with_transcript()
+        results = iter(["retry", "posted", "posted"])
+
+        async def flaky(channel_id: int, text: str) -> str:
+            result = next(results)
+            if result == "posted":
+                sent.append(text)
+            return result
+
+        self.bot._post_transcript = flaky  # type: ignore[method-assign]
+        self.said(table, "hello")
+        await self.bot.flush_transcript(table)
+        self.assertEqual(sent, [])
+        await self.bot.flush_transcript(table)
+        self.assertIn("hello", "\n".join(sent))
+
+    async def test_a_lost_channel_stops_the_transcript_and_tells_the_dm_once(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        gone = AsyncMock(return_value="gone")
+        self.bot._post_transcript = gone  # type: ignore[method-assign]
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        self.said(table, "hello")
+        await self.bot.flush_transcript(table)
+        self.said(table, "again")
+        await self.bot.flush_transcript(table)
+        self.assertIsNone(table.transcript_channel_id)
+        gone.assert_awaited_once()
+        posted.assert_awaited_once()
+        call = posted.await_args
+        assert call is not None
+        self.assertIn("live transcript stopped", call.args[1])
+
+    async def test_the_session_end_is_marked_in_the_transcript(self) -> None:
+        _, sent = await self.joined_with_transcript()
+        await self.bot.stop_table(GUILD, "test")  # answers at once; posts in the background
+        await asyncio.gather(*self.bot._asking)
+        self.assertIn("Session ended", sent[-1])

@@ -49,12 +49,14 @@ Stage directions:
    piece of speech). Ask: how many people (1 = DM only)?
 2. `/dmbot start`, and every reader presses **I consent** (or already has).
 3. Read the script once, start to finish.
-4. **Wait until the last line ("…Lonelywood and Caer-Dineval") shows up in a capture check**,
-   or until two checks in a row add nothing. Only then do free talk or `/dmbot stop`:
-   stopping drops lines that are still being written down.
-5. Copy **all** the capture checks since the start. Each check lists text by speaker, not in
-   the order it was read, and one reader's lines can be spread over several checks. (Text only
-   shows if speech-to-text is on, that is `TRANSCRIBER` isn't `none`.)
+4. **Wait until the last line ("…Lonelywood and Caer-Dineval") shows up in the transcript
+   channel** (`#dmb-transcript-<short name>`, #124), or until nothing new has appeared for
+   30 seconds. Only then do free talk or `/dmbot stop`: stopping drops lines that are still
+   being written down.
+5. Copy **everything** in the transcript channel between this session's "Session started"
+   and "Session ended" dividers. Lines are in the order each piece of speech finished being
+   written down, labelled `**Name:**`. (Text only shows if speech-to-text is on, that is
+   `TRANSCRIBER` isn't `none`.)
 
 ## Scoring
 
