@@ -428,7 +428,10 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
     campaign = await bot.campaigns.get(guild.id, campaign_id)
     # Only the campaign's DMs: a copy holds the secret names and notes, and a server
     # manager may be a player at the table (#229).
-    if campaign is None or interaction.user.id not in campaign.dm_user_ids:
+    if campaign is None:
+        await _tell(interaction, "That campaign isn't here any more.")
+        return
+    if interaction.user.id not in campaign.dm_user_ids:
         await _tell(interaction, logic.ONLY_DMS_BACKUP)
         return
     if not interaction.response.is_done():
@@ -438,7 +441,7 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
     file = discord.File(io.BytesIO(raw), filename=logic.backup_filename(campaign.name, _now()))
     await interaction.followup.send(
         f"💾 Here's a copy of **{campaign.name}**. Keep it somewhere safe, and don't share it "
-        "publicly: it holds the campaign's private notes.\n"
+        "publicly: it holds the campaign's secret notes.\n"
         "Use `/dmbot restore` to bring it back, here or in another server.",
         file=file,
         ephemeral=True,
@@ -646,8 +649,8 @@ async def dmbot_backup(interaction: discord.Interaction) -> None:
     if not mine:
         await _tell(
             interaction,
-            "You're not the DM of any campaign here, and only a campaign's DM can download "
-            "a copy (it holds their secret notes). Use `/dmbot start` to set one up.",
+            "Only a campaign's DM can download a copy, and you're not the DM of any campaign "
+            "here. Ask the DM, or use `/dmbot start` to set up your own.",
         )
     elif len(mine) == 1:
         await send_backup(interaction, mine[0].id)

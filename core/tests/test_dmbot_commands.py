@@ -121,7 +121,17 @@ class CommandTests(DatabaseTest):
         it.user.guild_permissions = discord.Permissions(manage_guild=True)
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         self.assertIn("not the DM of any campaign", it.response.sent[0][0])
+        it.followup.send.assert_not_called()
         it = fake_interaction(self.bot)
         it.user.guild_permissions = discord.Permissions(manage_guild=True)
         await cmds.send_backup(it, theirs.id)  # a pressed button is checked again
         self.assertIn("Only this campaign's DM can download a copy", it.response.sent[0][0])
+        it.followup.send.assert_not_called()
+
+    async def test_the_dm_gets_the_file(self) -> None:
+        await self.campaigns.create(GUILD, "Mine", DM)
+        it = fake_interaction(self.bot)
+        it.user.guild_permissions = discord.Permissions(manage_guild=True)  # both: still fine
+        await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
+        sent = it.followup.send.call_args.kwargs["file"]
+        self.assertTrue(sent.filename.endswith(".dmbot.json"))
