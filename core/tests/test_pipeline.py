@@ -398,7 +398,7 @@ class ClipBudgetTests(unittest.IsolatedAsyncioTestCase):
     async def test_name_lookup_error_does_not_stop_transcribing(self) -> None:
         calls = [0]
 
-        async def flaky_hints(guild_id: int) -> list[str]:
+        async def flaky_hints(utterance: Utterance) -> list[str]:
             calls[0] += 1
             if calls[0] == 1:
                 raise ConnectionError("database unavailable")
