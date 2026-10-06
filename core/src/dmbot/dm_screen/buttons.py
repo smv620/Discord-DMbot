@@ -314,3 +314,60 @@ def card_view(campaign: Campaign) -> discord.ui.View:
     if campaign.dm_screen_visibility == "peek":
         view.add_item(HideButton(campaign.id))
     return view
+
+
+class StopListeningButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:stop:{_ID}",
+):
+    """On the DM screen's "Listening" message (#108): the DM stops the session with one
+    press, like `/dmbot stop`. Only this campaign's DMs or a server manager; players are
+    told how to stop recording themselves instead. Works after a restart."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=messages.STOP_LISTENING_LABEL,
+                emoji="⏹",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"dmbot:stop:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> StopListeningButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        guild = interaction.guild
+        bot: Any = interaction.client
+        member = interaction.user
+        if guild is None or not hasattr(bot, "stop_session"):
+            await interaction.response.send_message(messages.CAMPAIGN_GONE, ephemeral=True)
+            return
+        if bot.active_campaign_id(guild.id) != self.campaign_id:  # checked again below
+            # An old message: this campaign isn't the one being listened to now.
+            await interaction.response.send_message(messages.NOT_LISTENING_NOW, ephemeral=True)
+            with contextlib.suppress(discord.HTTPException):
+                if interaction.message is not None:
+                    await interaction.message.edit(view=None)
+            return
+        manager = isinstance(member, discord.Member) and member.guild_permissions.manage_guild
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            reply: str = await bot.stop_session(
+                guild.id, member.id, manager, campaign_id=self.campaign_id
+            )
+        except Exception:
+            log.exception("Stop listening failed")
+            reply = messages.STOP_FAILED
+        await interaction.followup.send(reply, ephemeral=True, allowed_mentions=NO_PINGS)
+
+
+def stop_listening_view(campaign_id: str) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(StopListeningButton(campaign_id))
+    return view

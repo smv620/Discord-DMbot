@@ -49,6 +49,11 @@ HIDE_NOT_PEEKING = "You weren't peeking, so there's nothing to hide."
 HIDE_IS_DM = "You're a DM of this campaign, so the DM screen stays visible to you."
 HIDE_OPEN = "The DM screen is open to everyone, so it can't be hidden just for you."
 PLAYER_FAILED = "Sorry, DMbot couldn't change the DM screen for you. Let your DM know."
+STOP_LISTENING_LABEL = "Stop listening"
+NOT_LISTENING_NOW = (
+    "DMbot isn't listening to this campaign right now. To start, run `/dmbot start`."
+)
+STOP_FAILED = "Something went wrong stopping DMbot. Try `/dmbot stop`."
 NOT_THE_DM = "Only this campaign's DM (or a server manager) can change who can see the DM screen."
 SOMETHING_WENT_WRONG = "Sorry, something went wrong changing the DM screen. Please try again."
 
@@ -103,7 +108,8 @@ def help_card(campaign_name: str, visibility: str) -> str:
         "DMbot writes notes for the DM here. It never makes rulings or story. "
         "The DM decides everything.",
         f"**Who can see this:** {WHO_CAN_SEE[visibility]}",
-        "**To start listening:** run `/dmbot start`.",
+        "**To start:** `/dmbot start`. **To stop:** `/dmbot stop`, or ⏹ **Stop listening** "
+        "on the newest ✅ Listening message.",
     ]
     if visibility != "open":
         lines.append("Server owners and admins can always see every channel.")
@@ -310,3 +316,49 @@ def summary_problems(missed: int, failed: int, caught_up: bool) -> list[str]:
             "for them, then gave up."
         )
     return problems
+
+
+# ---- who is being recorded (#107) -------------------------------------------------------
+
+
+def _names(names: list[str]) -> str:
+    shown = [_who(n) for n in names]
+    return ", ".join(shown[:-1]) + f" and {shown[-1]}" if len(shown) > 1 else shown[0]
+
+
+def listening_message(
+    voice_channel_id: int, campaign_name: str, recorded: list[str], waiting: list[str]
+) -> str:
+    """The DM screen's "listening" message: who in the voice channel is recorded now.
+    `recorded`: people there who said yes; `waiting`: people there who haven't (DMbot is
+    asking them privately). A line follows for each answer and each join."""
+    campaign = f" for **{discord.utils.escape_markdown(campaign_name)}**" if campaign_name else ""
+    lines = [f"✅ Listening in <#{voice_channel_id}>{campaign}."]
+    if recorded:
+        lines.append(f"🎙 Recording: {_names(recorded)}.")
+    if waiting:
+        lines.append(
+            f"✉️ Not recorded yet: {_names(waiting)}. DMbot is asking privately; each answer "
+            "shows up here."
+        )
+    if not recorded and not waiting:
+        lines.append(
+            "Nobody is in the voice channel yet. DMbot asks each person privately as they join."
+        )
+    return "\n".join(lines)
+
+
+def agreed_message(name: str) -> str:
+    return f"🎙 **{_who(name)}** said yes: DMbot is recording them now."
+
+
+def stopped_message(name: str) -> str:
+    return f"🛑 **{_who(name)}** said stop. DMbot no longer records them."
+
+
+def joined_recorded_message(name: str) -> str:
+    return f"🎙 **{_who(name)}** joined and is recorded (they said yes before)."
+
+
+def joined_not_recorded_message(name: str) -> str:
+    return f"✉️ **{_who(name)}** joined. Not recorded unless they say yes."
