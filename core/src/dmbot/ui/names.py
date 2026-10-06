@@ -117,7 +117,8 @@ def sees_secrets(campaign: Campaign, interaction: discord.Interaction) -> bool:
     """Secret names are for the campaign's DMs only, and only in its DM screen channel.
     A server manager who isn't one of its DMs may be at the table, and a reply in a
     shared channel is easy to see over a shoulder or on a shared screen (replies are
-    private either way). Elsewhere none is shown, searched or added; a general line says where they are."""
+    private either way). Elsewhere none is shown, searched or added; a general line
+    says where they are."""
     return interaction.user.id in campaign.dm_user_ids and in_dm_screen(campaign, interaction)
 
 
