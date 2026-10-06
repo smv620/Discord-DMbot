@@ -11,6 +11,11 @@ Revoking must never be undone by a race or a database failure:
 - A revoked player is held back from every reload until the revoke is saved (or they
   give consent again), so a failed save can't quietly bring them back. A grant that was
   already running when the stop came doesn't count as giving consent again.
+
+Each consent records the wording it was given under (`TERMS_VERSION`) and how (#35).
+Only consent under the current wording counts: when what DMbot does with recordings
+changes, the version goes up, and everyone who agreed before is asked again. Until they
+say yes again they are not recorded.
 """
 
 from __future__ import annotations
@@ -18,8 +23,29 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Literal
 
 from dmbot.db import Conn, Database
+
+# Bump whenever the consent request's wording changes what people agree to
+# (consent_dm.request_text; a test pins that wording to this number), and rewrite
+# consent_dm.RENEWED to say what changed. Version 2: anyone in the server can read and
+# download the transcript (#124, #125, #132). Every yes saved before versions were
+# recorded counts as version 1, even the few given under the version-2 wording on the
+# test server: we can't tell them apart, so asking again is the safe choice.
+TERMS_VERSION = 2
+# How someone said yes: the button in DMbot's private message, or in the reply to
+# /consent give in the server.
+ConsentMethod = Literal["private_message", "consent_command"]
+PRIVATE_MESSAGE: ConsentMethod = "private_message"
+CONSENT_COMMAND: ConsentMethod = "consent_command"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsentStatus:
+    granted: dict[int, int]  # user → when they said yes under the current wording
+    outdated: set[int]  # said yes only under older wording: ask again
 
 
 class ConsentStore:
@@ -33,15 +59,21 @@ class ConsentStore:
         # stop arrived can't undo that stop.
         self._stops: dict[tuple[int, int], int] = {}
 
-    async def grant(self, guild_id: int, user_id: int) -> frozenset[int]:
+    async def grant(
+        self, guild_id: int, user_id: int, *, method: ConsentMethod = PRIVATE_MESSAGE
+    ) -> frozenset[int]:
+        """Save consent under the current wording. `method`: how they said yes."""
+        if method not in (PRIVATE_MESSAGE, CONSENT_COMMAND):
+            raise ValueError(f"Unknown consent method: {method!r}")
         stops_before = self._stops.get((guild_id, user_id), 0)
         async with self._lock(guild_id):
             async with self._db.guild(guild_id) as conn:
                 await conn.execute(
-                    "INSERT INTO consent (guild_id, user_id, granted_at) VALUES (%s, %s, %s)"
-                    " ON CONFLICT (guild_id, user_id)"
-                    " DO UPDATE SET granted_at = EXCLUDED.granted_at",
-                    (guild_id, user_id, int(time.time())),
+                    "INSERT INTO consent (guild_id, user_id, granted_at, terms_version, method)"
+                    " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (guild_id, user_id)"
+                    " DO UPDATE SET granted_at = EXCLUDED.granted_at,"
+                    " terms_version = EXCLUDED.terms_version, method = EXCLUDED.method",
+                    (guild_id, user_id, int(time.time()), TERMS_VERSION, method),
                 )
                 users = await _select(conn, guild_id)
             if self._stops.get((guild_id, user_id), 0) == stops_before:
@@ -84,21 +116,41 @@ class ConsentStore:
                     self._store(guild_id, users)
         return self._cache[guild_id]
 
-    async def granted_times(self, guild_id: int, user_ids: Iterable[int]) -> dict[int, int]:
-        """When each of these players consented here (Unix seconds); absent if they haven't.
+    async def status(self, guild_id: int, user_ids: Iterable[int]) -> ConsentStatus:
+        """For these players, in one query: when each said yes under the current wording,
+        and who said yes only under older wording (they're asked again, with a note).
 
-        One query for a whole table. Players whose revoke isn't saved yet are absent.
+        Players whose revoke isn't saved yet count as neither. A row with a *newer*
+        version (only after rolling DMbot back) also counts as neither: they're simply
+        asked again.
         """
-        ids = [u for u in set(user_ids) if u not in self._held_back.get(guild_id, set())]
+        held = self._held_back.get(guild_id, set())
+        ids = [u for u in set(user_ids) if u not in held]
         if not ids:
-            return {}
+            return ConsentStatus({}, set())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT user_id, granted_at FROM consent WHERE guild_id = %s AND user_id = ANY(%s)",
+                "SELECT user_id, granted_at, terms_version FROM consent"
+                " WHERE guild_id = %s AND user_id = ANY(%s)",
                 (guild_id, ids),
             )
             rows = await cur.fetchall()
-        return {int(r["user_id"]): int(r["granted_at"]) for r in rows}
+        granted = {
+            int(r["user_id"]): int(r["granted_at"])
+            for r in rows
+            if r["terms_version"] == TERMS_VERSION
+        }
+        outdated = {int(r["user_id"]) for r in rows if r["terms_version"] < TERMS_VERSION}
+        return ConsentStatus(granted, outdated)
+
+    async def granted_times(self, guild_id: int, user_ids: Iterable[int]) -> dict[int, int]:
+        """When each of these players said yes here under the current wording (Unix
+        seconds); absent if they haven't. Players whose revoke isn't saved are absent."""
+        return (await self.status(guild_id, user_ids)).granted
+
+    async def outdated(self, guild_id: int, user_ids: Iterable[int]) -> set[int]:
+        """Which of these players said yes only under older wording."""
+        return (await self.status(guild_id, user_ids)).outdated
 
     async def granted_at(self, guild_id: int, user_id: int) -> int | None:
         """When this player consented here (Unix seconds), or None if they haven't."""
@@ -118,5 +170,8 @@ class ConsentStore:
 
 
 async def _select(conn: Conn, guild_id: int) -> frozenset[int]:
-    cur = await conn.execute("SELECT user_id FROM consent WHERE guild_id = %s", (guild_id,))
+    cur = await conn.execute(
+        "SELECT user_id FROM consent WHERE guild_id = %s AND terms_version = %s",
+        (guild_id, TERMS_VERSION),
+    )
     return frozenset(int(r["user_id"]) for r in await cur.fetchall())

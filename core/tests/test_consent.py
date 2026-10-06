@@ -1,7 +1,7 @@
 import asyncio
 from unittest import mock
 
-from dmbot.consent import ConsentStore
+from dmbot.consent import TERMS_VERSION, ConsentStore
 from tests.pg import DatabaseTest
 
 
@@ -103,3 +103,46 @@ class ConsentTests(DatabaseTest):
         # Giving consent again is a clear choice and lifts the hold.
         await self.store.grant(1, 2)
         self.assertTrue(self.store.has_consent(1, 2))
+
+
+class TermsVersionTests(DatabaseTest):
+    """#35: only a yes under the current wording counts."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.store = ConsentStore(self.db)
+
+    async def test_a_yes_under_older_wording_does_not_count(self) -> None:
+        await self.store.grant(1, 2)
+        await self.store.grant(1, 3)
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE user_id = 2", (TERMS_VERSION - 1,)
+            )
+        fresh = ConsentStore(self.db)
+        self.assertEqual(await fresh.consenting(1), frozenset({3}))
+        self.assertEqual(set(await fresh.granted_times(1, [2, 3])), {3})
+        self.assertEqual(await fresh.outdated(1, [2, 3, 4]), {2})
+        await fresh.grant(1, 2, method="consent_command")  # asked again, said yes
+        self.assertEqual(await fresh.consenting(1), frozenset({2, 3}))
+        self.assertEqual(await fresh.outdated(1, [2]), set())
+
+    async def test_stopping_removes_an_older_yes_too(self) -> None:
+        await self.store.grant(1, 2)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE consent SET terms_version = 1 WHERE user_id = 2")
+        fresh = ConsentStore(self.db)
+        self.assertTrue(await fresh.revoke(1, 2))  # it was recorded under the old wording
+        self.assertEqual(await fresh.outdated(1, [2]), set())
+
+    async def test_a_held_back_stop_is_never_asked_as_a_renewal(self) -> None:
+        await self.store.grant(1, 2)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE consent SET terms_version = 1 WHERE user_id = 2")
+        fresh = ConsentStore(self.db)
+        fresh.stop_now(1, 2)  # pressed Stop; the save hasn't happened
+        self.assertEqual(await fresh.outdated(1, [2]), set())
+
+    async def test_unknown_method_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            await self.store.grant(1, 2, method="typed")  # type: ignore[arg-type]

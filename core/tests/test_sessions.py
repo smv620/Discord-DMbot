@@ -603,7 +603,7 @@ class SaveAndResume(SessionTests):
 
     async def test_consent_is_logged_by_id(self) -> None:
         with self.assertLogs("dmbot.bot", level="INFO") as logs:
-            await self.bot.give_consent(GUILD, PLAYER)
+            await self.bot.give_consent(GUILD, PLAYER, "private_message")
             await self.bot.withdraw_consent(GUILD, PLAYER)
         text = "\n".join(logs.output)
         self.assertIn(f"Consent given: user {PLAYER}", text)
@@ -614,7 +614,7 @@ class SaveAndResume(SessionTests):
         with self.assertLogs("dmbot.bot", level="INFO") as logs:
             logging.getLogger("dmbot.bot").info("start")  # assertLogs needs a line
             with self.assertRaises(RuntimeError):
-                await self.bot.give_consent(GUILD, PLAYER)
+                await self.bot.give_consent(GUILD, PLAYER, "private_message")
         self.assertNotIn("Consent given", "\n".join(logs.output))
 
     async def test_capture_check_is_logged_and_posted(self) -> None:
