@@ -264,8 +264,8 @@ class TranscriptionPipeline:
             else:
                 text = (
                     "⚠️ **Writing things down stopped working.** DMbot still hears everyone "
-                    "who said yes, but no words are being written down. Whoever hosts DMbot should check "
-                    "its log. DMbot keeps trying."
+                    "who said yes, but no words are being written down. Whoever hosts "
+                    "DMbot should check its log. DMbot keeps trying."
                 )
             await self._alert(guild_id, text)
 
