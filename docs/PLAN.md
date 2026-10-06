@@ -544,7 +544,39 @@ Code changes: #87.
 - The 15-second capture checks now go only to the core log. The DM screen gets
   "⚠️ Mia's voice is cutting out for DMbot (82% got through)…" below 90%, once per
   person, again only if it gets 10 points worse or after 10 minutes (#134).
-- The card doesn't mention `/transcript` until downloads exist (#125).
+- The card mentions `/transcript` now that downloads exist (#125).
+
+**Stored transcripts and downloads: built (2026-10-06, #41, #125).** Decided while
+building:
+- Each session has a row (kept after a restart: same campaign and start time) and each
+  piece of speech from someone who agreed is a line, with `heard` (never changed) and
+  `text` (cleaned; NULL while it's the same, which is always until the Cleaner). Lines
+  are saved in batches every 5 seconds, and the session's row keeps its line count and
+  speakers, so listing sessions never reads lines. Consent is checked when a batch is
+  taken and again after it's saved (lines of someone who pressed Stop mid-save are
+  taken back out); pressing Stop also drops that person's unsaved lines. If saving
+  can't start, DMbot keeps the lines and keeps trying, and tells the DM once.
+  Speaker names aren't stored: a download uses display names at that moment ("Someone"
+  if DMbot can't find the person). Transcripts are deleted with their campaign and
+  aren't part of campaign backups (yet).
+- Sessions are named by number in their campaign ("Session 7 · 2 h 14 min · Oct 6
+  (UTC)"): DMbot has no time zone setting, and a UTC date alone can look like the wrong
+  day to an evening table. The menu's prompt shows the newest session's start in each
+  person's own time (a Discord timestamp).
+- `/transcript` (anyone in the server): pick the campaign, then a session (newest 25
+  with something said), and get a private `.txt` file
+  (`frostmaiden-session-7-as-heard.txt`): a short header, then `0:42:10 Mia: …` per
+  line. The file says it's what DMbot wrote down, with no fixes, and that some words
+  may be misheard. While DMbot is still recording that session it warns first
+  ([Download anyway] [Cancel]), in different words for the DM and players. Replies
+  are deferred first, since building a file can take more than Discord's 3 seconds.
+- When a session ends, the DM(s) and everyone recorded get a private message with one
+  **[🎙 Download transcript]** button, which works after a restart and only for people
+  still in the server. People with private messages off use `/transcript`.
+- Until the Cleaner, there's only the "as heard" version. If saving fails at the start,
+  the DM screen says there'll be no download for this session.
+- Still to come: "Delete my past transcripts", retention, cleaned and both downloads
+  (Phase 2b), and the `{entity}` labels (#53).
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
 participants are stored. Each line is kept in two versions: **as heard** (exactly what
