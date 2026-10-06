@@ -775,24 +775,10 @@ class SaveAndResume(SessionTests):
 
     async def test_speech_still_being_written_down_at_stop_is_kept(self) -> None:
         # #109: the last words used to vanish when the DM pressed stop.
-        from dmbot.audio.segmenter import Utterance
-
         await self.consent.grant(GUILD, PLAYER)
         table, sent = await self.joined_with_transcript()
-        release = asyncio.Event()
-
-        async def slow(utterance: Any, hints: list[str]) -> str:
-            await release.wait()
-            return "Last words before we stop."
-
-        self.bot.pipeline.transcriber.transcribe = slow  # type: ignore[method-assign]
-        worker = asyncio.create_task(self.bot.pipeline.run())
-        self.addCleanup(worker.cancel)
-        await asyncio.sleep(0)
-        start_ms = table.started_at * 1000 + 5000
-        self.bot.pipeline.enqueue(
-            Utterance(GUILD, PLAYER, start_ms, start_ms, bytes(32000), table.segmenter.session)
-        )
+        release = await self.slow_worker("Last words before we stop.")
+        self.queue_speech(table)
         await self.bot.stop_table(GUILD, "test")
         release.set()
         await asyncio.gather(*self.bot._finishing)
@@ -815,6 +801,8 @@ class SaveAndResume(SessionTests):
             return text.format(session=utterance.session)
 
         self.bot.pipeline.transcriber.transcribe = slow  # type: ignore[method-assign]
+        # Names show as mentions (SaveAndResume's fake server returns mock members).
+        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign]
         worker = asyncio.create_task(self.bot.pipeline.run())
         self.addCleanup(worker.cancel)
         await asyncio.sleep(0)
@@ -822,8 +810,9 @@ class SaveAndResume(SessionTests):
 
     def queue_speech(self, table: Any) -> None:
         from dmbot.audio.segmenter import Utterance
+        from dmbot.bot import _now_ms
 
-        start_ms = table.started_at * 1000 + 5000
+        start_ms = _now_ms() - 1000  # said just before the stop
         self.bot.pipeline.enqueue(
             Utterance(GUILD, PLAYER, start_ms, start_ms, bytes(32000), table.segmenter.session)
         )
