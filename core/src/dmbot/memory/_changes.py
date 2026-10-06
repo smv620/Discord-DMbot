@@ -43,7 +43,17 @@ PREDICATES = Table(
 ENTITIES = Table(
     "memory_entities",
     "id",
-    ("id", "type", "name", "description", "status", "merged_into", "source", "created_at"),
+    (
+        "id",
+        "type",
+        "name",
+        "description",
+        "status",
+        "merged_into",
+        "source",
+        "created_at",
+        "played_by",
+    ),
 )
 ALIASES = Table(
     "memory_aliases",

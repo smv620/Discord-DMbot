@@ -15,7 +15,7 @@ Only the DM's word confirms anything (`source="dm"`); other sources propose.
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -91,7 +91,7 @@ _LIVE_ENTITY_IDS = (
 def _entity(r: dict[str, Any]) -> Entity:
     return Entity(
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
-        r["source"], r["created_at"],
+        r["source"], r["created_at"], r["played_by"],
     )  # fmt: skip
 
 
@@ -243,6 +243,12 @@ class MemoryStore:
                 raise MemoryRuleError(NOT_HERE)
             yield Scope(conn, guild_id, campaign_id, int(row["memory_version"]))
 
+    def listen(
+        self, channel: str, on_listening: Callable[[], None] | None = None
+    ) -> AsyncGenerator[str, None]:
+        """Change notifications (for `LookupCache.follow`): see `Database.listen`."""
+        return self._db.listen(channel, on_listening)
+
     # ---- reads -------------------------------------------------------------------------
 
     async def version(self, guild_id: int, campaign_id: str) -> int:
@@ -388,15 +394,22 @@ class MemoryStore:
         source: str,
         status: str = PROPOSED,
         description: str = "",
+        played_by: int | None = None,
     ) -> Written[Entity]:
-        """A new person, place or thing, with its name as the first alias."""
+        """A new person, place or thing, with its name as the first alias. `played_by`:
+        the Discord user playing a player character."""
         _check_choice(status, LIVE, "entity status")
         check_status_change(None, status, source)
         name = clean_text(name)
         if len(description) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
+        if played_by is not None and not 0 < played_by <= INT64_MAX:
+            raise ValueError("Bad Discord user ID")
         async with self._write(guild_id, campaign_id, source) as w:
-            (await _load_ontology(w)).active_type(type)
+            onto = await _load_ontology(w)
+            onto.active_type(type)
+            if played_by is not None and not onto.is_a(type, "player_character"):
+                raise MemoryRuleError("Only a player character is played by someone.")
             row = await w.insert(
                 ENTITIES,
                 {
@@ -408,10 +421,70 @@ class MemoryStore:
                     "merged_into": None,
                     "source": source,
                     "created_at": w.now,
+                    "played_by": played_by,
                 },
             )
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
             return Written(_entity(row), w.batch)
+
+    async def set_entity_type(
+        self, guild_id: int, campaign_id: str, entity_id: str, type: str, *, source: str
+    ) -> Written[Entity]:
+        """What kind of thing it is (an NPC, a place…): the DM's call."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say what something is.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            (await _load_ontology(w)).active_type(type)
+            current = await _entity_row(w, entity_id)
+            changes: dict[str, Any] = {"type": type}
+            if current["played_by"] is not None and not onto_is_pc(await _load_ontology(w), type):
+                changes["played_by"] = None
+            row = await w.update(ENTITIES, entity_id, changes)
+            return Written(_entity(row), w.batch)
+
+    async def confirm_entity(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        type: str,
+        *,
+        source: str,
+        played_by: int | None = None,
+    ) -> Written[Entity]:
+        """The DM says a suggested name is real: what it is, confirmed with all its
+        names, in one change (one undo, one reload)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can confirm that.")
+        if played_by is not None and not 0 < played_by <= INT64_MAX:
+            raise ValueError("Bad Discord user ID")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            onto.active_type(type)
+            if played_by is not None and not onto.is_a(type, "player_character"):
+                raise MemoryRuleError("Only a player character is played by someone.")
+            await _entity_row(w, entity_id)
+            row = await w.update(
+                ENTITIES, entity_id, {"type": type, "status": CONFIRMED, "played_by": played_by}
+            )
+            for alias in await w.select(
+                ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
+            ):
+                await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
+            return Written(_entity(row), w.batch)
+
+    async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
+        """Every name and word DMbot already has an answer for in this campaign, whatever
+        the answer: names (rejected ones too, so "Not a name" sticks) and "keep as heard"
+        and "change to" rules. The after-session scan never suggests these again."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT key FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
+                " UNION SELECT heard_key FROM memory_corrections"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (*scope.ids, *scope.ids),
+            )
+            return {str(r["key"]) for r in await cur.fetchall()}
 
     async def set_entity_status(
         self, guild_id: int, campaign_id: str, entity_id: str, status: str, *, source: str
@@ -818,6 +891,10 @@ class MemoryStore:
 
 
 # ---- helpers (inside a write) ----------------------------------------------------------
+
+
+def onto_is_pc(onto: Ontology, type_key: str) -> bool:
+    return onto.is_a(type_key, "player_character")
 
 
 def _new_alias(

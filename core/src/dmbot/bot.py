@@ -80,6 +80,10 @@ from dmbot.ears.protocol import (
 from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
 from dmbot.memory.backup import MemorySection
+from dmbot.memory.lookup import LookupCache
+from dmbot.memory.models import MemoryRuleError, name_key
+from dmbot.memory.scan import find_new_names
+from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.stream import TranscriptStream
@@ -88,6 +92,7 @@ from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline
 from dmbot.ui import logic as ui_logic
 from dmbot.ui.dmbot_commands import dmbot_group
+from dmbot.ui.names import ReviewButton, after_session_text, review_view
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +100,9 @@ SUMMARY_INTERVAL_S = 15
 # Lines for the transcript channel are grouped and posted this often (#124): well inside
 # Discord's 5 messages per 5 seconds per channel, and still feels live.
 TRANSCRIPT_FLUSH_S = 2.0
+HEARD_MAX = 20_000  # lines kept for the after-session name scan
+HINTS_MAX = 100  # names offered to speech-to-text (engines cut this down further)
+HINTS_FAIL_LOG_S = 60.0
 TRANSCRIPT_POST_TIMEOUT_S = 10.0  # one stuck post can't hold the others up for long
 TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel can't stall all)
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
@@ -193,6 +201,9 @@ class Table:
     transcript_channel_id: int | None = None
     transcript: TranscriptStream = field(default_factory=TranscriptStream)
     transcript_lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # keeps order
+    # What was heard this session (speaker, text as heard), for the after-session scan
+    # that suggests new names to the DM (#126). Kept in memory only, capped.
+    heard: list[tuple[int, str]] = field(default_factory=list)
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
@@ -220,6 +231,7 @@ class DMBot(commands.AutoShardedBot):
         campaigns: CampaignStore,
         sessions: SessionStore,
         transcriber: Transcriber | None = None,
+        memory: MemoryStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -239,6 +251,11 @@ class DMBot(commands.AutoShardedBot):
         self.consent = consent
         self.campaigns = campaigns
         self.sessions = sessions
+        # Campaign memory (#126): names the DM gives, suggestions after each session, and
+        # an in-memory copy of each campaign's names, kept up to date by notifications.
+        self.memory = memory
+        self.lookup = LookupCache(memory) if memory is not None else None
+        self._hints_failed_at = -HINTS_FAIL_LOG_S
         self.tables: dict[int, Table] = {}
         self.pipeline = TranscriptionPipeline(
             transcriber or PlaceholderTranscriber(),
@@ -282,6 +299,8 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton)
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
+        # "Check new names" on the DM screen after a session.
+        self.add_dynamic_items(ReviewButton)
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -295,6 +314,11 @@ class DMBot(commands.AutoShardedBot):
             asyncio.create_task(self.pipeline.run(), name="transcribe"),
             asyncio.create_task(self._idle_sweeper(), name="idle-sweep"),
             asyncio.create_task(self._summary_poster(), name="summaries"),
+            *(
+                [asyncio.create_task(self.lookup.follow(self.memory.listen), name="names")]
+                if self.lookup is not None and self.memory is not None
+                else []
+            ),
             asyncio.create_task(self._transcript_poster(), name="transcripts"),
         ]
 
@@ -369,6 +393,7 @@ class DMBot(commands.AutoShardedBot):
         if table is not None:
             table.segmenter.drop(user_id)
             table.transcript.drop_speaker(user_id)  # words not posted yet are discarded
+            table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
 
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
@@ -533,6 +558,7 @@ class DMBot(commands.AutoShardedBot):
                 asyncio.wait_for(self.flush_transcript(table), FINAL_FLUSH_TIMEOUT_S),
                 "final-transcript",
             )
+        self._track(self.suggest_names(table), "name-scan")
         return table
 
     # ---- sessions (used by /dmbot start · stop · help) ---------------------
@@ -1160,6 +1186,10 @@ class DMBot(commands.AutoShardedBot):
         if table is None or utterance.session != table.segmenter.session:
             return
         table.capture_log.add_utterance(utterance)
+        if text and len(table.heard) < HEARD_MAX:
+            table.heard.append((utterance.user_id, text))
+            if len(table.heard) == HEARD_MAX:
+                log.info("Name scan: kept the first %d lines of this session", HEARD_MAX)
         if text and table.transcript_channel_id is not None:
             guild = self.get_guild(utterance.guild_id)
             member = guild.get_member(utterance.user_id) if guild else None
@@ -1174,15 +1204,98 @@ class DMBot(commands.AutoShardedBot):
             await self.post(table.screen_channel_id, message)
 
     async def _name_hints(self, guild_id: int) -> list[str]:
-        """Names Whisper should expect. Phase 1: players' display names.
-
-        Later phases add character, NPC, and place names.
-        """
+        """Names speech-to-text should expect, most useful first (engines keep as many as
+        they can, from the front): players' characters, then the names the DM confirmed,
+        then names DMbot suggested, then the players' display names. Never secret names:
+        an outside service mustn't be nudged towards a hidden identity."""
         users = await self.consent.consenting(guild_id)
         names = (self.name_of(guild_id, uid) for uid in users)
         # A member DMbot can't look up comes back as "<@id>": no use as a hint, and an
         # outside service shouldn't get IDs.
-        return [name for name in names if not name.startswith("<@")]
+        people = [name for name in names if not name.startswith("<@")]
+        table = self.tables.get(guild_id)
+        if self.lookup is None or table is None or table.campaign_id is None:
+            return people
+        try:
+            lookup = await self.lookup.get(guild_id, table.campaign_id)
+        except Exception:
+            # Asked for every connection to speech-to-text: say so at most once a minute.
+            now = time.monotonic()
+            if now - self._hints_failed_at > HINTS_FAIL_LOG_S:
+                self._hints_failed_at = now
+                log.exception("Couldn't load the campaign's names for hints")
+            return people
+        characters: list[str] = []
+        confirmed: list[str] = []
+        suggested: list[str] = []
+        for entry in lookup.names:
+            if entry.secret:
+                continue
+            entity = lookup.entities.get(entry.entity_id)
+            if entity is not None and entity.type == "player_character":
+                characters.append(entry.text)
+            elif entry.confirmed:
+                confirmed.append(entry.text)
+            else:
+                suggested.append(entry.text)
+        # People before suggestions: a guess shouldn't push out a real name. One hint per
+        # name however it's capitalized.
+        ordered: dict[str, str] = {}
+        for name in [*characters, *confirmed, *people, *suggested]:
+            ordered.setdefault(name_key(name), name)
+        return list(ordered.values())[:HINTS_MAX]
+
+    async def suggest_names(self, table: Table) -> None:
+        """After a session: suggest names DMbot heard but doesn't know, for the DM to
+        check. Only lines from people who still agree; never anything DMbot already has
+        an answer for (including names the DM said aren't names)."""
+        if self.memory is None or table.campaign_id is None or not table.heard:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            lines = [text for uid, text in table.heard if uid in agreed]
+            speakers = {uid for uid, _ in table.heard}
+            table.heard = []  # the session is over; free it
+            if not lines:
+                return
+            # People at the table aren't story names: skip their whole display names and
+            # each word of them ("Mia Stone" → "Mia", "Stone").
+            users = speakers | agreed | {table.dm_user_id}
+            users |= table.dm_user_ids
+            skip = set(await self.memory.known_keys(gid, cid))
+            for uid in users:
+                name = self.name_of(gid, uid)
+                if not name.startswith("<@"):
+                    skip.add(name_key(name))
+                    skip.update(name_key(word) for word in name.split())
+            found = find_new_names(lines, skip)
+            added: list[str] = []
+            for suggestion in found:
+                try:
+                    await self.memory.add_entity(
+                        gid,
+                        cid,
+                        type="concept",
+                        name=suggestion.name,
+                        source="scan",
+                        description=f"Heard {suggestion.times} times",
+                    )
+                except MemoryRuleError as exc:
+                    log.info("Skipped a suggested name: %s", exc)
+                    continue
+                added.append(suggestion.name)
+            log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
+            if self.lookup is not None and not any(
+                t.campaign_id == cid for t in self.tables.values()
+            ):
+                self.lookup.drop([cid])  # the session's copy isn't needed any more
+            if added:
+                await self.post(
+                    table.screen_channel_id,
+                    after_session_text(added),
+                    view=review_view(cid),
+                )
 
     async def _idle_sweeper(self) -> None:
         while True:
@@ -1413,7 +1526,7 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
-        bot = DMBot(settings, consent, campaigns, SessionStore(db), transcriber)
+        bot = DMBot(settings, consent, campaigns, SessionStore(db), transcriber, MemoryStore(db))
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

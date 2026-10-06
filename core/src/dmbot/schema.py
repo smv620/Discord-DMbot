@@ -374,6 +374,12 @@ TRANSCRIPT_CHANNEL = """
     ALTER TABLE campaigns ADD COLUMN transcript_channel_id BIGINT;
     """
 
+PLAYED_BY = """
+    -- Which Discord user plays a player character (#126, step 3), so DMbot can label
+    -- their lines with the character (#53) and hint the character's name.
+    ALTER TABLE memory_entities ADD COLUMN played_by BIGINT;
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -382,6 +388,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0005_consent_terms", CONSENT_TERMS),
     ("0006_consent_outside", CONSENT_OUTSIDE),
     ("0007_transcript_channel", TRANSCRIPT_CHANNEL),
+    ("0008_played_by", PLAYED_BY),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

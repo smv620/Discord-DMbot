@@ -97,6 +97,7 @@ class Entity:
     merged_into: str | None
     source: str
     created_at: int
+    played_by: int | None = None  # the Discord user playing this player character
 
 
 @dataclass(frozen=True, slots=True)
