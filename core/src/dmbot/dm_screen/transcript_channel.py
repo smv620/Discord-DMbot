@@ -91,12 +91,14 @@ async def _ensure_card(
     text = messages.transcript_card(campaign.name)
     try:
         found: dict[int, discord.Message] = {}
-        for m in await channel.pins():
-            if m.author.id == me.id and m.content.startswith(messages.TRANSCRIPT_CARD_TITLE):
-                found[m.id] = m
-        async for m in channel.history(limit=RECENT_SCAN):
-            if m.author.id == me.id and m.content.startswith(messages.TRANSCRIPT_CARD_TITLE):
-                found.setdefault(m.id, m)
+        for pin in await channel.pins():
+            if pin.author.id == me.id and pin.content.startswith(messages.TRANSCRIPT_CARD_TITLE):
+                found[pin.id] = pin
+        async for recent in channel.history(limit=RECENT_SCAN):
+            if recent.author.id == me.id and recent.content.startswith(
+                messages.TRANSCRIPT_CARD_TITLE
+            ):
+                found.setdefault(recent.id, recent)
         cards = list(found.values())
         if len(cards) == 1 and cards[0].content == text:
             if not cards[0].pinned:
@@ -125,13 +127,16 @@ async def _repair(
     merged = merge_overwrites(current, plan, guild_id=guild.id)
     wanted = {t: restrict(p, held) for t, p in merged.items()}
     have = {t: dict(p) for t, p in current.items()}
-    changes: dict[str, object] = {}
+    timeout = RENAME_TIMEOUT_S * 2
     if have != wanted:
-        changes["overwrites"] = _discord_overwrites(guild, merged, held)
-    if channel.topic != topic:
-        changes["topic"] = topic
-    if changes:
-        await asyncio.wait_for(channel.edit(**changes, reason=reason), RENAME_TIMEOUT_S * 2)  # type: ignore[arg-type]  # kwargs built above
+        overwrites = _discord_overwrites(guild, merged, held)
+        if channel.topic != topic:
+            edit = channel.edit(overwrites=overwrites, topic=topic, reason=reason)
+        else:
+            edit = channel.edit(overwrites=overwrites, reason=reason)
+        await asyncio.wait_for(edit, timeout)
+    elif channel.topic != topic:
+        await asyncio.wait_for(channel.edit(topic=topic, reason=reason), timeout)
     name = transcript_channel_name(campaign)
     if channel.name != name:  # a renamed campaign; best effort (rate limited)
         try:
