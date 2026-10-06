@@ -271,7 +271,12 @@ class SaveAndResume(SessionTests):
             self.posts.append((channel_id, text))
             return True
 
+        async def fake_post_message(channel_id: int, text: str, view: object = None) -> Any:
+            self.posts.append((channel_id, text))
+            return MagicMock(edit=AsyncMock())
+
         self.bot.post = fake_post  # type: ignore[method-assign]
+        self.bot.post_message = fake_post_message  # type: ignore[method-assign]
         self.guild.unavailable = False
         self.bot.get_guild = lambda gid: self.guild if gid == GUILD else None  # type: ignore[method-assign]
         screen = MagicMock(spec=discord.TextChannel)
@@ -294,6 +299,7 @@ class SaveAndResume(SessionTests):
         self.ears = FakeEarsConnection()
         bot.ears._active = self.ears  # type: ignore[assignment]
         bot.post = self.bot.post  # type: ignore[method-assign]
+        bot.post_message = self.bot.post_message  # type: ignore[method-assign]
         bot.get_guild = self.bot.get_guild  # type: ignore[method-assign]
         bot.get_channel = self.bot.get_channel  # type: ignore[method-assign]
         return bot
@@ -666,13 +672,65 @@ class SaveAndResume(SessionTests):
         await self.consent.grant(GUILD, PLAYER)
         self.at_the_table(PLAYER, OTHER_PERSON)
         await self.start()
-        posted = AsyncMock(return_value=True)
-        self.bot.post = posted  # type: ignore[method-assign]
+        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        listening = MagicMock(edit=AsyncMock())
+        posted = AsyncMock(return_value=listening)
+        self.bot.post_message = posted  # type: ignore[method-assign]
         await self.bot._on_ears_message(Status("joined", guild_id=GUILD))
-        text = next(c.args[1] for c in posted.await_args_list if "Listening in" in c.args[1])
+        call = next(c for c in posted.await_args_list if "Listening in" in c.args[1])
+        text = call.args[1]
         self.assertIn("🎙 Recording: Mia.", text)
         self.assertIn("✉️ Not recorded yet: Dee. DMbot is asking privately", text)
         self.assertNotIn("0 player", text)
+        # #108: the DM stops with one press; the button comes off at the end.
+        (button,) = call.args[2].children
+        self.assertEqual(button.custom_id, f"dmbot:stop:{self.campaign.id}")
+        await self.bot.stop_table(GUILD, "test")
+        await asyncio.gather(*self.bot._finishing)
+        listening.edit.assert_awaited_with(view=None)
+
+    def press_stop(self, user: Any) -> Any:
+        return SimpleNamespace(
+            client=self.bot,
+            guild=self.guild,
+            user=user,
+            message=MagicMock(edit=AsyncMock()),
+            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+
+    async def test_the_stop_button_stops_only_for_the_dm(self) -> None:
+        from dmbot.dm_screen import StopListeningButton
+        from dmbot.dm_screen import messages as m
+
+        await self.start()
+        button = StopListeningButton(self.campaign.id)
+        player = self.press_stop(member(PLAYER))
+        await button.callback(player)
+        self.assertIn("Only the DM can stop", player.followup.send.await_args.args[0])
+        self.assertIn(GUILD, self.bot.tables)  # still listening
+        dm = self.press_stop(member(DM))
+        await button.callback(dm)
+        self.assertIn("Stopped listening", dm.followup.send.await_args.args[0])
+        self.assertNotIn(GUILD, self.bot.tables)
+        again = self.press_stop(member(DM))  # an old message, pressed later
+        await button.callback(again)
+        again.response.send_message.assert_awaited_once()
+        self.assertEqual(again.response.send_message.await_args.args[0], m.NOT_LISTENING_NOW)
+        again.message.edit.assert_awaited_with(view=None)
+
+    async def test_a_server_manager_can_press_stop_but_not_for_another_campaign(self) -> None:
+        from dmbot.dm_screen import StopListeningButton
+
+        await self.start()
+        other = await self.campaigns.create(GUILD, "Strahd", DM)
+        wrong = self.press_stop(member(OTHER_PERSON, manager=True))
+        await StopListeningButton(other.id).callback(wrong)
+        self.assertIn(GUILD, self.bot.tables)  # an old button never stops a newer session
+        manager = self.press_stop(member(OTHER_PERSON, manager=True))
+        await StopListeningButton(self.campaign.id).callback(manager)
+        self.assertIn("Stopped listening", manager.followup.send.await_args.args[0])
+        self.assertNotIn(GUILD, self.bot.tables)
 
     async def test_people_joining_mid_session_are_shown(self) -> None:
         from dmbot.ears.protocol import Status
