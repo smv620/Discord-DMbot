@@ -25,12 +25,15 @@ READ_ONLY: Perms = {
     "view_channel": True,
     "read_message_history": True,
     "send_messages": False,
-    # Read-only means no side doors either: threads, reactions, slash commands.
+    # Read-only means no side doors either: threads, reactions.
     "send_messages_in_threads": False,
     "create_public_threads": False,
     "create_private_threads": False,
     "add_reactions": False,
-    "use_application_commands": False,
+    # Slash commands are left alone (inherited, so the server's own setting applies):
+    # their replies are private, and a blocked command hangs on "Sending command..."
+    # with no explanation (#188, #190). Leaving the key out resets an old deny, since
+    # every overwrite is sent whole.
 }
 HIDDEN: Perms = {"view_channel": False}
 

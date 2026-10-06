@@ -484,10 +484,11 @@ so the docs always show names the way Discord does. For the campaign
 | **Unrestricted** | Game time, live transcript | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
 
 - Players can **read but never post** in any DMbot channel (no threads or reactions
-  either), the same read-only access as a DM-screen peek. Slash commands are blocked in
-  controlled channels and for peeks, but **work in the live transcript channel** (#188):
-  their replies are private, and its card tells players to type `/consent revoke`. A
-  blocked command hangs on "Sending command..." with no explanation.
+  either), the same read-only access as a DM-screen peek. **Slash commands are never
+  blocked** in DMbot's channels (the server's own setting applies): their replies are
+  private, and a blocked command hangs on "Sending command..." with no explanation. This
+  covers the live transcript channel (#188), peeks and an open DM screen (#190); old
+  blocks are lifted the next time DMbot sets up the channel.
 - Changing the setting (the help-card buttons) updates every controlled channel together.
   Peeking opens all controlled channels for that player; hiding closes them all. Once
   there's more than one controlled channel, the peek warning must name every channel a
