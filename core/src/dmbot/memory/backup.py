@@ -93,12 +93,12 @@ _CHOICES: dict[str, Sequence[str]] = {
 }
 _IDS = {"id", "entity_id", "merged_into", "used_by", "subject_id", "object_id", "relation_id",
         "other_id"}  # fmt: skip
-_INTS = {"created_at", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-         "max_per_subject"}  # fmt: skip
+_INTS = {"played_by", "created_at", "from_session_at", "to_session_at", "from_game_time",
+         "to_game_time", "max_per_subject"}  # fmt: skip
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
           "mention_ids"}  # fmt: skip
-_NULLABLE = {"merged_into", "used_by", "other_id", "entity_id", "replaced_by", "parent",
-             "from_session_at", "to_session_at", "from_game_time", "to_game_time",
+_NULLABLE = {"played_by", "merged_into", "used_by", "other_id", "entity_id", "replaced_by",
+             "parent", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
              "max_per_subject"}  # fmt: skip
 
 

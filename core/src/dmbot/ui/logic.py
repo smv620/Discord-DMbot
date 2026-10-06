@@ -195,6 +195,7 @@ HELP_TEXT = (
     "**Commands**\n"
     "• `/dmbot start`: pick your campaign and voice channel, then start listening\n"
     "• `/dmbot stop`: stop listening\n"
+    "• `/dmbot names`: the names DMbot listens for (characters, places, NPCs)\n"
     "• `/dmbot backup`: download a copy of a campaign\n"
     "• `/dmbot restore`: bring a campaign back from a copy\n"
     "\n"
