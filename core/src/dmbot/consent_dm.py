@@ -23,7 +23,7 @@ from typing import Any, Literal, Protocol
 
 import discord
 
-from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, ConsentMethod
+from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, TERMS_VERSION, ConsentMethod
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
@@ -62,6 +62,12 @@ def cloud_note(company: str | None = None) -> str:
 
 
 CLOUD_NOTE = cloud_note()
+# Shown when someone presses I consent on a message whose wording is out of date, or
+# that named another company (or none) than the one in use now.
+STALE_INTRO = (
+    "🔄 **DMbot's consent message has changed since this one,** so please read the "
+    "current one and choose."
+)
 REASK_INTRO = (
     "🔄 **DMbot now uses an outside company to turn speech into text,** so it needs to ask "
     "you again. Please read this and choose."
@@ -256,13 +262,20 @@ async def _is_member(interaction: discord.Interaction, guild: discord.Guild) -> 
 
 class ConsentButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:consent:yes:{_GUILD}(?::out:(?P<out>[a-z-]{{1,20}}))?",
+    template=(
+        rf"dmbot:consent:yes:{_GUILD}(?::v(?P<version>[0-9]{{1,4}}))?"
+        r"(?::out:(?P<out>[a-z-]{1,20}))?"
+    ),
 ):
-    """`outside`: the outside engine the message this button sits on named, if any. While
-    the server uses an outside engine, only a yes for that same engine counts (#170)."""
+    """The button records what the message it sits on said: the consent wording's version
+    (#35) and the outside engine it named, if any (#170). A yes is only saved from a
+    message that matches what DMbot does now; otherwise the current question is shown.
+    Buttons from before versions were recorded count as version 1."""
 
-    def __init__(self, guild_id: int, *, outside: str | None = None) -> None:
-        marker = f":out:{outside}" if outside else ""
+    def __init__(
+        self, guild_id: int, *, outside: str | None = None, version: int = TERMS_VERSION
+    ) -> None:
+        marker = f":v{version}" + (f":out:{outside}" if outside else "")
         super().__init__(
             discord.ui.Button(
                 label=CONSENT_LABEL,
@@ -273,12 +286,14 @@ class ConsentButton(
         )
         self.guild_id = guild_id
         self.outside = outside
+        self.version = version
 
     @classmethod
     async def from_custom_id(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> ConsentButton:
-        return cls(int(match["guild"]), outside=match["out"] or None)
+        version = int(match["version"]) if match["version"] else 1
+        return cls(int(match["guild"]), outside=match["out"] or None, version=version)
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         with log_context(guild_id=self.guild_id):
@@ -295,14 +310,20 @@ class ConsentButton(
                 return
             actions = _actions(interaction)
             engine = actions.outside_engine
-            if engine is not None and self.outside != engine:
-                # This message didn't name the company that writes things down now: show
-                # the current question instead of saving a yes to terms they never saw.
+            if self.version != TERMS_VERSION or (engine is not None and self.outside != engine):
+                # This message's wording is out of date, or it didn't name the company that
+                # writes things down now: show the current question instead of saving a
+                # yes to terms they never saw.
+                intro = STALE_INTRO if self.version != TERMS_VERSION else REASK_INTRO
                 text = request_text(
-                    guild.name, voice=None, dm=None, cloud=True, company=actions.company
+                    guild.name,
+                    voice=None,
+                    dm=None,
+                    cloud=engine is not None,
+                    company=actions.company,
                 )
                 await interaction.edit_original_response(
-                    content=f"{REASK_INTRO}\n\n{text}",
+                    content=f"{intro}\n\n{text}",
                     view=request_view(self.guild_id, outside=engine),
                 )
                 return

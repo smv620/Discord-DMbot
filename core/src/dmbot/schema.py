@@ -354,7 +354,7 @@ CONSENT_OUTSIDE = """
     -- when this yes was given; NULL = it named none (local Whisper). While the server
     -- uses an outside engine, only yeses for that same engine count; everyone else is
     -- asked again (#170, docs/PLAN.md "Consent"). Existing yeses: NULL.
-    ALTER TABLE consent ADD COLUMN outside_to TEXT;
+    ALTER TABLE consent ADD COLUMN IF NOT EXISTS outside_to TEXT;
     """
 
 CONSENT_TERMS = """

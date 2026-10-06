@@ -37,6 +37,7 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentMethod, ConsentStore
 from dmbot.consent_dm import (
     ALREADY_RECORDED,
+    REASK_INTRO,
     ConsentButton,
     DeclineButton,
     StopButton,
@@ -423,6 +424,8 @@ class DMBot(commands.AutoShardedBot):
                         renewed=member.id in status.outdated,  # the "What's new" note
                         company=company,
                     )
+                    if cloud and member.id in status.other_company:
+                        text = f"{REASK_INTRO}\n\n{text}"  # why they're asked again
                     view = request_view(gid, outside=self.outside_engine)
                 result = await send_prompt(member, text, view)
                 if result != "sent":
