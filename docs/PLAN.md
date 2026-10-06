@@ -122,6 +122,18 @@ database.
   `memory_mentions`, `memory_relations`, `memory_corrections`, `memory_types`,
   `memory_predicates`, `memory_flags` and `memory_changes`, and `dmbot.memory`
   (`MemoryStore`, the only writer). Decided while building:
+  - **Sound codes (#126, step 2):** `dmbot.memory.sounds`, modelled on Double Metaphone
+    but simplified and tuned for invented names read the English way: vowels dropped
+    except at the start, silent letters dropped ("Hrothgar" = "Rothgar"), words joined
+    first ("Bell or us" = "Belleros"), and up to four codes where letters have two likely
+    sounds. It matches all 59 "sounds like" spellings in the bake-off script, and no two
+    of its names share a code. Codes find candidates only; the Transcript Cleaner
+    decides.
+  - **In-memory lookup (#126, step 2):** `dmbot.memory.lookup` keeps one read-only copy
+    per (server, campaign), read in one snapshot. Writes notify with
+    `campaign:version:names-changed`, so a mention or flag doesn't make copies reload;
+    each time the listener (re)connects, every copy reloads. Secret aliases are known words but
+    are never offered as fixes.
   - **Sound-codes are computed in Python**, not by `fuzzystrmatch`, because the in-memory
     copy must code each heard word without a database round trip, and both sides must
     use the same code. They're kept in an indexed text-array column. So no Postgres
@@ -375,8 +387,16 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   serving shard 0. Until consent changes reach every process (see "Consent changes reach
   every process" above), a button for a server another process serves changes nothing and
   points to `/consent give` / `/consent revoke`, which Discord routes to the right process.
-- Consent records store the terms version, the UTC timestamp, and the method. Changing the
-  consent wording re-prompts everyone (#35).
+- Consent records store the terms version, the UTC timestamp, and the method
+  (`private_message`, or `consent_command` for the reply to `/consent give`). Changing the
+  consent wording re-prompts everyone (#35, built 2026-10-06): a yes under older wording
+  stops counting at once, so that person isn't recorded until they agree again. Their new
+  request starts with a "What's new" line naming the change, and the DM screen says
+  "🔁 Asked again: …" so the DM knows why. After a restart, people in voice whose yes no
+  longer counts are asked (nobody else is). Version 2 is the "anyone in this server can
+  read it" wording; every yes saved before versions were recorded is treated as version 1
+  (we can't tell which wording each person saw). A test pins the request's wording to
+  the version number.
 - The public "DMbot is listening" notice in the voice channel's chat still posts once per
   `/dmbot start`, is not repeated after a voice-service reconnect, and the DM is warned if
   it can't be posted.

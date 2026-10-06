@@ -13,7 +13,7 @@ from dmbot.audio.segmenter import Segmenter
 from dmbot.bot import DMBot, Table, consent_give
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
-from dmbot.consent import ConsentStore
+from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.ears.protocol import Status
 from dmbot.sessions import SessionStore
 from dmbot.transcription.config import TranscriptionSettings
@@ -72,7 +72,7 @@ def test_reminder_is_short_and_shows_the_date() -> None:
 
 def test_the_outside_note_names_the_company_when_known() -> None:
     known = c.request_text("Dragon Club", voice=None, dm=None, cloud=True, company="Deepgram")
-    assert "This server uses Deepgram to turn speech into text" in known
+    assert "this server uses Deepgram to turn speech into text" in known
     assert "Discord name" in known
     unknown = c.request_text("Dragon Club", voice=None, dm=None, cloud=True)
     assert c.CLOUD_NOTE in unknown and "another company" in unknown
@@ -191,6 +191,64 @@ class ConsentDMTests(DatabaseTest):
         assert "you said yes on <t:" in self.sent_text(self.player)
         assert custom_ids(self.player.send.await_args.kwargs["view"]) == ["dmbot:consent:stop:1"]
 
+    async def age_consent(self, user_id: int) -> None:
+        """Make a saved yes look as if it was given under older wording (#35)."""
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE guild_id = %s AND user_id = %s",
+                (TERMS_VERSION - 1, GUILD, user_id),
+            )
+        self.bot.consent = self.consent = ConsentStore(self.db)  # fresh cache
+
+    async def test_a_yes_under_older_wording_is_asked_again(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.age_consent(PLAYER)
+        assert not await self.consent.consenting(GUILD)  # not recorded meanwhile
+        await self.joined()
+        text = self.sent_text(self.player)
+        assert "Can DMbot record you" in text and c.RENEWED in text
+        assert "You said yes" not in text
+        assert c.RENEWED not in self.sent_text(self.dm)  # never asked before: no note
+        # The DM hears why someone who said yes before isn't recorded now.
+        notes = [t for cid, t in self.posts if cid == SCREEN and "Asked again" in t]
+        assert len(notes) == 1 and f"user{PLAYER}" in notes[0] and f"user{DM}" not in notes[0]
+
+    async def test_after_a_restart_only_older_yeses_are_asked_again(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.age_consent(PLAYER)
+        self.table.resumed = True
+        await self.joined()
+        assert c.RENEWED in self.sent_text(self.player)
+        self.dm.send.assert_not_called()  # asked before the restart; not asked twice
+        await self.bot.ask_for_consent(self.table, [self.dm])  # still askable on rejoin
+        self.dm.send.assert_awaited_once()
+
+    async def test_saying_yes_again_counts_under_the_new_wording(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.age_consent(PLAYER)
+        await c.ConsentButton(GUILD).callback(self.button_press(PLAYER))
+        assert PLAYER in await ConsentStore(self.db).consenting(GUILD)
+        assert not await self.consent.outdated(GUILD, [PLAYER])
+
+    async def test_how_consent_was_given_is_recorded(self) -> None:
+        await c.ConsentButton(GUILD).callback(self.button_press(PLAYER))
+        await c.ConsentButton(GUILD).callback(self.button_press(DM, guild=self.guild))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, method, terms_version FROM consent ORDER BY user_id"
+            )
+            rows = {r["user_id"]: (r["method"], r["terms_version"]) for r in await cur.fetchall()}
+        assert rows[PLAYER] == ("private_message", TERMS_VERSION)
+        assert rows[DM] == ("consent_command", TERMS_VERSION)
+
+    async def test_consent_give_after_older_wording_explains_why(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.age_consent(PLAYER)
+        call = self.slash(PLAYER)
+        await consent_give.callback(call)  # type: ignore[call-arg]
+        text = call.followup.send.await_args.args[0]
+        assert c.RENEWED in text and "Can DMbot record you" in text
+
     async def test_people_are_asked_once_per_session(self) -> None:
         await self.joined()
         self.table.listening = False  # the voice connection dropped and came back
@@ -208,6 +266,16 @@ class ConsentDMTests(DatabaseTest):
         self.table.resumed = True
         await self.joined()
         self.player.send.assert_not_called()
+
+    async def test_after_a_restart_onto_deepgram_earlier_yeses_are_asked_again(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)  # current wording, local Whisper
+        await self.consent.grant(GUILD, DM, outside_to="deepgram")
+        self.use_deepgram()
+        self.table.resumed = True  # the switch needs a restart; the session resumes
+        await self.joined()
+        assert "this server uses Deepgram" in self.sent_text(self.player)
+        assert "What's new" not in self.sent_text(self.player)  # not a wording change
+        self.dm.send.assert_not_called()  # their yes already names Deepgram
 
     async def test_a_session_stopped_partway_sends_nothing_more(self) -> None:
         async def stop_session(*_: Any, **__: Any) -> None:
@@ -262,11 +330,11 @@ class ConsentDMTests(DatabaseTest):
         assert "Can DMbot record you" in self.sent_text(self.player)
 
     async def test_a_failed_lookup_asks_them_when_they_rejoin(self) -> None:
-        self.consent.granted_times = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
+        self.consent.status = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
         with self.assertLogs("dmbot.bot", "ERROR"):
             await self.joined()
         self.player.send.assert_not_called()
-        del self.consent.granted_times  # the database is back
+        del self.consent.status  # the database is back
         await self.voice_update(self.player, None, self.voice)
         self.player.send.assert_awaited_once()
 
@@ -283,7 +351,7 @@ class ConsentDMTests(DatabaseTest):
         await self.consent.grant(GUILD, PLAYER, outside_to="deepgram")
         await self.joined()
         question = self.sent_text(self.dm)
-        assert "This server uses Deepgram" in question
+        assert "this server uses Deepgram" in question
         view = self.dm.send.await_args.kwargs["view"]
         assert custom_ids(view)[0] == "dmbot:consent:yes:1:out:deepgram"
         assert "go to Deepgram" in self.sent_text(self.player)  # the reminder
@@ -299,7 +367,7 @@ class ConsentDMTests(DatabaseTest):
         assert PLAYER not in await self.consent.consenting(GUILD)
         assert not self.consent.has_consent(GUILD, PLAYER)  # ears and core both skip them
         await self.joined()
-        assert "This server uses Deepgram" in self.sent_text(self.player)  # the question
+        assert "this server uses Deepgram" in self.sent_text(self.player)  # the question
 
     async def test_an_old_consent_button_after_the_switch_asks_again(self) -> None:
         self.use_deepgram()
@@ -308,7 +376,7 @@ class ConsentDMTests(DatabaseTest):
         assert await self.consent.granted_at(GUILD, PLAYER) is None  # nothing saved
         edit = press.edit_original_response.await_args.kwargs
         assert edit["content"].startswith(c.REASK_INTRO)
-        assert "This server uses Deepgram" in edit["content"]
+        assert "this server uses Deepgram" in edit["content"]
         assert custom_ids(edit["view"])[0] == "dmbot:consent:yes:1:out:deepgram"
 
     async def test_a_marked_consent_button_counts_after_the_switch(self) -> None:
@@ -348,7 +416,7 @@ class ConsentDMTests(DatabaseTest):
         )
         await consent_give.callback(call)  # type: ignore[call-arg]
         args = call.followup.send.await_args
-        assert "This server uses Deepgram" in args.args[0]
+        assert "this server uses Deepgram" in args.args[0]
         assert custom_ids(args.kwargs["view"])[0] == "dmbot:consent:yes:1:out:deepgram"
 
     async def test_cloud_transcription_is_mentioned_in_the_message(self) -> None:
@@ -391,9 +459,12 @@ class ConsentDMTests(DatabaseTest):
 
     # ---- buttons -------------------------------------------------------------
 
-    def button_press(self, user_id: int) -> Any:
+    def button_press(self, user_id: int, guild: Any = None) -> Any:
+        """A button press: in a private message, or (with `guild`) in the server."""
         return SimpleNamespace(
             client=self.bot,
+            guild=guild,
+            guild_id=None if guild is None else guild.id,
             user=SimpleNamespace(id=user_id),
             response=SimpleNamespace(
                 defer=AsyncMock(), send_message=AsyncMock(), edit_message=AsyncMock()
@@ -498,7 +569,9 @@ class ConsentDMTests(DatabaseTest):
     async def test_yes_then_quick_no_leaves_ears_without_them(self) -> None:
         lock = self.consent._lock(GUILD)
         await lock.acquire()  # "I consent" is still saving...
-        yes = asyncio.create_task(self.bot.give_consent(GUILD, PLAYER, outside_to=None))
+        yes = asyncio.create_task(
+            self.bot.give_consent(GUILD, PLAYER, "private_message", outside_to=None)
+        )
         await asyncio.sleep(0)
         no = asyncio.create_task(self.bot.withdraw_consent(GUILD, PLAYER))  # ...No thanks
         await asyncio.sleep(0)

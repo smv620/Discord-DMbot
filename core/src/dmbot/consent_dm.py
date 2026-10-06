@@ -23,6 +23,7 @@ from typing import Any, Literal, Protocol
 
 import discord
 
+from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, ConsentMethod
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
@@ -51,10 +52,12 @@ REVOKE_NOT_SAVED = (
 
 def cloud_note(company: str | None = None) -> str:
     """For the consent request when another company writes things down."""
+    # The generic sentence is pinned to the terms version (test_consent_terms.py); a
+    # named company is covered by consent.outside_to instead.
     who = company or "another company"
     return (
-        f"This server uses {who} to turn speech into text, so your voice clips and Discord "
-        "name are sent to them."
+        f"Note: this server uses {who} to turn speech into text, so your voice clips and "
+        "Discord name are sent to them."
     )
 
 
@@ -80,12 +83,42 @@ def _date(timestamp: int) -> str:
     return f"<t:{timestamp}:D>"
 
 
+# Says what changed in the current consent.TERMS_VERSION; rewrite it when that goes up.
+# It explains rather than adds terms, so it isn't part of the pinned wording.
+RENEWED = (
+    "**What's new:** anyone in this server can read and download the text DMbot writes. "
+    "DMbot is asking everyone who said yes before this was added to choose again. It "
+    "won't record you unless you say yes."
+)
+
+
+def renewed_text(names: list[str]) -> str | None:
+    """For the DM screen: people who said yes before and are being asked again, so the
+    DM knows why they aren't recorded yet."""
+    if not names:
+        return None
+    return (
+        f"🔁 **Asked again: {', '.join(map(_plain, names))}.** DMbot's consent message "
+        "changed, so they need to say yes again. DMbot isn't recording them until they do."
+    )
+
+
 def request_text(
-    server: str, *, voice: str | None, dm: str | None, cloud: bool, company: str | None = None
+    server: str,
+    *,
+    voice: str | None,
+    dm: str | None,
+    cloud: bool,
+    renewed: bool = False,
+    company: str | None = None,
 ) -> str:
+    """The consent request. Changing what it says people agree to means bumping
+    consent.TERMS_VERSION, so everyone who agreed before is asked again (#35)."""
     lines = [
         f"🎙️ **Can DMbot record you for your D&D game on {_plain(server)}?** Please choose below."
     ]
+    if renewed:
+        lines.append(RENEWED)
     if voice and dm:
         lines.append(f"**{_plain(dm)}** turned on DMbot in the **{_plain(voice)}** voice channel.")
     lines += [
@@ -184,7 +217,9 @@ class ConsentActions(Protocol):
     @property
     def company(self) -> str | None: ...
 
-    async def give_consent(self, guild_id: int, user_id: int, *, outside_to: str | None) -> int: ...
+    async def give_consent(
+        self, guild_id: int, user_id: int, method: ConsentMethod, *, outside_to: str | None
+    ) -> int: ...
 
     def stop_recording(self, guild_id: int, user_id: int) -> None: ...
 
@@ -272,8 +307,10 @@ class ConsentButton(
                 )
                 return
             try:
+                # In a private message, or in the reply to /consent give in the server.
+                method = PRIVATE_MESSAGE if interaction.guild_id is None else CONSENT_COMMAND
                 granted_at = await actions.give_consent(
-                    self.guild_id, interaction.user.id, outside_to=self.outside
+                    self.guild_id, interaction.user.id, method, outside_to=self.outside
                 )
             except Exception:
                 log.exception("Couldn't save consent from a consent button")

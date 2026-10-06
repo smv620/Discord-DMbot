@@ -16,6 +16,7 @@ from psycopg import sql
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
+from dmbot.memory import notify
 from dmbot.memory._changes import (
     ALIASES,
     CORRECTIONS,
@@ -52,10 +53,10 @@ from dmbot.memory.ontology import (
     PredicateTerm,
     TypeTerm,
 )
+from dmbot.memory.sounds import sound_codes
 
 DAMAGED = "This backup file is damaged (bad campaign memory entry)."
 INT64_MAX = 2**63 - 1
-NOTIFY_CHANNEL = "dmbot_memory"
 
 # Tag in the file → table, in load order (anything a row links to comes first).
 _TAGS: dict[str, Table] = {
@@ -134,9 +135,7 @@ async def bump_version(conn: Conn, guild_id: int, campaign_id: str) -> None:
     )
     row = await cur.fetchone()
     if row is not None:
-        await conn.execute(
-            "SELECT pg_notify(%s, %s)", (NOTIFY_CHANNEL, f"{campaign_id}:{row['memory_version']}")
-        )
+        await notify.send(conn, campaign_id, int(row["memory_version"]), names_changed=True)
 
 
 class MemorySection:
@@ -166,6 +165,8 @@ class MemorySection:
                 raise CampaignError(DAMAGED)
             if table is RELATIONS and raw["mention_ids"]:
                 raise CampaignError(DAMAGED)
+            if table is ALIASES:  # worked out again, not taken from the file
+                raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
             by_tag[raw["table"]].append(raw)
         _check_terms(by_tag)
         try:
