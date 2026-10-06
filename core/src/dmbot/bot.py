@@ -213,6 +213,9 @@ class DMBot(commands.AutoShardedBot):
             tree_cls=DMBotTree,
         )
         self.settings = settings
+        # With an outside speech-to-text company, only yeses given knowing that count
+        # (#170). Set here, from the same settings, so the two can never disagree.
+        consent.outside = settings.transcription.sends_audio_out
         self.consent = consent
         self.campaigns = campaigns
         self.sessions = sessions
@@ -224,6 +227,7 @@ class DMBot(commands.AutoShardedBot):
             hints=self._name_hints,
             deliver=self._deliver_transcript,
             alert=self._alert_dm,
+            outside=settings.transcription.sends_audio_out,
         )
         self.ears = EarsServer(
             host=settings.ears_host,
@@ -294,12 +298,22 @@ class DMBot(commands.AutoShardedBot):
 
     # ---- consent (slash commands and private-message buttons) ---------------
 
-    async def give_consent(self, guild_id: int, user_id: int) -> int:
+    @property
+    def sends_audio_out(self) -> bool:
+        """Another company writes things down (TRANSCRIBER=deepgram or cloud)."""
+        return self.settings.transcription.sends_audio_out
+
+    @property
+    def company(self) -> str | None:
+        return self.settings.transcription.company
+
+    async def give_consent(self, guild_id: int, user_id: int, *, outside_ok: bool) -> int:
         """Save consent and start capturing at once. Returns when it was given.
 
+        `outside_ok`: the request they agreed to said another company writes things down.
         Raises if it couldn't be saved; then nothing changed.
         """
-        await self.consent.grant(guild_id, user_id)
+        await self.consent.grant(guild_id, user_id, outside_ok=outside_ok)
         log.info("Consent given: user %s", user_id)
         # Always tell ears (if connected), even with no session here: it may still be
         # in voice from before a restart.
@@ -364,7 +378,8 @@ class DMBot(commands.AutoShardedBot):
             voice = self.get_channel(table.voice_channel_id)
             voice_name = voice.name if isinstance(voice, discord.abc.GuildChannel) else None
             dm_name = self.name_of(gid, table.dm_user_id)
-            cloud = self.settings.transcription.sends_audio_out
+            cloud = self.sends_audio_out
+            company = self.company
             dms_off: list[str] = []
             failed: list[str] = []
             for member in people:
@@ -374,11 +389,13 @@ class DMBot(commands.AutoShardedBot):
                 granted = times.get(member.id)
                 server = member.guild.name
                 if granted is not None and self.consent.has_consent(gid, member.id):
-                    text = reminder_text(server, voice_name, granted, cloud=cloud)
+                    text = reminder_text(server, voice_name, granted, cloud=cloud, company=company)
                     view = stop_view(gid)
                 else:
-                    text = request_text(server, voice=voice_name, dm=dm_name, cloud=cloud)
-                    view = request_view(gid)
+                    text = request_text(
+                        server, voice=voice_name, dm=dm_name, cloud=cloud, company=company
+                    )
+                    view = request_view(gid, outside=cloud)
                 result = await send_prompt(member, text, view)
                 if result != "sent":
                     table.asked.discard(member.id)  # try again if they rejoin
@@ -1037,7 +1054,10 @@ class DMBot(commands.AutoShardedBot):
         Later phases add character, NPC, and place names.
         """
         users = await self.consent.consenting(guild_id)
-        return [self.name_of(guild_id, uid) for uid in users]
+        names = (self.name_of(guild_id, uid) for uid in users)
+        # A member DMbot can't look up comes back as "<@id>": no use as a hint, and an
+        # outside service shouldn't get IDs.
+        return [name for name in names if not name.startswith("<@")]
 
     async def _idle_sweeper(self) -> None:
         while True:
@@ -1111,9 +1131,12 @@ async def consent_give(interaction: discord.Interaction) -> None:
         guild.name,
         voice=voice.name if isinstance(voice, discord.abc.GuildChannel) else None,
         dm=bot.name_of(guild.id, table.dm_user_id) if table else None,
-        cloud=bot.settings.transcription.sends_audio_out,
+        cloud=bot.sends_audio_out,
+        company=bot.company,
     )
-    await interaction.followup.send(text, view=request_view(guild.id), ephemeral=True)
+    await interaction.followup.send(
+        text, view=request_view(guild.id, outside=bot.sends_audio_out), ephemeral=True
+    )
 
 
 @consent_group.command(

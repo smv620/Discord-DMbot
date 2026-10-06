@@ -122,6 +122,15 @@ CHANNEL_NUMBER = """
     """
 
 
+CONSENT_OUTSIDE = """
+    -- Whether this yes was given knowing that another company turns speech into text
+    -- (the consent request said so). When the server uses such a company (TRANSCRIBER=
+    -- deepgram or cloud), only these yeses count; everyone else is asked again (#170,
+    -- docs/PLAN.md "Consent"). Existing yeses were given under local Whisper: false.
+    ALTER TABLE consent ADD COLUMN outside_ok BOOLEAN NOT NULL DEFAULT FALSE;
+    """
+
+
 # Shared columns and links for campaign-memory tables: scoped to one server AND one
 # campaign, and deleted with the campaign.
 def _memory_scope() -> str:
@@ -354,6 +363,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0002_active_sessions", ACTIVE_SESSIONS),
     ("0003_channel_number", CHANNEL_NUMBER),
     ("0004_campaign_memory", CAMPAIGN_MEMORY),
+    ("0005_consent_outside", CONSENT_OUTSIDE),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

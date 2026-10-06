@@ -24,6 +24,11 @@ class TranscriberUnavailable(RuntimeError):
     """The configured engine cannot start (missing package, bad settings)."""
 
 
+class TranscriptionProblem(RuntimeError):
+    """A failure whose message is plain words, safe to show the DM and to log: no keys,
+    no players' names, no reply bodies. Engines raise it for problems a host can fix."""
+
+
 class Transcriber(Protocol):
     async def warm_up(self) -> None:
         """Prepare before the session (load models). Raise TranscriberUnavailable if unusable."""

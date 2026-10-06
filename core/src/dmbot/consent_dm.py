@@ -47,9 +47,21 @@ REVOKE_NOT_SAVED = (
     "DMbot has stopped recording you. It couldn't save this yet, so it might record you "
     f"again after a restart. Please press **{STOP_LABEL}** again in a minute."
 )
-CLOUD_NOTE = (
-    "Note: this server uses another company to turn speech into text, so your voice "
-    "clips and Discord name are sent to them."
+
+
+def cloud_note(company: str | None = None) -> str:
+    """For the consent request when another company writes things down."""
+    who = company or "another company"
+    return (
+        f"This server uses {who} to turn speech into text, so your voice clips and Discord "
+        "name are sent to them."
+    )
+
+
+CLOUD_NOTE = cloud_note()
+REASK_INTRO = (
+    "🔄 **DMbot now uses an outside company to turn speech into text,** so it needs to ask "
+    "you again. Please read this and choose."
 )
 # What happens to what someone said before they stopped: the whole server can read it
 # (docs/PLAN.md, Retention and "who can see what"; transcripts #124, #125).
@@ -68,7 +80,9 @@ def _date(timestamp: int) -> str:
     return f"<t:{timestamp}:D>"
 
 
-def request_text(server: str, *, voice: str | None, dm: str | None, cloud: bool) -> str:
+def request_text(
+    server: str, *, voice: str | None, dm: str | None, cloud: bool, company: str | None = None
+) -> str:
     lines = [
         f"🎙️ **Can DMbot record you for your D&D game on {_plain(server)}?** Please choose below."
     ]
@@ -85,7 +99,7 @@ def request_text(server: str, *, voice: str | None, dm: str | None, cloud: bool)
         "A yes is remembered for this server. If you say no, DMbot asks again next session.",
     ]
     if cloud:
-        lines.append(CLOUD_NOTE)
+        lines.append(cloud_note(company))
     return "\n".join(lines)
 
 
@@ -97,17 +111,27 @@ def confirmed_text(server: str, granted_at: int) -> str:
     )
 
 
-# Short form for the weekly reminder, so people who agreed before the server switched
-# to an outside service still hear about it (#170; the terms version is #35).
-OUTSIDE_NOTE = "Your voice is sent to another company to be turned into text."
+def outside_note(company: str | None = None) -> str:
+    """Short form for the reminder sent each session."""
+    return f"Your voice and Discord name go to {company or 'another company'} to be written down."
 
 
-def reminder_text(server: str, voice: str | None, granted_at: int, *, cloud: bool = False) -> str:
+OUTSIDE_NOTE = outside_note()
+
+
+def reminder_text(
+    server: str,
+    voice: str | None,
+    granted_at: int,
+    *,
+    cloud: bool = False,
+    company: str | None = None,
+) -> str:
     where = f"**{_plain(voice)}** on " if voice else ""
-    outside = f" {OUTSIDE_NOTE}" if cloud else ""
+    outside = f" {outside_note(company)}" if cloud else ""
     return (
-        f"🎙️ DMbot is recording you in {where}**{_plain(server)}**. Anyone in this server "
-        f"can read what it writes down.{outside} You said yes on {_date(granted_at)}. "
+        f"🎙️ DMbot is recording you in {where}**{_plain(server)}** (you said yes on "
+        f"{_date(granted_at)}). Anyone in this server can read the text.{outside} "
         "Press 🛑 below to stop any time."
     )
 
@@ -154,7 +178,13 @@ class ConsentActions(Protocol):
 
     def get_guild(self, guild_id: int, /) -> discord.Guild | None: ...
 
-    async def give_consent(self, guild_id: int, user_id: int) -> int: ...
+    @property
+    def sends_audio_out(self) -> bool: ...
+
+    @property
+    def company(self) -> str | None: ...
+
+    async def give_consent(self, guild_id: int, user_id: int, *, outside_ok: bool) -> int: ...
 
     def stop_recording(self, guild_id: int, user_id: int) -> None: ...
 
@@ -191,24 +221,28 @@ async def _is_member(interaction: discord.Interaction, guild: discord.Guild) -> 
 
 class ConsentButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:consent:yes:{_GUILD}",
+    template=rf"dmbot:consent:yes:{_GUILD}(?P<out>:out)?",
 ):
-    def __init__(self, guild_id: int) -> None:
+    """`outside`: the message this button sits on said another company writes things
+    down. Only such a yes counts while the server uses one (#170)."""
+
+    def __init__(self, guild_id: int, *, outside: bool = False) -> None:
         super().__init__(
             discord.ui.Button(
                 label=CONSENT_LABEL,
                 emoji="✅",
                 style=discord.ButtonStyle.success,
-                custom_id=f"dmbot:consent:yes:{guild_id}",
+                custom_id=f"dmbot:consent:yes:{guild_id}{':out' if outside else ''}",
             )
         )
         self.guild_id = guild_id
+        self.outside = outside
 
     @classmethod
     async def from_custom_id(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> ConsentButton:
-        return cls(int(match["guild"]))
+        return cls(int(match["guild"]), outside=bool(match["out"]))
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         with log_context(guild_id=self.guild_id):
@@ -223,9 +257,21 @@ class ConsentButton(
                     NOT_A_MEMBER if member is False else GRANT_FAILED, ephemeral=True
                 )
                 return
+            actions = _actions(interaction)
+            if actions.sends_audio_out and not self.outside:
+                # This message didn't say another company writes things down: show the
+                # current question instead of saving a yes to terms they never saw.
+                text = request_text(
+                    guild.name, voice=None, dm=None, cloud=True, company=actions.company
+                )
+                await interaction.edit_original_response(
+                    content=f"{REASK_INTRO}\n\n{text}",
+                    view=request_view(self.guild_id, outside=True),
+                )
+                return
             try:
-                granted_at = await _actions(interaction).give_consent(
-                    self.guild_id, interaction.user.id
+                granted_at = await actions.give_consent(
+                    self.guild_id, interaction.user.id, outside_ok=self.outside
                 )
             except Exception:
                 log.exception("Couldn't save consent from a consent button")
@@ -312,9 +358,10 @@ class StopButton(
         await _stop(interaction, self.guild_id)
 
 
-def request_view(guild_id: int) -> discord.ui.View:
+def request_view(guild_id: int, *, outside: bool = False) -> discord.ui.View:
+    """`outside`: the request shown with it includes the outside-company note."""
     view = discord.ui.View(timeout=None)
-    view.add_item(ConsentButton(guild_id))
+    view.add_item(ConsentButton(guild_id, outside=outside))
     view.add_item(DeclineButton(guild_id))
     return view
 

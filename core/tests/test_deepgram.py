@@ -1,9 +1,11 @@
 """Deepgram Nova-3 engine (#170) against a local fake of Deepgram's pre-recorded API."""
 
+import asyncio
 import unittest
 from typing import Any
 from unittest.mock import patch
 
+import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
@@ -111,6 +113,7 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(DeepgramError) as ctx:
             await self.t.transcribe(clip(), [])
         self.assertIn("401", str(ctx.exception))
+        self.assertIn("didn't accept DEEPGRAM_API_KEY", str(ctx.exception))  # plain reason
         self.assertNotIn("dg-test", str(ctx.exception))
         self.assertNotIn("Invalid", str(ctx.exception))  # provider body is not echoed
         self.assertEqual(self.hits, 1)  # 401 is not retried
@@ -134,6 +137,68 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_speech_is_none(self) -> None:
         self.reply = (200, reply(""))
         self.assertIsNone(await self.t.transcribe(clip(), []))
+
+    async def test_unreadable_reply_is_a_plain_failure(self) -> None:
+        async def garbage(request: web.Request) -> web.Response:
+            return web.Response(text="not json", content_type="text/plain")
+
+        app = web.Application()
+        app.router.add_post("/v1/listen", garbage)
+        server = TestServer(app)
+        await server.start_server()
+        t = DeepgramTranscriber(
+            TranscriptionSettings(
+                engine="deepgram",
+                deepgram_api_key="dg-test",
+                deepgram_url=str(server.make_url("/v1/listen")),
+            )
+        )
+        try:
+            with self.assertRaisesRegex(DeepgramError, "couldn't read"):
+                await t.transcribe(clip(), ["Auril"])
+        finally:
+            await t.close()
+            await server.close()
+
+    async def test_a_timeout_isnt_retried(self) -> None:
+        async def slow(request: web.Request) -> web.Response:
+            await asyncio.sleep(2)
+            return web.json_response(reply("late"))
+
+        self.server.app.router._frozen = False  # add a route for this test
+        self.server.app.router.add_post("/slow", slow)
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=0.2))
+        t = DeepgramTranscriber(
+            TranscriptionSettings(
+                engine="deepgram",
+                deepgram_api_key="dg-test",
+                deepgram_url=str(self.server.make_url("/slow")),
+            ),
+            session,
+        )
+        try:
+            with self.assertRaises(TimeoutError):
+                await t.transcribe(clip(), [])
+        finally:
+            await session.close()
+
+    async def test_unreachable_is_retried_once_then_names_stay_out_of_the_error(self) -> None:
+        dead = DeepgramTranscriber(
+            TranscriptionSettings(
+                engine="deepgram",
+                deepgram_api_key="dg-test",
+                deepgram_url="http://127.0.0.1:9/v1/listen",  # nothing listens here
+            )
+        )
+        try:
+            with self.assertRaises(DeepgramError) as ctx:
+                await dead.transcribe(clip(), ["Bryn Shander"])
+        finally:
+            await dead.close()
+        message = str(ctx.exception)
+        self.assertIn("couldn't reach Deepgram", message)
+        for secret in ("dg-test", "Bryn", "keyterm", "127.0.0.1"):
+            self.assertNotIn(secret, message)
 
     async def test_close_twice_is_safe(self) -> None:
         await self.t.close()

@@ -64,6 +64,18 @@ class ConsentTests(DatabaseTest):
         self.assertFalse(self.store.has_consent(1, 2))
         self.assertEqual(await ConsentStore(self.db).consenting(1), frozenset())
 
+    async def test_with_an_outside_company_only_yeses_given_knowing_that_count(self) -> None:
+        await self.store.grant(1, 2)  # under local Whisper
+        await self.store.grant(1, 3, outside_ok=True)  # the request named the company
+        switched = ConsentStore(self.db, outside=True)
+        self.assertEqual(await switched.consenting(1), frozenset({3}))
+        self.assertIsNone(await switched.granted_at(1, 2))
+        self.assertIsNotNone(await switched.granted_at(1, 3))
+        await switched.grant(1, 2, outside_ok=True)  # agreed again to the new wording
+        self.assertEqual(await switched.consenting(1), frozenset({2, 3}))
+        # Back on local Whisper, every yes counts.
+        self.assertEqual(await ConsentStore(self.db).consenting(1), frozenset({2, 3}))
+
     async def test_concurrent_grants(self) -> None:
         await asyncio.gather(*(self.store.grant(1, u) for u in range(20)))
         self.assertEqual(len(await self.store.consenting(1)), 20)

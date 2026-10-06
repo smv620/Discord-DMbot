@@ -18,22 +18,33 @@ from typing import Any
 import aiohttp
 
 from dmbot.audio.segmenter import Utterance
-from dmbot.transcription.base import clean_text, to_wav
+from dmbot.transcription.base import TranscriptionProblem, clean_text, to_wav
 from dmbot.transcription.config import TranscriptionSettings
 
 log = logging.getLogger(__name__)
 
-REQUEST_TIMEOUT_S = 15
+# Well inside the pipeline's 10 s minimum budget per clip (#155), so a hung Deepgram
+# shows up as a failure ("isn't working"), not as "couldn't keep up". Replies took
+# 0.15-0.4 s in testing.
+REQUEST_TIMEOUT_S = 6
+CONNECT_TIMEOUT_S = 3
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 RETRY_DELAY_S = 1.0
+# Plain reasons the DM screen can show (the alert adds what to do next).
+STATUS_REASONS = {
+    400: "Deepgram couldn't use the request",
+    401: "Deepgram didn't accept DEEPGRAM_API_KEY",
+    402: "the Deepgram account is out of credit",
+    403: "Deepgram didn't accept DEEPGRAM_API_KEY",
+}
 # Deepgram rejects keyterm lists over about 500 tokens. Names are short, so a cap on the
 # count and total length keeps well inside it.
 MAX_KEYTERMS = 50
 MAX_KEYTERM_CHARS = 1000
 
 
-class DeepgramError(RuntimeError):
-    pass
+class DeepgramError(TranscriptionProblem):
+    """Safe to show and log: never contains the key, players' names or the reply body."""
 
 
 def keyterms(hints: list[str]) -> list[str]:
@@ -57,8 +68,7 @@ def keyterms(hints: list[str]) -> list[str]:
 def request_params(settings: TranscriptionSettings, hints: list[str]) -> list[tuple[str, str]]:
     params: list[tuple[str, str]] = [
         ("model", settings.deepgram_model),
-        ("smart_format", "true"),
-        ("punctuate", "true"),
+        ("smart_format", "true"),  # punctuation and tidy numbers
         ("mip_opt_out", "true"),  # don't keep players' voices for model training
     ]
     if settings.language:
@@ -89,7 +99,7 @@ class DeepgramTranscriber:
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S)
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
             )
             self._owns_session = True
         return self._session
@@ -103,16 +113,31 @@ class DeepgramTranscriber:
         body = to_wav(utterance.pcm)
         params = request_params(s, hints)
         for attempt in (1, 2):
-            async with self._get_session().post(
-                s.deepgram_url, params=params, data=body, headers=headers
-            ) as resp:
-                if resp.status == 200:
-                    return transcript(await resp.json(content_type=None))
-                if attempt == 1 and resp.status in RETRY_STATUSES:
-                    await asyncio.sleep(RETRY_DELAY_S)
+            try:
+                async with self._get_session().post(
+                    s.deepgram_url, params=params, data=body, headers=headers
+                ) as resp:
+                    if resp.status == 200:
+                        return transcript(await resp.json(content_type=None))
+                    if attempt == 1 and resp.status in RETRY_STATUSES:
+                        await asyncio.sleep(RETRY_DELAY_S)
+                        continue
+                    # Status only: error bodies can echo request details.
+                    reason = STATUS_REASONS.get(resp.status, "Deepgram had a problem")
+                    raise DeepgramError(f"{reason} (HTTP {resp.status})")
+            except aiohttp.ClientConnectionError as exc:
+                # A dropped or stale connection, or a slow connect: worth one more try.
+                # The overall request timeout isn't retried: it raises a plain
+                # TimeoutError, which the pipeline counts as a failure.
+                if attempt == 1:
                     continue
-                # Status only: error bodies can echo request details.
-                raise DeepgramError(f"Deepgram returned HTTP {resp.status}")
+                raise DeepgramError(f"couldn't reach Deepgram ({type(exc).__name__})") from None
+            except aiohttp.ClientError as exc:
+                # aiohttp's own messages can include the request URL, whose query holds
+                # players' names (keyterms): keep only the error's type.
+                raise DeepgramError(f"Deepgram request failed ({type(exc).__name__})") from None
+            except ValueError:
+                raise DeepgramError("Deepgram sent a reply DMbot couldn't read") from None
         return None  # pragma: no cover  # loop always returns or raises
 
     async def close(self) -> None:

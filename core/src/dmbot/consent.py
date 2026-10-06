@@ -23,8 +23,11 @@ from dmbot.db import Conn, Database
 
 
 class ConsentStore:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, *, outside: bool = False) -> None:
+        """`outside`: the server sends voices to another company to be written down, so
+        only yeses given knowing that count (the others are asked again)."""
         self._db = db
+        self._outside = outside
         self._cache: dict[int, frozenset[int]] = {}
         self._locks: dict[int, asyncio.Lock] = {}
         # Revoked here but not (yet) saved: never trust the database for these.
@@ -33,17 +36,34 @@ class ConsentStore:
         # stop arrived can't undo that stop.
         self._stops: dict[tuple[int, int], int] = {}
 
-    async def grant(self, guild_id: int, user_id: int) -> frozenset[int]:
+    @property
+    def outside(self) -> bool:
+        return self._outside
+
+    @outside.setter
+    def outside(self, value: bool) -> None:
+        """Changing which yeses count drops the cache, so nothing stale is trusted."""
+        if value != self._outside:
+            self._outside = value
+            self._cache.clear()
+
+    async def grant(
+        self, guild_id: int, user_id: int, *, outside_ok: bool = False
+    ) -> frozenset[int]:
+        """Save a yes. `outside_ok`: the request they agreed to said another company
+        writes things down."""
         stops_before = self._stops.get((guild_id, user_id), 0)
         async with self._lock(guild_id):
             async with self._db.guild(guild_id) as conn:
                 await conn.execute(
-                    "INSERT INTO consent (guild_id, user_id, granted_at) VALUES (%s, %s, %s)"
+                    "INSERT INTO consent (guild_id, user_id, granted_at, outside_ok)"
+                    " VALUES (%s, %s, %s, %s)"
                     " ON CONFLICT (guild_id, user_id)"
-                    " DO UPDATE SET granted_at = EXCLUDED.granted_at",
-                    (guild_id, user_id, int(time.time())),
+                    " DO UPDATE SET granted_at = EXCLUDED.granted_at,"
+                    " outside_ok = EXCLUDED.outside_ok",
+                    (guild_id, user_id, int(time.time()), outside_ok),
                 )
-                users = await _select(conn, guild_id)
+                users = await _select(conn, guild_id, self._outside)
             if self._stops.get((guild_id, user_id), 0) == stops_before:
                 self._held_back.get(guild_id, set()).discard(user_id)
             # Otherwise a stop arrived while saving: it wins, and its revoke follows.
@@ -70,7 +90,7 @@ class ConsentStore:
                     (guild_id, user_id),
                 )
                 removed = await cur.fetchone() is not None
-                users = await _select(conn, guild_id)
+                users = await _select(conn, guild_id, self._outside)
             self._held_back[guild_id].discard(user_id)
             self._store(guild_id, users)
             return removed
@@ -80,7 +100,7 @@ class ConsentStore:
             async with self._lock(guild_id):
                 if guild_id not in self._cache:
                     async with self._db.guild(guild_id) as conn:
-                        users = await _select(conn, guild_id)
+                        users = await _select(conn, guild_id, self._outside)
                     self._store(guild_id, users)
         return self._cache[guild_id]
 
@@ -94,8 +114,9 @@ class ConsentStore:
             return {}
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT user_id, granted_at FROM consent WHERE guild_id = %s AND user_id = ANY(%s)",
-                (guild_id, ids),
+                "SELECT user_id, granted_at FROM consent WHERE guild_id = %s"
+                " AND user_id = ANY(%s) AND (outside_ok OR NOT %s)",
+                (guild_id, ids, self._outside),
             )
             rows = await cur.fetchall()
         return {int(r["user_id"]): int(r["granted_at"]) for r in rows}
@@ -117,6 +138,9 @@ class ConsentStore:
         return users
 
 
-async def _select(conn: Conn, guild_id: int) -> frozenset[int]:
-    cur = await conn.execute("SELECT user_id FROM consent WHERE guild_id = %s", (guild_id,))
+async def _select(conn: Conn, guild_id: int, outside: bool) -> frozenset[int]:
+    cur = await conn.execute(
+        "SELECT user_id FROM consent WHERE guild_id = %s AND (outside_ok OR NOT %s)",
+        (guild_id, outside),
+    )
     return frozenset(int(r["user_id"]) for r in await cur.fetchall())

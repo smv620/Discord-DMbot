@@ -350,6 +350,12 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
     runs local Whisper).
 
   This changes the terms, so the terms version goes up and everyone is asked again (#35).
+  **Built for the switch to an outside company (#170):** each yes records whether the
+  request said another company writes things down. While the server uses one
+  (`TRANSCRIBER=deepgram` or `cloud`), only those yeses count; everyone else isn't
+  recorded and gets the question again. An old "I consent" button from before the switch
+  shows the new question instead of saving a yes. The general terms version (#35) still
+  covers other wording changes.
   It has a **✅ I consent** button (#33).
 - **Consent carries over** between sessions, per server. In **every session**, a consented
   person gets one short private reminder with the date they consented, plus a

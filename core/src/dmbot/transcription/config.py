@@ -48,6 +48,11 @@ class TranscriptionSettings:
         """True if players' voices go to another company to be turned into text."""
         return self.engine in OUTSIDE_ENGINES
 
+    @property
+    def company(self) -> str | None:
+        """The outside company's name when DMbot knows it (for the consent message)."""
+        return "Deepgram" if self.engine == "deepgram" else None
+
 
 def _language(value: str) -> str:
     """'auto' means let the engine detect the language (empty string)."""
