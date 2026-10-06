@@ -261,6 +261,171 @@ class NameCards(NamesTest):
         await name_card.show_matches(it, self.campaign.id, "zzz")
         self.assertIn("No name like **zzz**", it.response.sent[0][0])
 
+    async def alias(self, text: str) -> Any:
+        aliases = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=self.bell.id, include_secret=True
+        )
+        return next(a for a in aliases if a.text == text)
+
+    async def test_another_name_can_become_the_main_name(self) -> None:
+        from dmbot.ui import name_card
+
+        view = name_card.OneName(
+            self.campaign.id, self.bell.id, await self.alias("Bell"), secrets=True
+        )
+        it = self.it()
+        await view._main(it)
+        self.assertIn("⭐ **Bell** is the main name now", it.response.edited[0][0])
+        text = await self.card()
+        self.assertIn("🪪 **Bell** · NPC", text)
+        self.assertIn("**Also called:** Belleros", text)
+
+    async def test_a_secret_name_never_becomes_the_main_name(self) -> None:
+        from dmbot.ui import name_card
+
+        secret = await self.alias("the hooded stranger")
+        view = name_card.OneName(self.campaign.id, self.bell.id, secret, secrets=True)
+        buttons = [c for c in view.children if isinstance(c, discord.ui.Button)]
+        main = next(b for b in buttons if (b.label or "").startswith("⭐"))
+        self.assertTrue(main.disabled)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_main_name(
+                GUILD, self.campaign.id, self.bell.id, secret.id, source="dm"
+            )
+
+    async def test_keep_a_name_secret_and_a_manager_never_finds_it(self) -> None:
+        from dmbot.ui import name_card
+
+        bell = await self.alias("Bell")
+        view = name_card.OneName(self.campaign.id, self.bell.id, bell, secrets=True)
+        it = self.it()
+        await view._secret(it)
+        self.assertIn("🤫 **Bell** is secret now", it.response.edited[0][0])
+        self.assertTrue((await self.alias("Bell")).secret)
+        it = self.it(MANAGER)  # may be at the table: the secret name is "gone" for them
+        await name_card.OneName(self.campaign.id, self.bell.id, bell, secrets=False)._not_this(it)
+        self.assertIn("isn't there any more", it.response.sent[0][0])
+        self.assertTrue((await self.alias("Bell")).secret)
+
+    async def test_not_this_name(self) -> None:
+        from dmbot.ui import name_card
+
+        view = name_card.OneName(
+            self.campaign.id, self.bell.id, await self.alias("Bell"), secrets=True
+        )
+        it = self.it()
+        await view._not_this(it)
+        self.assertIn("stops listening for **Bell** as **Belleros**", it.response.edited[0][0])
+        self.assertNotIn("Also called", await self.card())
+
+    async def test_same_as_joins_two_names_and_can_be_undone(self) -> None:
+        from dmbot.ui import name_card
+
+        eros = await ui.save_name(self.memory, self.campaign, "Bell Eros", "npc", [], [])
+        view = name_card.SameConfirm(
+            self.campaign.id, eros.id, self.bell.id, "Bell Eros", "Belleros"
+        )
+        it = self.it()
+        await view._keep_other(it)
+        content, _ = it.response.edited[0]
+        self.assertIn("🔗 Done: **Bell Eros** is now another name for **Belleros**", content)
+        self.assertNotIn("Bell Eros", await self.names())
+        self.assertIn("Bell Eros", await self.card())  # now one of its other names
+        lasting = it.followup.send.call_args.kwargs["view"]  # outlives the card's menu
+        self.assertIsNone(lasting.timeout)
+        (undo,) = [c for c in lasting.children if isinstance(c, name_card.UndoButton)]
+        it = self.it()
+        await undo.callback(it)
+        self.assertIn("↩️ **Bell Eros** is back", it.response.edited[0][0])
+        self.assertIn("Bell Eros", await self.names())
+
+    async def test_same_as_never_offers_the_name_itself(self) -> None:
+        from dmbot.ui import name_card
+
+        self.fresh()
+        it = self.it()
+        await name_card.show_picks(it, self.campaign.id, self.bell.id, name_card.SAME, "Belleros")
+        self.assertIn("No other name like **Belleros**", it.response.edited[0][0])
+
+    async def test_connect_to_reads_both_ways_and_can_be_removed(self) -> None:
+        from dmbot.ui import name_card
+
+        tribe = await ui.save_name(self.memory, self.campaign, "Frostwolf tribe", "faction", [], [])
+        ulfgar = await ui.save_name(self.memory, self.campaign, "Ulfgar", "npc", [], [])
+        it = self.it()
+        await name_card.connect(
+            it, self.campaign.id, tribe.id, "member_of" + name_card.BACK, ulfgar.id
+        )
+        self.assertIn(
+            "🧭 Saved: **Ulfgar** is a member of **Frostwolf tribe**", it.response.edited[0][0]
+        )
+        self.fresh()
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, tribe.id)
+        self.assertIn("**Connections:** members include **Ulfgar**", it.response.sent[0][0])
+        self.fresh()
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, ulfgar.id)
+        self.assertIn("**Connections:** is a member of **Frostwolf tribe**", it.response.sent[0][0])
+        (relation,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id)
+        view = name_card.Connect(self.campaign.id, ulfgar.id, "Ulfgar", [(relation.id, "x")])
+        view.remove = SimpleNamespace(values=[relation.id])  # type: ignore[assignment]
+        it = self.it()
+        await view._remove_picked(it)
+        self.assertIn("Removed: Ulfgar is a member of Frostwolf tribe.", it.response.edited[0][0])
+        self.assertEqual(
+            await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id), []
+        )
+
+    async def test_a_long_note_and_card_fit_one_message(self) -> None:
+        from dmbot.ui import name_card
+
+        for n in range(30):
+            await self.memory.add_alias(
+                GUILD, self.campaign.id, self.bell.id, f"Bell {n} " + "x" * 80, kind="nickname",
+                source="dm", status=CONFIRMED,
+            )  # fmt: skip
+        self.fresh()
+        it = self.it()
+        note = "✅ " + "y" * 1500
+        await name_card.show_card(it, self.campaign.id, self.bell.id, full=True, note=note)
+        self.assertLessEqual(len(it.response.sent[0][0]), 2000)
+
+    async def test_a_manager_never_gets_the_secret_button(self) -> None:
+        from dmbot.ui import name_card
+
+        view = name_card.OneName(
+            self.campaign.id, self.bell.id, await self.alias("Bell"), secrets=False
+        )
+        labels = [b.label or "" for b in view.children if isinstance(b, discord.ui.Button)]
+        self.assertFalse(any("secret" in label for label in labels))
+        it = self.it(MANAGER)
+        await view._secret(it)
+        self.assertIn("Only the campaign's DMs", it.response.sent[0][0])
+        self.assertFalse((await self.alias("Bell")).secret)
+
+    async def test_show_all_lists_every_other_name(self) -> None:
+        from dmbot.ui import name_card
+
+        for n in range(5):
+            await self.memory.add_alias(
+                GUILD, self.campaign.id, self.bell.id, f"Bell {n}", kind="nickname",
+                source="dm", status=CONFIRMED,
+            )  # fmt: skip
+        self.fresh()
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("… and 3 more", text)
+        labels = [getattr(c, "label", None) for c in kw["view"].children]
+        self.assertIn("Show all", labels)
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, self.bell.id, full=True)
+        text, kw = it.response.sent[0]
+        self.assertNotIn("… and", text)
+        self.assertIn("Bell 4", text)
+        self.assertNotIn("Show all", [getattr(c, "label", None) for c in kw["view"].children])
+
     async def test_the_type_ahead_suggests_nothing_to_strangers(self) -> None:
         from dmbot.ui import name_card
 

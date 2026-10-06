@@ -509,6 +509,35 @@ class MemoryStore:
                 )
             return Written(_entity(row), w.batch)
 
+    async def set_main_name(
+        self, guild_id: int, campaign_id: str, entity_id: str, alias_id: str, *, source: str
+    ) -> Written[Entity]:
+        """Make one of an entry's other names its main name (the DM's call, ⭐ on the
+        name card). The old main name stays one of its other names. Never a secret name:
+        the main name is the one everyone sees."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change a name.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            await _entity_row(w, entity_id)
+            alias = await w.get(ALIASES, alias_id)
+            if alias is None or alias["entity_id"] != entity_id or alias["status"] != CONFIRMED:
+                raise MemoryRuleError(NOT_FOUND)
+            if alias["secret"]:
+                raise MemoryRuleError("A secret name can't be the main name.")
+            old = await w.get(ENTITIES, entity_id)
+            assert old is not None
+            kept = await w.select(
+                ALIASES, " AND entity_id = %s AND key = %s", [entity_id, lookup_key(old["name"])]
+            )
+            if not kept:  # the old main name stays one of its other names
+                await w.insert(
+                    ALIASES, _new_alias(w, entity_id, old["name"], "full", CONFIRMED, False, None)
+                )
+            elif kept[0]["status"] != CONFIRMED:
+                await w.update(ALIASES, kept[0]["id"], {"status": CONFIRMED})
+            row = await w.update(ENTITIES, entity_id, {"name": alias["text"]})
+            return Written(_entity(row), w.batch)
+
     async def confirm_entity(
         self,
         guild_id: int,
@@ -614,6 +643,14 @@ class MemoryStore:
             current = await w.get(ALIASES, alias_id)
             if current is None:
                 raise MemoryRuleError(NOT_FOUND)
+            owner = await w.get(ENTITIES, current["entity_id"])
+            if (
+                owner is not None
+                and current["key"] == lookup_key(owner["name"])
+                and (secret or status == REJECTED)
+            ):
+                # The main name is the one everyone sees and DMbot listens for.
+                raise MemoryRuleError("That's the main name. Make another name the main one first.")
             changes: dict[str, Any] = {}
             if status is not None:
                 _check_choice(status, FACT_STATUSES, "alias status")
@@ -653,7 +690,22 @@ class MemoryStore:
             needs_dm = CONFIRMED in (keep["status"], gone["status"]) or keep["type"] != gone["type"]
             if needs_dm and not dm_said_same:
                 raise MemoryRuleError("Only the DM can say these two are the same.")
+            players = {keep["played_by"], gone["played_by"]} - {None}
+            if len(players) > 1:
+                raise MemoryRuleError("Those are two different players' characters.")
+            if gone["played_by"] is not None and keep["played_by"] is None:
+                # A player's character stays one, whichever name is kept.
+                await w.update(
+                    ENTITIES, keep_id, {"type": gone["type"], "played_by": gone["played_by"]}
+                )
             await _move_aliases(w, keep_id, gone_id)
+            own = await w.select(
+                ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
+            )
+            if own and own[0]["secret"]:
+                # The other entry's name was a secret one: the main name everyone sees
+                # must never be.
+                raise MemoryRuleError("A secret name can't be the main name.")
             await _move_relations(w, keep_id, gone_id)
             for table in (MENTIONS, CORRECTIONS):
                 for row in await w.select(table, " AND entity_id = %s", [gone_id]):
