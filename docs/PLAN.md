@@ -483,8 +483,11 @@ so the docs always show names the way Discord does. For the campaign
 | **Controlled** | DM screen, rules, NPCs, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
 | **Unrestricted** | Game time, live transcript | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
 
-- Players can **read but never post** in any DMbot channel (no threads, reactions or
-  commands either), the same read-only access as a DM-screen peek.
+- Players can **read but never post** in any DMbot channel (no threads or reactions
+  either), the same read-only access as a DM-screen peek. Slash commands are blocked in
+  controlled channels and for peeks, but **work in the live transcript channel** (#188):
+  their replies are private, and its card tells players to type `/consent revoke`. A
+  blocked command hangs on "Sending command..." with no explanation.
 - Changing the setting (the help-card buttons) updates every controlled channel together.
   Peeking opens all controlled channels for that player; hiding closes them all. Once
   there's more than one controlled channel, the peek warning must name every channel a
@@ -520,7 +523,8 @@ Code changes: #87.
 
 **Live transcript channel: built (2026-10-06, #124).** Decided while building:
 - It's made at `/dmbot start`, next to the DM screen in the same category, and kept
-  view-only for everyone (DMs included: only DMbot posts there). It's only edited when
+  view-only for everyone (DMs included: only DMbot posts there; no threads or reactions).
+  Slash commands still work there, with private replies (#188). It's only edited when
   something differs (Discord allows few channel edits per ten minutes), and its card is
   found among the pins. A problem setting it up is reported in the DM screen and in the
   start reply, and never stops the session; losing the channel mid-session stops the

@@ -175,7 +175,7 @@ def transcript_discord_error(detail: str) -> str:
 def transcript_topic(campaign_name: str) -> str:
     return (
         f"Live transcript for {campaign_name}. Anyone in this server can read it; only "
-        "DMbot writes here. Only people who said yes to recording are recorded."
+        "DMbot posts here. Only people who said yes to recording are recorded."
     )
 
 
@@ -183,12 +183,12 @@ def transcript_card(campaign_name: str) -> str:
     return "\n".join(
         [
             f"{TRANSCRIPT_CARD_TITLE}{campaign_name}**",
-            "Anyone in this server can read this. Only DMbot writes here, so not even the "
-            "DM can post.",
+            "Anyone in this server can read this. Only DMbot posts here, not even the DM.",
             "While DMbot is listening, what people say shows up here a few seconds later.",
             "**Who is recorded:** only people who said yes in DMbot's private message. "
             "Changed your mind? Press **Stop recording me** in that message, or type "
-            "`/consent revoke`. What's already here stays.",
+            "`/consent revoke` here or in any channel. Only you see the answer. What's "
+            "already here stays.",
             "DMbot's notes for the DM never appear here.",
         ]
     )

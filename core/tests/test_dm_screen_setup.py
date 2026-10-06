@@ -19,6 +19,9 @@ BOT_PERMS = discord.Permissions(
     read_message_history=True,
     manage_channels=True,
     manage_roles=True,
+    # As in production: the bot's role inherits it from @everyone. Without it, setup
+    # drops the command setting from every overwrite and #188's tests prove nothing.
+    use_application_commands=True,
 )
 
 

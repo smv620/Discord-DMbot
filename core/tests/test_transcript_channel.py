@@ -78,7 +78,8 @@ class TranscriptChannelTests(DatabaseTest):
         await setup_transcript_channel(self.guild, self.campaign.id, self.store)
         card = self.new.send.await_args.args[0]
         self.assertTrue(card.startswith(messages.TRANSCRIPT_CARD_TITLE))
-        self.assertIn("Only DMbot writes here", card)
+        self.assertIn("Only DMbot posts here", card)
+        self.assertIn("`/consent revoke` here or in any channel", card)  # works here (#188)
         self.new.send.return_value.pin.assert_awaited_once()
 
     async def test_an_existing_channel_is_made_view_only_again_not_recreated(self) -> None:

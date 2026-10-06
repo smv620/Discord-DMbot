@@ -4,8 +4,10 @@
 anyone in the server can read it, and only DMbot posts (no threads or reactions
 either). Slash commands work there (#188): their replies are private, the pinned card
 tells players to type `/consent revoke`, and a DM's first try is often `/dmbot` in the
-channel they're looking at. It sits next to the DM screen, in the same category, with a topic and
-a pinned "what's this channel?" card. DMbot only ever changes a channel it named like a
+channel they're looking at.
+
+It sits next to the DM screen, in the same category, with a topic and a pinned "what's
+this channel?" card. DMbot only ever changes a channel it named like a
 transcript channel, and only edits it when something is actually different (Discord
 allows few channel edits per ten minutes).
 
@@ -134,7 +136,9 @@ async def _repair(
     current = current_overwrites(channel)
     merged = merge_overwrites(current, plan, guild_id=guild.id)
     wanted = {t: restrict(p, held) for t, p in merged.items()}
-    have = {t: dict(p) for t, p in current.items()}
+    # Compared as DMbot could set it: a permission it doesn't hold can't be changed, so a
+    # stale value there mustn't trigger an edit at every start.
+    have = {t: restrict(p, held) for t, p in current.items()}
     timeout = RENAME_TIMEOUT_S * 2
     if have != wanted:
         overwrites = _discord_overwrites(guild, merged, held)
