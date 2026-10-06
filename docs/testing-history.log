@@ -409,3 +409,14 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Each: database backed up first (kept on the server, outside the repo), core rebuilt,
   "ears connected" within seconds, no errors. Ears and postgres unchanged.
   Not yet live-tested: all of the above. Run 8's checklist covers them.
+
+==============================================================================
+2026-10-06  Server: redeploy before run 8 (server session, no test run)
+==============================================================================
+  - 16:13 UTC  development @ a184882: #206 (who is being recorded, kept up to date in
+    the DM screen: #107), #207 (Stop listening button: #108), #208 (plain words in
+    transcription alerts: #99), #214 (speech-to-text hints that follow the scene:
+    characters and players' names, names said in the last ~10 minutes, connected
+    names, names said earlier in the session, then the rest; never secret names).
+    No migrations. Database backed up first; core rebuilt; "ears connected" at
+    16:13:09; no errors. Ears and postgres unchanged.
