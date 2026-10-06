@@ -797,6 +797,40 @@ class Renaming(MemoryTest):
         self.assertEqual(written.value.name, "Bell")
         self.assertEqual(await self.keys(a), {"bell": CONFIRMED, "belleros": CONFIRMED})
 
+    async def test_joining_keeps_a_players_character_and_its_player(self) -> None:
+        npc = await self.add("Bell Eros", status=CONFIRMED)
+        pc = await self.add("Belleros", type="player_character", played_by=55, status=CONFIRMED)
+        await self.memory.merge(GUILD_A, self.c, npc, pc, source="dm", dm_said_same=True)
+        kept = await self.memory.entity(GUILD_A, self.c, npc)
+        assert kept is not None
+        self.assertEqual((kept.name, kept.played_by), ("Bell Eros", 55))
+        other = await self.add("Kesh", type="player_character", played_by=66, status=CONFIRMED)
+        with self.assertRaises(MemoryRuleError):  # two players' characters stay apart
+            await self.memory.merge(GUILD_A, self.c, npc, other, source="dm", dm_said_same=True)
+
+    async def test_joining_never_makes_a_secret_name_the_main_name(self) -> None:
+        a = await self.add("Belleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "the hooded stranger", kind="title", source="dm",
+            status=CONFIRMED, secret=True,
+        )  # fmt: skip
+        stranger = await self.add("the hooded stranger", status=CONFIRMED)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.merge(GUILD_A, self.c, stranger, a, source="dm", dm_said_same=True)
+        await self.memory.merge(GUILD_A, self.c, a, stranger, source="dm", dm_said_same=True)
+        self.assertEqual(
+            await self.keys(a), {"belleros": CONFIRMED, "the hooded stranger": CONFIRMED}
+        )
+        secret = await self.memory.aliases(GUILD_A, self.c, entity_id=a, include_secret=True)
+        self.assertTrue(next(x for x in secret if x.key == "the hooded stranger").secret)
+
+    async def test_the_main_name_is_never_made_secret_or_dropped(self) -> None:
+        a = await self.add("Belleros", status=CONFIRMED)
+        (own,) = await self.memory.aliases(GUILD_A, self.c, entity_id=a)
+        for change in ({"secret": True}, {"status": REJECTED}):
+            with self.assertRaises(MemoryRuleError):
+                await self.memory.update_alias(GUILD_A, self.c, own.id, source="dm", **change)
+
     async def test_never_onto_a_secret_name_and_only_by_the_dm(self) -> None:
         a = await self.add("Belleros", status=CONFIRMED)
         await self.memory.add_alias(

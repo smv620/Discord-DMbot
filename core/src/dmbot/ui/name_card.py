@@ -65,6 +65,7 @@ log = logging.getLogger(__name__)
 
 CARD_MAX = 1900  # under Discord's 2,000 characters
 SHOWN = 3  # per section, then "… and N more"
+NOTE_MAX = 600  # what just changed, above the card
 NAME_LIMIT = 100  # what a form field may hold
 
 # Connections in plain words (the fixed core of the memory rules).
@@ -82,11 +83,13 @@ CONNECTION_WORDS = {
 # Ulfgar"). Connections that read the same both ways use CONNECTION_WORDS.
 CONNECTION_BACK = {
     "located_in": "is where you find",
-    "member_of": "has as members",
+    "member_of": "has as a member",
     "owns": "is owned by",
-    "knows": "is known by",
-    "serves": "has working for them",
+    "knows": "is known to",
+    "serves": "is the boss of",
 }
+# On a card, where several names may follow ("members include Ulfgar, Kesh").
+CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
 BOTH_WAYS = frozenset({"ally_of", "enemy_of", "kin_of"})
 BACK = ":back"  # a "how" picked from the other name's side ("has as members…")
 
@@ -103,12 +106,31 @@ def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
     return f"{subject.name} {connection_words(r.predicate)} {obj.name}"
 
 
-def connect_choices(name: str) -> list[tuple[str, str]]:
-    """(value, label) for "How is it connected?": each connection from this name's side,
-    then the other way round."""
-    ahead = [(p, f"{name} {w}…") for p, w in CONNECTION_WORDS.items()]
-    back = [(p + BACK, f"{name} {w}…") for p, w in CONNECTION_BACK.items()]
-    return [(v, logic.shorten(label, logic.OPTION_LABEL_MAX)) for v, label in ahead + back]
+def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
+    """(value, label, description) for "How is it connected?": each connection from this
+    name's side, each followed by the same one the other way round."""
+    out: list[tuple[str, str, str | None]] = []
+    for p, w in CONNECTION_WORDS.items():
+        out.append((p, logic.shorten(f"{name} {w}…", logic.OPTION_LABEL_MAX), None))
+        if p in CONNECTION_BACK:
+            label = logic.shorten(f"{name} {CONNECTION_BACK[p]}…", logic.OPTION_LABEL_MAX)
+            out.append((p + BACK, label, "The other way round"))
+    return out
+
+
+def cut(text: str, limit: int) -> str:
+    """`text` within `limit` characters, cut after a whole entry (never inside **bold**)."""
+    if len(text) <= limit:
+        return text
+    head = text[: limit - 1]
+    at = max(head.rfind("\n"), head.rfind(", "), head.rfind("; "))
+    return (head[:at] if at > 0 else head).rstrip(",; ") + "…"
+
+
+def _who(names: CampaignLookup, entity_id: str) -> str:
+    """A name with its kind, so two buttons never read the same: "Bell (NPC)"."""
+    entity = names.entities.get(entity_id)
+    return f"{entity.name} ({_kind(entity.type)})" if entity is not None else "?"
 
 
 def _kind(type_key: str) -> str:
@@ -130,6 +152,7 @@ def card_text(
     secrets: bool,
     player: str | None = None,
     full: bool = False,
+    limit: int = CARD_MAX,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character). `full`: every entry of each section (Show all), not the first few."""
@@ -165,14 +188,14 @@ def card_text(
         words = (
             connection_words(r.predicate)
             if ahead
-            else CONNECTION_BACK.get(r.predicate, "is connected to")
+            else CARD_BACK.get(r.predicate, "is connected to")
         )
         groups.setdefault(words, []).append(f"**{_md(other.name)}**" + (" 🤫" if r.secret else ""))
     if groups:
         said = "; ".join(f"{words} {_more(who, full=full)}" for words, who in groups.items())
         lines.append(f"**Connections:** {said}")
     text = "\n".join(lines)
-    return text if len(text) <= CARD_MAX else text[: CARD_MAX - 1] + "…"
+    return cut(text, limit)
 
 
 async def _names(interaction: discord.Interaction, campaign: Campaign) -> CampaignLookup | None:
@@ -197,10 +220,9 @@ async def show_card(
     replace: bool = False,
     note: str | None = None,
     full: bool = False,
-    undo: UndoButton | None = None,
 ) -> None:
     """The card, as a new private message or in place of the one pressed; `note` goes
-    on top (what just changed), with `undo` under it if given. `full`: Show all."""
+    on top (what just changed). `full`: Show all."""
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
     if campaign is None or memory is None:
@@ -216,12 +238,16 @@ async def show_card(
     player = None
     if entity is not None and entity.played_by is not None:
         player = _bot(interaction).name_of(campaign.guild_id, entity.played_by)
-    text = card_text(names, entity_id, connections, secrets=secrets, player=player, full=full)
+    note = cut(note, NOTE_MAX) if note else None
+    limit = CARD_MAX - (len(note) + 2 if note else 0)
+    text = card_text(
+        names, entity_id, connections, secrets=secrets, player=player, full=full, limit=limit
+    )
     if text is None or entity is None:
         await _tell(interaction, GONE)
         return
     longer = not full and text != card_text(
-        names, entity_id, connections, secrets=secrets, player=player, full=True
+        names, entity_id, connections, secrets=secrets, player=player, full=True, limit=limit
     )
     own = name_key(entity.name)
     others = any(
@@ -230,7 +256,7 @@ async def show_card(
     )
     if note:
         text = f"{note}\n\n{text}"
-    view = NameCard(campaign.id, entity_id, others=others, longer=longer, undo=undo)
+    view = NameCard(campaign.id, entity_id, others=others, longer=longer)
     if replace:
         await _replace(interaction, text, view)
     else:
@@ -260,7 +286,6 @@ class NameCard(_Menu):
         *,
         others: bool = False,
         longer: bool = False,
-        undo: UndoButton | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -275,9 +300,6 @@ class NameCard(_Menu):
         self.add_item(_Button(self._change_kind, label="Change what it is", style=grey, row=1))
         if longer:
             self.add_item(_Button(self._all, label="Show all", style=grey, row=2))
-        if undo is not None:
-            undo.row = 2
-            self.add_item(undo)
         self.add_item(_Button(self._remove, label="Remove", style=grey, row=2))
 
     async def _all(self, interaction: discord.Interaction) -> None:
@@ -311,7 +333,7 @@ class NameCard(_Menu):
     async def _same(self, interaction: discord.Interaction) -> None:
         found = await _current(interaction, self.campaign_id, self.entity_id)
         if found:
-            self.stop()
+            self.origin = None  # the form's answer replaces this message; cancel keeps it
             await interaction.response.send_modal(
                 PickForm(self.campaign_id, self.entity_id, SAME, f"{found[1]} is the same as…")
             )
@@ -348,7 +370,7 @@ class NameCard(_Menu):
     async def _fix(self, interaction: discord.Interaction) -> None:
         found = await _current(interaction, self.campaign_id, self.entity_id)
         if found:
-            self.stop()
+            self.origin = None  # the form's answer replaces this message; cancel keeps it
             await interaction.response.send_modal(
                 FixSpellingForm(self.campaign_id, self.entity_id, found[1])
             )
@@ -356,7 +378,7 @@ class NameCard(_Menu):
     async def _add(self, interaction: discord.Interaction) -> None:
         found = await _current(interaction, self.campaign_id, self.entity_id)
         if found:
-            self.stop()
+            self.origin = None  # the form's answer replaces this message; cancel keeps it
             secrets = sees_secrets(found[0], interaction.user.id)
             await interaction.response.send_modal(
                 AnotherNameForm(self.campaign_id, self.entity_id, found[1], secrets=secrets)
@@ -645,9 +667,10 @@ class UndoButton(
                 interaction,
                 f"Couldn't undo: **{_md(entity.name)}** was changed again since. "
                 + (
-                    "Add it again with ➕ Add a name."
+                    "Add it again with ➕ Add a name on the names panel."
                     if entity.status == REJECTED
-                    else "Use ✖ Not this name on the card instead."
+                    else "To split them, open the card's Edit other names, press ✖ Not this "
+                    "name, add it again with ➕ Add a name, then fix any connections."
                 ),
             )
             return
@@ -706,7 +729,9 @@ class OtherNames(_Menu):
         campaign, alias, name = found
         self.stop()
         secrets = sees_secrets(campaign, interaction.user.id)
-        hidden = " 🤫 Secret: hidden from players." if alias.secret else ""
+        hidden = (
+            " 🤫 Secret: hidden from players, so it can't be the main name." if alias.secret else ""
+        )
         await _replace(
             interaction,
             f"**{_md(alias.text)}** is another name for **{_md(name)}**.{hidden}",
@@ -797,8 +822,8 @@ class OneName(_Menu):
         note = (
             f"👁️ **{_md(alias.text)}** isn't secret any more. Players can see it."
             if alias.secret
-            else f"🤫 **{_md(alias.text)}** is secret now: hidden from players, and DMbot "
-            "never puts it in the transcript."
+            else f"🤫 **{_md(alias.text)}** is secret now: hidden from players from now on, "
+            "and DMbot leaves it out of new transcripts. Past transcripts don't change."
         )
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
@@ -818,7 +843,7 @@ class OneName(_Menu):
         changed(interaction, campaign)
         self.stop()
         note = (
-            f"✖ DMbot no longer takes **{_md(alias.text)}** to mean **{_md(name)}**. Wrong? "
+            f"✖ DMbot stops listening for **{_md(alias.text)}** as **{_md(name)}**. Wrong? "
             "Add it back with Add another name."
         )
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
@@ -880,7 +905,10 @@ async def show_picks(
     options = [discord.SelectOption(label=_label(names, m), value=m.entity_id) for m in matches]
     asked = f"**{_md(_asked(name, how))}**"
     if not matches:
-        text = f"{asked}\nNo other name like **{_md(typed)}**. Search again, or add it first."
+        text = (
+            f"{asked}\nNo other name like **{_md(typed)}** yet. Search again, or add it "
+            "with ➕ Add a name on the names panel and come back."
+        )
     else:
         text = f"{asked} Pick one."
     await _replace(interaction, text, PickOther(campaign_id, entity_id, how, name, options))
@@ -915,20 +943,32 @@ class PickOther(_Menu):
             other = await _current(interaction, self.campaign_id, other_id) if found else None
             if found is None or other is None:
                 return
+            found_names = await _names(interaction, found[0])
+            if found_names is None:
+                return
             self.stop()
             name, other_name = found[1], other[1]
             await _replace(
                 interaction,
-                f"Are **{_md(name)}** and **{_md(other_name)}** the same person or thing? DMbot "
-                "makes them one: the other names and connections go together. Which name "
-                "should it use?",
-                SameConfirm(self.campaign_id, self.entity_id, other_id, name, other_name),
+                f"Make **{_md(name)}** and **{_md(other_name)}** one? Their other names and "
+                "connections go together. Which name should it keep?\n"
+                "Is one of them a disguise? Press **No**, then add it to the real one with "
+                "Add another name, as a secret name.",
+                SameConfirm(
+                    self.campaign_id,
+                    self.entity_id,
+                    other_id,
+                    _who(found_names, self.entity_id),
+                    _who(found_names, other_id),
+                ),
             )
             return
+        self.stop()
         await connect(interaction, self.campaign_id, self.entity_id, self.how, other_id)
 
     async def _again(self, interaction: discord.Interaction) -> None:
         if await _current(interaction, self.campaign_id, self.entity_id):
+            self.origin = None  # the form's answer replaces this message; cancel keeps it
             await interaction.response.send_modal(
                 PickForm(self.campaign_id, self.entity_id, self.how, _asked(self.name, self.how))
             )
@@ -947,12 +987,10 @@ class SameConfirm(_Menu):
         self.entity_id = entity_id
         self.other_id = other_id
         blue = discord.ButtonStyle.primary
-        self.add_item(
-            _Button(self._keep_this, label=logic.shorten(f"Call it {name}", 80), style=blue)
-        )
-        self.add_item(
-            _Button(self._keep_other, label=logic.shorten(f"Call it {other_name}", 80), style=blue)
-        )
+        for handler, label in ((self._keep_this, name), (self._keep_other, other_name)):
+            self.add_item(
+                _Button(handler, label=logic.shorten(f"Keep the name {label}", 80), style=blue)
+            )
         self.add_item(
             _Button(self._back, label="No, they're different", style=discord.ButtonStyle.secondary)
         )
@@ -979,11 +1017,18 @@ class SameConfirm(_Menu):
             return
         changed(interaction, campaign)
         self.stop()
-        undo = (
-            UndoButton(campaign.id, gone_id, written.batch) if written.batch is not None else None
-        )
         note = f"🔗 Done: **{_md(gone[1])}** is now another name for **{_md(kept[1])}**."
-        await show_card(interaction, campaign.id, keep_id, replace=True, note=note, undo=undo)
+        await show_card(interaction, campaign.id, keep_id, replace=True, note=note)
+        if written.batch is not None:
+            # Its own message, so Undo outlives the card's menu (and a restart).
+            view = discord.ui.View(timeout=None)
+            view.add_item(UndoButton(campaign.id, gone_id, written.batch))
+            await interaction.followup.send(
+                f"Wrong? **Undo** splits **{_md(gone[1])}** and **{_md(kept[1])}** again.",
+                view=view,
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -1002,7 +1047,8 @@ class Connect(_Menu):
             self._how_picked,
             placeholder=logic.shorten(f"How is {name} connected?", 150),
             options=[
-                discord.SelectOption(label=label, value=v) for v, label in connect_choices(name)
+                discord.SelectOption(label=label, value=v, description=d)
+                for v, label, d in connect_choices(name)
             ],
         )
         self.add_item(self.how)
@@ -1022,6 +1068,7 @@ class Connect(_Menu):
     async def _how_picked(self, interaction: discord.Interaction) -> None:
         how = self.how.values[0]
         if await _current(interaction, self.campaign_id, self.entity_id):
+            self.origin = None  # the form's answer replaces this message; cancel keeps it
             await interaction.response.send_modal(
                 PickForm(self.campaign_id, self.entity_id, how, _asked(self.name, how))
             )
@@ -1057,7 +1104,7 @@ class Connect(_Menu):
         changed(interaction, campaign)
         self.stop()
         said = sentence(names, relation) or "that connection"
-        note = f"Removed: {_md(said)}."
+        note = f"Removed: {_md(said)}. Wrong? Add it again with 🧭 Connect to…."
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
     async def _back(self, interaction: discord.Interaction) -> None:
@@ -1099,7 +1146,10 @@ async def connect(
     _, flags = written.value
     note = f"🧭 Saved: **{_md(subject[1])}** {connection_words(predicate)} **{_md(obj[1])}**."
     if flags:
-        note += " That's unusual for these two, so DMbot will check it with you later."
+        note += (
+            f' It\'s an odd pair for "{connection_words(predicate)}", so DMbot will ask you '
+            "about it after the session."
+        )
     await show_card(interaction, campaign.id, entity_id, replace=True, note=note)
 
 

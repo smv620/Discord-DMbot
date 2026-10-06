@@ -315,7 +315,7 @@ class NameCards(NamesTest):
         )
         it = self.it()
         await view._not_this(it)
-        self.assertIn("no longer takes **Bell** to mean **Belleros**", it.response.edited[0][0])
+        self.assertIn("stops listening for **Bell** as **Belleros**", it.response.edited[0][0])
         self.assertNotIn("Also called", await self.card())
 
     async def test_same_as_joins_two_names_and_can_be_undone(self) -> None:
@@ -327,11 +327,13 @@ class NameCards(NamesTest):
         )
         it = self.it()
         await view._keep_other(it)
-        content, card = it.response.edited[0]
+        content, _ = it.response.edited[0]
         self.assertIn("🔗 Done: **Bell Eros** is now another name for **Belleros**", content)
         self.assertNotIn("Bell Eros", await self.names())
         self.assertIn("Bell Eros", await self.card())  # now one of its other names
-        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoButton)]
+        lasting = it.followup.send.call_args.kwargs["view"]  # outlives the card's menu
+        self.assertIsNone(lasting.timeout)
+        (undo,) = [c for c in lasting.children if isinstance(c, name_card.UndoButton)]
         it = self.it()
         await undo.callback(it)
         self.assertIn("↩️ **Bell Eros** is back", it.response.edited[0][0])
@@ -360,7 +362,7 @@ class NameCards(NamesTest):
         self.fresh()
         it = self.it()
         await name_card.show_card(it, self.campaign.id, tribe.id)
-        self.assertIn("**Connections:** has as members **Ulfgar**", it.response.sent[0][0])
+        self.assertIn("**Connections:** members include **Ulfgar**", it.response.sent[0][0])
         self.fresh()
         it = self.it()
         await name_card.show_card(it, self.campaign.id, ulfgar.id)
@@ -374,6 +376,33 @@ class NameCards(NamesTest):
         self.assertEqual(
             await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id), []
         )
+
+    async def test_a_long_note_and_card_fit_one_message(self) -> None:
+        from dmbot.ui import name_card
+
+        for n in range(30):
+            await self.memory.add_alias(
+                GUILD, self.campaign.id, self.bell.id, f"Bell {n} " + "x" * 80, kind="nickname",
+                source="dm", status=CONFIRMED,
+            )  # fmt: skip
+        self.fresh()
+        it = self.it()
+        note = "✅ " + "y" * 1500
+        await name_card.show_card(it, self.campaign.id, self.bell.id, full=True, note=note)
+        self.assertLessEqual(len(it.response.sent[0][0]), 2000)
+
+    async def test_a_manager_never_gets_the_secret_button(self) -> None:
+        from dmbot.ui import name_card
+
+        view = name_card.OneName(
+            self.campaign.id, self.bell.id, await self.alias("Bell"), secrets=False
+        )
+        labels = [b.label or "" for b in view.children if isinstance(b, discord.ui.Button)]
+        self.assertFalse(any("secret" in label for label in labels))
+        it = self.it(MANAGER)
+        await view._secret(it)
+        self.assertIn("Only the campaign's DMs", it.response.sent[0][0])
+        self.assertFalse((await self.alias("Bell")).secret)
 
     async def test_show_all_lists_every_other_name(self) -> None:
         from dmbot.ui import name_card
@@ -393,7 +422,7 @@ class NameCards(NamesTest):
         it = self.it()
         await name_card.show_card(it, self.campaign.id, self.bell.id, full=True)
         text, kw = it.response.sent[0]
-        self.assertNotIn("more", text)
+        self.assertNotIn("… and", text)
         self.assertIn("Bell 4", text)
         self.assertNotIn("Show all", [getattr(c, "label", None) for c in kw["view"].children])
 
