@@ -490,7 +490,7 @@ class Lists(NamesTest):
         it = self.it()
         it.message = SimpleNamespace(content=sent.args[0])
         await sent.kwargs["view"].picked(
-            SimpleNamespace(values=["npc"], ids=select.ids, word=select.word),  # type: ignore[arg-type]
+            SimpleNamespace(values=["npc"], ids=select.ids, word=select.word),
             it,
         )
         self.assertIn("Every **wizard**: 4 names set to", it.response.edited[0][0])
