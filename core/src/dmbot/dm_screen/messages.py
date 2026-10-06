@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+import discord
 
 from dmbot import install
 from dmbot.capture_log import DM_WARN_PERCENT
@@ -239,13 +242,11 @@ class Spoke:
 
 
 def _who(name: str) -> str:
-    return name if name.startswith("<@") else _escape(name)
-
-
-def _escape(text: str) -> str:
-    for char in "\\*_~`|>[":
-        text = text.replace(char, "\\" + char)
-    return text
+    """A mention as-is (it shows the person, and pings are off); any other name shown
+    exactly as written."""
+    if re.fullmatch(r"<@!?[0-9]+>", name):
+        return name
+    return discord.utils.escape_markdown(name)
 
 
 def session_summary(
@@ -255,43 +256,57 @@ def session_summary(
     spoke: list[Spoke],
     problems: list[str],
     *,
-    downloads: bool,
+    downloads_sent: int,
 ) -> str:
-    """One plain summary for the DM screen when a session ends. Numbers and names only:
+    """One plain summary for the DM screen when a session ends. Names and numbers only:
     never anything that was said."""
     lines = [
-        f"📋 **Session over: {_escape(campaign_name)}**",
+        f"📋 **Session ended: {discord.utils.escape_markdown(campaign_name)}**",
         f"Started <t:{started_at}:t>, ran {duration(ended_at - started_at)}.",
     ]
-    if spoke:
-        parts = []
-        for person in sorted(spoke, key=lambda p: -p.seconds):
-            part = f"{_who(person.name)} ({duration(int(person.seconds))} of speech"
-            if person.percent is not None and person.percent < DM_WARN_PERCENT:
-                part += f", ⚠️ only {person.percent}% of their voice got through"
-            parts.append(part + ")")
-        lines.append("🎙 **Recorded:** " + ", ".join(parts) + ".")
+    people = sorted(spoke, key=lambda p: -p.seconds)
+    if people:
+        who = ", ".join(f"{_who(p.name)} {duration(int(p.seconds))}" for p in people)
+        lines.append(f"🎙 **Who spoke:** {who}.")
     else:
-        lines.append("🎙 Nobody was recorded this session.")
-    lines.extend(f"⚠️ {problem}" for problem in problems)
-    if spoke and not problems:
-        lines.append("✅ No problems writing things down.")
-    if downloads and spoke:
         lines.append(
-            "📄 Everyone recorded got a private message to download the transcript. "
-            "Anyone in the server can use `/transcript`."
+            "🎙 Nobody was recorded. DMbot only records people who said yes, and only when "
+            "they speak."
         )
+    for p in people:
+        if p.percent is not None and p.percent < DM_WARN_PERCENT:
+            lines.append(
+                f"⚠️ {_who(p.name)}'s voice kept cutting out ({p.percent}% got through), so "
+                "some of their words may be missing."
+            )
+    lines.extend(f"⚠️ {problem}" for problem in problems)
+    if problems:
+        lines.append("If this happens often, tell whoever runs DMbot for your server.")
+    elif people:
+        lines.append("✅ Everything DMbot heard was written down.")
+    if downloads_sent:
+        lines.append(
+            "📄 DMbot sent each recorded player a private message to download the "
+            "transcript. Anyone in the server can also get it with `/transcript`."
+        )
+    elif people:
+        lines.append("📄 Anyone in the server can get the transcript with `/transcript`.")
     return "\n".join(lines)
 
 
 def summary_problems(missed: int, failed: int, caught_up: bool) -> list[str]:
     problems = []
     if missed:
-        pieces = "1 piece" if missed == 1 else f"{missed} pieces"
-        problems.append(f"DMbot missed {pieces} of speech because writing things down fell behind.")
+        bits = "1 bit" if missed == 1 else f"{missed} bits"
+        problems.append(
+            f"DMbot fell behind and missed {bits} of speech. They aren't in the transcript."
+        )
     if failed:
         times = "once" if failed == 1 else f"{failed} times"
-        problems.append(f"Writing things down failed {times}, so the transcript has gaps.")
+        problems.append(f"DMbot couldn't write down speech {times}, so the transcript has gaps.")
     if not caught_up:
-        problems.append("DMbot stopped before it finished writing down the last few words.")
+        problems.append(
+            "The last few words before the stop may not be in the transcript: DMbot waited "
+            "for them, then gave up."
+        )
     return problems
