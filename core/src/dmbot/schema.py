@@ -442,6 +442,8 @@ MEMORY_HEARD = f"""
         PRIMARY KEY (guild_id, campaign_id, session_started_at, entity_id, speaker_id),
         {_entity_link("entity_id")}
     );
+    -- Deleting or merging a name, and reading counts per name.
+    CREATE INDEX memory_heard_by_entity ON memory_heard (guild_id, campaign_id, entity_id);
     CREATE INDEX memory_heard_by_speaker ON memory_heard (guild_id, speaker_id);
     """ + _isolate("memory_heard")
 
