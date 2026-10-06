@@ -37,6 +37,8 @@ STATUS_REASONS = {
     402: "the Deepgram account is out of credit",
     403: "Deepgram didn't accept DEEPGRAM_API_KEY",
 }
+# The same for the DM screen: no settings names (#99).
+DM_REASONS = {401: "Deepgram didn't accept DMbot's key", 403: "Deepgram didn't accept DMbot's key"}
 # Statuses the host can fix in .env or their Deepgram account (not an outage).
 HOST_FIXABLE = frozenset({400, 401, 402, 403})
 # Deepgram rejects keyterm lists over about 500 tokens. Names are short, so a cap on the
@@ -129,12 +131,16 @@ class DeepgramTranscriber:
                     raise DeepgramError(
                         f"{reason} (HTTP {resp.status})",
                         host_can_fix=resp.status in HOST_FIXABLE,
+                        for_dm=DM_REASONS.get(resp.status, reason),
                     )
             except aiohttp.ClientConnectionError as exc:
                 # A dropped or stale connection, or a slow connect: worth one more try.
                 if attempt == 1:
                     continue
-                raise DeepgramError(f"couldn't reach Deepgram ({type(exc).__name__})") from None
+                raise DeepgramError(
+                    f"couldn't reach Deepgram ({type(exc).__name__})",
+                    for_dm="DMbot couldn't reach Deepgram",
+                ) from None
             except TimeoutError:
                 # The whole request took too long: not retried (a second wait would run
                 # past the clip budget). The pipeline's own budget cancels the task
@@ -143,7 +149,10 @@ class DeepgramTranscriber:
             except aiohttp.ClientError as exc:
                 # aiohttp's own messages can include the request URL, whose query holds
                 # players' names (keyterms): keep only the error's type.
-                raise DeepgramError(f"Deepgram request failed ({type(exc).__name__})") from None
+                raise DeepgramError(
+                    f"Deepgram request failed ({type(exc).__name__})",
+                    for_dm="DMbot's request to Deepgram failed",
+                ) from None
             except ValueError:
                 raise DeepgramError("Deepgram sent a reply DMbot couldn't read") from None
         return None  # pragma: no cover  # loop always returns or raises

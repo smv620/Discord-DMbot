@@ -241,45 +241,56 @@ class TranscriptionPipeline:
         self.total_failures += 1
         self.failed_in[utterance.session] += 1
         if self.total_failures == 1 or self.total_failures % LOG_EVERY_NTH_FAILURE == 0:
-            log.error("Transcription failed (%d so far): %s", self.total_failures, exc)
+            # The details are for whoever hosts DMbot: the log, never Discord (#99).
+            log.error(
+                "Transcription failed (%d so far): %s: %s",
+                self.total_failures,
+                type(exc).__name__,
+                exc,
+            )
         if self.consecutive_failures == FAILURES_BEFORE_ALERT:
             if isinstance(exc, TranscriptionProblem):
+                # Our own plain sentence about the problem (never raw error text).
                 advice = (
-                    "Whoever hosts DMbot: check the speech-to-text settings in .env, then "
-                    "restart DMbot."
+                    "Whoever hosts DMbot needs to check its speech-to-text settings, then "
+                    "restart it."
                     if exc.host_can_fix
                     else "This is on the speech-to-text company's side; DMbot keeps trying."
                 )
                 text = (
-                    f"⚠️ **No transcript right now:** {exc}. DMbot still records, but writes "
-                    f"nothing down. {advice}"
+                    f"⚠️ **No transcript right now:** {exc.for_dm}. DMbot still hears "
+                    f"everyone, but writes nothing down. {advice}"
                 )
             else:
                 text = (
-                    f"⚠️ Transcription isn't working ({type(exc).__name__}: {exc}). "
-                    "Capture continues without text. Check the server log and your "
-                    "TRANSCRIBER settings."
+                    "⚠️ **Writing things down stopped working.** DMbot still hears everyone, "
+                    "but no words are being written down. Whoever hosts DMbot should check "
+                    "its log. DMbot keeps trying."
                 )
             await self._alert(guild_id, text)
 
     async def _on_success(self, guild_id: int) -> None:
         if self.consecutive_failures >= FAILURES_BEFORE_ALERT:
-            await self._alert(guild_id, "✅ Transcription is working again.")
+            await self._alert(guild_id, "✅ Writing things down is working again.")
         self.consecutive_failures = 0
 
     async def _check_backlog(self, guild_id: int) -> None:
         depth = self.backlog
         if depth >= BACKLOG_WARN and not self._backlog_warned:
             self._backlog_warned = True
-            log.warning("Transcription backlog: %d utterances waiting", depth)
+            log.warning(
+                "Transcription backlog: %d utterances waiting%s",
+                depth,
+                "" if self._outside else " (try a smaller WHISPER_MODEL or TRANSCRIBER=deepgram)",
+            )
             await self._alert(
                 guild_id,
-                f"🐢 Transcription is falling behind ({depth} clips waiting). "
+                f"🐢 **Writing things down is falling behind** ({depth} bits of speech "
+                "waiting), so words will show up late. "
                 + (
                     "The speech-to-text company is slow right now; DMbot will catch up."
                     if self._outside
-                    else "Whoever hosts DMbot can try a smaller WHISPER_MODEL or "
-                    "TRANSCRIBER=deepgram."
+                    else "Whoever hosts DMbot can switch to a faster setting."
                 ),
             )
         elif depth < BACKLOG_WARN // 2:

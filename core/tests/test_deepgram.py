@@ -113,7 +113,8 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(DeepgramError) as ctx:
             await self.t.transcribe(clip(), [])
         self.assertIn("401", str(ctx.exception))
-        self.assertIn("didn't accept DEEPGRAM_API_KEY", str(ctx.exception))  # plain reason
+        self.assertIn("didn't accept DEEPGRAM_API_KEY", str(ctx.exception))  # for the log
+        self.assertEqual(ctx.exception.for_dm, "Deepgram didn't accept DMbot's key")  # #99
         self.assertTrue(ctx.exception.host_can_fix)  # the DM screen points at .env
         self.assertNotIn("dg-test", str(ctx.exception))
         self.assertNotIn("Invalid", str(ctx.exception))  # provider body is not echoed

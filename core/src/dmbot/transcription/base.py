@@ -30,11 +30,16 @@ class TranscriptionProblem(RuntimeError):
 
     `host_can_fix`: the cause is in the host's settings (a wrong key, no credit), not an
     outage on the company's side, so the DM screen tells the host where to look.
+    `for_dm`: the same in words for the table, without settings names or status codes
+    (#99); the message itself, with those details, goes to the log.
     """
 
-    def __init__(self, message: str, *, host_can_fix: bool = False) -> None:
+    def __init__(
+        self, message: str, *, host_can_fix: bool = False, for_dm: str | None = None
+    ) -> None:
         super().__init__(message)
         self.host_can_fix = host_can_fix
+        self.for_dm = for_dm or message
 
 
 class Transcriber(Protocol):
