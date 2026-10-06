@@ -782,6 +782,21 @@ class Renaming(MemoryTest):
         await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
         self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})  # misspelling dropped
 
+    async def test_another_name_becomes_the_main_name(self) -> None:
+        a = await self.add("Belleros", status=CONFIRMED)
+        for text in ("Belleros", "Bell"):
+            await self.memory.add_alias(
+                GUILD_A, self.c, a, text, kind="full", source="dm", status=CONFIRMED
+            )
+        bell = next(
+            x for x in await self.memory.aliases(GUILD_A, self.c, entity_id=a) if x.key == "bell"
+        )
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_main_name(GUILD_A, self.c, a, bell.id, source="entitybot")
+        written = await self.memory.set_main_name(GUILD_A, self.c, a, bell.id, source="dm")
+        self.assertEqual(written.value.name, "Bell")
+        self.assertEqual(await self.keys(a), {"bell": CONFIRMED, "belleros": CONFIRMED})
+
     async def test_never_onto_a_secret_name_and_only_by_the_dm(self) -> None:
         a = await self.add("Belleros", status=CONFIRMED)
         await self.memory.add_alias(

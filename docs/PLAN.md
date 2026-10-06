@@ -878,6 +878,19 @@ names panel nor the speech-to-text hints can be a fixed list.
   connection reads the same sentence on both cards for now ("Ulfgar is a member of
   the Frostwolf tribe"); the reversed wording ("members include Ulfgar") comes with
   🧭 Connect to….
+- **Step 2, second part built (2026-10-06):** **Edit other names** (pick one: ⭐ make it
+  the main name, where the old main name stays one of its other names and a secret name
+  never can be; 🤫 keep it secret or 👁️ stop, for the campaign's DMs only; ✖ not this
+  name), **🔗 Same as…** (find the other name, then "Call it X" or "Call it Y"; the two
+  become one, with **Undo** on the card), **🧭 Connect to…** (pick how, from this
+  name's side or the other way round, then the other name; saved as confirmed, and a
+  **Remove a connection…** menu takes one back), and **Show all** when a section is
+  cut. Decided while building: a card groups connections by how they read from that
+  name's side ("is a member of **Frostwolf tribe**"; on the tribe's card "has as
+  members **Ulfgar**"; ally, enemy and family read the same both ways); connections the
+  DM adds are not secret for now (a 🤫 secret connection comes later); a connection that
+  breaks the usual rules (a member of a place) is still saved, flagged for the
+  after-session check.
 
 **Campaign memory rules (the ontology) (decided 2026-10-05).** EntityBot alone builds and
 maintains the ontology; there is no human graph engineer. So it is small, strict,

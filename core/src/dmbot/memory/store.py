@@ -509,6 +509,24 @@ class MemoryStore:
                 )
             return Written(_entity(row), w.batch)
 
+    async def set_main_name(
+        self, guild_id: int, campaign_id: str, entity_id: str, alias_id: str, *, source: str
+    ) -> Written[Entity]:
+        """Make one of an entry's other names its main name (the DM's call, ⭐ on the
+        name card). The old main name stays one of its other names. Never a secret name:
+        the main name is the one everyone sees."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change a name.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            await _entity_row(w, entity_id)
+            alias = await w.get(ALIASES, alias_id)
+            if alias is None or alias["entity_id"] != entity_id or alias["status"] != CONFIRMED:
+                raise MemoryRuleError(NOT_FOUND)
+            if alias["secret"]:
+                raise MemoryRuleError("A secret name can't be the main name.")
+            row = await w.update(ENTITIES, entity_id, {"name": alias["text"]})
+            return Written(_entity(row), w.batch)
+
     async def confirm_entity(
         self,
         guild_id: int,

@@ -3,8 +3,9 @@
 🔍 Find a name (a one-field form, or `/dmbot names find:` with Discord's type-ahead)
 opens a **name card**: what it is, when it was last heard, its other names, its secret
 names (the campaign's DMs only) and its connections, with ✏️ Fix spelling, Add another
-name, Change what it is, and Remove (asks first; Undo). Everything answers from the
-in-memory copy of the names, refreshed right after DMbot's own changes. Only the
+name, Edit other names (⭐ main name, 🤫 secret, ✖ not this name), 🔗 Same as…, 🧭 Connect
+to…, Change what it is, Show all, and Remove (asks first; Undo). Everything answers from
+the in-memory copy of the names, refreshed right after DMbot's own changes. Only the
 campaign's DMs and server managers, privately; every press checks again.
 """
 
@@ -19,7 +20,17 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, DM, REJECTED, MemoryRuleError, Relation, is_id, name_key
+from dmbot.memory.models import (
+    CONFIRMED,
+    DM,
+    MERGED,
+    REJECTED,
+    Alias,
+    MemoryRuleError,
+    Relation,
+    is_id,
+    name_key,
+)
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -67,13 +78,46 @@ CONNECTION_WORDS = {
     "knows": "knows",
     "serves": "works for",
 }
+# The same connection read from the other name's card ("Frostwolf tribe has as members
+# Ulfgar"). Connections that read the same both ways use CONNECTION_WORDS.
+CONNECTION_BACK = {
+    "located_in": "is where you find",
+    "member_of": "has as members",
+    "owns": "is owned by",
+    "knows": "is known by",
+    "serves": "has working for them",
+}
+BOTH_WAYS = frozenset({"ally_of", "enemy_of", "kin_of"})
+BACK = ":back"  # a "how" picked from the other name's side ("has as members…")
+
+
+def connection_words(predicate: str) -> str:
+    return CONNECTION_WORDS.get(predicate, predicate.replace("_", " "))
+
+
+def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
+    """ "Ulfgar is a member of Frostwolf tribe", or None if either end is gone."""
+    subject, obj = lookup.entities.get(r.subject_id), lookup.entities.get(r.object_id)
+    if subject is None or obj is None:
+        return None
+    return f"{subject.name} {connection_words(r.predicate)} {obj.name}"
+
+
+def connect_choices(name: str) -> list[tuple[str, str]]:
+    """(value, label) for "How is it connected?": each connection from this name's side,
+    then the other way round."""
+    ahead = [(p, f"{name} {w}…") for p, w in CONNECTION_WORDS.items()]
+    back = [(p + BACK, f"{name} {w}…") for p, w in CONNECTION_BACK.items()]
+    return [(v, logic.shorten(label, logic.OPTION_LABEL_MAX)) for v, label in ahead + back]
 
 
 def _kind(type_key: str) -> str:
     return KIND_SHORT.get(type_key, type_key)
 
 
-def _more(items: list[str], sep: str = ", ") -> str:
+def _more(items: list[str], sep: str = ", ", *, full: bool = False) -> str:
+    if full:
+        return sep.join(items)
     shown = sep.join(items[:SHOWN])
     return shown + (f" … and {len(items) - SHOWN} more" if len(items) > SHOWN else "")
 
@@ -85,9 +129,10 @@ def card_text(
     *,
     secrets: bool,
     player: str | None = None,
+    full: bool = False,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
-    character)."""
+    character). `full`: every entry of each section (Show all), not the first few."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
@@ -104,24 +149,28 @@ def card_text(
     what = f"played by **{_md(player)}**" if player else _kind(entity.type)
     lines = [f"🪪 **{_md(entity.name)}** · {what} · {when}"]
     if others:
-        lines.append(f"**Also called:** {_more(others)}")
+        lines.append(f"**Also called:** {_more(others, full=full)}")
     if secrets and hidden:
-        lines.append(f"**🤫 Secret:** {_more(hidden)} (hidden from players)")
-    sentences = []
+        lines.append(f"**🤫 Secret:** {_more(hidden, full=full)} (hidden from players)")
+    # Grouped by how they're connected, read from this name's side: "is a member of
+    # **Frostwolf tribe**; knows **Bell**, **Kesh**".
+    groups: dict[str, list[str]] = {}
     for r in connections:
-        subject, obj = lookup.entities.get(r.subject_id), lookup.entities.get(r.object_id)
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
-        if subject is None or obj is None:
+        ahead = r.subject_id == entity_id or r.predicate in BOTH_WAYS
+        other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
+        if other is None or other.status != CONFIRMED or other.id == entity_id:
             continue
-        if subject.status != CONFIRMED or obj.status != CONFIRMED:
-            continue
-        words = CONNECTION_WORDS.get(r.predicate, r.predicate.replace("_", " "))
-        sentences.append(
-            f"{_md(subject.name)} {words} {_md(obj.name)}" + (" 🤫" if r.secret else "")
+        words = (
+            connection_words(r.predicate)
+            if ahead
+            else CONNECTION_BACK.get(r.predicate, "is connected to")
         )
-    if sentences:
-        lines.append(f"**Connections:** {_more(sentences, '; ')}")
+        groups.setdefault(words, []).append(f"**{_md(other.name)}**" + (" 🤫" if r.secret else ""))
+    if groups:
+        said = "; ".join(f"{words} {_more(who, full=full)}" for words, who in groups.items())
+        lines.append(f"**Connections:** {said}")
     text = "\n".join(lines)
     return text if len(text) <= CARD_MAX else text[: CARD_MAX - 1] + "…"
 
@@ -147,9 +196,11 @@ async def show_card(
     *,
     replace: bool = False,
     note: str | None = None,
+    full: bool = False,
+    undo: UndoButton | None = None,
 ) -> None:
     """The card, as a new private message or in place of the one pressed; `note` goes
-    on top (what just changed)."""
+    on top (what just changed), with `undo` under it if given. `full`: Show all."""
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
     if campaign is None or memory is None:
@@ -165,13 +216,21 @@ async def show_card(
     player = None
     if entity is not None and entity.played_by is not None:
         player = _bot(interaction).name_of(campaign.guild_id, entity.played_by)
-    text = card_text(names, entity_id, connections, secrets=secrets, player=player)
-    if text is None:
+    text = card_text(names, entity_id, connections, secrets=secrets, player=player, full=full)
+    if text is None or entity is None:
         await _tell(interaction, GONE)
         return
+    longer = not full and text != card_text(
+        names, entity_id, connections, secrets=secrets, player=player, full=True
+    )
+    own = name_key(entity.name)
+    others = any(
+        e.entity_id == entity_id and e.confirmed and e.key != own and (secrets or not e.secret)
+        for e in names.names
+    )
     if note:
         text = f"{note}\n\n{text}"
-    view = NameCard(campaign.id, entity_id)
+    view = NameCard(campaign.id, entity_id, others=others, longer=longer, undo=undo)
     if replace:
         await _replace(interaction, text, view)
     else:
@@ -194,20 +253,97 @@ async def _current(
 
 
 class NameCard(_Menu):
-    def __init__(self, campaign_id: str, entity_id: str) -> None:
+    def __init__(
+        self,
+        campaign_id: str,
+        entity_id: str,
+        *,
+        others: bool = False,
+        longer: bool = False,
+        undo: UndoButton | None = None,
+    ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.entity_id = entity_id
+        grey = discord.ButtonStyle.secondary
         self.add_item(_Button(self._fix, label="✏️ Fix spelling", style=discord.ButtonStyle.primary))
-        self.add_item(
-            _Button(self._add, label="Add another name", style=discord.ButtonStyle.secondary)
-        )
-        self.add_item(
-            _Button(
-                self._change_kind, label="Change what it is", style=discord.ButtonStyle.secondary
+        self.add_item(_Button(self._add, label="Add another name", style=grey))
+        if others:
+            self.add_item(_Button(self._edit_others, label="Edit other names", style=grey))
+        self.add_item(_Button(self._same, label="🔗 Same as…", style=grey, row=1))
+        self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=1))
+        self.add_item(_Button(self._change_kind, label="Change what it is", style=grey, row=1))
+        if longer:
+            self.add_item(_Button(self._all, label="Show all", style=grey, row=2))
+        if undo is not None:
+            undo.row = 2
+            self.add_item(undo)
+        self.add_item(_Button(self._remove, label="Remove", style=grey, row=2))
+
+    async def _all(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True, full=True)
+
+    async def _edit_others(self, interaction: discord.Interaction) -> None:
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        if found is None:
+            return
+        campaign, name = found
+        listed = await _other_names(interaction, campaign, self.entity_id, name)
+        if not listed:
+            await _tell(
+                interaction,
+                f"**{_md(name)}** has no other names yet. Add some with Add another name.",
             )
+            return
+        self.stop()
+        more = (
+            f" Showing the first {logic.SELECT_OPTIONS_MAX}."
+            if len(listed) > logic.SELECT_OPTIONS_MAX
+            else ""
         )
-        self.add_item(_Button(self._remove, label="Remove", style=discord.ButtonStyle.secondary))
+        await _replace(
+            interaction,
+            f"**Other names for {_md(name)}:** pick one to change.{more}",
+            OtherNames(self.campaign_id, self.entity_id, listed),
+        )
+
+    async def _same(self, interaction: discord.Interaction) -> None:
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        if found:
+            self.stop()
+            await interaction.response.send_modal(
+                PickForm(self.campaign_id, self.entity_id, SAME, f"{found[1]} is the same as…")
+            )
+
+    async def _connect(self, interaction: discord.Interaction) -> None:
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        if found is None:
+            return
+        campaign, name = found
+        names = await _names(interaction, campaign)
+        memory = _memory(interaction)
+        if names is None or memory is None:
+            return
+        secrets = sees_secrets(campaign, interaction.user.id)
+        removable = []
+        for r in await memory.relations(
+            campaign.guild_id,
+            campaign.id,
+            entity_id=self.entity_id,
+            confirmed_only=True,
+            include_secret=secrets,
+        ):
+            said = sentence(names, r)
+            if said is not None:
+                removable.append((r.id, said + (" 🤫" if r.secret else "")))
+        self.stop()
+        back = " Or take one back with Remove a connection." if removable else ""
+        await _replace(
+            interaction,
+            f"**How is {_md(name)} connected?** Pick how, then the other name.{back}",
+            Connect(self.campaign_id, self.entity_id, name, removable),
+        )
 
     async def _fix(self, interaction: discord.Interaction) -> None:
         found = await _current(interaction, self.campaign_id, self.entity_id)
@@ -471,8 +607,9 @@ class UndoButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:undo:(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})",
 ):
-    """Undo forgetting a name; keeps working after a restart (all it needs is in its ID,
-    under Discord's 100 characters). Only undoes forgetting that name."""
+    """Undo forgetting a name, or a 🔗 Same as… (`entity` is the name that went); keeps
+    working after a restart (all it needs is in its ID, under Discord's 100 characters).
+    Only acts while that name is still forgotten or joined to another."""
 
     def __init__(self, campaign_id: str, entity_id: str, batch: int) -> None:
         super().__init__(
@@ -498,21 +635,472 @@ class UndoButton(
         if campaign is None or memory is None:
             return
         entity = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
-        if entity is None or entity.status != REJECTED:
-            await _tell(interaction, "Nothing to undo: that name isn't forgotten any more.")
+        if entity is None or entity.status not in (REJECTED, MERGED):
+            await _tell(interaction, "Nothing to undo: that was already undone or changed.")
             return
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
         except MemoryRuleError:
             await _tell(
                 interaction,
-                f"Couldn't undo: **{_md(entity.name)}** was changed again after it was "
-                "forgotten. Add it again with ➕ Add a name.",
+                f"Couldn't undo: **{_md(entity.name)}** was changed again since. "
+                + (
+                    "Add it again with ➕ Add a name."
+                    if entity.status == REJECTED
+                    else "Use ✖ Not this name on the card instead."
+                ),
             )
             return
         changed(interaction, campaign)
         note = f"↩️ **{_md(entity.name)}** is back, with its other names and connections."
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+
+# ---- other names: ⭐ main name, 🤫 secret, ✖ not this name -------------------------------
+
+
+async def _other_names(
+    interaction: discord.Interaction, campaign: Campaign, entity_id: str, name: str
+) -> list[Alias]:
+    """The entry's confirmed other names this person may see (secret ones only for the
+    campaign's DMs), not its main name."""
+    memory = _memory(interaction)
+    assert memory is not None
+    own = name_key(name)
+    return [
+        a
+        for a in await memory.aliases(
+            campaign.guild_id,
+            campaign.id,
+            entity_id=entity_id,
+            include_secret=sees_secrets(campaign, interaction.user.id),
+        )
+        if a.status == CONFIRMED and a.key != own
+    ]
+
+
+class OtherNames(_Menu):
+    def __init__(self, campaign_id: str, entity_id: str, listed: list[Alias]) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.pick = _Select(
+            self._picked,
+            placeholder="Pick a name to change…",
+            options=[
+                discord.SelectOption(
+                    label=logic.shorten(a.text, logic.OPTION_LABEL_MAX),
+                    value=a.id,
+                    description="🤫 Secret: hidden from players" if a.secret else "Another name",
+                )
+                for a in listed[: logic.SELECT_OPTIONS_MAX]
+            ],
+        )
+        self.add_item(self.pick)
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
+
+    async def _picked(self, interaction: discord.Interaction) -> None:
+        found = await _one_name(interaction, self.campaign_id, self.entity_id, self.pick.values[0])
+        if found is None:
+            return
+        campaign, alias, name = found
+        self.stop()
+        secrets = sees_secrets(campaign, interaction.user.id)
+        hidden = " 🤫 Secret: hidden from players." if alias.secret else ""
+        await _replace(
+            interaction,
+            f"**{_md(alias.text)}** is another name for **{_md(name)}**.{hidden}",
+            OneName(self.campaign_id, self.entity_id, alias, secrets=secrets),
+        )
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
+async def _one_name(
+    interaction: discord.Interaction, campaign_id: str, entity_id: str, alias_id: str
+) -> tuple[Campaign, Alias, str] | None:
+    """The campaign, the other name and the entry's name, checked again (tells them if
+    it's gone). A secret name is never found for someone who may not see it."""
+    found = await _current(interaction, campaign_id, entity_id)
+    if found is None:
+        return None
+    campaign, name = found
+    for alias in await _other_names(interaction, campaign, entity_id, name):
+        if alias.id == alias_id:
+            return campaign, alias, name
+    await _tell(interaction, "That name isn't there any more.")
+    return None
+
+
+class OneName(_Menu):
+    def __init__(self, campaign_id: str, entity_id: str, alias: Alias, *, secrets: bool) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.alias_id = alias.id
+        grey = discord.ButtonStyle.secondary
+        self.add_item(
+            _Button(
+                self._main,
+                label="⭐ Make it the main name",
+                style=discord.ButtonStyle.primary,
+                disabled=alias.secret,  # the main name is the one everyone sees
+            )
+        )
+        if secrets:  # only the campaign's DMs deal in secret names
+            label = "👁️ Stop keeping it secret" if alias.secret else "🤫 Keep it secret"
+            self.add_item(_Button(self._secret, label=label, style=grey))
+        self.add_item(_Button(self._not_this, label="✖ Not this name", style=grey))
+        self.add_item(_Button(self._back, label="Back", style=grey))
+
+    async def _main(self, interaction: discord.Interaction) -> None:
+        found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, alias, old = found
+        try:
+            await memory.set_main_name(
+                campaign.guild_id, campaign.id, self.entity_id, alias.id, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        note = (
+            f"⭐ **{_md(alias.text)}** is the main name now. **{_md(old)}** is still one of "
+            "its other names."
+        )
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+    async def _secret(self, interaction: discord.Interaction) -> None:
+        found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, alias, _ = found
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the campaign's DMs can change secret names.")
+            return
+        try:
+            await memory.update_alias(
+                campaign.guild_id, campaign.id, alias.id, secret=not alias.secret, source=DM
+            )
+        except MemoryRuleError:
+            await _tell(interaction, "That name isn't there any more.")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        note = (
+            f"👁️ **{_md(alias.text)}** isn't secret any more. Players can see it."
+            if alias.secret
+            else f"🤫 **{_md(alias.text)}** is secret now: hidden from players, and DMbot "
+            "never puts it in the transcript."
+        )
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+    async def _not_this(self, interaction: discord.Interaction) -> None:
+        found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, alias, name = found
+        try:
+            await memory.update_alias(
+                campaign.guild_id, campaign.id, alias.id, status=REJECTED, source=DM
+            )
+        except MemoryRuleError:
+            await _tell(interaction, "That name isn't there any more.")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        note = (
+            f"✖ DMbot no longer takes **{_md(alias.text)}** to mean **{_md(name)}**. Wrong? "
+            "Add it back with Add another name."
+        )
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
+# ---- 🔗 Same as… and 🧭 Connect to…: pick the other name --------------------------------
+
+SAME = "same"
+
+
+class PickForm(discord.ui.Modal, title="Find the other name"):
+    """Type the other name, for Same as… (`how` is SAME) or Connect to… (`how` is the
+    connection, maybe ending in BACK)."""
+
+    typed: discord.ui.TextInput[PickForm] = discord.ui.TextInput(
+        label="The other name",
+        placeholder="Type part of a name, a nickname, or how it sounds",
+        max_length=NAME_LIMIT,
+    )
+
+    def __init__(self, campaign_id: str, entity_id: str, how: str, title: str) -> None:
+        super().__init__(title=logic.shorten(title, 45), timeout=VIEW_TIMEOUT_S)
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.how = how
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await show_picks(interaction, self.campaign_id, self.entity_id, self.how, self.typed.value)
+
+
+def _asked(name: str, how: str) -> str:
+    """The question being answered: "Belleros is the same as…", "Ulfgar is a member of…"."""
+    if how == SAME:
+        return f"{name} is the same as…"
+    predicate = how.removesuffix(BACK)
+    words = CONNECTION_BACK.get(predicate) if how.endswith(BACK) else None
+    return f"{name} {words or connection_words(predicate)}…"
+
+
+async def show_picks(
+    interaction: discord.Interaction, campaign_id: str, entity_id: str, how: str, typed: str
+) -> None:
+    found = await _current(interaction, campaign_id, entity_id)
+    if found is None:
+        return
+    campaign, name = found
+    names = await _names(interaction, campaign)
+    if names is None:
+        return
+    matches = [
+        m
+        for m in find(names, typed, secrets=sees_secrets(campaign, interaction.user.id))
+        if m.entity_id != entity_id
+    ]
+    options = [discord.SelectOption(label=_label(names, m), value=m.entity_id) for m in matches]
+    asked = f"**{_md(_asked(name, how))}**"
+    if not matches:
+        text = f"{asked}\nNo other name like **{_md(typed)}**. Search again, or add it first."
+    else:
+        text = f"{asked} Pick one."
+    await _replace(interaction, text, PickOther(campaign_id, entity_id, how, name, options))
+
+
+class PickOther(_Menu):
+    def __init__(
+        self,
+        campaign_id: str,
+        entity_id: str,
+        how: str,
+        name: str,
+        options: list[discord.SelectOption],
+    ) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.how = how
+        self.name = name
+        if options:
+            self.pick = _Select(self._picked, placeholder="Pick the other name…", options=options)
+            self.add_item(self.pick)
+        self.add_item(
+            _Button(self._again, label="🔍 Search again", style=discord.ButtonStyle.secondary)
+        )
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
+
+    async def _picked(self, interaction: discord.Interaction) -> None:
+        other_id = self.pick.values[0]
+        if self.how == SAME:
+            found = await _current(interaction, self.campaign_id, self.entity_id)
+            other = await _current(interaction, self.campaign_id, other_id) if found else None
+            if found is None or other is None:
+                return
+            self.stop()
+            name, other_name = found[1], other[1]
+            await _replace(
+                interaction,
+                f"Are **{_md(name)}** and **{_md(other_name)}** the same person or thing? DMbot "
+                "makes them one: the other names and connections go together. Which name "
+                "should it use?",
+                SameConfirm(self.campaign_id, self.entity_id, other_id, name, other_name),
+            )
+            return
+        await connect(interaction, self.campaign_id, self.entity_id, self.how, other_id)
+
+    async def _again(self, interaction: discord.Interaction) -> None:
+        if await _current(interaction, self.campaign_id, self.entity_id):
+            await interaction.response.send_modal(
+                PickForm(self.campaign_id, self.entity_id, self.how, _asked(self.name, self.how))
+            )
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
+class SameConfirm(_Menu):
+    def __init__(
+        self, campaign_id: str, entity_id: str, other_id: str, name: str, other_name: str
+    ) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.other_id = other_id
+        blue = discord.ButtonStyle.primary
+        self.add_item(
+            _Button(self._keep_this, label=logic.shorten(f"Call it {name}", 80), style=blue)
+        )
+        self.add_item(
+            _Button(self._keep_other, label=logic.shorten(f"Call it {other_name}", 80), style=blue)
+        )
+        self.add_item(
+            _Button(self._back, label="No, they're different", style=discord.ButtonStyle.secondary)
+        )
+
+    async def _keep_this(self, interaction: discord.Interaction) -> None:
+        await self._join(interaction, self.entity_id, self.other_id)
+
+    async def _keep_other(self, interaction: discord.Interaction) -> None:
+        await self._join(interaction, self.other_id, self.entity_id)
+
+    async def _join(self, interaction: discord.Interaction, keep_id: str, gone_id: str) -> None:
+        kept = await _current(interaction, self.campaign_id, keep_id)
+        gone = await _current(interaction, self.campaign_id, gone_id) if kept else None
+        memory = _memory(interaction)
+        if kept is None or gone is None or memory is None:
+            return
+        campaign = kept[0]
+        try:
+            written = await memory.merge(
+                campaign.guild_id, campaign.id, keep_id, gone_id, source=DM, dm_said_same=True
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't join them. {exc}")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        undo = (
+            UndoButton(campaign.id, gone_id, written.batch) if written.batch is not None else None
+        )
+        note = f"🔗 Done: **{_md(gone[1])}** is now another name for **{_md(kept[1])}**."
+        await show_card(interaction, campaign.id, keep_id, replace=True, note=note, undo=undo)
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
+class Connect(_Menu):
+    def __init__(
+        self, campaign_id: str, entity_id: str, name: str, removable: list[tuple[str, str]]
+    ) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.name = name
+        self.how = _Select(
+            self._how_picked,
+            placeholder=logic.shorten(f"How is {name} connected?", 150),
+            options=[
+                discord.SelectOption(label=label, value=v) for v, label in connect_choices(name)
+            ],
+        )
+        self.add_item(self.how)
+        if removable:
+            self.remove = _Select(
+                self._remove_picked,
+                placeholder="Remove a connection…",
+                options=[
+                    discord.SelectOption(label=logic.shorten(said, logic.OPTION_LABEL_MAX), value=r)
+                    for r, said in removable[: logic.SELECT_OPTIONS_MAX]
+                ],
+                row=1,
+            )
+            self.add_item(self.remove)
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=2))
+
+    async def _how_picked(self, interaction: discord.Interaction) -> None:
+        how = self.how.values[0]
+        if await _current(interaction, self.campaign_id, self.entity_id):
+            await interaction.response.send_modal(
+                PickForm(self.campaign_id, self.entity_id, how, _asked(self.name, how))
+            )
+
+    async def _remove_picked(self, interaction: discord.Interaction) -> None:
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign = found[0]
+        names = await _names(interaction, campaign)
+        if names is None:
+            return
+        wanted = self.remove.values[0]
+        mine = await memory.relations(
+            campaign.guild_id,
+            campaign.id,
+            entity_id=self.entity_id,
+            confirmed_only=True,
+            include_secret=sees_secrets(campaign, interaction.user.id),
+        )
+        relation = next((r for r in mine if r.id == wanted), None)
+        if relation is None:
+            await _tell(interaction, "That connection isn't there any more.")
+            return
+        try:
+            await memory.update_relation(
+                campaign.guild_id, campaign.id, relation.id, status=REJECTED, source=DM
+            )
+        except MemoryRuleError:
+            await _tell(interaction, "That connection isn't there any more.")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        said = sentence(names, relation) or "that connection"
+        note = f"Removed: {_md(said)}."
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
+async def connect(
+    interaction: discord.Interaction, campaign_id: str, entity_id: str, how: str, other_id: str
+) -> None:
+    """Save the connection the DM picked (confirmed: the DM said it), then the card."""
+    found = await _current(interaction, campaign_id, entity_id)
+    other = await _current(interaction, campaign_id, other_id) if found else None
+    memory = _memory(interaction)
+    if found is None or other is None or memory is None:
+        return
+    campaign = found[0]
+    predicate = how.removesuffix(BACK)
+    if predicate not in CONNECTION_WORDS:
+        await _tell(interaction, "Pick how they're connected again.")
+        return
+    subject, obj = (other, found) if how.endswith(BACK) else (found, other)
+    subject_id, object_id = (other_id, entity_id) if how.endswith(BACK) else (entity_id, other_id)
+    try:
+        written = await memory.add_relation(
+            campaign.guild_id,
+            campaign.id,
+            subject_id,
+            predicate,
+            object_id,
+            source=DM,
+            confidence=1.0,
+            status=CONFIRMED,
+        )
+    except MemoryRuleError as exc:
+        await _tell(interaction, f"Couldn't connect them. {exc}")
+        return
+    changed(interaction, campaign)
+    _, flags = written.value
+    note = f"🧭 Saved: **{_md(subject[1])}** {connection_words(predicate)} **{_md(obj[1])}**."
+    if flags:
+        note += " That's unusual for these two, so DMbot will check it with you later."
+    await show_card(interaction, campaign.id, entity_id, replace=True, note=note)
 
 
 # ---- finding a name --------------------------------------------------------------------
