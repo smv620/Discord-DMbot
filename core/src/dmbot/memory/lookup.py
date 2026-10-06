@@ -110,7 +110,7 @@ class CampaignLookup:
             if r.subject_id in entities and r.object_id in entities:
                 neighbours[r.subject_id].add(r.object_id)
                 neighbours[r.object_id].add(r.subject_id)
-                if r.status == CONFIRMED:
+                if r.status == CONFIRMED and not r.secret:
                     confirmed_links[r.subject_id].add(r.object_id)
                     confirmed_links[r.object_id].add(r.subject_id)
         return cls(

@@ -446,6 +446,7 @@ class DMBot(commands.AutoShardedBot):
             table.transcript.drop_speaker(user_id)  # words not posted yet are discarded
             table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
             table.unsaved.drop_speaker(user_id)  # and never saved
+            table.scene.forget_speaker(user_id)  # and no longer shape the hints
 
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
@@ -1420,7 +1421,7 @@ class DMBot(commands.AutoShardedBot):
         table.capture_log.add_utterance(utterance)
         table.totals.add_utterance(utterance)
         if text and table.names is not None:
-            table.scene.note_line(table.names, text, time.monotonic())
+            table.scene.note_line(table.names, text, utterance.user_id, time.monotonic())
         if text and self.transcripts is not None:
             table.unsaved.add(Line(utterance.start_ms, utterance.user_id, text, text))
         if text and len(table.heard) < HEARD_MAX:
