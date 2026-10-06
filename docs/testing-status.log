@@ -1,7 +1,7 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-05 by the server session (run 6 scored, speech-to-text quick
-comparison done; next: run 7, DM + player)
+Last updated: 2026-10-06 by the server session (Deepgram and the transcript channel
+deployed; run 7 scored; next: run 8, DM + player)
 
 What this file is
   The immediate live-testing picture: what's next, what's blocking it, and the latest
@@ -11,65 +11,70 @@ What this file is
   them. Never put tokens, .env contents or players' personal data here (public repo).
 
 ------------------------------------------------------------------------------
-NEXT TEST: Test 1, run 7: DM + player script, first-time consent, player stops
+NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
 ------------------------------------------------------------------------------
 Why
-  Run 6 gave the first scored baseline with the DM alone. Still open: a scored run
-  with two speakers, the first-time consent question, and a player stopping.
+  Run 7 gave the Deepgram baseline with the DM alone (33/33, 10/12). Still open: a
+  scored run with two speakers, a player stopping mid-session, and a player getting
+  the first-time question.
 
 Where it runs
   Cloud test server, Docker Compose (postgres, core, ears), development branch,
-  TRANSCRIBER=whisper-local small, DMBOT_DEBUG_AUDIO=1. Server session watches logs.
+  TRANSCRIBER=deepgram (nova-3), DMBOT_DEBUG_AUDIO=1. Server session watches logs.
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...)
       and send the matching script from docs/test-scripts/ (paste it into Discord)
-  [ ] Someone who has NOT agreed yet (ideally a third account) in voice before
-      /dmbot start; or the player presses Stop recording me during this run and the
-      first-time question is checked next session
+  [ ] Someone who has NOT agreed before (ideally a third account) in voice before
+      /dmbot start, for the first-time question
+  [ ] Run /dmbot commands from any channel EXCEPT #dmb-transcript-... (they hang
+      there: #188)
+  [ ] Everyone presses I consent in DMbot's private message (or /consent give) BEFORE
+      speaking; the player will be asked once more (new wording, names Deepgram)
   [ ] At each (( dramatic pause )): mute, count to three, unmute
   [ ] Note: packet loss tool on/off, each reader's Discord noise suppression
 
 What to check
-  - Private message to everyone in voice; the new one gets "Can DMbot record
-    you...?"; the phone preview reads well
-  - I consent -> capture within seconds; Stop recording me -> gone from the next check
-  - Wait for the script's last line in a capture check before /dmbot stop
-  - Whisper keeps up (the stall fix #137 is live since 22:33): a slow clip shows as a
-    warning, not a freeze
+  - The player's request names Deepgram; capture starts only after their yes
+  - Lines appear in #dmb-transcript-... a few seconds after speaking, labelled per
+    speaker; the DM screen stays quiet
+  - Stop recording me -> no more lines from that player in the transcript channel
+  - Wait for the script's last line in the transcript channel before /dmbot stop
   - Score it (docs/test-scripts/README.md): audio from ears lines, pieces of speech,
     Part 1 of 35 (dm-and-player) or 33 (dm-only), Part 2 of 12, whisper, first word
     after each split pause (#121)
-  - Compare with run 6 (local Whisper small): Part 1 33/33, Part 2 7/12, whisper all
+  - Compare with run 7 (Deepgram, DM only: 33/33, 10/12, whisper part) and run 6
+    (local Whisper small: 33/33, 7/12, whisper all)
 
 LATER TESTS
-  - Speech-to-text bake-off (#128, docs/STT_BAKEOFF.md): keys in the server .env and
-    checked OK; needs 2-4 readers recording docs/test-scripts/stt-bakeoff.md (6-8 min
-    each) into ~/bakeoff-audio/. Quick comparison so far (2 short recordings, names
-    hinted): Deepgram 23/24 terms, Speechmatics 23/24, local Whisper 19/24
+  - Speech-to-text bake-off (#128, docs/STT_BAKEOFF.md): keys checked OK; needs 2-4
+    readers recording docs/test-scripts/stt-bakeoff.md (6-8 min each) into
+    ~/bakeoff-audio/. Deepgram is already live (#170); the bake-off confirms or
+    changes that choice
   - One-click install (#104, merged in #150): live check of the install link and the
     permission check when DMbot joins
 
 ------------------------------------------------------------------------------
 BLOCKED / WAITING
 ------------------------------------------------------------------------------
-  Nothing blocks run 7.
+  Nothing blocks run 8.
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test 1, run 6 (2026-10-05 20:08), DM alone, dm-only.md: PASS
+LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
 ------------------------------------------------------------------------------
-  Audio ................................. 1845/1845 (100%), no drops, no ⚠️
-  Pieces of speech ...................... 9, longest 10.8 s (4 of 5 pauses split)
+  Consent ............................... asked again under the new wording; nothing
+                                          captured before the yes (also run 7a)
+  Audio ................................. 1784/1784 (100%), no drops
+  Pieces of speech ...................... 9, longest 6.9 s (every pause split)
   Part 1 (everyday words) ............... 0 errors of 33
-  Part 2 (D&D terms) .................... 7 of 12 (missed Bryn Shander, Detect Magic,
-                                          Auril, Lonelywood, Caer-Dineval)
-  Whispered sentence .................... all
-  Speech-to-text delay .................. about 3-5 s, no stall
-  Earlier today: runs 2-4 (capture, two speakers, consent), run 5 (99.9% audio, 40 s
-  Whisper stall, no script). Details: docs/testing-history.log.
+  Part 2 (D&D terms) .................... 10 of 12 (missed Auril, Caer-Dineval);
+                                          local Whisper got 7 (run 6)
+  Whispered sentence .................... part (first word "He" missing)
+  Transcript channel .................... works; commands hang inside it (#188)
+  Details: docs/testing-history.log.
 
 Open issues from testing
   #43 DAVE loss after a pause   #45 uncounted losses   #107 "0 opted in" line
   #109 no summary at stop / last speech dropped   #112 menus run off phone screens
   #120 capture check drops audio counts   #121 start of speech may be cut
-  #134 transcript text in the DM screen
+  #188 commands hang in the transcript channel

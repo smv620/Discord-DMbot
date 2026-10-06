@@ -320,3 +320,78 @@ Notes
   - Small sample: two recordings, under 2 minutes, mostly one voice. Not a decision.
 Overall ...................................... First look: both cloud services well ahead
                                                of local Whisper; hinted, they tie (23/24)
+
+==============================================================================
+2026-10-06  Server: Deepgram, then the transcript channel deployed (server session)
+==============================================================================
+  - 03:01 UTC  Database backed up (pg_dumpall, kept on the server outside the repo).
+  - 03:03 UTC  #177 deployed (development @ e56da83): TRANSCRIBER=deepgram (Nova-3),
+    consent per outside company (#170) together with the terms version (#35/#172).
+    Migrations 0004_campaign_memory, 0005_consent_terms, 0006_consent_outside applied.
+    Smoke test from the deployed image against real Deepgram: 0.09-0.29 s per clip.
+  - 03:42 UTC  Database backed up again. 03:43 UTC  #183 deployed (development @
+    6c8161e): live transcript channel (#124); the DM screen no longer shows capture
+    checks (#134). Migration 0007_transcript_channel applied.
+  Every restart: "ears connected" within seconds, no errors. Ears and postgres were
+  not rebuilt (unchanged).
+
+==============================================================================
+2026-10-06  Test 1, run 7a: DM alone, no consent given (03:48-03:50)
+==============================================================================
+  First session after the deploys. Ears' consent list was 0, as expected: every earlier
+  yes was given under older wording and without naming Deepgram, so it no longer
+  counts. The DM spoke before agreeing; ears logged "not capturing ... not opted in"
+  and nothing was recorded or sent to Deepgram. The transcript channel was created and
+  saved with the campaign. Stopped before a yes was given: nothing to score.
+Results
+  Consent asked again after the switch ... PASS (nobody captured without a new yes)
+  Transcript channel created ............. PASS
+  Overall ................................ PARTIAL (consent only)
+
+==============================================================================
+2026-10-06  Test 1, run 7: DM alone, dm-only.md, Deepgram Nova-3 + transcript channel
+==============================================================================
+Setup       development @ 6c8161e, TRANSCRIBER=deepgram (nova-3), DMBOT_DEBUG_AUDIO=1.
+            The DM alone, docs/test-scripts/dm-only.md, dramatic pause = mute, count,
+            unmute. Name hints are players' display names only (no campaign names yet).
+Before      /dmbot start typed inside the new transcript channel stayed on Discord's
+            "Sending command..." and never reached core (core connected throughout) ->
+            #188. Run from another channel it worked.
+Timeline (UTC)
+  04:35:18  Session started; consent list: 0 opted in
+  04:35:19  Joined voice; 04:35:22 recording notice posted
+  04:35:30  Consent given (the new request naming Deepgram); consent list: 1
+  04:36:14  ears capturing the DM (first time they spoke)
+  04:36:28-04:37:13  4 capture checks (now in the core log only), audio 100%
+  04:37:30  /dmbot stop (from another channel)
+Numbers     ears: 1784 of 1784 packets (100%), link_dropped_total=0. 9 pieces of speech,
+            longest 6.9 s: every mute-pause split the speech. No Deepgram failures,
+            timeouts or errors; 23 log lines, all INFO.
+Score (docs/test-scripts/README.md, from the transcript channel)
+  script: dm-only   people: 1 (DM only)   commit: 6c8161e
+  engine: deepgram nova-3 (keyterms: players' names only)
+  packet loss added: none known      Discord noise suppression: not noted
+  audio: received/expected = 1784/1784 (100%)   pieces of speech: DM 9
+  part 1: 0 wrong, 0 missing, 0 added (of 33, whisper not included)
+  part 2: 10 of 12 right
+          right: Bryn Shander, Ten-Towns ("10 towns"), Targos, Easthaven, Detect Magic,
+                 Dexterity saving throw, frost giant, Frostmaiden, longsword ("long
+                 sword"), Lonelywood
+          wrong: Auril ("R. O. L."), Caer-Dineval ("Care D'Ivoire")
+  whisper: part ("Gives you hot food and a warm bed.": "He" missing), ring lit: not noted
+  delay: not measured from the logs (text isn't logged); lines appeared "a few seconds"
+         after speaking
+Notes
+  - Against run 6 (local Whisper small, same script): Part 1 33/33 both; Part 2 10/12
+    vs 7/12; whisper part vs all.
+  - The missing "He" was the first word of the whispered sentence, possibly the start of
+    a new piece (the switch to whispering, not a mute-pause: dm-only.md has none there).
+    Deepgram also dropped a "he" in the offline quick comparison, on a recording that
+    never went through ears, so this may be speech-to-text rather than #121. One data
+    point.
+  - "Your wizard casts" came out as "Your Wizardcast" (not a scored term).
+  - With campaign names as hints the quick comparison reached 12/12 (best case: the
+    hints were the tested terms themselves; #126 will supply real campaign names).
+  - Transcript channel: pinned card, session start/end dividers, one line per piece,
+    labelled with the speaker. Works as designed, apart from #188.
+Overall ...................................... PASS (Deepgram baseline: 33/33, 10/12)
