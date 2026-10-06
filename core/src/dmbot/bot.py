@@ -559,9 +559,12 @@ class DMBot(commands.AutoShardedBot):
         button comes off when the session ends, so old messages can't be pressed."""
         view = stop_listening_view(table.campaign_id) if table.campaign_id else None
         message = await self.post_message(table.screen_channel_id, text, view)
-        if message is not None:
-            await self._remove_stop_button(table)  # only the newest one keeps it
-            table.listening_message = message
+        if message is None:
+            return
+        await self._remove_stop_button(table)  # only the newest one keeps it
+        table.listening_message = message
+        if self.tables.get(table.guild_id) is not table:  # stopped while posting
+            await self._remove_stop_button(table)
 
     @staticmethod
     async def _remove_stop_button(table: Table) -> None:
@@ -668,7 +671,6 @@ class DMBot(commands.AutoShardedBot):
         session = table.segmenter.session
         with log_context(guild_id=gid, campaign_id=table.campaign_id):
             try:
-                await self._remove_stop_button(table)
                 caught_up = await self.pipeline.drain(session, STOP_DRAIN_TIMEOUT_S)
                 if not caught_up:
                     log.warning("Stopped before the last speech was written down")
@@ -698,6 +700,7 @@ class DMBot(commands.AutoShardedBot):
 
         steps: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
             ("stored transcript", stored),
+            ("stop button", lambda: self._remove_stop_button(table)),
             ("capture check", lambda: self.post_summary(table)),
             ("final transcript", channel),
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
@@ -899,9 +902,20 @@ class DMBot(commands.AutoShardedBot):
             "Only people who said yes are recorded, the DM included."
         )
 
-    async def stop_session(self, guild_id: int, user_id: int, is_server_manager: bool) -> str:
+    async def stop_session(
+        self,
+        guild_id: int,
+        user_id: int,
+        is_server_manager: bool,
+        *,
+        campaign_id: str | None = None,
+    ) -> str:
+        """`campaign_id`: only stop if this campaign is the one being listened to (a Stop
+        button on an older message must never end a newer session)."""
         async with self.session_lock(guild_id):
             table = self.tables.get(guild_id)
+            if campaign_id is not None and (table is None or table.campaign_id != campaign_id):
+                return screen_messages.NOT_LISTENING_NOW
             if table is None:
                 # Maybe a saved session that hasn't been picked up again yet (DMbot is
                 # restarting): stopping must still end it, or it would come back.

@@ -348,7 +348,7 @@ class StopListeningButton(
         if guild is None or not hasattr(bot, "stop_session"):
             await interaction.response.send_message(messages.CAMPAIGN_GONE, ephemeral=True)
             return
-        if bot.active_campaign_id(guild.id) != self.campaign_id:
+        if bot.active_campaign_id(guild.id) != self.campaign_id:  # checked again below
             # An old message: this campaign isn't the one being listened to now.
             await interaction.response.send_message(messages.NOT_LISTENING_NOW, ephemeral=True)
             with contextlib.suppress(discord.HTTPException):
@@ -357,7 +357,13 @@ class StopListeningButton(
             return
         manager = isinstance(member, discord.Member) and member.guild_permissions.manage_guild
         await interaction.response.defer(ephemeral=True, thinking=True)
-        reply: str = await bot.stop_session(guild.id, member.id, manager)
+        try:
+            reply: str = await bot.stop_session(
+                guild.id, member.id, manager, campaign_id=self.campaign_id
+            )
+        except Exception:
+            log.exception("Stop listening failed")
+            reply = messages.STOP_FAILED
         await interaction.followup.send(reply, ephemeral=True, allowed_mentions=NO_PINGS)
 
 

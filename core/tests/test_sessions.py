@@ -719,6 +719,19 @@ class SaveAndResume(SessionTests):
         self.assertEqual(again.response.send_message.await_args.args[0], m.NOT_LISTENING_NOW)
         again.message.edit.assert_awaited_with(view=None)
 
+    async def test_a_server_manager_can_press_stop_but_not_for_another_campaign(self) -> None:
+        from dmbot.dm_screen import StopListeningButton
+
+        await self.start()
+        other = await self.campaigns.create(GUILD, "Strahd", DM)
+        wrong = self.press_stop(member(OTHER_PERSON, manager=True))
+        await StopListeningButton(other.id).callback(wrong)  # type: ignore[arg-type]
+        self.assertIn(GUILD, self.bot.tables)  # an old button never stops a newer session
+        manager = self.press_stop(member(OTHER_PERSON, manager=True))
+        await StopListeningButton(self.campaign.id).callback(manager)  # type: ignore[arg-type]
+        self.assertIn("Stopped listening", manager.followup.send.await_args.args[0])
+        self.assertNotIn(GUILD, self.bot.tables)
+
     async def test_people_joining_mid_session_are_shown(self) -> None:
         from dmbot.ears.protocol import Status
 
