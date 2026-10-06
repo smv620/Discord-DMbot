@@ -12,9 +12,10 @@ the source of truth and links here. Build issues: 5a–5d and the measurement wo
    written: a published adventure, their own homebrew, or a fan-fiction version they
    want DMbot to help them keep to. Turning it on shows a warning: "Only give DMbot
    material you have the right to use. DMbot doesn't check this." DMbot does no legal
-   review. The repository's copyright rule still applies to what DMbot itself keeps: the
-   story plan is stored as structured facts and short labels, never bulk text, and only
-   short excerpts go into an AI prompt.
+   review. **Only after the DM confirms** may DMbot copy chunks of the material into that
+   campaign's storage and AI prompts to build the story plan's nodes and edges (the IP
+   rule in CLAUDE.md, changed by the owner on 2026-10-06). It never goes into the
+   repository and never leaves that campaign.
 3. **Reputations are hierarchical from the start** (section 5): a character's standing
    and the party's affect each other, and someone who has never met them (the guard at
    the gate) judges them by what their groups and their town think of the party, of the
@@ -349,10 +350,12 @@ A per-campaign setting, **"Shared story"**, on the DM screen's help card:
 - **Where the story plan comes from (decided):** any written adventure the DM runs:
   published, their own homebrew, or a fan-fiction version. Turning the switch on shows:
   "Only give DMbot material you have the right to use. DMbot doesn't check this." DMbot
-  does no legal review. Under the repository's copyright rule DMbot keeps only
-  structured facts (names, places, links, short DM-visible labels) and discards the
-  source text; quotes are never stored, and only short excerpts go into an AI prompt.
-  Adventures under an open license (SRD/CC-BY content) may be stored with attribution.
+  does no legal review. **After the DM confirms** (who and when are recorded), DMbot
+  may copy chunks of the text into that campaign's storage and AI prompts to build the
+  story plan: chapters, places, NPCs, what the book expects, "depends on" links, and
+  short quotes as evidence (IP rule in CLAUDE.md). It stays in that one campaign, never
+  in the repository; the DM can delete it, and it goes with the campaign. Open-licence
+  adventures (SRD/CC-BY content) may be stored with attribution.
 - **It still never invents story.** "Guide me" points to what the book says, with a
   citation, labeled as the story plan. It never makes up a bridge; for a broken
   dependency it only lists what already exists in the book or the table.

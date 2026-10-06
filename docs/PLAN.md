@@ -284,7 +284,8 @@ also stores its DM-screen visibility (`private` / `peek` / `open`, default `peek
 
 **Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are
-sent per query.
+sent per query. (IP rule in CLAUDE.md: bulk copying is allowed only for shared content
+the DM has confirmed the right to use, such as a Shared story adventure.)
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
@@ -786,7 +787,7 @@ names panel nor the speech-to-text hints can be a fixed list.
     names (a form holds 4,000 characters) or upload a file (UTF-8, up to 256 KB and
     2,000 lines; each name up to 100 characters). **Names only:** lines with
     descriptions or other columns are refused as unclear, and DMbot never offers
-    ready-made sourcebook name lists (copyright rule). It writes only into the chosen
+    ready-made sourcebook name lists (IP rule). It writes only into the chosen
     campaign, through the normal memory rules (checks, change log), **saved in one go**
     (batches of about 200 for a big file, with live transcription reloading its names
     once, after the last batch). Imported names count as confirmed (the DM gave them);
@@ -1048,7 +1049,9 @@ Full design and rationale: docs/STORY_MEMORY.md. In short:
   **Guide me** (says what the story has next, with the section). For any written
   adventure: published, homebrew or fan fiction. Turning it on warns: "Only give DMbot
   material you have the right to use. DMbot doesn't check this." The story plan comes
-  from the DM, chapter by chapter, kept as structured facts only (copyright rule).
+  from the DM, chapter by chapter; only after the DM confirms the right to use it may
+  DMbot copy chunks of it into that campaign's storage and prompts to build the graph
+  (IP rule, CLAUDE.md, 2026-10-06).
 - **One retrieval path** for every helper: seed from the scene, 1–2 hops over
   confirmed facts true at the current story time, secrets filtered by code per audience,
   summaries plus quoted lines, every item cited.
