@@ -43,6 +43,18 @@ nano .env        # fill in DISCORD_TOKEN, EARS_SHARED_SECRET, TRANSCRIBER (and
 chmod 600 .env   # only you can read your secrets
 ```
 
+To add or change a key later, for example from your phone over SSH, skip the editor:
+
+```bash
+scripts/set-key                    # pick from a list of keys and tokens
+scripts/set-key DEEPGRAM_API_KEY   # or name the one you want
+```
+
+Paste the key when asked. It stays hidden, and only its last 4 characters are shown
+back. The helper keeps `.env` at `chmod 600`, and if DMbot is running it offers to
+restart it. Keys go into the server's `.env` only: never paste them into chat or issues.
+It won't change the two database passwords, because Postgres keeps the old ones.
+
 Make both database passwords long, random, and letters and numbers only
 (`openssl rand -hex 24`). Compose runs Postgres for you and sets `DATABASE_URL`; the
 database is not reachable from outside the server.

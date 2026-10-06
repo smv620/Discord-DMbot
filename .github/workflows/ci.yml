@@ -94,6 +94,14 @@ jobs:
             exit 1
           }
 
+  scripts:
+    name: scripts (server helpers)
+    runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
+    steps:
+      - uses: actions/checkout@v5
+      - run: shellcheck scripts/set-key scripts/tests/*.sh   # shellcheck is on the runner
+      - run: bash scripts/tests/test-set-key.sh
+
   docker:
     name: docker images
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
