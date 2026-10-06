@@ -244,9 +244,9 @@ def test_read_only_closes_side_doors() -> None:
         "create_public_threads",
         "create_private_threads",
         "add_reactions",
-        "use_application_commands",
     ):
         assert READ_ONLY[side_door] is False
+    assert "use_application_commands" not in READ_ONLY  # never blocked (#190)
     assert is_peeker(READ_ONLY)
 
 

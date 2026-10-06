@@ -96,7 +96,9 @@ class TranscriptChannelTests(DatabaseTest):
 
     async def test_a_channel_made_before_188_gets_its_command_block_lifted(self) -> None:
         self.new.overwrites = {
-            discord.Object(GUILD, type=discord.Role): discord.PermissionOverwrite(**READ_ONLY)
+            discord.Object(GUILD, type=discord.Role): discord.PermissionOverwrite(
+                **READ_ONLY, use_application_commands=False
+            )
         }
         await self.store.set_transcript_channel(GUILD, self.campaign.id, NEW)
         self.guild.fetch_channel = AsyncMock(return_value=self.new)

@@ -11,7 +11,7 @@ from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import messages, setup_dm_screen
 from tests.pg import DatabaseTest
 
-GUILD, BOT, DM, GENERAL, NEW = 1, 2, 3, 40, 50
+GUILD, BOT, DM, GENERAL, NEW, PLAYER = 1, 2, 3, 40, 50, 8
 FORBIDDEN = discord.Forbidden(MagicMock(status=403), "Missing Permissions")
 BOT_PERMS = discord.Permissions(
     view_channel=True,
@@ -108,6 +108,26 @@ class SetupTests(DatabaseTest):
         self.guild.create_text_channel.assert_not_called()
         # Already correctly named, so no rename (Discord rate-limits renames).
         assert "name" not in self.new.edit.call_args.kwargs
+
+    async def test_peekers_get_their_old_command_block_lifted(self) -> None:
+        # Before #190, peeks and open screens denied slash commands, which then hung.
+        old = discord.PermissionOverwrite(
+            view_channel=True, send_messages=False, use_application_commands=False
+        )
+        self.new.overwrites = {discord.Object(PLAYER, type=discord.User): old}
+        await self.store.set_dm_screen(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=self.new)
+        await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="peek")
+        sent = self.new.edit.call_args.kwargs["overwrites"]
+        peeker = next(ow for key, ow in sent.items() if key.id == PLAYER)
+        assert peeker.view_channel is True and peeker.send_messages is False  # still a peek
+        assert peeker.use_application_commands is None  # the server's setting applies
+
+    async def test_an_open_screen_leaves_slash_commands_alone(self) -> None:
+        await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="open")
+        everyone = self.created_overwrite_for(GUILD)
+        assert everyone.send_messages is False  # still view-only
+        assert everyone.use_application_commands is None
 
     async def test_new_screen_gets_the_dmb_name(self) -> None:
         await setup_dm_screen(self.guild, self.campaign.id, self.store)
