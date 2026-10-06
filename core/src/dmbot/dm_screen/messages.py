@@ -161,12 +161,21 @@ def exposure_warning(exposure: Exposure) -> str | None:
 # ---- the live transcript channel (#124) --------------------------------------------
 
 TRANSCRIPT_CARD_TITLE = "📜 **Live transcript for "  # also used to find old cards
+TRANSCRIPT_FORBIDDEN = (
+    "Discord won't let DMbot make or change channels here. Ask a server admin to give "
+    "DMbot **Manage Channels** and **Manage Roles** in this category."
+)
+TRANSCRIPT_NO_ANSWER = "Discord didn't answer. This is often temporary."
+
+
+def transcript_discord_error(detail: str) -> str:
+    return f"Discord said: {detail}. A category can hold only 50 channels, so check it isn't full."
 
 
 def transcript_topic(campaign_name: str) -> str:
     return (
-        f"Live transcript for {campaign_name}. View only. Anyone in this server can read "
-        "it. Only people who agreed are recorded."
+        f"Live transcript for {campaign_name}. Anyone in this server can read it; only "
+        "DMbot writes here. Only people who said yes to recording are recorded."
     )
 
 
@@ -174,19 +183,29 @@ def transcript_card(campaign_name: str) -> str:
     return "\n".join(
         [
             f"{TRANSCRIPT_CARD_TITLE}{campaign_name}**",
+            "Anyone in this server can read this. Only DMbot writes here, so not even the "
+            "DM can post.",
             "While DMbot is listening, what people say shows up here a few seconds later.",
-            "**Who can read it:** anyone in this server. Nobody can post here.",
             "**Who is recorded:** only people who said yes in DMbot's private message. "
             "Changed your mind? Press **Stop recording me** in that message, or type "
-            "`/consent revoke`.",
+            "`/consent revoke`. What's already here stays.",
             "DMbot's notes for the DM never appear here.",
         ]
     )
 
 
-def transcript_failed(reason: str) -> str:
+def transcript_failed(cause: str) -> str:
+    """For the DM screen: setup failed. The session goes on without it."""
     return (
-        f"⚠️ DMbot couldn't set up the transcript channel ({reason}), so this session's "
-        "words won't appear there. Listening and DM notes still work. Check DMbot has "
-        "**Manage Channels** and **Manage Roles**, then run `/dmbot start` again."
+        f"⚠️ **No live transcript this session.** {cause} Listening and these notes still "
+        "work. To try again: fix that, then `/dmbot stop` and `/dmbot start`."
+    )
+
+
+def transcript_stopped(channel_id: int) -> str:
+    """For the DM screen: DMbot lost the channel mid-session."""
+    return (
+        f"⚠️ **The live transcript stopped:** DMbot can't post in <#{channel_id}> any "
+        "more. Give DMbot **Send Messages** there, or delete that channel and DMbot makes "
+        "a new one at the next `/dmbot start`."
     )

@@ -7,6 +7,7 @@ the maximum length (keeps transcription latency and memory bounded).
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass, field
 
 from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE, AudioFrame
@@ -22,6 +23,9 @@ class Utterance:
     start_ms: int
     end_ms: int
     pcm: bytes
+    # Which session's segmenter cut it, so speech still queued when one session stops
+    # can never land in the next one (another campaign's transcript, say).
+    session: int = 0
 
     @property
     def duration_s(self) -> float:
@@ -39,9 +43,13 @@ class _Buffer:
 _MAX_BYTES = MAX_UTTERANCE_MS * SAMPLE_RATE // 1000 * BYTES_PER_SAMPLE
 
 
+_sessions = itertools.count(1)
+
+
 class Segmenter:
     def __init__(self, guild_id: int) -> None:
         self.guild_id = guild_id
+        self.session = next(_sessions)  # one segmenter per session
         self._buffers: dict[int, _Buffer] = {}
 
     @property
@@ -72,6 +80,7 @@ class Segmenter:
             start_ms=buf.start_ms,
             end_ms=buf.last_ms,
             pcm=b"".join(buf.chunks),
+            session=self.session,
         )
 
     def drop(self, user_id: int) -> None:

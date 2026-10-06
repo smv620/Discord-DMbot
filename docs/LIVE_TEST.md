@@ -154,7 +154,7 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
 |---|---|---|
 | Both parts connected, bot online | Yes | Any startup error |
 | Join messages in the DM screen and voice chat | Both appear | Either missing |
-| Audio % per speaker | **95–100%** | Below 90% |
+| Audio % per speaker (core log `Capture check` lines, or ears `audio …` lines) | **95–100%** | Below 90% |
 | Every consenting speaker appears in the transcript channel (or, with `TRANSCRIBER=none`, in the core log's capture checks) | Yes | Someone missing |
 | Revoked speaker disappears | Yes | Still listed after revoke |
 | No errors in either terminal during the session | None | Any traceback or error |

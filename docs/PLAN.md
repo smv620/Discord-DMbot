@@ -482,7 +482,7 @@ so the docs always show names the way Discord does. For the campaign
 
 *Modes.*
 - **Compact mode:** everything goes in the DM screen **except the live transcript**, which
-  always has its own channel next to it, with no category (decided 2026-10-05: the DM
+  always has its own channel next to it, in the DM screen's category (decided 2026-10-05: the DM
   screen was too noisy). This is the default while the DM screen and transcript are the
   only channels built (Phases 1–2).
 - **Every DMbot channel has a topic and a pinned "What's this channel?" card in every
@@ -509,15 +509,23 @@ Code changes: #87.
 
 **Live transcript channel: built (2026-10-06, #124).** Decided while building:
 - It's made at `/dmbot start`, next to the DM screen in the same category, and kept
-  view-only for everyone (DMs included: nobody posts there but DMbot). A problem setting
-  it up is reported in the DM screen and never stops the session.
-- Lines are posted every 2 seconds as new messages (no edits yet): one message holds
-  whatever was said in that time, up to Discord's 2,000 characters. Until the Cleaner
+  view-only for everyone (DMs included: only DMbot posts there). It's only edited when
+  something differs (Discord allows few channel edits per ten minutes), and its card is
+  found among the pins. A problem setting it up is reported in the DM screen and in the
+  start reply, and never stops the session; losing the channel mid-session stops the
+  transcript and tells the DM once.
+- Lines are posted every 2 seconds as new messages (no edits yet), at most 2,000
+  characters each, in the order the speech *started*. A line leaves the queue only once
+  posted (a failed post is retried), and consent is checked again for every line as
+  each message is built. Speech from a stopped session never reaches the next one.
+  Speech is escaped (no formatting, pings or links; link previews off). Until the Cleaner
   (Phase 2b) lines are as heard and have no `{entity}` labels (#53).
-- When someone presses Stop, their words not posted yet are dropped. Words still being
-  written down when the session stops are lost (as before, #109).
-- The 15-second capture checks now go only to the core log; the DM screen gets
-  "⚠️ Some of what was said didn't reach DMbot…" when audio went missing (#134).
+- `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
+  time. Words still being written down when the session stops are lost (as before,
+  #109); at shutdown, waiting lines are posted first.
+- The 15-second capture checks now go only to the core log. The DM screen gets
+  "⚠️ Mia's voice is cutting out for DMbot (82% got through)…" below 90%, once per
+  person, again only if it gets 10 points worse or after 10 minutes (#134).
 - The card doesn't mention `/transcript` until downloads exist (#125).
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their

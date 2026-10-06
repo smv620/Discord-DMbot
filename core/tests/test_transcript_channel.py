@@ -1,5 +1,6 @@
 """setup_transcript_channel against a fake Discord server (#124)."""
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -8,12 +9,21 @@ import discord
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.transcript_channel import (
+    TranscriptChannelError,
     is_transcript_name,
     setup_transcript_channel,
     transcript_channel_name,
 )
 from tests.pg import DatabaseTest
-from tests.test_dm_screen_setup import BOT, BOT_PERMS, DM, GENERAL, GUILD, text_channel
+from tests.test_dm_screen_setup import (
+    BOT,
+    BOT_PERMS,
+    DM,
+    FORBIDDEN,
+    GENERAL,
+    GUILD,
+    text_channel,
+)
 
 NEW = 60
 
@@ -33,6 +43,7 @@ class TranscriptChannelTests(DatabaseTest):
         guild.get_member = lambda _id: None
         self.general = text_channel(GENERAL, "general", guild)
         self.new = text_channel(NEW, "dmb-transcript-rmfthfrstmdn", guild)
+        self.new.pins = AsyncMock(return_value=[])
         guild.fetch_channel = AsyncMock(return_value=self.general)
         guild.create_text_channel = AsyncMock(return_value=self.new)
         guild.get_channel = lambda cid: self.new if cid == NEW else None
@@ -82,6 +93,36 @@ class TranscriptChannelTests(DatabaseTest):
         await setup_transcript_channel(self.guild, self.campaign.id, self.store)
         self.general.edit.assert_not_called()
         self.guild.create_text_channel.assert_awaited_once()
+
+    async def test_a_pinned_card_far_back_is_not_posted_again(self) -> None:
+        await self.store.set_transcript_channel(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=self.new)
+        card = MagicMock(spec=discord.Message)
+        card.id, card.pinned = 1, True
+        card.author = SimpleNamespace(id=BOT)
+        campaign = await self.store.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        card.content = messages.transcript_card(campaign.name)
+        self.new.pins = AsyncMock(return_value=[card])  # thousands of lines since
+        await setup_transcript_channel(self.guild, self.campaign.id, self.store)
+        self.new.send.assert_not_called()
+
+    async def test_nothing_is_edited_when_nothing_changed(self) -> None:
+        await self.store.set_transcript_channel(GUILD, self.campaign.id, NEW)
+        self.guild.fetch_channel = AsyncMock(return_value=self.new)
+        await setup_transcript_channel(self.guild, self.campaign.id, self.store)
+        first = self.new.edit.await_args_list[0].kwargs
+        # Discord now has what DMbot sent; a second start changes nothing.
+        self.new.topic = first["topic"]
+        self.new.overwrites = first["overwrites"]
+        self.new.edit.reset_mock()
+        await setup_transcript_channel(self.guild, self.campaign.id, self.store)
+        self.new.edit.assert_not_called()
+
+    async def test_a_forbidden_create_gives_a_plain_cause(self) -> None:
+        self.guild.create_text_channel = AsyncMock(side_effect=FORBIDDEN)
+        with self.assertRaisesRegex(TranscriptChannelError, "Manage Channels"):
+            await setup_transcript_channel(self.guild, self.campaign.id, self.store)
 
     async def test_a_numbered_campaign_numbers_its_transcript_too(self) -> None:
         campaign = await self.store.set_channel_number(GUILD, self.campaign.id, 2)

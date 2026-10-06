@@ -42,7 +42,7 @@ class Transcriber(Protocol):
 
 
 class PlaceholderTranscriber:
-    """Returns no text. Used with TRANSCRIBER=none (capture checks only)."""
+    """Returns no text. Used with TRANSCRIBER=none (no text; only capture-check counts in the log)."""
 
     async def warm_up(self) -> None:
         return None
