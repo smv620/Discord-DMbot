@@ -14,16 +14,21 @@ from __future__ import annotations
 
 import html
 import io
+import logging
 import re
 import zipfile
 from pathlib import PurePath
 
+from dmbot.memory.models import name_key
+
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 MAX_DOCUMENT_CHARS = 200_000  # about a 100-page document
 CHUNK_CHARS = 40_000  # one AI request
-MAX_XML_BYTES = 30 * 1024 * 1024  # a Word file's text, unpacked
-TEXT_TYPES = (".txt", ".md", ".csv", ".text", "")
+MAX_XML_BYTES = 5 * 1024 * 1024  # a Word file's text, unpacked
+MAX_PDF_PAGES = 500
+TEXT_TYPES = (".txt", ".md", ".csv", ".text", "")  # also .doc, refused with its own words
 DOCUMENT_TYPES = (".pdf", ".docx")
+log = logging.getLogger(__name__)
 _GDOC = re.compile(r"^https://docs\.google\.com/document/(?:u/\d+/)?d/([A-Za-z0-9_-]{20,})")
 
 
@@ -36,33 +41,45 @@ def kind_of_file(filename: str) -> str:
     suffix = PurePath(filename).suffix.casefold()
     if suffix in TEXT_TYPES:
         return "text"
-    if suffix in DOCUMENT_TYPES:
+    if suffix in (*DOCUMENT_TYPES, ".doc"):
         return "document"
     return "unknown"
 
 
+UNREADABLE = "DMbot couldn't open that file. It may be damaged: save it again and try."
+TYPES_HELP = (
+    "DMbot can read .txt, .pdf and .docx (Word) files. Save it as one of those and try again."
+)
+
+
 def text_of(filename: str, raw: bytes) -> str:
-    """The text of a .txt, .pdf or .docx file. Raises DocumentError in plain words."""
+    """The text of a .txt, .pdf or .docx file. Raises DocumentError in plain words, for
+    any problem at all (a damaged or hostile file must never escape as another error)."""
     if len(raw) > MAX_DOCUMENT_BYTES:
         raise DocumentError("That file is too big (up to 10 MB). Split it into smaller files.")
     suffix = PurePath(filename).suffix.casefold()
-    if suffix == ".pdf":
-        text = _pdf_text(raw)
-    elif suffix == ".docx":
-        text = _docx_text(raw)
-    elif suffix in TEXT_TYPES:
-        try:
-            text = raw.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            text = raw.decode("cp1252", errors="replace")
-    else:
-        raise DocumentError(
-            "DMbot can read .txt, .pdf and .docx (Word) files. Save it as one of those and "
-            "try again."
-        )
+    try:
+        if suffix == ".pdf":
+            text = _pdf_text(raw)
+        elif suffix == ".docx":
+            text = _docx_text(raw)
+        elif suffix == ".doc":
+            raise DocumentError(
+                "Old Word files (.doc) can't be read. In Word, use Save As > Word Document "
+                "(.docx) and add that instead."
+            )
+        elif suffix in TEXT_TYPES:
+            text = decode_text(raw)
+        else:
+            raise DocumentError(TYPES_HELP)
+    except DocumentError:
+        raise
+    except Exception as exc:  # damaged, unusual or hostile files
+        log.warning("Couldn't read a %s file: %s", suffix or "text", type(exc).__name__)
+        raise DocumentError(UNREADABLE) from exc
     text = text.replace("\x00", "")
     if not text.strip():
-        raise DocumentError("DMbot found no text in that file.")
+        raise DocumentError("DMbot found no text in that file. Check it's the right file.")
     if len(text) > MAX_DOCUMENT_CHARS:
         raise DocumentError(
             "That document is too long for one go (about 100 pages at most). Split it into "
@@ -71,42 +88,79 @@ def text_of(filename: str, raw: bytes) -> str:
     return text
 
 
+def decode_text(raw: bytes) -> str:
+    """UTF-8, or the older Windows encoding (cp1252) that Notepad used to save."""
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
+
+
 def _pdf_text(raw: bytes) -> str:
     from pypdf import PdfReader
-    from pypdf.errors import PdfReadError
 
-    try:
-        reader = PdfReader(io.BytesIO(raw))
-        if reader.is_encrypted:
-            raise DocumentError("That PDF is locked with a password. Save an unlocked copy.")
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    except (PdfReadError, ValueError, KeyError, OSError) as exc:
-        raise DocumentError("DMbot couldn't open that PDF. Save it again and try.") from exc
+    reader = PdfReader(io.BytesIO(raw))
+    if reader.is_encrypted and not reader.decrypt(""):  # many only restrict printing
+        raise DocumentError(
+            "That PDF is locked with a password. Save an unlocked copy and add that instead."
+        )
+    if len(reader.pages) > MAX_PDF_PAGES:
+        raise DocumentError(
+            f"That PDF has more than {MAX_PDF_PAGES} pages. Split it into parts and add them "
+            "one at a time."
+        )
+    parts: list[str] = []
+    size = 0
+    for page in reader.pages:
+        text = page.extract_text() or ""
+        parts.append(text)
+        size += len(text)
+        if size > MAX_DOCUMENT_CHARS:
+            break  # too long anyway: text_of says so
+    text = "\n".join(parts)
     if not text.strip():
         raise DocumentError(
-            "That PDF has no text DMbot can read (it may be scanned pictures). Copy its text "
-            "into a .txt file instead."
+            "That PDF is pictures of pages (scanned), so DMbot can't read its words. Type the "
+            "names into the template instead: /dmbot names > 📥 Add many > 📄 Get the template."
         )
     return text
 
 
+# Text runs and paragraph ends in a Word file. `[^<]*` can't run past a tag, so one pass
+# over the file is enough, however it's built (no slow matching on hostile files).
+_DOCX_PARTS = re.compile(r"<w:t(?:\s[^>]*)?>([^<]*)</w:t>|</w:p>")
+
+
 def _docx_text(raw: bytes) -> str:
-    """A Word file is a zip with the text in word/document.xml: each paragraph's text
-    runs, joined. Read without an XML parser (nothing in the file is run or fetched)."""
+    """A Word file is a zip with the text in word/document.xml. Read without an XML
+    parser (nothing in the file is run or fetched), in one pass."""
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             info = archive.getinfo("word/document.xml")
             if info.file_size > MAX_XML_BYTES:
                 raise DocumentError("That Word file is too big. Split it into smaller files.")
-            xml = archive.read(info).decode("utf-8", errors="replace")
-    except (zipfile.BadZipFile, KeyError, OSError) as exc:
+            with archive.open(info) as part:
+                data = part.read(MAX_XML_BYTES + 1)  # never trust the size it declares
+            if len(data) > MAX_XML_BYTES:
+                raise DocumentError("That Word file is too big. Split it into smaller files.")
+    except (zipfile.BadZipFile, KeyError) as exc:
         raise DocumentError(
-            "DMbot couldn't open that Word file. Save it as .docx (not .doc) and try again."
+            "DMbot couldn't open that Word file. Save it as .docx and try again."
         ) from exc
-    paragraphs = []
-    for para in re.findall(r"<w:p[ >].*?</w:p>", xml, flags=re.S):
-        runs = re.findall(r"<w:t(?: [^>]*)?>(.*?)</w:t>", para, flags=re.S)
-        paragraphs.append(html.unescape("".join(runs)))
+    xml = data.decode("utf-8", errors="replace")
+    paragraphs: list[str] = []
+    current: list[str] = []
+    size = 0
+    for match in _DOCX_PARTS.finditer(xml):
+        if match[1] is None:  # </w:p>
+            paragraphs.append(html.unescape("".join(current)))
+            current = []
+        else:
+            current.append(match[1])
+            size += len(match[1])
+            if size > MAX_DOCUMENT_CHARS:
+                break
+    paragraphs.append(html.unescape("".join(current)))
     return "\n".join(paragraphs)
 
 
@@ -120,17 +174,19 @@ def google_doc_export(link: str) -> str | None:
 
 
 def chunks(text: str, size: int = CHUNK_CHARS) -> list[str]:
-    """The text in pieces of at most `size` characters, split between paragraphs."""
+    """The text in pieces of at most `size` characters, in order, split between
+    paragraphs where it can."""
     out: list[str] = []
     current = ""
     for para in text.split("\n"):
-        while len(para) > size:  # one huge paragraph
-            out.append(para[:size])
-            para = para[size:]
-        if len(current) + len(para) + 1 > size and current:
+        piece = para + "\n"
+        if len(current) + len(piece) > size and current:
             out.append(current)
             current = ""
-        current += para + "\n"
+        while len(piece) > size:  # one huge paragraph
+            out.append(piece[:size])
+            piece = piece[size:]
+        current += piece
     if current.strip():
         out.append(current)
     return out
@@ -169,8 +225,39 @@ def instructions(*, secrets: bool) -> str:
 
 def request_text(chunk: str) -> str:
     # The document can't close the tag early and smuggle text outside it.
-    safe = chunk.replace("</document>", "</ document>")
+    safe = re.sub(r"<\s*/\s*document\s*>", "</ document>", chunk, flags=re.I)
     return f"<document>\n{safe}\n</document>"
+
+
+def merge_lists(lists: list[str]) -> str:
+    """The AI's lists for each piece of a document as one list: each name once, its
+    other names and secret names from every piece together."""
+    order: list[str] = []
+    merged: dict[str, list[str]] = {}  # key → [name, kind, others, secrets]
+    for text in lists:
+        for line in text.splitlines():
+            cells = [c.strip() for c in line.split("|")] + ["", "", ""]
+            key = name_key(cells[0])
+            if not key:
+                continue
+            if key not in merged:
+                order.append(key)
+                merged[key] = cells[:4]
+                continue
+            row = merged[key]
+            row[1] = row[1] or cells[1]
+            for at in (2, 3):
+                seen = {name_key(x) for x in re.split(r"[;,]", row[at]) if x.strip()}
+                new = [x.strip() for x in re.split(r"[;,]", cells[at]) if x.strip()]
+                extra = [x for x in new if name_key(x) not in seen]
+                row[at] = "; ".join(p for p in [row[at], *extra] if p)
+    out = []
+    for key in order:
+        cells = merged[key]
+        while len(cells) > 1 and not cells[-1]:
+            cells = cells[:-1]
+        out.append(" | ".join(cells))
+    return "\n".join(out)
 
 
 def clean_reply(reply: str) -> str:

@@ -7,6 +7,8 @@ managers, privately; secret names only for the campaign's DMs.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
 import io
 import logging
 import re
@@ -17,19 +19,23 @@ from typing import Any
 
 import aiohttp
 import discord
+import yarl
 
-from dmbot.ai import AIError, AnthropicClient
+from dmbot.ai import AIError, AnthropicClient, Reply
 from dmbot.campaigns import Campaign
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, DM, PROPOSED, MemoryRuleError, NewName, name_key
 from dmbot.memory.name_documents import (
     MAX_DOCUMENT_BYTES,
+    TYPES_HELP,
     DocumentError,
     chunks,
     clean_reply,
+    decode_text,
     google_doc_export,
     instructions,
     kind_of_file,
+    merge_lists,
     request_text,
     text_of,
 )
@@ -356,37 +362,48 @@ class Upload:
     document: bool = False  # not meant as a names list: straight to the AI
 
 
+_PARSING = asyncio.Semaphore(2)  # documents read at once, across all servers
+_GOOGLE_HOSTS = ("docs.google.com",)
+_GOOGLE_SUFFIX = ".googleusercontent.com"
+
+
+async def _document(filename: str, raw: bytes, label: str) -> tuple[Upload | None, str | None]:
+    async with _PARSING:
+        try:
+            return Upload(await asyncio.to_thread(text_of, filename, raw), label, True), None
+        except DocumentError as exc:
+            return None, str(exc)
+
+
 async def read_attachment(file: discord.Attachment) -> tuple[Upload | None, str | None]:
-    """(upload, problem) for `/dmbot names file:`: a list, or a document's text."""
+    """(upload, problem) for `/dmbot names file:`: a list, or a document's text. A text
+    file too big for a list is read as a document."""
     label = logic.shorten(file.filename, 60)
     kind = kind_of_file(file.filename)
-    limit = MAX_FILE_BYTES if kind == "text" else MAX_DOCUMENT_BYTES
     if kind == "unknown":
-        return None, "DMbot can read .txt, .pdf and .docx (Word) files. Save it as one of those."
-    if file.size > limit:
-        size = "256 KB" if kind == "text" else "10 MB"
-        return None, f"That file is too big (up to {size}). Split it into smaller files."
+        return None, TYPES_HELP
+    if file.size > MAX_DOCUMENT_BYTES:
+        return None, "That file is too big (up to 10 MB). Split it into smaller files."
     try:
         raw = await file.read()
     except discord.HTTPException:
         return None, "DMbot couldn't download that file. Try again."
     if kind == "text":
-        text, problem = read_upload(raw)
-        return (Upload(text, label) if text is not None else None), problem
-    try:
-        return Upload(await asyncio.to_thread(text_of, file.filename, raw), label, True), None
-    except DocumentError as exc:
-        return None, str(exc)
+        text, _ = read_upload(raw)
+        if text is not None:
+            return Upload(text, label), None
+    return await _document(file.filename, raw, label)
 
 
 async def read_link(link: str) -> tuple[Upload | None, str | None]:
     """(upload, problem) for `/dmbot names link:`: a Google Doc shared with anyone who has
-    the link. Fetches only from Google Docs, with a size cap."""
+    the link. Fetches only from Google (every redirect checked), at most 10 MB."""
     url = google_doc_export(link)
     if url is None:
         return None, (
-            "That isn't a Google Docs link. Copy it from the doc's **Share** button (it starts "
-            "with https://docs.google.com/document/)."
+            "DMbot can only open Google Docs links (they start with "
+            "https://docs.google.com/document/). For a PDF or Word file in Google Drive, "
+            "download it and add it in the **file** box."
         )
     not_shared = (
         "DMbot can't open that doc. In Google Docs press **Share**, set General access to "
@@ -394,40 +411,59 @@ async def read_link(link: str) -> tuple[Upload | None, str | None]:
         "file instead."
     )
     try:
-        timeout = aiohttp.ClientTimeout(total=30)
-        async with (
-            aiohttp.ClientSession(timeout=timeout) as session,
-            session.get(url) as resp,
-        ):
-            host = resp.url.host or ""
-            if resp.status != 200 or not (
-                host == "docs.google.com" or host.endswith(".googleusercontent.com")
-            ):
-                return None, not_shared
-            if not resp.content_type.startswith("text/plain"):
-                return None, not_shared
-            raw = await resp.content.read(MAX_DOCUMENT_BYTES + 1)
+        raw = await _fetch_google(url)
+    except _NotShared:
+        return None, not_shared
     except (aiohttp.ClientError, TimeoutError):
         return None, "DMbot couldn't reach Google Docs. Try again in a minute."
-    try:
-        return Upload(text_of("doc.txt", raw), "the Google Doc", True), None
     except DocumentError as exc:
         return None, str(exc)
+    return await _document("doc.txt", raw, "the Google Doc")
+
+
+class _NotShared(Exception):
+    pass
+
+
+def _google_url(url: yarl.URL) -> bool:
+    host = url.host or ""
+    return url.scheme == "https" and (host in _GOOGLE_HOSTS or host.endswith(_GOOGLE_SUFFIX))
+
+
+async def _fetch_google(url: str) -> bytes:
+    """Follow at most 3 redirects by hand, each only to Google over https; read the body
+    in pieces up to the size cap."""
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        target = yarl.URL(url)
+        for _ in range(4):
+            async with session.get(target, allow_redirects=False) as resp:
+                if resp.status in (301, 302, 303, 307, 308):
+                    target = target.join(yarl.URL(resp.headers.get("Location", "")))
+                    if not _google_url(target):
+                        raise _NotShared  # a sign-in page: not shared with everyone
+                    continue
+                if resp.status != 200 or not resp.content_type.startswith("text/plain"):
+                    raise _NotShared
+                data = bytearray()
+                async for piece in resp.content.iter_chunked(64 * 1024):
+                    data += piece
+                    if len(data) > MAX_DOCUMENT_BYTES:
+                        raise DocumentError(
+                            "That doc is too big (up to 10 MB). Split it into smaller docs."
+                        )
+                return bytes(data)
+        raise _NotShared
 
 
 def read_upload(raw: bytes) -> tuple[str | None, str | None]:
-    """(text, problem) for an uploaded list: UTF-8, not too big, not too many lines."""
+    """(text, problem) for an uploaded list: not too big, not too many lines (bigger
+    files are read as documents instead)."""
     if len(raw) > MAX_FILE_BYTES:
-        return None, "That file is too big (up to 256 KB). Split it into smaller files."
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        return (
-            None,
-            "DMbot can't read that file. Save it as a .txt file (not Word or PDF) and try again.",
-        )
+        return None, "That file is too big for a list (up to 256 KB)."
+    text = decode_text(raw)
     if len(text.splitlines()) > MAX_LINES:
-        return None, f"That file has more than {MAX_LINES:,} lines. Split it into smaller files."
+        return None, f"That file has more than {MAX_LINES:,} lines."
     return text, None
 
 
@@ -442,66 +478,86 @@ def _sounds_known(names: CampaignLookup, name: str) -> bool:
     )
 
 
+ONLY_DM_SECRETS = "only the campaign's DM can add secret names"
+AI_READS_PER_DAY = 20  # per server, for the operator's bill (bring-your-own keys: #50)
+AI_TIME_LIMIT_S = 600  # well inside Discord's 15 minutes to answer
+_ai_busy: set[int] = set()  # servers with an AI read running
+_ai_reads: dict[tuple[int, str], int] = {}  # (server, day) → reads
+
+
 async def take_list(interaction: discord.Interaction, campaign_id: str, upload: Upload) -> None:
     """A list DMbot can read all of is added straight away. Anything else (a document, or
-    a list with any line it can't read) goes to the AI, which writes the list for the DM
-    to check first (owner's decision, 2026-10-06)."""
+    a list with any line that doesn't fit) goes to the AI, which writes the list for the
+    DM to check first (owner's decision, 2026-10-06)."""
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
+    parsed = None
     if not upload.document:
         parsed = parse(upload.text, secrets=sees_secrets(campaign, interaction.user.id))
-        if parsed.lines and not parsed.refused:
+        if not parsed.lines and not parsed.refused:
+            await _tell(
+                interaction,
+                f"There are no names in {_md(upload.label)}. Lines starting with # are "
+                "skipped. Put one name per line and try again.",
+            )
+            return
+        # Every line fits, or the only problem is secret names from someone who may not
+        # add them (the AI must never turn those into names everyone sees).
+        if all(why.startswith(ONLY_DM_SECRETS) for _, why in parsed.refused):
             await import_list(interaction, campaign.id, upload.text)
             return
     if _bot(interaction).ai is None:
         if upload.document:
             await _tell(
                 interaction,
-                "Reading documents with AI isn't switched on for this DMbot. Put the names in "
-                "the template (📥 Add many > 📄 Get the template) and add that instead.",
+                "DMbot can't read documents here (its AI isn't switched on). Copy the names "
+                "into the template instead: 📥 Add many > 📄 Get the template.",
             )
         else:
             await import_list(interaction, campaign.id, upload.text)  # what fits, and why not
         return
-    await offer_ai(interaction, campaign, upload)
-
-
-def _ai_offer_text(upload: Upload, fits: int, unread: int) -> str:
-    if upload.document:
-        first = f"📄 **DMbot can find the names in {_md(upload.label)} with AI.**"
-    else:
-        first = (
-            f"📄 **{unread} line{'' if unread == 1 else 's'} in {_md(upload.label)} "
-            f"{'doesn' if unread == 1 else 'don'}'t fit the names-list format**, so DMbot "
-            "can have its AI read it and write the list for you."
-        )
-    return (
-        f"{first}\nThe text is sent to Anthropic, the AI company, to read it. Only use material "
-        "you have the right to use: DMbot doesn't check. You'll see the list before anything "
-        "is added." + (f"\nOr add just the {fits} lines that fit, as they are." if fits else "")
+    fits = len(parsed.lines) if parsed else 0
+    await _send(
+        interaction,
+        _ai_offer_text(upload, parsed),
+        AIOffer(campaign.id, upload, fits, fits > len(parsed.refused) if parsed else False),
     )
 
 
-async def offer_ai(interaction: discord.Interaction, campaign: Campaign, upload: Upload) -> None:
-    secrets = sees_secrets(campaign, interaction.user.id)
-    parsed = None if upload.document else parse(upload.text, secrets=secrets)
-    fits = len(parsed.lines) if parsed else 0
-    unread = len(parsed.refused) if parsed else 0
-    view = AIOffer(campaign.id, upload, fits)
-    await _send(interaction, _ai_offer_text(upload, fits, unread), view)
+def _ai_offer_text(upload: Upload, parsed: Parsed | None) -> str:
+    rights = (
+        "Its text goes to Anthropic (an AI company) to be read. Only do this with material "
+        "you have the right to use: DMbot doesn't check."
+    )
+    if parsed is None:
+        return (
+            f"📄 **Find the names in {_md(upload.label)}?** DMbot's AI reads it and makes a "
+            f"list for you to check. Nothing is added until you say so.\n{rights}"
+        )
+    bad = len(parsed.refused)
+    shown = "; ".join(f"line {n}: {why}" for n, why in parsed.refused[:2])
+    more = " …" if bad > 2 else ""
+    return (
+        f"📄 **{bad} line{'' if bad == 1 else 's'} in {_md(upload.label)} "
+        f"{'doesn' if bad == 1 else 'don'}'t fit** ({shown}{more}). DMbot's AI can read the "
+        "whole list and make a clean one for you to check first"
+        + (f". Or add just the {len(parsed.lines)} that fit." if parsed.lines else ".")
+        + f"\n{rights}"
+    )
 
 
 class AIOffer(_Menu):
-    def __init__(self, campaign_id: str, upload: Upload, fits: int) -> None:
+    def __init__(self, campaign_id: str, upload: Upload, fits: int, fits_first: bool) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.upload = upload
+        blue, grey = discord.ButtonStyle.primary, discord.ButtonStyle.secondary
         self.add_item(
             _Button(
                 self._read,
-                label="🤖 Find the names (I may use this)",
-                style=discord.ButtonStyle.primary,
+                label="🤖 Find names (I have the right to use this)",
+                style=grey if fits_first else blue,
             )
         )
         if fits:
@@ -509,36 +565,69 @@ class AIOffer(_Menu):
                 _Button(
                     self._as_is,
                     label=f"Add the {fits} that fit",
-                    style=discord.ButtonStyle.secondary,
+                    style=blue if fits_first else grey,
                 )
             )
-        self.add_item(_Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary))
+        self.add_item(_Button(self._cancel, label="Cancel", style=grey))
 
     async def _read(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
         ai = _bot(interaction).ai
-        if campaign is None or ai is None:
+        if ai is None:
+            await _tell(interaction, "DMbot's AI was switched off. Nothing was added.")
+            return
+        guild = campaign.guild_id
+        day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
+        if guild in _ai_busy:
+            await _tell(interaction, "DMbot is already reading a document for this server. "
+                        "Try again when it's done.")  # fmt: skip
+            return
+        if _ai_reads.get((guild, day), 0) >= AI_READS_PER_DAY:
+            await _tell(interaction, "This server has used today's document reads. Try "
+                        "again tomorrow, or use the template.")  # fmt: skip
             return
         self.stop()
-        await interaction.response.edit_message(
-            content=f"🤖 Reading {_md(self.upload.label)}… this can take a minute.",
-            view=None,
-            allowed_mentions=NO_PINGS,
-        )
-        # The IP rule (CLAUDE.md): who confirmed the right to use it, and when.
-        log.info(
-            "Shared material confirmed for AI reading: user=%s campaign=%s source=%s",
-            interaction.user.id,
-            campaign.id,
-            self.upload.label,
-        )
-        secrets = sees_secrets(campaign, interaction.user.id)
+        _ai_busy.add(guild)
+        _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
         try:
-            listed = await ai_names_list(ai, self.upload.text, secrets=secrets)
+            await interaction.response.edit_message(
+                content=f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for "
+                "a long document.",
+                view=None,
+                allowed_mentions=NO_PINGS,
+            )
+            # The IP rule (CLAUDE.md): who confirmed the right to use it, and when. The
+            # file's name stays out of the log (it may hold names); a short fingerprint
+            # tells documents apart.
+            log.info(
+                "Shared material confirmed for AI reading: user=%s campaign=%s doc=%s",
+                interaction.user.id,
+                campaign.id,
+                hashlib.sha256(self.upload.text.encode()).hexdigest()[:12],
+            )
+            secrets = sees_secrets(campaign, interaction.user.id)
+            async with asyncio.timeout(AI_TIME_LIMIT_S):
+                listed, cut = await ai_names_list(ai, self.upload.text, secrets=secrets)
+            await show_ai_list(interaction, campaign, self.upload, listed, cut, secrets=secrets)
         except AIError as exc:
-            await interaction.edit_original_response(content=str(exc))
-            return
-        await show_ai_list(interaction, campaign, self.upload, listed, secrets=secrets)
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(content=str(exc))
+        except TimeoutError:
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content="Reading took too long. Nothing was added. Split the document into "
+                    "smaller parts and try again."
+                )
+        except Exception:
+            log.exception("Reading a document with the AI failed")
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content="Something went wrong. Nothing was added. Try again later."
+                )
+        finally:
+            _ai_busy.discard(guild)
 
     async def _as_is(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -554,11 +643,21 @@ class AIOffer(_Menu):
         )
 
 
-async def ai_names_list(ai: AnthropicClient, text: str, *, secrets: bool) -> str:
-    """The AI's names list for a document, piece by piece, in the list format."""
+AI_AT_ONCE = asyncio.Semaphore(3)  # AI requests running at once, across all servers
+
+
+async def ai_names_list(ai: AnthropicClient, text: str, *, secrets: bool) -> tuple[str, bool]:
+    """The AI's names list for a document (pieces read side by side, merged so each name
+    appears once), and whether any answer was cut off."""
     system = instructions(secrets=secrets)
-    replies = [clean_reply(await ai.complete(system, request_text(c))) for c in chunks(text)]
-    return "\n".join(r for r in replies if r)
+
+    async def one(piece: str) -> Reply:
+        async with AI_AT_ONCE:
+            return await ai.complete(system, request_text(piece))
+
+    replies = await asyncio.gather(*(one(piece) for piece in chunks(text)))
+    merged = merge_lists([clean_reply(r.text) for r in replies])
+    return merged, any(r.cut for r in replies)
 
 
 PREVIEW_LINES = 15
@@ -569,6 +668,7 @@ async def show_ai_list(
     campaign: Campaign,
     upload: Upload,
     listed: str,
+    cut: bool,
     *,
     secrets: bool,
 ) -> None:
@@ -582,24 +682,30 @@ async def show_ai_list(
         return
     lines = [line for line in listed.splitlines() if line.strip()]
     shown = "\n".join(logic.shorten(line, 90) for line in lines[:PREVIEW_LINES]).replace("`", "'")
-    more = (
-        f"\n… and {len(lines) - PREVIEW_LINES} more in the file."
-        if len(lines) > PREVIEW_LINES
-        else ""
-    )
+    extra = len(lines) - PREVIEW_LINES
     count = len(parsed.lines)
+    hidden = sum(1 for line in parsed.lines if line.secrets)
+    notes = []
+    if hidden:
+        notes.append(f"Includes {hidden} with secret names (only you see them).")
+    if cut:
+        notes.append("The document was long, so the list may be missing some names.")
     text = (
         f"🤖 **DMbot's AI found {count} name{'' if count == 1 else 's'} in "
-        f"{_md(upload.label)}.** Here's the list it made. Nothing is added until you press "
-        "**Add these names**. Want to change something? Edit the attached file and add it "
-        f"with `/dmbot names` instead.\n```\n{shown}\n```{more}"
+        f"{_md(upload.label)}.** It only lists names written there, but it can miss some or "
+        "get a kind wrong. Nothing is added until you press **Add these names**. To change "
+        "many, edit the attached file and add it with `/dmbot names`; or add them and fix "
+        "single names on their cards (or **Undo**)."
+        + (" " + " ".join(notes) if notes else "")
+        + f"\n```\n{shown}\n```"
+        + (f"… and {extra} more in the file." if extra > 0 else "")
     )
     body = (
         header(secrets=secrets)
-        + f"###\n### Made by DMbot's AI from {' '.join(upload.label.split())}. Check it before "
-        "adding.\n" + "\n".join(lines) + "\n"
+        + f"###\n### Made by DMbot's AI from {' '.join(upload.label.split())}. Check it, then "
+        "add it with /dmbot names (the file box).\n" + "\n".join(lines) + "\n"
     )
-    view = AIPreview(campaign.id, listed)
+    view = AIPreview(campaign.id, listed, count)
     await interaction.edit_original_response(
         content=text[:2000],
         attachments=[_file(body, f"names-from-{_slug(upload.label)}.txt")],
@@ -610,13 +716,12 @@ async def show_ai_list(
 
 
 class AIPreview(_Menu):
-    def __init__(self, campaign_id: str, listed: str) -> None:
+    def __init__(self, campaign_id: str, listed: str, count: int) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.listed = listed
-        self.add_item(
-            _Button(self._add, label="✅ Add these names", style=discord.ButtonStyle.success)
-        )
+        label = f"✅ Add these {count} names" if count != 1 else "✅ Add this name"
+        self.add_item(_Button(self._add, label=label, style=discord.ButtonStyle.success))
         self.add_item(_Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary))
 
     async def _add(self, interaction: discord.Interaction) -> None:
@@ -730,8 +835,8 @@ async def _send_summary(
             f"**{_md(w)}** ({len(ids)})" if w else f"no kind ({len(ids)})" for w, ids in asked
         )
         lines.append(
-            f"❓ DMbot doesn't know these kinds: {words}. Pick what each one is below to set "
-            "all its names at once."
+            f"❓ **What kind are these?** {words}. Pick one in each menu below to set them all "
+            "at once, or leave them for 📝 Check new names."
         )
         if len(kinds) > len(asked):
             lines.append(f"{len(kinds) - len(asked)} more wait in 📝 Check new names.")
@@ -803,9 +908,14 @@ KIND_QUESTIONS = 4  # one menu per unknown kind word; the 5th row holds the butt
 
 class KindSelect(discord.ui.Select["KindQuestions"]):
     def __init__(self, questions: KindQuestions, word: str, ids: list[str], row: int) -> None:
-        what = f"every “{logic.shorten(word, 40)}”" if word else "the names with no kind"
+        n = len(ids)
+        question = (
+            f"What is every “{logic.shorten(word, 40)}”? ({n} name{'' if n == 1 else 's'})"
+            if word
+            else f"What {'is the name' if n == 1 else f'are the {n} names'} with no kind?"
+        )
         super().__init__(
-            placeholder=logic.shorten(f"What is {what} ({len(ids)})?", 150),
+            placeholder=logic.shorten(question, 150),
             options=[
                 discord.SelectOption(label=label, value=kind)
                 for kind, label in KINDS.items()

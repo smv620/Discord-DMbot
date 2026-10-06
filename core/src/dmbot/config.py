@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dmbot.ai import DEFAULT_MODEL
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS
 from dmbot.sharding import ShardConfigError, ShardSettings, parse_shards
 from dmbot.transcription.config import (
@@ -35,7 +36,7 @@ class Settings:
     log_level: str = "INFO"
     # AI text calls (reading a document into a names list). Empty: switched off.
     ai_key: str = field(default="", repr=False)
-    ai_model: str = "claude-haiku-4-5-20251001"
+    ai_model: str = DEFAULT_MODEL
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -89,5 +90,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         log_format=log_format,
         log_level=log_level,
         ai_key=get("ANTHROPIC_API_KEY"),
-        ai_model=get("AI_MODEL") or "claude-haiku-4-5-20251001",
+        ai_model=get("AI_MODEL") or DEFAULT_MODEL,
     )
