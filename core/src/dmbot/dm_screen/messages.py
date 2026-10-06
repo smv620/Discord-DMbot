@@ -310,3 +310,49 @@ def summary_problems(missed: int, failed: int, caught_up: bool) -> list[str]:
             "for them, then gave up."
         )
     return problems
+
+
+# ---- who is being recorded (#107) -------------------------------------------------------
+
+
+def _names(names: list[str]) -> str:
+    shown = [_who(n) for n in names]
+    return ", ".join(shown[:-1]) + f" and {shown[-1]}" if len(shown) > 1 else shown[0]
+
+
+def listening_message(
+    voice_channel_id: int, campaign_name: str, recorded: list[str], waiting: list[str]
+) -> str:
+    """The DM screen's "listening" message: who in the voice channel is recorded now.
+    `recorded`: people there who said yes; `waiting`: people there who haven't (DMbot is
+    asking them privately). A line follows for each answer and each join."""
+    campaign = f" for **{discord.utils.escape_markdown(campaign_name)}**" if campaign_name else ""
+    lines = [f"✅ Listening in <#{voice_channel_id}>{campaign}."]
+    if recorded:
+        lines.append(f"🎙 Recording: {_names(recorded)}.")
+    if waiting:
+        lines.append(
+            f"✉️ Not recorded yet: {_names(waiting)}. DMbot is asking privately; each answer "
+            "shows up here."
+        )
+    if not recorded and not waiting:
+        lines.append(
+            "Nobody is in the voice channel yet. DMbot asks each person privately as they join."
+        )
+    return "\n".join(lines)
+
+
+def agreed_message(name: str) -> str:
+    return f"🎙 **{_who(name)}** said yes: DMbot is recording them now."
+
+
+def stopped_message(name: str) -> str:
+    return f"🛑 **{_who(name)}** said stop. DMbot no longer records them."
+
+
+def joined_recorded_message(name: str) -> str:
+    return f"🎙 **{_who(name)}** joined and is recorded (they said yes before)."
+
+
+def joined_not_recorded_message(name: str) -> str:
+    return f"✉️ **{_who(name)}** joined. Not recorded unless they say yes."

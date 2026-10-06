@@ -409,8 +409,13 @@ class DMBot(commands.AutoShardedBot):
         `outside_to`: the outside engine the request they agreed to named, if any.
         Raises if it couldn't be saved; then nothing changed.
         """
-        await self.consent.grant(guild_id, user_id, method=method, outside_to=outside_to)
+        already = self.consent.has_consent(guild_id, user_id)
+        recorded = await self.consent.grant(guild_id, user_id, method=method, outside_to=outside_to)
         log.info("Consent given: user %s", user_id)
+        # Only a yes that really counts (it names this server's speech-to-text, and no
+        # stop arrived meanwhile) is shown as recording.
+        if user_id in recorded and not already:
+            self._tell_dm_about_consent(guild_id, user_id, agreed=True)
         # Always tell ears (if connected), even with no session here: it may still be
         # in voice from before a restart.
         with contextlib.suppress(Exception):
@@ -438,7 +443,10 @@ class DMBot(commands.AutoShardedBot):
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
         failed; the player stays stopped in this process either way."""
+        was_recorded = self.consent.has_consent(guild_id, user_id)
         self.stop_recording(guild_id, user_id)
+        if was_recorded:  # stopped here at once, even if saving fails below
+            self._tell_dm_about_consent(guild_id, user_id, agreed=False)
         log.info("Consent withdrawn: user %s", user_id)
         with contextlib.suppress(Exception):
             await self.push_allowlist(guild_id)
@@ -543,6 +551,28 @@ class DMBot(commands.AutoShardedBot):
             if notes and self.tables.get(gid) is table:
                 await self.post(table.screen_channel_id, "\n".join(notes))
 
+    def _people_in_voice(self, table: Table) -> list[int]:
+        """People (not bots) in the session's voice channel right now."""
+        voice = self.get_channel(table.voice_channel_id)
+        if not isinstance(voice, discord.VoiceChannel | discord.StageChannel):
+            return []
+        return [m.id for m in voice.members if not m.bot]
+
+    def _tell_dm_about_consent(self, guild_id: int, user_id: int, *, agreed: bool) -> None:
+        """During a session, the DM screen shows each yes and each stop as it happens
+        (#107), so it stays a true picture of who is recorded."""
+        table = self.tables.get(guild_id)
+        # Only people at the table: someone elsewhere in the server isn't recorded now.
+        if table is None or self._closing or user_id not in self._people_in_voice(table):
+            return
+        name = self.name_of(guild_id, user_id)
+        text = (
+            screen_messages.agreed_message(name)
+            if agreed
+            else screen_messages.stopped_message(name)
+        )
+        self._track(self.post(table.screen_channel_id, text), "consent-note")
+
     def _ask_everyone_in_voice(self, table: Table, *, only_renewals: bool = False) -> None:
         voice = self.get_channel(table.voice_channel_id)
         if isinstance(voice, discord.VoiceChannel | discord.StageChannel):
@@ -557,6 +587,15 @@ class DMBot(commands.AutoShardedBot):
         if before.channel is not None and before.channel.id == after.channel.id:
             return  # mute, deafen and the like: not a join
         self.start_asking(table, [member])  # tracked, so close() cancels it
+        if not member.bot and table.listening:
+            # Keep the DM screen's picture of who is recorded true (#107).
+            recorded = self.consent.has_consent(member.guild.id, member.id)
+            text = (
+                screen_messages.joined_recorded_message(member.display_name)
+                if recorded
+                else screen_messages.joined_not_recorded_message(member.display_name)
+            )
+            self._track(self.post(table.screen_channel_id, text), "join-note")
 
     async def start_table(self, table: Table) -> bool:
         """Register the session, send ears the consent list, then the join.
@@ -1244,10 +1283,11 @@ class DMBot(commands.AutoShardedBot):
                     ),
                     at_ms=_now_ms(),
                 )
-            count = len(await self.consent.consenting(table.guild_id))
-            campaign = f" for **{table.campaign_name}**" if table.campaign_name else ""
+            agreed = await self.consent.consenting(table.guild_id)
+            here = self._people_in_voice(table)
+            recorded = [uid for uid in here if uid in agreed]
             if not repeat:
-                log.info("In the voice channel; %d player(s) opted in", count)
+                log.info("In the voice channel; %d of %d there opted in", len(recorded), len(here))
             if repeat:
                 pass
             elif table.resumed:
@@ -1260,8 +1300,14 @@ class DMBot(commands.AutoShardedBot):
             else:
                 await self.post(
                     table.screen_channel_id,
-                    f"✅ Listening in <#{table.voice_channel_id}>{campaign}. "
-                    f"{count} player(s) have opted in to recording.",
+                    screen_messages.listening_message(
+                        table.voice_channel_id,
+                        table.campaign_name,
+                        sorted(self.name_of(table.guild_id, uid) for uid in recorded),
+                        sorted(
+                            self.name_of(table.guild_id, uid) for uid in here if uid not in recorded
+                        ),
+                    ),
                 )
             if not table.notice_posted:
                 # Players learn they're being recorded from this notice, so a failure
