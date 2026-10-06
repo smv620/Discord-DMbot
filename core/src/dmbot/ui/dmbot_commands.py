@@ -426,23 +426,28 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         return
     bot = _bot(interaction)
     campaign = await bot.campaigns.get(guild.id, campaign_id)
-    # Only the campaign's DMs: a copy holds the secret names and notes, and a server
-    # manager may be a player at the table (#229).
     if campaign is None:
         await _tell(interaction, "That campaign isn't here any more.")
         return
-    if interaction.user.id not in campaign.dm_user_ids:
-        await _tell(interaction, logic.ONLY_DMS_BACKUP)
-        return
+    # Anyone in the server may download a complete copy, secrets included, so a campaign
+    # is never lost if its DM disappears (owner decision, 2026-10-06; CLAUDE.md).
+    dm = interaction.user.id in campaign.dm_user_ids
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True, thinking=True)
     data = await bot.campaigns.export(guild.id, campaign.id)
     raw = await asyncio.to_thread(encode_backup, data)
     file = discord.File(io.BytesIO(raw), filename=logic.backup_filename(campaign.name, _now()))
     await interaction.followup.send(
-        f"💾 Here's a copy of **{campaign.name}**. Keep it somewhere safe, and don't share it "
-        "publicly: it holds the campaign's secret notes.\n"
-        "Use `/dmbot restore` to bring it back, here or in another server.",
+        f"💾 Here's a complete copy of **{campaign.name}**. Keep it somewhere safe, and don't "
+        "share it publicly: it holds the DM's secret names and notes."
+        + (
+            ""
+            if dm
+            else " If you play in this campaign, don't open it: it's there in case the DM "
+            "is ever gone."
+        )
+        + "\nUse `/dmbot restore` to bring it back, here or in another server. Whoever "
+        "restores it becomes its DM.",
         file=file,
         ephemeral=True,
         allowed_mentions=NO_PINGS,
@@ -641,16 +646,10 @@ async def dmbot_backup(interaction: discord.Interaction) -> None:
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
         return
-    mine = [
-        c
-        for c in await _bot(interaction).campaigns.list_campaigns(guild.id)
-        if interaction.user.id in c.dm_user_ids
-    ]
+    mine = await _bot(interaction).campaigns.list_campaigns(guild.id)
     if not mine:
         await _tell(
-            interaction,
-            "Only a campaign's DM can download a copy, and you're not the DM of any campaign "
-            "here. Ask the DM, or use `/dmbot start` to set up your own.",
+            interaction, "There are no campaigns here yet. Use `/dmbot start` to set one up."
         )
     elif len(mine) == 1:
         await send_backup(interaction, mine[0].id)
