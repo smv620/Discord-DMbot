@@ -546,6 +546,28 @@ Code changes: #87.
   person, again only if it gets 10 points worse or after 10 minutes (#134).
 - The card mentions `/transcript` now that downloads exist (#125).
 
+**End of a session: built (2026-10-06, #109).** When the DM stops DMbot:
+- Nothing said before the stop is lost: speech still being heard is closed off and
+  queued, and the session stays "ending" until its own queued speech is written down
+  (up to 2 minutes; other servers' backlog doesn't count, and the summary says so if it
+  gave up). Then, in this order: save the last lines and end the stored transcript
+  (private download messages), the last capture warning, the "Session ended" divider in
+  the transcript channel, the summary, and the new-name suggestions. `/dmbot stop` still
+  answers at once ("A short summary follows in the DM screen"); all of this runs in the
+  background, and each step runs even if an earlier one fails. Pressing Stop recording
+  during this time still drops that person's words, and a session started again right
+  away never gets the old one's words. On shutdown the wait is cut short and saving
+  comes first.
+- **The summary** goes to the DM screen: "📋 Session ended: Frostmaiden", when it
+  started (in each reader's own time) and how long it ran, who spoke and for how long,
+  a ⚠️ line for anyone whose voice kept cutting out (under 90% got through), anything
+  that went wrong (speech missed because DMbot fell behind, speech it couldn't write
+  down, last words not finished), and where the transcript is. Names and numbers only,
+  never anything that was said. Missed and failed speech is counted per session.
+- Only `/dmbot stop` ends a session today; a resume that gives up after a restart has no
+  summary yet. After a restart, speaking times count only from the restart (the "ran"
+  time is the whole session). An AI recap of what happened is a later phase.
+
 **Stored transcripts and downloads: built (2026-10-06, #41, #125).** Decided while
 building:
 - Each session has a row (kept after a restart: same campaign and start time) and each

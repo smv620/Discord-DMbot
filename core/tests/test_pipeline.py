@@ -19,8 +19,8 @@ from dmbot.transcription.pipeline import (
 ONE_SECOND = bytes(32000)
 
 
-def utt(user: int = 7, pcm: bytes = ONE_SECOND, guild: int = 1) -> Utterance:
-    return Utterance(guild, user, 0, 0, pcm)
+def utt(user: int = 7, pcm: bytes = ONE_SECOND, guild: int = 1, session: int = 0) -> Utterance:
+    return Utterance(guild, user, 0, 0, pcm, session)
 
 
 class FakeConsent:
@@ -69,7 +69,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.pipeline = TranscriptionPipeline(
             self.engine,
             self.consent,
-            is_active=lambda g: g in self.active,
+            is_active=lambda u: u.guild_id in self.active,
             hints=hints,
             deliver=lambda u, t: self.delivered.append((u, t)),
             alert=alert,
@@ -168,6 +168,74 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.delivered), 2)
         self.assertIsNotNone(self.pipeline.last_latency_s)
 
+    async def test_drain_waits_for_the_last_words(self) -> None:
+        # #109: a stopping session waits for its own speech already queued.
+        task = asyncio.create_task(self.pipeline.run())
+        await asyncio.sleep(0)
+        self.pipeline.enqueue(utt(session=5))
+        self.pipeline.enqueue(utt(session=5))
+        self.assertTrue(await self.pipeline.drain(5, 5))
+        self.assertEqual(len(self.delivered), 2)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def stuck_worker(self) -> tuple[asyncio.Task[None], asyncio.Event]:
+        release = asyncio.Event()
+
+        async def stuck(utterance: Utterance, hints: list[str]) -> str | None:
+            await release.wait()
+            return "late"
+
+        self.engine.transcribe = stuck  # type: ignore[method-assign]
+        task = asyncio.create_task(self.pipeline.run())
+        await asyncio.sleep(0)
+        return task, release
+
+    async def test_drain_gives_up_after_its_time_and_the_clip_still_finishes(self) -> None:
+        task, release = await self.stuck_worker()
+        self.pipeline.enqueue(utt(session=5))
+        self.assertFalse(await self.pipeline.drain(5, 0.2))
+        release.set()
+        for _ in range(50):
+            if self.delivered:
+                break
+            await asyncio.sleep(0.01)
+        self.assertEqual(self.delivered[0][1], "late")
+        self.assertEqual(self.pipeline.pending[5], 0)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def test_another_sessions_backlog_is_not_waited_for(self) -> None:
+        task, release = await self.stuck_worker()
+        self.pipeline.enqueue(utt(guild=2, session=9))  # another server, stuck
+        self.assertTrue(await self.pipeline.drain(5, 0.5))  # nothing of ours waiting
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def test_shutdown_stops_the_wait(self) -> None:
+        task, release = await self.stuck_worker()
+        self.pipeline.enqueue(utt(session=5))
+        waiting = asyncio.create_task(self.pipeline.drain(5, 60))
+        await asyncio.sleep(0.05)
+        self.pipeline.stop_waiting()
+        self.assertFalse(await asyncio.wait_for(waiting, 1))
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def test_drain_without_a_worker_does_not_wait(self) -> None:
+        self.pipeline.enqueue(utt(session=5))
+        self.assertFalse(await self.pipeline.drain(5, 30))
+
+    async def test_missed_and_failed_clips_are_counted_per_session(self) -> None:
+        for _ in range(6):
+            self.pipeline.enqueue(utt(guild=2, session=3))
+        self.assertEqual(self.pipeline.missed_in[3], 2)  # the queue holds 4
+        self.engine.fail = True
+        await self.pipeline.process(utt(session=4))
+        self.assertEqual((self.pipeline.failed_in[4], self.pipeline.failed_in[3]), (1, 0))
+
 
 class BacklogTests(unittest.IsolatedAsyncioTestCase):
     async def test_warns_once_when_falling_behind(self) -> None:
@@ -182,7 +250,7 @@ class BacklogTests(unittest.IsolatedAsyncioTestCase):
         p = TranscriptionPipeline(
             FakeTranscriber(),
             FakeConsent(set()),
-            is_active=lambda g: True,
+            is_active=lambda u: True,
             hints=hints,
             deliver=lambda u, t: None,
             alert=alert,
@@ -212,7 +280,7 @@ class BacklogTests(unittest.IsolatedAsyncioTestCase):
         p = TranscriptionPipeline(
             FakeTranscriber(),
             FakeConsent(set()),
-            is_active=lambda g: True,
+            is_active=lambda u: True,
             hints=hints,
             deliver=lambda u, t: None,
             alert=alert,
@@ -258,7 +326,7 @@ class ClipBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.pipeline = TranscriptionPipeline(
             self.engine,
             FakeConsent({7}),
-            is_active=lambda g: True,
+            is_active=lambda u: True,
             hints=hints,
             deliver=lambda u, t: self.delivered.append((u, t)),
             alert=alert,

@@ -773,8 +773,92 @@ class SaveAndResume(SessionTests):
         assert call is not None
         self.assertIn("live transcript stopped", call.args[1])
 
+    async def test_speech_still_being_written_down_at_stop_is_kept(self) -> None:
+        # #109: the last words used to vanish when the DM pressed stop.
+        await self.consent.grant(GUILD, PLAYER)
+        table, sent = await self.joined_with_transcript()
+        release = await self.slow_worker("Last words before we stop.")
+        self.queue_speech(table)
+        await self.bot.stop_table(GUILD, "test")
+        release.set()
+        await asyncio.gather(*self.bot._finishing)
+        text = "\n".join(sent)
+        self.assertIn("Last words before we stop.", text)
+        self.assertLess(text.index("Last words"), text.index("Session ended"))
+        posted: Any = self.bot.post
+        summaries = [c.args[1] for c in posted.await_args_list if "Session ended:" in c.args[1]]
+        self.assertEqual(len(summaries), 1)
+        self.assertIn("under a minute", summaries[0])
+        self.assertIn("Everything DMbot heard was written down", summaries[0])
+        self.assertEqual(self.bot._ending, {})
+
+    async def slow_worker(self, text: str) -> asyncio.Event:
+        """A running transcription worker that holds each clip until released."""
+        release = asyncio.Event()
+
+        async def slow(utterance: Any, hints: list[str]) -> str:
+            await release.wait()
+            return text.format(session=utterance.session)
+
+        self.bot.pipeline.transcriber.transcribe = slow  # type: ignore[method-assign]
+        # Names show as mentions (SaveAndResume's fake server returns mock members).
+        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign]
+        worker = asyncio.create_task(self.bot.pipeline.run())
+        self.addCleanup(worker.cancel)
+        await asyncio.sleep(0)
+        return release
+
+    def queue_speech(self, table: Any) -> None:
+        from dmbot.audio.segmenter import Utterance
+        from dmbot.bot import _now_ms
+
+        start_ms = _now_ms() - 1000  # said just before the stop
+        self.bot.pipeline.enqueue(
+            Utterance(GUILD, PLAYER, start_ms, start_ms, bytes(32000), table.segmenter.session)
+        )
+
+    async def test_stop_recording_while_the_session_finishes_drops_their_words(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table, sent = await self.joined_with_transcript()
+        release = await self.slow_worker("Do not keep this.")
+        self.queue_speech(table)
+        await self.bot.stop_table(GUILD, "test")
+        self.bot.stop_recording(GUILD, PLAYER)  # while the last words are being written
+        release.set()
+        await asyncio.gather(*self.bot._finishing)
+        self.assertNotIn("Do not keep this.", "\n".join(sent))
+
+    async def test_a_new_session_never_gets_the_old_ones_last_words(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        old, sent = await self.joined_with_transcript()
+        release = await self.slow_worker("said in session {session}")
+        self.queue_speech(old)
+        await self.bot.stop_table(GUILD, "test")
+        await self.start()  # the DM starts again right away
+        new = self.bot.tables[GUILD]
+        self.assertIsNot(new, old)
+        release.set()
+        await asyncio.gather(*self.bot._finishing)
+        self.assertIn(f"said in session {old.segmenter.session}", "\n".join(sent))
+        self.assertEqual(len(new.transcript), 0)  # nothing of the old session's
+        self.assertEqual(new.heard, [])
+
+    async def test_a_shutdown_right_after_stop_still_finishes_quickly(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        await self.slow_worker("never written")  # stuck: never released
+        self.queue_speech(table)
+        finished = AsyncMock(return_value=0)
+        self.bot.finish_transcript = finished  # type: ignore[method-assign]
+        await self.bot.stop_table(GUILD, "test")
+        await asyncio.sleep(0.05)
+        self.bot.pipeline.stop_waiting()  # what close() does first
+        await asyncio.wait_for(asyncio.gather(*self.bot._finishing), 5)
+        finished.assert_awaited_once()
+        self.assertEqual(self.bot._ending, {})
+
     async def test_the_session_end_is_marked_in_the_transcript(self) -> None:
         _, sent = await self.joined_with_transcript()
         await self.bot.stop_table(GUILD, "test")  # answers at once; posts in the background
-        await asyncio.gather(*self.bot._asking)
+        await asyncio.gather(*self.bot._finishing)
         self.assertIn("Session ended", sent[-1])

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -33,6 +34,7 @@ MIN_CLIP_BUDGET_S = 10.0
 CLIP_BUDGET_PER_AUDIO_S = 3.0
 # A clip slower than this (and slower than its own length) is logged as slow.
 SLOW_CLIP_S = 5.0
+DRAIN_POLL_S = 0.1
 # Tell the DM about skipped clips at most this often.
 SKIP_ALERT_EVERY_S = 600.0
 SKIPPED_ALERT = (
@@ -57,7 +59,7 @@ class ConsentChecker(Protocol):
 Deliver = Callable[[Utterance, str | None], None]
 Alert = Callable[[int, str], Awaitable[None]]
 Hints = Callable[[int], Awaitable[list[str]]]
-IsActive = Callable[[int], bool]
+IsActive = Callable[[Utterance], bool]  # is the session that heard it still on?
 
 
 class TranscriptionPipeline:
@@ -93,6 +95,15 @@ class TranscriptionPipeline:
         self._budget_s = budget_s
         self._last_skip_alert: dict[int, float] = {}  # per Discord server
         self._backlog_warned = False
+        # Per Discord server, for the end-of-session summary (#109).
+        # Per session (Utterance.session), for the end-of-session summary (#109).
+        self.missed_in: Counter[int] = Counter()  # skipped or dropped clips
+        self.failed_in: Counter[int] = Counter()
+        # Clips queued but not finished, per session, so a stopping session can wait for
+        # its own last words (not other servers' backlog).
+        self.pending: Counter[int] = Counter()
+        self._running = False  # a worker is taking clips off the queue
+        self._stop_waiting = False  # shutting down: nobody waits for the queue any more
 
     @property
     def backlog(self) -> int:
@@ -104,20 +115,52 @@ class TranscriptionPipeline:
             self._queue.put_nowait((time.monotonic(), utterance))
         except asyncio.QueueFull:
             self.dropped += 1
+            self.missed_in[utterance.session] += 1
             return False
+        self.pending[utterance.session] += 1
         return True
 
+    async def drain(self, session: int, timeout_s: float) -> bool:
+        """Wait until this session's queued clips are finished, or `timeout_s` passes,
+        or DMbot is shutting down. True if it caught up. With no worker running nothing
+        would finish, so it doesn't wait."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        while self.pending[session] > 0:
+            if not self._running:
+                log.warning("Not waiting for the last words: transcription isn't running")
+                return False
+            if self._stop_waiting or loop.time() >= deadline:
+                return False
+            await asyncio.sleep(DRAIN_POLL_S)
+        self.pending.pop(session, None)
+        return True
+
+    def stop_waiting(self) -> None:
+        """Shutting down: every `drain` returns now."""
+        self._stop_waiting = True
+
     def _allowed(self, utterance: Utterance) -> bool:
-        return self._is_active(utterance.guild_id) and self._consent.has_consent(
+        return self._is_active(utterance) and self._consent.has_consent(
             utterance.guild_id, utterance.user_id
         )
 
     async def run(self) -> None:
+        self._running = True
+        try:
+            await self._work()
+        finally:
+            self._running = False
+
+    async def _work(self) -> None:
         while True:
             queued_at, utterance = await self._queue.get()
-            with log_context(guild_id=utterance.guild_id):
-                await self._check_backlog(utterance.guild_id)
-                await self.process(utterance)
+            try:
+                with log_context(guild_id=utterance.guild_id):
+                    await self._check_backlog(utterance.guild_id)
+                    await self.process(utterance)
+            finally:
+                self.pending[utterance.session] -= 1
             self.last_latency_s = time.monotonic() - queued_at
 
     async def process(self, utterance: Utterance) -> None:
@@ -144,9 +187,9 @@ class TranscriptionPipeline:
             if timer.expired():
                 await self._on_skip(utterance, budget)
             else:
-                await self._on_failure(utterance.guild_id, exc)
+                await self._on_failure(utterance, exc)
         except Exception as exc:
-            await self._on_failure(utterance.guild_id, exc)
+            await self._on_failure(utterance, exc)
         else:
             await self._on_success(utterance.guild_id)
             took = time.monotonic() - started
@@ -177,6 +220,7 @@ class TranscriptionPipeline:
         The audio still counts in the capture check; only its text is missing.
         """
         self.skipped += 1
+        self.missed_in[utterance.session] += 1
         log.warning(
             "Transcription skipped: %.1f s clip ran over its %.0f s budget (%d skipped so far)",
             utterance.duration_s,
@@ -191,9 +235,11 @@ class TranscriptionPipeline:
                 utterance.guild_id, SKIPPED_ALERT_OUTSIDE if self._outside else SKIPPED_ALERT
             )
 
-    async def _on_failure(self, guild_id: int, exc: Exception) -> None:
+    async def _on_failure(self, utterance: Utterance, exc: Exception) -> None:
+        guild_id = utterance.guild_id
         self.consecutive_failures += 1
         self.total_failures += 1
+        self.failed_in[utterance.session] += 1
         if self.total_failures == 1 or self.total_failures % LOG_EVERY_NTH_FAILURE == 0:
             log.error("Transcription failed (%d so far): %s", self.total_failures, exc)
         if self.consecutive_failures == FAILURES_BEFORE_ALERT:
