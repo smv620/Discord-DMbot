@@ -533,7 +533,9 @@ Code changes: #87.
   characters each, in the order the speech *started*. A line leaves the queue only once
   posted (a failed post is retried), and consent is checked again for every line as
   each message is built. Speech from a stopped session never reaches the next one.
-  Speech is escaped (no formatting, pings or links; link previews off). Until the Cleaner
+  Speech is escaped (no formatting, pings or links; link previews off). Every post (lines
+  and the card) is sent silently, so nobody gets a pop-up or phone notification for it;
+  the channel still shows as unread. Until the Cleaner
   (Phase 2b) lines are as heard and have no `{entity}` labels (#53).
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,

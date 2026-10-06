@@ -1369,7 +1369,9 @@ class DMBot(commands.AutoShardedBot):
             return "gone"
         try:
             await asyncio.wait_for(
-                channel.send(text, allowed_mentions=NO_PINGS, suppress_embeds=True),
+                # silent: no pop-up or phone notification for every line (Discord's
+                # @silent). The channel still shows as unread.
+                channel.send(text, allowed_mentions=NO_PINGS, suppress_embeds=True, silent=True),
                 TRANSCRIPT_POST_TIMEOUT_S,
             )
         except (discord.NotFound, discord.Forbidden):

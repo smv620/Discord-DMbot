@@ -745,6 +745,16 @@ class SaveAndResume(SessionTests):
         await self.bot.flush_transcript(table)
         self.assertIn("hello", "\n".join(sent))
 
+    async def test_transcript_lines_never_make_a_pop_up(self) -> None:
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.send = AsyncMock()
+        self.bot.get_channel = MagicMock(return_value=channel)  # type: ignore[method-assign]
+        self.assertEqual(await self.bot._post_transcript(5, "**Mia:** hi"), "posted")
+        call = channel.send.await_args
+        assert call is not None
+        self.assertTrue(call.kwargs["silent"])
+        self.assertTrue(call.kwargs["suppress_embeds"])  # still no link previews
+
     async def test_a_lost_channel_stops_the_transcript_and_tells_the_dm_once(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table, _ = await self.joined_with_transcript()

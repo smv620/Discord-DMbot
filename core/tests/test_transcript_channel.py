@@ -77,8 +77,10 @@ class TranscriptChannelTests(DatabaseTest):
     async def test_the_card_is_posted_and_pinned(self) -> None:
         await setup_transcript_channel(self.guild, self.campaign.id, self.store)
         card = self.new.send.await_args.args[0]
+        self.assertTrue(self.new.send.await_args.kwargs["silent"])  # no pop-ups
         self.assertTrue(card.startswith(messages.TRANSCRIPT_CARD_TITLE))
         self.assertIn("Only DMbot posts here", card)
+        self.assertIn("No pop-ups from here", card)
         self.assertIn("`/consent revoke` here or in any channel", card)  # works here (#188)
         self.new.send.return_value.pin.assert_awaited_once()
 
