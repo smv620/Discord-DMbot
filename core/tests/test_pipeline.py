@@ -108,7 +108,10 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(FAILURES_BEFORE_ALERT + 2):
             await self.pipeline.process(utt())
         self.assertEqual(len(self.alerts), 1)
-        self.assertIn("isn't working", self.alerts[0])
+        self.assertIn("Writing things down stopped working", self.alerts[0])
+        self.assertIn("hears everyone who said yes", self.alerts[0])  # never "everyone"
+        self.assertNotIn("RuntimeError", self.alerts[0])  # details stay in the log (#99)
+        self.assertNotIn("engine down", self.alerts[0])
         self.assertTrue(all(text is None for _, text in self.delivered))
         self.engine.fail = False
         await self.pipeline.process(utt())
@@ -118,7 +121,9 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_plain_engine_problem_is_shown_in_plain_words(self) -> None:
         problem = TranscriptionProblem(
-            "Deepgram didn't accept DEEPGRAM_API_KEY (HTTP 401)", host_can_fix=True
+            "Deepgram didn't accept DEEPGRAM_API_KEY (HTTP 401)",
+            host_can_fix=True,
+            for_dm="Deepgram didn't accept DMbot's key",
         )
 
         async def fail(utterance: Utterance, hints: list[str]) -> str | None:
@@ -130,7 +135,10 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         (alert,) = self.alerts
         self.assertTrue(alert.startswith("⚠️ **No transcript right now:** Deepgram didn't accept"))
         self.assertNotIn("TranscriptionProblem", alert)  # no class names for the DM
-        self.assertIn("check the speech-to-text settings in .env", alert)
+        self.assertNotIn("DEEPGRAM_API_KEY", alert)  # nor settings names or codes (#99)
+        self.assertNotIn("HTTP", alert)
+        self.assertIn("check its speech-to-text settings", alert)
+        self.assertNotIn(".env", alert)
 
     async def test_an_outage_doesnt_send_the_host_to_env(self) -> None:
         async def fail(utterance: Utterance, hints: list[str]) -> str | None:
@@ -141,6 +149,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             await self.pipeline.process(utt())
         (alert,) = self.alerts
         self.assertIn("company's side", alert)
+        self.assertNotIn("HTTP", alert)  # no for_dm given: a plain fallback, not the log text
         self.assertNotIn(".env", alert)
 
     async def test_single_failure_no_alert(self) -> None:
@@ -266,7 +275,8 @@ class BacklogTests(unittest.IsolatedAsyncioTestCase):
         task.cancel()
         self.assertEqual(len(alerts), 1)
         self.assertIn("falling behind", alerts[0])
-        self.assertIn("WHISPER_MODEL", alerts[0])  # local Whisper: a smaller model helps
+        self.assertIn("switch to a faster setting", alerts[0])  # local Whisper
+        self.assertNotIn("WHISPER_MODEL", alerts[0])  # settings names stay in the log (#99)
 
     async def test_with_an_outside_company_the_advice_is_not_about_whisper(self) -> None:
         alerts: list[str] = []

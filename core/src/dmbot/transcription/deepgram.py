@@ -30,13 +30,15 @@ REQUEST_TIMEOUT_S = 4
 CONNECT_TIMEOUT_S = 2
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 RETRY_DELAY_S = 1.0
-# Plain reasons the DM screen can show (the alert adds what to do next).
+# Reasons for the log (with settings names); DM_REASONS has the DM screen's words.
 STATUS_REASONS = {
     400: "Deepgram couldn't use the request",
     401: "Deepgram didn't accept DEEPGRAM_API_KEY",
     402: "the Deepgram account is out of credit",
     403: "Deepgram didn't accept DEEPGRAM_API_KEY",
 }
+# The same for the DM screen: no settings names (#99).
+DM_REASONS = {401: "Deepgram didn't accept DMbot's key", 403: "Deepgram didn't accept DMbot's key"}
 # Statuses the host can fix in .env or their Deepgram account (not an outage).
 HOST_FIXABLE = frozenset({400, 401, 402, 403})
 # Deepgram rejects keyterm lists over about 500 tokens. Names are short, so a cap on the
@@ -129,23 +131,35 @@ class DeepgramTranscriber:
                     raise DeepgramError(
                         f"{reason} (HTTP {resp.status})",
                         host_can_fix=resp.status in HOST_FIXABLE,
+                        for_dm=DM_REASONS.get(resp.status, reason),
                     )
             except aiohttp.ClientConnectionError as exc:
                 # A dropped or stale connection, or a slow connect: worth one more try.
                 if attempt == 1:
                     continue
-                raise DeepgramError(f"couldn't reach Deepgram ({type(exc).__name__})") from None
+                raise DeepgramError(
+                    f"couldn't reach Deepgram ({type(exc).__name__})",
+                    for_dm="DMbot couldn't reach Deepgram",
+                ) from None
             except TimeoutError:
                 # The whole request took too long: not retried (a second wait would run
                 # past the clip budget). The pipeline's own budget cancels the task
                 # instead (CancelledError), which isn't caught here.
-                raise DeepgramError("Deepgram took too long to answer") from None
+                raise DeepgramError(
+                    "Deepgram took too long to answer", for_dm="Deepgram took too long to answer"
+                ) from None
             except aiohttp.ClientError as exc:
                 # aiohttp's own messages can include the request URL, whose query holds
                 # players' names (keyterms): keep only the error's type.
-                raise DeepgramError(f"Deepgram request failed ({type(exc).__name__})") from None
+                raise DeepgramError(
+                    f"Deepgram request failed ({type(exc).__name__})",
+                    for_dm="DMbot's request to Deepgram failed",
+                ) from None
             except ValueError:
-                raise DeepgramError("Deepgram sent a reply DMbot couldn't read") from None
+                raise DeepgramError(
+                    "Deepgram sent a reply DMbot couldn't read",
+                    for_dm="Deepgram sent a reply DMbot couldn't read",
+                ) from None
         return None  # pragma: no cover  # loop always returns or raises
 
     async def close(self) -> None:
