@@ -59,6 +59,7 @@ from dmbot.dm_screen import (
     peek_view,
 )
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen.transcript_channel import setup_transcript_channel
 from dmbot.ears.protocol import (
     AudioFrame,
     EarsMessage,
@@ -74,6 +75,8 @@ from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
 from dmbot.memory.backup import MemorySection
 from dmbot.sessions import SavedSession, SessionStore
+from dmbot.transcript import stream as transcript_lines
+from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline
@@ -83,6 +86,9 @@ from dmbot.ui.dmbot_commands import dmbot_group
 log = logging.getLogger(__name__)
 
 SUMMARY_INTERVAL_S = 15
+# Lines for the transcript channel are grouped and posted this often (#124): well inside
+# Discord's 5 messages per 5 seconds per channel, and still feels live.
+TRANSCRIPT_FLUSH_S = 2.0
 IDLE_SWEEP_INTERVAL_S = 1
 NO_PINGS = discord.AllowedMentions.none()
 
@@ -174,6 +180,10 @@ class Table:
     announce_resume: bool = True  # post "listening again" when voice is back
     # Asked privately about recording (or reminded) this session: at most once each.
     asked: set[int] = field(default_factory=set)
+    # The live transcript channel (#124); None if it couldn't be set up this session.
+    transcript_channel_id: int | None = None
+    transcript: TranscriptStream = field(default_factory=TranscriptStream)
+    transcript_lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # keeps order
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
@@ -272,6 +282,7 @@ class DMBot(commands.AutoShardedBot):
             asyncio.create_task(self.pipeline.run(), name="transcribe"),
             asyncio.create_task(self._idle_sweeper(), name="idle-sweep"),
             asyncio.create_task(self._summary_poster(), name="summaries"),
+            asyncio.create_task(self._transcript_poster(), name="transcripts"),
         ]
 
     async def close(self) -> None:
@@ -321,6 +332,7 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.get(guild_id)
         if table is not None:
             table.segmenter.drop(user_id)
+            table.transcript.drop_speaker(user_id)  # words not posted yet are discarded
 
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
@@ -437,6 +449,12 @@ class DMBot(commands.AutoShardedBot):
             if self.tables.get(table.guild_id) is table:
                 del self.tables[table.guild_id]
             raise
+        if table.transcript_channel_id is not None and (not table.resumed or table.announce_resume):
+            table.transcript.add_divider(
+                transcript_lines.started(
+                    table.campaign_name, int(time.time()), resumed=table.resumed
+                )
+            )
         sent = await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
             log.info(
@@ -455,6 +473,9 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
         await self.ears.send(leave_command(guild_id))
+        if table.transcript_channel_id is not None:
+            table.transcript.add_divider(transcript_lines.ended())
+            await self.flush_transcript(table)
         return table
 
     # ---- sessions (used by /dmbot start · stop · help) ---------------------
@@ -567,6 +588,7 @@ class DMBot(commands.AutoShardedBot):
         )
         if problems:
             return False, join_blocked_message(problems)
+        transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
 
         await self.campaigns.set_dm_screen(guild.id, campaign.id, screen_id)
         await self.campaigns.set_last_voice_channel(guild.id, campaign.id, voice.id)
@@ -580,6 +602,7 @@ class DMBot(commands.AutoShardedBot):
             campaign_id=campaign.id,
             campaign_name=campaign.name,
             dm_user_ids=campaign.dm_user_ids,
+            transcript_channel_id=transcript_id,
         )
         # Save before joining, so a restart can always pick the session up again.
         try:
@@ -604,9 +627,12 @@ class DMBot(commands.AutoShardedBot):
             with contextlib.suppress(Exception):
                 await self.sessions.clear(guild.id)  # don't resume what never started
             return False, SAVE_FAILED
+        if transcript_problem:
+            await self.post(screen_id, transcript_problem)
+        where_words = f"What's said appears in <#{transcript_id}>. " if transcript_id else ""
         return True, (
             f"▶ Listening to **{campaign.name}** in {voice.mention}.\n"
-            f"DM notes go to <#{screen_id}>"
+            f"{where_words}DM notes go to <#{screen_id}>"
             f"{ui_logic.screen_note(campaign.dm_screen_visibility)}. "
             "Only players who said yes are recorded."
         )
@@ -862,6 +888,7 @@ class DMBot(commands.AutoShardedBot):
             dm_user_ids=campaign.dm_user_ids,
             resumed=True,
             announce_resume=not recently,
+            transcript_channel_id=self._usable_transcript(campaign),
         )
         # Sends the allowlist, then the join. If ears isn't connected yet, it gets both
         # when it connects (_on_ears_link_change).
@@ -1050,9 +1077,14 @@ class DMBot(commands.AutoShardedBot):
     # ---- background loops --------------------------------------------------
 
     def _deliver_transcript(self, utterance: Utterance, text: str | None) -> None:
+        """A piece of speech, written down. The pipeline has just re-checked consent."""
         table = self.tables.get(utterance.guild_id)
-        if table is not None:
-            table.capture_log.add_utterance(utterance, text)
+        if table is None:
+            return
+        table.capture_log.add_utterance(utterance)
+        if text and table.transcript_channel_id is not None:
+            name = self.name_of(utterance.guild_id, utterance.user_id)
+            table.transcript.add(utterance.user_id, name, text)
 
     async def _alert_dm(self, guild_id: int, message: str) -> None:
         table = self.tables.get(guild_id)
@@ -1082,8 +1114,57 @@ class DMBot(commands.AutoShardedBot):
             for table in list(self.tables.values()):
                 await self.post_summary(table)
 
+    async def _transcript_poster(self) -> None:
+        while True:
+            await asyncio.sleep(TRANSCRIPT_FLUSH_S)
+            for table in list(self.tables.values()):
+                await self.flush_transcript(table)
+
+    async def flush_transcript(self, table: Table) -> None:
+        """Post what's waiting for the transcript channel, in order."""
+        if table.transcript_channel_id is None:
+            return
+        async with table.transcript_lock:
+            for message in table.transcript.take():
+                if not await self.post(table.transcript_channel_id, message):
+                    break  # logged by post(); the next lines try again
+
+    async def _transcript_channel(
+        self, guild: discord.Guild, campaign: Campaign, screen: object
+    ) -> tuple[int | None, str | None]:
+        """The campaign's transcript channel, set up next to the DM screen, and a note for
+        the DM if it couldn't be. A missing transcript channel never stops a session."""
+        category = getattr(screen, "category", None)
+        try:
+            channel = await setup_transcript_channel(
+                guild,
+                campaign.id,
+                self.campaigns,
+                category=category if isinstance(category, discord.CategoryChannel) else None,
+            )
+        except DMScreenError as exc:
+            return None, screen_messages.transcript_failed(str(exc))
+        except Exception:
+            log.exception("Couldn't set up the transcript channel")
+            return None, screen_messages.transcript_failed("Discord didn't answer")
+        return channel.id, None
+
+    def _usable_transcript(self, campaign: Campaign) -> int | None:
+        """After a restart: the campaign's transcript channel, if DMbot can still post."""
+        if campaign.transcript_channel_id is None:
+            return None
+        channel = self.get_channel(campaign.transcript_channel_id)
+        guild = self.get_guild(campaign.guild_id)
+        me = guild.me if guild else None
+        if isinstance(channel, discord.TextChannel) and me is not None:
+            perms = channel.permissions_for(me)
+            if perms.view_channel and perms.send_messages:
+                return channel.id
+        return None
+
     async def post_summary(self, table: Table) -> None:
-        """Log one capture-check line, then post the check to the DM screen."""
+        """Log one capture-check line (IDs and numbers); warn the DM screen only if audio
+        went missing."""
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
             line = table.capture_log.log_line()  # IDs and numbers only; before render
             if line:

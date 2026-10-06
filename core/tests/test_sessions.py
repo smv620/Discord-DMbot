@@ -21,7 +21,7 @@ from dmbot.sessions import SessionStore
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
 from tests.pg import DatabaseTest
 
-GUILD, VOICE, SCREEN, OTHER_TEXT = 1, 2, 3, 4
+GUILD, VOICE, SCREEN, OTHER_TEXT, TRANSCRIPT = 1, 2, 3, 4, 5
 DM, PLAYER = 7, 8
 CAN_POST = discord.Permissions(view_channel=True, send_messages=True, connect=True)
 
@@ -50,12 +50,20 @@ async def screen_from_invoking_channel(bot: DMBot, interaction: Any, campaign: A
     return int(interaction.channel_id)
 
 
+async def transcript_channel(*_: Any, **__: Any) -> Any:
+    """Stand-in for the real transcript-channel setup (tested in test_transcript_channel)."""
+    return SimpleNamespace(id=TRANSCRIPT)
+
+
 class SessionTests(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         hook = patch("dmbot.bot.ensure_dm_screen", screen_from_invoking_channel)
         hook.start()
         self.addCleanup(hook.stop)
+        transcript_hook = patch("dmbot.bot.setup_transcript_channel", transcript_channel)
+        transcript_hook.start()
+        self.addCleanup(transcript_hook.stop)
         self.consent = ConsentStore(self.db)
         self.campaigns = CampaignStore(self.db)
         self.sessions = SessionStore(self.db)
@@ -617,14 +625,14 @@ class SaveAndResume(SessionTests):
                 await self.bot.give_consent(GUILD, PLAYER, "private_message")
         self.assertNotIn("Consent given", "\n".join(logs.output))
 
-    async def test_capture_check_is_logged_and_posted(self) -> None:
+    async def test_capture_check_is_logged_and_only_gaps_reach_the_dm(self) -> None:
         from dmbot.audio.segmenter import Utterance
 
         await self.start()
         posted = AsyncMock(return_value=True)
         self.bot.post = posted  # type: ignore[method-assign]
         table = self.bot.tables[GUILD]
-        table.capture_log.add_utterance(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)), None)
+        table.capture_log.add_utterance(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)))
         table.capture_log.add_health(PLAYER, 50, 50)
         with self.assertLogs("dmbot.bot", level="INFO") as logs:
             await self.bot.post_summary(table)
@@ -632,7 +640,74 @@ class SaveAndResume(SessionTests):
             f"Capture check: 1 speaker(s); user {PLAYER}: 1 x speech, 1.0 s, audio 100%",
             "\n".join(logs.output),
         )
+        posted.assert_not_awaited()  # all fine: nothing in the DM screen (#134)
+        table.capture_log.add_utterance(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)))
+        table.capture_log.add_health(PLAYER, 30, 50)
+        await self.bot.post_summary(table)
         posted.assert_awaited_once()
         call = posted.await_args
         assert call is not None
-        self.assertIn("Capture check", call.args[1])
+        self.assertEqual(call.args[0], SCREEN)
+        self.assertIn("didn't reach DMbot", call.args[1])
+
+    # ---- the live transcript channel (#124) ------------------------------------
+
+    async def test_start_sets_up_the_transcript_channel(self) -> None:
+        ok, message = await self.start()
+        self.assertTrue(ok, message)
+        self.assertEqual(self.bot.tables[GUILD].transcript_channel_id, TRANSCRIPT)
+        self.assertIn(f"<#{TRANSCRIPT}>", message)
+
+    async def test_a_transcript_channel_problem_never_stops_the_session(self) -> None:
+        from dmbot.dm_screen import DMScreenError
+
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        failing = AsyncMock(side_effect=DMScreenError("Missing Manage Channels"))
+        with patch("dmbot.bot.setup_transcript_channel", failing):
+            ok, message = await self.start()
+        self.assertTrue(ok, message)
+        self.assertIsNone(self.bot.tables[GUILD].transcript_channel_id)
+        notes = [c.args for c in posted.await_args_list if c.args[0] == SCREEN]
+        self.assertTrue(any("couldn't set up the transcript channel" in n[1] for n in notes))
+
+    async def test_what_is_said_goes_to_the_transcript_channel_not_the_dm_screen(self) -> None:
+        from dmbot.audio.segmenter import Utterance
+
+        await self.start()
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        table = self.bot.tables[GUILD]
+        self.bot._deliver_transcript(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)), "I cast Shield")
+        await self.bot.flush_transcript(table)
+        await self.bot.post_summary(table)
+        channels = {c.args[0] for c in posted.await_args_list}
+        self.assertEqual(channels, {TRANSCRIPT})
+        text = "\n".join(c.args[1] for c in posted.await_args_list)
+        self.assertIn("Session started", text)
+        self.assertIn("I cast Shield", text)
+
+    async def test_someone_who_stops_loses_their_unposted_words(self) -> None:
+        from dmbot.audio.segmenter import Utterance
+
+        await self.start()
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        table = self.bot.tables[GUILD]
+        self.bot._deliver_transcript(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)), "secret plan")
+        self.bot.stop_recording(GUILD, PLAYER)
+        await self.bot.flush_transcript(table)
+        text = "\n".join(c.args[1] for c in posted.await_args_list)
+        self.assertNotIn("secret plan", text)
+
+    async def test_the_session_end_is_marked_in_the_transcript(self) -> None:
+        await self.start()
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        await self.bot.stop_table(GUILD, "test")
+        self.assertTrue(
+            any(
+                c.args[0] == TRANSCRIPT and "Session ended" in c.args[1]
+                for c in posted.await_args_list
+            )
+        )

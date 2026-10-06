@@ -360,12 +360,19 @@ CONSENT_TERMS = """
         CHECK (method IN ('private_message', 'consent_command', 'unknown'));
     """
 
+TRANSCRIPT_CHANNEL = """
+    -- The campaign's live transcript channel, dmb-transcript-<short name> (#124). Like
+    -- the DM screen it belongs to the server, so it isn't part of backups.
+    ALTER TABLE campaigns ADD COLUMN transcript_channel_id BIGINT;
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
     ("0003_channel_number", CHANNEL_NUMBER),
     ("0004_campaign_memory", CAMPAIGN_MEMORY),
     ("0005_consent_terms", CONSENT_TERMS),
+    ("0006_transcript_channel", TRANSCRIPT_CHANNEL),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -156,3 +156,37 @@ def exposure_warning(exposure: Exposure) -> str | None:
         f"⚠️ These can see this DM screen: {', '.join(who)}. To hide it from them: "
         "Edit Channel → Permissions → pick each one → set **View Channel** to ✗."
     )
+
+
+# ---- the live transcript channel (#124) --------------------------------------------
+
+TRANSCRIPT_CARD_TITLE = "📜 **Live transcript for "  # also used to find old cards
+
+
+def transcript_topic(campaign_name: str) -> str:
+    return (
+        f"Live transcript for {campaign_name}. View only. Anyone in this server can read "
+        "it. Only people who agreed are recorded."
+    )
+
+
+def transcript_card(campaign_name: str) -> str:
+    return "\n".join(
+        [
+            f"{TRANSCRIPT_CARD_TITLE}{campaign_name}**",
+            "While DMbot is listening, what people say shows up here a few seconds later.",
+            "**Who can read it:** anyone in this server. Nobody can post here.",
+            "**Who is recorded:** only people who said yes in DMbot's private message. "
+            "Changed your mind? Press **Stop recording me** in that message, or type "
+            "`/consent revoke`.",
+            "DMbot's notes for the DM never appear here.",
+        ]
+    )
+
+
+def transcript_failed(reason: str) -> str:
+    return (
+        f"⚠️ DMbot couldn't set up the transcript channel ({reason}), so this session's "
+        "words won't appear there. Listening and DM notes still work. Check DMbot has "
+        "**Manage Channels** and **Manage Roles**, then run `/dmbot start` again."
+    )

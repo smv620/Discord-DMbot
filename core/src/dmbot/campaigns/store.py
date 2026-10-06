@@ -163,6 +163,7 @@ _SETTABLE = frozenset(
         "optional_rules_default",
         "dm_screen_visibility",
         "channel_number",
+        "transcript_channel_id",
     }
 )
 
@@ -336,6 +337,12 @@ class CampaignStore:
         private to the DM(s); the store can't see Discord.
         """
         return await self._set(guild_id, campaign_id, "dm_screen_channel_id", channel_id)
+
+    async def set_transcript_channel(
+        self, guild_id: int, campaign_id: str, channel_id: int | None
+    ) -> Campaign:
+        """Store the campaign's live transcript channel (#124)."""
+        return await self._set(guild_id, campaign_id, "transcript_channel_id", channel_id)
 
     async def set_dm_screen_visibility(
         self, guild_id: int, campaign_id: str, visibility: str
@@ -605,6 +612,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         last_voice_channel_id=row_int(row, "last_voice_channel_id"),
         dm_screen_visibility=row["dm_screen_visibility"],
         channel_number=row_int(row, "channel_number"),
+        transcript_channel_id=row_int(row, "transcript_channel_id"),
     )
 
 

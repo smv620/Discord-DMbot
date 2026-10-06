@@ -108,8 +108,9 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
    your notes, with buttons there to change who can see it. Everyone in the voice channel
    (you too) gets a private message from DMbot asking if they agree to be recorded; they
    press **I consent**. Their answer is remembered for the server, so next time they just
-   get a reminder with a **Stop recording me** button. Talk for a bit and watch the
-   capture check appear in the DM screen.
+   get a reminder with a **Stop recording me** button. Talk for a bit and watch what you
+   say appear in the campaign's transcript channel, `#dmb-transcript-<short name>`, which
+   anyone in the server can read.
 
 ## Database
 
@@ -147,7 +148,7 @@ Pick one with `TRANSCRIBER` in `.env`:
 |---|---|---|---|
 | `whisper-local` (default) | Free | `pip install -e ".[whisper]"`; a strong CPU or an NVIDIA GPU | Audio never leaves your server. Model downloads on first run. |
 | `cloud` | Pay per minute of speech | `CLOUD_STT_API_KEY` | Any OpenAI-compatible speech-to-text API. Best for servers without a GPU. |
-| `none` | Free | — | Capture checks only, no text. |
+| `none` | Free | — | No text: only the capture-check counts in the core log. |
 
 On a CPU-only server use `WHISPER_MODEL=small` (or `base` if it falls behind). With an
 NVIDIA GPU use `large-v3` or `turbo`. The default compute type (`auto`) picks the fastest

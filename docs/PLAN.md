@@ -429,7 +429,7 @@ so the docs always show names the way Discord does. For the campaign
 | Channel | Name in Discord | Built in |
 |---|---|---|
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
-| Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124) |
+| Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06: lines as heard until the Cleaner) |
 | Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
 | Game time (clock, effects, rests) | `dmb-time-rmfthfrstmdn` | Phase 4 |
 | NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Phase 5 |
@@ -506,6 +506,19 @@ so the docs always show names the way Discord does. For the campaign
 the table. Actionable alerts stay separate from reference information. Players can follow
 the clock and NPCs without seeing rulings, and each channel can be muted on its own.
 Code changes: #87.
+
+**Live transcript channel: built (2026-10-06, #124).** Decided while building:
+- It's made at `/dmbot start`, next to the DM screen in the same category, and kept
+  view-only for everyone (DMs included: nobody posts there but DMbot). A problem setting
+  it up is reported in the DM screen and never stops the session.
+- Lines are posted every 2 seconds as new messages (no edits yet): one message holds
+  whatever was said in that time, up to Discord's 2,000 characters. Until the Cleaner
+  (Phase 2b) lines are as heard and have no `{entity}` labels (#53).
+- When someone presses Stop, their words not posted yet are dropped. Words still being
+  written down when the session stops are lost (as before, #109).
+- The 15-second capture checks now go only to the core log; the DM screen gets
+  "⚠️ Some of what was said didn't reach DMbot…" when audio went missing (#134).
+- The card doesn't mention `/transcript` until downloads exist (#125).
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
 participants are stored. Each line is kept in two versions: **as heard** (exactly what
