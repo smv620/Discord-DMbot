@@ -19,10 +19,6 @@ OPTION_LABEL_MAX = 100
 SELECT_OPTIONS_MAX = 25
 
 NO_CAMPAIGN_ACCESS = "Only this campaign's DM (or a server manager) can do that."
-ONLY_DMS_BACKUP = (
-    "Only this campaign's DM can download a copy: it holds their secret notes. A server "
-    "manager can't, because they might be playing in it. Ask the DM to run `/dmbot backup`."
-)
 
 
 def shorten(text: str, limit: int) -> str:
@@ -201,7 +197,7 @@ HELP_TEXT = (
     "• `/dmbot stop`: stop listening\n"
     "• `/dmbot names`: the names DMbot listens for (characters, places, NPCs)\n"
     "• `/transcript`: download what was said in a session (anyone in the server)\n"
-    "• `/dmbot backup`: download a copy of a campaign (its DM only)\n"
+    "• `/dmbot backup`: download a copy of a campaign (anyone; secret names only for its DM)\n"
     "• `/dmbot restore`: bring a campaign back from a copy\n"
     "\n"
     "**Recording:** DMbot only records people who say yes. When the DM starts a "

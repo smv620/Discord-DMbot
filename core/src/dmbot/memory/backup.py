@@ -153,6 +153,27 @@ class MemorySection:
                 out.append({"table": tag, **row})
         return out
 
+    @staticmethod
+    def without_secrets(rows: list[Any]) -> list[Any]:
+        """The rows without the DM's secrets: secret names, secret connections, the
+        flags about those connections, and DM fixes that pointed a secret name at its
+        entry. What's left still loads (nothing kept links to a dropped row)."""
+        secret_keys = {
+            (r["entity_id"], r["key"]) for r in rows if r["table"] == "alias" and r["secret"]
+        }
+        dropped = {r["id"] for r in rows if r["table"] == "relation" and r["secret"]}
+        out = []
+        for r in rows:
+            tag = r["table"]
+            if tag in ("alias", "relation") and r["secret"]:
+                continue
+            if tag == "flag" and (r["relation_id"] in dropped or r["other_id"] in dropped):
+                continue
+            if tag == "correction" and (r["entity_id"], r["heard_key"]) in secret_keys:
+                continue
+            out.append(r)
+        return out
+
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: list[Any]) -> None:
         by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
         for raw in rows:

@@ -629,6 +629,25 @@ class Backups(MemoryTest):
         self.assertEqual(copy, original)
         self.assertGreater(await self.memory.version(GUILD_B, restored.id), 0)
 
+    async def test_a_copy_without_secrets_still_restores(self) -> None:
+        a, b = await self.add("Belleros"), await self.add("Ulfgar")
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "the hooded stranger", kind="title", secret=True, source="dm"
+        )
+        await self.memory.add_alias(GUILD_A, self.c, a, "Bell", kind="nickname", source="dm")
+        await self.relate(a, "enemy_of", b, secret=True)
+        await self.relate(a, "knows", b)
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c, secrets=False))
+        self.assertNotIn(b"hooded", raw)
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
+        texts = {
+            x.text for x in await self.memory.aliases(GUILD_B, restored.id, include_secret=True)
+        }
+        self.assertIn("Bell", texts)
+        self.assertNotIn("the hooded stranger", texts)
+        kept = await self.memory.relations(GUILD_B, restored.id, include_secret=True)
+        self.assertEqual([r.predicate for r in kept], ["knows"])
+
     async def test_replacing_from_a_backup_bumps_the_version(self) -> None:
         await self.add("Belleros")
         backup = await self.campaigns.export(GUILD_A, self.c)
