@@ -49,6 +49,8 @@ HIDE_NOT_PEEKING = "You weren't peeking, so there's nothing to hide."
 HIDE_IS_DM = "You're a DM of this campaign, so the DM screen stays visible to you."
 HIDE_OPEN = "The DM screen is open to everyone, so it can't be hidden just for you."
 PLAYER_FAILED = "Sorry, DMbot couldn't change the DM screen for you. Let your DM know."
+STOP_LISTENING_LABEL = "Stop listening"
+NOT_LISTENING_NOW = "DMbot isn't listening to this campaign right now, so there's nothing to stop."
 NOT_THE_DM = "Only this campaign's DM (or a server manager) can change who can see the DM screen."
 SOMETHING_WENT_WRONG = "Sorry, something went wrong changing the DM screen. Please try again."
 
@@ -103,7 +105,8 @@ def help_card(campaign_name: str, visibility: str) -> str:
         "DMbot writes notes for the DM here. It never makes rulings or story. "
         "The DM decides everything.",
         f"**Who can see this:** {WHO_CAN_SEE[visibility]}",
-        "**To start listening:** run `/dmbot start`.",
+        "**To start listening:** run `/dmbot start`. **To stop:** press ⏹ **Stop "
+        'listening** on the "Listening" message here, or run `/dmbot stop`.',
     ]
     if visibility != "open":
         lines.append("Server owners and admins can always see every channel.")

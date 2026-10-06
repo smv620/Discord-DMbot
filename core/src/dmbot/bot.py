@@ -56,9 +56,11 @@ from dmbot.dm_screen import (
     DMScreenError,
     HideButton,
     PeekButton,
+    StopListeningButton,
     VisibilityButton,
     ensure_dm_screen,
     peek_view,
+    stop_listening_view,
 )
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen.transcript_channel import (
@@ -216,6 +218,7 @@ class Table:
     transcript_session_id: str | None = None  # set at the first save
     unsaved: TranscriptBuffer = field(default_factory=TranscriptBuffer)
     transcript_warned: bool = False  # told the DM saving isn't working
+    listening_message: discord.Message | None = None  # carries the Stop button (#108)
     dropped_logged: bool = False
     save_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -318,7 +321,7 @@ class DMBot(commands.AutoShardedBot):
         self.tree.add_command(consent_group)
         self.tree.add_command(transcript_command)
         # DM-screen buttons keep working after a restart.
-        self.add_dynamic_items(PeekButton, HideButton, VisibilityButton)
+        self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
         # "Check new names" on the DM screen after a session.
@@ -549,6 +552,22 @@ class DMBot(commands.AutoShardedBot):
             if notes and self.tables.get(gid) is table:
                 await self.post(table.screen_channel_id, "\n".join(notes))
 
+    async def _post_listening(self, table: Table, text: str) -> None:
+        """The DM screen's "listening" message, with a Stop listening button (#108). The
+        button comes off when the session ends, so old messages can't be pressed."""
+        view = stop_listening_view(table.campaign_id) if table.campaign_id else None
+        message = await self.post_message(table.screen_channel_id, text, view)
+        if message is not None:
+            await self._remove_stop_button(table)  # only the newest one keeps it
+            table.listening_message = message
+
+    @staticmethod
+    async def _remove_stop_button(table: Table) -> None:
+        message, table.listening_message = table.listening_message, None
+        if message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(view=None)
+
     def _people_in_voice(self, table: Table) -> list[int]:
         """People (not bots) in the session's voice channel right now."""
         voice = self.get_channel(table.voice_channel_id)
@@ -637,6 +656,7 @@ class DMBot(commands.AutoShardedBot):
         session = table.segmenter.session
         with log_context(guild_id=gid, campaign_id=table.campaign_id):
             try:
+                await self._remove_stop_button(table)
                 caught_up = await self.pipeline.drain(session, STOP_DRAIN_TIMEOUT_S)
                 if not caught_up:
                     log.warning("Stopped before the last speech was written down")
@@ -1174,20 +1194,24 @@ class DMBot(commands.AutoShardedBot):
 
     async def post(self, channel_id: int, text: str, view: discord.ui.View | None = None) -> bool:
         """Send a message; returns False (and logs) if it could not be posted."""
+        return await self.post_message(channel_id, text, view) is not None
+
+    async def post_message(
+        self, channel_id: int, text: str, view: discord.ui.View | None = None
+    ) -> discord.Message | None:
+        """Send a message; returns it, or None (and logs) if it could not be posted."""
         channel = self.get_channel(channel_id)
         if not isinstance(channel, discord.abc.Messageable):
             log.warning("Could not post to channel %s: channel not found", channel_id)
-            return False
+            return None
         try:
             # discord.py's types don't accept view=None, so only pass a real view.
             if view is None:
-                await channel.send(text, allowed_mentions=NO_PINGS)
-            else:
-                await channel.send(text, allowed_mentions=NO_PINGS, view=view)
+                return await channel.send(text, allowed_mentions=NO_PINGS)
+            return await channel.send(text, allowed_mentions=NO_PINGS, view=view)
         except discord.HTTPException as exc:
             log.warning("Could not post to channel %s: %s", channel_id, exc)
-            return False
-        return True
+            return None
 
     async def after_screen_change(self, campaign: Campaign, channel: discord.TextChannel) -> None:
         """Keep a live session in step after the DM changes who can see the DM screen."""
@@ -1281,13 +1305,12 @@ class DMBot(commands.AutoShardedBot):
             elif table.resumed:
                 table.resumed = False
                 if table.announce_resume:
-                    await self.post(
-                        table.screen_channel_id,
-                        resumed_message(table.campaign_name, table.voice_channel_id),
+                    await self._post_listening(
+                        table, resumed_message(table.campaign_name, table.voice_channel_id)
                     )
             else:
-                await self.post(
-                    table.screen_channel_id,
+                await self._post_listening(
+                    table,
                     screen_messages.listening_message(
                         table.voice_channel_id,
                         table.campaign_name,
