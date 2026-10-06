@@ -894,9 +894,9 @@ versioned and self-checking:
 
 *Proposed additions (2026-10-06, docs/STORY_MEMORY.md, not yet decided):* a core v2
 with story threads, promises, clues and state facts (`condition`: alive, dead, missing…,
-one at a time, with allowed changes); new checks (one owner per item, nesting and no
-loops for places and causes, a dead or missing being can't act, an NPC mentioning what
-they never learned); claims kept apart from facts so an NPC's lie or a player's guess is
+one at a time, with allowed changes); new checks (one holder at a time, only for items
+marked unique; nesting and no loops for places and causes; a dead or destroyed thing
+can't act; an NPC mentioning a limited-audience clue they never learned); claims kept apart from facts so an NPC's lie or a player's guess is
 never world truth; and the ontology and graph upkeep split into AI roles that only
 propose, each with its own golden test set.
 

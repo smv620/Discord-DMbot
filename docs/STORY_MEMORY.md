@@ -106,6 +106,9 @@ each with a plain label:
 - `condition` for items and places: `intact`, `destroyed`, `lost`, `unknown`;
 - allowed changes are a small table in code. Some need the DM's say-so even when a
   claim is clear: `dead → alive` must be confirmed as "brought back", never inferred.
+- states live in their own table (`memory_states`), not as relationships;
+- only `dead` and `destroyed` stop something from acting. `missing`, `captured` and the
+  rest are soft: a missing NPC turning up is news, not a contradiction.
 
 **Relationships** (each with domain, range, how many, conflicts):
 - `involved_in` (being/group/item/place → thread, detail = role: quest giver, target,
@@ -114,17 +117,28 @@ each with a plain label:
 - `led_to` (event → event: cause and effect, no loops);
 - `wants` (character/group → anything: goals and motives);
 - `promised` (character → character, via a `promise` event, with a due date);
-- `knows_fact` (being/group → fact or clue: who knows what, and since when);
+- `knows` (being/group → clue): who knows what, and since when. A clue is an entry of
+  its own, so this is an ordinary relationship, never one that points at another
+  relationship. A clue can have a **limited audience** (only these people know it);
+  most clues don't;
 - `witnessed` (being → event): feeds who knows and reputation;
-- `owns`: add **one owner at a time on the item side** (a new `max_per_object`);
+- `owns` stays as it is: owning isn't holding, and owning has no limit on the item side;
+- `carries` (being → item, new): who has it right now. **One holder at a time, only for
+  unique items** (a new `max_per_object`). Ordinary items are kinds of thing, not one
+  object: several characters can each carry *a* longbow, but only one can carry
+  *Heartseeker, the magical bow*. Items get a **unique** flag: on by default for a named
+  item (a proper name, like Heartseeker), off for an ordinary one (a longbow), and the DM
+  can switch it on the item's name card (owner's comment on #227, 2026-10-06);
 - `located_in`: place → place nesting is allowed, loops are a flag, and "in two
   places" checks the nesting first.
 
 The checks module grows to match (all still pure, all still flags):
-`max_per_object`, acyclic relationships (`located_in` between places, `led_to`),
-**state-gated actions** (a `dead` being can't be the actor of a new event after its death
-unless the DM confirms why), **state-change rules**, and **knowledge checks** (an NPC
-mentions a fact they have no `knows_fact` path to). The planned "alive and dead at the
+`max_per_object` (only for unique items), acyclic relationships (`located_in` between
+places, `led_to`), **state-gated actions** (a `dead` or `destroyed` thing can't be the
+actor of a new event after it died or was destroyed, unless the DM confirms why),
+**state-change rules**, and **knowledge checks**, only for clues with a limited audience
+(an NPC outside that audience mentions it). A missing "knows" means DMbot doesn't know,
+not that the NPC doesn't: it never warns about ordinary knowledge. The planned "alive and dead at the
 same game time" check (#164) becomes the `condition` rule.
 
 ### 3. AI roles that maintain the graph
@@ -192,7 +206,9 @@ Three levels, cheapest first:
 - **Secrets said out loud:** if the DM narrates a link that's marked secret ("the hooded
   stranger, Belleros…"), DMbot asks once: "You just said **the hooded stranger** is
   **Belleros** out loud. Is it revealed now? [Yes, players know now] [No, keep it
-  secret]". "Yes" adds `knows_fact` for the characters present and ends the secret.
+  secret]". "Yes" asks **who** learned it ([Everyone at the table] or pick characters)
+  and adds `knows` for those only. It's never assumed from who's in voice: a player in
+  voice may be away from the table or their character elsewhere.
 - **Before it happens:** the pre-session note (section 7) lists the conflicts the DM is
   most likely to walk into tonight: NPCs in tonight's places who are dead or elsewhere,
   promises due, threads waiting on someone who's gone.
@@ -289,6 +305,12 @@ on embeddings. Apache AGE is still not needed: these are 1–2 hop lookups.
   forced row-level security, composite foreign keys, an `ExportSection`, and undo
   through the change log. Claims are kept out of backups like mentions are (rebuilt from
   transcripts); facts, threads, deeds and the book's plan are in backups.
+- Cost: a live extractor every 30–60 s is roughly 240–480 calls in a 4-hour session.
+  Before live extraction is approved, measure the tokens per call on saved transcripts
+  and write down a cost per session; until bring-your-own keys (#50) exist it's the
+  owner's bill. Starting after-session only (5a) avoids this at first.
+- Story time is "which session" until TimeBot (#55) exists; no game-time fields are
+  added before then.
 - Retention: when a person's lines are deleted, their claims go too; facts the DM
   confirmed stay (they're the DM's word), with the evidence link removed. Proposals that
   rested only on those lines are dropped.
@@ -298,10 +320,11 @@ on embeddings. Apache AGE is still not needed: these are 1–2 hop lookups.
 Each step is useful on its own and ships behind the existing phases.
 
 1. **Phase 5a: claims and state** (after the Cleaner and speaker tagging, Phase 2b):
-   the extractor and claim table, `condition` state facts, `max_per_object`, nesting
-   and loop checks, the first continuity warnings (dead/missing actors, two owners, two
-   places), the secret-said-aloud question. Start after-session only, then live.
-2. **Phase 5b: NPC tracker and reputation:** knowledge (`knows_fact`, `witnessed`),
+   the extractor and claim table, `condition` state facts, the unique flag and
+   `carries` with `max_per_object`, nesting and loop checks, the first continuity
+   warnings (dead or destroyed actors, a unique item in two hands, two places), the
+   secret-said-aloud question. Start after-session only, then live.
+2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
    deeds, standing, the NPC channel, the recall service.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
@@ -315,6 +338,11 @@ TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by 
 as today.
 
 ## Open decisions for the owner
+
+Before any of these: **measure the hardest part first.** Live warnings depend on telling
+"the DM narrates" from "the DM voices an NPC" from "a player guesses", from audio alone.
+Build a saved test set (PyCharm session) and measure how often the extractor gets the
+"how it was said" right before 5a depends on it.
 
 - Accept this design as the plan for Phase 5 (and the split into 5a–5d)?
 - Where the book's plan may come from (DM-supplied outline only, or also structured
