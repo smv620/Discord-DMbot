@@ -56,9 +56,11 @@ from dmbot.dm_screen import (
     DMScreenError,
     HideButton,
     PeekButton,
+    StopListeningButton,
     VisibilityButton,
     ensure_dm_screen,
     peek_view,
+    stop_listening_view,
 )
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen.transcript_channel import (
@@ -216,6 +218,7 @@ class Table:
     transcript_session_id: str | None = None  # set at the first save
     unsaved: TranscriptBuffer = field(default_factory=TranscriptBuffer)
     transcript_warned: bool = False  # told the DM saving isn't working
+    listening_message: discord.Message | None = None  # carries the Stop button (#108)
     dropped_logged: bool = False
     save_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -318,7 +321,7 @@ class DMBot(commands.AutoShardedBot):
         self.tree.add_command(consent_group)
         self.tree.add_command(transcript_command)
         # DM-screen buttons keep working after a restart.
-        self.add_dynamic_items(PeekButton, HideButton, VisibilityButton)
+        self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
         # "Check new names" on the DM screen after a session.
@@ -409,8 +412,13 @@ class DMBot(commands.AutoShardedBot):
         `outside_to`: the outside engine the request they agreed to named, if any.
         Raises if it couldn't be saved; then nothing changed.
         """
-        await self.consent.grant(guild_id, user_id, method=method, outside_to=outside_to)
+        already = self.consent.has_consent(guild_id, user_id)
+        recorded = await self.consent.grant(guild_id, user_id, method=method, outside_to=outside_to)
         log.info("Consent given: user %s", user_id)
+        # Only a yes that really counts (it names this server's speech-to-text, and no
+        # stop arrived meanwhile) is shown as recording.
+        if user_id in recorded and not already:
+            self._tell_dm_about_consent(guild_id, user_id, agreed=True)
         # Always tell ears (if connected), even with no session here: it may still be
         # in voice from before a restart.
         with contextlib.suppress(Exception):
@@ -438,7 +446,10 @@ class DMBot(commands.AutoShardedBot):
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
         failed; the player stays stopped in this process either way."""
+        was_recorded = self.consent.has_consent(guild_id, user_id)
         self.stop_recording(guild_id, user_id)
+        if was_recorded:  # stopped here at once, even if saving fails below
+            self._tell_dm_about_consent(guild_id, user_id, agreed=False)
         log.info("Consent withdrawn: user %s", user_id)
         with contextlib.suppress(Exception):
             await self.push_allowlist(guild_id)
@@ -543,6 +554,47 @@ class DMBot(commands.AutoShardedBot):
             if notes and self.tables.get(gid) is table:
                 await self.post(table.screen_channel_id, "\n".join(notes))
 
+    async def _post_listening(self, table: Table, text: str) -> None:
+        """The DM screen's "listening" message, with a Stop listening button (#108). The
+        button comes off when the session ends, so old messages can't be pressed."""
+        view = stop_listening_view(table.campaign_id) if table.campaign_id else None
+        message = await self.post_message(table.screen_channel_id, text, view)
+        if message is None:
+            return
+        await self._remove_stop_button(table)  # only the newest one keeps it
+        table.listening_message = message
+        if self.tables.get(table.guild_id) is not table:  # stopped while posting
+            await self._remove_stop_button(table)
+
+    @staticmethod
+    async def _remove_stop_button(table: Table) -> None:
+        message, table.listening_message = table.listening_message, None
+        if message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(view=None)
+
+    def _people_in_voice(self, table: Table) -> list[int]:
+        """People (not bots) in the session's voice channel right now."""
+        voice = self.get_channel(table.voice_channel_id)
+        if not isinstance(voice, discord.VoiceChannel | discord.StageChannel):
+            return []
+        return [m.id for m in voice.members if not m.bot]
+
+    def _tell_dm_about_consent(self, guild_id: int, user_id: int, *, agreed: bool) -> None:
+        """During a session, the DM screen shows each yes and each stop as it happens
+        (#107), so it stays a true picture of who is recorded."""
+        table = self.tables.get(guild_id)
+        # Only people at the table: someone elsewhere in the server isn't recorded now.
+        if table is None or self._closing or user_id not in self._people_in_voice(table):
+            return
+        name = self.name_of(guild_id, user_id)
+        text = (
+            screen_messages.agreed_message(name)
+            if agreed
+            else screen_messages.stopped_message(name)
+        )
+        self._track(self.post(table.screen_channel_id, text), "consent-note")
+
     def _ask_everyone_in_voice(self, table: Table, *, only_renewals: bool = False) -> None:
         voice = self.get_channel(table.voice_channel_id)
         if isinstance(voice, discord.VoiceChannel | discord.StageChannel):
@@ -557,6 +609,15 @@ class DMBot(commands.AutoShardedBot):
         if before.channel is not None and before.channel.id == after.channel.id:
             return  # mute, deafen and the like: not a join
         self.start_asking(table, [member])  # tracked, so close() cancels it
+        if not member.bot and table.listening:
+            # Keep the DM screen's picture of who is recorded true (#107).
+            recorded = self.consent.has_consent(member.guild.id, member.id)
+            text = (
+                screen_messages.joined_recorded_message(member.display_name)
+                if recorded
+                else screen_messages.joined_not_recorded_message(member.display_name)
+            )
+            self._track(self.post(table.screen_channel_id, text), "join-note")
 
     async def start_table(self, table: Table) -> bool:
         """Register the session, send ears the consent list, then the join.
@@ -639,6 +700,7 @@ class DMBot(commands.AutoShardedBot):
 
         steps: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
             ("stored transcript", stored),
+            ("stop button", lambda: self._remove_stop_button(table)),
             ("capture check", lambda: self.post_summary(table)),
             ("final transcript", channel),
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
@@ -840,9 +902,20 @@ class DMBot(commands.AutoShardedBot):
             "Only people who said yes are recorded, the DM included."
         )
 
-    async def stop_session(self, guild_id: int, user_id: int, is_server_manager: bool) -> str:
+    async def stop_session(
+        self,
+        guild_id: int,
+        user_id: int,
+        is_server_manager: bool,
+        *,
+        campaign_id: str | None = None,
+    ) -> str:
+        """`campaign_id`: only stop if this campaign is the one being listened to (a Stop
+        button on an older message must never end a newer session)."""
         async with self.session_lock(guild_id):
             table = self.tables.get(guild_id)
+            if campaign_id is not None and (table is None or table.campaign_id != campaign_id):
+                return screen_messages.NOT_LISTENING_NOW
             if table is None:
                 # Maybe a saved session that hasn't been picked up again yet (DMbot is
                 # restarting): stopping must still end it, or it would come back.
@@ -1147,20 +1220,24 @@ class DMBot(commands.AutoShardedBot):
 
     async def post(self, channel_id: int, text: str, view: discord.ui.View | None = None) -> bool:
         """Send a message; returns False (and logs) if it could not be posted."""
+        return await self.post_message(channel_id, text, view) is not None
+
+    async def post_message(
+        self, channel_id: int, text: str, view: discord.ui.View | None = None
+    ) -> discord.Message | None:
+        """Send a message; returns it, or None (and logs) if it could not be posted."""
         channel = self.get_channel(channel_id)
         if not isinstance(channel, discord.abc.Messageable):
             log.warning("Could not post to channel %s: channel not found", channel_id)
-            return False
+            return None
         try:
             # discord.py's types don't accept view=None, so only pass a real view.
             if view is None:
-                await channel.send(text, allowed_mentions=NO_PINGS)
-            else:
-                await channel.send(text, allowed_mentions=NO_PINGS, view=view)
+                return await channel.send(text, allowed_mentions=NO_PINGS)
+            return await channel.send(text, allowed_mentions=NO_PINGS, view=view)
         except discord.HTTPException as exc:
             log.warning("Could not post to channel %s: %s", channel_id, exc)
-            return False
-        return True
+            return None
 
     async def after_screen_change(self, campaign: Campaign, channel: discord.TextChannel) -> None:
         """Keep a live session in step after the DM changes who can see the DM screen."""
@@ -1244,24 +1321,30 @@ class DMBot(commands.AutoShardedBot):
                     ),
                     at_ms=_now_ms(),
                 )
-            count = len(await self.consent.consenting(table.guild_id))
-            campaign = f" for **{table.campaign_name}**" if table.campaign_name else ""
+            agreed = await self.consent.consenting(table.guild_id)
+            here = self._people_in_voice(table)
+            recorded = [uid for uid in here if uid in agreed]
             if not repeat:
-                log.info("In the voice channel; %d player(s) opted in", count)
+                log.info("In the voice channel; %d of %d there opted in", len(recorded), len(here))
             if repeat:
                 pass
             elif table.resumed:
                 table.resumed = False
                 if table.announce_resume:
-                    await self.post(
-                        table.screen_channel_id,
-                        resumed_message(table.campaign_name, table.voice_channel_id),
+                    await self._post_listening(
+                        table, resumed_message(table.campaign_name, table.voice_channel_id)
                     )
             else:
-                await self.post(
-                    table.screen_channel_id,
-                    f"✅ Listening in <#{table.voice_channel_id}>{campaign}. "
-                    f"{count} player(s) have opted in to recording.",
+                await self._post_listening(
+                    table,
+                    screen_messages.listening_message(
+                        table.voice_channel_id,
+                        table.campaign_name,
+                        sorted(self.name_of(table.guild_id, uid) for uid in recorded),
+                        sorted(
+                            self.name_of(table.guild_id, uid) for uid in here if uid not in recorded
+                        ),
+                    ),
                 )
             if not table.notice_posted:
                 # Players learn they're being recorded from this notice, so a failure

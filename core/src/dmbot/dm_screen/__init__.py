@@ -7,10 +7,12 @@ visibility (private / opt-in peek / open). See docs/PLAN.md, "DM-screen visibili
 from dmbot.dm_screen.buttons import (
     HideButton,
     PeekButton,
+    StopListeningButton,
     VisibilityButton,
     card_view,
     hide_view,
     peek_view,
+    stop_listening_view,
 )
 from dmbot.dm_screen.channel import DMScreenError, ScreenResult, ensure_dm_screen, setup_dm_screen
 
@@ -19,10 +21,12 @@ __all__ = [
     "HideButton",
     "PeekButton",
     "ScreenResult",
+    "StopListeningButton",
     "VisibilityButton",
     "card_view",
     "ensure_dm_screen",
     "hide_view",
     "peek_view",
     "setup_dm_screen",
+    "stop_listening_view",
 ]
