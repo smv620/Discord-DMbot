@@ -300,11 +300,11 @@ class ConsentDMTests(DatabaseTest):
         assert "Can DMbot record you" in self.sent_text(self.player)
 
     async def test_a_failed_lookup_asks_them_when_they_rejoin(self) -> None:
-        self.consent.granted_times = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
+        self.consent.status = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
         with self.assertLogs("dmbot.bot", "ERROR"):
             await self.joined()
         self.player.send.assert_not_called()
-        del self.consent.granted_times  # the database is back
+        del self.consent.status  # the database is back
         await self.voice_update(self.player, None, self.voice)
         self.player.send.assert_awaited_once()
 
