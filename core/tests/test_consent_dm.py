@@ -189,6 +189,19 @@ class ConsentDMTests(DatabaseTest):
         assert "Can DMbot record you" in text and c.RENEWED in text
         assert "You said yes" not in text
         assert c.RENEWED not in self.sent_text(self.dm)  # never asked before: no note
+        # The DM hears why someone who said yes before isn't recorded now.
+        notes = [t for cid, t in self.posts if cid == SCREEN and "Asked again" in t]
+        assert len(notes) == 1 and f"user{PLAYER}" in notes[0] and f"user{DM}" not in notes[0]
+
+    async def test_after_a_restart_only_older_yeses_are_asked_again(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.age_consent(PLAYER)
+        self.table.resumed = True
+        await self.joined()
+        assert c.RENEWED in self.sent_text(self.player)
+        self.dm.send.assert_not_called()  # asked before the restart; not asked twice
+        await self.bot.ask_for_consent(self.table, [self.dm])  # still askable on rejoin
+        self.dm.send.assert_awaited_once()
 
     async def test_saying_yes_again_counts_under_the_new_wording(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
@@ -340,6 +353,7 @@ class ConsentDMTests(DatabaseTest):
         return SimpleNamespace(
             client=self.bot,
             guild=guild,
+            guild_id=None if guild is None else guild.id,
             user=SimpleNamespace(id=user_id),
             response=SimpleNamespace(
                 defer=AsyncMock(), send_message=AsyncMock(), edit_message=AsyncMock()

@@ -10,6 +10,8 @@ from dmbot.consent_dm import request_text
 # wording: if the change alters what people agree to (who can read it, what's recorded,
 # where it's sent), bump consent.TERMS_VERSION so everyone is asked again, then update
 # both values here. A pure typo fix may keep the version: update only the fingerprint.
+# The "What's new" note for people asked again (consent_dm.RENEWED) explains a change
+# rather than adding terms, so it isn't part of the fingerprint.
 PINNED_VERSION = 2
 PINNED_FINGERPRINT = "5828adf54f32889ddc06b20a689049fb843e651f9ab606519f562277ce391599"
 

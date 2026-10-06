@@ -127,6 +127,22 @@ class TermsVersionTests(DatabaseTest):
         self.assertEqual(await fresh.consenting(1), frozenset({2, 3}))
         self.assertEqual(await fresh.outdated(1, [2]), set())
 
+    async def test_stopping_removes_an_older_yes_too(self) -> None:
+        await self.store.grant(1, 2)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE consent SET terms_version = 1 WHERE user_id = 2")
+        fresh = ConsentStore(self.db)
+        self.assertTrue(await fresh.revoke(1, 2))  # it was recorded under the old wording
+        self.assertEqual(await fresh.outdated(1, [2]), set())
+
+    async def test_a_held_back_stop_is_never_asked_as_a_renewal(self) -> None:
+        await self.store.grant(1, 2)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE consent SET terms_version = 1 WHERE user_id = 2")
+        fresh = ConsentStore(self.db)
+        fresh.stop_now(1, 2)  # pressed Stop; the save hasn't happened
+        self.assertEqual(await fresh.outdated(1, [2]), set())
+
     async def test_unknown_method_is_refused(self) -> None:
         with self.assertRaises(ValueError):
-            await self.store.grant(1, 2, method="typed")
+            await self.store.grant(1, 2, method="typed")  # type: ignore[arg-type]

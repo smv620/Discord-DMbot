@@ -34,7 +34,7 @@ from dmbot.channel_access import (
     post_problems,
 )
 from dmbot.config import Settings
-from dmbot.consent import ConsentStore
+from dmbot.consent import ConsentMethod, ConsentStore
 from dmbot.consent_dm import (
     ALREADY_RECORDED,
     ConsentButton,
@@ -42,6 +42,7 @@ from dmbot.consent_dm import (
     StopButton,
     confirmed_text,
     reminder_text,
+    renewed_text,
     request_text,
     request_view,
     send_prompt,
@@ -294,7 +295,7 @@ class DMBot(commands.AutoShardedBot):
 
     # ---- consent (slash commands and private-message buttons) ---------------
 
-    async def give_consent(self, guild_id: int, user_id: int, method: str) -> int:
+    async def give_consent(self, guild_id: int, user_id: int, method: ConsentMethod) -> int:
         """Save consent and start capturing at once. Returns when it was given.
 
         Raises if it couldn't be saved; then nothing changed.
@@ -335,19 +336,29 @@ class DMBot(commands.AutoShardedBot):
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
 
-    def start_asking(self, table: Table, members: list[discord.Member]) -> None:
+    def start_asking(
+        self, table: Table, members: list[discord.Member], *, only_renewals: bool = False
+    ) -> None:
         """Ask in the background: Discord calls must never hold up the voice link."""
         if self._closing:
             return  # close() may already be gathering; a new task would never be cancelled
-        task = asyncio.create_task(self.ask_for_consent(table, members), name="ask-consent")
+        task = asyncio.create_task(
+            self.ask_for_consent(table, members, only_renewals=only_renewals),
+            name="ask-consent",
+        )
         self._asking.add(task)
         task.add_done_callback(self._asking.discard)
 
-    async def ask_for_consent(self, table: Table, members: list[discord.Member]) -> None:
+    async def ask_for_consent(
+        self, table: Table, members: list[discord.Member], *, only_renewals: bool = False
+    ) -> None:
         """Privately ask each person about recording, or remind them they agreed.
 
         Once per person per session; never bots. Anyone DMbot couldn't reach is named in
-        the DM screen and asked again if they rejoin.
+        the DM screen and asked again if they rejoin. Anyone who said yes only under older
+        wording is asked again, and the DM screen says why they aren't recorded yet.
+        `only_renewals` (after a restart, when everyone else was already asked) asks just
+        those people.
         """
         gid = table.guild_id
         people = [m for m in members if not m.bot and m.id not in table.asked]
@@ -356,12 +367,17 @@ class DMBot(commands.AutoShardedBot):
         table.asked.update(m.id for m in people)  # before any await: nobody asked twice
         with log_context(guild_id=gid, campaign_id=table.campaign_id):
             try:
-                times = await self.consent.granted_times(gid, [m.id for m in people])
-                renew = await self.consent.outdated(gid, [m.id for m in people])
+                status = await self.consent.status(gid, [m.id for m in people])
             except Exception:
                 log.exception("Couldn't look up consent; they'll be asked when they rejoin")
                 table.asked.difference_update(m.id for m in people)
                 return
+            times, renew = status.granted, status.outdated
+            if only_renewals:
+                table.asked.difference_update(m.id for m in people if m.id not in renew)
+                people = [m for m in people if m.id in renew]
+                if not people:
+                    return
             voice = self.get_channel(table.voice_channel_id)
             voice_name = voice.name if isinstance(voice, discord.abc.GuildChannel) else None
             dm_name = self.name_of(gid, table.dm_user_id)
@@ -389,14 +405,15 @@ class DMBot(commands.AutoShardedBot):
                 if result != "sent":
                     table.asked.discard(member.id)  # try again if they rejoin
                     (dms_off if result == "dms_off" else failed).append(member.display_name)
-            note = unreachable_text(dms_off, failed)
-            if note and self.tables.get(gid) is table:
-                await self.post(table.screen_channel_id, note)
+            renewed = [m.display_name for m in people if m.id in renew]
+            notes = [n for n in (renewed_text(renewed), unreachable_text(dms_off, failed)) if n]
+            if notes and self.tables.get(gid) is table:
+                await self.post(table.screen_channel_id, "\n".join(notes))
 
-    def _ask_everyone_in_voice(self, table: Table) -> None:
+    def _ask_everyone_in_voice(self, table: Table, *, only_renewals: bool = False) -> None:
         voice = self.get_channel(table.voice_channel_id)
         if isinstance(voice, discord.VoiceChannel | discord.StageChannel):
-            self.start_asking(table, list(voice.members))
+            self.start_asking(table, list(voice.members), only_renewals=only_renewals)
 
     async def on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
@@ -965,6 +982,7 @@ class DMBot(commands.AutoShardedBot):
             # Ask everyone in the channel once, when a session starts. Not after a
             # restart: they were asked before it, and newcomers are asked as they join.
             first_join = not repeat and not table.resumed
+            resumed_now = not repeat and table.resumed
             count = len(await self.consent.consenting(table.guild_id))
             campaign = f" for **{table.campaign_name}**" if table.campaign_name else ""
             if not repeat:
@@ -1009,6 +1027,10 @@ class DMBot(commands.AutoShardedBot):
                     )
             if first_join:
                 self._ask_everyone_in_voice(table)
+            elif not repeat and resumed_now:
+                # After a restart only people whose yes no longer counts (the consent
+                # wording changed) need asking: everyone else was asked before it.
+                self._ask_everyone_in_voice(table, only_renewals=True)
         elif status.state in ("left", "error"):
             table.listening = False
             # The detail comes from ears' own fixed messages, never from users.
@@ -1096,8 +1118,9 @@ async def consent_give(interaction: discord.Interaction) -> None:
         return
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
-        granted = await bot.consent.granted_at(guild.id, interaction.user.id)
-        renewed = bool(await bot.consent.outdated(guild.id, [interaction.user.id]))
+        status = await bot.consent.status(guild.id, [interaction.user.id])
+        granted = status.granted.get(interaction.user.id)
+        renewed = interaction.user.id in status.outdated
     except Exception:
         log.exception("Couldn't look up consent in guild %s", guild.id)
         await interaction.followup.send(
@@ -1105,7 +1128,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
             ephemeral=True,
         )
         return
-    # granted_at reads the database and skips unsaved revokes, so it is right even on a
+    # status reads the database and skips unsaved revokes, so it is right even on a
     # fresh process whose cache hasn't loaded this server yet.
     if granted is not None:
         await interaction.followup.send(

@@ -23,7 +23,7 @@ from typing import Any, Literal, Protocol
 
 import discord
 
-from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE
+from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, ConsentMethod
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
@@ -69,10 +69,24 @@ def _date(timestamp: int) -> str:
     return f"<t:{timestamp}:D>"
 
 
+# Says what changed in the current consent.TERMS_VERSION; rewrite it when that goes up.
+# It explains rather than adds terms, so it isn't part of the pinned wording.
 RENEWED = (
-    "What DMbot does with recordings has changed since you last said yes, so it needs "
-    "to ask you again. Until you choose, it isn't recording you."
+    "**What's new:** anyone in this server can read and download the text DMbot writes. "
+    "DMbot is asking everyone who said yes before this was added to choose again. It "
+    "won't record you unless you say yes."
 )
+
+
+def renewed_text(names: list[str]) -> str | None:
+    """For the DM screen: people who said yes before and are being asked again, so the
+    DM knows why they aren't recorded yet."""
+    if not names:
+        return None
+    return (
+        f"🔁 **Asked again: {', '.join(map(_plain, names))}.** DMbot's consent message "
+        "changed, so they need to say yes again. DMbot isn't recording them until they do."
+    )
 
 
 def request_text(
@@ -161,7 +175,7 @@ class ConsentActions(Protocol):
 
     def get_guild(self, guild_id: int, /) -> discord.Guild | None: ...
 
-    async def give_consent(self, guild_id: int, user_id: int, method: str) -> int: ...
+    async def give_consent(self, guild_id: int, user_id: int, method: ConsentMethod) -> int: ...
 
     def stop_recording(self, guild_id: int, user_id: int) -> None: ...
 
@@ -232,7 +246,7 @@ class ConsentButton(
                 return
             try:
                 # In a private message, or in the reply to /consent give in the server.
-                method = PRIVATE_MESSAGE if interaction.guild is None else CONSENT_COMMAND
+                method = PRIVATE_MESSAGE if interaction.guild_id is None else CONSENT_COMMAND
                 granted_at = await _actions(interaction).give_consent(
                     self.guild_id, interaction.user.id, method
                 )
