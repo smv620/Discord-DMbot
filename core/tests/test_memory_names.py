@@ -385,6 +385,21 @@ class Hints(NamesTest):
         self.assertIn("Bell", hints)
         self.assertNotIn("the hooded stranger", hints)
 
+    async def test_names_said_at_the_table_move_to_the_front(self) -> None:
+        from dmbot.audio.segmenter import Utterance
+
+        for name in ("Aldric", "Bryn Shander", "Zephyr"):
+            await ui.save_name(self.memory, self.campaign, name, "npc", [], [])
+        table = make_table(self.campaign.id)
+        self.bot.tables[GUILD] = table
+        before = await self.bot._name_hints(GUILD)  # also loads the names for matching
+        self.assertLess(before.index("Aldric"), before.index("Zephyr"))
+        await self.consent.grant(GUILD, PLAYER)
+        said = Utterance(GUILD, PLAYER, 0, 0, bytes(32000), table.segmenter.session)
+        self.bot._deliver_transcript(said, "Let's ask Zephyr about it.")
+        after = await self.bot._name_hints(GUILD)
+        self.assertEqual(after[0], "Zephyr")  # in the scene now
+
 
 class Store(NamesTest):
     async def test_only_the_dm_says_what_something_is(self) -> None:
