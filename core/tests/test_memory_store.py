@@ -780,7 +780,7 @@ class Renaming(MemoryTest):
                 GUILD_A, self.c, a, text, kind="full", source="dm", status=CONFIRMED
             )
         await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
-        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED, "beleros": REJECTED})
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})  # misspelling dropped
 
     async def test_never_onto_a_secret_name_and_only_by_the_dm(self) -> None:
         a = await self.add("Belleros", status=CONFIRMED)
