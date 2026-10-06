@@ -117,7 +117,9 @@ async def _ensure_card(
         for old in cards:
             with contextlib.suppress(discord.HTTPException):
                 await old.delete()
-        card = await channel.send(text, allowed_mentions=discord.AllowedMentions.none())
+        card = await channel.send(
+            text, allowed_mentions=discord.AllowedMentions.none(), silent=True
+        )
         await _pin(card, PIN_REASON)
     except discord.HTTPException as exc:
         log.warning("Transcript channel card not updated: %s", exc)

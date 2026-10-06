@@ -190,6 +190,8 @@ def transcript_card(campaign_name: str) -> str:
             "`/consent revoke` here or in any channel. Only you see the answer. What's "
             "already here stays.",
             "DMbot's notes for the DM never appear here.",
+            "No pop-ups from here. To hide the unread dot too, mute this channel "
+            "(right-click it, or long-press on a phone).",
         ]
     )
 
