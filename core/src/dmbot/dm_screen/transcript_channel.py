@@ -67,15 +67,10 @@ def is_transcript_name(name: str) -> bool:
     return name.startswith(NAME_PREFIX)
 
 
-# Read-only, but slash commands left alone (inherited, so the server's own setting
-# applies): a blocked command can hang on "Sending command..." with no explanation.
-VIEW_AND_COMMANDS: Perms = {k: v for k, v in READ_ONLY.items() if k != "use_application_commands"}
-
-
 def transcript_plan(*, guild_id: int, bot_id: int) -> dict[Target, Perms]:
     """Everyone reads and can use slash commands, nobody posts; DMbot posts. DMs read
     like everyone else."""
-    return {everyone(guild_id): VIEW_AND_COMMANDS, Target("member", bot_id): FULL}
+    return {everyone(guild_id): READ_ONLY, Target("member", bot_id): FULL}
 
 
 async def _fresh(guild: discord.Guild, campaign: Campaign) -> discord.TextChannel | None:
