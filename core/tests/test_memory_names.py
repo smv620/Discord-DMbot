@@ -438,6 +438,104 @@ class NameCards(NamesTest):
         self.assertEqual([c.value for c in plain], [self.bell.id])  # the rest, yes
 
 
+class Lists(NamesTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        from dmbot.memory.lookup import LookupCache
+
+        self.bot.lookup = LookupCache(self.memory)
+        await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], ["the stranger"])
+
+    def fresh(self) -> None:
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+
+    async def test_add_many_saves_skips_and_asks_about_unclear_ones(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.fresh()
+        it = self.it()
+        text = "# note\nBryn Shander | place | Bryn\nBelleros | npc\nUlfgar\nBell Eros | npc"
+        await name_lists.import_list(it, self.campaign.id, text)
+        summary = it.followup.send.call_args.args[0]
+        self.assertIn("Added 3 names", summary)
+        self.assertIn("2 names need a look", summary)  # no kind; sounds like Belleros
+        self.assertIn("1 name DMbot already knows", summary)
+        self.assertIn("Bryn Shander", await self.names())
+        self.assertIn("Ulfgar", await self.names((PROPOSED,)))
+        view = it.followup.send.call_args.kwargs["view"]
+        (undo,) = [c for c in view.children if isinstance(c, name_lists.UndoListButton)]
+        it = self.it()
+        await undo.callback(it)
+        self.assertIn("Took the whole list back", it.response.edited[0][0])
+        self.assertNotIn("Bryn Shander", await self.names())
+
+    async def test_a_manager_never_learns_of_or_adds_secret_names(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.fresh()
+        it = self.it(MANAGER)
+        await name_lists.import_list(
+            it, self.campaign.id, "the stranger | npc\nKesh | npc | | a secret"
+        )
+        summary = it.followup.send.call_args.args[0]
+        self.assertNotIn("already knows", summary)  # a secret name's clash isn't revealed
+        self.assertIn("only the campaign's DM can add secret names", summary)
+        self.fresh()
+        it = self.it(MANAGER)
+        await name_lists.send_download(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertNotIn("secret", text)
+        self.assertNotIn(b"the stranger | ", kw["file"].fp.getvalue())
+
+    async def test_download_has_the_secrets_for_the_dm_and_reads_back(self) -> None:
+        from dmbot.memory.name_list import parse
+        from dmbot.ui import name_lists
+
+        self.fresh()
+        it = self.it()
+        await name_lists.send_download(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("includes secret names", text)
+        body = kw["file"].fp.getvalue().decode()
+        (line,) = parse(body, secrets=True).lines
+        self.assertEqual((line.name, line.secrets), ("Belleros", ("the stranger",)))
+
+    async def test_browse_by_kind_pages_and_opens_names(self) -> None:
+        from dmbot.ui import name_lists
+
+        for n in range(25):
+            await ui.save_name(self.memory, self.campaign, f"Place {n:02}", "place", [], [])
+        self.fresh()
+        it = self.it()
+        await name_lists.show_browse(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("pick a kind", text)
+        view = kw["view"]
+        view.pick = SimpleNamespace(values=["place"])  # type: ignore[assignment]
+        it = self.it()
+        await view._kind_picked(it)
+        text, page = it.response.edited[0]
+        self.assertIn("page 1 of 2", text)
+        self.assertEqual(len(page.shown), 20)
+        it = self.it()
+        await page._sort(it)  # A to Z
+        text, page = it.response.edited[0]
+        self.assertIn("**Place 00**", text)
+        it = self.it()
+        await page._next_page(it)
+        text, _ = it.response.edited[0]
+        self.assertIn("page 2 of 2", text)
+        self.assertIn("**Place 24**", text)
+
+    async def test_the_template_file(self) -> None:
+        from dmbot.ui import name_lists
+
+        it = self.it()
+        await name_lists.AddMany(self.campaign.id)._template(it)
+        _, kw = it.response.sent[0]
+        self.assertTrue(kw["file"].fp.getvalue().startswith(b"### DMbot names list"))
+
+
 class Adding(NamesTest):
     async def test_a_name_with_nicknames_and_a_secret(self) -> None:
         entity = await ui.save_name(

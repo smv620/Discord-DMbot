@@ -606,6 +606,44 @@ class Undo(MemoryTest):
         self.assertEqual(len(await self.memory.relations(GUILD_A, self.c)), 1)
 
 
+class Lists(MemoryTest):
+    async def test_a_list_is_one_change_and_one_undo(self) -> None:
+        from dmbot.memory.models import NewName
+
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [
+                NewName("Belleros", "npc", CONFIRMED, ("Bell",), ("the hooded stranger",)),
+                NewName("Odd Thing", "concept", PROPOSED),
+            ],
+            source="dm",
+        )
+        a, b = written.value
+        aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=a, include_secret=True)
+        self.assertEqual(
+            {(x.text, x.secret) for x in aliases},
+            {("Belleros", False), ("Bell", False), ("the hooded stranger", True)},
+        )
+        thing = await self.memory.entity(GUILD_A, self.c, b)
+        assert thing is not None and written.batch is not None
+        self.assertEqual(thing.status, PROPOSED)
+        await self.memory.undo(GUILD_A, self.c, written.batch)
+        self.assertEqual(await self.memory.entities(GUILD_A, self.c), [])
+
+    async def test_only_the_dm_and_never_a_players_character(self) -> None:
+        from dmbot.memory.models import NewName
+
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.add_names(
+                GUILD_A, self.c, [NewName("X", "npc", CONFIRMED)], source="entitybot"
+            )
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.add_names(
+                GUILD_A, self.c, [NewName("X", "player_character", CONFIRMED)], source="dm"
+            )
+
+
 class Backups(MemoryTest):
     async def test_memory_survives_backup_and_restore(self) -> None:
         await self.memory.add_predicate(

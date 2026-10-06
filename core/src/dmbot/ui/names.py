@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 SHOWN_PER_SECTION = 10
+MAX_UPLOAD_BYTES = 256 * 1024  # a names list (dmbot.memory.name_list.MAX_FILE_BYTES)
 PANEL_MAX = 1900  # under Discord's 2,000 characters
 SAME_AS_CHOICES = 25  # Discord's limit for a menu
 PC = "player_character"
@@ -238,6 +239,10 @@ class NamesHome(_Menu):
                 row=1,
             )
         )
+        grey = discord.ButtonStyle.secondary
+        self.add_item(_Button(self._browse, label="📚 Browse by kind", style=grey, row=1))
+        self.add_item(_Button(self._add_many, label="📥 Add many", style=grey, row=1))
+        self.add_item(_Button(self._download, label="📤 Download all", style=grey, row=1))
         if shown:
             self.open = _Select(
                 self._open,
@@ -262,6 +267,22 @@ class NamesHome(_Menu):
         from dmbot.ui.name_card import show_card
 
         await show_card(interaction, self.campaign_id, self.open.values[0])
+
+    async def _browse(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.name_lists import show_browse
+
+        await show_browse(interaction, self.campaign_id)
+
+    async def _add_many(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.name_lists import FORMAT_HELP, AddMany
+
+        if await _campaign_for(interaction, self.campaign_id):
+            await _send(interaction, FORMAT_HELP, AddMany(self.campaign_id))
+
+    async def _download(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.name_lists import send_download
+
+        await send_download(interaction, self.campaign_id)
 
     async def _add(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -299,9 +320,12 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
 
 
 class CampaignChoice(_Menu):
-    def __init__(self, campaigns: list[Campaign], find: str | None = None) -> None:
+    def __init__(
+        self, campaigns: list[Campaign], find: str | None = None, upload: str | None = None
+    ) -> None:
         super().__init__()
         self.find = find
+        self.upload = upload  # a list of names added with /dmbot names file:
         now = int(time.time())
         self.pick = _Select(
             self._picked,
@@ -319,7 +343,11 @@ class CampaignChoice(_Menu):
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         self.stop()
-        if self.find:  # the name typed with /dmbot names find:, now the campaign is known
+        if self.upload is not None:
+            from dmbot.ui.name_lists import import_list
+
+            await import_list(interaction, self.pick.values[0], self.upload)
+        elif self.find:  # the name typed with /dmbot names find:, now the campaign is known
             from dmbot.ui.name_card import open_found
 
             await open_found(interaction, self.pick.values[0], self.find)
@@ -338,15 +366,39 @@ async def _find_typeahead(
 @dmbot_group.command(
     name="names", description="Teach DMbot your campaign's names so it spells them right"
 )
-@app_commands.describe(find="Open one name: type part of it, a nickname, or how it sounds")
+@app_commands.describe(
+    find="Open one name: type part of it, a nickname, or how it sounds",
+    file="Add many names from a list (get the template with 📥 Add many)",
+)
 @app_commands.autocomplete(find=_find_typeahead)
-async def dmbot_names(interaction: discord.Interaction, find: str | None = None) -> None:
+async def dmbot_names(
+    interaction: discord.Interaction,
+    find: str | None = None,
+    file: discord.Attachment | None = None,
+) -> None:
     guild = interaction.guild
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
         return
     bot = _bot(interaction)
-    if find:
+    upload = None
+    if file is not None:
+        from dmbot.ui.name_lists import read_upload
+
+        if file.size > MAX_UPLOAD_BYTES:
+            await _tell(interaction, "That file is too big (up to 256 KB). Split it up.")
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            raw = await file.read()
+        except discord.HTTPException:
+            await _tell(interaction, "DMbot couldn't download that file. Try again.")
+            return
+        upload, problem = read_upload(raw)
+        if problem is not None:
+            await _tell(interaction, problem)
+            return
+    if find and upload is None:
         from dmbot.ui.name_card import open_found, typeahead_campaign
 
         campaign = await typeahead_campaign(interaction)
@@ -357,7 +409,14 @@ async def dmbot_names(interaction: discord.Interaction, find: str | None = None)
         await bot.campaigns.list_campaigns(guild.id), interaction.user.id, _is_manager(interaction)
     )
     playing = bot.active_campaign_id(guild.id)
-    if playing is not None and any(c.id == playing for c in mine):
+    only = playing if any(c.id == playing for c in mine) else None
+    if only is None and len(mine) == 1:
+        only = mine[0].id
+    if upload is not None and only is not None:
+        from dmbot.ui.name_lists import import_list
+
+        await import_list(interaction, only, upload)
+    elif playing is not None and any(c.id == playing for c in mine):
         await show_home(interaction, playing)
     elif not mine:
         await _tell(
@@ -366,7 +425,7 @@ async def dmbot_names(interaction: discord.Interaction, find: str | None = None)
     elif len(mine) == 1:
         await show_home(interaction, mine[0].id)
     else:
-        await _send(interaction, "**Which campaign's names?**", CampaignChoice(mine, find))
+        await _send(interaction, "**Which campaign's names?**", CampaignChoice(mine, find, upload))
 
 
 # ---- adding a name ---------------------------------------------------------------------

@@ -61,6 +61,7 @@ from dmbot.memory.models import (
     Heard,
     HeardCount,
     MemoryRuleError,
+    NewName,
     Relation,
     Written,
     check_status_change,
@@ -450,6 +451,47 @@ class MemoryStore:
             )
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
             return Written(_entity(row), w.batch)
+
+    async def add_names(
+        self, guild_id: int, campaign_id: str, names: Sequence[NewName], *, source: str
+    ) -> Written[list[str]]:
+        """Many names at once (📥 Add many), each with its other and secret names, in one
+        change: one Undo takes the whole list back, and live transcription reloads its
+        names once. Only the DM gives lists. Returns the new entries' IDs, in order."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can add a list of names.")
+        for n in names:
+            _check_choice(n.status, LIVE, "entity status")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            ids: list[str] = []
+            for n in names:
+                onto.active_type(n.type)
+                if onto_is_pc(onto, n.type):
+                    raise MemoryRuleError("A player's character needs its player.")
+                name = clean_text(n.name)
+                row = await w.insert(
+                    ENTITIES,
+                    {
+                        "id": new_id(), "type": n.type, "name": name, "description": "",
+                        "status": n.status, "merged_into": None, "source": source,
+                        "created_at": w.now, "played_by": None,
+                    },
+                )  # fmt: skip
+                seen = {lookup_key(name)}
+                aliases = [(name, "full", False)]
+                aliases += [(clean_text(t), "nickname", False) for t in n.others]
+                aliases += [(clean_text(t), "title", True) for t in n.secrets]
+                for text, kind, secret in aliases:
+                    key = lookup_key(text)
+                    if key in seen and kind != "full":
+                        continue
+                    seen.add(key)
+                    await w.insert(
+                        ALIASES, _new_alias(w, row["id"], text, kind, n.status, secret, None)
+                    )
+                ids.append(row["id"])
+            return Written(ids, w.batch)
 
     async def set_entity_type(
         self, guild_id: int, campaign_id: str, entity_id: str, type: str, *, source: str

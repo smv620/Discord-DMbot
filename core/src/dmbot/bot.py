@@ -100,6 +100,7 @@ from dmbot.transcription.pipeline import TranscriptionPipeline
 from dmbot.ui import logic as ui_logic
 from dmbot.ui.dmbot_commands import dmbot_group
 from dmbot.ui.name_card import UndoButton
+from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
 from dmbot.ui.transcripts import DownloadButton, download_view, ended_text, transcript_command
 
@@ -339,7 +340,7 @@ class DMBot(commands.AutoShardedBot):
         # "Check new names" on the DM screen after a session.
         self.add_dynamic_items(ReviewButton)
         # Undo after forgetting a name (its card), after a restart too.
-        self.add_dynamic_items(UndoButton)
+        self.add_dynamic_items(UndoButton, UndoListButton)
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
         if self.settings.dev_guild_id:
