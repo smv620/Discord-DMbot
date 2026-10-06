@@ -540,7 +540,8 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
     warning = " This file includes secret names. Don't share it with players." if secrets else ""
     await interaction.response.send_message(
         f"📤 **All {count:,} name{'' if count == 1 else 's'} for {_md(campaign.name)}.**"
-        f"{warning} You can edit it and add it again with `/dmbot names` (names DMbot already knows are skipped).",
+        f"{warning} You can edit it and add it again with `/dmbot names` (names DMbot "
+        "already knows are skipped).",
         file=_file(text, f"names-{_slug(campaign.name)}-{day}.txt"),
         ephemeral=True,
         allowed_mentions=NO_PINGS,
