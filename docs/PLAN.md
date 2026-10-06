@@ -93,6 +93,15 @@ back to the Cleaner. Later helpers (NPC tracker, PlotBot) send **proposals** to 
 their DM-confirmation step is what marks a fact confirmed. See "Campaign memory
 (EntityBot)" below.
 
+**Story memory (proposed 2026-10-06, not yet decided; docs/STORY_MEMORY.md, #227).** Phase 5
+grows the campaign memory from names and connections into what happened: claims (what
+was said, and how: narrated, an NPC's words, a player's belief, a plan) kept apart from
+DM-confirmed facts; state facts (alive, dead, missing); story threads, promises and
+clues; who knows what; reputations derived from deeds; and, behind a per-campaign
+**Story guide** switch, a separate layer for a published adventure's plan. EntityBot
+stays the only writer, split into small AI roles (extractor, continuity checker,
+ontology steward, graph curator, summarizer) behind deterministic checks.
+
 **Build order (decided 2026-10-05):** EntityBot and the campaign memory first (Phase 2a),
 then the Transcript Cleaner on top of them (Phase 2b).
 
@@ -215,7 +224,7 @@ than in separate volumes.
 | 2b | **Transcript Cleaner** (live name fixing, off-topic hiding, #127), off-topic filter (#52), speaker tagging | Every helper depends on clean, labeled input |
 | 3 | **Rules advisor + house rules**: alerts with ✅ Agree / 🙈 Ignore / ⚖️ Override, house rules by voice with DM approval, `/houserules` | Uses the rules hierarchy below |
 | 4 | **TimeBot**: game clock, effect durations, rests, dawn/noon/dusk, split-party clocks | |
-| 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only |
+| 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only. *Proposed split (docs/STORY_MEMORY.md):* 5a claims, state facts and the first continuity warnings · 5b NPC tracker, who knows what, reputations · 5c PlotBot: threads, promises, summaries, pre-session note · 5d Story guide for published adventures |
 | 6 | **DM sidebar**: voice messages to DMbot, marked `[DM Sidebar Discussion]` | No install needed |
 | 7 | **Google Drive** (house-rules doc mirror) and **character data** from D&D Beyond links | |
 | later | Paid service billing (owner's key, per-server metering); D&D Beyond companion extension; optional DM hotkey helper | |
@@ -920,6 +929,14 @@ versioned and self-checking:
    tracked (duplicates, orphans, unused terms, how often the DM is asked).
 10. **Plain words for users,** always.
 
+*Proposed additions (2026-10-06, docs/STORY_MEMORY.md, not yet decided):* a core v2
+with story threads, promises, clues and state facts (`condition`: alive, dead, missing…,
+one at a time, with allowed changes); new checks (one holder at a time, only for items
+marked unique; nesting and no loops for places and causes; a dead or destroyed thing
+can't act; an NPC mentioning a limited-audience clue they never learned); claims kept apart from facts so an NPC's lie or a player's guess is
+never world truth; and the ontology and graph upkeep split into AI roles that only
+propose, each with its own golden test set.
+
 **Transcript Cleaner (decided 2026-10-05, #127).** Fixes misheard names in each line as
 it arrives, so the live transcript, the downloads and every helper get clean text. It
 reads the campaign memory and never changes it.
@@ -1001,6 +1018,28 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
 filter within the Cleaner's time budget; if the filter is late, the line is posted and
 then edited to the marker.
 
+**Story memory: continuity, reputations, published adventures (proposed 2026-10-06).**
+Full design and rationale: docs/STORY_MEMORY.md. In short:
+- **Continuity warnings** in the DM screen, quiet by default, always with the source:
+  "⚠️ Heads-up: **Ulfgar** died in Session 4. He was just voiced talking. [He's alive
+  after all] [It's not really him] [Ignore]". Code checks first, AI only for close calls,
+  the rest in the after-session report. A secret said out loud asks "Is it revealed
+  now?".
+- **Reputations:** each player character's and the party's standing with NPCs, groups
+  and places (Hostile · Unfriendly · Wary · Friendly · Devoted), worked out from deeds
+  the DM confirmed, spreading at most two steps through confirmed connections. The DM
+  can always set it.
+- **Plots:** story threads (hinted, open, active, stalled, resolved, abandoned),
+  promises with due dates, clues, and cause and effect; a pre-session note of what's
+  open and what could clash tonight.
+- **Story guide switch** per campaign: **Off** (default; never suggests story),
+  **Watch the book** (warns when the table breaks something the adventure still needs),
+  **Guide me** (says what the book has next, with the section). The book's plan comes
+  from the DM, chapter by chapter, as structured facts only (copyright rule).
+- **One retrieval path** for every helper: seed from the scene, 1–2 hops over
+  confirmed facts true at the current story time, secrets filtered by code per audience,
+  summaries plus quoted lines, every item cited.
+
 **TimeBot (decided 2026-10-04).** Tracks **game time** (not real time) quietly in the
 background.
 - Reads time cues from narration ("you walk for a few hours"), rests (short ≈ 1 hour,
@@ -1054,3 +1093,8 @@ DMbot already wrote down stays, and anyone in this server can still read it." (W
   the DM sees every fix)
 - Hosting provider and Kubernetes setup (Helm) for the public bot (transcription is cloud by default; GPU workers only for self-hosters who want them)
 - Privacy policy and terms of service text for the public bot
+- Story memory (docs/STORY_MEMORY.md): accept the design and the Phase 5a–5d split;
+  where a published adventure's plan may come from (DM outline only, or structured
+  extraction from an owned copy with the text discarded); reputation per character or
+  party only at first; live continuity warnings on or after-session only at first;
+  models and the per-session cost cap for the AI roles
