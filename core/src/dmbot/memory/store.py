@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
-from dmbot.db import Database
+from dmbot.db import Database, row_int
 from dmbot.memory import notify
 from dmbot.memory._changes import (
     ALIASES,
@@ -58,6 +58,8 @@ from dmbot.memory.models import (
     Correction,
     Entity,
     Flag,
+    Heard,
+    HeardCount,
     MemoryRuleError,
     Relation,
     Written,
@@ -347,12 +349,34 @@ class MemoryStore:
                 + " ORDER BY id",
                 [*scope.ids, *scope.ids],
             )
+            # Counts follow merges (a merged-away name counts for the one it became).
+            cur = await conn.execute(
+                "SELECT coalesce(e.merged_into, h.entity_id) AS entity_id,"
+                " sum(h.times) AS times, max(h.session_started_at) AS last_at"
+                " FROM memory_heard h JOIN memory_entities e ON e.guild_id = h.guild_id"
+                " AND e.campaign_id = h.campaign_id AND e.id = h.entity_id"
+                " WHERE h.guild_id = %s AND h.campaign_id = %s GROUP BY 1",
+                scope.ids,
+            )
+            heard = tuple(
+                HeardCount(r["entity_id"], int(r["times"]), row_int(r, "last_at"))
+                for r in await cur.fetchall()
+            )
+            cur = await conn.execute(
+                "SELECT DISTINCT session_started_at FROM memory_heard"
+                " WHERE guild_id = %s AND campaign_id = %s"
+                " ORDER BY session_started_at DESC LIMIT 2",
+                scope.ids,
+            )
+            recent = tuple(int(r["session_started_at"]) for r in await cur.fetchall())
             return LookupData(
                 scope.version,
                 tuple(_entity(r) for r in entities),
                 tuple(_alias(r) for r in aliases),
                 tuple(_correction(r) for r in corrections),
                 tuple(_relation(r) for r in relations),
+                heard,
+                recent,
             )
 
     async def corrections(self, guild_id: int, campaign_id: str) -> list[Correction]:
@@ -700,6 +724,51 @@ class MemoryStore:
             return Written(_flag(row), w.batch)
 
     # ---- mentions and corrections -------------------------------------------------------
+
+    async def add_session_heard(
+        self, guild_id: int, campaign_id: str, session_started_at: int, heard: Sequence[Heard]
+    ) -> int:
+        """Keep how often names were said in a session, written once at its end; how
+        many rows were written.
+
+        Observations, not edits: no change log (nothing to undo) and no version change,
+        so running copies don't reload (the caller drops its copy for next time). A name
+        merged meanwhile counts for the one it was merged into; removed names are
+        skipped. The caller has already left out people who stopped being recorded.
+        """
+        _check_time(session_started_at)
+        rows = [
+            h
+            for h in heard
+            if is_id(h.entity_id) and 0 < h.times <= 2**31 - 1 and 0 < h.speaker_id <= INT64_MAX
+        ]
+        if not rows:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO memory_heard"
+                " (guild_id, campaign_id, entity_id, session_started_at, speaker_id, times)"
+                " SELECT %s, %s, coalesce(e.merged_into, e.id), %s, h.speaker_id,"
+                " sum(h.times)"
+                " FROM unnest(%s::text[], %s::bigint[], %s::int[])"
+                " AS h(entity_id, speaker_id, times)"
+                " JOIN memory_entities e ON e.guild_id = %s AND e.campaign_id = %s"
+                " AND e.id = h.entity_id AND e.status IN ('proposed', 'confirmed', 'merged')"
+                " GROUP BY 3, 5"
+                " ON CONFLICT (guild_id, campaign_id, session_started_at, entity_id, speaker_id)"
+                " DO UPDATE SET times = memory_heard.times + EXCLUDED.times",
+                (
+                    guild_id,
+                    campaign_id,
+                    session_started_at,
+                    [h.entity_id for h in rows],
+                    [h.speaker_id for h in rows],
+                    [h.times for h in rows],
+                    guild_id,
+                    campaign_id,
+                ),
+            )
+            return cur.rowcount
 
     async def add_mention(
         self,

@@ -844,16 +844,22 @@ names panel nor the speech-to-text hints can be a fixed list.
   1–4 words, exact and "fixed" spellings) and the scene-based hints, ahead of the
   Cleaner, which will reuse the matcher; (2) the name card, find and **Connect to…**;
   (3) browse by kind, add many and download all.
-- **Step 1 built (2026-10-06, `dmbot.memory.scene`):** the line matcher and the scene
-  tiers 1–3, with tier 4 as "names said earlier this session" and fill as confirmed
-  names A–Z, until the stored mentions land (next: written at the end of a session, so
-  "the last session or two", "most-heard" and "never heard yet counts as recent" can
-  rank). Lines from someone who stops being recorded stop counting at once. The fixed
-  parts of the list are prepared once per change to the names, not per clip. Until the
-  DM can add connections (step 2), the tip-of-the-tongue tier stays empty. Hints are worked
-  out for the session that heard the clip (a stopped session still finishing keeps its
-  own campaign's names). "Or a second speaker" isn't needed as a separate rule: each
-  mention fades on its own, so only a name said again stays in the scene.
+- **Step 1 built (2026-10-06, `dmbot.memory.scene`):** the line matcher and all five
+  tiers. **How often names were said is kept as counts, not per mention** (changed
+  from the `memory_mentions` idea after review measured a year of per-mention rows at
+  ~1M rows and ~400 MB per campaign, with reloads reading them all): `memory_heard`,
+  one row per name, session and speaker, counting lines that named it; written once
+  at the end of a session from people who still agree (checked again right before
+  writing); observations, not edits, so no undo entry, no reload (the session's copy
+  is dropped so the next one sees them), and Undo of adding a name still works (its
+  counts go with it). A merged-away name counts for the one it became. "Recently" is
+  this session, then the last two sessions, then names never said yet that were added
+  since then (newest first); fill is most said first (names unsaid for about six
+  months drop out), then older names never said. Lines from someone who stops being
+  recorded stop counting at once, and the speaker is kept so their counts can be
+  removed with their lines (Retention). Not yet in campaign backups. The fixed tiers
+  are prepared off the event loop, once per change to the names. Until the DM can add
+  connections (step 2), the tip-of-the-tongue tier stays empty.
 
 **Campaign memory rules (the ontology) (decided 2026-10-05).** EntityBot alone builds and
 maintains the ontology; there is no human graph engineer. So it is small, strict,
