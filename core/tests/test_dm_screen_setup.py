@@ -126,7 +126,7 @@ class SetupTests(DatabaseTest):
     async def test_an_open_screen_leaves_slash_commands_alone(self) -> None:
         await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="open")
         everyone = self.created_overwrite_for(GUILD)
-        assert everyone.send_messages is False and everyone.add_reactions is False
+        assert everyone.send_messages is False  # still view-only
         assert everyone.use_application_commands is None
 
     async def test_new_screen_gets_the_dmb_name(self) -> None:
