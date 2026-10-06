@@ -39,6 +39,23 @@ class MemoryRuleError(ValueError):
     """A write the memory rules refuse. The message is plain enough to show a DM."""
 
 
+@dataclass(frozen=True, slots=True)
+class Heard:
+    """How many lines of one speaker named an entry in a session, kept at its end
+    (memory_heard) for ranking hints."""
+
+    entity_id: str
+    speaker_id: int
+    times: int
+
+
+@dataclass(frozen=True, slots=True)
+class HeardCount:
+    entity_id: str
+    times: int
+    last_session_at: int | None  # when the last session it was said in started
+
+
 def new_id() -> str:
     return uuid.uuid4().hex
 

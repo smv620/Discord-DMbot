@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
-from dmbot.db import Database
+from dmbot.db import Database, row_int
 from dmbot.memory import notify
 from dmbot.memory._changes import (
     ALIASES,
@@ -58,6 +58,8 @@ from dmbot.memory.models import (
     Correction,
     Entity,
     Flag,
+    Heard,
+    HeardCount,
     MemoryRuleError,
     Relation,
     Written,
@@ -347,12 +349,34 @@ class MemoryStore:
                 + " ORDER BY id",
                 [*scope.ids, *scope.ids],
             )
+            # Counts follow merges (a merged-away name counts for the one it became).
+            cur = await conn.execute(
+                "SELECT coalesce(e.merged_into, h.entity_id) AS entity_id,"
+                " sum(h.times) AS times, max(h.session_started_at) AS last_at"
+                " FROM memory_heard h JOIN memory_entities e ON e.guild_id = h.guild_id"
+                " AND e.campaign_id = h.campaign_id AND e.id = h.entity_id"
+                " WHERE h.guild_id = %s AND h.campaign_id = %s GROUP BY 1",
+                scope.ids,
+            )
+            heard = tuple(
+                HeardCount(r["entity_id"], int(r["times"]), row_int(r, "last_at"))
+                for r in await cur.fetchall()
+            )
+            cur = await conn.execute(
+                "SELECT DISTINCT session_started_at FROM memory_heard"
+                " WHERE guild_id = %s AND campaign_id = %s"
+                " ORDER BY session_started_at DESC LIMIT 2",
+                scope.ids,
+            )
+            recent = tuple(int(r["session_started_at"]) for r in await cur.fetchall())
             return LookupData(
                 scope.version,
                 tuple(_entity(r) for r in entities),
                 tuple(_alias(r) for r in aliases),
                 tuple(_correction(r) for r in corrections),
                 tuple(_relation(r) for r in relations),
+                heard,
+                recent,
             )
 
     async def corrections(self, guild_id: int, campaign_id: str) -> list[Correction]:
@@ -440,6 +464,78 @@ class MemoryStore:
             if current["played_by"] is not None and not onto_is_pc(await _load_ontology(w), type):
                 changes["played_by"] = None
             row = await w.update(ENTITIES, entity_id, changes)
+            return Written(_entity(row), w.batch)
+
+    async def rename_entity(
+        self, guild_id: int, campaign_id: str, entity_id: str, name: str, *, source: str
+    ) -> Written[Entity]:
+        """Fix how a name is spelled (the DM's call): the entry's name and the name it's
+        listened for change together, in one change (one undo)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change a name.")
+        name = clean_text(name)
+        key = lookup_key(name)
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await _entity_row(w, entity_id)
+            old_key = lookup_key(current["name"])
+            own = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, old_key])
+            clash = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, key])
+            if clash and clash[0]["secret"]:
+                # Never turn a secret name into the name everyone hears.
+                raise MemoryRuleError("Pick another spelling.")
+            row = await w.update(ENTITIES, entity_id, {"name": name})
+            if own and (not clash or clash[0]["id"] == own[0]["id"]):
+                # The same name, spelled right (listened for, and never secret).
+                await w.update(
+                    ALIASES,
+                    own[0]["id"],
+                    {
+                        "text": name,
+                        "key": key,
+                        "sound_codes": list(sound_codes(name)),
+                        "status": CONFIRMED,
+                        "secret": False,
+                    },
+                )
+            elif clash:
+                # The right spelling was already one of its other names: that becomes
+                # its name, and the misspelling stops being listened for.
+                await w.update(ALIASES, clash[0]["id"], {"text": name, "status": CONFIRMED})
+                if own:
+                    await w.update(ALIASES, own[0]["id"], {"status": REJECTED})
+            else:
+                await w.insert(
+                    ALIASES, _new_alias(w, entity_id, name, "full", CONFIRMED, False, None)
+                )
+            return Written(_entity(row), w.batch)
+
+    async def set_main_name(
+        self, guild_id: int, campaign_id: str, entity_id: str, alias_id: str, *, source: str
+    ) -> Written[Entity]:
+        """Make one of an entry's other names its main name (the DM's call, ⭐ on the
+        name card). The old main name stays one of its other names. Never a secret name:
+        the main name is the one everyone sees."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change a name.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            await _entity_row(w, entity_id)
+            alias = await w.get(ALIASES, alias_id)
+            if alias is None or alias["entity_id"] != entity_id or alias["status"] != CONFIRMED:
+                raise MemoryRuleError(NOT_FOUND)
+            if alias["secret"]:
+                raise MemoryRuleError("A secret name can't be the main name.")
+            old = await w.get(ENTITIES, entity_id)
+            assert old is not None
+            kept = await w.select(
+                ALIASES, " AND entity_id = %s AND key = %s", [entity_id, lookup_key(old["name"])]
+            )
+            if not kept:  # the old main name stays one of its other names
+                await w.insert(
+                    ALIASES, _new_alias(w, entity_id, old["name"], "full", CONFIRMED, False, None)
+                )
+            elif kept[0]["status"] != CONFIRMED:
+                await w.update(ALIASES, kept[0]["id"], {"status": CONFIRMED})
+            row = await w.update(ENTITIES, entity_id, {"name": alias["text"]})
             return Written(_entity(row), w.batch)
 
     async def confirm_entity(
@@ -547,6 +643,14 @@ class MemoryStore:
             current = await w.get(ALIASES, alias_id)
             if current is None:
                 raise MemoryRuleError(NOT_FOUND)
+            owner = await w.get(ENTITIES, current["entity_id"])
+            if (
+                owner is not None
+                and current["key"] == lookup_key(owner["name"])
+                and (secret or status == REJECTED)
+            ):
+                # The main name is the one everyone sees and DMbot listens for.
+                raise MemoryRuleError("That's the main name. Make another name the main one first.")
             changes: dict[str, Any] = {}
             if status is not None:
                 _check_choice(status, FACT_STATUSES, "alias status")
@@ -586,7 +690,22 @@ class MemoryStore:
             needs_dm = CONFIRMED in (keep["status"], gone["status"]) or keep["type"] != gone["type"]
             if needs_dm and not dm_said_same:
                 raise MemoryRuleError("Only the DM can say these two are the same.")
+            players = {keep["played_by"], gone["played_by"]} - {None}
+            if len(players) > 1:
+                raise MemoryRuleError("Those are two different players' characters.")
+            if gone["played_by"] is not None and keep["played_by"] is None:
+                # A player's character stays one, whichever name is kept.
+                await w.update(
+                    ENTITIES, keep_id, {"type": gone["type"], "played_by": gone["played_by"]}
+                )
             await _move_aliases(w, keep_id, gone_id)
+            own = await w.select(
+                ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
+            )
+            if own and own[0]["secret"]:
+                # The other entry's name was a secret one: the main name everyone sees
+                # must never be.
+                raise MemoryRuleError("A secret name can't be the main name.")
             await _move_relations(w, keep_id, gone_id)
             for table in (MENTIONS, CORRECTIONS):
                 for row in await w.select(table, " AND entity_id = %s", [gone_id]):
@@ -700,6 +819,51 @@ class MemoryStore:
             return Written(_flag(row), w.batch)
 
     # ---- mentions and corrections -------------------------------------------------------
+
+    async def add_session_heard(
+        self, guild_id: int, campaign_id: str, session_started_at: int, heard: Sequence[Heard]
+    ) -> int:
+        """Keep how often names were said in a session, written once at its end; how
+        many rows were written.
+
+        Observations, not edits: no change log (nothing to undo) and no version change,
+        so running copies don't reload (the caller drops its copy for next time). A name
+        merged meanwhile counts for the one it was merged into; removed names are
+        skipped. The caller has already left out people who stopped being recorded.
+        """
+        _check_time(session_started_at)
+        rows = [
+            h
+            for h in heard
+            if is_id(h.entity_id) and 0 < h.times <= 2**31 - 1 and 0 < h.speaker_id <= INT64_MAX
+        ]
+        if not rows:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO memory_heard"
+                " (guild_id, campaign_id, entity_id, session_started_at, speaker_id, times)"
+                " SELECT %s, %s, coalesce(e.merged_into, e.id), %s, h.speaker_id,"
+                " sum(h.times)"
+                " FROM unnest(%s::text[], %s::bigint[], %s::int[])"
+                " AS h(entity_id, speaker_id, times)"
+                " JOIN memory_entities e ON e.guild_id = %s AND e.campaign_id = %s"
+                " AND e.id = h.entity_id AND e.status IN ('proposed', 'confirmed', 'merged')"
+                " GROUP BY 3, 5"
+                " ON CONFLICT (guild_id, campaign_id, session_started_at, entity_id, speaker_id)"
+                " DO UPDATE SET times = memory_heard.times + EXCLUDED.times",
+                (
+                    guild_id,
+                    campaign_id,
+                    session_started_at,
+                    [h.entity_id for h in rows],
+                    [h.speaker_id for h in rows],
+                    [h.times for h in rows],
+                    guild_id,
+                    campaign_id,
+                ),
+            )
+            return cur.rowcount
 
     async def add_mention(
         self,

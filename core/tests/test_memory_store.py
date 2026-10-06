@@ -112,6 +112,9 @@ class Isolation(MemoryTest):
         await self.memory.add_correction(
             GUILD_A, self.c, "bell or us", action="fix", entity_id=a, source="dm"
         )
+        from dmbot.memory.models import Heard
+
+        await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, DM, 1)])
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
@@ -684,6 +687,166 @@ class Indexes(MemoryTest):
         self.assertGreater(len(rows), 5)
         missing = [(r["tbl"], r["cols"]) for r in rows if not r["indexed"]]
         self.assertEqual(missing, [])
+
+
+class HeardNames(MemoryTest):
+    """How often names were said, kept at the end of a session for hints (#126, #127)."""
+
+    async def test_counted_per_session_and_never_a_new_version(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup
+        from dmbot.memory.models import Heard
+
+        a, b = await self.add("Belleros", status=CONFIRMED), await self.add("Cerric")
+        gone = await self.add("Bellamy")
+        await self.memory.set_entity_status(GUILD_A, self.c, gone, REJECTED, source="dm")
+        version = await self.memory.version(GUILD_A, self.c)
+        kept = await self.memory.add_session_heard(
+            GUILD_A,
+            self.c,
+            1_000,
+            [Heard(a, 8, 2), Heard(a, 9, 1), Heard(b, 8, 1), Heard(gone, 8, 5), Heard(b, 8, 0)],
+        )
+        self.assertEqual(kept, 3)  # a rejected name and a zero count left out
+        self.assertEqual(await self.memory.version(GUILD_A, self.c), version)  # no reload
+        await self.memory.add_session_heard(GUILD_A, self.c, 2_000, [Heard(a, 8, 4)])
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        counts = {h.entity_id: (h.times, h.last_session_at) for h in data.heard}
+        self.assertEqual(counts, {a: (7, 2_000), b: (1, 1_000)})
+        self.assertEqual(data.recent_sessions, (2_000, 1_000))
+        self.assertIn(a, CampaignLookup.build(data).heard)
+
+    async def test_merged_names_count_for_the_one_kept(self) -> None:
+        from dmbot.memory.models import Heard
+
+        keep, gone = await self.add("Belleros", status=CONFIRMED), await self.add("Bellaros")
+        await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(gone, 8, 3)])
+        await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True)
+        await self.memory.add_session_heard(GUILD_A, self.c, 2_000, [Heard(gone, 8, 1)])
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertEqual([(h.entity_id, h.times) for h in data.heard], [(keep, 4)])
+
+    async def test_undo_still_works_after_a_name_was_said(self) -> None:
+        from dmbot.memory.models import Heard
+
+        written = await self.memory.add_entity(
+            GUILD_A, self.c, type="npc", name="Zephyr", source="dm", status=CONFIRMED
+        )
+        await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(written.value.id, 8, 2)])
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.c, written.batch)  # never refused
+        self.assertEqual((await self.memory.lookup_data(GUILD_A, self.c)).heard, ())
+        self.assertEqual(await self.count("memory_heard"), 0)
+
+    async def test_another_campaign_or_server_never_sees_them(self) -> None:
+        from dmbot.memory.models import Heard
+
+        a = await self.add("Belleros", status=CONFIRMED)
+        other = (await self.campaigns.create(GUILD_A, "Strahd", DM)).id
+        await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, 8, 1)])
+        self.assertEqual((await self.memory.lookup_data(GUILD_A, other)).heard, ())
+        # This campaign's name written under another campaign or server is skipped.
+        self.assertEqual(
+            await self.memory.add_session_heard(GUILD_A, other, 1, [Heard(a, 8, 1)]), 0
+        )
+        far = (await self.campaigns.create(GUILD_B, "Far Away", DM)).id
+        skipped = await self.memory.add_session_heard(GUILD_B, far, 1, [Heard(a, 8, 1)])
+        self.assertEqual(skipped, 0)
+        self.assertEqual(await self.count("memory_heard", GUILD_B), 0)
+
+
+class Renaming(MemoryTest):
+    async def keys(self, entity: str) -> dict[str, str]:
+        aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=entity, include_secret=True)
+        return {x.key: x.status for x in aliases}
+
+    async def test_fix_spelling_and_undo_it(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        written = await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        self.assertEqual(written.value.name, "Belleros")
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.c, written.batch)  # one change, one undo
+        entity = await self.memory.entity(GUILD_A, self.c, a)
+        assert entity is not None
+        self.assertEqual((entity.name, await self.keys(a)), ("Beleros", {"beleros": CONFIRMED}))
+
+    async def test_the_right_spelling_already_another_name_becomes_the_name(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        for text in ("Beleros", "Belleros"):
+            await self.memory.add_alias(
+                GUILD_A, self.c, a, text, kind="full", source="dm", status=CONFIRMED
+            )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})  # misspelling dropped
+
+    async def test_another_name_becomes_the_main_name(self) -> None:
+        a = await self.add("Belleros", status=CONFIRMED)
+        for text in ("Belleros", "Bell"):
+            await self.memory.add_alias(
+                GUILD_A, self.c, a, text, kind="full", source="dm", status=CONFIRMED
+            )
+        bell = next(
+            x for x in await self.memory.aliases(GUILD_A, self.c, entity_id=a) if x.key == "bell"
+        )
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_main_name(GUILD_A, self.c, a, bell.id, source="entitybot")
+        written = await self.memory.set_main_name(GUILD_A, self.c, a, bell.id, source="dm")
+        self.assertEqual(written.value.name, "Bell")
+        self.assertEqual(await self.keys(a), {"bell": CONFIRMED, "belleros": CONFIRMED})
+
+    async def test_joining_keeps_a_players_character_and_its_player(self) -> None:
+        npc = await self.add("Bell Eros", status=CONFIRMED)
+        pc = await self.add("Belleros", type="player_character", played_by=55, status=CONFIRMED)
+        await self.memory.merge(GUILD_A, self.c, npc, pc, source="dm", dm_said_same=True)
+        kept = await self.memory.entity(GUILD_A, self.c, npc)
+        assert kept is not None
+        self.assertEqual((kept.name, kept.played_by), ("Bell Eros", 55))
+        other = await self.add("Kesh", type="player_character", played_by=66, status=CONFIRMED)
+        with self.assertRaises(MemoryRuleError):  # two players' characters stay apart
+            await self.memory.merge(GUILD_A, self.c, npc, other, source="dm", dm_said_same=True)
+
+    async def test_joining_never_makes_a_secret_name_the_main_name(self) -> None:
+        a = await self.add("Belleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "the hooded stranger", kind="title", source="dm",
+            status=CONFIRMED, secret=True,
+        )  # fmt: skip
+        stranger = await self.add("the hooded stranger", status=CONFIRMED)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.merge(GUILD_A, self.c, stranger, a, source="dm", dm_said_same=True)
+        await self.memory.merge(GUILD_A, self.c, a, stranger, source="dm", dm_said_same=True)
+        self.assertEqual(
+            await self.keys(a), {"belleros": CONFIRMED, "the hooded stranger": CONFIRMED}
+        )
+        secret = await self.memory.aliases(GUILD_A, self.c, entity_id=a, include_secret=True)
+        self.assertTrue(next(x for x in secret if x.key == "the hooded stranger").secret)
+
+    async def test_the_main_name_is_never_made_secret_or_dropped(self) -> None:
+        a = await self.add("Belleros", status=CONFIRMED)
+        (own,) = await self.memory.aliases(GUILD_A, self.c, entity_id=a)
+        for change in ({"secret": True}, {"status": REJECTED}):
+            with self.assertRaises(MemoryRuleError):
+                await self.memory.update_alias(GUILD_A, self.c, own.id, source="dm", **change)
+
+    async def test_never_onto_a_secret_name_and_only_by_the_dm(self) -> None:
+        a = await self.add("Belleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A,
+            self.c,
+            a,
+            "the hooded stranger",
+            kind="title",
+            source="dm",
+            status=CONFIRMED,
+            secret=True,
+        )
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.rename_entity(GUILD_A, self.c, a, "The Hooded Stranger", source="dm")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.rename_entity(GUILD_A, self.c, a, "Bel", source="entitybot")
 
 
 class LookupInPostgres(MemoryTest):

@@ -853,16 +853,53 @@ names panel nor the speech-to-text hints can be a fixed list.
   1–4 words, exact and "fixed" spellings) and the scene-based hints, ahead of the
   Cleaner, which will reuse the matcher; (2) the name card, find and **Connect to…**;
   (3) browse by kind, add many and download all.
-- **Step 1 built (2026-10-06, `dmbot.memory.scene`):** the line matcher and the scene
-  tiers 1–3, with tier 4 as "names said earlier this session" and fill as confirmed
-  names A–Z, until the stored mentions land (next: written at the end of a session, so
-  "the last session or two", "most-heard" and "never heard yet counts as recent" can
-  rank). Lines from someone who stops being recorded stop counting at once. The fixed
-  parts of the list are prepared once per change to the names, not per clip. Until the
-  DM can add connections (step 2), the tip-of-the-tongue tier stays empty. Hints are worked
-  out for the session that heard the clip (a stopped session still finishing keeps its
-  own campaign's names). "Or a second speaker" isn't needed as a separate rule: each
-  mention fades on its own, so only a name said again stays in the scene.
+- **Step 1 built (2026-10-06, `dmbot.memory.scene`):** the line matcher and all five
+  tiers. **How often names were said is kept as counts, not per mention** (changed
+  from the `memory_mentions` idea after review measured a year of per-mention rows at
+  ~1M rows and ~400 MB per campaign, with reloads reading them all): `memory_heard`,
+  one row per name, session and speaker, counting lines that named it; written once
+  at the end of a session from people who still agree (checked again right before
+  writing); observations, not edits, so no undo entry, no reload (the session's copy
+  is dropped so the next one sees them), and Undo of adding a name still works (its
+  counts go with it). A merged-away name counts for the one it became. "Recently" is
+  this session, then the last two sessions, then names never said yet that were added
+  since then (newest first); fill is most said first (names unsaid for about six
+  months drop out), then older names never said. Lines from someone who stops being
+  recorded stop counting at once, and the speaker is kept so their counts can be
+  removed with their lines (Retention). Not yet in campaign backups. The fixed tiers
+  are prepared off the event loop, once per change to the names. Until the DM can add
+  connections (step 2), the tip-of-the-tongue tier stays empty.
+- **Step 2, first part built (2026-10-06, `dmbot.ui.name_card`, `dmbot.memory.search`):**
+  the overview (counts by kind, the waiting check, "Heard last session", "Added lately",
+  an **Open a name…** menu; buttons 🔍 Find a name, ➕ Add a name, 📝 Check new names,
+  🧑 Add a player's character), **🔍 Find a name** (the form and `/dmbot names find:`
+  with type-ahead), and the **name card** with ✏️ Fix spelling, Add another name (with
+  a secret-name field for the campaign's DMs only), Change what it is, and Remove
+  (asks first; Undo). Still to come in step 2: Edit other names, Same as…, 🧭 Connect
+  to…, and "Show all" on long sections. The type-ahead answers from the copy the
+  session already keeps (no expiry for search-only copies yet). Decided while building:
+  after DMbot's own change the copy is marked stale at once (not waiting for the change
+  notification), so the redrawn card and the next search are right; Fix spelling and
+  Add another name redraw the card in place with what changed on top; Fix spelling
+  and adding a name refuse a name another entry already has (checked against names
+  everyone may know, so the reply never reveals a secret one) and never turn a secret
+  name into the main name; Undo works only to bring back that forgotten name. A
+  connection reads the same sentence on both cards for now ("Ulfgar is a member of
+  the Frostwolf tribe"); the reversed wording ("members include Ulfgar") comes with
+  🧭 Connect to….
+- **Step 2, second part built (2026-10-06):** **Edit other names** (pick one: ⭐ make it
+  the main name, where the old main name stays one of its other names and a secret name
+  never can be; 🤫 keep it secret or 👁️ stop, for the campaign's DMs only; ✖ not this
+  name), **🔗 Same as…** (find the other name, then "Call it X" or "Call it Y"; the two
+  become one, with **Undo** on the card), **🧭 Connect to…** (pick how, from this
+  name's side or the other way round, then the other name; saved as confirmed, and a
+  **Remove a connection…** menu takes one back), and **Show all** when a section is
+  cut. Decided while building: a card groups connections by how they read from that
+  name's side ("is a member of **Frostwolf tribe**"; on the tribe's card "has as
+  members **Ulfgar**"; ally, enemy and family read the same both ways); connections the
+  DM adds are not secret for now (a 🤫 secret connection comes later); a connection that
+  breaks the usual rules (a member of a place) is still saved, flagged for the
+  after-session check.
 
 **Campaign memory rules (the ontology) (decided 2026-10-05).** EntityBot alone builds and
 maintains the ontology; there is no human graph engineer. So it is small, strict,

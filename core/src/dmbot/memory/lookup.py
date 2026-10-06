@@ -24,7 +24,17 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from dmbot.memory import notify
-from dmbot.memory.models import CONFIRMED, FIX, KEEP, Alias, Correction, Entity, Relation, name_key
+from dmbot.memory.models import (
+    CONFIRMED,
+    FIX,
+    KEEP,
+    Alias,
+    Correction,
+    Entity,
+    HeardCount,
+    Relation,
+    name_key,
+)
 from dmbot.memory.sounds import sound_codes
 
 log = logging.getLogger(__name__)
@@ -41,6 +51,10 @@ class LookupData:
     aliases: tuple[Alias, ...]  # not rejected, of live entities, secret ones included
     corrections: tuple[Correction, ...]
     relations: tuple[Relation, ...]  # live, not secret, between live entities
+    # How often and when names were said in past sessions (stored mentions), and when
+    # the last two sessions with any started: for ranking hints only.
+    heard: tuple[HeardCount, ...] = ()
+    recent_sessions: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +85,8 @@ class CampaignLookup:
     neighbours: dict[str, frozenset[str]]  # entity → entities it's related to
     # Only links the DM confirmed: what scene hints follow (docs/PLAN.md).
     confirmed_neighbours: dict[str, frozenset[str]]
+    heard: dict[str, HeardCount] = field(default_factory=dict)
+    recent_sessions: tuple[int, ...] = ()
 
     @classmethod
     def build(cls, data: LookupData) -> CampaignLookup:
@@ -123,6 +139,8 @@ class CampaignLookup:
             {k: tuple(v) for k, v in fixes.items() if k not in keep},  # keep wins
             {k: frozenset(v) for k, v in neighbours.items()},
             {k: frozenset(v) for k, v in confirmed_links.items()},
+            {h.entity_id: h for h in data.heard if h.entity_id in entities},
+            data.recent_sessions,
         )
 
     def exact(self, heard: str) -> tuple[NameEntry, ...]:
@@ -214,6 +232,13 @@ class LookupCache:
                 slot.lookup is None or event.version > slot.lookup.version
             ):
                 slot.stale = True
+
+    def mark_stale(self, guild_id: int, campaign_id: str) -> None:
+        """DMbot itself just changed this campaign's names: reload before next use,
+        without waiting for the change notification."""
+        slot = self._slots.get((guild_id, campaign_id))
+        if slot is not None:
+            slot.stale = True
 
     def mark_all_stale(self) -> None:
         """Changes may have been missed: reload every copy before its next use."""

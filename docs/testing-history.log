@@ -420,3 +420,28 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     names, names said earlier in the session, then the rest; never secret names).
     No migrations. Database backed up first; core rebuilt; "ears connected" at
     16:13:09; no errors. Ears and postgres unchanged.
+
+==============================================================================
+2026-10-06  Test 1, run 8a: DM alone, DISCARDED (owner: really bad Wi-Fi) (16:24-16:28)
+==============================================================================
+  Not scored. Recorded only for what didn't depend on audio quality, and as the first
+  live reading of heavy loss.
+  - Consent carried over (yes from run 7); "1 of 1 there opted in" (#206).
+  - Stop recording me at 16:27:45: ears dropped the DM the same second; I consent again
+    at 16:27:54: back on the list at once.
+  - /dmbot stop at 16:28:08; "Transcript download offered privately to 1 of 1" (#196)
+    a second later. No errors (26 log lines, all INFO).
+  - Audio: 515 of 1969 packets (26%), steady 23-31% across 7 pieces, none dropped
+    between ears and core: loss before the server, as bad Wi-Fi would give.
+  - Not checked: the #188 retry inside the transcript channel, the session summary
+    and the "voice cutting out" warning in the DM screen, "Check new names".
+
+==============================================================================
+2026-10-06  Server: name card deployed (server session, no test run)
+==============================================================================
+  - 18:24 UTC  development @ 81a617a: #220 (how often and when each name was heard,
+    stored per session), #223 (the name card), #226 (editing from the name card:
+    Fix spelling, Edit other names, Make it the main name, Not this name, Remove with
+    Undo, Connect to...), #215 (docs: live-test results go in these logs, not issue
+    #40). Migration 0010_memory_heard. Database backed up first; core rebuilt;
+    "ears connected" at 18:24:45; no errors. Ears and postgres unchanged.
