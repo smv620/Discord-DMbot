@@ -3,6 +3,7 @@
 TRANSCRIBER picks the engine:
 - ``whisper-local`` (default): faster-whisper on this machine's CPU or GPU. Free, private.
 - ``cloud``: any OpenAI-compatible speech-to-text API. Pay as you go; no GPU needed.
+- ``deepgram``: Deepgram Nova-3, with campaign names as keyterms (#170). Pay as you go.
 - ``none``: no transcription (capture checks only).
 """
 
@@ -12,9 +13,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
-Engine = Literal["whisper-local", "cloud", "none"]
-ENGINES: tuple[Engine, ...] = ("whisper-local", "cloud", "none")
+Engine = Literal["whisper-local", "cloud", "deepgram", "none"]
+ENGINES: tuple[Engine, ...] = ("whisper-local", "cloud", "deepgram", "none")
+# Engines that send players' voices to another company (the consent message says so).
+OUTSIDE_ENGINES: frozenset[Engine] = frozenset({"cloud", "deepgram"})
 DEFAULT_CLOUD_URL = "https://api.openai.com/v1/audio/transcriptions"
+DEFAULT_DEEPGRAM_URL = "https://api.deepgram.com/v1/listen"
 
 
 class TranscriptionConfigError(ValueError):
@@ -34,6 +38,15 @@ class TranscriptionSettings:
     cloud_url: str = DEFAULT_CLOUD_URL
     cloud_api_key: str = field(default="", repr=False)
     cloud_model: str = "whisper-1"
+    # deepgram
+    deepgram_api_key: str = field(default="", repr=False)
+    deepgram_model: str = "nova-3"
+    deepgram_url: str = DEFAULT_DEEPGRAM_URL
+
+    @property
+    def sends_audio_out(self) -> bool:
+        """True if players' voices go to another company to be turned into text."""
+        return self.engine in OUTSIDE_ENGINES
 
 
 def _language(value: str) -> str:
@@ -68,6 +81,9 @@ def load_transcription_settings(env: Mapping[str, str]) -> TranscriptionSettings
         cloud_url=get("CLOUD_STT_URL", DEFAULT_CLOUD_URL),
         cloud_api_key=get("CLOUD_STT_API_KEY", ""),
         cloud_model=get("CLOUD_STT_MODEL", "whisper-1"),
+        deepgram_api_key=get("DEEPGRAM_API_KEY", ""),
+        deepgram_model=get("DEEPGRAM_MODEL", "nova-3"),
+        deepgram_url=get("DEEPGRAM_LISTEN_URL", DEFAULT_DEEPGRAM_URL),
     )
     if settings.engine == "cloud" and not settings.cloud_api_key:
         raise TranscriptionConfigError(
@@ -75,4 +91,12 @@ def load_transcription_settings(env: Mapping[str, str]) -> TranscriptionSettings
         )
     if settings.engine == "cloud" and not settings.cloud_url.startswith("https://"):
         raise TranscriptionConfigError("CLOUD_STT_URL must start with https:// to protect audio.")
+    if settings.engine == "deepgram" and not settings.deepgram_api_key:
+        raise TranscriptionConfigError(
+            "TRANSCRIBER=deepgram needs DEEPGRAM_API_KEY (from your Deepgram account)."
+        )
+    if settings.engine == "deepgram" and not settings.deepgram_url.startswith("https://"):
+        raise TranscriptionConfigError(
+            "DEEPGRAM_LISTEN_URL must start with https:// to protect audio."
+        )
     return settings

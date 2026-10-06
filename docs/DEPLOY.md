@@ -11,7 +11,7 @@ Vultr, AWS Lightsail, …). Pick **Ubuntu 24.04 LTS**.
 
 | Transcription | Suggested size | Notes |
 |---|---|---|
-| `TRANSCRIBER=cloud` or `none` | 1–2 vCPU, 2 GB RAM | Cheapest. Build with `CORE_EXTRAS=dev`. |
+| `TRANSCRIBER=deepgram`, `cloud` or `none` | 1–2 vCPU, 2 GB RAM | Cheapest. Build with `CORE_EXTRAS=dev`. |
 | `whisper-local`, model `small` | 4+ vCPU, 8 GB RAM | Works for a typical table; a few seconds of delay. Prefer dedicated CPU over shared. |
 | `whisper-local`, `large-v3`/`turbo` | NVIDIA GPU server | Best accuracy; costs much more. Needs the NVIDIA container toolkit (not covered here). |
 

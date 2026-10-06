@@ -97,12 +97,18 @@ def confirmed_text(server: str, granted_at: int) -> str:
     )
 
 
-def reminder_text(server: str, voice: str | None, granted_at: int) -> str:
+# Short form for the weekly reminder, so people who agreed before the server switched
+# to an outside service still hear about it (#170; the terms version is #35).
+OUTSIDE_NOTE = "Your voice is sent to another company to be turned into text."
+
+
+def reminder_text(server: str, voice: str | None, granted_at: int, *, cloud: bool = False) -> str:
     where = f"**{_plain(voice)}** on " if voice else ""
+    outside = f" {OUTSIDE_NOTE}" if cloud else ""
     return (
         f"🎙️ DMbot is recording you in {where}**{_plain(server)}**. Anyone in this server "
-        f"can read what it writes down. You said yes on {_date(granted_at)}. Press 🛑 below "
-        "to stop any time."
+        f"can read what it writes down.{outside} You said yes on {_date(granted_at)}. "
+        "Press 🛑 below to stop any time."
     )
 
 

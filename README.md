@@ -146,7 +146,8 @@ Pick one with `TRANSCRIBER` in `.env`:
 | Engine | Cost | Needs | Notes |
 |---|---|---|---|
 | `whisper-local` (default) | Free | `pip install -e ".[whisper]"`; a strong CPU or an NVIDIA GPU | Audio never leaves your server. Model downloads on first run. |
-| `cloud` | Pay per minute of speech | `CLOUD_STT_API_KEY` | Any OpenAI-compatible speech-to-text API. Best for servers without a GPU. |
+| `deepgram` | Pay per minute of speech | `DEEPGRAM_API_KEY` | Deepgram Nova-3. Sends the names DMbot expects as hints (keyterms); in testing it got 23 of 24 D&D names right, against 19 for local Whisper. Best for servers without a GPU. |
+| `cloud` | Pay per minute of speech | `CLOUD_STT_API_KEY` | Any OpenAI-compatible speech-to-text API. |
 | `none` | Free | — | Capture checks only, no text. |
 
 On a CPU-only server use `WHISPER_MODEL=small` (or `base` if it falls behind). With an
@@ -154,8 +155,9 @@ NVIDIA GPU use `large-v3` or `turbo`. The default compute type (`auto`) picks th
 precision for your hardware. If transcription falls behind, DMbot warns you in
 the DM screen; the **Status** button in `/dmbot help` shows the backlog.
 
-When `TRANSCRIBER=cloud`, players are told in the consent message (and by `/consent
-give`) that their voice clips go to an outside service.
+When `TRANSCRIBER=deepgram` or `cloud`, players are told in the consent message (and by
+`/consent give`) that their voice clips go to an outside service, and the weekly reminder
+says so too, so people who agreed before the switch hear about it.
 
 ## Commands
 

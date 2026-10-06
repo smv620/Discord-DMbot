@@ -364,7 +364,7 @@ class DMBot(commands.AutoShardedBot):
             voice = self.get_channel(table.voice_channel_id)
             voice_name = voice.name if isinstance(voice, discord.abc.GuildChannel) else None
             dm_name = self.name_of(gid, table.dm_user_id)
-            cloud = self.settings.transcription.engine == "cloud"
+            cloud = self.settings.transcription.sends_audio_out
             dms_off: list[str] = []
             failed: list[str] = []
             for member in people:
@@ -374,7 +374,8 @@ class DMBot(commands.AutoShardedBot):
                 granted = times.get(member.id)
                 server = member.guild.name
                 if granted is not None and self.consent.has_consent(gid, member.id):
-                    text, view = reminder_text(server, voice_name, granted), stop_view(gid)
+                    text = reminder_text(server, voice_name, granted, cloud=cloud)
+                    view = stop_view(gid)
                 else:
                     text = request_text(server, voice=voice_name, dm=dm_name, cloud=cloud)
                     view = request_view(gid)
@@ -1110,7 +1111,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
         guild.name,
         voice=voice.name if isinstance(voice, discord.abc.GuildChannel) else None,
         dm=bot.name_of(guild.id, table.dm_user_id) if table else None,
-        cloud=bot.settings.transcription.engine == "cloud",
+        cloud=bot.settings.transcription.sends_audio_out,
     )
     await interaction.followup.send(text, view=request_view(guild.id), ephemeral=True)
 

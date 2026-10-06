@@ -46,6 +46,43 @@ class TranscriptionConfigTests(unittest.TestCase):
         )
         self.assertEqual((s.engine, s.cloud_api_key, s.cloud_model), ("cloud", "k", "m"))
 
+    def test_deepgram_needs_key(self) -> None:
+        with self.assertRaisesRegex(TranscriptionConfigError, "DEEPGRAM_API_KEY"):
+            load_transcription_settings({"TRANSCRIBER": "deepgram"})
+
+    def test_deepgram_requires_https(self) -> None:
+        with self.assertRaisesRegex(TranscriptionConfigError, "https"):
+            load_transcription_settings(
+                {
+                    "TRANSCRIBER": "deepgram",
+                    "DEEPGRAM_API_KEY": "k",
+                    "DEEPGRAM_LISTEN_URL": "http://x",
+                }
+            )
+
+    def test_deepgram_settings_and_defaults(self) -> None:
+        s = load_transcription_settings({"TRANSCRIBER": "deepgram", "DEEPGRAM_API_KEY": "k"})
+        self.assertEqual(
+            (s.engine, s.deepgram_api_key, s.deepgram_model), ("deepgram", "k", "nova-3")
+        )
+        self.assertEqual(s.deepgram_url, "https://api.deepgram.com/v1/listen")
+        blank = load_transcription_settings(
+            {
+                "TRANSCRIBER": "deepgram",
+                "DEEPGRAM_API_KEY": "k",
+                "DEEPGRAM_MODEL": " ",
+                "DEEPGRAM_LISTEN_URL": "",
+            }
+        )
+        self.assertEqual(
+            (blank.deepgram_model, blank.deepgram_url), (s.deepgram_model, s.deepgram_url)
+        )
+
+    def test_the_bakeoff_key_alone_doesnt_switch_engines(self) -> None:
+        s = load_transcription_settings({"DEEPGRAM_API_KEY": "k"})
+        self.assertEqual(s.engine, "whisper-local")
+        self.assertFalse(s.sends_audio_out)
+
     def test_errors_surface_through_main_settings(self) -> None:
         with self.assertRaises(ConfigError):
             load_settings(

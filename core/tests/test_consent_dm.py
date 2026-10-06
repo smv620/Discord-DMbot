@@ -64,6 +64,9 @@ def test_reminder_is_short_and_shows_the_date() -> None:
     assert "🛑" in text and text.count("\n") == 0
     # Also reaches people who said yes before the whole server could read it (#35).
     assert "Anyone in this server can read what it writes down" in text
+    assert c.OUTSIDE_NOTE not in text  # local Whisper keeps voices on the server
+    outside = c.reminder_text("Dragon Club", "table", 1_760_000_000, cloud=True)
+    assert c.OUTSIDE_NOTE in outside and outside.count("\n") == 0
 
 
 def test_unreachable_note_tells_dms_off_from_other_failures() -> None:
@@ -249,6 +252,17 @@ class ConsentDMTests(DatabaseTest):
         del self.consent.granted_times  # the database is back
         await self.voice_update(self.player, None, self.voice)
         self.player.send.assert_awaited_once()
+
+    async def test_deepgram_is_mentioned_in_the_message_and_reminder(self) -> None:
+        self.bot.settings = Settings(
+            discord_token="t",
+            ears_secret="s",
+            transcription=TranscriptionSettings(engine="deepgram", deepgram_api_key="k"),
+        )
+        await self.consent.grant(GUILD, PLAYER)
+        await self.joined()
+        assert c.CLOUD_NOTE in self.sent_text(self.dm)  # the question
+        assert c.OUTSIDE_NOTE in self.sent_text(self.player)  # the reminder
 
     async def test_cloud_transcription_is_mentioned_in_the_message(self) -> None:
         self.bot.settings = Settings(
