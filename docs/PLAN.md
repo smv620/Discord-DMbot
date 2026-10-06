@@ -733,7 +733,13 @@ names panel nor the speech-to-text hints can be a fixed list.
   (server and campaign), never trusted from a button or a typed value. **Secret names
   and secret connections are shown, searched and downloaded only for the campaign's
   DMs:** a server manager who isn't one of its DMs gets the panel, cards, browsing and
-  download without them (they may be at the table).
+  download without them (they may be at the table). **And only in the campaign's DM
+  screen channel** (decided 2026-10-06, after a live test): the replies are private
+  everywhere, but a DM running `/dmbot names` in a channel players read (the transcript
+  channel, say) is easy to see over a shoulder or on a shared screen. Elsewhere the
+  panel and cards say "🤫 Secret names are hidden here. See and add them in
+  #dm-screen." The NPC channel joins once it exists, only when the campaign's
+  visibility is private.
 - **`/dmbot names` becomes an overview and a search, not a list.** Discord allows 2,000
   characters per message, 25 choices per menu and 5 fields per form, so:
   - **Overview, about 15 lines:** "🧠 **412 names**: 212 NPCs, 87 places, 41 groups, 72

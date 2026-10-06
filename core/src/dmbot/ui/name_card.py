@@ -57,6 +57,7 @@ from dmbot.ui.names import (
     already_known,
     changed,
     known_as,
+    secrets_elsewhere,
     sees_secrets,
     split_names,
 )
@@ -230,7 +231,7 @@ async def show_card(
     names = await _names(interaction, campaign)
     if names is None:
         return
-    secrets = sees_secrets(campaign, interaction.user.id)
+    secrets = sees_secrets(campaign, interaction)
     connections = await memory.relations(
         campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=secrets
     )
@@ -239,7 +240,10 @@ async def show_card(
     if entity is not None and entity.played_by is not None:
         player = _bot(interaction).name_of(campaign.guild_id, entity.played_by)
     note = cut(note, NOTE_MAX) if note else None
-    limit = CARD_MAX - (len(note) + 2 if note else 0)
+    where = secrets_elsewhere(campaign, interaction)
+    if where and not any(e.entity_id == entity_id and e.secret for e in names.names):
+        where = None  # nothing hidden on this card
+    limit = CARD_MAX - (len(note) + 2 if note else 0) - (len(where) + 1 if where else 0)
     text = card_text(
         names, entity_id, connections, secrets=secrets, player=player, full=full, limit=limit
     )
@@ -254,6 +258,8 @@ async def show_card(
         e.entity_id == entity_id and e.confirmed and e.key != own and (secrets or not e.secret)
         for e in names.names
     )
+    if where:
+        text = f"{text}\n{where}"
     if note:
         text = f"{note}\n\n{text}"
     view = NameCard(campaign.id, entity_id, others=others, longer=longer)
@@ -347,7 +353,7 @@ class NameCard(_Menu):
         memory = _memory(interaction)
         if names is None or memory is None:
             return
-        secrets = sees_secrets(campaign, interaction.user.id)
+        secrets = sees_secrets(campaign, interaction)
         removable = []
         for r in await memory.relations(
             campaign.guild_id,
@@ -379,7 +385,7 @@ class NameCard(_Menu):
         found = await _current(interaction, self.campaign_id, self.entity_id)
         if found:
             self.origin = None  # the form's answer replaces this message; cancel keeps it
-            secrets = sees_secrets(found[0], interaction.user.id)
+            secrets = sees_secrets(found[0], interaction)
             await interaction.response.send_modal(
                 AnotherNameForm(self.campaign_id, self.entity_id, found[1], secrets=secrets)
             )
@@ -406,7 +412,7 @@ class NameCard(_Menu):
                 campaign.guild_id,
                 campaign.id,
                 entity_id=self.entity_id,
-                include_secret=sees_secrets(campaign, interaction.user.id),
+                include_secret=sees_secrets(campaign, interaction),
             )
             if a.key != own
         ]
@@ -483,7 +489,7 @@ class AnotherNameForm(discord.ui.Modal, title="Add another name"):
         if found is None or memory is None:
             return
         campaign, name = found
-        secret_ok = sees_secrets(campaign, interaction.user.id)
+        secret_ok = sees_secrets(campaign, interaction)
         plain = split_names(self.other.value)
         hidden = split_names(self.secret.value) if secret_ok else []
         if not plain and not hidden:
@@ -696,7 +702,7 @@ async def _other_names(
             campaign.guild_id,
             campaign.id,
             entity_id=entity_id,
-            include_secret=sees_secrets(campaign, interaction.user.id),
+            include_secret=sees_secrets(campaign, interaction),
         )
         if a.status == CONFIRMED and a.key != own
     ]
@@ -728,7 +734,7 @@ class OtherNames(_Menu):
             return
         campaign, alias, name = found
         self.stop()
-        secrets = sees_secrets(campaign, interaction.user.id)
+        secrets = sees_secrets(campaign, interaction)
         hidden = (
             " 🤫 Secret: hidden from players, so it can't be the main name." if alias.secret else ""
         )
@@ -807,7 +813,7 @@ class OneName(_Menu):
         if found is None or memory is None:
             return
         campaign, alias, _ = found
-        if not sees_secrets(campaign, interaction.user.id):
+        if not sees_secrets(campaign, interaction):
             await _tell(interaction, "Only the campaign's DMs can change secret names.")
             return
         try:
@@ -899,7 +905,7 @@ async def show_picks(
         return
     matches = [
         m
-        for m in find(names, typed, secrets=sees_secrets(campaign, interaction.user.id))
+        for m in find(names, typed, secrets=sees_secrets(campaign, interaction))
         if m.entity_id != entity_id
     ]
     options = [discord.SelectOption(label=_label(names, m), value=m.entity_id) for m in matches]
@@ -1088,7 +1094,7 @@ class Connect(_Menu):
             campaign.id,
             entity_id=self.entity_id,
             confirmed_only=True,
-            include_secret=sees_secrets(campaign, interaction.user.id),
+            include_secret=sees_secrets(campaign, interaction),
         )
         relation = next((r for r in mine if r.id == wanted), None)
         if relation is None:
@@ -1185,7 +1191,7 @@ async def show_matches(interaction: discord.Interaction, campaign_id: str, typed
     names = await _names(interaction, campaign)
     if names is None:
         return
-    matches = find(names, typed, secrets=sees_secrets(campaign, interaction.user.id))
+    matches = find(names, typed, secrets=sees_secrets(campaign, interaction))
     if len(matches) == 1:
         await show_card(interaction, campaign.id, matches[0].entity_id)
         return
@@ -1236,9 +1242,7 @@ class Matches(_Menu):
 
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign:
-            form = AddNameForm(
-                self.campaign_id, secrets=sees_secrets(campaign, interaction.user.id)
-            )
+            form = AddNameForm(self.campaign_id, secrets=sees_secrets(campaign, interaction))
             form.name.default = self.typed[:NAME_LIMIT]
             await interaction.response.send_modal(form)
 
@@ -1277,7 +1281,7 @@ async def find_typeahead(
     except Exception:
         log.exception("Name type-ahead failed")
         return []
-    secrets = sees_secrets(campaign, interaction.user.id)
+    secrets = sees_secrets(campaign, interaction)
     if current.strip():
         matches = find(names, current, secrets=secrets)
     else:

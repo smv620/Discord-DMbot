@@ -61,8 +61,10 @@ class NamesTest(DatabaseTest):
             memory=self.memory,
         )
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        # Secret names show only in the DM screen; tests press buttons there by default.
+        self.campaign = await self.campaigns.set_dm_screen(GUILD, self.campaign.id, SCREEN)
 
-    def it(self, user_id: int = DM) -> Any:
+    def it(self, user_id: int = DM, channel_id: int = SCREEN) -> Any:
         user = MagicMock(spec=discord.Member)
         user.id = user_id
         user.guild_permissions = (
@@ -74,6 +76,7 @@ class NamesTest(DatabaseTest):
             client=self.bot,
             guild=SimpleNamespace(id=GUILD),
             guild_id=GUILD,
+            channel_id=channel_id,
             user=user,
             response=FakeResponse(),
             followup=SimpleNamespace(send=AsyncMock()),
@@ -173,6 +176,20 @@ class NameCards(NamesTest):
         self.assertIn("**🤫 Secret:** the hooded stranger", text)
         manager = await self.card(MANAGER)
         self.assertNotIn("hooded", manager)  # a server manager may be at the table
+
+    async def test_secret_names_stay_in_the_dm_screen(self) -> None:
+        from dmbot.ui import name_card
+
+        self.fresh()
+        it = self.it(channel_id=99)  # the DM, in a channel players read
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        text = it.response.sent[0][0]
+        self.assertNotIn("hooded", text)
+        self.assertIn(f"See and add them in <#{SCREEN}>", text)
+        self.assertEqual(await name_card.find_typeahead(self.it(channel_id=99), "hooded"), [])
+        it = self.it(channel_id=99)
+        await ui.NamesHome(self.campaign.id, 0)._add(it)
+        self.assertNotIn(it.response.modal.secret, it.response.modal.children)
 
     async def test_fix_spelling_changes_the_name_it_listens_for(self) -> None:
         from dmbot.ui import name_card

@@ -104,10 +104,32 @@ def split_names(raw: str) -> list[str]:
     return out
 
 
-def sees_secrets(campaign: Campaign, user_id: int) -> bool:
-    """Secret names are for the campaign's DMs only: a server manager who isn't one of
-    them may be at the table. They never see, search, add or even hear of one."""
-    return user_id in campaign.dm_user_ids
+def in_dm_screen(campaign: Campaign, interaction: discord.Interaction) -> bool:
+    """Used in the campaign's DM screen channel (or a thread in it)."""
+    screen = campaign.dm_screen_channel_id
+    if screen is None:
+        return False
+    channel = getattr(interaction, "channel", None)
+    return screen in (getattr(interaction, "channel_id", None), getattr(channel, "parent_id", None))
+
+
+def sees_secrets(campaign: Campaign, interaction: discord.Interaction) -> bool:
+    """Secret names are for the campaign's DMs only, and only in its DM screen channel.
+    A server manager who isn't one of its DMs may be at the table, and a reply in a
+    shared channel is easy to see over a shoulder or on a shared screen (replies are
+    private either way). Elsewhere they're never shown, searched, added or hinted at."""
+    return interaction.user.id in campaign.dm_user_ids and in_dm_screen(campaign, interaction)
+
+
+def secrets_elsewhere(campaign: Campaign, interaction: discord.Interaction) -> str | None:
+    """For one of the campaign's DMs outside the DM screen: where secret names are."""
+    if interaction.user.id not in campaign.dm_user_ids or in_dm_screen(campaign, interaction):
+        return None
+    if campaign.dm_screen_channel_id is None:
+        return "🤫 Secret names show only in the DM screen channel, once the campaign has one."
+    return (
+        f"🤫 Secret names are hidden here. See and add them in <#{campaign.dm_screen_channel_id}>."
+    )
 
 
 def changed(interaction: discord.Interaction, campaign: Campaign) -> None:
@@ -266,7 +288,7 @@ class NamesHome(_Menu):
     async def _add(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign:
-            secrets = sees_secrets(campaign, interaction.user.id)
+            secrets = sees_secrets(campaign, interaction)
             await interaction.response.send_modal(AddNameForm(self.campaign_id, secrets=secrets))
 
     async def _character(self, interaction: discord.Interaction) -> None:
@@ -295,6 +317,9 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
         return
     waiting = len(await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED]))
     text, shown = home_text(names, campaign, waiting)
+    where = secrets_elsewhere(campaign, interaction)
+    if where:
+        text = f"{text}\n{where}"
     await _send(interaction, text, NamesHome(campaign.id, waiting, shown))
 
 
@@ -406,9 +431,7 @@ class AddNameForm(discord.ui.Modal, title="Add a name"):
         if clash is not None:
             await _tell(interaction, already_known(name, clash))
             return
-        secret = (
-            split_names(self.secret.value) if sees_secrets(campaign, interaction.user.id) else []
-        )
+        secret = split_names(self.secret.value) if sees_secrets(campaign, interaction) else []
         view = KindPicker(self.campaign_id, name, split_names(self.others.value), secret)
         await _send(interaction, f"**What is {_md(name)}?**", view)
 
