@@ -259,12 +259,12 @@ class TranscriptionPipeline:
                 )
                 text = (
                     f"⚠️ **No transcript right now:** {exc.for_dm}. DMbot still hears "
-                    f"everyone, but writes nothing down. {advice}"
+                    f"everyone who said yes, but writes nothing down. {advice}"
                 )
             else:
                 text = (
-                    "⚠️ **Writing things down stopped working.** DMbot still hears everyone, "
-                    "but no words are being written down. Whoever hosts DMbot should check "
+                    "⚠️ **Writing things down stopped working.** DMbot still hears everyone "
+                    "who said yes, but no words are being written down. Whoever hosts DMbot should check "
                     "its log. DMbot keeps trying."
                 )
             await self._alert(guild_id, text)

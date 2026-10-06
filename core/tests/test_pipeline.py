@@ -109,6 +109,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             await self.pipeline.process(utt())
         self.assertEqual(len(self.alerts), 1)
         self.assertIn("Writing things down stopped working", self.alerts[0])
+        self.assertIn("hears everyone who said yes", self.alerts[0])  # never "everyone"
         self.assertNotIn("RuntimeError", self.alerts[0])  # details stay in the log (#99)
         self.assertNotIn("engine down", self.alerts[0])
         self.assertTrue(all(text is None for _, text in self.delivered))
@@ -148,6 +149,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             await self.pipeline.process(utt())
         (alert,) = self.alerts
         self.assertIn("company's side", alert)
+        self.assertNotIn("HTTP", alert)  # no for_dm given: a plain fallback, not the log text
         self.assertNotIn(".env", alert)
 
     async def test_single_failure_no_alert(self) -> None:

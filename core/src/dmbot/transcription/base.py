@@ -39,7 +39,8 @@ class TranscriptionProblem(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.host_can_fix = host_can_fix
-        self.for_dm = for_dm or message
+        # Never the log text by default: it may name settings (#99).
+        self.for_dm = for_dm or "the speech-to-text service had a problem"
 
 
 class Transcriber(Protocol):
