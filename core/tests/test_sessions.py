@@ -648,7 +648,7 @@ class SaveAndResume(SessionTests):
         call = posted.await_args
         assert call is not None
         self.assertEqual(call.args[0], SCREEN)
-        self.assertIn("didn't reach DMbot", call.args[1])
+        self.assertIn("voice is cutting out for DMbot", call.args[1])
 
     # ---- the live transcript channel (#124) ------------------------------------
 
