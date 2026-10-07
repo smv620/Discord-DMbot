@@ -38,6 +38,8 @@ export function hoursLeftLine(
 
 export const planName = (id: PlanId): string => byId[id].name;
 
+const noFreeSlot = "Their plan is full. Ask them to pause a campaign or pick a bigger plan.";
+
 export const text = {
   heading: "My account",
   loading: "Loading your account…",
@@ -61,14 +63,17 @@ export const text = {
     "try-it-used": "You've already used Try It. Pick a plan to keep playing.",
     "has-plan": "You already have a plan. Tap Change plan to switch.",
     "payments-off": "Paying for a plan isn't open yet. Please try again soon.",
-    "already-linked": "Someone else already said they added DMbot to this server.",
+    "already-linked":
+      "Someone else already said they added DMbot here. If that's wrong, ask your server's owner for help.",
     "not-installed": "DMbot isn't in this server yet. Tap Add DMbot first.",
-    "no-free-slot": "Their plan is full. Ask them to pause a campaign or pick a bigger plan.",
+    "no-free-slot": noFreeSlot,
   } as Record<string, string>,
   install: {
     done: "Done! DMbot is in your server. In Discord, type /dmbot start to begin.",
     failed: "DMbot wasn't added. Tap Add DMbot to try again.",
-    not_allowed: "You can only add DMbot to servers you run.",
+    not_allowed: "You can only add DMbot to a server you run. Ask its owner to add DMbot.",
+    already_linked:
+      "DMbot is in your server. Someone else is listed as the one who added it.",
   } as Record<string, string>,
   signedOutNow: "You've been signed out. Tap Sign in with Discord to carry on.",
   busy: "One moment…",
@@ -114,14 +119,14 @@ export const text = {
   handOverConfirm: "Give it to them",
   handOverDone: (campaign: string, person: string): string =>
     `Done. ${campaign} now belongs to ${person}.`,
-  noFreeSlot: "Their plan is full. Ask them to pause a campaign or pick a bigger plan.",
+  noFreeSlot,
   cancel: "Cancel",
 
   // Servers
   serversHeading: "Add DMbot to a server",
-  serversNote: "These are the Discord servers you run.",
+  serversNote: "Servers you run. Tap Add DMbot to bring it to one.",
   linkServer: "This is mine",
-  linkNote: "DMbot is here, but nobody has said who added it. If you did, tap This is mine.",
+  linkNote: "DMbot is here, but we don't know who added it. If it was you, tap This is mine.",
   youAddedIt: "You added DMbot here",
   noServers: "You don't run any Discord servers. Ask a server's owner to add DMbot.",
   addTo: "Add DMbot",

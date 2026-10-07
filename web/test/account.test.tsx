@@ -144,6 +144,30 @@ describe("actions", () => {
     expect(await screen.findByText(text.install["failed"] ?? "")).toBeTruthy();
   });
 
+  it("keeps other servers' buttons free while one is busy", async () => {
+    const api = mockApi("table");
+    let release: () => void = () => {};
+    api.linkServer = () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.linkServer }));
+    await screen.findByRole("button", { name: text.busy });
+    // Quillon's Corner's Add DMbot link is still there and usable.
+    expect(
+      document.querySelector('[data-server="200000000000000002"] a')?.getAttribute("href"),
+    ).toBe("#demo-install-200000000000000002");
+    release();
+  });
+
+  it("shows the install result once, then takes it out of the address", async () => {
+    window.history.replaceState(null, "", "/account?install=done");
+    show("table", "?install=done");
+    expect(await screen.findByText(text.install["done"] ?? "")).toBeTruthy();
+    await waitFor(() => expect(window.location.search).toBe(""));
+  });
+
   it("asks for a fresh sign-in when the API wants one", async () => {
     show("table", "?install=sign_in_again");
     expect((await screen.findByRole("alert")).textContent).toBe(text.signInAgain);
