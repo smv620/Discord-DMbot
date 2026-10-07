@@ -72,11 +72,15 @@ each one uses:
 - **PyCharm session** (`session: pycharm`, on the owner's PC, when used): the same as a
   dev session, plus offline quality checks on saved test sets (EntityBot resolution,
   Transcript Cleaner accuracy).
-- **Web session** (`session: web`, cloud): planning, design, issues, reviews and code
-  changes.
-- **CloudDev** (`session: clouddev`, Claude Code in the cloud, its own clone): a dev
-  session like dev2/dev3, code only, with the cloud limits: no live server, GitHub only
-  through `gh api` (REST; GraphQL is blocked), and no deleting branches.
+- **Web session** (`session: web`, cloud): the coordinating session. Planning, design
+  decisions, `docs/PLAN.md` and this file, issue hygiene, reviewing every PR before the
+  owner merges, and the code that needs design judgement. Scope questions from any
+  session go in the issue; the web session answers there.
+- **CloudDev** (`session: clouddev`, Claude Code in the cloud, its own clone): builds
+  queued, fully written issues that need no live server; when its PR is open it takes
+  the next one without waiting for the merge. Cloud limits: no server access at all,
+  GitHub only through `gh api` (REST; GraphQL is blocked), no deleting branches, and
+  CI is its test runner (discord.py, psycopg and pytest aren't installed locally).
 
 Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
 On the server that copy is the one in Docker Compose, run by the server session.
