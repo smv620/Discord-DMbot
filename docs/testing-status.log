@@ -8,7 +8,17 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued; twin name-scan run done: cleaned 3 of 15, script 9 of 15)
+In development @ 25a5d47 (f292c48 is live; core only, rebuild core). Check:
+  - #405 (dev2, #394) pending: not merged yet (draft flag), skip until it lands.
+  - #414 (CloudDev, #393): wording. After ➕ Add a name the saved line comes first,
+    then "Wrong? Fix or remove it…"; the card's row 1 ends with 🔗 Same as… and row 2
+    starts with 🧭 Connect to…. Glance only.
+  - #410 (CloudDev, #164 part 3): after a session the log says "Deleted N change-log
+    row(s) too old to undo" (N may be 0). Record the first real N and how long it took
+    in testing-history. An Undo button older than 30 days says it's too late, plainly.
+  - #428 (dev1, #426): start-up log "Connected to N server(s)". Record N in #426
+    (count only).
+  - #420 (dev3): twin --commit; use it in container runs.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
