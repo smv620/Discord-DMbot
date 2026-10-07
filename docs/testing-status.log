@@ -8,7 +8,9 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued)
+- PR #487 (#476): memory facts touching an entry now load in a fixed order, so flags are
+  made in the same order every time. Deploy: rebuild core. Check: after a session, the
+  DM screen's flags look as before (no live change expected; the fix is for a test).
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
