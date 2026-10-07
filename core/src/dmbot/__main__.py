@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import sys
 
 from dotenv import find_dotenv, load_dotenv
 
+from dmbot import env_check
 from dmbot.config import ConfigError, load_settings
 from dmbot.logs import configure_logging
 
@@ -21,11 +23,14 @@ def main() -> None:
         print(f"Configuration problem: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
     configure_logging(settings.log_format, settings.log_level, settings.shards)
-    logging.getLogger("dmbot").info(
+    log = logging.getLogger("dmbot")
+    log.info(
         "Starting: shards %s of %d",
         ",".join(map(str, settings.shards.ids)),
         settings.shards.count,
     )
+    if stale := env_check.check(os.environ):
+        log.warning("%s", stale)  # setting names only, never values
 
     from dmbot.bot import run  # imported late so config errors show before discord loads
     from dmbot.db import DatabaseError

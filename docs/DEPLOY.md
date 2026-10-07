@@ -75,6 +75,11 @@ in a volume, so restarts are fast.
 | See logs | `docker compose logs -f core` (or `ears`) |
 | Status | `docker compose ps` |
 
+**After updating,** look at core's log (`docker compose logs core`). Updates never change
+your `.env`, so if `.env.example` gained new settings, the log names them at start-up
+("Your .env is missing …"). Copy those lines into `.env` (blank keeps the default) and
+run `docker compose up -d`.
+
 The containers restart automatically after a crash or a server reboot. A game that was
 running picks up where it left off: DMbot rejoins the voice channel and posts a note in
 the DM screen. A few seconds of speech during the restart can't be recovered.
