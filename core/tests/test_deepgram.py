@@ -1,8 +1,8 @@
 """Deepgram Nova-3 engine (#170) against a local fake of Deepgram's pre-recorded API."""
 
 import asyncio
+import math
 import unittest
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -147,45 +147,79 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text, "Welcome to Bryn Shander.")
         self.assertEqual(self.hits, 2)
 
-    async def busy_once(self, retry_after: str | None) -> tuple[str | None, list[float]]:
-        """One 429 with this Retry-After, then the usual answer. Returns the text and
-        the waits DMbot made."""
-        self.replies = [(429, {"err_msg": "slow down"})]
+    async def busy_once(
+        self, retry_after: str | None, status: int = 429
+    ) -> tuple[str | None, list[float]]:
+        """One busy reply with this Retry-After, then the usual answer. Returns the text
+        and the waits DMbot made (without really waiting)."""
+        self.replies = [(status, {"err_msg": "slow down"})]
         self.retry_after = retry_after
+        return await self.transcribe_counting_waits()
+
+    async def transcribe_counting_waits(self) -> tuple[str | None, list[float]]:
         waits: list[float] = []
 
         async def no_wait(seconds: float) -> None:
             waits.append(seconds)
 
-        # Only deepgram's view of asyncio: the test server keeps the real one.
-        fake = SimpleNamespace(sleep=no_wait, get_running_loop=asyncio.get_running_loop)
-        with patch.object(dg, "asyncio", fake):
+        with patch.object(dg, "_sleep", no_wait):
             return await self.t.transcribe(clip(), []), waits
 
     async def test_waits_as_long_as_deepgram_asks(self) -> None:
-        text, waits = await self.busy_once("2")
-        self.assertEqual((text, waits, self.hits), ("Welcome to Bryn Shander.", [2.0], 2))
+        for status in (429, 503):
+            self.hits = 0
+            with self.subTest(status):
+                text, waits = await self.busy_once("2", status)
+                self.assertEqual((text, self.hits), ("Welcome to Bryn Shander.", 2))
+                self.assertEqual(len(waits), 1)
+                self.assertAlmostEqual(waits[0], 2.0, places=1)
+                # Answered: the next clip doesn't wait.
+                self.assertEqual(await self.transcribe_counting_waits(), (text, []))
 
     async def test_usual_pause_without_a_usable_retry_after(self) -> None:
         for value in (None, "Wed, 21 Oct 2026 07:28:00 GMT", "nan"):
-            self.hits = 0
             with self.subTest(value):
                 _, waits = await self.busy_once(value)
                 self.assertEqual(waits, [dg.RETRY_DELAY_S])
 
-    async def test_no_retry_when_the_wait_would_run_past_the_clip(self) -> None:
-        # A 0.1 s clip has the minimum budget (10 s): 30 s plus another try can't fit.
-        with self.assertRaises(DeepgramError) as ctx:
+    async def test_a_long_wait_fails_the_clip_at_once(self) -> None:
+        # One worker writes for every table: waiting 30 s would hold them all up.
+        for value in ("30", "inf"):
+            self.hits = 0
+            self.t._busy_until = 0.0
+            with self.subTest(value), self.assertRaises(DeepgramError) as ctx:
+                await self.busy_once(value)
+            self.assertEqual(self.hits, 1)
+            self.assertEqual(ctx.exception.for_dm, dg.BUSY)
+            self.assertFalse(ctx.exception.host_can_fix)
+
+    async def test_later_clips_respect_the_wait_without_asking_again(self) -> None:
+        with self.assertRaises(DeepgramError):
             await self.busy_once("30")
-        self.assertEqual(self.hits, 1)  # said at once, not after the budget runs out
-        self.assertIn("busy", str(ctx.exception))
-        self.assertFalse(ctx.exception.host_can_fix)
+        self.assertEqual(self.hits, 1)
+        with self.assertRaises(DeepgramError) as ctx:
+            await self.transcribe_counting_waits()  # well inside the 30 s
+        self.assertEqual(self.hits, 1)  # no request sent
+        self.assertEqual(ctx.exception.for_dm, dg.BUSY)
+
+    async def test_busy_twice_says_busy(self) -> None:
+        self.reply = (429, {"err_msg": "slow down"})
+        with (
+            patch("dmbot.transcription.deepgram.RETRY_DELAY_S", 0),
+            self.assertRaises(DeepgramError) as ctx,
+        ):
+            await self.t.transcribe(clip(), [])
+        self.assertEqual(self.hits, 2)
+        self.assertEqual(ctx.exception.for_dm, dg.BUSY)  # the same words either way
 
     def test_retry_after_parsing(self) -> None:
         self.assertEqual(dg.retry_after_s(" 3 "), 3.0)
         self.assertEqual(dg.retry_after_s("0.5"), 0.5)
+        self.assertEqual(dg.retry_after_s("0"), 0.0)
         self.assertEqual(dg.retry_after_s("-4"), 0.0)
+        self.assertEqual(dg.retry_after_s("inf"), math.inf)
         self.assertIsNone(dg.retry_after_s(None))
+        self.assertIsNone(dg.retry_after_s("nan"))
         self.assertIsNone(dg.retry_after_s("soon"))
 
     async def test_gives_up_after_second_failure(self) -> None:

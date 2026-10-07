@@ -255,7 +255,8 @@ class TranscriptionPipeline:
                     "Whoever hosts DMbot needs to check its speech-to-text settings, then "
                     "restart it."
                     if exc.host_can_fix
-                    else "This is on the speech-to-text company's side; DMbot keeps trying."
+                    else "This is on the speech-to-text company's side. You don't need to do "
+                    "anything: DMbot keeps trying and tells you when it works again."
                 )
                 text = (
                     f"⚠️ **No transcript right now:** {exc.for_dm}. DMbot still hears "

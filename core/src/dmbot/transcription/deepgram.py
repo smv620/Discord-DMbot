@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from typing import Any
 
 import aiohttp
@@ -20,7 +21,6 @@ import aiohttp
 from dmbot.audio.segmenter import Utterance
 from dmbot.transcription.base import TranscriptionProblem, clean_text, to_wav
 from dmbot.transcription.config import TranscriptionSettings
-from dmbot.transcription.pipeline import clip_budget_s
 
 log = logging.getLogger(__name__)
 
@@ -33,9 +33,15 @@ REQUEST_TIMEOUT_S = 4
 CONNECT_TIMEOUT_S = 2
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 RETRY_DELAY_S = 1.0  # when Deepgram doesn't say how long to wait (Retry-After)
+# The longest wait honoured (#173). One worker writes for every table, so a longer wait
+# would hold all of them up: the clip fails as "busy" instead.
+MAX_RETRY_WAIT_S = 3.0
+BUSY = "Deepgram is busy"
 # Reasons for the log (with settings names); DM_REASONS has the DM screen's words.
 STATUS_REASONS = {
     400: "Deepgram couldn't use the request",
+    429: BUSY,
+    503: BUSY,
     401: "Deepgram didn't accept DEEPGRAM_API_KEY",
     402: "the Deepgram account is out of credit",
     403: "Deepgram didn't accept DEEPGRAM_API_KEY",
@@ -44,7 +50,7 @@ STATUS_REASONS = {
 DM_REASONS = {401: "Deepgram didn't accept DMbot's key", 403: "Deepgram didn't accept DMbot's key"}
 # Statuses the host can fix in .env or their Deepgram account (not an outage).
 HOST_FIXABLE = frozenset({400, 401, 402, 403})
-BUSY = "Deepgram is busy"
+_sleep = asyncio.sleep  # replaced in tests
 # Deepgram rejects keyterm lists over about 500 tokens with a 400. Invented names split
 # into many tokens, so the length cap is cautious, and a 400 with keyterms is retried
 # with half of them, then none (#209).
@@ -100,7 +106,7 @@ def retry_after_s(value: str | None) -> float | None:
         seconds = float(value.strip())
     except ValueError:
         return None  # an HTTP date: rare from an API, so use the usual pause
-    return max(0.0, seconds) if seconds == seconds else None  # NaN is not a number of seconds
+    return None if math.isnan(seconds) else max(0.0, seconds)
 
 
 def request_params(settings: TranscriptionSettings, terms: list[str]) -> list[tuple[str, str]]:
@@ -141,6 +147,9 @@ class DeepgramTranscriber:
         # 400s raise at once instead of paying for the fallbacks on every clip. Any
         # answer clears it (one clip Deepgram couldn't read isn't a settings problem).
         self._400_is_settings = False
+        # Loop time until which Deepgram asked DMbot to wait (Retry-After). It applies to
+        # the whole account, so every clip waits for it instead of asking again first.
+        self._busy_until = 0.0
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -155,17 +164,12 @@ class DeepgramTranscriber:
 
     async def transcribe(self, utterance: Utterance, hints: list[str]) -> str | None:
         body = to_wav(utterance.pcm)
-        # The pipeline cancels the clip at this point; a wait Deepgram asks for that
-        # would run past it is not worth starting.
-        deadline = asyncio.get_running_loop().time() + clip_budget_s(utterance.duration_s)
         key = (utterance.guild_id, utterance.session)
         terms = keyterms(hints, self._max_keyterm_chars.get(key, MAX_KEYTERM_CHARS))
         tries = fallbacks(terms) if not self._400_is_settings else [terms]
         for n, sent in enumerate(tries):
             try:
-                text = await self._request(
-                    body, sent, fallback=n < len(tries) - 1, deadline=deadline
-                )
+                text = await self._request(body, sent, fallback=n < len(tries) - 1)
             except _KeytermsRefused:
                 # Counts only: the keyterms are players' and characters' names.
                 log.warning(
@@ -186,44 +190,55 @@ class DeepgramTranscriber:
             return text
         return None  # pragma: no cover  # the last try is never refused, it raises
 
-    async def _request(
-        self, body: bytes, terms: list[str], *, fallback: bool, deadline: float
-    ) -> str | None:
-        """One request, retried once if Deepgram is busy, after the wait it asks for
-        (Retry-After) if that and a second try fit before `deadline` (loop time). With
-        `fallback`, a 400 raises _KeytermsRefused so the caller can try fewer keyterms."""
+    async def _wait_if_busy(self) -> None:
+        """Wait out a Retry-After that's still running, or fail at once if it's too long."""
+        left = self._busy_until - asyncio.get_running_loop().time()
+        if left > MAX_RETRY_WAIT_S:
+            raise DeepgramError(f"{BUSY} (asked to wait {left:.0f} s more)", for_dm=BUSY)
+        if left > 0:
+            await _sleep(left)
+
+    async def _request(self, body: bytes, terms: list[str], *, fallback: bool) -> str | None:
+        """One request, retried once if Deepgram is busy: after the wait it asks for
+        (Retry-After, up to MAX_RETRY_WAIT_S), or RETRY_DELAY_S. With `fallback`, a 400
+        raises _KeytermsRefused so the caller can try fewer keyterms."""
         s = self._settings
         headers = {"Authorization": f"Token {s.deepgram_api_key}", "Content-Type": "audio/wav"}
         params = request_params(s, terms)
         for attempt in (1, 2):
+            await self._wait_if_busy()
+            pause = 0.0  # before the second try, when Deepgram gave no Retry-After
             try:
                 async with self._get_session().post(
                     s.deepgram_url, params=params, data=body, headers=headers
                 ) as resp:
                     if resp.status == 200:
                         self._400_is_settings = False
+                        self._busy_until = 0.0
                         return transcript(await resp.json(content_type=None))
+                    asked = retry_after_s(resp.headers.get("Retry-After"))
+                    if asked is not None and resp.status in RETRY_STATUSES:
+                        self._busy_until = asyncio.get_running_loop().time() + asked
                     if attempt == 1 and resp.status in RETRY_STATUSES:
-                        asked = retry_after_s(resp.headers.get("Retry-After"))
-                        wait = RETRY_DELAY_S if asked is None else asked
-                        left = deadline - asyncio.get_running_loop().time() - REQUEST_TIMEOUT_S
-                        if wait <= left:
-                            await asyncio.sleep(wait)
-                            continue
-                        # Too long to wait for this clip: say so now, not at the budget.
-                        raise DeepgramError(f"{BUSY} (HTTP {resp.status})", for_dm=BUSY)
-                    if resp.status == 400 and fallback:
-                        # Most likely too many keyterm tokens, not the host's settings.
-                        raise _KeytermsRefused
-                    if resp.status == 400 and not terms:
-                        self._400_is_settings = True
-                    # Status only: error bodies can echo request details.
-                    reason = STATUS_REASONS.get(resp.status, "Deepgram had a problem")
-                    raise DeepgramError(
-                        f"{reason} (HTTP {resp.status})",
-                        host_can_fix=resp.status in HOST_FIXABLE,
-                        for_dm=DM_REASONS.get(resp.status, reason),
-                    )
+                        if asked is not None and asked > MAX_RETRY_WAIT_S:
+                            # Too long to hold every table up: say so now.
+                            raise DeepgramError(f"{BUSY} (HTTP {resp.status})", for_dm=BUSY)
+                        # The wait itself happens after the reply is closed: the
+                        # Retry-After at the top of the loop, or this pause.
+                        pause = RETRY_DELAY_S if asked is None else 0.0
+                    else:
+                        if resp.status == 400 and fallback:
+                            # Most likely too many keyterm tokens, not the host's settings.
+                            raise _KeytermsRefused
+                        if resp.status == 400 and not terms:
+                            self._400_is_settings = True
+                        # Status only: error bodies can echo request details.
+                        reason = STATUS_REASONS.get(resp.status, "Deepgram had a problem")
+                        raise DeepgramError(
+                            f"{reason} (HTTP {resp.status})",
+                            host_can_fix=resp.status in HOST_FIXABLE,
+                            for_dm=DM_REASONS.get(resp.status, reason),
+                        )
             except aiohttp.ClientConnectionError as exc:
                 # A dropped or stale connection, or a slow connect: worth one more try.
                 if attempt == 1:
@@ -251,6 +266,8 @@ class DeepgramTranscriber:
                     "Deepgram sent a reply DMbot couldn't read",
                     for_dm="Deepgram sent a reply DMbot couldn't read",
                 ) from None
+            if pause:
+                await _sleep(pause)
         return None  # pragma: no cover  # loop always returns or raises
 
     async def close(self) -> None:
