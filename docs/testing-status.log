@@ -8,7 +8,21 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued)
+In development @ 040254f (f3d1088 is live; core only, rebuild core). Check:
+  - #389 (dev1, #264): /dmbot names > Add many shows 📋 Paste a list, 🔗 Paste a
+    link, 📎 Upload a file, 📄 Get the template. A Google Doc link pasted as a list
+    is read as a link and goes to the AI offer, never becomes a name; a link to a
+    private address is refused. The owner's two findings from this morning.
+  - #380 (CloudDev, #353): the names panel ends with the edit/remove hint; the menu
+    says "✏️ Edit or remove a name…"; after ➕ Add a name the card is shown.
+  - #348 (CloudDev, #164 part 5): after a session, flags that no longer apply are
+    closed (log: "closed N stale flag(s)"); a merge's Undo still works afterwards.
+  - #378 (CloudDev, #164 part 4): restore/download of a big campaign no longer
+    stalls the loop; nothing to see unless something breaks.
+  - #384 + #376 (dev3): docs/test-scripts/bakeoff-story.md and its names list (the
+    owner's test, #368); twin part 2 scores the bake-off names. On the host venv:
+    `scripts/replay docs/test-scripts/stt-bakeoff.m4a --script
+    docs/test-scripts/stt-bakeoff.md` and record the per-name score in #299.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
