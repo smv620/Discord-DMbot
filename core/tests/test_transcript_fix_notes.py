@@ -29,11 +29,22 @@ class FixNotesTest(unittest.TestCase):
         book = FixNotes()
         first, second = book.add(MIA, 1000, HEARD, fixes())
         self.assertEqual(book.line_text(first), "then Hrothgar and Belleros left")
-        self.assertIs(book.undo(second.id), second)
+        self.assertEqual(book.undo(second.id), [second])
         self.assertEqual(book.line_text(first), "then Hrothgar and Beleros left")
-        self.assertIsNone(book.undo(second.id))  # once only
+        self.assertEqual(book.undo(second.id), [])  # once only
         book.undo(first.id)
         self.assertEqual(book.line_text(first), HEARD)
+
+    def test_the_same_words_twice_in_a_line_are_one_press(self) -> None:
+        heard = "Hrothgarr and Hrothgarr roar"
+        twice = (
+            Fix(0, 9, "Hrothgarr", "Hrothgar", "a" * 32, SOUND, sure=False),
+            Fix(14, 23, "Hrothgarr", "Hrothgar", "a" * 32, SOUND, sure=False),
+        )
+        book = FixNotes()
+        first, _ = book.add(MIA, 1000, heard, twice)
+        self.assertEqual(len(book.undo(first.id)), 2)
+        self.assertEqual(book.line_text(first), heard)
 
     def test_the_message_numbers_its_lines_and_shows_what_was_undone(self) -> None:
         book = FixNotes()
@@ -41,15 +52,33 @@ class FixNotesTest(unittest.TestCase):
         book.undo(second.id)
         text = message_text(book.shown(), {MIA: "Mia"})
         self.assertIn("1. **Hrothgarr** → **Hrothgar** (Mia)", text)
-        self.assertIn("2. ~~**Beleros** → **Belleros**~~ (Mia): ↩️ kept as heard", text)
-        self.assertTrue(text.startswith("✏️ **Name fixes this scene**"))
+        self.assertIn("2. ~~Beleros → Belleros~~ (Mia): ↩️ undone", text)
+        self.assertTrue(text.startswith("✏️ **Name fixes to check**"))
+        self.assertIn("Nothing to check right now", message_text([], {}))
 
-    def test_only_the_newest_are_shown_and_undoable(self) -> None:
+    def test_numbers_never_change_meaning(self) -> None:
+        book = FixNotes()
+        for i in range(SHOWN + 3):
+            book.add(MIA, i, HEARD, fixes(first_sure=True))
+        self.assertEqual([n.number for n in book.shown()], list(range(4, SHOWN + 4)))
+        view = fix_notes_view(1234, book.shown())
+        assert view is not None
+        self.assertEqual(view.children[0].item.label, "Undo 4")  # type: ignore[attr-defined]
+
+    def test_old_notes_are_let_go(self) -> None:
         book = FixNotes()
         notes = [book.add(MIA, i, HEARD, fixes(first_sure=True))[0] for i in range(SHOWN + 2)]
-        self.assertEqual(len(book.shown()), SHOWN)
+        self.assertEqual(len(book.notes), SHOWN)
         self.assertIsNone(book.find(notes[0].id))
         self.assertIsNotNone(book.find(notes[-1].id))
+
+    def test_a_long_list_still_fits_discord(self) -> None:
+        book = FixNotes()
+        long = "_" * 200
+        for i in range(SHOWN):
+            book.add(MIA, i, long, (Fix(0, 200, long, long, "a" * 32, SOUND, sure=False),))
+        text = message_text(book.shown(), {MIA: "Mia"}, lambda t: t.replace("_", "\\_"))
+        self.assertLessEqual(len(text), 2000)
 
     def test_a_speaker_who_stops_loses_their_notes(self) -> None:
         book = FixNotes()
@@ -74,6 +103,19 @@ class FixNotesTest(unittest.TestCase):
 
 
 class RelabelTest(unittest.TestCase):
+    def test_an_earlier_line_queued_during_a_send_stays_waiting(self) -> None:
+        # #296 review: posted() took the first N lines, not the ones sent
+        stream = TranscriptStream()
+        stream.add(DEE, "Dee", "second line", 2000)
+        text, count = stream.next_message(lambda _: True) or ("", 0)
+        stream.add(MIA, "Mia", "first line", 1000)  # arrives while the message is sent
+        stream.posted(count, object(), now=1.0)
+        self.assertIn("second line", text)
+        waiting, _ = stream.next_message(lambda _: True) or ("", 0)
+        self.assertIn("first line", waiting)  # not lost
+        self.assertNotIn("second line", waiting)  # not posted twice
+        self.assertIsNone(stream.relabel(MIA, 1000, "first, fixed", 1.0))  # still waiting
+
     def test_a_waiting_line_goes_out_with_the_new_words(self) -> None:
         stream = TranscriptStream()
         stream.add(MIA, "Mia", "I saw Belleros", 1000)
@@ -87,7 +129,7 @@ class RelabelTest(unittest.TestCase):
         stream.add(DEE, "Dee", "Me too", 2000)
         _, count = stream.next_message(lambda _: True) or ("", 0)
         message = object()
-        stream.posted(count, message, 100.0)
+        stream.posted(count, message, now=100.0)
         edit = stream.relabel(MIA, 1000, "I saw Beleros", 100.0 + EDIT_WINDOW_S - 1)
         assert edit is not None
         self.assertIs(edit[0], message)
@@ -97,7 +139,8 @@ class RelabelTest(unittest.TestCase):
     def test_too_late_for_the_channel(self) -> None:
         stream = TranscriptStream()
         stream.add(MIA, "Mia", "I saw Belleros", 1000)
-        stream.posted(1, object(), 100.0)
+        stream.next_message(lambda _: True)
+        stream.posted(1, object(), now=100.0)
         self.assertIsNone(stream.relabel(MIA, 1000, "I saw Beleros", 100.0 + EDIT_WINDOW_S + 1))
 
     def test_a_waiting_line_in_the_save_buffer(self) -> None:

@@ -79,15 +79,17 @@ class TranscriptStore:
 
     async def relabel_line(
         self, guild_id: int, session_id: str, user_id: int, started_ms: int, text: str
-    ) -> None:
+    ) -> int:
         """A saved line's cleaned words changed (an Undo, #296). What was heard never
-        changes; `text` goes back to NULL when it's the same as heard."""
+        changes; `text` goes back to NULL when it's the same as heard. How many lines
+        changed (0: it wasn't saved)."""
         async with self._db.guild(guild_id) as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 "UPDATE transcript_lines SET text = NULLIF(%s, heard)"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = %s",
                 (text, session_id, user_id, started_ms),
             )
+            return cur.rowcount
 
     async def remove_lines(self, guild_id: int, session_id: str, ids: Collection[int]) -> None:
         """Take saved lines back out (someone pressed Stop while they were being saved),

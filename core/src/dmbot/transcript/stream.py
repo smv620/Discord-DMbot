@@ -112,6 +112,7 @@ class TranscriptStream:
         self._seq = 0
         self.dropped = 0  # lines thrown away because posting kept failing
         self._recent: list[_Posted] = []  # posted in the last EDIT_WINDOW_S
+        self._built: list[_Waiting] = []  # the lines in the message `next_message` built
 
     def __len__(self) -> int:
         return len(self._waiting)
@@ -154,13 +155,17 @@ class TranscriptStream:
             text, count = joined, count + 1
         if not count:
             return None
+        self._built = self._waiting[:count]
         return _cut(text, MESSAGE_MAX), count
 
-    def posted(self, count: int, ref: object | None = None, now: float = 0.0) -> None:
-        """The first `count` waiting lines went out as one message (`ref`, kept for
-        EDIT_WINDOW_S so a late fix can edit it)."""
-        items = self._waiting[:count]
-        del self._waiting[:count]
+    def posted(self, count: int, ref: object | None = None, *, now: float) -> None:
+        """The message `next_message` built went out (`ref`, kept for EDIT_WINDOW_S so a
+        late fix can edit it). Exactly those lines leave the queue: a line that started
+        earlier may have been queued ahead of them while the message was being sent."""
+        built = {id(w) for w in self._built[:count]}
+        items = [w for w in self._waiting if id(w) in built]
+        self._waiting = [w for w in self._waiting if id(w) not in built]
+        self._built = []
         self._recent = [p for p in self._recent if now - p.at <= EDIT_WINDOW_S]
         if ref is not None:
             self._recent.append(_Posted(ref, now, items))

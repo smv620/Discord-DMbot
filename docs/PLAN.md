@@ -1203,12 +1203,19 @@ consent check just made still holds:
   - **Which fixes:** a misheard word that sounds like a name DMbot only *suggested*
     (spelled at least 0.9 alike, never secret, not next to a secret name) is fixed,
     but never silently.
-  - **Where they show:** only in the DM screen, in one "✏️ Name fixes this scene"
-    message edited in place, one numbered line and one **↩️ Undo** each (the newest
-    10). Nothing about these guesses ever goes in the transcript channel.
-  - **Undo** (DM-only) puts the heard words back in that line: the stored line, a line
-    waiting to be saved or posted, and the channel message if it was posted in the last
-    ~30 s. It saves a "keep as heard" rule so the same words aren't fixed again.
+  - **Where they show:** only in the DM screen, in one "✏️ Name fixes to check" message
+    edited in place: "DMbot changed these words in the transcript but isn't sure.
+    Wrong? Press its Undo to put back what was heard." One numbered line and one
+    **↩️ Undo N** each (the newest 10). A fix keeps its number for the whole session,
+    so a number never changes meaning while the DM aims at it. A burst of fixes is one
+    edit, and if the message is deleted a new one is posted. Nothing about these
+    guesses ever goes in the transcript channel.
+  - **Undo** (DM-only) puts the heard words back in that line, and in any other place
+    in the line with the same words: the stored line (waiting for a save in progress),
+    a line waiting to be posted, and the channel message if it was posted in the last
+    ~30 s. It saves a "keep as heard" rule, and the private reply names the words:
+    "↩️ Undone. "Beleros" stays as heard: DMbot won't change it to Belleros again in
+    this campaign." **↪️ Allow again** under it takes the rule back.
   - **Consent:** if the speaker stops being recorded, their lines leave the message.
     Undo only touches their words while they're still recorded.
   - **When it closes:** at the session's end the list stays but the Undo buttons go.

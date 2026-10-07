@@ -1177,19 +1177,65 @@ class SaveAndResume(SessionTests):
     async def test_undo_puts_the_heard_words_back_and_keeps_them(self) -> None:
         table, message, memory = await self.fixed_from_a_suggestion()
         (note,) = table.fix_notes.notes
-        answer = await self.bot.undo_fix(GUILD, note.id, PLAYER)
-        self.assertIn("Only the DM", answer)
-        answer = await self.bot.undo_fix(GUILD, note.id, DM)
-        self.assertIn("Undone", answer)
+        answer, _ = await self.bot.undo_fix(GUILD, note.id, PLAYER)
+        self.assertIn("Only this campaign's DM", answer)
+        answer, allow = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn('"Hrothgarr" stays as heard', answer)
+        self.assertEqual(allow, (table.campaign_id, 3))  # "Allow again" takes it back
         self.assertEqual(memory.add_correction.await_args.kwargs["action"], "keep")
         self.assertEqual(memory.add_correction.await_args.args[2], "Hrothgarr")
         (line,) = list(table.unsaved._waiting)
         self.assertEqual(line.text, "then Hrothgarr roars")  # as heard again
         for _ in range(3):
             await asyncio.sleep(0)
-        self.assertIn("kept as heard", message.edit.await_args.kwargs["content"])
-        again = await self.bot.undo_fix(GUILD, note.id, DM)
-        self.assertIn("can't be undone", again)
+        self.assertIn("↩️ undone", message.edit.await_args.kwargs["content"])
+        again, _ = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("already undone", again)
+
+    async def test_undo_edits_the_channel_message_while_it_is_recent(self) -> None:
+        table, _, _ = await self.fixed_from_a_suggestion()
+        posted = MagicMock(edit=AsyncMock())
+
+        async def post(channel_id: int, text: str) -> Any:
+            return "posted", posted
+
+        self.bot._post_transcript = post  # type: ignore[method-assign]
+        await self.bot.flush_transcript(table)
+        (note,) = table.fix_notes.notes
+        await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("then Hrothgarr roars", posted.edit.await_args.kwargs["content"])
+
+    async def test_someone_who_stops_during_the_undo_isnt_put_back(self) -> None:
+        table, _, memory = await self.fixed_from_a_suggestion()
+        (note,) = table.fix_notes.notes
+
+        async def stop_meanwhile(*_: Any, **__: Any) -> Any:
+            await self.consent.revoke(GUILD, PLAYER)
+            return MagicMock(batch=4)
+
+        memory.add_correction.side_effect = stop_meanwhile
+        answer, _ = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("stopped being recorded", answer)
+
+    async def test_no_undo_buttons_after_the_session_ends(self) -> None:
+        table, message, _ = await self.fixed_from_a_suggestion()
+        await self.bot.stop_table(GUILD, "test")
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertIsNone(message.edit.await_args.kwargs["view"])
+        self.assertTrue(table.fix_ended)
+
+    async def test_allow_again_takes_back_the_rule(self) -> None:
+        table, _, memory = await self.fixed_from_a_suggestion()
+        memory.undo = AsyncMock()
+        self.bot.campaigns.get = AsyncMock(  # type: ignore[method-assign]
+            return_value=MagicMock(dm_user_ids=frozenset({DM}))
+        )
+        answer = await self.bot.allow_fix_again(GUILD, table.campaign_id, 3, PLAYER)
+        self.assertIn("Only this campaign's DM", answer)
+        answer = await self.bot.allow_fix_again(GUILD, table.campaign_id, 3, DM)
+        self.assertIn("may fix those words again", answer)
+        memory.undo.assert_awaited_once_with(GUILD, table.campaign_id, 3)
 
     async def test_lower_case_words_count_even_without_the_names(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
