@@ -619,3 +619,19 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   hints, the 13 new names are mostly misheard, so the scan can't find them (35 of 55
   vs 54 of 55 when all 38 names are hints, earlier today). Pre-filled matches wait for
   #394.
+
+==============================================================================
+2026-10-07  Server: deploy 8815c6a (dev1, no test run)
+==============================================================================
+  - 19:51 UTC  development @ 8815c6a: #414 (wording after ➕ Add a name; name card
+    rows, #393), #410 (undo history older than MEMORY_CHANGELOG_KEEP_DAYS, default
+    30, pruned after each session, #164 part 3), #444 (PLAN pricing, docs only).
+    #405 not merged yet (skipped). No migrations. Database backed up first (outside
+    the repo; pg_restore -l reads 19 tables); no session was live. Core rebuilt;
+    "Connected to 1 server(s)" and "ears connected"; one warning: .env was missing
+    MEMORY_CHANGELOG_KEEP_DAYS (new in .env.example).
+  - 19:52 UTC  scripts/update-env: kept 30 values, added MEMORY_CHANGELOG_KEEP_DAYS at
+    its default (30); old .env kept as a backup (mode 600, ignored by git). Core
+    restarted: "Connected to 1 server(s)", "ears connected", no warnings or errors.
+  Not yet live-tested: #414 (glance), #410 (the first "Deleted N change-log row(s)"
+  after a session: record N and how long it took).
