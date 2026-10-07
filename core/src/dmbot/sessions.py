@@ -4,14 +4,21 @@
 looks up the saved sessions for the servers on its shards and rejoins them (see
 `DMBot.resume_sessions`). Like every store, reads and writes for a server go through
 `Database.guild`, so Postgres only shows that server's row.
+
+Every save and every removal is logged at INFO with its reason (IDs only), so a row that
+goes missing can be traced from the log (#147).
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from dmbot.db import Conn, Database, row_int
+from dmbot.logs import log_context
 from dmbot.sharding import ShardSettings
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +41,7 @@ class SessionStore:
     async def save(self, session: SavedSession) -> None:
         """Record (or replace) the server's active session."""
         async with self._db.guild(session.guild_id) as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 "INSERT INTO active_sessions (guild_id, campaign_id, voice_channel_id,"
                 " screen_channel_id, started_by, started_at, notice_posted)"
                 " VALUES (%s, %s, %s, %s, %s, %s, %s)"
@@ -45,7 +52,9 @@ class SessionStore:
                 " started_by = EXCLUDED.started_by,"
                 " started_at = EXCLUDED.started_at,"
                 " notice_posted = EXCLUDED.notice_posted,"
-                " resume_count = 0, last_resumed_at = NULL",
+                " resume_count = 0, last_resumed_at = NULL"
+                # xmax is 0 only for a row this statement inserted (not one it updated).
+                " RETURNING (xmax = 0) AS inserted",
                 (
                     session.guild_id,
                     session.campaign_id,
@@ -60,6 +69,14 @@ class SessionStore:
                 "INSERT INTO live_session_guilds (guild_id) VALUES (%s)"
                 " ON CONFLICT (guild_id) DO NOTHING",
                 (session.guild_id,),
+            )
+            row = await cur.fetchone()
+        with log_context(guild_id=session.guild_id, campaign_id=session.campaign_id):
+            log.info(
+                "Session saved%s: voice channel %s, started by user %s",
+                "" if row and row["inserted"] else " in place of the one saved before",
+                session.voice_channel_id,
+                session.started_by,
             )
 
     async def get(self, guild_id: int) -> SavedSession | None:
@@ -89,10 +106,25 @@ class SessionStore:
                 (guild_id,),
             )
 
-    async def clear(self, guild_id: int) -> None:
+    async def clear(self, guild_id: int, reason: str) -> None:
+        """Forget the server's saved session. `reason` goes in the log (IDs only)."""
         async with self._db.guild(guild_id) as conn:
-            await conn.execute("DELETE FROM active_sessions WHERE guild_id = %s", (guild_id,))
-            await conn.execute("DELETE FROM live_session_guilds WHERE guild_id = %s", (guild_id,))
+            cur = await conn.execute(
+                "DELETE FROM active_sessions WHERE guild_id = %s RETURNING campaign_id",
+                (guild_id,),
+            )
+            row = await cur.fetchone()
+            cur = await conn.execute(
+                "DELETE FROM live_session_guilds WHERE guild_id = %s RETURNING guild_id",
+                (guild_id,),
+            )
+            routed = await cur.fetchone()
+        if row is not None:
+            with log_context(guild_id=guild_id, campaign_id=row["campaign_id"]):
+                log.info("Saved session removed: %s", reason)
+        elif routed is not None:
+            with log_context(guild_id=guild_id):
+                log.info("Leftover resume entry removed (no saved session): %s", reason)
 
     async def guilds_to_resume(self, shards: ShardSettings) -> list[int]:
         """Servers on these shards that had a session running. IDs only."""
