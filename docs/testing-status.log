@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-07 by dev1 (deployed f292c48; ready for run 8)
+Last updated: 2026-10-07 by dev1 (deployed b97c16c; twin runs done; ready for run 8)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -8,12 +8,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued; twin runs done 2026-10-07: hints 54/55 names, none 20/55, see history)
-  - #402 (0cc620e, dev3, #395): the twin now scores the after-session name scan.
-    Nothing to deploy; one run for dev1, the same way as the earlier twin runs:
-      scripts/replay docs/test-scripts/stt-bakeoff.m4a --script docs/test-scripts/stt-bakeoff.md --transcriber deepgram --names docs/test-scripts/bakeoff-story-names-setup.md --log
-    Check: the "cleaned, without the limit" line against the "script text" line (at most
-    9 of 15 on this script); known names suggested again; rules words suggested.
+(nothing queued; twin name-scan run done: cleaned 3 of 15, script 9 of 15)
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -27,12 +22,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: f292c48 (2026-10-07 18:34 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: b97c16c (2026-10-07 19:37 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since f292c48, ask it to redeploy first. Use a steady connection (run 8a
+      moved since b97c16c, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question

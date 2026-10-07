@@ -591,3 +591,31 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     live. Core rebuilt; "ears connected" at 18:34:34; no warnings or errors.
   Not yet live-tested: #408. Run 8's #389 checks cover it (a Google Doc is served
   gzipped, so it goes through the new unpacking).
+
+==============================================================================
+2026-10-07  Server: deploy b97c16c (dev1, no test run)
+==============================================================================
+  - 19:37 UTC  development @ b97c16c: #428 (core logs "Connected to N server(s)" once
+    at start-up, #426), #420 (session twin records the commit it replayed, #417),
+    #438 (CLAUDE.md only). No migrations, no .env or dependency changes. Database
+    backed up first (outside the repo; pg_restore -l reads 19 tables); no session was
+    live. Core rebuilt; "Connected to 1 server(s)" and "ears connected" at 19:37:45; no
+    warnings or errors. 1 server matches the #426 check (Discord's own list: 1).
+
+==============================================================================
+2026-10-07  Twin run (dev1): stt-bakeoff name scan on Deepgram, code @ b97c16c
+==============================================================================
+  As before: a throwaway container from the core image, key from compose's environment
+  (never read or printed), --names docs/test-scripts/bakeoff-story-names-setup.md.
+  names (12 hints from the setup list): 35 of 55 right   nickname "Bell" 2/2 kept
+  rules words: 12 of 12   false names: 0   everyday lines: WER 3% (2 of 68)
+  name scan, campaign knows 10 names:
+    as heard / cleaned (shown, at most 10): 3 of 15 new story names; 1 known name
+      again, 0 rules words, 4 other (8 suggested)
+    script text, heard perfectly: 9 of 15; 1 known again, 0 rules words, 0 other
+    without the limit: cleaned 3 of 15, script text 9 of 15 (the most possible)
+  Check from the queue: cleaned 3 vs script 9 of 15 (at most 9 on this script); known
+  names suggested again: 1; rules words suggested: 0. With only the 12 setup names as
+  hints, the 13 new names are mostly misheard, so the scan can't find them (35 of 55
+  vs 54 of 55 when all 38 names are hints, earlier today). Pre-filled matches wait for
+  #394.
