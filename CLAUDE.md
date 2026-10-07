@@ -62,6 +62,9 @@ each one uses:
   Transcript Cleaner accuracy).
 - **Web session** (`session: web`, cloud): planning, design, issues, reviews and code
   changes.
+- **CloudDev** (`session: clouddev`, Claude Code in the cloud, its own clone): a dev
+  session like dev2/dev3, code only, with the cloud limits: no live server, GitHub only
+  through `gh api` (REST; GraphQL is blocked), and no deleting branches.
 
 Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
 On the server that copy is the one in Docker Compose, run by the server session.
