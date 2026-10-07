@@ -8,7 +8,28 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-  - #405 (dev2, #394): not merged yet; deploy when it lands.
+In development @ 197ed7e (core only, rebuild core; web/ is not deployed anywhere yet;
+set TRANSCRIBE_WORKERS in .env, see .env.example: 3 for Deepgram). Check:
+  - #405 (dev2, #394): after a session, a suggested name that sounds like a known one
+    comes with "✅ It's X" / "➕ New name"; a known name misheard and fixed live is not
+    suggested again.
+  - #456 (dev2, #296): the DM screen gets one "✏️ Name fixes to check" message edited in
+    place, one Undo per line; Undo puts the heard words back in the stored line and in
+    the channel if within 30 s. Nothing about guesses in the transcript channel.
+  - #425 (CloudDev, #369): the owner's bulk-import test (docs/test-scripts/
+    bakeoff-story-names-setup.md): expect "Added 22 names · 4 already known · 3 look
+    like known names · 2 kinds differ. Questions below." then the two question
+    messages. Same for all 3 joins them and says how to take one back.
+  - #309 + #464 (dev1, #173): 3 transcription workers, one queue per server; the
+    status line shows per-server backlog. Retry-After windows capped at 60 s. Run 8 is
+    the live check; watch the log for "working again" churn.
+  - #436, #410 (CloudDev, #164/#347): after a session: "closed N stale flag(s)" and
+    "Deleted N change-log row(s)"; record the first real N of each.
+  - #448 (dev3): twin --lead-in-ms; run the dm-only replay with 0 and 100 and note
+    first-word errors for both in #299.
+  - #461 (WebDev, #435): new tables only (web_users, web_sessions, entitlements,
+    payment_events, try_it_used, installs). Migration 0011 runs at start; confirm it
+    applied and nothing else changed.
 
 - #425 (#369, CloudDev): core only. Check: the owner's bulk-import test,
   docs/test-scripts/bakeoff-story-names-setup.md section B: "📥 Added 22 names · 4 already
