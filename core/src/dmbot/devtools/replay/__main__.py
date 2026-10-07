@@ -106,6 +106,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--transcriber", choices=ENGINES, help="overrides TRANSCRIBER")
     parser.add_argument("--hint", action="append", default=[], help="a name hint (repeat)")
     parser.add_argument(
+        "--no-hints",
+        action="store_true",
+        help="the bake-off script sends its names as hints unless this is given",
+    )
+    parser.add_argument(
         "--silence-db",
         type=float,
         default=None,
@@ -158,9 +163,21 @@ async def main_async(args: argparse.Namespace) -> int:
     except (OSError, ValueError, audio.DecodeError) as exc:
         print(f"replay: {exc}", file=sys.stderr)
         return 2
-    silence = args.silence_db if args.silence_db is not None else audio.silence_dbfs_for(pcm)
-    cut = f"{args.speech_end_ms / 1000:g} s quieter than {silence:.0f} dBFS ends a piece"
-    pieces = list(audio.pieces(pcm, silence_dbfs=silence, speech_end_ms=args.speech_end_ms))
+    levels = audio.frame_levels(pcm)
+    silence = args.silence_db if args.silence_db is not None else audio.silence_dbfs_for(levels)
+    pieces = list(
+        audio.pieces(pcm, silence_dbfs=silence, speech_end_ms=args.speech_end_ms, levels=levels)
+    )
+    left_out_s = sum(p.end_ms - p.start_ms - len(p.frames) * audio.FRAME_MS for p in pieces)
+    cut = (
+        f"{args.speech_end_ms / 1000:g} s quieter than {silence:.0f} dBFS ends a piece: "
+        f"{len(pieces)} pieces before core's 15 s cut, {left_out_s / 1000:.0f} s of quiet "
+        "inside them left out"
+    )
+    hints = list(args.hint)
+    if isinstance(script, Bakeoff) and not args.no_hints and not hints:
+        # As the live bot sends the campaign's names: every name and rules word.
+        hints = [t.name for t in (*script.names, script.nickname, *script.rules)]
     sent_s = sum(len(piece.frames) for piece in pieces) * audio.FRAME_MS / 1000
     cost = cost_line(settings, sent_s)
     if cost:
@@ -169,7 +186,7 @@ async def main_async(args: argparse.Namespace) -> int:
         result = await replay(
             pieces,
             build_transcriber(settings),
-            hints=args.hint,
+            hints=hints,
             realtime=args.realtime,
             outside=settings.sends_audio_out,
             end_delay_ms=args.speech_end_ms,

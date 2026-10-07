@@ -67,10 +67,12 @@ def words(text: str) -> list[str]:
     text = re.sub(r"\bit is\b", "it's", text)
     text = re.sub(r"[-\u2010-\u2015]", " ", text)
     text = re.sub(r"[^\w\s']", " ", text).replace("'", "")
-    text = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", text)  # d20 -> d 20
+    # d20 -> d 20, but an ordinal ("1st", "10th") stays one word.
+    text = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])(?!(?:st|nd|rd|th)\b)", " ", text)
     out: list[str] = []
     for word in text.split():
-        out.extend(_number(int(word)) if word.isdigit() and int(word) < 100 else [word])
+        # isdecimal, not isdigit: int() can't read every digit ("²").
+        out.extend(_number(int(word)) if word.isdecimal() and int(word) < 100 else [word])
     return out
 
 

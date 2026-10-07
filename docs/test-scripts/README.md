@@ -114,7 +114,11 @@ pipeline and the same speech-to-text as the bot) and comes out scored the way th
 describes. For `stt-bakeoff.md` the record instead scores every time a campaign name is
 said (right, wrong or missing, per name), the nickname "Bell", the rules words, names
 written where none was said, and the everyday lines' word error rate. Names are scored
-wherever they land, so a name cut in half between two pieces of speech shows up as wrong.
+wherever they land; a name cut in half between two pieces of speech is counted apart
+("cut"), since live the halves arrive separately. Its names and rules words go to the engine
+as hints, as the live bot sends a campaign's names (`--no-hints` to leave them out). One
+reader takes every role, so pieces run longer and core's 15 s cut falls more often than at a
+table, where each player's speech arrives on its own.
 
 ```bash
 scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-only.md \

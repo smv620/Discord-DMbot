@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dmbot.devtools.replay.score import align, words
+from dmbot.devtools.replay.score import align, merge_splits, words
 
 # Line ranges from the script's scoring key.
 NAME_LINES = range(1, 49)
@@ -73,6 +73,8 @@ def parse_bakeoff(text: str) -> Bakeoff:
             else:
                 names.append(term)
         elif section == "name list" and line.startswith("**Rules words**"):
+            if ":" not in line:
+                raise ValueError("bake-off script: the rules words line needs a ':'")
             rules_text = [line.split(":", 1)[1]]
             in_rules = True
     listed = " ".join(rules_text).strip().rstrip(".")
@@ -96,6 +98,7 @@ class TermScore:
     right: int = 0
     wrong: list[str] = field(default_factory=list)  # what was written instead
     missing: int = 0
+    cut: int = 0  # written right, but split between two pieces of speech
 
 
 @dataclass(slots=True)
@@ -116,7 +119,13 @@ class BakeoffScore:
             out.right += s.right
             out.wrong += s.wrong
             out.missing += s.missing
+            out.cut += s.cut
         return out
+
+
+def _initial(original: str) -> str:
+    """The first letter of a script word, past any opening quote."""
+    return next((c for c in original if c.isalnum()), "")
 
 
 def _find(tokens: Sequence[str], originals: Sequence[str], term: Term) -> list[int]:
@@ -128,10 +137,18 @@ def _find(tokens: Sequence[str], originals: Sequence[str], term: Term) -> list[i
     for i in range(len(tokens) - len(target) + 1):
         if list(tokens[i : i + len(target)]) != target:
             continue
-        if term.capitalised and not originals[i][:1].isupper():
+        if term.capitalised and not _initial(originals[i]).isupper():
             continue  # "ring the bell" isn't the nickname
         found.append(i)
     return found
+
+
+def _forms(term: Term) -> list[list[str]]:
+    """Each accepted spelling once, as compared ("Ka'zeth" and "Kazeth" are one)."""
+    seen: dict[tuple[str, ...], None] = {}
+    for spelling in term.spellings:
+        seen.setdefault(tuple(words(spelling)), None)
+    return [list(form) for form in seen if form]
 
 
 def score_bakeoff(script: Bakeoff, pieces: Sequence[str]) -> BakeoffScore:
@@ -145,8 +162,16 @@ def score_bakeoff(script: Bakeoff, pieces: Sequence[str]) -> BakeoffScore:
                 ref.append(word)
                 originals.append(original)
                 line_of.append(number)
-    hyp = [w for text in pieces for w in words(text)]
-    # Plain alignment: a name heard as two words ("Draven Moor") keeps both of them.
+    hyp: list[str] = []
+    hyp_raw: list[str] = []  # as written, for capitals
+    piece_of: list[int] = []  # which piece of speech each heard word came from
+    for index, text in enumerate(pieces):
+        for raw in text.split():
+            for word in words(raw):
+                hyp.append(word)
+                hyp_raw.append(raw)
+                piece_of.append(index)
+    # Plain alignment for names: a name heard as two words ("Draven Moor") keeps both.
     steps = align(ref, hyp)
     heard_at: dict[int, list[int]] = {}  # script word -> heard words aligned to it
     added_after: dict[int, list[int]] = {}  # heard words with no script word, by place
@@ -159,68 +184,84 @@ def score_bakeoff(script: Bakeoff, pieces: Sequence[str]) -> BakeoffScore:
         elif step.hyp is not None:
             added_after.setdefault(last_ref, []).append(step.hyp)
 
-    def heard(start: int, length: int) -> list[str]:
-        """What was written for script words start .. start+length-1."""
+    def heard(start: int, length: int) -> list[int]:
+        """The heard words for script words start .. start+length-1."""
         got: list[int] = []
         for i in range(start, start + length):
             got += heard_at.get(i, [])
             if i < start + length - 1:
                 got += added_after.get(i, [])  # an extra word inside a name: part of it
-        return [hyp[j] for j in sorted(got)]
+        return sorted(got)
 
     def score_term(term: Term, lines: range) -> TermScore:
         result = TermScore()
-        accepted = {"".join(words(s)) for s in term.spellings}
+        accepted = {"".join(form) for form in _forms(term)}
         length = len(words(term.name))
         for start in _find(ref, originals, term):
             if line_of[start] not in lines:
                 continue
             result.said += 1
             got = heard(start, length)
-            # A word written just before or after it may be part of it ("Draven" + "Moor").
-            before = [hyp[j] for j in added_after.get(start - 1, [])][-1:]
-            after = [hyp[j] for j in added_after.get(start + length - 1, [])][:1]
-            tries = [got, before + got, got + after, before + got + after]
-            if any(t and "".join(t) in accepted for t in tries):
-                result.right += 1
+            # Words written just before or after may be part of it ("Draven" + "Moor").
+            before = added_after.get(start - 1, [])[-2:]
+            after = added_after.get(start + length - 1, [])[:2]
+            tries = [
+                b + got + a
+                for b in (before[i:] for i in range(len(before) + 1))
+                for a in (after[:i] for i in range(len(after) + 1))
+            ]
+            match = next((t for t in tries if t and "".join(hyp[j] for j in t) in accepted), None)
+            if match is not None:
+                if len({piece_of[j] for j in match}) > 1:
+                    result.cut += 1  # live, the two halves arrive as separate pieces
+                else:
+                    result.right += 1
             elif not got:
                 result.missing += 1
             else:
-                result.wrong.append(" ".join(got))
+                result.wrong.append(" ".join(hyp[j] for j in [*before, *got, *after]))
         return result
 
     names = {term.name: score_term(term, NAME_LINES) for term in script.names}
     nickname = score_term(script.nickname, NAME_LINES)
-    expanded = sum(1 for got in nickname.wrong if got.startswith("belleros"))
+    expanded_forms = next(
+        ({"".join(f) for f in _forms(t)} for t in script.names if t.name == "Belleros"), set()
+    )
+    expanded = sum(1 for got in nickname.wrong if "".join(got.split()) in expanded_forms)
     rules = {term.name: score_term(term, range(1, 100)) for term in script.rules}
 
     # Names written in the lines that have none (the tricky, off-topic and everyday ones).
-    region = [j for i, js in heard_at.items() if line_of[i] >= TRICKY_LINES.start for j in js] + [
-        j
-        for i, js in added_after.items()
-        if i >= 0 and line_of[i] >= TRICKY_LINES.start
-        for j in js
-    ]
-    region_words = [hyp[j] for j in sorted(region)]
+    region = sorted(
+        [j for i, js in heard_at.items() if line_of[i] >= TRICKY_LINES.start for j in js]
+        + [
+            j
+            for i, js in added_after.items()
+            if i >= 0 and line_of[i] >= TRICKY_LINES.start
+            for j in js
+        ]
+    )
+    region_words = [hyp[j] for j in region]
     false_names: list[str] = []
     for term in script.names:
-        for spelling in term.spellings:
-            target = words(spelling)
+        for target in _forms(term):
             for i in range(len(region_words) - len(target) + 1):
                 if region_words[i : i + len(target)] == target:
                     false_names.append(term.name)
+    # The nickname is an everyday word too ("ring the bell"): only a capital counts.
+    nick_forms = {f[0] for f in _forms(script.nickname) if len(f) == 1}
+    for j in region:
+        if hyp[j] in nick_forms and _initial(hyp_raw[j]).isupper():
+            false_names.append(script.nickname.name)
 
+    # Word error rate the README's way: a word split in two or two joined is one error.
     wer_words = sum(1 for n in line_of if n in WER_LINES)
     wer_errors = 0
-    for step in steps:
-        line = line_of[step.ref] if step.ref is not None else None
-        if step.ref is None:
-            continue
-        if line in WER_LINES and step.kind != "ok":
+    last_line: int | None = None
+    for step in merge_splits(steps, ref, hyp):
+        if step.ref is not None:
+            last_line = line_of[step.ref]
+        if last_line in WER_LINES and step.kind != "ok":
             wer_errors += 1
-    wer_errors += sum(
-        len(js) for i, js in added_after.items() if i >= 0 and line_of[i] in WER_LINES
-    )
     return BakeoffScore(
         names=names,
         nickname=nickname,
@@ -241,8 +282,9 @@ def bakeoff_record(score: BakeoffScore) -> list[str]:
     nick = score.nickname
     wer = 100 * score.wer_errors / score.wer_words if score.wer_words else 0.0
     return [
-        f"names: {total.right} of {total.said} right ({len(total.wrong)} wrong, "
-        f"{total.missing} missing)",
+        f"names ({len(score.names)}, Ashen Crown included): {total.right} of {total.said} "
+        f"right ({len(total.wrong)} wrong, {total.missing} missing, {total.cut} cut in half "
+        "between two pieces of speech)",
         f"  per name: {per_name}",
         f'nickname "Bell": {nick.right} of {nick.said} kept ({score.expanded} written as Belleros)',
         f"rules words: {rules.right} of {rules.said} right",
@@ -257,7 +299,7 @@ def misheard(score: BakeoffScore) -> list[str]:
     """What each name was written as when it was wrong, for the screen only."""
     out = []
     for name, s in [*score.names.items(), (NICKNAME, score.nickname), *score.rules.items()]:
-        if s.wrong or s.missing:
+        if s.wrong or s.missing or s.cut:
             heard = "; ".join(f'"{w}"' for w in s.wrong) or "-"
-            out.append(f"{name}: written as {heard}; missing {s.missing}")
+            out.append(f"{name}: written as {heard}; missing {s.missing}; cut {s.cut}")
     return out
