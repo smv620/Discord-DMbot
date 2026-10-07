@@ -509,3 +509,17 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     ears "connected to core" and core "ears connected" at 15:22:15; no warnings or
     errors beyond the usual start-up retries.
   Not yet live-tested: #329's behaviours. Run 8's checklist covers them.
+
+==============================================================================
+2026-10-07  Server: deploy f3d1088 (dev1, no test run)
+==============================================================================
+  - 16:17 UTC  development @ f3d1088 (= 1b68f6b plus test-script docs and the
+    stt-bakeoff recording): #338 (optional rules for 2024 campaigns too; switching a
+    rule edits the menu in place, #320), #345 (backups as .dmbot.json.gz; older
+    .dmbot.json still restores, #164 part 2), #327 (session twin, scripts/replay: a
+    dev tool, not part of the running bot). No migrations, no .env changes; the new
+    optional `twin` extra isn't installed in the image. Database backed up first
+    (16:16 UTC, outside the repo; pg_restore -l reads 19 tables); no session was live.
+    Core rebuilt; "ears connected" at 16:17:51; no warnings or errors. Ears and
+    postgres unchanged.
+  Not yet live-tested: #338, #345. Run 8's checklist covers them.

@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-07 by dev1 (deployed a3d12ef; ready for run 8 and the #147 repro)
+Last updated: 2026-10-07 by dev1 (deployed f3d1088; ready for run 8 and the #147 repro)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -8,12 +8,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-In development @ 1b68f6b (a3d12ef is live; core only). Check:
-  - #338 (CloudDev, #320): /dmbot optionalrules lists Spotting a spell and How fast
-    you fall for a 2024 campaign too; switching a rule edits the menu in place and
-    notes it in the DM screen. New-campaign settings say "pick which ones later".
-  - #345 (CloudDev, #164 part 2): /dmbot backup gives a .dmbot.json.gz file;
-    /dmbot restore takes it back, and an older .dmbot.json still restores.
+(nothing queued)
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -27,12 +22,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: a3d12ef (2026-10-07 15:22 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: f3d1088 (2026-10-07 16:17 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since a3d12ef, ask it to redeploy first. Use a steady connection (run 8a
+      moved since f3d1088, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -98,6 +93,11 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
   Deployed 2026-10-07 15:22 (a3d12ef)
   - #329: a consent push logs "N opted out"; /transcript says "No transcripts yet"
     for a campaign played with transcripts off
+  Deployed 2026-10-07 16:17 (f3d1088)
+  - #338: /dmbot optionalrules on a 2024 campaign lists Spotting a spell and How fast
+    you fall; switching a rule edits the menu in place and notes it in the DM screen
+  - #345: /dmbot backup gives a .dmbot.json.gz; /dmbot restore takes it back, and an
+    older .dmbot.json still restores
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
