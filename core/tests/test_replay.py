@@ -669,8 +669,14 @@ class LeadInTests(unittest.TestCase):
     def test_negative_values_are_refused(self) -> None:
         for flag in ("--lead-in-ms", "--hangover-ms"):
             argv = ["x.wav", "--script", str(SCRIPTS / "dm-only.md"), flag, "-5"]
-            with redirect_stderr(io.StringIO()) as err:
-                self.assertEqual(replay_main.main(argv), 2)
+            with (
+                patch.object(replay_main, "load_transcription_settings") as settings,
+                redirect_stderr(io.StringIO()) as err,
+                self.assertRaises(SystemExit) as stop,
+            ):
+                replay_main.main(argv)
+            self.assertEqual(stop.exception.code, 2)  # argparse's usage error
             self.assertIn("can't be negative", err.getvalue())
+            settings.assert_not_called()  # before any settings are read
         (piece,) = audio.pieces(tone(200) + silence(600) + tone(200), hangover_ms=-60)
         self.assertEqual(len(piece.frames) * audio.FRAME_MS, 400)  # no quiet kept, not most
