@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import dataclasses
 import itertools
 import json
 import random
@@ -17,6 +18,7 @@ from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory._changes import ALIASES, ALL, scoped_select
 from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
+from dmbot.memory._changes import FLAGS as FLAGS_TABLE
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.checks import CONTRADICTION, TOO_MANY, WRONG_OBJECT, WRONG_SUBJECT
 from dmbot.memory.lookup import LookupCache
@@ -593,9 +595,129 @@ class Rules(MemoryTest):
     async def test_checking_many_flags_takes_a_few_statements(self) -> None:
         one = await self.closing_statements(1)
         thirty = await self.closing_statements(30)
-        # The checks are a fixed few statements; closing is 3 per flag until it reuses
-        # part 1's bulk update (it was 6 per flag).
-        self.assertLessEqual(thirty - one, 3 * 29)
+        # A fixed few statements however many close: one bulk update and its log (#347;
+        # it was 6 per flag, then 3).
+        self.assertEqual(thirty, one)
+
+    async def test_the_same_flag_twice_keeps_only_the_oldest(self) -> None:
+        town, inn = (
+            await self.add("Bryn Shander", type="place"),
+            await self.add("Inn", type="place"),
+        )
+        npc = await self.add("Guard")
+        await self.relate(npc, "located_in", town)
+        await self.relate(npc, "located_in", inn, source="cleaner", confidence=0.5)
+        (flag,) = await self.memory.flags(GUILD_A, self.c)
+        self.now += 1
+        async with self.memory._write(GUILD_A, self.c, "entitybot") as w:  # as a merge might
+            row = (await w.select(FLAGS_TABLE, " AND id = %s", [flag.id]))[0]
+            await w.insert(FLAGS_TABLE, {**row, "id": "f" * 32, "created_at": self.now})
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual([f.id for f in closed.value], ["f" * 32])
+        self.assertEqual([f.id for f in await self.memory.flags(GUILD_A, self.c)], [flag.id])
+
+    async def test_a_term_dmbot_cant_check_still_loses_its_doubles(self) -> None:
+        town, inn = (
+            await self.add("Bryn Shander", type="place"),
+            await self.add("Inn", type="place"),
+        )
+        npc = await self.add("Guard")
+        await self.relate(npc, "located_in", town)
+        await self.relate(npc, "located_in", inn, source="cleaner", confidence=0.5)
+        (flag,) = await self.memory.flags(GUILD_A, self.c)
+        self.now += 1
+        async with self.memory._write(GUILD_A, self.c, "entitybot") as w:
+            row = (await w.select(FLAGS_TABLE, " AND id = %s", [flag.id]))[0]
+            await w.insert(FLAGS_TABLE, {**row, "id": "f" * 32, "created_at": self.now})
+        from dmbot.memory import store as store_module
+
+        real = store_module._load_ontology
+
+        async def without_located_in(w: Any) -> Any:
+            onto = await real(w)
+            return dataclasses.replace(
+                onto, predicates={k: v for k, v in onto.predicates.items() if k != "located_in"}
+            )
+
+        with patch.object(store_module, "_load_ontology", without_located_in):
+            closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual([f.id for f in closed.value], ["f" * 32])  # the original stays
+
+    async def test_a_busy_place_checks_only_the_facts_that_matter(self) -> None:
+        """#347 perf-qa: a flag on a fact about a busy place is checked against the
+        same pair and the same "how many" term, not every fact on that place."""
+        from dmbot.memory import store as store_module
+
+        hub = await self.add("Bryn Shander", type="place")
+        inn = await self.add("Inn", type="place")
+        for n in range(40):  # others in town, nothing to do with the guard's flag
+            await self.relate(await self.add(f"Villager {n}"), "located_in", hub)
+        guard = await self.add("Guard")
+        first = (await self.relate(guard, "located_in", hub)).value[0]
+        await self.relate(guard, "located_in", inn, source="cleaner", confidence=0.5)
+        await self.memory.update_relation(GUILD_A, self.c, first.id, status=REJECTED, source="dm")
+        from dmbot.memory.checks import check_relation as real
+
+        sizes: list[int] = []
+
+        def counted(onto: Any, new: Any, st: str, ot: str, existing: Any) -> Any:
+            sizes.append(len(existing))
+            return real(onto, new, st, ot, existing)
+
+        with patch.object(store_module, "check_relation", counted):
+            closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(len(closed.value), 1)
+        self.assertLessEqual(max(sizes), 2)  # the guard's own two facts, not 40 villagers
+
+    async def test_flags_against_different_facts_are_not_doubles(self) -> None:
+        npc = await self.add("Guard")
+        places = [await self.add(n, type="place") for n in ("Town", "Inn", "Keep")]
+        for place in places:  # three places: too many for one person
+            await self.relate(npc, "located_in", place, source="cleaner", confidence=0.5)
+        before = await self.memory.flags(GUILD_A, self.c)
+        self.assertGreater(len({f.other_id for f in before}), 1)
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(closed.value, [])  # all still real, none a double
+        self.assertEqual(len(await self.memory.flags(GUILD_A, self.c)), len(before))
+
+    async def test_one_campaigns_check_never_skips_anothers(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Other", DM)).id
+        await self.memory.resolve_stale_flags(GUILD_A, self.c)  # nothing open: recorded
+        with patch.object(self.memory, "_write", side_effect=AssertionError("no lock")):
+            await self.memory.resolve_stale_flags(GUILD_A, self.c)  # skipped
+        a = await self.add("Guard", campaign=other)
+        town = (
+            await self.memory.add_entity(GUILD_A, other, type="place", name="Town", source="dm")
+        ).value.id
+        inn = (
+            await self.memory.add_entity(GUILD_A, other, type="place", name="Inn", source="dm")
+        ).value.id
+        first = await self.memory.add_relation(
+            GUILD_A, other, a, "located_in", town, source="dm", confidence=1.0
+        )
+        await self.memory.add_relation(
+            GUILD_A, other, a, "located_in", inn, source="cleaner", confidence=0.5
+        )
+        await self.memory.update_relation(
+            GUILD_A, other, first.value[0].id, status=REJECTED, source="dm"
+        )
+        closed = await self.memory.resolve_stale_flags(GUILD_A, other)
+        self.assertEqual(len(closed.value), 1)
+
+    async def test_nothing_changed_since_the_last_check_skips_it(self) -> None:
+        a = await self.add("Guard")
+        town, inn = (
+            await self.add("Bryn Shander", type="place"),
+            await self.add("Inn", type="place"),
+        )
+        first = (await self.relate(a, "located_in", town)).value[0]
+        await self.relate(a, "located_in", inn, source="cleaner", confidence=0.5)
+        await self.memory.resolve_stale_flags(GUILD_A, self.c)  # the clash is real: kept
+        with patch.object(self.memory, "_write", side_effect=AssertionError("no lock")):
+            await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        await self.memory.update_relation(GUILD_A, self.c, first.id, status=REJECTED, source="dm")
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)  # changed: checked
+        self.assertEqual(len(closed.value), 1)
 
     async def test_saying_a_fact_again_only_strengthens_it(self) -> None:
         a, b = await self.add("Gorrak"), await self.add("Tamsin")
@@ -986,11 +1108,64 @@ class Undo(MemoryTest):
             batch = w.batch
         assert batch is not None
         after = await self.snapshot()
-        undone = await self.memory.undo(GUILD_A, self.c, batch, source="dm")
+        from dmbot.memory import _changes
+
+        async def tripped(changes: Any, run: Any) -> bool:
+            # The bulk undo in the order that collides: Red back to E while G's Red is
+            # still there. Postgres refuses; the savepoint must roll it back (#347).
+            await changes.conn.execute(
+                "UPDATE memory_aliases SET entity_id = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (e, *changes.ids, a1.value.id),
+            )
+            return True
+
+        with patch.object(_changes, "_undo_run", AsyncMock(side_effect=tripped)) as bulk:
+            undone = await self.memory.undo(GUILD_A, self.c, batch, source="dm")
+        bulk.assert_awaited()  # it failed for real, and the rows went one by one
         self.assertEqual(await self.snapshot(), before)
         assert undone.batch is not None
         await self.memory.undo(GUILD_A, self.c, undone.batch, source="dm")  # redo
         self.assertEqual(await self.snapshot(), after)
+
+    async def test_a_chain_of_three_undoes_in_whatever_order_it_needs(self) -> None:
+        """#347: rows that must wait for each other, given in the worst order (oldest
+        first): each round frees the next, until all are back."""
+        from dmbot.memory import _changes
+
+        e, g, h, f = [await self.add(n) for n in ("Edda", "Gwen", "Hild", "Finn")]
+        reds = [
+            (
+                await self.memory.add_alias(
+                    GUILD_A, self.c, owner, "Red", kind="short", source="dm"
+                )
+            ).value.id
+            for owner in (e, g, h)
+        ]
+        before = await self.snapshot()
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            await w.update_rows(ALIASES, {reds[0]: {"entity_id": f}})  # E's Red to F
+            await w.update_rows(ALIASES, {reds[1]: {"entity_id": e}})  # G's Red to E
+            await w.update_rows(ALIASES, {reds[2]: {"entity_id": g}})  # H's Red to G
+            batch = w.batch
+        tries = 0
+        real_row = _changes._undo_row
+
+        async def counted(*args: Any) -> None:
+            nonlocal tries
+            tries += 1
+            await real_row(*args)
+
+        async with self.memory._write(GUILD_A, self.c, "undo", undoes=batch) as w:
+            cur = await w.conn.execute(
+                "SELECT table_name, row_id, op, before, after FROM memory_changes"
+                " WHERE guild_id = %s AND campaign_id = %s AND batch = %s ORDER BY version",
+                (*w.ids, batch),
+            )
+            with patch.object(_changes, "_undo_row", counted):
+                await _changes._undo_rows(w, await cur.fetchall())
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(tries, 3 + 2 + 1)  # three rounds, each freeing the next
 
     async def test_update_rows_refuses_bad_columns(self) -> None:
         a = await self.add("Edda")
