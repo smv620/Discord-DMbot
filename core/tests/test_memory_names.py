@@ -852,6 +852,9 @@ class Hints(NamesTest):
     async def test_names_said_at_the_table_move_to_the_front(self) -> None:
         from dmbot.audio.segmenter import Utterance
 
+        # One creation second for all three, so never-said names tie and sort by name
+        # (a second boundary between saves would put Zephyr first as the newest).
+        self.memory._clock = lambda: 1_700_000_000.0
         for name in ("Aldric", "Bryn Shander", "Zephyr"):
             await ui.save_name(self.memory, self.campaign, name, "npc", [], [])
         table = make_table(self.campaign.id)

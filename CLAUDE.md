@@ -120,6 +120,12 @@ terminal output or Discord screenshots copied to it.
   visibility allows it: **private** (DM only), **opt-in peek** (the default: hidden, with a
   "Peek behind the DM screen" button that warns about spoilers before granting access),
   or **open**. See docs/PLAN.md.
+- **Backups are complete, and anyone in the server may download one** (owner decision,
+  2026-10-06): a campaign must never be lost if its DM disappears. A backup holds the
+  whole campaign, unabridged, including secret names and DM notes; that is the one
+  exception to keeping DM-screen content from players. The download message says it holds
+  the DM's secrets and tells players not to open it. Whoever restores a backup becomes the
+  restored campaign's DM; only a campaign's own DM may replace it with a backup.
 - **Citations:** every rules alert includes its source and confidence.
 - **Rules edition:** newest ruleset first, always — even in legacy adventures — for
   spells, rules, and monsters (currently 2024 PHB / 2025 MM). Use legacy content only

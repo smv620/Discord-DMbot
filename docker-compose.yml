@@ -39,6 +39,8 @@ services:
     volumes:
       - dmbot-data:/data       # local files (campaign data itself is in Postgres)
       - whisper-models:/models # downloaded Whisper models, kept across updates
+      # Read at start-up to warn when .env is missing newer settings (#31). Names only.
+      - ./.env.example:/app/.env.example:ro
     restart: unless-stopped
 
   ears:
