@@ -25,7 +25,7 @@ fail() {
 }
 
 [[ -f $example ]] || fail "Can't find .env.example in $root.
-Check this is your Discord-DMbot folder, then run: git pull"
+Get it back with: git checkout .env.example"
 
 # Without a terminal the paste can't be hidden (ssh host scripts/set-key). Tests pipe in.
 [[ -t 0 || -n ${DMBOT_ENV_FILE:-} ]] || fail "Log in to the server first, then run:

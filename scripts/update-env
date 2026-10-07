@@ -8,7 +8,8 @@
 #
 # The new .env has the template's order, comments and new settings. Each setting you
 # had keeps your value exactly. Settings that are no longer in the template are kept at
-# the end, so nothing is lost. Only setting names are printed, never values.
+# the end. Lines it can't copy safely (a value over several lines, a line that isn't a
+# setting) stop it before anything changes. Only setting names are printed, never values.
 #
 # Tests point DMBOT_ENV_FILE and DMBOT_ENV_EXAMPLE at temporary files.
 set -euo pipefail
@@ -22,37 +23,59 @@ fail() {
   exit 1
 }
 
+usage="Use: scripts/update-env          (rebuild .env)
+ or: scripts/update-env --check  (only look)"
 check_only=false
+if [[ $# -gt 1 ]]; then
+  fail "Too many options.
+$usage"
+fi
 case ${1:-} in
   "") ;;
   --check) check_only=true ;;
-  *) fail "Run scripts/update-env, or scripts/update-env --check to only look." ;;
+  -h | --help) echo "$usage"; exit 0 ;;
+  *) fail "Unknown option: $1
+$usage" ;;
 esac
-[[ $# -le 1 ]] || fail "Run scripts/update-env, or scripts/update-env --check to only look."
 
 [[ -f $example ]] || fail "Can't find .env.example in $root.
-Check this is your Discord-DMbot folder, then run: git pull"
+Get it back with: git checkout .env.example"
 [[ -f $env_file ]] || fail "There's no .env to copy settings from yet.
 Run scripts/set-key to make one and add your first key."
+[[ ! -L $env_file ]] || fail "Your .env is a link to another file, so I won't replace it.
+Nothing was changed. Run this on the real file instead."
 
 umask 077
 work=$(mktemp -d "$env_file.update.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 # Pass 1 reads the old .env (last line wins, as in Docker Compose). Pass 2 copies the
-# template, putting the old value into each setting line it has. The report lists names.
-awk -v report="$work/report" '
+# template, putting the old value into each setting line it has. The template uses plain
+# NAME=value lines. The report holds names and line numbers only; old comment lines go to
+# their own private file, because a parked key may be in one.
+set +e
+awk -v report="$work/report" -v comments="$work/comments" -v q="'" '
   function clean(s) { sub(/\r$/, "", s); return s }
   FILENAME == ARGV[1] {
     line = clean($0)
-    if (line !~ /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=/) next
+    if (line ~ /^[ \t]*$/) next
+    if (line ~ /^[ \t]*#/) { print line > comments; next }
+    if (line !~ /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=/) { print "bad " FNR > report; bad = 1; next }
     sub(/^[ \t]*(export[ \t]+)?/, "", line)
     name = line; sub(/[ \t]*=.*$/, "", name)
-    value = line; sub(/^[^=]*=[ \t]*/, "", value)
+    value = line; sub(/^[^=]*=/, "", value)
+    # Drop spaces before the value, unless a comment follows: "KEY= # note" is empty.
+    if (value !~ /^[ \t]+#/) sub(/^[ \t]+/, "", value)
+    # A quote that opens but does not close here means the value goes on over more lines.
+    if ((value ~ /^"/ && value !~ /^"([^"\\]|\\.)*"/) \
+        || (value ~ ("^" q) && value !~ ("^" q "[^" q "]*" q))) {
+      print "bad " FNR > report; bad = 1; next
+    }
     if (!(name in old)) order[++count] = name
     old[name] = value
     next
   }
+  bad { next }
   {
     line = clean($0)
     if (match(line, /^[A-Za-z_][A-Za-z0-9_]*=/)) {
@@ -66,6 +89,7 @@ awk -v report="$work/report" '
     print line
   }
   END {
+    if (bad) exit 3
     extra = 0
     for (i = 1; i <= count; i++) {
       name = order[i]
@@ -79,19 +103,58 @@ awk -v report="$work/report" '
       print name "=" old[name]
       print "extra " name > report
     }
-    close(report)
   }
 ' "$env_file" "$example" >"$work/new"
-touch "$work/report"
+status=$?
+set -e
+touch "$work/report" "$work/comments"
+if ((status == 3)); then
+  lines=$(sed -nE 's/^bad //p' "$work/report" | paste -sd' ' | sed 's/ /, /g')
+  fail "Your .env has lines I can't copy safely (line $lines): a value that goes on over
+more than one line, or a line that isn't NAME=value.
+Nothing was changed. Fix or remove those lines with: nano $env_file"
+fi
+((status == 0)) || fail "Something went wrong reading .env. Nothing was changed."
 
+count() { grep -c "^$1 " "$work/report" || true; }
 names() { sed -nE "s/^$1 //p" "$work/report" | paste -sd' ' | sed 's/ /, /g'; }
-kept=$(grep -c '^kept ' "$work/report" || true)
-new=$(names new)
-extra=$(names extra)
+plural() { if (($1 == 1)); then echo "1 $2"; else echo "$1 $2s"; fi; }
+kept=$(count kept)
+new_count=$(count new)
+extra_count=$(count extra)
+# Old comment lines that aren't in the template are left out (they stay in the backup).
+dropped=$(grep -cvxF -f "$example" "$work/comments" || true)
 
-# Keys, tokens and secrets that are still empty in the new file.
-empty=$(sed -nE "s/^([A-Z][A-Z0-9_]*(_KEY|_TOKEN|_SECRET))=[\"']{0,2}$/\1/p" "$work/new" \
-  | paste -sd' ' | sed 's/ /, /g')
+# Empty settings in the new file, and which transcriber it uses.
+empty_names=$(awk -v q="'" '
+  match($0, /^[A-Za-z_][A-Za-z0-9_]*=/) {
+    name = substr($0, 1, RLENGTH - 1); value = substr($0, RLENGTH + 1)
+    sub(/[ \t]+#.*$/, "", value); sub(/[ \t]+$/, "", value)
+    if (name == "TRANSCRIBER") transcriber = value
+    empty[name] = (value == "" || value == "\"\"" || value == q q)
+  }
+  END {
+    for (name in empty) if (empty[name]) print name
+    print "TRANSCRIBER_IS " transcriber
+  }
+' "$work/new")
+transcriber=$(sed -nE 's/^TRANSCRIBER_IS ["'"'"']?([a-z-]*).*/\1/p' <<<"$empty_names")
+is_empty() { grep -qx -- "$1" <<<"$empty_names"; }
+
+needed=(DISCORD_TOKEN EARS_SHARED_SECRET)
+case $transcriber in
+  deepgram) needed+=(DEEPGRAM_API_KEY) ;;
+  cloud) needed+=(CLOUD_STT_API_KEY) ;;
+esac
+needed_keys=()
+needed_passwords=()
+for n in "${needed[@]}"; do is_empty "$n" && needed_keys+=("$n"); done
+for n in POSTGRES_ADMIN_PASSWORD DMBOT_DB_PASSWORD; do is_empty "$n" && needed_passwords+=("$n"); done
+other_keys=()
+while read -r n; do
+  [[ $n =~ (_KEY|_TOKEN|_SECRET)$ ]] || continue
+  [[ " ${needed_keys[*]} " == *" $n "* ]] || other_keys+=("$n")
+done < <(grep -v '^TRANSCRIBER_IS ' <<<"$empty_names" | sort)
 
 if cmp -s "$work/new" "$env_file"; then
   echo "Your .env already matches .env.example. Nothing was changed."
@@ -99,23 +162,45 @@ if cmp -s "$work/new" "$env_file"; then
 else
   changed=true
   if $check_only; then
-    echo "This would rebuild .env from .env.example. Nothing was changed yet."
+    echo "Nothing changed yet. Running scripts/update-env would:"
+    use="use" keep="keep your values for" add="add" put="keep" leave="leave out"
   else
     backup="$env_file.backup-$(date +%Y%m%d-%H%M%S)"
     cp "$env_file" "$backup"
     chmod 600 "$backup" "$work/new"
+    # Keep the file's owner (say, after running with sudo), if allowed.
+    chown --reference="$env_file" "$work/new" "$backup" 2>/dev/null || true
     mv -f "$work/new" "$env_file"
-    echo "Rebuilt .env from .env.example."
-    echo "Your old .env is saved as $(basename "$backup") (delete it once all is well)."
+    echo "Rebuilt .env from .env.example:"
+    use="used" keep="kept your values for" add="added" put="kept" leave="left out"
   fi
-  echo "- Kept your value for $kept settings."
-  [[ -z $new ]] || echo "- New settings, with the template's default: $new"
-  [[ -z $extra ]] || echo "- Not in the template, kept at the end (yours, or no longer used): $extra"
+  echo "- $use the layout and notes of the new .env.example"
+  echo "- $keep $(plural "$kept" setting)"
+  if ((new_count > 0)); then
+    line="- $add $(plural "$new_count" "new setting") from .env.example, set to the default"
+    if ((new_count <= 5)); then echo "$line: $(names new)"; else echo "$line (see .env)"; fi
+  fi
+  ((extra_count == 0)) \
+    || echo "- $put at the end $(plural "$extra_count" setting) not in .env.example (yours, or no longer used): $(names extra)"
+  ((dropped == 0)) \
+    || echo "- $leave $(plural "$dropped" "comment line") from your old .env (the backup keeps them)"
 fi
-if [[ -n $empty ]]; then
-  echo "- Keys still empty (fill in the ones you use): $empty"
-  echo "  To fill one in: scripts/set-key"
+
+((${#needed_keys[@]} == 0)) || echo "Needed, still empty: ${needed_keys[*]}"
+((${#needed_passwords[@]} == 0)) || echo "Database passwords, still empty: ${needed_passwords[*]}"
+((${#other_keys[@]} == 0)) || echo "Other empty keys (only if you use them): ${other_keys[*]}"
+if ((${#needed_keys[@]} + ${#other_keys[@]} > 0)); then
+  echo "To fill in a key: scripts/set-key"
 fi
-if $changed && ! $check_only; then
-  echo "DMbot uses the new file after a restart: cd $root && docker compose up -d"
+if ((${#needed_passwords[@]} > 0)); then
+  echo "Database passwords go in by hand (see docs/DEPLOY.md, step 3): nano $env_file"
+fi
+
+if $changed && $check_only; then
+  echo "To do it: scripts/update-env"
+elif $changed; then
+  echo "Old .env saved. Once DMbot runs fine, delete it: rm $backup"
+  echo "Not restarted. If DMbot should be running, this makes it use the new .env"
+  echo "(it leaves voice for about a minute, so not mid-session):"
+  echo "cd $root && docker compose up -d"
 fi
