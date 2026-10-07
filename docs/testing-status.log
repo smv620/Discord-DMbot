@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-07 by dev1 (deployed 8815c6a; ready for run 8)
+Last updated: 2026-10-07 by dev1 (deployed 84f1790: migration 0011, 3 workers; ready for run 8)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -8,37 +8,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-In development @ 197ed7e (core only, rebuild core; web/ is not deployed anywhere yet;
-set TRANSCRIBE_WORKERS in .env, see .env.example: 3 for Deepgram). Check:
-  - #405 (dev2, #394): after a session, a suggested name that sounds like a known one
-    comes with "✅ It's X" / "➕ New name"; a known name misheard and fixed live is not
-    suggested again.
-  - #456 (dev2, #296): the DM screen gets one "✏️ Name fixes to check" message edited in
-    place, one Undo per line; Undo puts the heard words back in the stored line and in
-    the channel if within 30 s. Nothing about guesses in the transcript channel.
-  - #425 (CloudDev, #369): the owner's bulk-import test (docs/test-scripts/
-    bakeoff-story-names-setup.md): expect "Added 22 names · 4 already known · 3 look
-    like known names · 2 kinds differ. Questions below." then the two question
-    messages. Same for all 3 joins them and says how to take one back.
-  - #309 + #464 (dev1, #173): 3 transcription workers, one queue per server; the
-    status line shows per-server backlog. Retry-After windows capped at 60 s. Run 8 is
-    the live check; watch the log for "working again" churn.
-  - #436, #410 (CloudDev, #164/#347): after a session: "closed N stale flag(s)" and
-    "Deleted N change-log row(s)"; record the first real N of each.
-  - #448 (dev3): twin --lead-in-ms; run the dm-only replay with 0 and 100 and note
-    first-word errors for both in #299.
-  - #461 (WebDev, #435): new tables only (web_users, web_sessions, entitlements,
-    payment_events, try_it_used, installs). Migration 0011 runs at start; confirm it
-    applied and nothing else changed.
-
-- #425 (#369, CloudDev): core only. Check: the owner's bulk-import test,
-  docs/test-scripts/bakeoff-story-names-setup.md section B: "📥 Added 22 names · 4 already
-  known · 3 look like known names · 2 kinds differ. Questions below.", then the near-name
-  message (1. Same / 1. Different / 1. Remove) and the kind message. Press nothing,
-  then Undo takes all 22 back.
-- #436 (#347 items 2-4, CloudDev): core only, no visible change. After a session the
-  log may show "Closed N memory flag(s) that no longer apply"; a second session with no
-  memory changes in between skips the check.
+(nothing queued)
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -52,12 +22,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 8815c6a (2026-10-07 19:51 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 84f1790 (2026-10-07 21:11 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since 8815c6a, ask it to redeploy first. Use a steady connection (run 8a
+      moved since 84f1790, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -141,6 +111,18 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     remove it…"; card row 1 ends with 🔗 Same as…, row 2 starts with 🧭 Connect to…
   - #410 (#164): after /dmbot stop the log says "Deleted N change-log row(s) too old to
     undo": record N and how long it took
+  Deployed 2026-10-07 21:11 (84f1790)
+  - #405 (#394): after a session, a suggested name that sounds like a known one comes
+    with "✅ It's X" / "➕ New name"; a name misheard and fixed live isn't suggested again
+  - #456 (#296): one "✏️ Name fixes to check" message in the DM screen, edited in place,
+    one Undo per line; Undo puts the heard words back (in the channel within 30 s)
+  - #425 (#369): bulk import of docs/test-scripts/bakeoff-story-names-setup.md section
+    B: "📥 Added 22 names · 4 already known · 3 look like known names · 2 kinds differ",
+    then the near-name and kind questions; Undo takes all 22 back
+  - #309 + #464 (#173): 3 workers, one queue per server; status shows this table's own
+    backlog; watch the log for "working again" churn
+  - #436, #410: after /dmbot stop, record the first real N of "Closed N memory flag(s)"
+    and "Deleted N change-log row(s)"
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
