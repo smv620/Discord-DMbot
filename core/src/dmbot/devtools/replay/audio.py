@@ -34,8 +34,13 @@ FRAME_BYTES = SAMPLE_RATE * FRAME_MS // 1000 * BYTES_PER_SAMPLE
 HANGOVER_MS = 200
 SPEECH_END_MS = 1000  # ears' 800 ms, plus the hangover
 # Quieter than this is silence. A muted mic is digital silence (about -90 dBFS); a quiet
-# room is around -60 to -50.
+# room is around -60 to -50. A recording that wasn't muted between lines has its room
+# noise there, so silence is also anything within NOISE_MARGIN_DB of the room's noise.
 SILENCE_DBFS = -60.0
+NOISE_MARGIN_DB = 10.0
+# Never louder than this: in a recording that is nearly all speech, the quietest tenth is
+# speech, and a gate set above it would cut words.
+SILENCE_MAX_DBFS = -40.0
 
 
 class DecodeError(RuntimeError):
@@ -91,6 +96,25 @@ def frame_dbfs(frame: bytes) -> float:
     return 10 * math.log10(mean_square / 32768**2) if mean_square else -math.inf
 
 
+def frame_levels(pcm: bytes) -> list[float]:
+    """The level of every 20 ms frame, in dBFS."""
+    return [
+        frame_dbfs(pcm[i : i + FRAME_BYTES])
+        for i in range(0, len(pcm) - FRAME_BYTES + 1, FRAME_BYTES)
+    ]
+
+
+def silence_dbfs_for(levels: list[float]) -> float:
+    """How quiet counts as silence in this recording: SILENCE_DBFS, or the room's noise
+    (its quietest tenth) plus NOISE_MARGIN_DB if that is louder, as a voice gate does,
+    but never above SILENCE_MAX_DBFS."""
+    ranked = sorted(max(level, -120.0) for level in levels)
+    if not ranked:
+        return SILENCE_DBFS
+    noise = ranked[len(ranked) // 10]
+    return min(SILENCE_MAX_DBFS, max(SILENCE_DBFS, noise + NOISE_MARGIN_DB))
+
+
 @dataclass(frozen=True, slots=True)
 class Piece:
     """One piece of speech: the frames ears would have sent, each with its time."""
@@ -112,6 +136,7 @@ def pieces(
     silence_dbfs: float = SILENCE_DBFS,
     speech_end_ms: int = SPEECH_END_MS,
     hangover_ms: int = HANGOVER_MS,
+    levels: list[float] | None = None,
 ) -> Iterator[Piece]:
     """Pieces of speech: from the first loud frame to the last one before
     `speech_end_ms` of silence. Inside a piece, up to `hangover_ms` of quiet after speech
@@ -123,7 +148,8 @@ def pieces(
     for index in range(0, len(pcm) - FRAME_BYTES + 1, FRAME_BYTES):
         at_ms = index // BYTES_PER_SAMPLE * 1000 // SAMPLE_RATE
         frame = (at_ms, pcm[index : index + FRAME_BYTES])
-        loud = frame_dbfs(frame[1]) > silence_dbfs
+        level = levels[index // FRAME_BYTES] if levels is not None else frame_dbfs(frame[1])
+        loud = level > silence_dbfs
         if not current:
             if loud:
                 current = [frame]

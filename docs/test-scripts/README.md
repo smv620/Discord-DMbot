@@ -109,9 +109,17 @@ Ignore capitals, punctuation and hyphens. "It's" = "it is", "3" = "three", "Ten 
 
 ## Replaying a recording (the session twin, #299)
 
-A recording of `dm-only.md` or `dm-and-player.md` can be scored without anyone in voice. It
-goes through core's real speech path (the Segmenter, the transcription pipeline and the same
-speech-to-text as the bot) and comes out scored the way this page describes.
+A recording of `dm-only.md`, `dm-and-player.md` or `stt-bakeoff.md` can be scored without
+anyone in voice. It goes through core's real speech path (the Segmenter, the transcription
+pipeline and the same speech-to-text as the bot) and comes out scored the way this page
+describes. For `stt-bakeoff.md` the record instead scores every time a campaign name is
+said (right, wrong or missing, per name), the nickname "Bell", the rules words, names
+written where none was said, and the everyday lines' word error rate. Names are scored
+wherever they land; a name cut in half between two pieces of speech is counted apart
+("cut"), since live the halves arrive separately. Its names and rules words go to the engine
+as hints, as the live bot sends a campaign's names (`--no-hints` to leave them out). One
+reader takes every role, so pieces run longer and core's 15 s cut falls more often than at a
+table, where each player's speech arrives on its own.
 
 ```bash
 scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-only.md \
@@ -127,7 +135,8 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
   during a live session (speech-to-text competes with the bot). It holds the whole recording
   in memory, so keep to the one-minute scripts.
 - **What it doesn't model:** Discord and ears. Pieces are cut at 1 s of near-silence (set
-  so `DMOnlyAudio.m4a` matches run 7), no audio is lost, and a recording's dramatic pauses
+  so `DMOnlyAudio.m4a` matches run 7; in a recording that wasn't muted, near-silence means
+  within 10 dB of the room's noise, as a voice gate works), no audio is lost, and a recording's dramatic pauses
   are quiet, not muted. It scores the text as heard, before the name cleaning the transcript
   channel shows (part 2 of #299). So use replays to compare speech-to-text and changes to
   core, and live runs for audio and pieces of speech.
