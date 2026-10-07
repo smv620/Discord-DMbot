@@ -23,6 +23,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     MemoryRuleError,
+    NewName,
     Written,
 )
 from dmbot.memory.ontology import PredicateTerm, TypeTerm
@@ -763,6 +764,48 @@ class Undo(MemoryTest):
         await self.check_undo_and_redo(
             lambda: self.memory.merge(GUILD_A, self.c, keep, gone, source="entitybot")
         )
+
+    async def test_a_big_merge_and_its_undo_take_few_statements(self) -> None:
+        """#164: rows move in one statement per table, not one round trip per row."""
+        from unittest.mock import patch
+
+        from psycopg import AsyncConnection
+
+        keep, gone = await self.add("Belleros"), await self.add("Bell")
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [NewName(f"Friend {n}", "npc", CONFIRMED, (), ()) for n in range(200)],
+            source="dm",
+        )
+        friends = [i for i in written.value if i is not None]
+        for n in range(200):
+            await self.memory.add_alias(
+                GUILD_A, self.c, gone, f"Bell {n}", kind="short", source="dm"
+            )
+        for friend in friends:
+            await self.relate(gone, "ally_of", friend)
+        before = await self.snapshot()
+        statements = 0
+        real = AsyncConnection.execute
+
+        async def counting(conn: Any, *args: Any, **kw: Any) -> Any:
+            nonlocal statements
+            statements += 1
+            return await real(conn, *args, **kw)
+
+        with patch.object(AsyncConnection, "execute", counting):
+            merged = await self.memory.merge(
+                GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True
+            )
+            merge_statements, statements = statements, 0
+            assert merged.batch is not None
+            await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
+            undo_statements = statements
+        # Row by row, this was well over a thousand round trips each.
+        self.assertLess(merge_statements, 60)
+        self.assertLess(undo_statements, 60)
+        self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
 
     async def test_undo_twice_is_refused(self) -> None:
         w = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="X", source="dm")

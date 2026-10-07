@@ -14,6 +14,7 @@ Only the DM's word confirms anything (`source="dm"`); other sources propose.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
@@ -824,9 +825,10 @@ class MemoryStore:
                 # must never be.
                 raise MemoryRuleError("A secret name can't be the main name.")
             await _move_relations(w, keep_id, gone_id)
-            for table in (MENTIONS, CORRECTIONS):
-                for row in await w.select(table, " AND entity_id = %s", [gone_id]):
-                    await w.update(table, row["id"], {"entity_id": keep_id})
+            for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
+                await w.update_where(
+                    table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id]
+                )
             await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
             # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
             await w.update(ENTITIES, gone_id, {"status": MERGED, "merged_into": keep_id})
@@ -1329,48 +1331,81 @@ async def _delete_relation(w: Changes, relation_id: str) -> None:
 
 
 async def _move_aliases(w: Changes, keep_id: str, gone_id: str) -> None:
+    """The other entry's names move over in one statement (#164); a name both have is
+    kept once, with the stronger status and any secret mark."""
     keep_aliases = {a["key"]: a for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
+    moving = []
     for alias in await w.select(ALIASES, " AND entity_id = %s", [gone_id]):
         twin = keep_aliases.get(alias["key"])
         if twin is None:
-            await w.update(ALIASES, alias["id"], {"entity_id": keep_id})
+            moving.append(alias["id"])
             continue
-        # Both have it: keep one, with the stronger status and any secret mark.
         upgrade = _upgrade(twin, alias["status"], alias["secret"], DM)
         await w.delete(ALIASES, alias["id"])
         if upgrade:
             await w.update(ALIASES, twin["id"], upgrade)
-    for alias in await w.select(ALIASES, " AND used_by = %s", [gone_id]):
-        await w.update(ALIASES, alias["id"], {"used_by": keep_id})
+    if moving:
+        await w.update_where(ALIASES, {"entity_id": keep_id}, " AND id = ANY(%s)", [moving])
+    await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
 
 
 async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
+    """The other entry's facts move over. They're checked one by one, in the same order
+    as before, against an in-memory copy of every fact they could clash with (so the
+    same duplicates are folded and the same problems flagged); the moves themselves are
+    then written in one statement (#164)."""
     onto = await _load_ontology(w)
-    for row in await w.select(
-        RELATIONS, " AND (subject_id = %s OR object_id = %s)", [gone_id, gone_id]
-    ):
+    rows = await w.select(RELATIONS, " AND (subject_id = %s OR object_id = %s)", [gone_id, gone_id])
+    if not rows:
+        return
+    ends = {keep_id, gone_id} | {r["subject_id"] for r in rows} | {r["object_id"] for r in rows}
+    state = {r.id: r for r in await _relations_touching(w, *ends)}  # as the walk sees them
+    types = {
+        e["id"]: e["type"]
+        for e in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(ends | {keep_id})])
+    }
+    moves: dict[str, dict[str, Any]] = {}
+    gone_rows: list[str] = []  # removed: said nothing, or the same as another fact
+    upgrades: list[tuple[str, dict[str, Any]]] = []
+    to_check: list[tuple[Relation, list[Relation]]] = []
+    for row in rows:
         subject = keep_id if row["subject_id"] == gone_id else row["subject_id"]
         obj = keep_id if row["object_id"] == gone_id else row["object_id"]
         if subject == obj:  # "Bell is an ally of Belleros" says nothing any more
-            await _delete_relation(w, row["id"])
+            gone_rows.append(row["id"])
+            state.pop(row["id"], None)
             continue
         pred = onto.predicates.get(row["predicate"])
         if pred is not None:
             subject, obj = ordered(pred, subject, obj)
-        moved = _relation(
-            await w.update(RELATIONS, row["id"], {"subject_id": subject, "object_id": obj})
-        )
-        others = [r for r in await _relations_touching(w, subject, obj) if r.id != moved.id]
+        moves[row["id"]] = {"subject_id": subject, "object_id": obj}
+        moved = dataclasses.replace(state[row["id"]], subject_id=subject, object_id=obj)
+        state[row["id"]] = moved
+        others = [
+            r
+            for r in state.values()
+            if r.id != moved.id and ({r.subject_id, r.object_id} & {subject, obj})
+        ]
         twin = duplicate_of(moved, others)
         if twin is not None:  # both said the same: keep one, with the stronger status
             upgrade = _upgrade(_relation_row(twin), moved.status, moved.secret, DM)
-            await _delete_relation(w, moved.id)
+            gone_rows.append(moved.id)
+            del state[moved.id]
             if upgrade:
-                await w.update(RELATIONS, twin.id, upgrade)
+                upgrades.append((twin.id, upgrade))
+                state[twin.id] = _relation({**_relation_row(twin), **upgrade})
             continue
         if pred is not None and moved.status != REJECTED:
-            types = {e: (await _entity_row(w, e))["type"] for e in (subject, obj)}
-            await _flag_problems(w, onto, moved, types[subject], types[obj], others)
+            to_check.append((moved, others))
+    await w.update_rows(RELATIONS, moves)
+    for relation_id in gone_rows:
+        await _delete_relation(w, relation_id)
+    for twin_id, upgrade in upgrades:
+        await w.update(RELATIONS, twin_id, upgrade)
+    for moved, others in to_check:
+        await _flag_problems(
+            w, onto, moved, types[moved.subject_id], types[moved.object_id], others
+        )
 
 
 async def _check_growth(w: Changes, session_started_at: int | None) -> None:
