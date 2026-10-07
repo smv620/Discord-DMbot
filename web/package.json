@@ -10,18 +10,22 @@
   "packageManager": "npm@10.9.8",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && node scripts/csp-hashes.mjs",
     "preview": "astro preview",
     "typecheck": "astro check",
     "test": "vitest run",
     "check:links": "node scripts/check-links.mjs"
   },
   "dependencies": {
-    "astro": "~7.3.5"
+    "@astrojs/preact": "^6.0.6",
+    "astro": "~7.3.5",
+    "preact": "^10.29.8"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "@testing-library/preact": "^3.2.4",
     "@types/node": "^22.20.5",
+    "happy-dom": "^20.14.5",
     "linkedom": "^0.18.13",
     "typescript": "^6.0.3",
     "vitest": "^5.0.3"
