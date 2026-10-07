@@ -580,3 +580,18 @@ class StoryScriptTests(unittest.TestCase):
         for turn in re.findall(r"\*\*\[DM\]:\*\*(.*?)(?=\n\n|\Z)", text, re.S):
             for stretch in re.split(r"\(\( (?:dramatic pause|whispering) \)\)", turn):
                 self.assertLessEqual(len(stretch.split()), 30, stretch[:40])
+
+
+class CommitTests(unittest.TestCase):
+    def test_the_commit_comes_from_the_option_then_the_environment(self) -> None:
+        with patch.dict(os.environ, {"GIT_COMMIT": "1D2E04DABCDEF"}):
+            self.assertEqual(replay_main.commit("abc1234ff"), "abc1234")
+            self.assertEqual(replay_main.commit(), "1d2e04d")
+        with patch.dict(os.environ, {"GIT_COMMIT": "not a sha; rm -rf"}):
+            self.assertNotIn("rm", replay_main.commit())  # never into the public log
+
+    def test_a_bad_commit_option_is_refused(self) -> None:
+        argv = ["x.wav", "--script", str(SCRIPTS / "dm-only.md"), "--commit", "hello world"]
+        with redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(replay_main.main(argv), 2)
+        self.assertIn("--commit takes a commit id", err.getvalue())

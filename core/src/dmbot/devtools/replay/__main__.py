@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -75,7 +76,15 @@ def describe(settings: TranscriptionSettings) -> str:
     return "none (no text)"
 
 
-def commit() -> str:
+_SHA = re.compile(r"[0-9a-f]{4,40}")
+
+
+def commit(given: str | None = None) -> str:
+    """Which code was replayed, for the record: `--commit`, then GIT_COMMIT (a container
+    has no git checkout to ask), then git itself. Only a commit id goes in the public log."""
+    for value in (given, os.environ.get("GIT_COMMIT")):
+        if value and _SHA.fullmatch(value.strip().casefold()):
+            return value.strip().casefold()[:7]
     try:
         out = subprocess.run(
             ["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
@@ -133,6 +142,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--realtime", action="store_true", help="send audio as it was spoken, to time the delay"
     )
     parser.add_argument("--log", action="store_true", help="append to docs/testing-history.log")
+    parser.add_argument(
+        "--commit", help="the commit being replayed (default: GIT_COMMIT, then git)"
+    )
     parser.add_argument("--history", type=Path, default=HISTORY, help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
@@ -145,6 +157,9 @@ async def main_async(args: argparse.Namespace) -> int:
         settings = load_transcription_settings(env)
     except TranscriptionConfigError as exc:
         print(f"replay: {exc}", file=sys.stderr)
+        return 2
+    if args.commit and not _SHA.fullmatch(args.commit.strip().casefold()):
+        print("replay: --commit takes a commit id (letters a-f and digits)", file=sys.stderr)
         return 2
     if settings.sends_audio_out and args.transcriber != settings.engine:
         # TRANSCRIBER in the environment (in the bot's container, say) must not send
@@ -218,7 +233,7 @@ async def main_async(args: argparse.Namespace) -> int:
             name=args.script.stem,
             recording=public_name(args.recording),
             engine=describe(settings),
-            commit=commit(),
+            commit=commit(args.commit),
             result=result,
             score=names,
             cut=cut,
@@ -228,7 +243,7 @@ async def main_async(args: argparse.Namespace) -> int:
             script=script,
             recording=public_name(args.recording),
             engine=describe(settings),
-            commit=commit(),
+            commit=commit(args.commit),
             result=result,
             score=score(script, heard),
             cut=cut,
