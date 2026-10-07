@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-07 by dev1 (deployed b97c16c; twin runs done; ready for run 8)
+Last updated: 2026-10-07 by dev1 (deployed 8815c6a; ready for run 8)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -8,17 +8,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-In development @ 25a5d47 (f292c48 is live; core only, rebuild core). Check:
-  - #405 (dev2, #394) pending: not merged yet (draft flag), skip until it lands.
-  - #414 (CloudDev, #393): wording. After ➕ Add a name the saved line comes first,
-    then "Wrong? Fix or remove it…"; the card's row 1 ends with 🔗 Same as… and row 2
-    starts with 🧭 Connect to…. Glance only.
-  - #410 (CloudDev, #164 part 3): after a session the log says "Deleted N change-log
-    row(s) too old to undo" (N may be 0). Record the first real N and how long it took
-    in testing-history. An Undo button older than 30 days says it's too late, plainly.
-  - #428 (dev1, #426): start-up log "Connected to N server(s)". Record N in #426
-    (count only).
-  - #420 (dev3): twin --commit; use it in container runs.
+  - #405 (dev2, #394): not merged yet; deploy when it lands.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -32,12 +22,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: b97c16c (2026-10-07 19:37 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 8815c6a (2026-10-07 19:51 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since b97c16c, ask it to redeploy first. Use a steady connection (run 8a
+      moved since 8815c6a, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -117,6 +107,10 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
   - #380 (#353): editing and removing a name is easy to find from /dmbot names
   - #408 (#392): the same link checks again (Google Docs come gzipped); 📄 Get the
     template sits on its own row on a phone
+  - #414 (#393): after ➕ Add a name the saved line comes first, then "Wrong? Fix or
+    remove it…"; card row 1 ends with 🔗 Same as…, row 2 starts with 🧭 Connect to…
+  - #410 (#164): after /dmbot stop the log says "Deleted N change-log row(s) too old to
+    undo": record N and how long it took
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
