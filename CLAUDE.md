@@ -52,11 +52,23 @@ each one uses:
   `docker compose`, changes `.env` (through `scripts/set-key` and
   `scripts/update-env`), and maintains the testing logs (below).
 - **Dev sessions** (`session: dev2`, `session: dev3`, …; Claude Code on the same
-  server, code only): each works one issue at a time in **its own git worktree**
+  server): each works one issue at a time in **its own git worktree**
   (`git worktree add ../dmbot-dev2 -b <branch> development`), never in the server
-  session's checkout. They run unit tests, lint and type checks there; they never
-  run `docker compose`, never touch `.env`, never start DMbot against Discord, and
-  never deploy. For a live check they say so in the PR and the server session does it.
+  session's checkout, and runs unit tests, lint and type checks there. **They may look
+  at the running system but never change it** (owner decision, 2026-10-07): reading
+  logs (`docker compose logs`, `docker compose ps`, `journalctl`), read-only database
+  queries through the read-only role `dmbot_ro`, checking that an API endpoint
+  answers, reading firewall rules and resource use. They never deploy, never run
+  `docker compose up/down/restart/build`, never run migrations, never touch `.env`
+  (`scripts/set-key`, `scripts/update-env` are the server session's), never restart
+  a service, and never start DMbot against Discord. Nothing read from the live
+  database (players' data, secret names) goes into an issue, a PR or a log file.
+  Their `.claude/settings.local.json` denies those commands so the rule is enforced,
+  not promised.
+- **Handover to a deploy:** when a dev session's PR is merged and needs to go live, it
+  adds one line under "Ready to deploy" in `docs/testing-status.log` (what to deploy,
+  what to check) or comments on the PR. The server session deploys, checks, and
+  records it in `docs/testing-history.log`. The log is the queue; nobody waits in chat.
 - **PyCharm session** (`session: pycharm`, on the owner's PC, when used): the same as a
   dev session, plus offline quality checks on saved test sets (EntityBot resolution,
   Transcript Cleaner accuracy).
