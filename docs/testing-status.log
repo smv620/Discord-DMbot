@@ -12,6 +12,9 @@ READY TO DEPLOY (merged into development, not on the server yet)
   - #284 (b4a1ab8, CloudDev): /dmbot start > New campaign settings are buttons that
     fit a phone. Check on a phone: every label readable, one tap changes a setting,
     Create keeps the choices; with 2+ campaigns, "Continue last campaign" fits.
+  - #288 (1d98a83, CloudDev): campaign menus in /dmbot backup, restore and names fit a
+    phone; long names are cut in the middle. Check on a phone with a campaign and a
+    restored copy: the two can be told apart in each menu.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
