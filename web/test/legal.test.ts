@@ -5,7 +5,8 @@ import type { AstroComponentFactory } from "astro/runtime/server/index.js";
 import { parseHTML } from "linkedom";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { notAffiliated, retentionRows } from "../src/content/legal";
+import facts from "../src/content/plans.json";
+import { deletionWarnings, notAffiliated, retentionRows } from "../src/content/legal";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -51,19 +52,32 @@ describe.each(pages.map(([name]) => [name]))("legal/%s", (name) => {
 
   it("leaves no half-written placeholder", () => {
     const body = text(doc(name).querySelector("main"));
-    // Every {{ has its }}; nothing like "undefined" leaked from the data.
-    expect(body.split("{{").length).toBe(body.split("}}").length);
-    expect(body).not.toMatch(/undefined|null|NaN|\[object/);
+    // Remove well-formed placeholders; no stray braces may be left. Nothing leaked from data.
+    expect(body.replace(/\{\{[^{}]+\}\}/g, "")).not.toMatch(/[{}]/);
+    expect(body).not.toMatch(/\b(undefined|null|NaN)\b|\[object/);
   });
 });
 
-describe("the facts agree with the plan file", () => {
+describe("retention and warnings", () => {
   it("lists every plan's retention as on the pricing page", () => {
     const rows = [...doc("privacy").querySelectorAll("tbody tr")].map((tr) =>
       [...tr.querySelectorAll("td")].map((td) => text(td)),
     );
     expect(rows).toEqual(retentionRows.map((r) => [r.plan, r.keep]));
+    expect(rows).toHaveLength(facts.order.length);
+    expect(rows).toEqual([
+      ["Try It", "60 days"],
+      ["Table", "6 months"],
+      ["Two Tables", "1 year"],
+      ["Guild", "1 year"],
+      ["Pro", "1 year"],
+    ]);
     expect(rows[0]).toEqual([byId["try-it"].name, formatPeriod(byId["try-it"].keepAfterLastSession)]);
+  });
+
+  it("lists every warning day from the plan file", () => {
+    expect(deletionWarnings).toBe("14 days and 3 days");
+    for (const day of facts.deletionWarningDaysBefore) expect(deletionWarnings).toContain(`${day} day`);
   });
 
   it("states the 120 days after a plan stops and the warning days", () => {
@@ -80,7 +94,7 @@ describe("the facts #433 asks for", () => {
   const terms = (): string => text(doc("terms").querySelector("main"));
 
   it("names what we keep and who helps us", () => {
-    for (const fact of ["Discord user id", "email", "ids of the Discord servers", "Deepgram", "Anthropic"]) {
+    for (const fact of ["Discord user id", "email", "ids of your Discord servers that use DMbot", "Deepgram", "Anthropic"]) {
       expect(privacy()).toContain(fact);
     }
   });
@@ -98,10 +112,21 @@ describe("the facts #433 asks for", () => {
   it("says we are not connected to the publisher, once, on the terms page", () => {
     expect(terms()).toContain(notAffiliated);
     expect(privacy()).not.toContain("Wizards");
+    expect(text(doc("refunds").querySelector("main"))).not.toContain("Wizards");
   });
 
   it("says shared material is the game master's responsibility and gets no legal review", () => {
     expect(terms()).toMatch(/confirm they have the right to use it\. We don't check this/);
+  });
+
+  it("describes the three DM-screen settings and that peeks are seen", () => {
+    expect(privacy()).toMatch(/players who choose to peek \(the usual setting/);
+    expect(privacy()).toContain("the game master can see who peeked");
+  });
+
+  it("gives a failed payment the 7 days from the plan file", () => {
+    expect(facts.paymentGraceDays).toBe(7);
+    expect(terms()).toContain("you have 7 days to fix it");
   });
 
   it("uses one sign-in cookie and no tracking", () => {

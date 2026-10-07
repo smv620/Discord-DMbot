@@ -60,6 +60,7 @@
     }
   },
   "extraHours": { "hours": 10, "priceCents": 499 },
+  "paymentGraceDays": 7,
   "keepAfterPlanStopsPaying": { "count": 120, "unit": "day" },
   "deletionWarningDaysBefore": [14, 3],
   "recommended": "table"

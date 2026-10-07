@@ -7,6 +7,8 @@ import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { notAffiliated } from "../src/content/legal";
+
 // Every file in src/pages gets a smoke test; a new page without an entry here fails below.
 const found = import.meta.glob<{ default: AstroComponentFactory }>("../src/pages/**/*.astro", {
   eager: true,
@@ -72,6 +74,21 @@ describe.each(pages)("page %s", (path, file, title, noindex) => {
   });
 });
 
+describe("rendered pages", () => {
+  // The source scan below skips content/legal.ts; this catches the not-affiliated sentence
+  // (or anything else) being rendered where it shouldn't be. Only /legal/terms may name
+  // the publisher, and only in that sentence.
+  it.each(pages)("%s names no trademark", async (path, file) => {
+    let html = await container.renderToString(page(file), {
+      request: new Request(`https://dmbot.example${path}`),
+    });
+    if (path === "/legal/terms") html = html.replace(notAffiliated, "");
+    for (const pattern of trademarks) {
+      expect(html, `found ${pattern}`).not.toMatch(pattern);
+    }
+  });
+});
+
 describe("menu", () => {
   it("marks only the current page", async () => {
     const html = await container.renderToString(page("pricing.astro"), {
@@ -84,17 +101,19 @@ describe("menu", () => {
 
 // The site must never use the game's trademarks or the publisher's name (README.md).
 // Say "5e-compatible tabletop games" instead. README.md names them on purpose, so it isn't scanned.
+const trademarks = [
+  /D\s*&(amp;)?\s*D/i,
+  /Dungeons\s*(&|and)\s*Dragons/i,
+  /Wizards of the Coast/i,
+  /\bWotC\b/i,
+  /D&D Beyond/i,
+  /Forgotten Realms/i,
+  /Player['’]?s Handbook/i,
+  /Monster Manual/i,
+];
+
 describe("no trademarks", () => {
-  const banned = [
-    /D\s*&(amp;)?\s*D/i,
-    /Dungeons\s*(&|and)\s*Dragons/i,
-    /Wizards of the Coast/i,
-    /\bWotC\b/i,
-    /D&D Beyond/i,
-    /Forgotten Realms/i,
-    /Player['’]?s Handbook/i,
-    /Monster Manual/i,
-  ];
+  const banned = trademarks;
   const root = fileURLToPath(new URL("..", import.meta.url));
 
   function files(dir: string): string[] {

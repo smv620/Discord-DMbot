@@ -75,6 +75,18 @@ const { title, description, heading, summary } = Astro.props;
     margin-bottom: var(--space-2);
   }
 
+  .legal :global(.table-wrap) {
+    overflow-x: auto;
+    margin-bottom: var(--space-4);
+  }
+
+  .legal :global(caption) {
+    text-align: left;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding-bottom: var(--space-2);
+  }
+
   .legal :global(table) {
     width: 100%;
     border-collapse: collapse;

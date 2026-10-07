@@ -23,16 +23,22 @@ export const paymentProvider =
 
 export const minimumAge = 13;
 
-/** Graces and limits from #437 that the terms state. */
-export const paymentGraceDays = 7;
+/** Days to fix a failed payment before the plan stops (#437). */
+export const paymentGraceDays = facts.paymentGraceDays;
 
 /** Rows for the "how long we keep it" table, from the shared plan facts. */
-export const retentionRows: { plan: string; keep: string }[] = (
-  ["try-it", "table", "two-tables", "guild", "pro"] as PlanId[]
-).map((id) => ({ plan: byId[id].name, keep: formatPeriod(byId[id].keepAfterLastSession) }));
+export const retentionRows: { plan: string; keep: string }[] = (facts.order as PlanId[]).map(
+  (id) => ({ plan: byId[id].name, keep: formatPeriod(byId[id].keepAfterLastSession) }),
+);
 
 export const keepAfterStopPaying = formatPeriod(
   facts.keepAfterPlanStopsPaying as { count: number; unit: "day" | "month" | "year" },
 );
 
-export const deletionWarningDays = facts.deletionWarningDaysBefore;
+/** "14 days and 3 days", from however many warnings the plan file lists. */
+export const deletionWarnings = ((days: number[]): string => {
+  const parts = days.map((d) => `${d} day${d === 1 ? "" : "s"}`);
+  return parts.length <= 1
+    ? (parts[0] ?? "")
+    : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+})(facts.deletionWarningDaysBefore);

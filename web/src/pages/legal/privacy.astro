@@ -1,22 +1,20 @@
 ---
 import LegalPage from "../../components/LegalPage.astro";
 import {
-  deletionWarningDays,
+  deletionWarnings,
   keepAfterStopPaying,
   minimumAge,
   operator,
   paymentProvider,
   retentionRows,
 } from "../../content/legal";
-
-const [firstWarning, lastWarning] = deletionWarningDays;
 ---
 
 <LegalPage
   title="Privacy"
   description="What DMbot keeps about you, who sees it, how long we keep it, and how to delete it."
   heading="Privacy"
-  summary="DMbot only records people who said yes. We never keep the sound of your voice: it is turned into text and the sound is thrown away. Everyone in your Discord server can read what was written down. We keep your Discord id, your email and the ids of your servers so you can sign in and use your plan. We don't sell anything about you, and there are no ads. You can stop being recorded at any time, and you can delete everything from My account."
+  summary="DMbot only records people who said yes. We never keep the sound of your voice: it is turned into text and the sound is thrown away. Everyone in your Discord server can read what was written down. We keep your Discord account number, your email and which of your servers use DMbot, so you can sign in and use your plan. We don't sell anything about you, and there are no ads. You can stop being recorded at any time, and you can delete your account and your campaigns from My account."
 >
   <h2>Who looks after your information</h2>
   <p>
@@ -32,13 +30,12 @@ const [firstWarning, lastWarning] = deletionWarningDays;
       use the email only to tell you about your account and plan.
     </li>
     <li>
-      The <strong>ids of the Discord servers</strong> you're in, so we can show which ones have
-      DMbot. We don't keep your server list once you sign out, only the ids of servers that use
-      DMbot. {"{{CHECK: confirm with #435 what /me stores}}"}
+      The <strong>ids of your Discord servers that use DMbot</strong>, so we can show them to
+      you. {"{{CHECK: confirm with #435 what /me stores}}"}
     </li>
     <li>
       Sign-in uses Discord. We never see your Discord password, and we don't keep your Discord
-      sign-in token after you sign out.
+      sign-in token after you sign out. {"{{CHECK: confirm once sign-in is built (#435)}}"}
     </li>
   </ul>
 
@@ -57,9 +54,9 @@ const [firstWarning, lastWarning] = deletionWarningDays;
       master's notes and settings, and any adventure or rulebook text the game master shares.
     </li>
     <li>
-      <strong>Your voice is not kept.</strong> The sound is sent to be written down and then
-      thrown away. To fix a misheard name, DMbot may hold the last minute of sound in memory and
-      ask again; it is never saved to disk.
+      <strong>Your voice is not kept.</strong> The sound is sent to be written down, then thrown
+      away. It is never saved.
+      {"{{CHECK: when the re-listen feature ships, say it holds about a minute of sound in memory only}}"}
     </li>
   </ul>
 
@@ -74,18 +71,21 @@ const [firstWarning, lastWarning] = deletionWarningDays;
   <ul>
     <li>
       <strong>What was said</strong> can be read and downloaded by everyone in the Discord server
-      where the game is played. The question you say yes to tells you this.
+      where the game is played (downloads come with paid plans). The question you say yes to
+      tells you this.
     </li>
     <li>
-      <strong>The game master's notes</strong> are for the game master. Players see them only if
-      the game master allows it.
+      <strong>The game master's (DM's) notes</strong>: each campaign picks who sees them. Only the
+      game master; players who choose to peek (the usual setting, with a spoiler warning first);
+      or everyone in the server. When a player peeks, the game master can see who peeked.
     </li>
     <li>
-      <strong>Backups</strong> of a paid campaign hold everything in it, including the game
-      master's secrets, and anyone in the server may download one. This keeps a campaign safe if
+      <strong>Backups</strong> of a paid campaign hold the campaign, including the game master's
+      secrets, and anyone in the server may download one.
+      {"{{CHECK: say whether transcripts are in backups once that is built}}"} This keeps a campaign safe if
       its game master leaves.
     </li>
-    <li>Nobody outside your server sees your campaign. Campaigns never share information.</li>
+    <li>Only people in your server can open your campaign in DMbot. Campaigns never share information.</li>
   </ul>
 
   <h2>Companies that help us</h2>
@@ -117,7 +117,9 @@ const [firstWarning, lastWarning] = deletionWarningDays;
 
   <h2>How long we keep it</h2>
   <p>A campaign is deleted this long after its last game:</p>
+  <div class="table-wrap">
   <table>
+    <caption>How long a campaign is kept after its last game, by plan</caption>
     <thead>
       <tr><th scope="col">Plan</th><th scope="col">Kept after the last game</th></tr>
     </thead>
@@ -132,9 +134,10 @@ const [firstWarning, lastWarning] = deletionWarningDays;
       }
     </tbody>
   </table>
+  </div>
   <p>
     If a plan stops being paid, its campaigns are kept for {keepAfterStopPaying}. We message the
-    game master on Discord {firstWarning} days and {lastWarning} days before anything is deleted.
+    game master on Discord {deletionWarnings} before anything is deleted.
     Backups people already downloaded are theirs to keep or delete.
   </p>
   <p>Account details are deleted when you delete your account. {"{{CHECK: anything payment law says we must keep, such as invoices}}"}</p>
@@ -146,8 +149,10 @@ const [firstWarning, lastWarning] = deletionWarningDays;
       DMbot sends you, or type <code>/consent revoke</code> in Discord.
     </li>
     <li>
-      <strong>Delete everything</strong> about you from <a href="/account">My account</a>. It
-      happens straight away.
+      <strong>Delete your account</strong> from <a href="/account">My account</a>. This removes
+      your sign-in details, your plan and the campaigns you own, straight away. Lines you said in
+      someone else's campaign stay there, readable by that server, until that campaign is
+      deleted. {"{{CHECK: what account deletion removes (#435), and update when \"Delete my past transcripts\" ships}}"}
     </li>
     <li>
       <strong>Ask for a copy</strong> of what we keep, or ask us to fix it, by writing to
@@ -157,8 +162,8 @@ const [firstWarning, lastWarning] = deletionWarningDays;
 
   <h2>Cookies</h2>
   <p>
-    This website uses one cookie, only to keep you signed in. It can't be read by other websites
-    or by code on the page. There are no tracking or ad cookies.
+    This website uses one cookie, only to keep you signed in. Other websites can't read it. There
+    are no tracking or ad cookies. {"{{CHECK: confirm with #435}}"}
   </p>
 
   <h2>Keeping it safe</h2>
@@ -176,7 +181,7 @@ const [firstWarning, lastWarning] = deletionWarningDays;
 
   <h2>Changes</h2>
   <p>
-    If we change what we keep or who sees it, we'll update this page and ask everyone who is
-    recorded to say yes again before DMbot records them.
+    If we change what we keep or who sees it, we'll update this page and tell signed-in users. If
+    the question you said yes to changes, DMbot asks you again before it records you.
   </p>
 </LegalPage>

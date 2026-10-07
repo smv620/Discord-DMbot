@@ -14,7 +14,7 @@ import {
   title="Terms of use"
   description="The rules for using DMbot: plans, recording, what DMbot does and doesn't do, and ending your account."
   heading="Terms of use"
-  summary="DMbot listens to your game in Discord and quietly helps the game master. It only records people who said yes, and everyone in the server can read what it writes down. DMbot gives advice; the game master decides. It can mishear and make mistakes, so check anything important. Plans are paid monthly through our payment company, and you can change or stop any time. Don't use DMbot to record people who haven't agreed, and only share books or adventures you have the right to use."
+  summary="DMbot listens to your game in Discord and quietly helps the game master (DM). It only records people who said yes, and everyone in the server can read what it writes down. DMbot gives advice; the game master decides. It can mishear and make mistakes, so check anything important. Plans are paid monthly through our payment company, and you can change or stop any time. Don't use DMbot to record people who haven't agreed, and only share books or adventures you have the right to use."
 >
   <h2>Who we are</h2>
   <p>
@@ -37,11 +37,13 @@ import {
   <h2>Recording and saying yes</h2>
   <ul>
     <li>
-      DMbot records only people who pressed "I consent". Anyone can stop at any time with "Stop
-      recording me" or <code>/consent revoke</code>.
+      DMbot records only people who said yes (the "I consent" button or
+      <code>/consent give</code>). Anyone can stop at any time with "Stop recording me" or
+      <code>/consent revoke</code>.
     </li>
     <li>
-      What DMbot writes down can be read and downloaded by everyone in that Discord server.
+      What DMbot writes down can be read by everyone in that Discord server, and downloaded on
+      paid plans.
     </li>
     <li>
       Don't try to record people who haven't agreed, for example by playing their voice through
@@ -69,7 +71,8 @@ import {
   <ul>
     <li>
       Plans, prices and hours are on the <a href="/pricing">Prices</a> page. Paid plans renew
-      every month until you stop them.
+      every month until you stop them. The first month of Table after Try It costs $1.99.
+      {"{{CHECK: does Try It turn into a paid plan by itself after 30 days, or only when you pick one? Say so here.}}"}
     </li>
     <li>
       Payments are taken by {paymentProvider}, who is the seller. Their terms apply to the
@@ -107,7 +110,7 @@ import {
       {"{{CHECK: notice-and-takedown address and process}}"}
     </li>
     <li>
-      Backups of a paid campaign hold everything in it, including the game master's secrets.
+      Backups of a paid campaign hold the campaign, including the game master's secrets.
       Anyone in the server may download one. Whoever loads a backup becomes the game master of
       that copy.
     </li>
@@ -124,6 +127,7 @@ import {
   <ul>
     <li>
       You can delete your account and data any time from <a href="/account">My account</a>.
+      {"{{CHECK: what account deletion removes (#435)}}"}
     </li>
     <li>
       We may stop offering DMbot. If we do, we'll give paid users at least {"{{CHECK: 30}}"} days'
@@ -145,7 +149,7 @@ import {
   <h2>Changes to these terms</h2>
   <p>
     If we change these terms, we'll update this page and tell signed-in users before the change
-    starts. If a change affects recording, everyone is asked to say yes again.
+    starts. If the question people say yes to changes, DMbot asks everyone again before it records them.
   </p>
 
   <h2>The law that applies</h2>
