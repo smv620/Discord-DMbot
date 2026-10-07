@@ -107,7 +107,7 @@ class WebApi(DatabaseTest):
         self.assertEqual(start.status_code, 302)
         query = parse_qs(urlsplit(start.headers["location"]).query)
         self.assertEqual(query["redirect_uri"], [f"{API}/auth/discord/callback"])
-        state_cookie = start.cookies.get("dmbot_signin")
+        state_cookie = start.cookies.get("__Host-dmbot_signin")
         self.assertEqual(state_cookie, query["state"][0])
 
     async def test_a_state_from_another_browser_is_refused(self) -> None:
@@ -122,13 +122,48 @@ class WebApi(DatabaseTest):
 
     async def test_a_forged_or_expired_state_is_refused(self) -> None:
         forged = sessions.new_state(b"x" * 40, self.now)
-        self.client.cookies.set("dmbot_signin", forged, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_signin", forged, domain="api.dmbot.example")
         done = await self.client.get(
             "/auth/discord/callback", params={"state": forged, "code": "good-code"}
         )
         self.assertEqual(done.headers["location"], f"{SITE}/account?signin=failed")
         old = sessions.new_state(SECRET, self.now - sessions.STATE_SECONDS - 1)
         self.assertFalse(sessions.state_ok(SECRET, old, old, self.now))
+
+    async def test_a_malformed_state_is_a_plain_failure_not_an_error(self) -> None:
+        for cookie, bad in (
+            ("x", "é.1.x"),
+            ("a.b", "a.b"),
+            ("n.9999999999.A", "n.9999999999.A"),
+            ("", ""),
+            ("n.1.@@@", "n.1.@@@"),
+        ):
+            self.client.cookies.set("__Host-dmbot_signin", cookie, domain="api.dmbot.example")
+            done = await self.client.get(
+                "/auth/discord/callback", params={"state": bad, "code": "good-code"}
+            )
+            self.assertEqual(done.status_code, 302, bad)
+            self.assertEqual(done.headers["location"], f"{SITE}/account?signin=failed")
+        # Text a browser could never send as a cookie, checked directly.
+        for state, cookie in (("é.1.x", "é.1.x"), ("n.9.A", "n.9.A"), ("n.9.AAAAA", "n.9.AAAAA")):
+            self.assertFalse(sessions.state_ok(SECRET, state, cookie, self.now))
+
+    async def test_the_token_is_revoked_even_when_reading_the_person_fails(self) -> None:
+        async def broken(token: str) -> DiscordUser:
+            raise DiscordError("bad answer")
+
+        self.discord.user = broken  # type: ignore[method-assign]
+        done = await self.sign_in()
+        self.assertEqual(done.headers["location"], f"{SITE}/account?signin=failed")
+        self.assertEqual(self.discord.revoked, ["discord-access-token"])
+
+    async def test_an_unexpected_failure_still_sends_the_person_back_plainly(self) -> None:
+        async def odd(token: str) -> list[DiscordGuild]:
+            raise KeyError("id")
+
+        self.discord.guilds = odd  # type: ignore[method-assign]
+        done = await self.sign_in()
+        self.assertEqual(done.headers["location"], f"{SITE}/account?signin=failed")
 
     async def test_discord_refusing_sends_the_person_back_with_a_plain_failure(self) -> None:
         self.discord.fail = True
@@ -186,11 +221,38 @@ class WebApi(DatabaseTest):
         self.assertEqual((await self.client.get("/me")).status_code, 401)
 
     async def test_the_database_hides_and_sweeps_expired_sessions(self) -> None:
-        self.now = int(time.time()) - 31 * 86400  # signed in 31 days ago, by the real clock
+        # Signed in 31 days ago by the real clock; the API's clock stays at that moment, so
+        # only the database's own expiry check (its clock) can refuse the session.
+        self.now = int(time.time()) - 31 * 86400
         await self.sign_in()
-        self.now = int(time.time())
         self.assertEqual((await self.client.get("/me")).status_code, 401)
         self.assertEqual(await sessions.delete_expired(self.db), 1)
+        self.assertEqual(await sessions.delete_expired(self.db), 0)
+
+    async def test_signing_out_one_browser_leaves_the_others(self) -> None:
+        await self.sign_in()
+        first = self.client.cookies.get("__Host-dmbot_session")
+        assert first is not None
+        self.client.cookies.clear()
+        await self.sign_in()
+        await self.client.post("/auth/logout", headers={"X-DMbot-Request": "1"})
+        self.client.cookies.set("__Host-dmbot_session", first, domain="api.dmbot.example")
+        self.assertEqual((await self.client.get("/me")).status_code, 200)
+
+    async def test_signing_out_always_works(self) -> None:
+        response = await self.client.post("/auth/logout", headers={"X-DMbot-Request": "1"})
+        self.assertEqual(response.status_code, 204)
+
+    async def test_a_plan_past_its_period_shows_as_lapsed(self) -> None:
+        await self.sign_in()
+        async with self.db.plan_writer(ALICE.id) as conn:
+            await conn.execute(
+                "INSERT INTO entitlements (user_id, plan, status, hours_cap, campaign_cap,"
+                " period_start, period_end, plan_changed_at, provider, last_event_at,"
+                " updated_at) VALUES (%s, 'try-it', 'active', 8, 1, %s, %s, 0, 'fake', 0, 0)",
+                (ALICE.id, self.now - 40 * 86400, self.now - 10 * 86400),
+            )
+        self.assertEqual((await self.client.get("/me")).json()["plan"]["status"], "lapsed")
 
     async def test_sign_out_ends_the_session(self) -> None:
         await self.sign_in()
@@ -225,6 +287,12 @@ class WebApi(DatabaseTest):
             headers={"X-DMbot-Request": "1", "Origin": "https://evil.example"},
         )
         self.assertEqual(response.status_code, 403)
+
+    async def test_refusals_carry_cors_headers_so_the_site_can_read_them(self) -> None:
+        refused = await self.client.post("/auth/logout", headers={"Origin": SITE})
+        self.assertEqual(refused.status_code, 403)
+        self.assertEqual(refused.headers.get("access-control-allow-origin"), SITE)
+        self.assertEqual(refused.json(), {"error": "not_allowed"})
 
     async def test_cors_allows_only_the_website(self) -> None:
         ours = await self.client.options(

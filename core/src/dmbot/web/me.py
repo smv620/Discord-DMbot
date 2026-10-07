@@ -38,19 +38,31 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
     names = {g.id: g.name for g in session.guilds}
 
     async with db.unscoped() as conn:
-        for guild in session.guilds[:MAX_GUILDS]:
-            # Switch this transaction to one server at a time; row-level security then
-            # shows only that server's rows, exactly as Database.guild() would.
-            await conn.execute(
-                "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild.id)),)
-            )
-            cur = await conn.execute(
-                "SELECT c.id, c.name, c.last_played_at FROM campaigns c"
-                " JOIN campaign_dms d ON d.campaign_id = c.id AND d.guild_id = c.guild_id"
-                " WHERE c.guild_id = %s AND d.user_id = %s ORDER BY c.name",
-                (guild.id, session.user_id),
-            )
-            for row in await cur.fetchall():
+        # One batch (a pipeline), not hundreds of round trips. Each server's statements
+        # switch the transaction to that server first, so row-level security shows only
+        # its rows, exactly as Database.guild() would.
+        pending = []
+        async with conn.pipeline():
+            for guild in session.guilds[:MAX_GUILDS]:
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild.id)),)
+                )
+                mine = await conn.execute(
+                    "SELECT c.id, c.name, c.last_played_at FROM campaigns c"
+                    " JOIN campaign_dms d ON d.campaign_id = c.id AND d.guild_id = c.guild_id"
+                    " WHERE c.guild_id = %s AND d.user_id = %s ORDER BY c.name",
+                    (guild.id, session.user_id),
+                )
+                here = None
+                if guild.manage:
+                    here = await conn.execute(
+                        "SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = %s)"
+                        " OR EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %s) AS here",
+                        (guild.id, guild.id),
+                    )
+                pending.append((guild, mine, here))
+        for guild, mine, here in pending:
+            for row in await mine.fetchall():
                 campaigns.append(
                     {
                         "id": row["id"],
@@ -64,18 +76,13 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                         "role": "co-dm",
                     }
                 )
-            if guild.manage:
-                cur = await conn.execute(
-                    "SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = %s)"
-                    " OR EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %s) AS here",
-                    (guild.id, guild.id),
-                )
-                here = await cur.fetchone()
+            if here is not None:
+                found = await here.fetchone()
                 servers.append(
                     {
                         "id": str(guild.id),
                         "name": guild.name,
-                        "hasDmbot": bool(here and here["here"]),
+                        "hasDmbot": bool(found and found["here"]),
                     }
                 )
 

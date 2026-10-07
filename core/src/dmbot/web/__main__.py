@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import sys
 
 import uvicorn
+from psycopg.conninfo import make_conninfo
 
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
@@ -34,16 +36,19 @@ async def _sweep_expired_sessions(db: Database) -> None:
 
 
 async def serve(settings: WebSettings) -> None:
-    db = await Database.open(settings.database_url)
-    app = create_app(
-        settings, db, HttpDiscord(settings.discord_client_id, settings.discord_client_secret)
+    # A small pool of its own, and no query may run longer than 5 seconds: a busy website
+    # can never hold many of the database's connections for long.
+    db = await Database.open(
+        make_conninfo(settings.database_url, options="-c statement_timeout=5000"),
+        max_size=4,
     )
+    discord = HttpDiscord(settings.discord_client_id, settings.discord_client_secret)
+    app = create_app(settings, db, discord)
     sweeper = asyncio.create_task(_sweep_expired_sessions(db))
     config = uvicorn.Config(
         app,
         host=settings.host,
         port=settings.port,
-        proxy_headers=True,  # behind Caddy or Cloudflare (#435)
         server_header=False,
         log_config=None,  # our own logging (ids only)
         access_log=False,  # access lines would include query strings
@@ -52,6 +57,9 @@ async def serve(settings: WebSettings) -> None:
         await uvicorn.Server(config).serve()
     finally:
         sweeper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sweeper
+        await discord.close()
         await db.close()
 
 

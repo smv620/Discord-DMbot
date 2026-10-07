@@ -15,7 +15,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
@@ -29,7 +29,6 @@ from dmbot.web.settings import WebSettings
 log = logging.getLogger(__name__)
 
 REQUEST_HEADER = "X-DMbot-Request"
-STATE_COOKIE = "dmbot_signin"
 Clock = Callable[[], int]
 
 
@@ -50,19 +49,13 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
-    # The __Host- prefix makes browsers refuse the cookie unless it's Secure, set by this
-    # exact host, with no Domain: no other site or subdomain can plant or read it.
-    session_cookie = "__Host-dmbot_session" if settings.secure_cookies else "dmbot_session"
+    # The __Host- prefix makes browsers refuse a cookie unless it's Secure, set by this
+    # exact host with Path=/ and no Domain: no other site or subdomain (the website shares
+    # this API's site) can plant or read it. Plain names only for http://localhost testing.
+    prefix = "__Host-" if settings.secure_cookies else ""
+    session_cookie = f"{prefix}dmbot_session"
+    state_cookie = f"{prefix}dmbot_signin"
     account_page = f"{settings.site_url}/account"
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[settings.site_origin],  # exactly the website, never echoed back
-        allow_credentials=True,
-        allow_methods=["GET", "POST"],
-        allow_headers=[REQUEST_HEADER, "Content-Type"],
-        max_age=600,
-    )
 
     @app.middleware("http")
     async def guard(
@@ -79,6 +72,17 @@ def create_app(
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
+
+    # Added after the guard, so it wraps it: refusals and errors carry CORS headers too,
+    # and the website can read them as "not allowed" or "server", not as "network".
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[settings.site_origin],  # exactly the website, never echoed back
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=[REQUEST_HEADER, "Content-Type"],
+        max_age=600,
+    )
 
     def set_session_cookie(response: Response, token: str) -> None:
         response.set_cookie(
@@ -117,10 +121,10 @@ def create_app(
             discord.authorize_url(state, settings.oauth_redirect_uri), status_code=302
         )
         response.set_cookie(
-            STATE_COOKIE,
+            state_cookie,
             state,
             max_age=sessions.STATE_SECONDS,
-            path="/auth/discord",
+            path="/",
             secure=settings.secure_cookies,
             httponly=True,
             samesite="lax",
@@ -128,22 +132,30 @@ def create_app(
         return response
 
     @app.get("/auth/discord/callback")
-    async def sign_in_finish(
-        state: Annotated[str, Query()] = "",
-        code: Annotated[str, Query()] = "",
-        signin_cookie: Annotated[str | None, Cookie(alias=STATE_COOKIE)] = None,
-    ) -> Response:
+    async def sign_in_finish(request: Request) -> Response:
+        # Read by hand (not as typed parameters) so nothing malformed becomes an error page.
+        state = request.query_params.get("state", "")
+        code = request.query_params.get("code", "")
         failed = RedirectResponse(f"{account_page}?signin=failed", status_code=302)
-        failed.delete_cookie(STATE_COOKIE, path="/auth/discord")
-        if not code or not sessions.state_ok(settings.secret_key, state, signin_cookie, clock()):
+        failed.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+        cookie = request.cookies.get(state_cookie)
+        if not code or not sessions.state_ok(settings.secret_key, state, cookie, clock()):
             return failed
         token: str | None = None
         try:
             token = await discord.exchange(code, settings.oauth_redirect_uri)
             user = await discord.user(token)
             guilds = await discord.guilds(token)
+            session_token = await sessions.sign_in(
+                db, user, guilds, now=clock(), days=settings.session_days
+            )
         except DiscordError as exc:
             log.warning("Sign-in failed: %s", exc)
+            return failed
+        except Exception:
+            # A bad answer from Discord or a database problem: the person gets the plain
+            # "try again" page, the log gets the details (no token, no names).
+            log.exception("Sign-in failed unexpectedly")
             return failed
         finally:
             if token is not None:
@@ -151,19 +163,20 @@ def create_app(
                     await discord.revoke(token)
                 except DiscordError as exc:
                     log.warning("Couldn't revoke a Discord sign-in token: %s", exc)
-        session_token = await sessions.sign_in(
-            db, user, guilds, now=clock(), days=settings.session_days
-        )
         log.info("Signed in: user %s", user.id)
         response = RedirectResponse(account_page, status_code=302)
-        response.delete_cookie(STATE_COOKIE, path="/auth/discord")
+        response.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
         set_session_cookie(response, session_token)
         return response
 
     @app.post("/auth/logout", status_code=204)
-    async def sign_out(signed: Signed) -> Response:
-        session, token = signed
-        await sessions.sign_out(db, session.user_id, token)
+    async def sign_out(request: Request) -> Response:
+        """Always ends with the person signed out, even if the session had already gone."""
+        token = request.cookies.get(session_cookie)
+        if token:
+            found = await sessions.find(db, token, now=clock())
+            if found is not None:
+                await sessions.sign_out(db, found.user_id, token)
         response = Response(status_code=204)
         response.delete_cookie(session_cookie, path="/", secure=settings.secure_cookies)
         return response

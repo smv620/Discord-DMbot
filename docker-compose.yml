@@ -22,6 +22,7 @@ services:
     restart: unless-stopped
 
   core:
+    image: dmbot-core   # shared with web-api
     build:
       context: ./core
       args:
@@ -65,28 +66,29 @@ services:
   # the private network; Caddy or Cloudflare in front publishes it later.
   web-api:
     profiles: ["web"]
+    image: dmbot-core   # the same image as core: built once
     build:
       context: ./core
       args:
-        EXTRAS: ${CORE_EXTRAS:-whisper}   # same as core, so the image is shared
+        EXTRAS: ${CORE_EXTRAS:-whisper}
     command: ["python", "-m", "dmbot.web"]
-    env_file: .env
+    # Only the settings the API needs, listed by name (no env_file): a secret added to
+    # .env later never reaches it by accident. No bot token, voice secret, AI or speech keys.
     environment:
-      LOG_FORMAT: ${LOG_FORMAT:-json}
       DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
-      # Only what the API needs: no bot token, voice secret or AI and speech keys.
-      POSTGRES_ADMIN_PASSWORD: ""
-      DMBOT_DB_PASSWORD: ""
-      DISCORD_TOKEN: ""
-      EARS_SHARED_SECRET: ""
-      ANTHROPIC_API_KEY: ""
-      DEEPGRAM_API_KEY: ""
-      CLOUD_STT_API_KEY: ""
-      SPEECHMATICS_API_KEY: ""
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      WEB_SECRET_KEY: ${WEB_SECRET_KEY:-}
+      WEB_SITE_URL: ${WEB_SITE_URL:-}
+      WEB_API_URL: ${WEB_API_URL:-}
+      WEB_API_PORT: ${WEB_API_PORT:-8080}
+      WEB_SESSION_DAYS: ${WEB_SESSION_DAYS:-30}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     expose:
-      - "8080"
+      - "${WEB_API_PORT:-8080}"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      test: ["CMD-SHELL", "python -c \"import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('WEB_API_PORT', '8080') + '/health', timeout=3)\""]
       interval: 30s
       timeout: 5s
       retries: 3

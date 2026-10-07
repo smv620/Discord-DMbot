@@ -34,16 +34,17 @@ def new_state(secret: bytes, now: int) -> str:
 
 
 def state_ok(secret: bytes, state: str, cookie: str | None, now: int) -> bool:
-    """The state Discord sent back is ours, unexpired, and from this same browser."""
-    if not cookie or not hmac.compare_digest(state, cookie):
-        return False
+    """The state Discord sent back is ours, unexpired, and from this same browser.
+    Anything malformed is simply not ok (never an error)."""
     try:
+        if not cookie or not hmac.compare_digest(state.encode(), cookie.encode()):
+            return False
         nonce, expires_raw, mac = state.split(".")
         expires = int(expires_raw)
-    except ValueError:
+        good = hmac.new(secret, f"{nonce}.{expires}".encode(), hashlib.sha256).digest()
+        given = base64.urlsafe_b64decode(mac + "=" * (-len(mac) % 4))
+    except (ValueError, TypeError, UnicodeError):
         return False
-    good = hmac.new(secret, f"{nonce}.{expires}".encode(), hashlib.sha256).digest()
-    given = base64.urlsafe_b64decode(mac + "=" * (-len(mac) % 4))
     return hmac.compare_digest(good, given) and now < expires
 
 
@@ -87,10 +88,11 @@ async def sign_in(
 async def find(db: Database, token: str, *, now: int) -> Session | None:
     """The unexpired session for this cookie, or None. (The database also hides expired
     sessions by its own clock; this checks the API's clock too.)"""
-    async with db.session(hash_token(token)) as conn:
+    id_hash = hash_token(token)
+    async with db.session(id_hash) as conn:
         cur = await conn.execute(
             "SELECT user_id, display_name, guilds, expires_at FROM web_sessions WHERE id_hash = %s",
-            (hash_token(token),),
+            (id_hash,),
         )
         row = await cur.fetchone()
     if row is None or row["expires_at"] <= now:

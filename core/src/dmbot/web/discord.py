@@ -69,9 +69,16 @@ class DiscordOAuth(Protocol):
 class HttpDiscord:
     """The real Discord, over HTTPS."""
 
-    def __init__(self, client_id: str, client_secret: str) -> None:
+    def __init__(self, client_id: str, client_secret: str, *, api: str = API) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
+        self._api = api.rstrip("/")
+        self._http: aiohttp.ClientSession | None = None
+
+    async def close(self) -> None:
+        if self._http is not None:
+            await self._http.close()
+            self._http = None
 
     def authorize_url(self, state: str, redirect_uri: str) -> str:
         query = urlencode(
@@ -87,12 +94,10 @@ class HttpDiscord:
         return f"{AUTHORIZE_URL}?{query}"
 
     async def _request(self, method: str, url: str, **kwargs: Any) -> Any:
-        timeout = aiohttp.ClientTimeout(total=10)
+        if self._http is None:  # one connection pool for every sign-in
+            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
         try:
-            async with (
-                aiohttp.ClientSession(timeout=timeout) as http,
-                http.request(method, url, **kwargs) as response,
-            ):
+            async with self._http.request(method, url, **kwargs) as response:
                 if response.status >= 400:
                     raise DiscordError(f"Discord answered {response.status} to {url}")
                 if response.content_type == "application/json":
@@ -104,7 +109,7 @@ class HttpDiscord:
     async def exchange(self, code: str, redirect_uri: str) -> str:
         data = await self._request(
             "POST",
-            f"{API}/oauth2/token",
+            f"{self._api}/oauth2/token",
             data={
                 "grant_type": "authorization_code",
                 "code": code,
@@ -121,20 +126,20 @@ class HttpDiscord:
 
     async def user(self, token: str) -> DiscordUser:
         raw = await self._request(
-            "GET", f"{API}/users/@me", headers={"Authorization": f"Bearer {token}"}
+            "GET", f"{self._api}/users/@me", headers={"Authorization": f"Bearer {token}"}
         )
         return user_from_json(raw)
 
     async def guilds(self, token: str) -> list[DiscordGuild]:
         raw = await self._request(
-            "GET", f"{API}/users/@me/guilds", headers={"Authorization": f"Bearer {token}"}
+            "GET", f"{self._api}/users/@me/guilds", headers={"Authorization": f"Bearer {token}"}
         )
         return [guild_from_json(g) for g in raw or []]
 
     async def revoke(self, token: str) -> None:
         await self._request(
             "POST",
-            f"{API}/oauth2/token/revoke",
+            f"{self._api}/oauth2/token/revoke",
             data={"token": token, "token_type_hint": "access_token"},
             auth=aiohttp.BasicAuth(self._client_id, self._client_secret),
         )
