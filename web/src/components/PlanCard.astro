@@ -1,0 +1,113 @@
+---
+// One plan: name, big price, the hours line right under it, campaigns, a note, a button.
+import { formatPrice, labels, type Plan } from "../content/pricing";
+
+interface Props {
+  plan: Plan;
+}
+
+const { plan } = Astro.props;
+const headingId = `plan-${plan.id}`;
+---
+
+<article
+  class:list={["card", { recommended: plan.recommended }]}
+  aria-labelledby={headingId}
+  data-plan={plan.id}
+>
+  {plan.recommended && <p class="badge">{labels.recommendedBadge}</p>}
+  <h3 id={headingId}>{plan.name}</h3>
+  <p class="price">
+    {
+      plan.priceCents === null ? (
+        <span class="amount soon">{labels.comingSoon}</span>
+      ) : plan.priceCents === 0 ? (
+        <span class="amount">{labels.free}</span>
+      ) : (
+        <>
+          <span class="amount">{formatPrice(plan.priceCents)}</span>
+          <span class="per">{labels.perMonth}</span>
+        </>
+      )
+    }
+  </p>
+  <p class="hours">{plan.hoursLine}</p>
+  <p class="campaigns">{plan.campaignsLine}</p>
+  {plan.note && <p class="note">{plan.note}</p>}
+  {!plan.comingSoon && <a class="button" href="/account">{plan.action}</a>}
+</article>
+
+<style>
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-6);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .card p {
+    margin: 0;
+  }
+
+  .recommended {
+    border: 2px solid var(--accent);
+  }
+
+  .badge {
+    align-self: flex-start;
+    padding: var(--space-1) var(--space-3);
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--text);
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+
+  h3 {
+    margin: var(--space-2) 0 0;
+  }
+
+  .price {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+  }
+
+  .amount {
+    font-size: var(--text-3xl);
+    font-weight: 700;
+    line-height: var(--leading-tight);
+  }
+
+  .amount.soon {
+    font-size: var(--text-xl);
+    color: var(--text-muted);
+  }
+
+  .per {
+    color: var(--text-muted);
+  }
+
+  .hours {
+    font-size: var(--text-lg);
+    font-weight: 600;
+  }
+
+  .campaigns,
+  .note {
+    color: var(--text-muted);
+  }
+
+  .button {
+    margin-top: auto;
+    align-self: stretch;
+  }
+
+  .note + .button,
+  .campaigns + .button {
+    margin-top: var(--space-4);
+  }
+</style>

@@ -1,12 +1,223 @@
 ---
+import PlanCard from "../components/PlanCard.astro";
 import Base from "../layouts/Base.astro";
+import {
+  extraHours,
+  formatPrice,
+  headline,
+  labels,
+  plans,
+  pro,
+  questions,
+  tryIt,
+} from "../content/pricing";
 ---
 
-<Base title="Prices" description="DMbot plans: pick the hours your table plays. Every plan has everything.">
-  <div class="prose">
-    <h1>Prices</h1>
-    <p>Pick the hours your table plays. Every plan has everything. Change plans any time.</p>
-    <p class="muted">This page is being written. Check back soon.</p>
-    <a class="button" href="/">Go to the home page</a>
-  </div>
+<Base title="Prices" description={`${headline.title} ${headline.rest}`}>
+  <header class="intro">
+    <h1>{headline.title}</h1>
+    <p class="lead">{headline.rest}</p>
+  </header>
+
+  <section class="try" aria-labelledby="try-heading">
+    <div>
+      <h2 id="try-heading">{labels.tryItHeading}</h2>
+      <p>
+        {tryIt.hoursLine}, {tryIt.campaignsLine.toLowerCase()}. {tryIt.note}
+      </p>
+    </div>
+    <a class="button" href="/account">{tryIt.action}</a>
+  </section>
+
+  <section aria-labelledby="plans-heading">
+    <h2 id="plans-heading" class="visually-hidden">{labels.plansHeading}</h2>
+    <p class="hint muted" aria-hidden="true">{labels.swipeHint}</p>
+    <div class="plans" role="region" aria-labelledby="plans-heading" tabindex="0">
+      {plans.map((plan) => <PlanCard plan={plan} />)}
+    </div>
+    <p class="every muted">{labels.everyPlanHas}</p>
+  </section>
+
+  <section class="more" aria-labelledby="more-heading">
+    <h2 id="more-heading">{labels.morePlansHeading}</h2>
+    <div class="more-grid">
+      <PlanCard plan={pro} />
+      <article class="extra" aria-labelledby="extra-heading" data-plan="extra-hours">
+        <h3 id="extra-heading">{extraHours.name}</h3>
+        <p class="extra-price">{formatPrice(extraHours.priceCents)}</p>
+        <p>{extraHours.line}</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="faq" aria-labelledby="faq-heading">
+    <h2 id="faq-heading">{labels.faqHeading}</h2>
+    {
+      questions.map((item) => (
+        <details>
+          <summary>{item.question}</summary>
+          <p>{item.answer}</p>
+        </details>
+      ))
+    }
+  </section>
 </Base>
+
+<style>
+  .intro {
+    max-width: var(--text-width);
+    margin-bottom: var(--space-8);
+  }
+
+  .lead {
+    font-size: var(--text-lg);
+    color: var(--text-muted);
+  }
+
+  section {
+    margin-bottom: var(--space-12);
+  }
+
+  .try {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-6);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+  }
+
+  .try h2 {
+    font-size: var(--text-lg);
+    margin-bottom: var(--space-2);
+  }
+
+  .try p {
+    margin: 0;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Phone: one swipeable row, the next card peeking so it's clear there's more. */
+  .plans {
+    display: flex;
+    gap: var(--space-4);
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    margin-inline: calc(-1 * var(--gutter));
+    padding: var(--space-2) var(--gutter) var(--space-4);
+    scroll-padding-inline: var(--gutter);
+  }
+
+  .plans > :global(*) {
+    flex: 0 0 85%;
+    scroll-snap-align: start;
+  }
+
+  .hint {
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-2);
+  }
+
+  .every {
+    margin-top: var(--space-4);
+  }
+
+  .more h2 {
+    font-size: var(--text-lg);
+  }
+
+  .more-grid {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .extra {
+    padding: var(--space-6);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  .extra h3 {
+    margin-bottom: var(--space-1);
+  }
+
+  .extra p {
+    margin: 0;
+  }
+
+  .extra-price {
+    font-size: var(--text-xl);
+    font-weight: 700;
+  }
+
+  .faq {
+    max-width: var(--text-width);
+  }
+
+  details {
+    border-bottom: 1px solid var(--border);
+  }
+
+  summary {
+    display: flex;
+    align-items: center;
+    min-height: var(--tap);
+    padding-block: var(--space-2);
+    justify-content: space-between;
+    gap: var(--space-4);
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  summary::after {
+    content: "+";
+    flex: none;
+    font-size: var(--text-xl);
+    line-height: 1;
+    color: var(--accent);
+  }
+
+  details[open] summary::after {
+    content: "\2212";
+  }
+
+  details p {
+    margin: 0 0 var(--space-4);
+  }
+
+  /* Wider screens: three cards side by side, no swiping. */
+  @media (min-width: 48rem) {
+    .hint {
+      display: none;
+    }
+
+    .plans {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      overflow: visible;
+      margin-inline: 0;
+      padding-inline: 0;
+    }
+
+    .more-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+</style>
