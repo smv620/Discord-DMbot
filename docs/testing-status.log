@@ -8,9 +8,21 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- PR #487 (#476): memory facts touching an entry now load in a fixed order, so flags are
-  made in the same order every time. Deploy: rebuild core. Check: after a session, the
-  DM screen's flags look as before (no live change expected; the fix is for a test).
+In development @ 6895de8 (84f1790 is live; core only, rebuild core; migration 0012 adds
+transcript_sessions.engines). Check:
+  - #495 (dev1, #470): pool follow-ups. During a forced Deepgram outage (wrong key for
+    a minute) every table gets "No transcript" once, then "working again" once after
+    recovery, no churn; the log shows no worker died.
+  - #492 (dev1, #173): the downloaded transcript's header says which speech-to-text
+    wrote it ("Deepgram, an online service (model nova-3)"), never a host or key.
+  - #482 (dev1, #173): hints put people in voice first; someone who never agreed and
+    is in voice is never in the keyterms (check the Deepgram request log line).
+  - #477 (dev2, #471): one "✏️ Name fixes to check" header; with many fixes the oldest
+    lines drop whole, every Undo button keeps its numbered line.
+  - #487 (CloudDev, #476): flags are made in the same order every time; no live change
+    expected. Loop test_seeded_graphs 20× on the server once and note it in #476.
+  - #478 (dev3): twin flags. Also still queued from #480: run the dm-only replay with
+    --lead-in-ms 0 and 100 and note first-word errors for both in #299.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
