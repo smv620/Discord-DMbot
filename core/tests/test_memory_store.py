@@ -1198,7 +1198,8 @@ class Backups(MemoryTest):
         ):
             data = await self.campaigns.export(GUILD_A, self.c)
             await self.campaigns.import_backup(GUILD_B, data, DM)
-        self.assertEqual(ran, ["dump", "validate", "check"])
+        tables = len(backup._TAGS)  # one hop per table: one table's raw rows at a time (#393)
+        self.assertEqual(ran, ["dump"] * tables + ["validate", "check"])
 
     async def test_a_damaged_file_is_refused_before_anything_is_touched(self) -> None:
         """The memory rows are checked before the restore's transaction opens: a bad

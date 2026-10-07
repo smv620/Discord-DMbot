@@ -190,7 +190,7 @@ class Browse(_Menu):
             if self.shown:
                 self.open = _Select(
                     self._open,
-                    placeholder="✏️ Edit or remove a name…",
+                    placeholder="✏️ Fix, change or remove a name…",
                     options=[
                         discord.SelectOption(
                             label=logic.shorten(names.entities[e].name, logic.OPTION_LABEL_MAX),

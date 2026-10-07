@@ -154,7 +154,7 @@ class Panel(NamesTest):
         self.assertEqual(len(shown), 3)  # for the Open a name… menu
         self.assertTrue(text.endswith(ui.EDIT_HINT))  # how to edit or remove (#353)
         view = ui.NamesHome(self.campaign.id, 0, shown)
-        self.assertEqual(view.open.placeholder, "✏️ Edit or remove a name…")
+        self.assertEqual(view.open.placeholder, "✏️ Fix, change or remove a name…")
 
     async def test_names_heard_last_session_come_first(self) -> None:
         from dmbot.memory.models import Heard
@@ -254,6 +254,13 @@ class NameCards(NamesTest):
         first_row = [getattr(c, "label", "") for c in card.children if c.row in (None, 0)]
         # The three edits the panel names, in its words (#353).
         self.assertEqual(first_row, ["✏️ Fix spelling", "Change what it is", "🗑 Remove this name"])
+        longer = name_card.NameCard(self.campaign.id, self.bell.id, others=True, longer=True)
+        rows: dict[int, list[str]] = {}
+        for c in longer.children:
+            rows.setdefault(c.row or 0, []).append(getattr(c, "label", ""))
+        # Three short buttons a row at most, so nothing clips on a phone (#393).
+        self.assertEqual(rows[1], [name_card.ALSO_CALLED, "Edit other names", "🔗 Same as…"])
+        self.assertEqual(rows[2], ["🧭 Connect to…", "Show all"])
         self.assertTrue(all(len(getattr(c, "label", "")) <= 25 for c in card.children))
         (remove,) = [c for c in card.children if getattr(c, "label", "") == "🗑 Remove this name"]
         it = self.it()
@@ -923,11 +930,15 @@ class Adding(NamesTest):
         it = self.it()
         await view._picked(it)
         text, card = it.response.edited[0]
-        self.assertIn("DMbot will remember **Thornewick** (place)", text)
-        self.assertIn(ui.MISTAKE_HINT, text)  # #353: its card, to fix or remove it
+        # What was saved, then the hint, then the rest (#393).
+        self.assertIn(
+            "✅ DMbot will remember **Thornewick** (place).\n"
+            f"{ui.MISTAKE_HINT}\nDMbot also listens for: Thorn Wick.",
+            text,
+        )
         self.assertIn("🪪 **Thornewick**", text)
         labels = {getattr(c, "label", None) for c in card.children}
-        self.assertLessEqual({"✏️ Fix spelling", "🗑 Remove this name", "➕ Also called…"}, labels)
+        self.assertLessEqual({"✏️ Fix spelling", "🗑 Remove this name", "🏷️ Also called…"}, labels)
         self.assertIn("Thornewick", await self.names())
 
     async def test_a_players_character_knows_its_player(self) -> None:

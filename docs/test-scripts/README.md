@@ -16,7 +16,8 @@ words, who said them, and where the silences are. That lets us check:
 | Speech-to-text bake-off (#128), 2–4 readers | [stt-bakeoff.md](stt-bakeoff.md) | Each reader reads every line, recorded on their own device (not through DMbot). About 6–8 minutes |
 | Twin name test, 1 reader (#367) | [bakeoff-story.md](bakeoff-story.md) | One reader, alone, recorded on their own device: a three-minute story with every bake-off name at least twice. Read with a two-count stop between lines, it should cut into about 27 pieces of speech (25 lines and 2 dramatic pauses). The recording, `bakeoff-story.m4a`, goes next to it once the owner records it. Its names list for the Add many test is [bakeoff-story-names.txt](bakeoff-story-names.txt), with [the setup](bakeoff-story-names-setup.md) (#368) |
 
-Both scripts take about a minute and score the same 12 D&D terms.
+The two table scripts, [dm-only.md](dm-only.md) and [dm-and-player.md](dm-and-player.md),
+take about a minute each and score the same 12 D&D terms.
 
 **Recordings** (for the session twin, #299, and offline speech-to-text checks): `DMOnlyAudio.m4a`
 (dm-only.md), `dm-and-player.m4a` (dm-and-player.md) and `stt-bakeoff.m4a` (stt-bakeoff.md, the

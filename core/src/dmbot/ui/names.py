@@ -81,10 +81,8 @@ GONE = "That name was just changed or removed. Run `/dmbot names` to try again."
 # In the review, where the next suggestion is already on screen (#372 review).
 NOT_JOINED = "That name was just changed or removed, so they weren't joined. Here's the next one."
 # Editing and removing live on each name's card; say how to get there (#353).
-EDIT_HINT = (
-    "To fix a spelling, change what a name is, or remove it, pick it below or press 🔍 Find a name."
-)
-MISTAKE_HINT = "Made a mistake? Fix or remove it with the buttons below."
+EDIT_HINT = "Fix, change or remove a name: pick it below, or press 🔍 Find a name."
+MISTAKE_HINT = "Wrong? Fix or remove it with the buttons below."
 
 
 def _memory(interaction: discord.Interaction) -> MemoryStore | None:
@@ -255,7 +253,7 @@ class NamesHome(_Menu):
         if shown:
             self.open = _Select(
                 self._open,
-                placeholder="✏️ Edit or remove a name…",
+                placeholder="✏️ Fix, change or remove a name…",
                 options=[
                     discord.SelectOption(
                         label=logic.shorten(name, logic.OPTION_LABEL_MAX), value=e, description=kind
@@ -540,8 +538,10 @@ class KindPicker(_Menu):
         # Its card, so fixing or removing it is one press away (#353).
         from dmbot.ui.name_card import show_card
 
-        # The hint first: the card's note is cut to fit, from the end (#353 review).
-        note = f"{MISTAKE_HINT}\n{saved_text(entity, self.others, self.secret)}"
+        # What was saved, then the hint, then the rest: the card's note is cut to fit,
+        # from the end (#353, #393).
+        saved, *rest = saved_text(entity, self.others, self.secret).split("\n")
+        note = "\n".join([saved, MISTAKE_HINT, *rest])
         await show_card(interaction, campaign.id, entity.id, replace=True, note=note)
 
 
@@ -576,7 +576,7 @@ def saved_text(entity: Entity, others: list[str], secret: list[str]) -> str:
     kind = KIND_SHORT.get(entity.type, entity.type)
     lines = [f"✅ DMbot will remember **{_md(entity.name)}** ({kind})."]
     if others:
-        lines.append(f"It also listens for: {', '.join(map(_md, others))}.")
+        lines.append(f"DMbot also listens for: {', '.join(map(_md, others))}.")
     if secret:
         lines.append(
             f"🤫 Kept secret: **{', '.join(map(_md, secret))}** is really "

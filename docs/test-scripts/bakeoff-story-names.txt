@@ -1,7 +1,8 @@
 ### DMbot names list: every name in bakeoff-story.md, for testing Add many (#368)
 ###
 ### One name per line:  name | kind | other names
-### The story has 29 names. This file has 26 lines, and 7 of them are wrong on purpose,
+### The story has 29 names (Bell counts as Belleros's other name, not a name of its own).
+### This file has 26 lines, and 7 of them are wrong on purpose,
 ### to test how Add many handles names the campaign already has (#369). Before uploading,
 ### add the 10 names in bakeoff-story-names-setup.md by hand.
 ###
@@ -15,6 +16,9 @@
 ### A different kind from the one you will have given it:
 ###   Varrow | place            (you have Varrow as a god)
 ###   Ashen Crown | place       (you have Ashen Crown as a group)
+###
+### Bardic Inspiration is "other", not "spell": it's a bard's class feature. That's
+### right, and not one of the 7 deliberate errors.
 ###
 ### No secret names: those are tested separately.
 Bell | NPC | Belleros

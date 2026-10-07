@@ -63,7 +63,7 @@ from dmbot.ui.names import (
 )
 
 log = logging.getLogger(__name__)
-ALSO_CALLED = "➕ Also called…"  # adds another name for this one
+ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
 TRY_AGAIN = (
     "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
 )
@@ -310,7 +310,8 @@ class NameCard(_Menu):
         if others:
             self.add_item(_Button(self._edit_others, label="Edit other names", style=grey, row=1))
         self.add_item(_Button(self._same, label="🔗 Same as…", style=grey, row=1))
-        self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=1))
+        # Row 2, so row 1's buttons don't clip on a phone (#393).
+        self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=2))
         if longer:
             self.add_item(_Button(self._all, label="Show all", style=grey, row=2))
 
@@ -327,7 +328,7 @@ class NameCard(_Menu):
         if not listed:
             await _tell(
                 interaction,
-                f"**{_md(name)}** has no other names yet. Add some with ➕ Also called….",
+                f"**{_md(name)}** has no other names yet. Press {ALSO_CALLED} to add one.",
             )
             return
         self.stop()
@@ -868,7 +869,7 @@ class OneName(_Menu):
         self.stop()
         note = (
             f"✖ DMbot stops listening for **{_md(alias.text)}** as **{_md(name)}**. Wrong? "
-            "Add it back with ➕ Also called…."
+            f"Press {ALSO_CALLED} to add it back."
         )
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
@@ -976,8 +977,8 @@ class PickOther(_Menu):
                 interaction,
                 f"Make **{_md(name)}** and **{_md(other_name)}** one? Their other names and "
                 "connections go together. Which name should it keep?\n"
-                "Is one of them a disguise? Press **No**, then add it to the real one with "
-                "➕ Also called…, as a secret name.",
+                "Is one of them a disguise? Press **No**, then press "
+                f"{ALSO_CALLED} on the real one to add it as a secret name.",
                 SameConfirm(
                     self.campaign_id,
                     self.entity_id,
@@ -1135,7 +1136,7 @@ class Connect(_Menu):
         changed(interaction, campaign)
         self.stop()
         said = sentence(names, relation) or "that connection"
-        note = f"Removed: {_md(said)}. Wrong? Add it again with 🧭 Connect to…."
+        note = f"Removed: {_md(said)}. Wrong? Press 🧭 Connect to… to add it again."
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
     async def _back(self, interaction: discord.Interaction) -> None:
@@ -1241,7 +1242,7 @@ class Matches(_Menu):
         self.typed = typed
         if options:
             self.pick = _Select(
-                self._picked, placeholder="✏️ Edit or remove a name…", options=options
+                self._picked, placeholder="✏️ Fix, change or remove a name…", options=options
             )
             self.add_item(self.pick)
         primary, secondary = discord.ButtonStyle.primary, discord.ButtonStyle.secondary
