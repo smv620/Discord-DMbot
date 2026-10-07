@@ -25,7 +25,9 @@ log = logging.getLogger(__name__)
 
 # Two tries (4 s + 1 s pause + 4 s) fit inside the pipeline's 10 s minimum budget per
 # clip (#155), so a hung Deepgram shows up as a failure ("isn't working"), not as
-# "couldn't keep up". Replies took 0.12-0.6 s in testing.
+# "couldn't keep up". Replies took 0.12-0.6 s in testing. A refused keyterm list (#209)
+# adds one or two more requests; refusals come back fast, and the budget still cuts off
+# the rare clip that is refused slowly.
 REQUEST_TIMEOUT_S = 4
 CONNECT_TIMEOUT_S = 2
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
@@ -41,17 +43,23 @@ STATUS_REASONS = {
 DM_REASONS = {401: "Deepgram didn't accept DMbot's key", 403: "Deepgram didn't accept DMbot's key"}
 # Statuses the host can fix in .env or their Deepgram account (not an outage).
 HOST_FIXABLE = frozenset({400, 401, 402, 403})
-# Deepgram rejects keyterm lists over about 500 tokens. Names are short, so a cap on the
-# count and total length keeps well inside it.
+# Deepgram rejects keyterm lists over about 500 tokens with a 400. Invented names split
+# into many tokens, so the length cap is cautious, and a 400 with keyterms is retried
+# with half of them, then none (#209).
 MAX_KEYTERMS = 50
-MAX_KEYTERM_CHARS = 1000
+MAX_KEYTERM_CHARS = 600
+MIN_KEYTERM_CHARS = 100  # the lowest a refusal can lower the length cap to
 
 
 class DeepgramError(TranscriptionProblem):
     """Safe to show and log: never contains the key, players' names or the reply body."""
 
 
-def keyterms(hints: list[str]) -> list[str]:
+class _KeytermsRefused(Exception):
+    """Deepgram answered 400 to a request that carried keyterms."""
+
+
+def keyterms(hints: list[str], max_chars: int = MAX_KEYTERM_CHARS) -> list[str]:
     """Hints as keyterms: tidied, de-duplicated (ignoring case), capped."""
     seen: set[str] = set()
     terms: list[str] = []
@@ -61,15 +69,28 @@ def keyterms(hints: list[str]) -> list[str]:
         key = term.casefold()
         if not term or key in seen:
             continue
-        if len(terms) >= MAX_KEYTERMS or length + len(term) > MAX_KEYTERM_CHARS:
+        if len(terms) >= MAX_KEYTERMS:
             break
+        if length + len(term) > max_chars:
+            continue  # one long name shouldn't push out the shorter ones after it
         seen.add(key)
         terms.append(term)
         length += len(term)
     return terms
 
 
-def request_params(settings: TranscriptionSettings, hints: list[str]) -> list[tuple[str, str]]:
+def fallbacks(terms: list[str]) -> list[list[str]]:
+    """The keyterm lists to try in turn when Deepgram refuses them: all, the most
+    relevant half (hints come most relevant first), then none."""
+    lists = [terms]
+    if len(terms) > 1:
+        lists.append(terms[: len(terms) // 2])
+    if terms:
+        lists.append([])
+    return lists
+
+
+def request_params(settings: TranscriptionSettings, terms: list[str]) -> list[tuple[str, str]]:
     params: list[tuple[str, str]] = [
         ("model", settings.deepgram_model),
         ("smart_format", "true"),  # punctuation and tidy numbers
@@ -79,7 +100,7 @@ def request_params(settings: TranscriptionSettings, hints: list[str]) -> list[tu
         params.append(("language", settings.language))
     else:
         params.append(("detect_language", "true"))
-    params += [("keyterm", term) for term in keyterms(hints)]
+    params += [("keyterm", term) for term in terms]
     return params
 
 
@@ -99,6 +120,14 @@ class DeepgramTranscriber:
         self._settings = settings
         self._session = session
         self._owns_session = session is None
+        # Keyterm length that Deepgram accepted after a refusal, per listening session
+        # (one campaign in one server), so one campaign's names never limit another's.
+        # An entry is added only after a refusal, which is rare.
+        self._max_keyterm_chars: dict[tuple[int, int], int] = {}
+        # Set when a 400 came back even without keyterms: a settings problem, so later
+        # 400s raise at once instead of paying for the fallbacks on every clip. Any
+        # answer clears it (one clip Deepgram couldn't read isn't a settings problem).
+        self._400_is_settings = False
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -112,20 +141,55 @@ class DeepgramTranscriber:
         return None
 
     async def transcribe(self, utterance: Utterance, hints: list[str]) -> str | None:
+        body = to_wav(utterance.pcm)
+        key = (utterance.guild_id, utterance.session)
+        terms = keyterms(hints, self._max_keyterm_chars.get(key, MAX_KEYTERM_CHARS))
+        tries = fallbacks(terms) if not self._400_is_settings else [terms]
+        for n, sent in enumerate(tries):
+            try:
+                text = await self._request(body, sent, fallback=n < len(tries) - 1)
+            except _KeytermsRefused:
+                # Counts only: the keyterms are players' and characters' names.
+                log.warning(
+                    "Deepgram refused %d keyterms (%d characters); trying %d",
+                    len(sent),
+                    sum(map(len, sent)),
+                    len(tries[n + 1]),
+                )
+                continue
+            if len(sent) < len(terms):
+                # Remember a length that worked, so later clips in this session don't pay
+                # for a refusal first. It only goes down, and never so low that hints
+                # stop altogether.
+                worked = max(MIN_KEYTERM_CHARS, sum(map(len, sent)))
+                self._max_keyterm_chars[key] = min(
+                    worked, self._max_keyterm_chars.get(key, MAX_KEYTERM_CHARS)
+                )
+            return text
+        return None  # pragma: no cover  # the last try is never refused, it raises
+
+    async def _request(self, body: bytes, terms: list[str], *, fallback: bool) -> str | None:
+        """One request, retried once if Deepgram is busy. With `fallback`, a 400 raises
+        _KeytermsRefused so the caller can try fewer keyterms."""
         s = self._settings
         headers = {"Authorization": f"Token {s.deepgram_api_key}", "Content-Type": "audio/wav"}
-        body = to_wav(utterance.pcm)
-        params = request_params(s, hints)
+        params = request_params(s, terms)
         for attempt in (1, 2):
             try:
                 async with self._get_session().post(
                     s.deepgram_url, params=params, data=body, headers=headers
                 ) as resp:
                     if resp.status == 200:
+                        self._400_is_settings = False
                         return transcript(await resp.json(content_type=None))
                     if attempt == 1 and resp.status in RETRY_STATUSES:
                         await asyncio.sleep(RETRY_DELAY_S)
                         continue
+                    if resp.status == 400 and fallback:
+                        # Most likely too many keyterm tokens, not the host's settings.
+                        raise _KeytermsRefused
+                    if resp.status == 400 and not terms:
+                        self._400_is_settings = True
                     # Status only: error bodies can echo request details.
                     reason = STATUS_REASONS.get(resp.status, "Deepgram had a problem")
                     raise DeepgramError(
