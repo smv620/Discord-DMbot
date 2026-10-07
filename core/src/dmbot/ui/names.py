@@ -852,6 +852,11 @@ class SuggestionReview(_Menu):
         if keep is None or keep.status != CONFIRMED:
             await _tell(interaction, GONE)
             return
+        # Answer Discord at once (#351): a big merge can take longer than its 3 seconds.
+        # Saying so in place also takes the menu away, so nothing is picked twice.
+        await _replace(
+            interaction, f"🔗 Joining **{_md(entity.name)}** into **{_md(keep.name)}**…", None
+        )
         try:
             await memory.merge(gid, cid, keep.id, entity.id, source=DM, dm_said_same=True)
             heard = name_key(entity.name)
@@ -859,7 +864,7 @@ class SuggestionReview(_Menu):
                 if alias.key == heard and alias.status != CONFIRMED:
                     await memory.update_alias(gid, cid, alias.id, status=CONFIRMED, source=DM)
         except MemoryRuleError:
-            await _tell(interaction, GONE)
+            await self._next(interaction, campaign, memory, note=GONE)  # back in place
             return
         note = f"🔗 Got it: **{_md(entity.name)}** is another name for **{_md(keep.name)}**."
         await self._saved(interaction, campaign, memory, note)

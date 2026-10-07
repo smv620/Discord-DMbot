@@ -1,9 +1,10 @@
 """Campaign memory step 3 (#126): names the DM adds, players' characters, checking the
 names DMbot suggests after a session, and names as speech-to-text hints."""
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -34,20 +35,25 @@ class FakeResponse:
     def is_done(self) -> bool:
         return self.done
 
-    async def send_message(self, text: str = "", **kw: Any) -> None:
+    def _answer(self) -> None:
+        # Like discord.py: an interaction is answered once (InteractionResponded).
+        assert not self.done, "this interaction was already answered"
         self.done = True
+
+    async def send_message(self, text: str = "", **kw: Any) -> None:
+        self._answer()
         self.sent.append((text, kw))
 
     async def edit_message(self, *, content: str = "", view: Any = None, **_: Any) -> None:
-        self.done = True
+        self._answer()
         self.edited.append((content, view))
 
     async def send_modal(self, modal: Any) -> None:
-        self.done = True
+        self._answer()
         self.modal = modal
 
     async def defer(self, **_: Any) -> None:
-        self.done = True
+        self._answer()
 
 
 class NamesTest(DatabaseTest):
@@ -74,14 +80,36 @@ class NamesTest(DatabaseTest):
             if user_id == MANAGER
             else discord.Permissions.none()
         )
+        response = FakeResponse()
+
+        async def edit_original_response(*, content: str = "", view: Any = None, **_: Any) -> None:
+            response.edited.append((content, view))  # after a defer: the same message
+
         return SimpleNamespace(
             client=self.bot,
             guild=SimpleNamespace(id=GUILD),
             guild_id=GUILD,
             user=user,
-            response=FakeResponse(),
+            response=response,
             followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(side_effect=edit_original_response),
         )
+
+    def slow(self, method: str, it: Any) -> list[str]:
+        """Make memory.<method> take a while; returns, per call, what the message said
+        when it started: Discord must have been answered already (#351)."""
+        real = getattr(self.memory, method)
+        shown: list[str] = []
+
+        async def slow_call(*args: Any, **kw: Any) -> Any:
+            shown.append(it.response.edited[-1][0] if it.response.edited else "")
+            await asyncio.sleep(0.05)  # stands in for a merge of thousands of rows
+            return await real(*args, **kw)
+
+        patcher = patch.object(self.memory, method, side_effect=slow_call)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return shown
 
     async def names(self, statuses: tuple[str, ...] = (CONFIRMED,)) -> dict[str, Any]:
         return {
@@ -251,7 +279,7 @@ class NameCards(NamesTest):
         undo = await name_card.UndoButton.from_custom_id(self.it(), dynamic.item, match)
         it = self.it()
         await undo.callback(it)
-        self.assertIn("↩️ **Belleros** is back", it.response.edited[0][0])
+        self.assertIn("↩️ **Belleros** is back", it.response.edited[-1][0])
         self.assertIn("Belleros", await self.names())
 
     async def test_change_what_it_is_shows_at_once(self) -> None:
@@ -349,7 +377,7 @@ class NameCards(NamesTest):
         )
         it = self.it()
         await view._keep_other(it)
-        content, _ = it.response.edited[0]
+        content, _ = it.response.edited[-1]
         self.assertIn("🔗 Done: **Bell Eros** is now another name for **Belleros**", content)
         self.assertNotIn("Bell Eros", await self.names())
         self.assertIn("Bell Eros", await self.card())  # now one of its other names
@@ -358,8 +386,61 @@ class NameCards(NamesTest):
         (undo,) = [c for c in lasting.children if isinstance(c, name_card.UndoButton)]
         it = self.it()
         await undo.callback(it)
-        self.assertIn("↩️ **Bell Eros** is back", it.response.edited[0][0])
+        self.assertIn("↩️ **Bell Eros** is back", it.response.edited[-1][0])
         self.assertIn("Bell Eros", await self.names())
+
+    async def test_a_slow_join_and_its_undo_answer_discord_first(self) -> None:
+        """#351: Discord gives 3 seconds. A big merge or undo takes longer, so the
+        buttons answer first and the card still arrives after."""
+        from dmbot.ui import name_card
+
+        eros = await ui.save_name(self.memory, self.campaign, "Bell Eros", "npc", [], [])
+        view = name_card.SameConfirm(
+            self.campaign.id, eros.id, self.bell.id, "Bell Eros", "Belleros"
+        )
+        it = self.it()
+        merged = self.slow("merge", it)
+        await view._keep_other(it)
+        # Answered in place, buttons gone (no second press), then the card.
+        self.assertEqual(merged, ["🔗 Joining **Bell Eros** into **Belleros**…"])
+        self.assertIsNone(it.response.edited[0][1])
+        self.assertIn("🔗 Done", it.response.edited[-1][0])
+        it.edit_original_response.assert_awaited()  # the card arrived after the answer
+        (undo,) = [
+            c
+            for c in it.followup.send.call_args.kwargs["view"].children
+            if isinstance(c, name_card.UndoButton)
+        ]
+        it = self.it()
+        undone = self.slow("undo", it)
+        await undo.callback(it)
+        self.assertEqual(undone, ["↩️ Undoing… bringing back **Bell Eros**."])
+        self.assertIn("↩️ **Bell Eros** is back", it.response.edited[-1][0])
+        it = self.it()
+        await undo.callback(it)  # pressed again later: nothing to undo
+        self.assertIn("Nothing to undo", it.response.sent[0][0])
+
+    async def test_a_join_that_is_refused_says_so_in_place(self) -> None:
+        from dmbot.ui import name_card
+
+        eros = await ui.save_name(self.memory, self.campaign, "Bell Eros", "npc", [], [])
+        view = name_card.SameConfirm(
+            self.campaign.id, eros.id, self.bell.id, "Bell Eros", "Belleros"
+        )
+        it = self.it()
+        with patch.object(
+            self.memory, "merge", side_effect=MemoryRuleError("Those are two players.")
+        ):
+            await view._keep_other(it)
+        self.assertEqual(
+            it.response.edited[-1],
+            ("Couldn't join them. Those are two players. Nothing was changed.", None),
+        )
+        it = self.it()
+        broken = patch.object(self.memory, "merge", side_effect=RuntimeError("database gone"))
+        with broken, self.assertLogs("dmbot.ui.name_card", "ERROR"):
+            await view._keep_other(it)
+        self.assertEqual(it.response.edited[-1], (name_card.TRY_AGAIN, None))
 
     async def test_same_as_never_offers_the_name_itself(self) -> None:
         from dmbot.ui import name_card
@@ -791,8 +872,10 @@ class Review(NamesTest):
         await view._same(self.it())
         view.same = SimpleNamespace(values=[belleros.id])  # type: ignore[assignment]
         it = self.it()
+        merged = self.slow("merge", it)
         await view._same_picked(it)
-        self.assertIn("**Bellaros** is another name for **Belleros**", it.response.edited[0][0])
+        self.assertEqual(merged, ["🔗 Joining **Bellaros** into **Belleros**…"])  # #351
+        self.assertIn("**Bellaros** is another name for **Belleros**", it.response.edited[-1][0])
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=belleros.id)
         self.assertIn(("Bellaros", CONFIRMED), {(a.text, a.status) for a in aliases})
 
