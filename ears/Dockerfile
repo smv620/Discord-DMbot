@@ -4,7 +4,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --no-audit --no-fund
+# npm ci: exactly the package versions in package-lock.json, the ones CI tests (#318). Dev deps are
+# needed to compile; they're pruned below.
+RUN npm ci --no-audit --no-fund
 COPY tsconfig*.json ./
 COPY src ./src
 RUN npm run build && npm prune --omit=dev
