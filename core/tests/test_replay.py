@@ -641,12 +641,25 @@ class LeadInTests(unittest.TestCase):
         plain = list(audio.pieces(pcm))
         led = list(audio.pieces(pcm, lead_in_ms=100))
         self.assertEqual([p.start_ms for p in plain], [400, 1800])
-        self.assertEqual([p.start_ms for p in led], [300, 1700])  # also after a piece
+        self.assertEqual([p.start_ms for p in led], [300, 1700])
         self.assertEqual(len(led[0].frames), len(plain[0].frames) + 5)
 
-    def test_no_lead_in_at_the_very_start(self) -> None:
-        (piece,) = audio.pieces(tone(200), lead_in_ms=100)
-        self.assertEqual(piece.start_ms, 0)
+    def test_the_quiet_that_ended_a_piece_leads_into_the_next(self) -> None:
+        # The piece ends at 1200 ms; only 40 ms of quiet follow before the next speech,
+        # so the rest of its lead-in comes from the quiet that ended the first piece.
+        pcm = tone(200) + silence(1040) + tone(200)
+        _, second = audio.pieces(pcm, lead_in_ms=100)
+        self.assertEqual(second.start_ms, 1140)
+
+    def test_a_lead_in_never_sends_a_frame_twice(self) -> None:
+        pcm = tone(200) + silence(1040) + tone(200)
+        first, second = audio.pieces(pcm, lead_in_ms=5000)
+        self.assertEqual(second.start_ms, first.end_ms)
+        self.assertFalse({t for t, _ in first.frames} & {t for t, _ in second.frames})
+
+    def test_a_lead_in_stops_at_the_start_of_the_file(self) -> None:
+        (piece,) = audio.pieces(silence(40) + tone(200), lead_in_ms=100)
+        self.assertEqual((piece.start_ms, len(piece.frames)), (0, 12))
 
     def test_all_the_quiet_inside_a_piece_can_be_kept(self) -> None:
         pcm = tone(200) + silence(600) + tone(200)
@@ -654,7 +667,10 @@ class LeadInTests(unittest.TestCase):
         self.assertEqual(len(piece.frames) * audio.FRAME_MS, 1000)
 
     def test_negative_values_are_refused(self) -> None:
-        argv = ["x.wav", "--script", str(SCRIPTS / "dm-only.md"), "--lead-in-ms", "-5"]
-        with redirect_stderr(io.StringIO()) as err:
-            self.assertEqual(replay_main.main(argv), 2)
-        self.assertIn("can't be negative", err.getvalue())
+        for flag in ("--lead-in-ms", "--hangover-ms"):
+            argv = ["x.wav", "--script", str(SCRIPTS / "dm-only.md"), flag, "-5"]
+            with redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(replay_main.main(argv), 2)
+            self.assertIn("can't be negative", err.getvalue())
+        (piece,) = audio.pieces(tone(200) + silence(600) + tone(200), hangover_ms=-60)
+        self.assertEqual(len(piece.frames) * audio.FRAME_MS, 400)  # no quiet kept, not most

@@ -227,10 +227,14 @@ async def main_async(args: argparse.Namespace) -> int:
             levels=levels,
         )
     )
+    # As used: whole 20 ms frames, and quiet as long as speech_end_ms ends a piece.
+    lead_in = args.lead_in_ms // audio.FRAME_MS * audio.FRAME_MS
+    hangover = min(args.hangover_ms, args.speech_end_ms - audio.FRAME_MS)
+    hangover = hangover // audio.FRAME_MS * audio.FRAME_MS
     left_out_s = sum(p.end_ms - p.start_ms - len(p.frames) * audio.FRAME_MS for p in pieces)
     cut = (
         f"{args.speech_end_ms / 1000:g} s quieter than {silence:.0f} dBFS ends a piece "
-        f"(lead-in {args.lead_in_ms} ms, quiet kept inside up to {args.hangover_ms} ms): "
+        f"(lead-in {lead_in} ms, quiet kept inside up to {hangover} ms): "
         f"{len(pieces)} pieces before core's 15 s cut, {left_out_s / 1000:.0f} s of quiet "
         "inside them left out"
     )

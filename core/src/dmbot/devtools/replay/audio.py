@@ -146,7 +146,7 @@ def pieces(
     much of the audio just before each piece, as a voice gate opens a little early (live,
     the client's packets start before the first loud moment)."""
     end_frames = speech_end_ms // FRAME_MS
-    hangover_frames = hangover_ms // FRAME_MS
+    hangover_frames = max(0, hangover_ms // FRAME_MS)
     before: deque[tuple[int, bytes]] = deque(maxlen=max(0, lead_in_ms // FRAME_MS))
     current: list[tuple[int, bytes]] = []
     quiet: list[tuple[int, bytes]] = []
