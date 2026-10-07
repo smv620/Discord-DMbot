@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-07 by dev1 (deployed 040254f; ready for run 8 and the #147 repro)
+Last updated: 2026-10-07 by dev1 (deployed 1d2e04d; twin runs done; ready for run 8)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -8,13 +8,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-  - #327 + #376 (369dc51, dev3, #299): the session twin. Nothing to deploy, but a run
-    for dev1: from the host venv (cd core && pip install -e ".[twin]"), not the bot's
-    container, not during a live session, then:
-      scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-only.md --transcriber deepgram --log
-      scripts/replay docs/test-scripts/stt-bakeoff.m4a --script docs/test-scripts/stt-bakeoff.md --transcriber deepgram --log
-    Check: dm-only within a few points of run 7 (part 1: 0 of 33, part 2: 10 of 12); the
-    bake-off record's names line, and once more with --no-hints. About 4 min of audio in all.
+(nothing queued; twin runs done 2026-10-07: hints 54/55 names, none 20/55, see history)
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -28,12 +22,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 040254f (2026-10-07 17:09 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 1d2e04d (2026-10-07 18:19 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since 040254f, ask it to redeploy first. Use a steady connection (run 8a
+      moved since 1d2e04d, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question

@@ -539,3 +539,42 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     and postgres unchanged. Nothing was queued under Ready to deploy: dev1 deployed
     the merges it saw.
   Not yet live-tested: #389, #380, #348. Run 8's checklist covers them.
+
+==============================================================================
+2026-10-07  Server: deploy 1d2e04d (dev1, no test run)
+==============================================================================
+  - 18:19 UTC  development @ 1d2e04d: #342 (memory: set-based merge and undo, #164
+    part 1), #372 (name card and names panel answer Discord before a slow merge,
+    #351). No migrations, no .env or dependency changes. Database backed up first
+    (18:18 UTC, outside the repo; pg_restore -l reads 19 tables); no session was live.
+    Core rebuilt; "ears connected" at 18:19:55; no warnings or errors. Ears and
+    postgres unchanged. Not queued under Ready to deploy: dev1 deployed the merges it saw.
+
+==============================================================================
+2026-10-07  Twin runs (dev1): dm-only and stt-bakeoff on Deepgram, code @ 1d2e04d
+==============================================================================
+  How: scripts/replay's module in a throwaway container from the core image
+  (docker compose run --rm --no-deps core), with the twin extra installed only there;
+  the key came from compose's environment as for the bot (never read or printed). The
+  host can't make a venv (no ensurepip). Test scripts mounted read-only; the record
+  below was copied in by hand. "commit: unknown" in the tool's own lines: no git in the
+  container. About 4 min of audio, about $0.03 at nova-3 list prices.
+
+  1. dm-only.md, DMOnlyAudio.m4a (run 7's recording), no name hints
+     part 1: 0 wrong, 0 missing, 0 added (of 33)                 run 7 live: 0 of 33
+     part 2: 7 of 12 (missed Bryn Shander, Targos, Dexterity saving throw, Auril,
+             Caer-Dineval)                                       run 7 live: 10 of 12
+     whisper: part   pieces: 8 (longest 7.3 s)   failed/skipped/dropped: 0/0/0
+     dramatic pauses: 5 of 5 split; first-word errors after them: "Your", "The"
+     Part 1 matches run 7. Part 2 is 3 lower, but this run sent no hints while the
+     live run sent the campaign's names, so it isn't like for like.
+  2. stt-bakeoff.md, stt-bakeoff.m4a, its 38 names as hints
+     names: 54 of 55 right (0 wrong, 1 missing; Hrothgar 2/3)   nickname "Bell" 2/2 kept
+     rules words: 12 of 12   false names: 0   everyday lines: WER 3% (2 of 68)
+     pieces: 20 (longest 15.0 s)   7.3 s for 175 s of speech
+  3. the same, --no-hints
+     names: 20 of 55 right (33 wrong, 2 missing)   nickname "Bell" 2/2 kept
+     rules words: 12 of 12   false names: 0   everyday lines: WER 1% (1 of 68)
+  Takeaway: campaign names as hints are what makes Deepgram get invented names right
+  (20 → 54 of 55), at no cost to everyday speech or rules words. Run 8 should add
+  Auril and Caer-Dineval as names first, as its checklist says.
