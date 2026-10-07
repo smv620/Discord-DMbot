@@ -34,8 +34,10 @@ FRAME_BYTES = SAMPLE_RATE * FRAME_MS // 1000 * BYTES_PER_SAMPLE
 HANGOVER_MS = 200
 SPEECH_END_MS = 1000  # ears' 800 ms, plus the hangover
 # Quieter than this is silence. A muted mic is digital silence (about -90 dBFS); a quiet
-# room is around -60 to -50.
+# room is around -60 to -50. A recording that wasn't muted between lines has its room
+# noise there, so silence is also anything within NOISE_MARGIN_DB of the room's noise.
 SILENCE_DBFS = -60.0
+NOISE_MARGIN_DB = 10.0
 
 
 class DecodeError(RuntimeError):
@@ -89,6 +91,19 @@ def frame_dbfs(frame: bytes) -> float:
         return -math.inf
     mean_square = sum(s * s for s in samples) / len(samples)
     return 10 * math.log10(mean_square / 32768**2) if mean_square else -math.inf
+
+
+def silence_dbfs_for(pcm: bytes) -> float:
+    """How quiet counts as silence in this recording: SILENCE_DBFS, or the room's noise
+    (its quietest tenth) plus NOISE_MARGIN_DB if that is louder, as a voice gate does."""
+    levels = sorted(
+        max(frame_dbfs(pcm[i : i + FRAME_BYTES]), -120.0)
+        for i in range(0, len(pcm) - FRAME_BYTES + 1, FRAME_BYTES)
+    )
+    if not levels:
+        return SILENCE_DBFS
+    noise = levels[len(levels) // 10]
+    return max(SILENCE_DBFS, noise + NOISE_MARGIN_DB)
 
 
 @dataclass(frozen=True, slots=True)

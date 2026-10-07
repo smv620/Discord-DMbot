@@ -27,7 +27,7 @@ TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Caer-Dineval", ("Care Dineval", "Kair Dineval")),
 )
 
-_NUMBERS = [
+_ONES = [
     "zero",
     "one",
     "two",
@@ -48,22 +48,29 @@ _NUMBERS = [
     "seventeen",
     "eighteen",
     "nineteen",
-    "twenty",
 ]
+_TENS = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+
+def _number(n: int) -> list[str]:
+    """0 to 99 in words: 23 is "twenty three", as "twenty-three" normalises."""
+    if n < 20:
+        return [_ONES[n]]
+    tens, ones = divmod(n, 10)
+    return [_TENS[tens - 2]] + ([_ONES[ones]] if ones else [])
 
 
 def words(text: str) -> list[str]:
     """Words compared the README's way: ignore capitals, punctuation and hyphens;
-    "it's" = "it is"; "3" = "three"."""
-    text = text.casefold().replace("’", "'")
+    "it's" = "it is"; "3" = "three"; a die like "d20" = "d 20" = "d twenty"."""
+    text = text.casefold().replace("\u2019", "'")
     text = re.sub(r"\bit is\b", "it's", text)
-    text = re.sub(r"[-‐-―]", " ", text)
+    text = re.sub(r"[-\u2010-\u2015]", " ", text)
     text = re.sub(r"[^\w\s']", " ", text).replace("'", "")
+    text = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", text)  # d20 -> d 20
     out: list[str] = []
     for word in text.split():
-        if word.isdigit() and int(word) < len(_NUMBERS):
-            word = _NUMBERS[int(word)]
-        out.append(word)
+        out.extend(_number(int(word)) if word.isdigit() and int(word) < 100 else [word])
     return out
 
 

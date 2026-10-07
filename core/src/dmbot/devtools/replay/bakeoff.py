@@ -1,0 +1,263 @@
+"""Scores a replay of the bake-off script (docs/test-scripts/stt-bakeoff.md) the way its
+scoring key asks: every time a campaign name is said, was it written right, wrong or not
+at all; does the nickname "Bell" stay "Bell"; the rules words; names written where none
+was said (the tricky lines); and the word error rate of the everyday lines.
+
+Names are scored wherever they land in the text, not line by line: the recording is one
+reader going straight through, so pieces of speech are cut wherever the pauses fall, as
+at a real table. A name cut in half by a piece boundary is a real finding.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from dmbot.devtools.replay.score import align, words
+
+# Line ranges from the script's scoring key.
+NAME_LINES = range(1, 49)
+TRICKY_LINES = range(49, 58)
+WER_LINES = range(58, 66)
+NICKNAME = "Bell"
+
+_LINE = re.compile(r"^(\d+)\.\s+(.+)$")
+_ROW = re.compile(r"^\|(.+)\|\s*$")
+
+
+@dataclass(frozen=True, slots=True)
+class Term:
+    name: str
+    spellings: tuple[str, ...]  # the name and every accepted spelling
+    capitalised: bool = True  # only counts where the script writes it with a capital
+
+
+@dataclass(frozen=True, slots=True)
+class Bakeoff:
+    lines: dict[int, str]
+    names: tuple[Term, ...]  # the name list, without the nickname
+    nickname: Term
+    rules: tuple[Term, ...]
+
+
+def parse_bakeoff(text: str) -> Bakeoff:
+    lines: dict[int, str] = {}
+    names: list[Term] = []
+    nickname: Term | None = None
+    rules_text: list[str] = []
+    in_rules = False
+    section = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if in_rules:
+            if line:
+                rules_text.append(line)  # the list runs on until a blank line
+                continue
+            in_rules = False
+        if line.startswith("## "):
+            section = line[3:].casefold()
+            continue
+        if section == "the lines" and (match := _LINE.match(line)):
+            lines[int(match.group(1))] = match.group(2)
+        elif section == "name list" and (match := _ROW.match(line)):
+            cells = [c.strip() for c in match.group(1).split("|")]
+            if len(cells) < 2 or cells[0] in ("Name", "") or set(cells[0]) <= {"-"}:
+                continue
+            name = re.sub(r"\s*\(.*\)$", "", cells[0]).strip()
+            spellings = (name, *(s.strip() for s in cells[1].split(",") if s.strip()))
+            term = Term(name, spellings)
+            if name == NICKNAME:
+                nickname = term
+            else:
+                names.append(term)
+        elif section == "name list" and line.startswith("**Rules words**"):
+            rules_text = [line.split(":", 1)[1]]
+            in_rules = True
+    listed = " ".join(rules_text).strip().rstrip(".")
+    rules = [Term(w, (w,), capitalised=False) for w in (w.strip() for w in listed.split(",")) if w]
+    if not lines or not names or nickname is None:
+        raise ValueError("not a bake-off script: needs '## The lines' and '## Name list'")
+    return Bakeoff(lines=lines, names=tuple(names), nickname=nickname, rules=tuple(rules))
+
+
+def load_bakeoff(path: Path) -> Bakeoff:
+    return parse_bakeoff(path.read_text(encoding="utf-8"))
+
+
+def is_bakeoff(text: str) -> bool:
+    return "## The lines" in text and "## Name list" in text
+
+
+@dataclass(slots=True)
+class TermScore:
+    said: int = 0
+    right: int = 0
+    wrong: list[str] = field(default_factory=list)  # what was written instead
+    missing: int = 0
+
+
+@dataclass(slots=True)
+class BakeoffScore:
+    names: dict[str, TermScore]
+    nickname: TermScore
+    expanded: int  # times "Bell" came out as "Belleros"
+    rules: dict[str, TermScore]
+    false_names: list[str]  # names written in lines that have none
+    wer_words: int
+    wer_errors: int
+
+    @staticmethod
+    def total(scores: dict[str, TermScore]) -> TermScore:
+        out = TermScore()
+        for s in scores.values():
+            out.said += s.said
+            out.right += s.right
+            out.wrong += s.wrong
+            out.missing += s.missing
+        return out
+
+
+def _find(tokens: Sequence[str], originals: Sequence[str], term: Term) -> list[int]:
+    """Where the term starts in the script's words (its main spelling)."""
+    target = words(term.name)
+    if not target:
+        return []
+    found = []
+    for i in range(len(tokens) - len(target) + 1):
+        if list(tokens[i : i + len(target)]) != target:
+            continue
+        if term.capitalised and not originals[i][:1].isupper():
+            continue  # "ring the bell" isn't the nickname
+        found.append(i)
+    return found
+
+
+def score_bakeoff(script: Bakeoff, pieces: Sequence[str]) -> BakeoffScore:
+    """`pieces`: the text of each piece of speech, in order."""
+    ref: list[str] = []
+    originals: list[str] = []  # the script word each normalised word came from
+    line_of: list[int] = []
+    for number, text in sorted(script.lines.items()):
+        for original in text.split():
+            for word in words(original):
+                ref.append(word)
+                originals.append(original)
+                line_of.append(number)
+    hyp = [w for text in pieces for w in words(text)]
+    # Plain alignment: a name heard as two words ("Draven Moor") keeps both of them.
+    steps = align(ref, hyp)
+    heard_at: dict[int, list[int]] = {}  # script word -> heard words aligned to it
+    added_after: dict[int, list[int]] = {}  # heard words with no script word, by place
+    last_ref = -1
+    for step in steps:
+        if step.ref is not None:
+            last_ref = step.ref
+            if step.hyp is not None:
+                heard_at.setdefault(step.ref, []).append(step.hyp)
+        elif step.hyp is not None:
+            added_after.setdefault(last_ref, []).append(step.hyp)
+
+    def heard(start: int, length: int) -> list[str]:
+        """What was written for script words start .. start+length-1."""
+        got: list[int] = []
+        for i in range(start, start + length):
+            got += heard_at.get(i, [])
+            if i < start + length - 1:
+                got += added_after.get(i, [])  # an extra word inside a name: part of it
+        return [hyp[j] for j in sorted(got)]
+
+    def score_term(term: Term, lines: range) -> TermScore:
+        result = TermScore()
+        accepted = {"".join(words(s)) for s in term.spellings}
+        length = len(words(term.name))
+        for start in _find(ref, originals, term):
+            if line_of[start] not in lines:
+                continue
+            result.said += 1
+            got = heard(start, length)
+            # A word written just before or after it may be part of it ("Draven" + "Moor").
+            before = [hyp[j] for j in added_after.get(start - 1, [])][-1:]
+            after = [hyp[j] for j in added_after.get(start + length - 1, [])][:1]
+            tries = [got, before + got, got + after, before + got + after]
+            if any(t and "".join(t) in accepted for t in tries):
+                result.right += 1
+            elif not got:
+                result.missing += 1
+            else:
+                result.wrong.append(" ".join(got))
+        return result
+
+    names = {term.name: score_term(term, NAME_LINES) for term in script.names}
+    nickname = score_term(script.nickname, NAME_LINES)
+    expanded = sum(1 for got in nickname.wrong if got.startswith("belleros"))
+    rules = {term.name: score_term(term, range(1, 100)) for term in script.rules}
+
+    # Names written in the lines that have none (the tricky, off-topic and everyday ones).
+    region = [j for i, js in heard_at.items() if line_of[i] >= TRICKY_LINES.start for j in js] + [
+        j
+        for i, js in added_after.items()
+        if i >= 0 and line_of[i] >= TRICKY_LINES.start
+        for j in js
+    ]
+    region_words = [hyp[j] for j in sorted(region)]
+    false_names: list[str] = []
+    for term in script.names:
+        for spelling in term.spellings:
+            target = words(spelling)
+            for i in range(len(region_words) - len(target) + 1):
+                if region_words[i : i + len(target)] == target:
+                    false_names.append(term.name)
+
+    wer_words = sum(1 for n in line_of if n in WER_LINES)
+    wer_errors = 0
+    for step in steps:
+        line = line_of[step.ref] if step.ref is not None else None
+        if step.ref is None:
+            continue
+        if line in WER_LINES and step.kind != "ok":
+            wer_errors += 1
+    wer_errors += sum(
+        len(js) for i, js in added_after.items() if i >= 0 and line_of[i] in WER_LINES
+    )
+    return BakeoffScore(
+        names=names,
+        nickname=nickname,
+        expanded=expanded,
+        rules=rules,
+        false_names=false_names,
+        wer_words=wer_words,
+        wer_errors=wer_errors,
+    )
+
+
+def bakeoff_record(score: BakeoffScore) -> list[str]:
+    """Lines for the record: counts and the script's own names only, never what was
+    heard (that goes to the screen)."""
+    total = BakeoffScore.total(score.names)
+    rules = BakeoffScore.total(score.rules)
+    per_name = ", ".join(f"{name} {s.right}/{s.said}" for name, s in score.names.items() if s.said)
+    nick = score.nickname
+    wer = 100 * score.wer_errors / score.wer_words if score.wer_words else 0.0
+    return [
+        f"names: {total.right} of {total.said} right ({len(total.wrong)} wrong, "
+        f"{total.missing} missing)",
+        f"  per name: {per_name}",
+        f'nickname "Bell": {nick.right} of {nick.said} kept ({score.expanded} written as Belleros)',
+        f"rules words: {rules.right} of {rules.said} right",
+        f"false names in lines with none: {len(score.false_names)}"
+        + (f" ({', '.join(score.false_names)})" if score.false_names else ""),
+        f"everyday and off-topic lines: word error rate {wer:.0f}% "
+        f"({score.wer_errors} of {score.wer_words} words)",
+    ]
+
+
+def misheard(score: BakeoffScore) -> list[str]:
+    """What each name was written as when it was wrong, for the screen only."""
+    out = []
+    for name, s in [*score.names.items(), (NICKNAME, score.nickname), *score.rules.items()]:
+        if s.wrong or s.missing:
+            heard = "; ".join(f'"{w}"' for w in s.wrong) or "-"
+            out.append(f"{name}: written as {heard}; missing {s.missing}")
+    return out

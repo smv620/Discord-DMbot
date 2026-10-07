@@ -18,10 +18,17 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from dmbot.devtools.replay import audio
-from dmbot.devtools.replay.report import heard_lines, history_entry, record
+from dmbot.devtools.replay.bakeoff import (
+    Bakeoff,
+    is_bakeoff,
+    misheard,
+    parse_bakeoff,
+    score_bakeoff,
+)
+from dmbot.devtools.replay.report import heard_lines, history_entry, record, record_bakeoff
 from dmbot.devtools.replay.run import replay
 from dmbot.devtools.replay.score import score
-from dmbot.devtools.replay.script import load_script
+from dmbot.devtools.replay.script import Script, parse_script
 from dmbot.transcription.base import TranscriberUnavailable
 from dmbot.transcription.config import (
     ENGINES,
@@ -101,8 +108,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--silence-db",
         type=float,
-        default=audio.SILENCE_DBFS,
-        help=f"quieter than this (dBFS) is silence (default {audio.SILENCE_DBFS:g})",
+        default=None,
+        help="quieter than this (dBFS) is silence (default: from the recording's own noise)",
     )
     parser.add_argument(
         "--speech-end-ms",
@@ -143,12 +150,17 @@ async def main_async(args: argparse.Namespace) -> int:
         print(f"replay: no {args.history.parent} here; give --history", file=sys.stderr)
         return 2
     try:
-        script = load_script(args.script)
+        text = args.script.read_text(encoding="utf-8")
+        script: Script | Bakeoff = (
+            parse_bakeoff(text) if is_bakeoff(text) else parse_script(text, args.script.stem)
+        )
         pcm = audio.decode(args.recording)
     except (OSError, ValueError, audio.DecodeError) as exc:
         print(f"replay: {exc}", file=sys.stderr)
         return 2
-    pieces = list(audio.pieces(pcm, silence_dbfs=args.silence_db, speech_end_ms=args.speech_end_ms))
+    silence = args.silence_db if args.silence_db is not None else audio.silence_dbfs_for(pcm)
+    cut = f"{args.speech_end_ms / 1000:g} s quieter than {silence:.0f} dBFS ends a piece"
+    pieces = list(audio.pieces(pcm, silence_dbfs=silence, speech_end_ms=args.speech_end_ms))
     sent_s = sum(len(piece.frames) for piece in pieces) * audio.FRAME_MS / 1000
     cost = cost_line(settings, sent_s)
     if cost:
@@ -165,18 +177,36 @@ async def main_async(args: argparse.Namespace) -> int:
     except TranscriberUnavailable as exc:
         print(f"replay: the speech-to-text engine can't start: {exc}", file=sys.stderr)
         return 2
-    scored = score(script, [h.text or "" for h in result.heard])
-    lines = record(
-        script=script,
-        recording=public_name(args.recording),
-        engine=describe(settings),
-        commit=commit(),
-        result=result,
-        score=scored,
-    )
+    heard = [h.text or "" for h in result.heard]
+    details: list[str] = []
+    if isinstance(script, Bakeoff):
+        names = score_bakeoff(script, heard)
+        details = misheard(names)
+        lines = record_bakeoff(
+            name=args.script.stem,
+            recording=public_name(args.recording),
+            engine=describe(settings),
+            commit=commit(),
+            result=result,
+            score=names,
+            cut=cut,
+        )
+    else:
+        lines = record(
+            script=script,
+            recording=public_name(args.recording),
+            engine=describe(settings),
+            commit=commit(),
+            result=result,
+            score=score(script, heard),
+            cut=cut,
+        )
     if cost:
         lines.insert(2, cost)
     print("\n".join(lines))
+    if details:
+        print("\nmisheard (on screen only):")
+        print("\n".join(f"  {line}" for line in details))
     print("\nheard:")
     print("\n".join(f"  {line}" for line in heard_lines(result)))
     for text in result.alerts:
