@@ -6,6 +6,8 @@ A campaign's choice for each rule is stored in `campaign_optional_rules`
 (`CampaignStore.set_optional_rule`); a rule with no stored choice follows the
 campaign's `optional_rules_default`. A rule applies only to the rulesets it doesn't
 clash with: one the newer books already include or change is listed for 2014 only.
+Xanathar's and Tasha's are not legacy books as a whole (docs/PLAN.md): whatever the
+2024 books don't reprint or replace stays listed for 2024, without a legacy tag.
 """
 
 from __future__ import annotations
@@ -36,8 +38,8 @@ CATALOG: tuple[OptionalRule, ...] = (
     ),
     OptionalRule(
         "xge-sleep",
-        "Sleeping in armour",
-        "Sleeping in medium or heavy armour: you get back fewer Hit Dice, and Exhaustion "
+        "Sleeping in armor",
+        "Sleeping in medium or heavy armor: you get back fewer Hit Dice, and Exhaustion "
         "doesn't go down.",
         XANATHAR,
     ),
@@ -58,20 +60,20 @@ CATALOG: tuple[OptionalRule, ...] = (
     OptionalRule(
         "xge-identify-spell",
         "Spotting a spell",
-        "Use your reaction and an Arcana check to recognise a spell as it's cast.",
+        "Use your reaction and an Arcana check to recognize a spell as it's cast.",
         XANATHAR,
-        ("2014",),  # the 2024 rules treat studying a spell differently; check before widening
+        # Not checked against the 2024 rules yet: offering a rule does no harm (the DM
+        # decides), hiding one wrongly does. Narrow it only by naming the 2024 section.
     ),
     OptionalRule(
         "xge-falling-rate",
         "How fast you fall",
         "A long fall takes time: you drop up to 500 feet each round.",
-        XANATHAR,
-        ("2014",),  # the 2024 falling rule already includes it
+        XANATHAR,  # not checked against the 2024 rules yet, so offered to both
     ),
     OptionalRule(
         "tce-custom-origin",
-        "Customising your origin",
+        "Customizing your origin",
         "Move your race's ability score bonuses and swap some of its proficiencies.",
         TASHA,
         ("2014",),  # the 2024 rules tie ability scores to backgrounds instead
@@ -107,6 +109,11 @@ def rule(rule_id: str) -> OptionalRule | None:
 def applying(target_ruleset: str) -> list[OptionalRule]:
     """The rules that can add to a campaign's main rules, in catalog order."""
     return [r for r in CATALOG if target_ruleset in r.applies_to]
+
+
+def covered_by(target_ruleset: str) -> list[OptionalRule]:
+    """The rules not offered for these main rules, because they have their own version."""
+    return [r for r in CATALOG if target_ruleset not in r.applies_to]
 
 
 def is_on(rule_id: str, overrides: Mapping[str, bool], default: bool) -> bool:
