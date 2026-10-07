@@ -17,6 +17,7 @@ from dmbot.db import Conn
 from dmbot.memory.models import MemoryRuleError
 
 NOT_FOUND = "DMbot doesn't remember that any more."
+LOG_ROWS_PER_STATEMENT = 1000  # 12 values each, well under Postgres's 65,535
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
 
 
@@ -367,9 +368,17 @@ class Changes(Scope):
         op: str,
         rows: Sequence[tuple[str, dict[str, Any] | None, dict[str, Any] | None]],
     ) -> None:
-        """Log many row changes in one statement, each with its own version."""
-        if not rows:
-            return
+        """Log many row changes, each with its own version, a thousand to a statement
+        (Postgres takes at most 65,535 values in one statement; each row has 12)."""
+        for start in range(0, len(rows), LOG_ROWS_PER_STATEMENT):
+            await self._log_some(table, op, rows[start : start + LOG_ROWS_PER_STATEMENT])
+
+    async def _log_some(
+        self,
+        table: Table,
+        op: str,
+        rows: Sequence[tuple[str, dict[str, Any] | None, dict[str, Any] | None]],
+    ) -> None:
         values = []
         params: list[Any] = []
         for row_id, before, after in rows:

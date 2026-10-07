@@ -807,6 +807,19 @@ class Undo(MemoryTest):
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
 
+    async def test_undoing_a_huge_list_writes_its_log_in_pieces(self) -> None:
+        """#164: more changed rows than Postgres takes values in one statement."""
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [NewName(f"Name {n}", "npc", CONFIRMED, (f"Nick {n}",), ()) for n in range(3000)],
+            source="dm",
+        )
+        assert written.batch is not None
+        await self.memory.undo_names(GUILD_A, self.c, written.batch)  # 6,000 rows back
+        names = await self.memory.entities(GUILD_A, self.c, statuses=[CONFIRMED])
+        self.assertEqual(names, [])
+
     async def test_undo_twice_is_refused(self) -> None:
         w = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="X", source="dm")
         assert w.batch is not None
