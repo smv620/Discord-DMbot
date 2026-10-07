@@ -80,6 +80,18 @@ describe("menu", () => {
     expect(html.match(/aria-current="page"/g)).toHaveLength(1);
     expect(html).toMatch(/<a href="\/pricing" aria-current="page"/);
   });
+
+  // A static build renders /pricing as pricing.html, and the page sees that path.
+  it.each([
+    ["/pricing.html", "/pricing"],
+    ["/account.html", "/account"],
+  ])("marks the current page when built as %s", async (built, link) => {
+    const file = `${link.slice(1)}.astro`;
+    const html = await container.renderToString(page(file), {
+      request: new Request(`https://dmbot.example${built}`),
+    });
+    expect(html).toMatch(new RegExp(`<a href="${link}" aria-current="page"`));
+  });
 });
 
 // The site must never use the game's trademarks or the publisher's name (README.md).
