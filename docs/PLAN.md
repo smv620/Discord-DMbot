@@ -918,6 +918,25 @@ names panel nor the speech-to-text hints can be a fixed list.
     duplicate a name;
   - for anyone but the campaign's DMs, a clash with a secret name looks exactly like no
     clash.
+  - **names from any document** (owner's decision): `/dmbot names` takes a .txt, .pdf or
+    .docx file, or `link:` a Google Doc shared with anyone who has the link. A list
+    DMbot can read all of is added straight away; anything else (a document, or a list
+    with any line that doesn't fit) goes to the AI (Anthropic, `ANTHROPIC_API_KEY`,
+    `AI_MODEL`, a cheap model by default), which writes the names list. The DM first
+    confirms the right to use the material and that its text goes to Anthropic (one
+    press, logged with who and when: the IP rule), then sees the list (the start in the
+    message, all of it as a file to edit) and adds it with **Add these names**. The
+    document is treated as untrusted data: quoted, with the AI told to ignore
+    instructions in it, and its answer read by the same strict parser; secret names are
+    asked for only for the campaign's DMs. Without a key, documents are refused with a
+    pointer to the template, and a list adds what fits. Up to 10 MB, 500 PDF pages and
+    about 100 pages of text, in pieces of 40,000 characters read side by side (at most 3
+    AI requests at once across all servers, 10 minutes per document). Each server reads
+    one document at a time and up to 20 a day (the operator pays until bring-your-own
+    keys, #50). Whoever may add names (the campaign's DMs and server managers) may
+    confirm the right to use a document; the confirmation is logged with who, when and
+    a fingerprint of the text, not the file's name. An empty list, or a list whose only
+    problem is a secret name from someone who may not add one, never goes to the AI;
   - **a kind DMbot doesn't know is asked once per word** (owner's decision): the summary
     shows a menu for each of up to 4 unknown words ("What is every “wizard” (50)?"), and
     picking one confirms all those names as that kind in one change; the template lists

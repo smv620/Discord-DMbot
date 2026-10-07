@@ -24,6 +24,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from dmbot import install
+from dmbot.ai import AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.capture_log import CaptureLog, SessionTotals
@@ -286,6 +287,8 @@ class DMBot(commands.AutoShardedBot):
         # an in-memory copy of each campaign's names, kept up to date by notifications.
         self.memory = memory
         self.lookup = LookupCache(memory) if memory is not None else None
+        # AI text calls (a document into a names list); None when no key is set.
+        self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None
         self._hints_failed_at = -HINTS_FAIL_LOG_S
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
@@ -393,6 +396,8 @@ class DMBot(commands.AutoShardedBot):
             task.cancel()
         await asyncio.gather(*self._background, *self._asking, return_exceptions=True)
         await self.pipeline.transcriber.close()
+        if self.ai is not None:
+            await self.ai.close()
         for guild_id in list(self.tables):
             await self.ears.send(leave_command(guild_id))
         await self.ears.stop()
