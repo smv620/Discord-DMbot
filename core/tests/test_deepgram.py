@@ -34,8 +34,14 @@ class KeytermTests(unittest.TestCase):
     def test_capped(self) -> None:
         many = [f"Name{i}" for i in range(200)]
         self.assertEqual(len(dg.keyterms(many)), dg.MAX_KEYTERMS)
-        long = ["x" * 400, "y" * 400, "z" * 400]
-        self.assertEqual(dg.keyterms(long), ["x" * 400, "y" * 400])  # third goes over
+        long = ["x" * 250, "y" * 250, "z" * 250]
+        self.assertEqual(dg.keyterms(long), ["x" * 250, "y" * 250])  # third goes over 600
+        self.assertEqual(dg.keyterms(long, max_chars=300), ["x" * 250])
+
+    def test_fallbacks_halve_then_drop_keyterms(self) -> None:
+        self.assertEqual(dg.fallbacks(["a", "b", "c"]), [["a", "b", "c"], ["a"], []])
+        self.assertEqual(dg.fallbacks(["a"]), [["a"], []])
+        self.assertEqual(dg.fallbacks([]), [[]])
 
     def test_request_params(self) -> None:
         s = TranscriptionSettings(engine="deepgram", deepgram_api_key="k")
@@ -71,6 +77,8 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         self.reply: tuple[int, Any] = (200, reply("Welcome to Bryn Shander."))
         self.replies: list[tuple[int, Any]] = []  # consumed first, if set
         self.hits = 0
+        self.max_keyterm_chars: int | None = None  # longer keyterm lists get a 400
+        self.sent: list[list[str]] = []  # keyterms of each request, in order
 
         async def handler(request: web.Request) -> web.Response:
             self.received["auth"] = request.headers.get("Authorization")
@@ -78,6 +86,10 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             self.received["query"] = list(request.query.items())
             self.received["body"] = await request.read()
             self.hits += 1
+            terms = [v for k, v in request.query.items() if k == "keyterm"]
+            self.sent.append(terms)
+            if self.max_keyterm_chars is not None and sum(map(len, terms)) > self.max_keyterm_chars:
+                return web.json_response({"err_msg": "too many keyterm tokens"}, status=400)
             status, body = self.replies.pop(0) if self.replies else self.reply
             return web.json_response(body, status=status)
 
@@ -135,6 +147,44 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         ):
             await self.t.transcribe(clip(), [])
         self.assertEqual(self.hits, 2)
+
+    async def test_refused_keyterms_are_halved_and_the_length_remembered(self) -> None:
+        names = [f"Caer-Dineval-{i:02}" for i in range(30)]  # 15 characters each
+        self.max_keyterm_chars = 250  # more than about 16 names is refused
+        with self.assertLogs("dmbot.transcription.deepgram", "WARNING") as logs:
+            text = await self.t.transcribe(clip(), names)
+        self.assertEqual(text, "Welcome to Bryn Shander.")
+        self.assertEqual([len(t) for t in self.sent], [30, 15])  # the most relevant half
+        self.assertEqual(self.sent[1], names[:15])
+        self.assertNotIn("Caer", "\n".join(logs.output))  # counts only, never names
+        # The next clip goes straight to a length that works: no refusal first.
+        self.sent.clear()
+        await self.t.transcribe(clip(), names)
+        self.assertEqual([len(t) for t in self.sent], [15])
+
+    async def test_no_keyterms_as_a_last_resort(self) -> None:
+        self.max_keyterm_chars = 0  # any keyterm is refused
+        with self.assertLogs("dmbot.transcription.deepgram", "WARNING"):
+            text = await self.t.transcribe(clip(), ["Auril", "Bryn Shander"])
+        self.assertEqual(text, "Welcome to Bryn Shander.")
+        self.assertEqual(self.sent, [["Auril", "Bryn Shander"], ["Auril"], []])
+        # Hints come back on later clips, a few at least (MIN_KEYTERM_CHARS).
+        self.sent.clear()
+        self.max_keyterm_chars = None
+        await self.t.transcribe(clip(), ["Auril", "Bryn Shander"])
+        self.assertEqual(self.sent, [["Auril", "Bryn Shander"]])
+
+    async def test_a_400_without_keyterms_points_at_the_settings(self) -> None:
+        self.reply = (400, {"err_msg": "bad model"})
+        with (
+            self.assertLogs("dmbot.transcription.deepgram", "WARNING"),
+            self.assertRaises(DeepgramError) as ctx,
+        ):
+            await self.t.transcribe(clip(), ["Auril", "Bryn Shander"])
+        self.assertEqual(self.sent, [["Auril", "Bryn Shander"], ["Auril"], []])
+        self.assertIn("400", str(ctx.exception))
+        self.assertTrue(ctx.exception.host_can_fix)  # even without keyterms: settings
+        self.assertNotIn("Auril", str(ctx.exception))
 
     async def test_no_speech_is_none(self) -> None:
         self.reply = (200, reply(""))
