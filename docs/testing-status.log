@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-07 by dev1 (deployed f3d1088; ready for run 8 and the #147 repro)
+Last updated: 2026-10-07 by dev1 (deployed 040254f; ready for run 8 and the #147 repro)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -22,12 +22,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: f3d1088 (2026-10-07 16:17 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 040254f (2026-10-07 17:09 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since f3d1088, ask it to redeploy first. Use a steady connection (run 8a
+      moved since 040254f, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -65,7 +65,6 @@ What to check
   - /dmbot backup as a player who isn't the DM: a complete copy is sent (#241)
   - A scene with many names: no Deepgram 400 in the logs, or "Deepgram refused N
     keyterms" followed by transcript lines still appearing (#262)
-  - Don't paste a link into Paste a list: known bug #264
   Deployed 2026-10-07 08:08 (bb55060)
   - #270: first word after each ((dramatic pause)) not cut: score against run 7
   - #276: the DM screen's audio % matches the ears audio lines
@@ -98,6 +97,14 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     you fall; switching a rule edits the menu in place and notes it in the DM screen
   - #345: /dmbot backup gives a .dmbot.json.gz; /dmbot restore takes it back, and an
     older .dmbot.json still restores
+  Deployed 2026-10-07 17:09 (040254f)
+  - #389 (#264): paste the Rime of the Frostmaiden Google Docs link into 📋 Paste a
+    list: "Find the names in the linked page or file?", no name added. 🔗 Paste a
+    link with a public wiki page, then 🤖 Find names: the list is shown before
+    anything is added. 📎 Upload a file from a phone with a short PDF or Word file.
+    A private Google Doc link gives the "set sharing" message. Log: no link, only
+    "Shared material confirmed" with a fingerprint
+  - #380 (#353): editing and removing a name is easy to find from /dmbot names
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
