@@ -15,7 +15,7 @@ Dungeon Master. **The bot advises; the DM decides.**
 
 ## Commands
 ```bash
-# ears
+# ears (Node 22, npm 10; `corepack enable` honours packageManager, nvm reads .nvmrc)
 cd ears && npm ci && npm run typecheck && npm test && npm run build
 
 # core (Python 3.12+)
