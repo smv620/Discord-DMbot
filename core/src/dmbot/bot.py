@@ -65,6 +65,7 @@ from dmbot.dm_screen import (
     stop_listening_view,
 )
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen.name_questions import NameQuestionButton, question_view
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -85,14 +86,15 @@ from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
-from dmbot.memory.models import Heard, MemoryRuleError, name_key
+from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.scan import find_new_names
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SavedSession, SessionStore
+from dmbot.transcript import questions as name_questions
 from dmbot.transcript import stream as transcript_lines
-from dmbot.transcript.cleaner import Vocabulary, clean
+from dmbot.transcript.cleaner import Cleaned, Vocabulary, clean
 from dmbot.transcript.models import Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
@@ -209,6 +211,9 @@ class Table:
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
     vocabulary: Vocabulary = field(default_factory=Vocabulary)
+    # "Did they mean…?" for the DM (#296): one open at a time, each word once a session.
+    questions: name_questions.QuestionBook = field(default_factory=name_questions.QuestionBook)
+    question_message: discord.Message | None = None
     people: tuple[str, ...] = ()
     # The whole session's numbers, for the summary when it ends (#109).
     totals: SessionTotals = field(default_factory=SessionTotals)
@@ -353,6 +358,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(UndoButton, UndoListButton)
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
+        self.add_dynamic_items(NameQuestionButton)
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -471,6 +477,8 @@ class DMBot(commands.AutoShardedBot):
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
+            if table.questions.drop_speaker(user_id) is not None:  # their open question goes
+                self._track(self._close_question(table), "name-question")
             for key in [k for k in table.heard_counts if k[1] == user_id]:
                 del table.heard_counts[key]
 
@@ -1452,7 +1460,11 @@ class DMBot(commands.AutoShardedBot):
         table.totals.add_utterance(utterance)
         cleaned = text
         if text and table.name_lookup is not None:
-            cleaned = self._clean(table, text)
+            result = self._clean(table, text)
+            cleaned = result.text
+            asked = table.questions.offer(utterance.user_id, result.questions)
+            if asked is not None:
+                self._track(self._ask_dm(table, asked), "name-question")
             named = mentions(table.name_lookup, cleaned)  # once per name per line
             table.scene.note(named, utterance.user_id, time.monotonic())
             table.heard_counts.update((entity_id, utterance.user_id) for entity_id in named)
@@ -1477,7 +1489,7 @@ class DMBot(commands.AutoShardedBot):
                 utterance.start_ms,
             )
 
-    def _clean(self, table: Table, heard: str) -> str:
+    def _clean(self, table: Table, heard: str) -> Cleaned:
         """The line with misheard names fixed (#127), from the campaign's names as last
         loaded; as heard if cleaning fails. No await: the consent check just made still
         holds."""
@@ -1495,10 +1507,78 @@ class DMBot(commands.AutoShardedBot):
             if now - self._clean_failed_at > HINTS_FAIL_LOG_S:
                 self._clean_failed_at = now
                 log.exception("Couldn't fix names in a line; kept it as heard")
-            return heard
+            return Cleaned(heard, ())
         if result.fixes:
             log.debug("Fixed %d misheard name(s) in a line", len(result.fixes))
-        return result.text
+        return result
+
+    async def _ask_dm(self, table: Table, asked: name_questions.Asked) -> None:
+        """Post "Did they mean…?" to the DM screen (#296). Consent is checked again
+        first: this runs after the line was delivered."""
+        if not self.consent.has_consent(table.guild_id, asked.speaker):
+            table.questions.take(asked.id)
+            return
+        name = self.name_of(table.guild_id, asked.speaker)
+        speaker = "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
+        text = name_questions.question_text(speaker, discord.utils.escape_markdown(asked.heard))
+        message = await self.post_message(
+            table.screen_channel_id, text, question_view(table.guild_id, asked)
+        )
+        if message is None:
+            table.questions.take(asked.id)  # not posted: free the slot for the next one
+            return
+        if table.questions.open is asked:
+            table.question_message = message
+        else:  # closed while posting (they stopped being recorded)
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(content=name_questions.GONE, view=None)
+
+    async def _close_question(self, table: Table) -> None:
+        """The open question's speaker stopped being recorded: take their words down."""
+        message, table.question_message = table.question_message, None
+        if message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(content=name_questions.GONE, view=None)
+
+    async def answer_name_question(
+        self, guild_id: int, question_id: str, pick: str, user_id: int
+    ) -> tuple[str, bool]:
+        """The DM answered "Did they mean…?": save it for the campaign, so the same words
+        are handled silently from now on. What to tell them, and whether the question
+        is now closed."""
+        table = self.tables.get(guild_id)
+        if table is None or table.campaign_id is None or self.memory is None:
+            return name_questions.EXPIRED, True
+        if table.questions.open is None or table.questions.open.id != question_id:
+            return name_questions.EXPIRED, True
+        if not table.is_dm(user_id):
+            return name_questions.ONLY_DM, False
+        asked = table.questions.take(question_id)  # before any await: answered once
+        assert asked is not None
+        table.question_message = None
+        if not self.consent.has_consent(guild_id, asked.speaker):
+            return name_questions.GONE, True
+        heard = discord.utils.escape_markdown(asked.heard)
+        campaign_id = table.campaign_id
+        try:
+            if pick == "keep":
+                await self.memory.add_correction(
+                    guild_id, campaign_id, asked.heard, action=KEEP, source=DM
+                )
+                answer = name_questions.kept_text(heard)
+            else:
+                entity_id, name = asked.options[int(pick)]
+                await self.memory.add_correction(
+                    guild_id, campaign_id, asked.heard, action=FIX, source=DM, entity_id=entity_id
+                )
+                answer = name_questions.fixed_text(heard, discord.utils.escape_markdown(name))
+        except Exception:
+            if table.questions.open is None:
+                table.questions.open = asked  # not saved: the question stays open
+            raise
+        if self.lookup is not None:
+            self.lookup.mark_stale(guild_id, campaign_id)  # the next line uses the answer
+        return answer, True
 
     async def _alert_dm(self, guild_id: int, message: str) -> None:
         table = self.tables.get(guild_id)

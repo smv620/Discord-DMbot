@@ -924,6 +924,105 @@ class SaveAndResume(SessionTests):
         self.bot.stop_recording(GUILD, PLAYER)
         self.assertFalse(table.vocabulary.is_name("beleros"))  # forgotten with them
 
+    def two_alike(self) -> Any:
+        """A campaign where "Marin" sounds like both Maren and Marron (#296)."""
+        from dmbot.memory.lookup import CampaignLookup, LookupData
+        from dmbot.memory.models import CONFIRMED, Alias, Entity
+
+        names = (("a" * 32, "Maren"), ("b" * 32, "Marron"))
+        return CampaignLookup.build(
+            LookupData(
+                1,
+                tuple(Entity(e, "npc", n, "", CONFIRMED, None, "dm", 0) for e, n in names),
+                tuple(
+                    Alias(
+                        e[:16] + "0" * 16,
+                        e,
+                        n,
+                        n.lower(),
+                        "full",
+                        None,
+                        False,
+                        CONFIRMED,
+                        (),
+                        "dm",
+                        0,
+                    )
+                    for e, n in names
+                ),
+                (),
+                (),
+            )
+        )
+
+    async def asked_about_marin(self) -> tuple[Any, Any, Any, Any]:
+        """A question asked; the table, its message, the post and the campaign memory."""
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        table.name_lookup = self.two_alike()
+        message = MagicMock(edit=AsyncMock())
+        self.bot.post_message = AsyncMock(return_value=message)  # type: ignore[method-assign]
+        memory: Any = MagicMock(add_correction=AsyncMock())
+        self.addCleanup(setattr, self.bot, "memory", self.bot.memory)  # put back after
+        self.bot.memory = memory
+        self.said(table, "then Marin speaks")
+        for _ in range(5):
+            await asyncio.sleep(0)  # the question is posted in the background
+        return table, message, self.bot.post_message, memory
+
+    async def test_the_dm_is_asked_did_they_mean(self) -> None:
+        table, _, posted, _ = await self.asked_about_marin()
+        channel, text, view = posted.await_args.args
+        self.assertEqual(channel, SCREEN)  # the DM screen, never the transcript channel
+        self.assertIn('said "Marin"**: did they mean', text)
+        labels = [item.item.label for item in view.children]
+        self.assertEqual(sorted(labels[:2]), ["Maren", "Marron"])
+        self.assertEqual(labels[2], "Keep as heard")
+        # one open question at a time, and the line stays as heard
+        self.said(table, "then Marin speaks again")
+        await asyncio.sleep(0)
+        self.assertEqual(posted.await_count, 1)
+
+    async def test_only_the_dm_answers_and_the_answer_is_saved(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        text, done = await self.bot.answer_name_question(GUILD, asked.id, "0", PLAYER)
+        self.assertFalse(done)
+        self.assertIn("Only the DM", text)
+        text, done = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        entity_id, name = asked.options[0]
+        self.assertIn(f"**{name}**", text)
+        add = memory.add_correction
+        add.assert_awaited_once()
+        self.assertEqual(add.await_args.args[2], "Marin")
+        self.assertEqual(add.await_args.kwargs["entity_id"], entity_id)
+        self.assertEqual(add.await_args.kwargs["source"], "dm")
+        again, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertIn("expired", again)  # answered once only
+
+    async def test_keep_as_heard_is_saved(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        await self.bot.answer_name_question(GUILD, asked.id, "keep", DM)
+        add = memory.add_correction
+        self.assertEqual(add.await_args.kwargs["action"], "keep")
+
+    async def test_a_speaker_who_stops_closes_their_question(self) -> None:
+        table, message, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        self.bot.stop_recording(GUILD, PLAYER)
+        for _ in range(3):
+            await asyncio.sleep(0)
+        self.assertIsNone(table.questions.open)
+        self.assertNotIn("Marin", message.edit.await_args.kwargs["content"])  # words gone
+        text, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertIn("expired", text)
+        memory.add_correction.assert_not_awaited()
+
     async def test_lower_case_words_count_even_without_the_names(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table, _ = await self.joined_with_transcript()

@@ -50,6 +50,7 @@ MAX_REBUILDS = 8  # the line as written is rebuilt at most this often, then left
 MAX_JOINED = 3  # a name split into at most this many words ("Ka Zeth", "Bry N Shander")
 MIN_LETTERS = 4  # shorter words sound like too many names
 MIN_LIKENESS = 0.7  # how alike the spelling must be (0 to 1) for a fix by sound
+MAX_OPTIONS = 3  # names offered in one "Did they mean…?"; more sounding alike: no question
 # One word alone, by sound: real first names sound like campaign names ("Mary" for the
 # NPC or character Mara, 0.75), so one word must be spelled closer than a joined name.
 MIN_LIKENESS_ONE_WORD = 0.8
@@ -74,9 +75,21 @@ class Fix:
 
 
 @dataclass(frozen=True, slots=True)
+class Question:
+    """Words that sound like two or three confirmed names: the DM is asked which one
+    ("Did they mean…?", #296). Left as heard until then."""
+
+    start: int  # characters in the line as heard
+    end: int
+    heard: str
+    options: tuple[tuple[str, str], ...]  # (entity ID, its own name), most alike first
+
+
+@dataclass(frozen=True, slots=True)
 class Cleaned:
     text: str
     fixes: tuple[Fix, ...]
+    questions: tuple[Question, ...] = ()
 
 
 @dataclass(slots=True)
@@ -209,19 +222,18 @@ def clean(
                 known[start:end] = [True] * (end - start)
 
     near = _SecretChecks()
+    by_sound, asking = _by_sound(lookup, heard, words, known, vocabulary, scene)
     fixes = [
         fix
-        for fix in [
-            *_known_names(lookup, heard, person_keys),
-            *_by_sound(lookup, heard, words, known, vocabulary, scene),
-        ]
+        for fix in [*_known_names(lookup, heard, person_keys), *by_sound]
         if not _near_secret(lookup, words, fix.start, fix.end, near)
     ]
+    questions = tuple(q for q in asking if not _near_secret(lookup, words, q.start, q.end, near))
     fixes.sort(key=lambda f: f.start)
     text, fixes = _without_secrets(lookup, heard, fixes, near)
     if near.ran_out:
         log.debug("Secret-name check ran out for a line: %d fix(es) kept", len(fixes))
-    return Cleaned(text, tuple(fixes))
+    return Cleaned(text, tuple(fixes), questions)
 
 
 def _apply(heard: str, fixes: list[Fix]) -> tuple[str, list[tuple[int, int]]]:
@@ -340,7 +352,7 @@ def _by_sound(
     known: list[bool],
     vocabulary: Vocabulary | None,
     scene: Collection[str],
-) -> list[Fix]:
+) -> tuple[list[Fix], list[Question]]:
     """Unknown capitalized words (1 to MAX_JOINED in a row) that sound like exactly one
     confirmed name and are spelled much like it. A word starting a sentence has its
     capital anyway, so it counts only once it was also written with one mid-sentence
@@ -371,7 +383,8 @@ def _by_sound(
     # Once per word: as the last word of a run (may end in "'s") and inside one.
     as_last = [unknown(i) for i in range(len(words))]
     inside = [ok and not words[i].group().endswith(_POSSESSIVE) for i, ok in enumerate(as_last)]
-    fixes = []
+    fixes: list[Fix] = []
+    questions: list[Question] = []
     i = 0
     while i < len(words):
         for size in range(min(MAX_JOINED, len(words) - i), 0, -1):
@@ -382,16 +395,20 @@ def _by_sound(
                 continue  # only words with a plain space between are one split name
             start, end = words[i].start(), words[run[-1]].end()
             said = _stem(heard[start:end])
-            fix = _sounds_like(lookup, said, start)
-            if fix is not None and size == 1 and not _one_word_ok(fix, scene):
-                fix = None
-            if fix is not None:
-                fixes.append(fix)
+            found = _sounds_like(lookup, said, start)
+            if isinstance(found, Question):
+                questions.append(found)  # the DM is asked; no scene needed for that
+                i += size
+                break
+            if found is not None and size == 1 and not _one_word_ok(found, scene):
+                found = None
+            if found is not None:
+                fixes.append(found)
                 i += size
                 break
         else:
             i += 1
-    return fixes
+    return fixes, questions
 
 
 def _stem(word: str) -> str:
@@ -402,27 +419,43 @@ def _stem(word: str) -> str:
     return word
 
 
-def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | None:
+def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | Question | None:
+    """A fix when the words sound like one confirmed name; a question when they sound
+    like two or three (each spelled much alike, none secret, none only suggested)."""
     joined = said.replace(" ", "")
     if len(name_key(joined)) < MIN_LETTERS:
         return None
-    matches: dict[str, NameEntry] = {}
+    by_entity: dict[str, list[NameEntry]] = {}
     for code in sound_codes(joined):
         for entry in lookup.by_sound.get(code, ()):
             if entry.secret:
                 return None  # it could be a secret name: never guess around one
-            if matches and entry.entity_id != next(iter(matches.values())).entity_id:
-                return None  # more than one entry sounds like it
-            matches.setdefault(entry.alias_id, entry)
-    if not matches:
+            by_entity.setdefault(entry.entity_id, []).append(entry)
+            if len(by_entity) > MAX_OPTIONS:
+                return None  # sounds like too many names to ask about
+    if not by_entity:
         return None
-    usable = [e for e in matches.values() if e.confirmed]
-    if not usable:
-        return None  # only a name DMbot suggested: never a silent fix
-    best = max(usable, key=lambda e: (likeness(said, e.text), e.text))
-    if likeness(said, best.text) < MIN_LIKENESS or best.text == said:
+    if len(by_entity) == 1:
+        usable = [e for entries in by_entity.values() for e in entries if e.confirmed]
+        if not usable:
+            return None  # only a name DMbot suggested: never a silent fix
+        best = max(usable, key=lambda e: (likeness(said, e.text), e.text))
+        if likeness(said, best.text) < MIN_LIKENESS or best.text == said:
+            return None
+        return Fix(start, start + len(said), said, best.text, best.entity_id, SOUND)
+    if any(not any(e.confirmed for e in entries) for entries in by_entity.values()):
+        return None  # one of them is only a suggestion: too unsure to ask
+    options = []
+    for entity_id, entries in by_entity.items():
+        name = own_name(lookup, entity_id)
+        alike = max(likeness(said, e.text) for e in entries if e.confirmed)
+        if name is None or alike < MIN_LIKENESS:
+            return None  # not clearly one of these: leave it, don't ask
+        options.append((alike, name, entity_id))
+    if any(name == said for _, name, _ in options):
         return None
-    return Fix(start, start + len(said), said, best.text, best.entity_id, SOUND)
+    options.sort(key=lambda o: (-o[0], o[1]))
+    return Question(start, start + len(said), said, tuple((e, n) for _, n, e in options))
 
 
 def _one_word_ok(fix: Fix, scene: Collection[str]) -> bool:
