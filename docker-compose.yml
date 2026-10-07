@@ -59,6 +59,42 @@ services:
       - core
     restart: unless-stopped
 
+  # The website's API (#435): Discord sign-in, the account page, payments. Same image as
+  # core, its own process. Off until the Website API settings are in .env: start it with
+  # COMPOSE_PROFILES=web in .env (or `docker compose --profile web up -d`). Listens only on
+  # the private network; Caddy or Cloudflare in front publishes it later.
+  web-api:
+    profiles: ["web"]
+    build:
+      context: ./core
+      args:
+        EXTRAS: ${CORE_EXTRAS:-whisper}   # same as core, so the image is shared
+    command: ["python", "-m", "dmbot.web"]
+    env_file: .env
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
+      # Only what the API needs: no bot token, voice secret or AI and speech keys.
+      POSTGRES_ADMIN_PASSWORD: ""
+      DMBOT_DB_PASSWORD: ""
+      DISCORD_TOKEN: ""
+      EARS_SHARED_SECRET: ""
+      ANTHROPIC_API_KEY: ""
+      DEEPGRAM_API_KEY: ""
+      CLOUD_STT_API_KEY: ""
+      SPEECHMATICS_API_KEY: ""
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   dmbot-data:
