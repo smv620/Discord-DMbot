@@ -9,7 +9,7 @@ from dmbot.memory.name_documents import (
     DocumentError,
     chunks,
     clean_reply,
-    google_doc_export,
+    html_text,
     instructions,
     kind_of_file,
     merge_lists,
@@ -50,22 +50,18 @@ class Reading(unittest.TestCase):
             text_of("npcs.pdf", b"%PDF-1.4 garbage")
         self.assertEqual(text_of("old.txt", "Café".encode("cp1252")), "Café")
 
-    def test_google_docs_links_only(self) -> None:
-        link = (
-            "https://docs.google.com/document/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/edit?usp=sharing"
+    def test_web_page_text(self) -> None:
+        page = (
+            "<html><head><title>Skip</title><script>var Auril = 1;</script></head><body>"
+            "<nav>Menu</nav><h1>Ten-Towns</h1><p>Belleros &amp; <b>Bryn</b>\nShander</p>"
+            "<style>.x{}</style><ul><li>Auril</li><li>Ulfgar</li></ul><footer>(c)</footer>"
+            "</body></html>"
         )
-        self.assertEqual(
-            google_doc_export(link),
-            "https://docs.google.com/document/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/export?format=txt",
-        )
-        self.assertIsNone(
-            google_doc_export("https://evil.example/document/d/1AbCdEfGhIjKlMnOpQrSt")
-        )
-        doc_id = "1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
-        self.assertIsNone(google_doc_export(f"http://docs.google.com/document/d/{doc_id}"))
-        self.assertIsNone(
-            google_doc_export(f"https://docs.google.com.evil.example/document/d/{doc_id}")
-        )
+        self.assertEqual(html_text(page), "Ten-Towns\nBelleros & Bryn Shander\nAuril\nUlfgar")
+        self.assertEqual(text_of("link.html", page.encode()), html_text(page))
+        with self.assertRaises(DocumentError):
+            text_of("link.html", b"<html><script>only code</script></html>")
+        self.assertEqual(kind_of_file("notes.htm"), "document")
 
 
 class Request(unittest.TestCase):

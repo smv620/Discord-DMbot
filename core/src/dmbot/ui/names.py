@@ -371,7 +371,7 @@ async def _find_typeahead(
 @app_commands.describe(
     find="Open one name: type part of it, a nickname, or how it sounds",
     file="Add names from a file: a names list, or a .txt, .pdf or .docx (Word) document",
-    link="Add names from a Google Doc that anyone with the link can view",
+    link="Add names from a link: a document or web page anyone with the link can open",
 )
 @app_commands.autocomplete(find=_find_typeahead)
 async def dmbot_names(

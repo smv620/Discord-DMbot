@@ -1,6 +1,6 @@
 """Many names at a time (docs/PLAN.md, "Names at scale", step 3; #126): 📚 Browse by
-kind, 📥 Add many (paste a list, or upload a file with `/dmbot names file:`, with a
-template to start from) and 📤 Download all. Only the campaign's DMs and server
+kind, 📥 Add many (paste a list, a link to any document or page, or upload a file; with
+a template to start from) and 📤 Download all. Only the campaign's DMs and server
 managers, privately; secret names only for the campaign's DMs.
 """
 
@@ -15,12 +15,11 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-import aiohttp
 import discord
-import yarl
 
+from dmbot import fetch
 from dmbot.ai import AIError, AnthropicClient, Reply
 from dmbot.campaigns import Campaign
 from dmbot.memory.lookup import CampaignLookup, NameEntry
@@ -32,7 +31,6 @@ from dmbot.memory.name_documents import (
     chunks,
     clean_reply,
     decode_text,
-    google_doc_export,
     instructions,
     kind_of_file,
     merge_lists,
@@ -73,6 +71,8 @@ PAGE_MAX = 1800  # the page's text, under Discord's 2,000 characters
 SHOWN_PROBLEMS = 5
 PASTE_MAX = 4000  # what a form field holds
 TEMPLATE_FILE = "dmbot-names-template.txt"
+LINK_MAX = 2000  # a form field for one link
+_LONE_LINK = re.compile(r"^(?:<?https?://|www\.)\S+$", re.IGNORECASE)
 
 
 def _slug(name: str) -> str:
@@ -292,11 +292,14 @@ async def show_browse(interaction: discord.Interaction, campaign_id: str) -> Non
 def format_help(*, secrets: bool) -> str:
     parts = "name | kind | other names | secret names" if secrets else "name | kind | other names"
     return (
-        "📥 **Add many names at once.** Press **📋 Paste a list**, or **📄 Get the template** "
-        "to fill in and upload with `/dmbot names` (the **file** box).\n"
-        f"One name per line: `{parts}`. Only the name is needed. Put a `,` or `;` between "
-        "several other names. Kinds: NPC, place, group, creature, item, god, spell, event, "
-        "other. A name with no kind waits in 📝 Check new names."
+        "📥 **Add many names at once.** Paste a list, give a link to a document or web "
+        "page, or upload a file (PDF, Word or .txt). A list in the template's form is added "
+        "at once. Anything else, DMbot's AI can read and make a list for you to check "
+        "first.\n"
+        f"The template: one name per line, `{parts}`. Only the name is needed. Put a `,` or "
+        "`;` between several other names. Kinds: NPC, place, group, creature, item, god, "
+        "spell, event, other. A name with no kind waits in 📝 Check new names.\n"
+        "Upload button missing? Type `/dmbot names` and pick the file in the **file** box."
     )
 
 
@@ -304,14 +307,13 @@ class AddMany(_Menu):
     def __init__(self, campaign_id: str) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        grey = discord.ButtonStyle.secondary
         self.add_item(
             _Button(self._paste, label="📋 Paste a list", style=discord.ButtonStyle.primary)
         )
-        self.add_item(
-            _Button(
-                self._template, label="📄 Get the template", style=discord.ButtonStyle.secondary
-            )
-        )
+        self.add_item(_Button(self._link, label="🔗 Paste a link", style=grey))
+        self.add_item(_Button(self._upload, label="📎 Upload a file", style=grey))
+        self.add_item(_Button(self._template, label="📄 Get the template", style=grey))
 
     async def _paste(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -321,14 +323,24 @@ class AddMany(_Menu):
                 PasteForm(self.campaign_id, secrets=sees_secrets(campaign, interaction.user.id))
             )
 
+    async def _link(self, interaction: discord.Interaction) -> None:
+        if await _campaign_for(interaction, self.campaign_id):
+            self.origin = None
+            await interaction.response.send_modal(LinkForm(self.campaign_id))
+
+    async def _upload(self, interaction: discord.Interaction) -> None:
+        if await _campaign_for(interaction, self.campaign_id):
+            self.origin = None
+            await interaction.response.send_modal(UploadForm(self.campaign_id))
+
     async def _template(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign:
             secrets = sees_secrets(campaign, interaction.user.id)
             await interaction.response.send_message(
                 "📄 **The names template.** Lines starting with `###` explain it. Change the "
-                "examples to your own names, save it as a .txt file, then type `/dmbot names` "
-                "and add the file in the **file** box.",
+                "examples to your own names, save it as a .txt file, then add it with "
+                "📥 Add many > 📎 Upload a file.",
                 file=_file(template(secrets=secrets), TEMPLATE_FILE),
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
@@ -350,7 +362,62 @@ class PasteForm(discord.ui.Modal, title="Add many names"):
             self.lines.label = "One name per line (no secret names)"
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        text = self.lines.value.strip()
+        if _LONE_LINK.match(text):  # a link, not a list: read what it points to
+            await take_link(interaction, self.campaign_id, text)
+            return
         await take_list(interaction, self.campaign_id, Upload(self.lines.value, "your list"))
+
+
+class LinkForm(discord.ui.Modal, title="Add names from a link"):
+    link: discord.ui.TextInput[LinkForm] = discord.ui.TextInput(
+        label="Link to a document or web page",
+        placeholder="https://docs.google.com/document/d/…",
+        max_length=LINK_MAX,
+    )
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(timeout=30 * 60)
+        self.campaign_id = campaign_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await take_link(interaction, self.campaign_id, self.link.value)
+
+
+class UploadForm(discord.ui.Modal, title="Add names from a file"):
+    file: discord.ui.Label[UploadForm] = discord.ui.Label(
+        text="A names list, or a PDF, Word or .txt document",
+        component=discord.ui.FileUpload(max_values=1),
+    )
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(timeout=30 * 60)
+        self.campaign_id = campaign_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        upload = cast(discord.ui.FileUpload[UploadForm], self.file.component)
+        if not upload.values:
+            await _tell(interaction, "No file was added. Press 📎 Upload a file and pick one.")
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        got, problem = await read_attachment(upload.values[0])
+        if got is None:
+            await _tell(interaction, problem or "DMbot couldn't read that.")
+            return
+        await take_list(interaction, self.campaign_id, got)
+
+
+async def take_link(interaction: discord.Interaction, campaign_id: str, link: str) -> None:
+    """Read a link (it can take a while, so answer "thinking" first), then offer its
+    text to the AI. Text from a link is never read as a names list (#264)."""
+    if await _campaign_for(interaction, campaign_id) is None:
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    upload, problem = await read_link(link)
+    if upload is None:
+        await _tell(interaction, problem or "DMbot couldn't read that.")
+        return
+    await take_list(interaction, campaign_id, upload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,13 +425,11 @@ class Upload:
     """Names to add: a list (pasted or a .txt file), or a document's text."""
 
     text: str
-    label: str  # "report.pdf", "your list", "the Google Doc"
+    label: str  # "report.pdf", "your list", "the linked page or file"
     document: bool = False  # not meant as a names list: straight to the AI
 
 
 _PARSING = asyncio.Semaphore(2)  # documents read at once, across all servers
-_GOOGLE_HOSTS = ("docs.google.com",)
-_GOOGLE_SUFFIX = ".googleusercontent.com"
 
 
 async def _document(filename: str, raw: bytes, label: str) -> tuple[Upload | None, str | None]:
@@ -396,64 +461,13 @@ async def read_attachment(file: discord.Attachment) -> tuple[Upload | None, str 
 
 
 async def read_link(link: str) -> tuple[Upload | None, str | None]:
-    """(upload, problem) for `/dmbot names link:`: a Google Doc shared with anyone who has
-    the link. Fetches only from Google (every redirect checked), at most 10 MB."""
-    url = google_doc_export(link)
-    if url is None:
-        return None, (
-            "DMbot can only open Google Docs links (they start with "
-            "https://docs.google.com/document/). For a PDF or Word file in Google Drive, "
-            "download it and add it in the **file** box."
-        )
-    not_shared = (
-        "DMbot can't open that doc. In Google Docs press **Share**, set General access to "
-        "**Anyone with the link**, and try again. Or download it as .docx or .txt and add the "
-        "file instead."
-    )
+    """(upload, problem) for a link: any document or web page anyone can open, fetched
+    with every address checked (dmbot.fetch). Always a document, never a names list."""
     try:
-        raw = await _fetch_google(url)
-    except _NotShared:
-        return None, not_shared
-    except (aiohttp.ClientError, TimeoutError):
-        return None, "DMbot couldn't reach Google Docs. Try again in a minute."
-    except DocumentError as exc:
+        got = await fetch.fetch(link)
+    except fetch.LinkError as exc:
         return None, str(exc)
-    return await _document("doc.txt", raw, "the Google Doc")
-
-
-class _NotShared(Exception):
-    pass
-
-
-def _google_url(url: yarl.URL) -> bool:
-    host = url.host or ""
-    return url.scheme == "https" and (host in _GOOGLE_HOSTS or host.endswith(_GOOGLE_SUFFIX))
-
-
-async def _fetch_google(url: str) -> bytes:
-    """Follow at most 3 redirects by hand, each only to Google over https; read the body
-    in pieces up to the size cap."""
-    timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        target = yarl.URL(url)
-        for _ in range(4):
-            async with session.get(target, allow_redirects=False) as resp:
-                if resp.status in (301, 302, 303, 307, 308):
-                    target = target.join(yarl.URL(resp.headers.get("Location", "")))
-                    if not _google_url(target):
-                        raise _NotShared  # a sign-in page: not shared with everyone
-                    continue
-                if resp.status != 200 or not resp.content_type.startswith("text/plain"):
-                    raise _NotShared
-                data = bytearray()
-                async for piece in resp.content.iter_chunked(64 * 1024):
-                    data += piece
-                    if len(data) > MAX_DOCUMENT_BYTES:
-                        raise DocumentError(
-                            "That doc is too big (up to 10 MB). Split it into smaller docs."
-                        )
-                return bytes(data)
-        raise _NotShared
+    return await _document(got.filename, got.data, "the linked page or file")
 
 
 def read_upload(raw: bytes) -> tuple[str | None, str | None]:

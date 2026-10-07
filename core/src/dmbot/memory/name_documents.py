@@ -17,6 +17,7 @@ import io
 import logging
 import re
 import zipfile
+from html.parser import HTMLParser
 from pathlib import PurePath
 
 from dmbot.memory.models import name_key
@@ -27,9 +28,8 @@ CHUNK_CHARS = 40_000  # one AI request
 MAX_XML_BYTES = 5 * 1024 * 1024  # a Word file's text, unpacked
 MAX_PDF_PAGES = 500
 TEXT_TYPES = (".txt", ".md", ".csv", ".text", "")  # also .doc, refused with its own words
-DOCUMENT_TYPES = (".pdf", ".docx")
+DOCUMENT_TYPES = (".pdf", ".docx", ".html", ".htm")
 log = logging.getLogger(__name__)
-_GDOC = re.compile(r"^https://docs\.google\.com/document/(?:u/\d+/)?d/([A-Za-z0-9_-]{20,})")
 
 
 class DocumentError(ValueError):
@@ -63,6 +63,8 @@ def text_of(filename: str, raw: bytes) -> str:
             text = _pdf_text(raw)
         elif suffix == ".docx":
             text = _docx_text(raw)
+        elif suffix in (".html", ".htm"):
+            text = html_text(decode_text(raw))
         elif suffix == ".doc":
             raise DocumentError(
                 "Old Word files (.doc) can't be read. In Word, use Save As > Word Document "
@@ -164,13 +166,52 @@ def _docx_text(raw: bytes) -> str:
     return "\n".join(paragraphs)
 
 
-def google_doc_export(link: str) -> str | None:
-    """The plain-text export address for a Google Docs share link, or None if it isn't
-    one. Only docs.google.com: DMbot fetches nothing else."""
-    match = _GDOC.match(link.strip())
-    if match is None:
-        return None
-    return f"https://docs.google.com/document/d/{match[1]}/export?format=txt"
+_SPACES = re.compile(r"\s+")
+
+
+class _PageText(HTMLParser):
+    """A web page's readable text: no scripts, styles or page furniture, one line per
+    paragraph, heading or list item. Python's own HTML reader: nothing is run or fetched,
+    and it reads in one pass however the page is built."""
+
+    _SKIP = frozenset({"script", "style", "noscript", "template", "svg", "head", "nav", "footer"})
+    _BLOCK = frozenset(
+        {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section",
+         "article", "header", "blockquote", "pre", "dt", "dd", "td", "th", "table", "ul", "ol"}
+    )  # fmt: skip
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.size = 0
+        self._skipping = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._SKIP:
+            self._skipping += 1
+        elif tag in self._BLOCK:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIP:
+            self._skipping = max(0, self._skipping - 1)
+        elif tag in self._BLOCK:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._skipping and self.size <= MAX_DOCUMENT_CHARS:
+            text = _SPACES.sub(" ", data)  # in a page, a line break in text is a space
+            self.parts.append(text)
+            self.size += len(text)
+
+
+def html_text(page: str) -> str:
+    """The readable text of a web page (see _PageText)."""
+    reader = _PageText()
+    reader.feed(page)
+    reader.close()
+    lines = (" ".join(line.split()) for line in "".join(reader.parts).splitlines())
+    return "\n".join(line for line in lines if line)
 
 
 def chunks(text: str, size: int = CHUNK_CHARS) -> list[str]:

@@ -46,6 +46,20 @@ class Reading(unittest.TestCase):
         self.assertEqual(parsed.lines, [])
         self.assertEqual([n for n, _ in parsed.refused], [2, 3, 4, 5])
 
+    def test_a_link_is_never_a_name(self) -> None:
+        text = "\n".join(
+            [
+                "https://docs.google.com/document/d/1lHeFJAheOyz/edit?usp=drivesdk",
+                "www.dndbeyond.com/sources",
+                "Ulfgar | NPC | https://example.com/ulfgar",
+                "Belleros",
+            ]
+        )
+        parsed = parse(text, secrets=True)
+        self.assertEqual([line.name for line in parsed.lines], ["Belleros"])
+        self.assertEqual([n for n, _ in parsed.refused], [1, 2, 3])
+        self.assertIn("Paste a link", parsed.refused[0][1])
+
     def test_only_a_dm_adds_secret_names_and_repeats_are_counted(self) -> None:
         parsed = parse("Belleros | npc | | the hooded stranger\nAuril\nauril", secrets=False)
         self.assertEqual([line.name for line in parsed.lines], ["Auril"])

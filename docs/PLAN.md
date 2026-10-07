@@ -941,10 +941,20 @@ names panel nor the speech-to-text hints can be a fixed list.
     duplicate a name;
   - for anyone but the campaign's DMs, a clash with a secret name looks exactly like no
     clash.
-  - **names from any document** (owner's decision): `/dmbot names` takes a .txt, .pdf or
-    .docx file, or `link:` a Google Doc shared with anyone who has the link. A list
-    DMbot can read all of is added straight away; anything else (a document, or a list
-    with any line that doesn't fit) goes to the AI (Anthropic, `ANTHROPIC_API_KEY`,
+  - **names from any document** (owner's decision): 📥 Add many has 📋 Paste a list,
+    🔗 Paste a link, 📎 Upload a file (a .txt, .pdf or .docx; `/dmbot names file:` is the
+    fallback) and 📄 Get the template. **A link can point anywhere** (#264, 2026-10-07):
+    a document or a web page anyone with the link can open; Google Docs and Drive,
+    Dropbox, OneDrive and SharePoint share links are turned into their download address,
+    and web pages are reduced to their readable text. A link pasted into Paste a list is
+    read as a link, and a web address is never saved as a name. Fetching is guarded
+    (`dmbot.fetch`): https on port 443 only, at most 3 redirects, 10 MB and 30 seconds,
+    and every address a host resolves to must be public (no private, loopback,
+    link-local or cloud-metadata addresses), checked again on every redirect and used
+    for the connection itself; a file host's sign-in page is never sent to the AI. Links
+    are never logged. A list DMbot can read all of is added straight away; anything else
+    (a document, **anything from a link**, or a list with any line that doesn't fit)
+    goes to the AI (Anthropic, `ANTHROPIC_API_KEY`,
     `AI_MODEL`, a cheap model by default), which writes the names list. The DM first
     confirms the right to use the material and that its text goes to Anthropic (one
     press, logged with who and when: the IP rule), then sees the list (the start in the
