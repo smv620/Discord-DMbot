@@ -1355,15 +1355,16 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
     same duplicates are folded and the same problems flagged); the moves themselves are
     then written in one statement (#164)."""
     onto = await _load_ontology(w)
-    rows = await w.select(RELATIONS, " AND (subject_id = %s OR object_id = %s)", [gone_id, gone_id])
+    rows = await w.select(  # oldest first, so the same merge always folds the same way
+        RELATIONS,
+        " AND (subject_id = %s OR object_id = %s) ORDER BY created_at, id",
+        [gone_id, gone_id],
+    )
     if not rows:
         return
     ends = {keep_id, gone_id} | {r["subject_id"] for r in rows} | {r["object_id"] for r in rows}
     state = {r.id: r for r in await _relations_touching(w, *ends)}  # as the walk sees them
-    types = {
-        e["id"]: e["type"]
-        for e in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(ends | {keep_id})])
-    }
+    entities = {e["id"]: e for e in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(ends)])}
     moves: dict[str, dict[str, Any]] = {}
     gone_rows: list[str] = []  # removed: said nothing, or the same as another fact
     upgrades: list[tuple[str, dict[str, Any]]] = []
@@ -1398,14 +1399,17 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         if pred is not None and moved.status != REJECTED:
             to_check.append((moved, others))
     await w.update_rows(RELATIONS, moves)
+    # Flags before removals, as the old walk did: a flag can point at a fact removed
+    # later in the walk, and removing that fact removes its flags too.
+    for moved, others in to_check:
+        subject, obj = (entities.get(e) for e in (moved.subject_id, moved.object_id))
+        if subject is None or obj is None or {subject["status"], obj["status"]} - set(LIVE):
+            raise MemoryRuleError(NOT_FOUND)  # the far end was rejected or merged away
+        await _flag_problems(w, onto, moved, subject["type"], obj["type"], others)
     for relation_id in gone_rows:
         await _delete_relation(w, relation_id)
     for twin_id, upgrade in upgrades:
         await w.update(RELATIONS, twin_id, upgrade)
-    for moved, others in to_check:
-        await _flag_problems(
-            w, onto, moved, types[moved.subject_id], types[moved.object_id], others
-        )
 
 
 async def _check_growth(w: Changes, session_started_at: int | None) -> None:

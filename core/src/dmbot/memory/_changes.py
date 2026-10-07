@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, LiteralString
 
-from psycopg import sql
+from psycopg import errors, sql
 from psycopg.types.json import Jsonb
 
 from dmbot.db import Conn
@@ -255,8 +255,10 @@ class Changes(Scope):
         self, table: Table, changes: dict[str, Any], where: LiteralString, params: Sequence[Any]
     ) -> list[dict[str, Any]]:
         """Set the same values on every matching row that differs, in one statement.
-        `where` reads like Scope.select's (" AND entity_id = %s"); the columns compared
-        must be text-like (ids). Returns the rows after, in key order."""
+        `where` reads like Scope.select's (" AND entity_id = %s"). Returns the rows
+        after, in key order."""
+        if not changes:
+            return []
         self._check_columns(table, changes)
         differs = sql.SQL(" OR ").join(
             sql.SQL("{} IS DISTINCT FROM %s").format(sql.Identifier(c)) for c in changes
@@ -282,6 +284,8 @@ class Changes(Scope):
         if not rows:
             return []
         columns = sorted({c for changes in rows.values() for c in changes})
+        if not columns:
+            return []
         for changes in rows.values():
             self._check_columns(table, changes)
             if sorted(changes) != columns:
@@ -488,7 +492,7 @@ async def undo_batch(changes: Changes, batch: int) -> None:
         while end < len(rows) and (rows[end]["table_name"], rows[end]["op"]) == kind:
             end += 1
         run = rows[start:end]
-        if len(run) == 1 or not await _undo_run(changes, run):
+        if len(run) == 1 or not await _undo_run_or_not(changes, run):
             await _undo_rows(changes, run)
         start = end
 
@@ -506,6 +510,18 @@ async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
             await changes.update(table, change["row_id"], change["before"])
         else:
             await changes.insert(table, change["before"])
+
+
+async def _undo_run_or_not(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
+    """_undo_run, but False (nothing written) if one statement trips over a unique
+    rule that one row at a time wouldn't: a chain like A takes B's name as B gives it
+    up. Nothing is logged before the statement that fails, so going row by row after
+    is safe."""
+    try:
+        async with changes.conn.transaction():  # a savepoint
+            return await _undo_run(changes, run)
+    except errors.UniqueViolation:
+        return False
 
 
 async def _undo_run(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:

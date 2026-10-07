@@ -767,10 +767,6 @@ class Undo(MemoryTest):
 
     async def test_a_big_merge_and_its_undo_take_few_statements(self) -> None:
         """#164: rows move in one statement per table, not one round trip per row."""
-        from unittest.mock import patch
-
-        from psycopg import AsyncConnection
-
         keep, gone = await self.add("Belleros"), await self.add("Bell")
         written = await self.memory.add_names(
             GUILD_A,
@@ -800,12 +796,57 @@ class Undo(MemoryTest):
             )
             merge_statements, statements = statements, 0
             assert merged.batch is not None
-            await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
+            after = await self.snapshot()
+            statements = 0
+            undone = await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
             undo_statements = statements
         # Row by row, this was well over a thousand round trips each.
         self.assertLess(merge_statements, 60)
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
+        # Still one log row per changed row, so undo and redo work as before.
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT table_name, count(*) AS n FROM memory_changes WHERE batch = %s"
+                " GROUP BY table_name",
+                (merged.batch,),
+            )
+            logged = {r["table_name"]: r["n"] for r in await cur.fetchall()}
+        self.assertEqual(
+            (logged["memory_aliases"], logged["memory_relations"]), (201, 200)
+        )  # + "Bell"
+        assert undone.batch is not None
+        await self.memory.undo(GUILD_A, self.c, undone.batch, source="dm")  # redo
+        self.assertEqual(await self.snapshot(), after)
+
+    async def test_a_merge_onto_a_fact_about_a_rejected_entry_is_refused(self) -> None:
+        """As before #164: a fact to check whose other end was rejected stops the merge."""
+        keep, gone, cerric = (
+            await self.add("Belleros"),
+            await self.add("Bell"),
+            await self.add("Cerric"),
+        )
+        await self.relate(gone, "ally_of", cerric)
+        await self.memory.set_entity_status(GUILD_A, self.c, cerric, REJECTED, source="dm")
+        before = await self.snapshot()
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_a_flag_on_a_fact_the_merge_drops_goes_with_it(self) -> None:
+        """#164 review: a moved fact can be flagged against one dropped later in the
+        same merge (it became "X is in X"); that flag must go, not break the merge."""
+        keep, gone = (
+            await self.add("Neverwinter", type="place"),
+            await self.add("Nevers", type="place"),
+        )
+        sword_coast = await self.add("Sword Coast", type="place")
+        await self.relate(gone, "located_in", sword_coast)  # becomes keep's: is in
+        self.now += 1  # the walk goes oldest first
+        await self.relate(keep, "located_in", gone)  # becomes "is in itself": dropped
+        await self.check_undo_and_redo(
+            lambda: self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+        )
 
     async def test_undoing_a_huge_list_writes_its_log_in_pieces(self) -> None:
         """#164: more changed rows than Postgres takes values in one statement."""
