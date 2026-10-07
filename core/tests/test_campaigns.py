@@ -1,6 +1,9 @@
 import asyncio
+import gzip
 import json
+import random
 import unittest
+import uuid
 from typing import Any
 
 from psycopg import errors as pg_errors
@@ -320,7 +323,49 @@ class BackupFiles(unittest.TestCase):
         from dmbot.campaigns.store import decode_backup, encode_backup
 
         data = {"format": EXPORT_FORMAT, "campaign": {"name": "Ærth & Frost"}}
-        self.assertEqual(decode_backup(encode_backup(data)), data)
+        raw = encode_backup(data)
+        self.assertTrue(raw.startswith(b"\x1f\x8b"))  # compressed (#164)
+        self.assertEqual(decode_backup(raw), data)
+        self.assertEqual(decode_backup(json.dumps(data).encode()), data)  # older, plain
+
+    def test_a_small_file_that_unpacks_too_big_is_refused(self) -> None:
+        from dmbot.campaigns import store as store_mod
+
+        bomb = gzip.compress(b" " * (store_mod.MAX_BACKUP_BYTES + 1))
+        self.assertLess(len(bomb), 100_000)
+        with self.assertRaisesRegex(CampaignError, "too big"):
+            store_mod.decode_backup(bomb)
+        raw = store_mod.encode_backup({"format": EXPORT_FORMAT})
+        for broken in (raw[:-10], b"\x1f\x8b" + b"junk" * 10):  # cut short, or not gzip
+            with self.assertRaisesRegex(CampaignError, "isn't a DMbot campaign backup"):
+                store_mod.decode_backup(broken)
+
+    def test_the_biggest_campaign_that_restores_fits_in_one_discord_file(self) -> None:
+        """A backup as big as a restore takes (MAX_BACKUP_BYTES of JSON) must download
+        as one file Discord accepts. Rows shaped like campaign memory: random IDs, names,
+        descriptions and the same keys over and over."""
+        from dmbot.campaigns import store as store_mod
+        from dmbot.ui.logic import FILE_MAX
+
+        rng = random.Random(164)
+        words = ["the", "old", "tower", "frost", "giant", "of", "Bryn", "Shander", "goblin"]
+
+        def row(n: int) -> dict[str, object]:
+            return {
+                "id": uuid.UUID(int=rng.getrandbits(128)).hex,
+                "type": rng.choice(["npc", "place", "item", "faction"]),
+                "name": f"{rng.choice(words).title()} {rng.choice(words)} {n}",
+                "description": " ".join(rng.choice(words) for _ in range(12)),
+                "status": "confirmed",
+                "secret": rng.random() < 0.1,
+                "created_at": 1_700_000_000 + n,
+            }
+
+        rows: list[dict[str, object]] = []
+        data = {"format": EXPORT_FORMAT, "sections": {"memory": {"memory_entities": rows}}}
+        while len(json.dumps(data)) < store_mod.MAX_BACKUP_BYTES - 50_000:
+            rows += [row(len(rows) + i) for i in range(5_000)]
+        self.assertLess(len(store_mod.encode_backup(data)), FILE_MAX)
 
     def test_rejects_oversized_and_garbage(self) -> None:
         from dmbot.campaigns import store as store_mod

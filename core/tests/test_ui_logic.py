@@ -102,9 +102,9 @@ class Wording(unittest.TestCase):
     def test_backup_filename(self) -> None:
         self.assertEqual(
             backup_filename("Rime of the Frostmaiden!", NOW),
-            "rime-of-the-frostmaiden-2027-01-15.dmbot.json",
+            "rime-of-the-frostmaiden-2027-01-15.dmbot.json.gz",
         )
-        self.assertEqual(backup_filename("✨✨", NOW), "campaign-2027-01-15.dmbot.json")
+        self.assertEqual(backup_filename("✨✨", NOW), "campaign-2027-01-15.dmbot.json.gz")
 
 
 class MenuChoices(unittest.TestCase):

@@ -281,6 +281,11 @@ caller. A feature with per-campaign data adds its own tables (with `campaign_id`
 removed with the campaign. Schema changes go through `dmbot.db` migrations. The campaign
 also stores its DM-screen visibility (`private` / `peek` / `open`, default `peek`), which
 `dmbot.dm_screen` applies to the channel's permissions (#30).
+The backup file is compressed JSON (`.dmbot.json.gz`, format version 2, #164), so the
+biggest campaign a restore accepts (25 MB of JSON) still downloads as one Discord file
+(10 MB; about 5 MB in practice). Restore still reads older plain `.dmbot.json` files,
+and refuses a file that would unpack past 25 MB. A copy too big to send says so and
+nothing is lost.
 
 **Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are

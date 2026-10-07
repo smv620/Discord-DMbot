@@ -442,6 +442,14 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         await interaction.response.defer(ephemeral=True, thinking=True)
     data = await bot.campaigns.export(guild.id, campaign.id)
     raw = await asyncio.to_thread(encode_backup, data)
+    if len(raw) > logic.FILE_MAX:  # Discord would refuse it
+        log.warning("Backup of %s is %d bytes, too big to send", campaign.id, len(raw))
+        await _tell(
+            interaction,
+            f"**{campaign.name}** is too big to send as one file (over 10 MB). Nothing was "
+            "lost: the campaign is still here. Tell whoever hosts DMbot.",
+        )
+        return
     file = discord.File(io.BytesIO(raw), filename=logic.backup_filename(campaign.name, _now()))
     await interaction.followup.send(
         f"💾 Here's a complete copy of **{campaign.name}**. Keep it somewhere safe, and don't "
@@ -668,7 +676,7 @@ async def dmbot_backup(interaction: discord.Interaction) -> None:
 
 
 @dmbot_group.command(name="restore", description="Bring back a campaign from a copy")
-@app_commands.describe(file="The .dmbot.json file you got from /dmbot backup")
+@app_commands.describe(file="The file you got from /dmbot backup")
 async def dmbot_restore(interaction: discord.Interaction, file: discord.Attachment) -> None:
     guild = interaction.guild
     if guild is None:
