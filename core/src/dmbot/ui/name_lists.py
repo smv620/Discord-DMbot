@@ -576,8 +576,8 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
 
 def _ai_offer_text(upload: Upload, parsed: Parsed | None) -> str:
     rights = (
-        "**Pressing 🤖 Find names confirms you have the right to use this material.** Its "
-        "text goes to Anthropic (an AI company) to be read. DMbot doesn't check."
+        "**Pressing 🤖 Find names confirms you have the right to use this material.** DMbot "
+        "doesn't check this. Its text goes to Anthropic (an AI company) to be read."
     )
     if parsed is None:
         return (

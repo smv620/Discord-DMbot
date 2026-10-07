@@ -5,6 +5,7 @@ import asyncio
 import gzip
 import inspect
 import ipaddress
+import os
 import unittest
 from typing import Any
 from unittest.mock import patch
@@ -65,14 +66,13 @@ class Addresses(unittest.TestCase):
             "100.64.0.1", "0.0.0.0", "224.0.0.1", "::1", "fe80::1", "fc00::1",
             "::ffff:127.0.0.1", "::ffff:169.254.169.254", "192.0.2.1",
             "64:ff9b::a00:1", "64:ff9b::a9fe:a9fe", "::ffff:0:a00:1", "::7f00:1",
-            "2002:a00:1::1", "2002:a9fe:a9fe::1",  # 6to4 around 10.0.0.1, 169.254.169.254
-            "2001:0:4136:e378:8000:63bf:f5ff:fffe",  # Teredo, client 10.0.0.1
+            "2002:a00:1::1", "2002:808:808::1",  # 6to4 (old tunnels): always refused
+            "2001:0:4136:e378:8000:63bf:f5ff:fffe",  # Teredo: always refused
         ]  # fmt: skip
         for ip in refused:
             with self.subTest(ip):
                 self.assertFalse(is_public(ipaddress.ip_address(ip)))
-        public = ("8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "64:ff9b::808:808",
-                  "2002:808:808::1")  # fmt: skip
+        public = ("8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "64:ff9b::808:808")
         for ip in public:
             with self.subTest(ip):
                 self.assertTrue(is_public(ipaddress.ip_address(ip)))
@@ -253,10 +253,45 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
         self.routes["/small"] = gzipped(b"Auril")
         self.routes["/bomb"] = gzipped(b"\0" * (20 * 1024 * 1024))  # ~20 KB on the wire
         self.routes["/br"] = gzipped(b"Auril", encoding="br")
+        self.routes["/deflate"] = gzipped(b"Auril", encoding="deflate")  # never asked for
+        self.routes["/x-gzip"] = gzipped(b"Auril", encoding="x-gzip")
         self.assertEqual((await self.get("/small")).data, b"Auril")
         self.assertEqual(seen["asked"], "gzip")
+        self.assertEqual((await self.get("/x-gzip")).data, b"Auril")
         self.assertEqual(await self.refused("/bomb"), fetch.TOO_BIG)
         self.assertEqual(await self.refused("/br"), fetch.WRONG_TYPE)
+        self.assertEqual(await self.refused("/deflate"), fetch.WRONG_TYPE)
+
+    async def test_broken_or_padded_gzip_is_refused(self) -> None:
+        def raw(body: bytes) -> Any:
+            return lambda _request: web.Response(
+                body=body, headers={"Content-Type": "text/plain", "Content-Encoding": "gzip"}
+            )
+
+        whole = gzip.compress(b"Auril the Frostmaiden " * 100)
+        self.routes["/corrupt"] = raw(b"not gzip at all")
+        self.routes["/cut"] = raw(whole[: len(whole) // 2])
+        # A tiny stream, then more bytes after its end: they'd pile up unread in zlib.
+        self.routes["/padded"] = raw(gzip.compress(b"Auril") + b"\0" * 200_000)
+        self.routes["/two"] = raw(gzip.compress(b"Auril") + gzip.compress(b"Ulfgar"))
+        for path in ("/corrupt", "/cut", "/padded", "/two"):
+            with self.subTest(path):
+                self.assertEqual(await self.refused(path), fetch.UNREACHABLE)
+
+    async def test_the_size_cap_counts_both_ends(self) -> None:
+        def raw(body: bytes) -> Any:
+            return lambda _request: web.Response(
+                body=body, headers={"Content-Type": "text/plain", "Content-Encoding": "gzip"}
+            )
+
+        self.routes["/exact"] = raw(gzip.compress(b"a" * 1000))
+        self.routes["/over"] = raw(gzip.compress(b"a" * 1001))
+        self.routes["/noise"] = raw(gzip.compress(os.urandom(3000)))  # big on the wire
+        with patch.object(fetch, "MAX_BYTES", 1000), patch.object(fetch, "_INFLATE_STEP", 7):
+            self.assertEqual(len((await self.get("/exact")).data), 1000)
+            self.assertEqual(await self.refused("/over"), fetch.TOO_BIG)
+        with patch.object(fetch, "MAX_BYTES", 2000):
+            self.assertEqual(await self.refused("/noise"), fetch.TOO_BIG)
 
     async def test_slow_and_odd_replies(self) -> None:
         async def slow(_request: web.Request) -> web.Response:

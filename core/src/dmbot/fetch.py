@@ -25,6 +25,7 @@ import socket
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import aiohttp
 import yarl
@@ -77,21 +78,22 @@ NOT_A_LINK = (
     "To add names you typed, use 📋 Paste a list."
 )
 ONLY_HTTPS = (
-    "DMbot can only open links that start with https://. Download the file and add it "
-    "with 📎 Upload a file instead."
+    "DMbot can only open links that start with https://. Try the same link with https://, "
+    "or download the file and add it with 📎 Upload a file."
 )
 NOT_PUBLIC = (
     "DMbot can't open that link. Use a link anyone can open, or download the file and add "
     "it with 📎 Upload a file."
 )
 NOT_SHARED = (
-    "DMbot can't open that link: it may be private or mistyped. In Google Docs press Share "
-    'and set General access to "Anyone with the link", then try again. Or download the '
-    "file and add it with 📎 Upload a file."
+    "DMbot can't open that link: it may be private or mistyped. If it's a Google Doc, press "
+    'Share and set General access to "Anyone with the link", then try again. Or download '
+    "the file and add it with 📎 Upload a file."
 )
 DRIVE_PAGE = (
-    "DMbot can't open that Google Drive file: it may be private, or too big for Google to "
-    "hand over. Download it and add it with 📎 Upload a file."
+    "DMbot can't open that Google Drive file: it may be private (Share > \"Anyone with the "
+    'link") or too big for Google to share by link. Download it and add it with 📎 Upload '
+    "a file."
 )
 TOO_BIG = (
     "That's too big for DMbot (up to 10 MB). Split it into smaller files and add them with "
@@ -106,7 +108,12 @@ WRONG_TYPE = (
     "Download it, save it as one of those, and add it with 📎 Upload a file."
 )
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
-_V4_IN_V6 = (ipaddress.ip_network("::/96"), ipaddress.ip_network("::ffff:0:0:0/96"))
+# Older ways to put IPv4 in IPv6 (compatible, SIIT) and old tunnels (6to4, Teredo): no
+# file host uses them, so they're refused outright.
+_V4_IN_V6 = tuple(
+    ipaddress.ip_network(net) for net in ("::/96", "::ffff:0:0:0/96", "2002::/16", "2001::/32")
+)
+_INFLATE_STEP = 1 << 20  # unpack at most this much between pauses for the event loop
 # A host made only of digits and dots (or with a colon) is meant as an IP address, even
 # when it isn't written the usual way (127.1, 2130706433): never treat it as a name.
 _NUMERIC_HOST = re.compile(r"^[0-9.]+$|:")
@@ -116,17 +123,14 @@ _BARE_LINK = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)+/\S*$", re.IGNORECASE)
 
 def is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """On the public internet: not private, loopback, link-local (cloud metadata),
-    carrier-grade NAT, multicast, reserved or documentation space."""
+    carrier-grade NAT, multicast, reserved or documentation space. IPv4 inside IPv6 is
+    checked as IPv4 (mapped, NAT64) or refused (compatible, SIIT, 6to4, Teredo)."""
     if isinstance(ip, ipaddress.IPv6Address):
         if ip.ipv4_mapped is not None:
             ip = ip.ipv4_mapped
         elif ip in _NAT64:  # IPv6 that a NAT64 gateway turns into this IPv4 address
             ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
-        elif ip.sixtofour is not None:  # 6to4: the IPv4 address is inside
-            ip = ip.sixtofour
-        elif ip.teredo is not None:  # Teredo: the server and the client are inside
-            return all(is_public(v4) for v4 in ip.teredo)
-        elif any(ip in net for net in _V4_IN_V6):  # older ways to write IPv4 in IPv6
+        elif any(ip in net for net in _V4_IN_V6):
             return False
     return ip.is_global and not ip.is_multicast
 
@@ -305,26 +309,51 @@ async def _read(resp: aiohttp.ClientResponse, url: yarl.URL, hosts: list[str]) -
         raise LinkError(WRONG_TYPE)
     if sign_in_page(ending, url, *hosts):
         raise LinkError(sign_in_message(*hosts))
-    if (resp.content_length or 0) > MAX_BYTES:
+    if (resp.content_length or 0) > MAX_BYTES:  # bytes as sent: compressed or not
         raise LinkError(TOO_BIG)
     encoding = resp.headers.get("Content-Encoding", "identity").strip().casefold()
     if encoding in ("", "identity"):
         inflate = None
-    elif encoding in ("gzip", "x-gzip", "deflate"):
-        inflate = zlib.decompressobj(zlib.MAX_WBITS | 32)  # a gzip or zlib header
+    elif encoding in ("gzip", "x-gzip"):
+        inflate = zlib.decompressobj(zlib.MAX_WBITS | 16)  # gzip only
     else:
         raise LinkError(WRONG_TYPE)  # never asked for: DMbot only accepts gzip
     data = bytearray()
+    sent = 0  # bytes off the network: capped too, compressed or not
     try:
         async for piece in resp.content.iter_chunked(64 * 1024):
-            if inflate is not None:
-                # Never unpack more than the room left: a tiny "zip bomb" stays tiny.
-                piece = inflate.decompress(piece, MAX_BYTES + 1 - len(data))
-                if inflate.unconsumed_tail:
-                    raise LinkError(TOO_BIG)
-            data += piece
+            sent += len(piece)
+            if sent > MAX_BYTES:
+                raise LinkError(TOO_BIG)
+            if inflate is None:
+                data += piece
+            else:
+                await _inflate(inflate, piece, data)
             if len(data) > MAX_BYTES:
                 raise LinkError(TOO_BIG)
+        if inflate is not None and not inflate.eof:
+            await _inflate(inflate, b"", data)  # anything zlib still held back
     except zlib.error:
         raise LinkError(UNREACHABLE) from None
+    if inflate is not None and not inflate.eof:
+        raise LinkError(UNREACHABLE)  # cut short: never send half a document to the AI
     return Fetched(bytes(data), "link" + ending)
+
+
+async def _inflate(inflate: Any, piece: bytes, data: bytearray) -> None:
+    """Unpack one piece into `data`: never more than the room left (a tiny "zip bomb"
+    stays tiny), at most _INFLATE_STEP at a time with a pause between, and nothing after
+    the end of the gzip stream (it would pile up unread inside zlib)."""
+    if inflate.eof:
+        raise LinkError(UNREACHABLE)
+    while True:
+        room = MAX_BYTES + 1 - len(data)
+        data += inflate.decompress(piece, min(_INFLATE_STEP, room))
+        if len(data) > MAX_BYTES:
+            raise LinkError(TOO_BIG)
+        if inflate.eof and inflate.unused_data:
+            raise LinkError(UNREACHABLE)  # bytes after the end: refused, not stored
+        piece = inflate.unconsumed_tail
+        if not piece:
+            return
+        await asyncio.sleep(0)

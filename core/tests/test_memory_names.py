@@ -761,6 +761,14 @@ class Lists(NamesTest):
             got = await name_lists.read_link_once(GUILD, "https://example.com/b")
         self.assertEqual(got, (None, name_lists.LINK_BUSY))
         fetched.assert_not_called()
+        # The place is freed even when reading fails.
+        name_lists._link_busy.discard(GUILD)
+        with (
+            patch("dmbot.fetch.fetch", AsyncMock(side_effect=RuntimeError("boom"))),
+            self.assertRaises(RuntimeError),
+        ):
+            await name_lists.read_link_once(GUILD, "https://example.com/c")
+        self.assertEqual(name_lists._link_busy, set())
 
     async def test_a_web_page_reaches_the_ai_offer_as_text(self) -> None:
         from dmbot.fetch import Fetched
