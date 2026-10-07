@@ -178,5 +178,5 @@ def _session(row: dict[str, Any]) -> TranscriptSession:
         lines=int(row["line_count"]),
         speakers=tuple(sorted(int(u) for u in row["speakers"])),
         number=int(row["number"]),
-        engines=tuple(row.get("engines") or ()),
+        engines=tuple(row["engines"]),
     )

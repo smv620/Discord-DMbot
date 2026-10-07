@@ -66,13 +66,16 @@ class Render(unittest.TestCase):
     def test_the_header_says_which_speech_to_text_wrote_it_in_plain_words(self) -> None:
         engines = ("deepgram nova-3 api.deepgram.com",)
         text = export.render("X", dataclasses.replace(session(), engines=engines), [], {})
-        self.assertIn("Written down by Deepgram (nova-3)", text)
+        self.assertIn("Speech to text: Deepgram, an online service (model nova-3)", text)
         self.assertNotIn("api.deepgram.com", text)  # the endpoint stays in the database
         self.assertEqual(
-            export.written_by(["deepgram nova-3 x", "whisper-local small local"]),
-            "Deepgram (nova-3), then Whisper, on DMbot's own computer (small)",
+            export.written_by(
+                ["deepgram nova-3 x", "whisper-local small local", "deepgram nova-3 x"]
+            ),
+            "Deepgram, an online service (model nova-3); then Whisper, on DMbot's own "
+            "computer (model small); then Deepgram, an online service (model nova-3)",
         )
-        self.assertNotIn("Written down", export.render("X", session(), [], {}))  # older
+        self.assertNotIn("Speech to text", export.render("X", session(), [], {}))  # older
 
     def test_an_unknown_version_is_refused(self) -> None:
         with self.assertRaises(ValueError):

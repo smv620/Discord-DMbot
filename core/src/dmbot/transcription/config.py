@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import PurePath
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -52,11 +53,11 @@ class TranscriptionSettings:
         """Which speech-to-text writes a session down, for its stored transcript (#173):
         "engine model host". Never a key. Empty with TRANSCRIBER=none."""
         if self.engine == "deepgram":
-            return f"deepgram {self.deepgram_model} {urlsplit(self.deepgram_url).hostname}"
+            return f"deepgram {_word(self.deepgram_model)} {_host(self.deepgram_url)}"
         if self.engine == "cloud":
-            return f"cloud {self.cloud_model} {urlsplit(self.cloud_url).hostname}"
+            return f"cloud {_word(self.cloud_model)} {_host(self.cloud_url)}"
         if self.engine == "whisper-local":
-            return f"whisper-local {self.whisper_model} local"
+            return f"whisper-local {_word(self.whisper_model)} local"
         return ""
 
     @property
@@ -73,6 +74,17 @@ class TranscriptionSettings:
     def company(self) -> str | None:
         """The outside company's name when DMbot knows it (for the consent message)."""
         return "Deepgram" if self.engine == "deepgram" else None
+
+
+def _word(model: str) -> str:
+    """A model's name as one plain word: a local model folder keeps only its last part
+    (never the server's folders), and spaces become _."""
+    return "_".join(PurePath(model).name.split()) or "custom"
+
+
+def _host(url: str) -> str:
+    """The endpoint's host only: never a user, password, path or query."""
+    return urlsplit(url).hostname or "unknown"
 
 
 def _language(value: str) -> str:
