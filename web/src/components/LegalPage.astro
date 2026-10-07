@@ -1,0 +1,111 @@
+---
+// Shared frame for the legal pages: draft banner, "The short version" box, and the
+// effective-date footer. The owner (or a lawyer) signs these off; until then they are drafts.
+import { operator } from "../content/legal";
+import Base from "../layouts/Base.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  heading: string;
+  /** One paragraph: the whole page in plain words. */
+  summary: string;
+}
+
+const { title, description, heading, summary } = Astro.props;
+---
+
+<Base title={title} description={description}>
+  <article class="legal prose">
+    <p class="draft" role="note">
+      Draft for review. These words are not final yet and don't apply until an effective date
+      is set below.
+    </p>
+    <h1>{heading}</h1>
+    <section class="short" aria-labelledby="short-heading">
+      <h2 id="short-heading">The short version</h2>
+      <p>{summary}</p>
+    </section>
+    <slot />
+    <footer class="effective">
+      <p>Effective date: {"{{EFFECTIVE DATE: to be set by the owner}}"}</p>
+      <p>
+        Questions? Write to {operator.email}. You can also delete your account and data from
+        <a href="/account">My account</a>.
+      </p>
+    </footer>
+  </article>
+</Base>
+
+<style>
+  .draft {
+    padding: var(--space-3) var(--space-4);
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+
+  .short {
+    padding: var(--space-4) var(--space-6);
+    margin-bottom: var(--space-8);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+  }
+
+  .short h2 {
+    font-size: var(--text-lg);
+    margin-bottom: var(--space-2);
+  }
+
+  .short p {
+    margin: 0;
+  }
+
+  .legal :global(h2) {
+    margin-top: var(--space-8);
+  }
+
+  .legal :global(ul) {
+    padding-left: var(--space-6);
+    margin: 0 0 var(--space-4);
+  }
+
+  .legal :global(li) {
+    margin-bottom: var(--space-2);
+  }
+
+  .legal :global(.table-wrap) {
+    overflow-x: auto;
+    margin-bottom: var(--space-4);
+  }
+
+  .legal :global(caption) {
+    text-align: left;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding-bottom: var(--space-2);
+  }
+
+  .legal :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: var(--space-4);
+  }
+
+  .legal :global(th),
+  .legal :global(td) {
+    text-align: left;
+    padding: var(--space-2);
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  .effective {
+    margin-top: var(--space-12);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+</style>
