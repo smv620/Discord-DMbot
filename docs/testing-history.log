@@ -470,3 +470,16 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     the link: box, and nothing says so. Issue #264, widened by the owner to: read
     names from any list, notes, file or link (any host) with the AI, shown before
     adding. Not fixed yet (web session owns ui/name_lists.py).
+
+==============================================================================
+2026-10-07  Server: deploy bb55060 (dev1, no test run)
+==============================================================================
+  - 08:08 UTC  development @ bb55060 (= 1d98a83 plus log changes): #270 (ears: first
+    word after a pause no longer cut), #276 (audio % in the DM screen), #283
+    (Transcript Cleaner step 1: speaker labels, misheard confirmed names fixed live),
+    #284 and #288 (phone-sized start buttons, long campaign names cut in the middle),
+    #266 (docs). No migrations, no .env or dependency changes. Database backed up
+    first (08:06 UTC, kept on the server outside the repo; pg_restore -l reads 19
+    tables); no session was live. Core and ears rebuilt; ears "connected to core" and
+    core "ears connected" at 08:08:21; no warnings or errors. Postgres unchanged.
+  Not yet live-tested: all of the above. Run 8's checklist covers them.
