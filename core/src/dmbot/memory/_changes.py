@@ -253,27 +253,26 @@ class Changes(Scope):
     async def update_where(
         self, table: Table, changes: dict[str, Any], where: LiteralString, params: Sequence[Any]
     ) -> list[dict[str, Any]]:
-        """Set the same values on every matching row that differs, in one statement.
+        """Set the same values on every matching row that differs, in two statements.
         `where` reads like Scope.select's (" AND entity_id = %s"). Returns the rows
-        after, in key order."""
+        after, in key order.
+
+        First the keys, with the filter's own index; then update_rows by key. One
+        UPDATE … FROM a filtered subquery picked a quadratic plan whenever the table's
+        statistics were missing or stale (a campaign added since the last ANALYZE):
+        seconds for a few thousand rows (#342 review)."""
         if not changes:
             return []
         self._check_columns(table, changes)
         differs = sql.SQL(" OR ").join(
             sql.SQL("{} IS DISTINCT FROM %s").format(sql.Identifier(c)) for c in changes
         )
-        # A subquery, so `where` can name columns without saying which copy of the table.
-        rows = sql.SQL(
-            "(SELECT * FROM {} WHERE guild_id = %s AND campaign_id = %s{} AND ({})) o"
-        ).format(sql.Identifier(table.name), sql.SQL(where), differs)
-        sets = sql.SQL(", ").join(sql.SQL("{} = %s").format(sql.Identifier(c)) for c in changes)
-        return await self._update_from(
-            table,
-            sets,
-            rows,
-            sql.SQL("TRUE"),
-            (*changes.values(), *self.ids, *params, *changes.values()),
-        )
+        query = sql.SQL(
+            "SELECT {} FROM {} WHERE guild_id = %s AND campaign_id = %s{} AND ({}) FOR UPDATE"
+        ).format(sql.Identifier(table.key), sql.Identifier(table.name), sql.SQL(where), differs)
+        cur = await self.conn.execute(query, (*self.ids, *params, *changes.values()))
+        keys = [r[table.key] for r in await cur.fetchall()]
+        return await self.update_rows(table, {key: dict(changes) for key in keys})
 
     async def update_rows(
         self, table: Table, rows: dict[str, dict[str, Any]]
@@ -429,11 +428,12 @@ class Changes(Scope):
         )
 
 
-def _only_closed_since(table: Table, current: dict[str, Any] | None, after: Any) -> bool:
-    """A flag the after-session cleanup closed since this batch (#348): still the batch's
-    own row, so undoing the batch may go ahead. Undoing an insert deletes the flag;
-    undoing an update restores the flag as it was, open again if it was open then (the
-    next cleanup closes it again if the clash is still gone)."""
+def _unchanged_since(table: Table, current: dict[str, Any] | None, after: Any) -> bool:
+    """The row is as the batch left it. A flag the after-session cleanup closed since
+    (#348) counts as unchanged: undoing an insert deletes it, undoing an update restores
+    it as it was (the next cleanup closes it again if the clash is still gone)."""
+    if current == after:
+        return True
     return (
         table is FLAGS
         and current is not None
@@ -483,18 +483,43 @@ async def undo_batch(changes: Changes, batch: int) -> None:
 
 
 async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
-    """One row at a time: the general way."""
+    """One row at a time: the general way.
+
+    A run several rows long may hold a chain of unique values (a name leaving E as
+    another takes its words to E). Rows written in one statement are logged in key
+    order, not in the order such a chain needs, so a row that trips a unique rule waits
+    for the others and is tried again (#342 review). A row with nothing left to wait
+    for has really been blocked since: CHANGED_SINCE."""
     for change in run:
         table = BY_NAME[change["table_name"]]
         current = await changes.get(table, change["row_id"])
-        if current != change["after"] and not _only_closed_since(table, current, change["after"]):
+        if not _unchanged_since(table, current, change["after"]):
             raise MemoryRuleError(CHANGED_SINCE)
-        if change["op"] == "insert":
-            await changes.delete(table, change["row_id"])
-        elif change["op"] == "update":
-            await changes.update(table, change["row_id"], change["before"])
-        else:
-            await changes.insert(table, change["before"])
+    if len(run) == 1:
+        await _undo_row(changes, run[0])
+        return
+    pending = list(run)
+    while pending:
+        waiting = []
+        for change in pending:
+            try:
+                async with changes.conn.transaction():  # a savepoint
+                    await _undo_row(changes, change)
+            except errors.UniqueViolation:
+                waiting.append(change)
+        if len(waiting) == len(pending):
+            raise MemoryRuleError(CHANGED_SINCE)
+        pending = waiting
+
+
+async def _undo_row(changes: Changes, change: dict[str, Any]) -> None:
+    table = BY_NAME[change["table_name"]]
+    if change["op"] == "insert":
+        await changes.delete(table, change["row_id"])
+    elif change["op"] == "update":
+        await changes.update(table, change["row_id"], change["before"])
+    else:
+        await changes.insert(table, change["before"])
 
 
 async def _undo_run_or_not(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
@@ -522,7 +547,7 @@ async def _undo_run(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
     cur = await conn.execute(scoped_select(table, where), (*ids, keys))
     current = {r[table.key]: row_of(r, table) for r in await cur.fetchall()}
     for change in run:
-        if current.get(change["row_id"]) != change["after"]:
+        if not _unchanged_since(table, current.get(change["row_id"]), change["after"]):
             raise MemoryRuleError(CHANGED_SINCE)
     if op == "insert":  # undo: delete them, unless something else links to them
         for dep_table, column, is_list in DEPENDENTS.get(table.name, ()):

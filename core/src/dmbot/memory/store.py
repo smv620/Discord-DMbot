@@ -1364,6 +1364,19 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         return
     ends = {keep_id, gone_id} | {r["subject_id"] for r in rows} | {r["object_id"] for r in rows}
     state = {r.id: r for r in await _relations_touching(w, *ends)}  # as the walk sees them
+    # Which facts touch each entry, kept up to date as facts move or go, so each fact
+    # is checked against its neighbours only (not every fact in `state`), in `state`'s
+    # order so the same twin is found as before (#342 review).
+    order = {fact_id: n for n, fact_id in enumerate(state)}
+    touching: dict[str, set[str]] = {}
+    for fact in state.values():
+        for end in (fact.subject_id, fact.object_id):
+            touching.setdefault(end, set()).add(fact.id)
+
+    def forget(fact: Relation) -> None:
+        for end in (fact.subject_id, fact.object_id):
+            touching.get(end, set()).discard(fact.id)
+
     entities = {e["id"]: e for e in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(ends)])}
     moves: dict[str, dict[str, Any]] = {}
     gone_rows: list[str] = []  # removed: said nothing, or the same as another fact
@@ -1374,23 +1387,26 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         obj = keep_id if row["object_id"] == gone_id else row["object_id"]
         if subject == obj:  # "Bell is an ally of Belleros" says nothing any more
             gone_rows.append(row["id"])
-            state.pop(row["id"], None)
+            dropped = state.pop(row["id"], None)
+            if dropped is not None:
+                forget(dropped)
             continue
         pred = onto.predicates.get(row["predicate"])
         if pred is not None:
             subject, obj = ordered(pred, subject, obj)
         moves[row["id"]] = {"subject_id": subject, "object_id": obj}
+        forget(state[row["id"]])
         moved = dataclasses.replace(state[row["id"]], subject_id=subject, object_id=obj)
         state[row["id"]] = moved
-        others = [
-            r
-            for r in state.values()
-            if r.id != moved.id and ({r.subject_id, r.object_id} & {subject, obj})
-        ]
+        for end in (subject, obj):
+            touching.setdefault(end, set()).add(moved.id)
+        near = (touching.get(subject, set()) | touching.get(obj, set())) - {moved.id}
+        others = [state[fact_id] for fact_id in sorted(near, key=order.__getitem__)]
         twin = duplicate_of(moved, others)
         if twin is not None:  # both said the same: keep one, with the stronger status
             upgrade = _upgrade(_relation_row(twin), moved.status, moved.secret, DM)
             gone_rows.append(moved.id)
+            forget(moved)
             del state[moved.id]
             if upgrade:
                 upgrades.append((twin.id, upgrade))
