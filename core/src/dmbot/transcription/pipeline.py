@@ -26,6 +26,11 @@ from dmbot.transcription.base import MIN_UTTERANCE_S, Transcriber, Transcription
 
 log = logging.getLogger(__name__)
 
+
+def _clock() -> float:  # replaced in tests
+    return time.monotonic()
+
+
 QUEUE_SIZE = 64  # per Discord server
 # Across all servers: a clip is up to 480 KB of audio, so this bounds memory (~120 MB at
 # worst) when the engine is down for every table at once.
@@ -33,8 +38,9 @@ MAX_QUEUED = 256
 # Warn the DM if this many of a server's utterances are waiting: the engine can't keep up.
 BACKLOG_WARN = 16
 FAILURES_BEFORE_ALERT = 3
-# "Working again" only once it's steady (#470): this many answers in a row, or one answer
-# and this long without a failure, so a flapping engine doesn't churn the DM screen.
+# "Working again" only once it's steady (#470): this many answers in a row, or, on the
+# next answer, this long since the first one without a failure, so a flapping engine
+# doesn't churn the DM screen.
 SUCCESSES_BEFORE_ALL_CLEAR = 3
 ALL_CLEAR_AFTER_S = 30.0
 LOG_EVERY_NTH_FAILURE = 50
@@ -202,7 +208,9 @@ class TranscriptionPipeline:
     async def _take_turn(self) -> None:
         guild = await self._turns.get()
         queue = self._queues[guild]
-        if queue:
+        if not queue:  # can't happen: a turn is only queued with a clip waiting
+            log.warning("An empty turn for a server; skipping it")
+        else:
             queued_at, utterance = queue.popleft()
             self._writing.add(guild)
             try:
@@ -222,9 +230,19 @@ class TranscriptionPipeline:
                     self._backlog_warned.discard(guild)
             self.last_latency_s = self.latency_of[guild] = time.monotonic() - queued_at
 
-    def session_ended(self, guild_id: int) -> None:
-        """A server's session ended: a new one there during a long outage is told again."""
+    def session_started(self, guild_id: int) -> None:
+        """A session starts in this server: if writing has stopped, it's told again. (At
+        the start, not the end: an ended session's last clips are still written, and
+        failing would mark it told before a new session ever began.)"""
         self._told_stopped.discard(guild_id)
+
+    async def _tell(self, guild_id: int, text: str) -> None:
+        """Post an alert; a problem posting is logged, never passed on (it would lose the
+        clip being delivered, or leave other tables untold)."""
+        try:
+            await self._alert(guild_id, text)
+        except Exception:
+            log.exception("Couldn't post an alert to the DM screen")
 
     async def process(self, utterance: Utterance) -> None:
         # Skip if the table ended or the speaker revoked consent while queued.
@@ -294,7 +312,7 @@ class TranscriptionPipeline:
         last = self._last_skip_alert.get(utterance.guild_id)
         if last is None or now - last >= SKIP_ALERT_EVERY_S:
             self._last_skip_alert[utterance.guild_id] = now
-            await self._alert(
+            await self._tell(
                 utterance.guild_id, SKIPPED_ALERT_OUTSIDE if self._outside else SKIPPED_ALERT
             )
 
@@ -342,14 +360,14 @@ class TranscriptionPipeline:
                 "DMbot should check its log. DMbot keeps trying."
             )
         for guild in sorted(busy):
-            await self._alert(guild, text)
+            await self._tell(guild, text)
         self._told_stopped |= busy  # after sending: "working again" never comes first
 
     async def _on_success(self, guild_id: int) -> None:
         self.consecutive_failures = 0
         if not self._told_stopped:
             return
-        now = time.monotonic()
+        now = _clock()
         self._ok_streak += 1
         if self._ok_since is None:
             self._ok_since = now
@@ -360,10 +378,12 @@ class TranscriptionPipeline:
         if not steady:
             return
         async with self._alerts_lock:
+            if self._ok_since is None:
+                return  # a failure came in while waiting: not steady after all
             told, self._told_stopped = self._told_stopped, set()
             self._ok_streak, self._ok_since = 0, None
             for guild in sorted(told):
-                await self._alert(guild, "✅ Writing things down is working again.")
+                await self._tell(guild, "✅ Writing things down is working again.")
 
     async def _check_backlog(self, guild_id: int) -> None:
         depth = self.backlog_of(guild_id)
@@ -374,7 +394,7 @@ class TranscriptionPipeline:
                 depth,
                 "" if self._outside else " (try a smaller WHISPER_MODEL or TRANSCRIBER=deepgram)",
             )
-            await self._alert(
+            await self._tell(
                 guild_id,
                 f"🐢 **Writing things down is falling behind** ({depth} bits of speech "
                 "waiting), so words will show up late. "

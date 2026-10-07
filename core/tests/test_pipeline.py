@@ -139,7 +139,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         # One answer and quiet for ALL_CLEAR_AFTER_S counts as steady too.
         self.engine.fail = False
         clock = [0.0]
-        with mock.patch("dmbot.transcription.pipeline.time.monotonic", lambda: clock[0]):
+        with mock.patch("dmbot.transcription.pipeline._clock", lambda: clock[0]):
             await self.pipeline.process(utt())
             self.assertEqual(len(self.alerts), 1)
             clock[0] = ALL_CLEAR_AFTER_S + 1  # quiet for a while, then one more answer
@@ -152,7 +152,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             await self.pipeline.process(utt())
         await self.pipeline.process(utt())
         self.assertEqual(len(self.alerts), 1)
-        self.pipeline.session_ended(1)  # /dmbot stop, then a new session
+        self.pipeline.session_started(1)  # a new session
         await self.pipeline.process(utt(session=1))
         self.assertEqual(len(self.alerts), 2)
         self.assertIn("stopped working", self.alerts[1])
@@ -683,6 +683,47 @@ class WorkerPool(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(p._running)
         self.assertEqual(p._writing, set())  # nothing claims to be in progress
         self.assertEqual(p.pending[0], 1)  # the clip never started is still counted
+        self.assertEqual(p.backlog_of(1), 1)  # still queued, and its turn is still there
+        self.assertIn(1, list(p._turns._queue))
+
+    async def test_an_ended_sessions_last_clips_dont_block_telling_the_next(self) -> None:
+        engine = FakeTranscriber()
+        engine.fail = True
+        p = self.make(engine, workers=1)
+        told: list[tuple[int, str]] = []
+
+        async def alert(guild_id: int, message: str) -> None:
+            told.append((guild_id, message))
+
+        p._alert = alert
+        task = asyncio.create_task(p.run())
+        for at in range(FAILURES_BEFORE_ALERT):  # an outage: told once
+            p.enqueue(self.clip(1, at * 1000))
+        await self.wait_for(lambda: len(told) == 1)
+        p.enqueue(self.clip(1, 9000))  # the stopped session's last words, still failing
+        await self.wait_for(lambda: p.backlog == 0 and not p._writing)
+        p.session_started(1)  # a new /dmbot start during the same outage
+        p.enqueue(self.clip(1, 20_000))
+        await self.wait_for(lambda: len(told) == 2)
+        await self.stop(task)
+        self.assertEqual([g for g, _ in told], [1, 1])  # the new session is told too
+
+    async def test_a_problem_posting_an_alert_never_loses_the_clip(self) -> None:
+        engine = FakeTranscriber()
+        engine.fail = True
+        p = self.make(engine, workers=1)
+
+        async def broken(guild_id: int, message: str) -> None:
+            raise RuntimeError("Discord said no")
+
+        p._alert = broken
+        for _ in range(FAILURES_BEFORE_ALERT):
+            await p.process(self.clip(1, 0))
+        engine.fail = False
+        with self.assertLogs("dmbot.transcription.pipeline", "ERROR"):
+            for at in range(SUCCESSES_BEFORE_ALL_CLEAR):
+                await p.process(self.clip(1, at))
+        self.assertEqual(len([t for _, t in self.delivered if t]), SUCCESSES_BEFORE_ALL_CLEAR)
 
     async def test_a_revoke_while_waiting_its_turn_means_it_isnt_written(self) -> None:
         engine = GatedTranscriber()

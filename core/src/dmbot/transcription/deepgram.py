@@ -26,8 +26,9 @@ log = logging.getLogger(__name__)
 
 # Two tries (4 s + a pause of at most 2 s + 4 s) fit inside the pipeline's 10 s minimum
 # budget per clip (#155), so a hung Deepgram shows up as a failure ("isn't working"), not
-# as "couldn't keep up". A wait for a busy window before the first try can add up to 2 s
-# more (12 s at worst): then the pipeline's budget cuts the clip and counts it skipped.
+# as "couldn't keep up". A wait for a busy window before the first try adds 2 s or more
+# (more if other clips keep being told to wait): past the pipeline's budget, the clip is
+# cut and counted as skipped.
 # Replies took 0.12-0.6 s in testing. A refused keyterm list (#209) adds one or two more
 # requests; refusals come back fast, and the budget still cuts off the rare clip that is
 # refused slowly.

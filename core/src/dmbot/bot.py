@@ -680,6 +680,7 @@ class DMBot(commands.AutoShardedBot):
         If the consent list can't be loaded, nothing is left half-started.
         """
         self.tables[table.guild_id] = table
+        self.pipeline.session_started(table.guild_id)  # told of an outage afresh (#470)
         try:
             await self.push_allowlist(table.guild_id)
         except BaseException:
@@ -703,7 +704,6 @@ class DMBot(commands.AutoShardedBot):
             return None
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
-        self.pipeline.session_ended(guild_id)  # a new session is told of an outage again
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.
