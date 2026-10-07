@@ -131,7 +131,8 @@ class Command(DatabaseTest):
         overrides = await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id)
         self.assertEqual(overrides, {"xge-sleep": False})
         text, view = it.response.edited[0]
-        self.assertIn("⬜ **Sleeping in armor**", text)
+        self.assertTrue(text.startswith("⬜ **Sleeping in armor** is now off.\n📚"))  # news first
+        self.assertIn("⬜ **Sleeping in armor**:", text)
         self.assertNotIn(ui.NO_SCREEN_NOTE, text)
         (note,) = self.posted.await_args_list
         self.assertEqual(note.args[0], SCREEN)
@@ -184,8 +185,24 @@ class Command(DatabaseTest):
         menu = (await self.open_list()).response.sent[0][1]["view"]
         it = await self.switch(menu, "tce-parley")
         text, _ = it.response.edited[0]
-        self.assertTrue(text.endswith(ui.NO_SCREEN_NOTE))
-        self.assertLess(len(text), 2000)
+        self.assertTrue(
+            text.startswith(f"⬜ **Talking with monsters** is now off. {ui.NO_SCREEN_NOTE}\n")
+        )
+        self.assertLessEqual(len(text), ui.TEXT_MAX)
+
+    async def test_a_long_list_is_cut_between_lines_and_keeps_its_last_lines(self) -> None:
+        campaign = await self.campaigns.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        with unittest.mock.patch.object(ui, "TEXT_MAX", 700):
+            text = ui.rules_text(campaign, {}, "✅ news")
+        self.assertLessEqual(len(text), 700)
+        self.assertTrue(text.startswith("✅ news\n"))
+        self.assertIn("\n…\n" + ui.COVERED_2024, text)
+        self.assertTrue(text.endswith("You make every call at the table."))
+        whole = {f"✅ **{r.name}**: {r.summary}" for r in optional.applying("2024")}
+        listed = [line for line in text.split("\n")[1:] if line.startswith("✅")]
+        self.assertTrue(listed)
+        self.assertLessEqual(set(listed), whole)  # no rule cut in half
 
     async def test_a_menu_that_cannot_be_updated_still_says_what_was_saved(self) -> None:
         menu = (await self.open_list()).response.sent[0][1]["view"]
@@ -201,7 +218,24 @@ class Command(DatabaseTest):
             {"tce-parley": False},
         )
         self.posted.assert_awaited_once()  # the DM screen was told first
-        self.assertEqual(it.response.sent[0][0], "Saved: **Talking with monsters** is now off.")
+        self.assertEqual(it.response.sent[0][0], "Saved. ⬜ **Talking with monsters** is now off.")
+
+    async def test_too_late_to_answer_still_saves_quietly(self) -> None:
+        self.posted.return_value = False
+        menu = (await self.open_list()).response.sent[0][1]["view"]
+        (value,) = [o.value for o in menu.pick.options if o.value.startswith("tce-parley:")]
+        menu.pick._values = [value]
+        it = self.it()
+        gone = discord.HTTPException(MagicMock(status=404, reason="gone"), "gone")
+        it.response.edit_message = AsyncMock(side_effect=gone)
+        it.response.send_message = AsyncMock(side_effect=gone)
+        await menu._switch(it)  # doesn't raise
+        it.response.send_message.assert_awaited_once()
+        self.assertIn(ui.NO_SCREEN_NOTE, it.response.send_message.await_args.args[0])
+        self.assertEqual(
+            await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id),
+            {"tce-parley": False},
+        )
 
     async def test_a_ruleset_with_no_optional_rules_says_so_plainly(self) -> None:
         campaign = await self.campaigns.get(GUILD, self.campaign.id)
@@ -209,6 +243,8 @@ class Command(DatabaseTest):
         with unittest.mock.patch.object(optional, "applying", return_value=[]):
             text = ui.rules_text(campaign, {})
         self.assertIn("DMbot has no optional rules to offer for the 2024 rules yet.", text)
+        self.assertNotIn("doesn't check rules yet", text)  # nothing to keep on
+        self.assertNotIn(ui.COVERED_2024, text)
 
     async def test_several_campaigns_ask_which_one_first(self) -> None:
         await self.campaigns.create(GUILD, "Strahd", DM)
