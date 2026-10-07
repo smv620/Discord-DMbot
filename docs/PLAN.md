@@ -896,8 +896,12 @@ names panel nor the speech-to-text hints can be a fixed list.
   taken from the front, so the order is what matters. **Never secret names, and a
   match on a secret name adds nothing:** saying "the hooded stranger" must not pull
   Belleros, or anything connected to Belleros, into the hints.
-  1. **Always:** the players' characters and the players' display names (players call
-     each other by name), each capped at a few nicknames.
+  1. **Always:** the players' characters and the display names of the people who agreed
+     **and are in the table's voice channel** (players call each other by name), each
+     capped at a few nicknames. People who agreed but aren't there go **last**, after
+     every campaign name, so a big server's members never crowd out the scene (#173).
+     Who's there is looked at every 5 seconds per server; anyone who stops being
+     recorded is gone from the very next clip's hints.
   2. **The scene:** confirmed names said in about the last 10 minutes, newest and most
      said first. Each written-down line, only after the per-line consent check, is
      matched against the campaign's non-secret names (exact names, other names and

@@ -125,6 +125,7 @@ TRANSCRIPT_FLUSH_S = 2.0
 TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this often
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
+HINT_PEOPLE_S = 5.0  # who's in the voice channel, for name hints: looked at this often
 TRANSCRIPT_POST_TIMEOUT_S = 10.0  # one stuck post can't hold the others up for long
 TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel can't stall all)
 STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be written
@@ -314,6 +315,10 @@ class DMBot(commands.AutoShardedBot):
         # AI text calls (a document into a names list); None when no key is set.
         self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None
         self._hints_failed_at = -HINTS_FAIL_LOG_S
+        # Per server: (when, who agreed, (names at the table, names not there)).
+        self._hint_people_cache: dict[
+            int, tuple[float, frozenset[int], tuple[list[str], list[str]]]
+        ] = {}
         self._clean_failed_at = -HINTS_FAIL_LOG_S
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
@@ -1833,14 +1838,10 @@ class DMBot(commands.AutoShardedBot):
         names): characters, the players, names said lately, names connected to them,
         then the rest (dmbot.memory.scene). Never secret names."""
         guild_id = utterance.guild_id
-        users = await self.consent.consenting(guild_id)
-        names = (self.name_of(guild_id, uid) for uid in users)
-        # A member DMbot can't look up comes back as "<@id>": no use as a hint, and an
-        # outside service shouldn't get IDs.
-        people = [name for name in names if not name.startswith("<@")]
         table = self._table_for(utterance)
+        people, absent = await self._hint_people(guild_id, table)
         if self.lookup is None or table is None or table.campaign_id is None:
-            return people
+            return people + absent
         try:
             lookup = await self.lookup.get(guild_id, table.campaign_id)
             if table.hint_parts is None or table.hint_parts.version != lookup.version:
@@ -1854,10 +1855,39 @@ class DMBot(commands.AutoShardedBot):
                 log.exception("Couldn't load the campaign's names for hints")
             # Never fix names from an old copy: a name may have just been made secret.
             table.name_lookup = None
-            return people
+            return people + absent
         table.name_lookup = lookup  # for matching written-down lines to the scene
-        table.people = self._everyone_at_table(table, people)  # never "fixed" into a name
-        return scene_hints(lookup, table.hint_parts, table.scene, time.monotonic(), people=people)
+        # Never "fixed" into a name, whether at the table or not.
+        table.people = self._everyone_at_table(table, people + absent)
+        return scene_hints(
+            lookup, table.hint_parts, table.scene, time.monotonic(), people=people, absent=absent
+        )
+
+    async def _hint_people(self, guild_id: int, table: Table | None) -> tuple[list[str], list[str]]:
+        """Display names of people who agreed: (in the table's voice channel, not there).
+        Kept for HINT_PEOPLE_S per server, and made again at once when anyone agrees or
+        stops, so a revoked name is never sent as a hint (#173)."""
+        users = await self.consent.consenting(guild_id)
+        now = time.monotonic()
+        cached = self._hint_people_cache.get(guild_id)
+        if cached is not None and cached[1] == users and now - cached[0] < HINT_PEOPLE_S:
+            return cached[2]
+        voice = self.get_channel(table.voice_channel_id) if table is not None else None
+        here = (
+            {m.id for m in voice.members}
+            if isinstance(voice, discord.VoiceChannel | discord.StageChannel)
+            else set()
+        )
+        present: list[str] = []
+        away: list[str] = []
+        for user_id in sorted(users):
+            name = self.name_of(guild_id, user_id)
+            # A member DMbot can't look up comes back as "<@id>": no use as a hint, and
+            # an outside service shouldn't get IDs.
+            if not name.startswith("<@"):
+                (present if user_id in here else away).append(name)
+        self._hint_people_cache[guild_id] = (now, users, (present, away))
+        return present, away
 
     def _everyone_at_table(self, table: Table, consenting: list[str]) -> tuple[str, ...]:
         """Display names the name fixes must never change: people who agreed, the DM(s),

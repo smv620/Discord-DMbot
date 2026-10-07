@@ -1640,6 +1640,40 @@ class Hints(NamesTest):
         self.assertIn("Bell", hints)
         self.assertNotIn("the hooded stranger", hints)
 
+    async def test_people_in_the_voice_channel_come_first_and_a_revoke_counts_at_once(
+        self,
+    ) -> None:
+        await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+        table = make_table(self.campaign.id)
+        self.bot.tables[GUILD] = table
+        for user in (DM, PLAYER, STRANGER):
+            await self.consent.grant(GUILD, user)
+        voice = MagicMock(spec=discord.VoiceChannel)
+        voice.members = [
+            SimpleNamespace(id=PLAYER, bot=False, display_name="p")
+        ]  # only the player is at the table
+        self.bot.get_channel = lambda _id: voice  # type: ignore[method-assign]
+        self.bot.name_of = lambda _g, user: f"user{user}"  # type: ignore[method-assign, assignment]
+        hints = await self.bot._name_hints(clip(table))
+        self.assertEqual(hints[0], f"user{PLAYER}")  # at the table: first
+        self.assertLess(hints.index("Belleros"), hints.index(f"user{DM}"))  # not here: last
+        self.assertLess(hints.index("Belleros"), hints.index(f"user{STRANGER}"))
+        # Someone stops being recorded: gone from the very next hints, cache or not.
+        await self.consent.revoke(GUILD, STRANGER)
+        self.assertNotIn(f"user{STRANGER}", await self.bot._name_hints(clip(table)))
+        # Who's in the voice channel is looked at again after a few seconds.
+        voice.members = [
+            SimpleNamespace(id=PLAYER, bot=False, display_name="p"),
+            SimpleNamespace(id=DM, bot=False, display_name="d"),
+        ]
+        self.assertGreater(
+            (await self.bot._name_hints(clip(table))).index(f"user{DM}"), 1
+        )  # still the copy from a moment ago
+        cached = self.bot._hint_people_cache[GUILD]
+        self.bot._hint_people_cache[GUILD] = (cached[0] - 60, *cached[1:])  # time passes
+        hints = await self.bot._name_hints(clip(table))
+        self.assertEqual(sorted(hints[:2]), sorted([f"user{PLAYER}", f"user{DM}"]))
+
     async def test_names_said_at_the_table_move_to_the_front(self) -> None:
         from dmbot.audio.segmenter import Utterance
 
