@@ -119,8 +119,12 @@ def public_name(recording: Path) -> str:
 
 
 def _milliseconds(text: str) -> int:
-    """A whole number of milliseconds, 0 or more (argparse turns the error into usage)."""
-    value = int(text)
+    """A whole number of milliseconds, 0 or more. Raises ArgumentTypeError, which argparse
+    reports as a usage error before anything else runs."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("needs a whole number of milliseconds") from None
     if value < 0:
         raise argparse.ArgumentTypeError("can't be negative")
     return value
