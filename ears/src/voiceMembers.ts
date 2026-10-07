@@ -18,7 +18,9 @@ export interface MemberNotes {
 /**
  * Per session, people looked up here and when they may be asked about again: never
  * while a lookup runs, and only after UNKNOWN_RETRY_MS if Discord couldn't find them,
- * so a mute or deafen doesn't ask again each time.
+ * so a mute or deafen doesn't ask again each time. Kept apart from TableSession's own
+ * retry time on purpose: someone who speaks is looked up at once, so their first
+ * words are kept. Relies on lookUpBot always settling (discord.js times requests out).
  */
 const askedUntil = new WeakMap<MemberNotes, Map<string, number>>();
 

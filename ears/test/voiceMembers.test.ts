@@ -116,6 +116,24 @@ test("someone Discord couldn't find isn't looked up again on every mute, only la
   assert.deepEqual(looked, ["1", "2", "1", "2"]);
 });
 
+test("a lookup still running past the retry time isn't started again", async () => {
+  const session = notes();
+  const looked: string[] = [];
+  let answer: (isBot: boolean) => void = () => undefined;
+  const lookUp = (id: string): Promise<boolean> => {
+    looked.push(id);
+    return new Promise((resolve) => (answer = resolve));
+  };
+  const states: VoiceMember[] = [{ id: "1", channelId: "c1", member: null }];
+  noteVoiceMembers(session, states, everyone, lookUp);
+  mock.timers.tick(UNKNOWN_RETRY_MS * 2);
+  noteVoiceMembers(session, states, everyone, lookUp);
+  assert.deepEqual(looked, ["1"]);
+  answer(false);
+  await flush();
+  assert.deepEqual(session.noted, [["1", false]]);
+});
+
 function table(): MemberNotes & { noted: [string, boolean][]; events: string[]; dropSpeakers(ids: readonly string[]): void } {
   const events: string[] = [];
   const base = notes();

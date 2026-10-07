@@ -112,8 +112,8 @@ class TranscriptStore:
             return [_session(r) for r in await cur.fetchall()]
 
     async def session_counts(self, guild_id: int) -> dict[str, int]:
-        """How many sessions with lines each campaign in the server has, in one query
-        (campaigns with none are left out)."""
+        """Saved sessions (with at least one line) per campaign id in this server, in
+        one query. Campaigns with none are left out."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT campaign_id, count(*) AS n FROM transcript_sessions"

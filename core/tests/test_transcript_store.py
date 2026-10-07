@@ -84,6 +84,7 @@ class StoreTests(DatabaseTest):
         self.assertIsNone(await self.store.session(OTHER_GUILD, sid))
         self.assertEqual(await self.store.lines(OTHER_GUILD, sid), [])
         self.assertEqual(await self.store.sessions(OTHER_GUILD, self.campaign.id), [])
+        self.assertEqual(await self.store.session_counts(OTHER_GUILD), {})
 
     async def test_another_campaign_in_the_same_server_is_listed_apart(self) -> None:
         other = await self.campaigns.create(GUILD, "Strahd", DM)
@@ -93,6 +94,8 @@ class StoreTests(DatabaseTest):
         await self.store.add_lines(GUILD, theirs, [line(1, DM, "b")])
         listed = await self.store.sessions(GUILD, self.campaign.id)
         self.assertEqual([(s.id, s.number) for s in listed], [(mine, 1)])
+        counts = await self.store.session_counts(GUILD)
+        self.assertEqual(counts, {self.campaign.id: 1, other.id: 1})
 
     async def test_deleting_the_campaign_deletes_its_transcripts(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
