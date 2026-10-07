@@ -2,17 +2,21 @@
 
 import asyncio
 import contextlib
+import itertools
 import json
+import random
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from psycopg import AsyncConnection, sql
 from psycopg import errors as pg_errors
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
-from dmbot.memory._changes import ALL, scoped_select
+from dmbot.memory._changes import ALIASES, ALL, scoped_select
+from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.checks import CONTRADICTION, TOO_MANY, WRONG_OBJECT, WRONG_SUBJECT
 from dmbot.memory.lookup import LookupCache
@@ -23,6 +27,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     MemoryRuleError,
+    NewName,
     Written,
 )
 from dmbot.memory.ontology import PredicateTerm, TypeTerm
@@ -764,6 +769,244 @@ class Undo(MemoryTest):
             lambda: self.memory.merge(GUILD_A, self.c, keep, gone, source="entitybot")
         )
 
+    async def test_a_big_merge_and_its_undo_take_few_statements(self) -> None:
+        """#164: rows move in one statement per table, not one round trip per row."""
+        keep, gone = await self.add("Belleros"), await self.add("Bell")
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [NewName(f"Friend {n}", "npc", CONFIRMED, (), ()) for n in range(200)],
+            source="dm",
+        )
+        friends = [i for i in written.value if i is not None]
+        for n in range(200):
+            await self.memory.add_alias(
+                GUILD_A, self.c, gone, f"Bell {n}", kind="short", source="dm"
+            )
+        for friend in friends:
+            await self.relate(gone, "ally_of", friend)
+        before = await self.snapshot()
+        statements = 0
+        real = AsyncConnection.execute
+
+        async def counting(conn: Any, *args: Any, **kw: Any) -> Any:
+            nonlocal statements
+            statements += 1
+            return await real(conn, *args, **kw)
+
+        with patch.object(AsyncConnection, "execute", counting):
+            merged = await self.memory.merge(
+                GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True
+            )
+            merge_statements, statements = statements, 0
+            assert merged.batch is not None
+            after = await self.snapshot()
+            statements = 0
+            undone = await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
+            undo_statements = statements
+        # Row by row, this was well over a thousand round trips each. Counted with
+        # execute, so the savepoints around bulk undo runs (their own round trips) aren't.
+        self.assertLess(merge_statements, 60)
+        self.assertLess(undo_statements, 60)
+        self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
+        # Still one log row per changed row, so undo and redo work as before.
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT table_name, count(*) AS n FROM memory_changes WHERE batch = %s"
+                " GROUP BY table_name",
+                (merged.batch,),
+            )
+            logged = {r["table_name"]: r["n"] for r in await cur.fetchall()}
+        self.assertEqual(
+            (logged["memory_aliases"], logged["memory_relations"]), (201, 200)
+        )  # + "Bell"
+        assert undone.batch is not None
+        await self.memory.undo(GUILD_A, self.c, undone.batch, source="dm")  # redo
+        self.assertEqual(await self.snapshot(), after)
+
+    async def test_a_merge_onto_a_fact_about_a_rejected_entry_is_refused(self) -> None:
+        """As before #164: a fact to check whose other end was rejected stops the merge."""
+        keep, gone, cerric = (
+            await self.add("Belleros"),
+            await self.add("Bell"),
+            await self.add("Cerric"),
+        )
+        await self.relate(gone, "ally_of", cerric)
+        await self.memory.set_entity_status(GUILD_A, self.c, cerric, REJECTED, source="dm")
+        before = await self.snapshot()
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_a_flag_on_a_fact_the_merge_folds_away_goes_with_it(self) -> None:
+        """#164 review: the same, for a fact folded into its twin later in the walk."""
+        frida = await self.add("Frida")
+        keep, gone = (
+            await self.add("Neverwinter", type="place"),
+            await self.add("Nevers", type="place"),
+        )
+        await self.relate(frida, "located_in", gone, detail="docks")  # flagged against the next
+        self.now += 1
+        await self.relate(frida, "located_in", gone)  # becomes the same as the last: folded
+        self.now += 1
+        await self.relate(frida, "located_in", keep)
+        await self.check_undo_and_redo(
+            lambda: self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+        )
+
+    async def test_a_merge_with_shared_names_and_facts_undoes_in_bulk(self) -> None:
+        """Rows the merge deleted (twins) come back in bulk, values and all."""
+        keep, gone = await self.add("Belleros"), await self.add("Bell")
+        for n in range(50):
+            friend = await self.add(f"Friend {n}")
+            await self.relate(keep, "ally_of", friend, source="cleaner", confidence=0.5)
+            await self.relate(gone, "ally_of", friend, secret=True)  # folded, upgrades keep's
+            await self.memory.add_alias(
+                GUILD_A, self.c, gone, f"Nick {n}", kind="short", secret=True, source="dm"
+            )
+            await self.memory.add_alias(
+                GUILD_A, self.c, keep, f"Nick {n}", kind="short", source="dm"
+            )
+        await self.check_undo_and_redo(
+            lambda: self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+        )
+
+    async def test_a_bulk_undo_after_one_fact_changed_again_is_refused(self) -> None:
+        keep, gone = await self.add("Belleros"), await self.add("Bell")
+        facts = []
+        for n in range(20):
+            friend = await self.add(f"Friend {n}")
+            facts.append((await self.relate(gone, "ally_of", friend)).value[0])
+        merged = await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+        await self.memory.update_relation(
+            GUILD_A, self.c, facts[7].id, status=CONFIRMED, source="dm"
+        )
+        changed = await self.snapshot()
+        assert merged.batch is not None
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
+        self.assertEqual(await self.snapshot(), changed)  # nothing half undone
+
+    async def test_a_flag_on_a_fact_the_merge_drops_goes_with_it(self) -> None:
+        """#164 review: a moved fact can be flagged against one dropped later in the
+        same merge (it became "X is in X"); that flag must go, not break the merge."""
+        keep, gone = (
+            await self.add("Neverwinter", type="place"),
+            await self.add("Nevers", type="place"),
+        )
+        sword_coast = await self.add("Sword Coast", type="place")
+        await self.relate(gone, "located_in", sword_coast)  # becomes keep's: is in
+        self.now += 1  # the walk goes oldest first
+        await self.relate(keep, "located_in", gone)  # becomes "is in itself": dropped
+        await self.check_undo_and_redo(
+            lambda: self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+        )
+
+    async def test_a_merge_of_thousands_of_rows_and_its_undo(self) -> None:
+        """#164: 6,000 moved rows used to need more values than one statement takes;
+        now each table's rows and their log are one statement whatever the count."""
+        keep, gone = await self.add("Belleros"), await self.add("Bell")
+        async with self.db.guild(GUILD_A) as conn:  # quicker than 6,000 add_mention calls
+            await conn.execute(
+                "INSERT INTO memory_mentions (guild_id, campaign_id, id, entity_id, line_ref,"
+                " span_start, span_end, confidence, method, created_at)"
+                " SELECT %s, %s, md5(i::text), %s, 's1:' || i, 0, 4, 0.9, 'exact', %s"
+                " FROM generate_series(1, 6000) i",
+                (GUILD_A, self.c, gone, self.now),
+            )
+        before = await self.snapshot()
+        statements = 0
+        real = AsyncConnection.execute
+
+        async def counting(conn: Any, *args: Any, **kw: Any) -> Any:
+            nonlocal statements
+            statements += 1
+            return await real(conn, *args, **kw)
+
+        with patch.object(AsyncConnection, "execute", counting):
+            merged = await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+            merge_statements, statements = statements, 0
+            assert merged.batch is not None
+            await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
+        self.assertLess(merge_statements, 60)
+        self.assertLess(statements, 60)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_a_new_campaign_merges_fast_with_stale_statistics(self) -> None:
+        """#342 review: with statistics from before this campaign existed, a filtered
+        UPDATE … FROM picked a nested-loop plan: seconds for 50 names among 3,000."""
+        await self.fill_names(self.c, 2000)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("ANALYZE memory_aliases")
+            await conn.execute("ANALYZE memory_entities")
+        fresh = (await self.campaigns.create(GUILD_A, "Fresh", DM)).id
+        await self.fill_names(fresh, 3000)
+        keep = await self.memory.add_entity(GUILD_A, fresh, type="npc", name="Keep", source="dm")
+        gone = await self.memory.add_entity(GUILD_A, fresh, type="npc", name="Gone", source="dm")
+        for n in range(50):
+            await self.memory.add_alias(
+                GUILD_A, fresh, gone.value.id, f"Gone {n}", kind="short", source="dm"
+            )
+        started = time.perf_counter()
+        await self.memory.merge(GUILD_A, fresh, keep.value.id, gone.value.id, source="dm")
+        self.assertLess(time.perf_counter() - started, 1.0)  # the bad plan took over 3 s
+
+    async def fill_names(self, campaign: str, count: int) -> None:
+        """`count` entries with one name each, written directly (quicker than the API)."""
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at)"
+                " SELECT %s, %s, md5(%s || i), 'npc', 'Name ' || i, '', 'proposed', 'dm', %s"
+                " FROM generate_series(1, %s) i",
+                (GUILD_A, campaign, campaign, self.now, count),
+            )
+            await conn.execute(
+                "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key,"
+                " kind, secret, status, sound_codes, source, created_at)"
+                " SELECT %s, %s, md5('a' || %s || i), md5(%s || i), 'Name ' || i,"
+                " 'name ' || i, 'full', false, 'proposed', '{}', 'dm', %s"
+                " FROM generate_series(1, %s) i",
+                (GUILD_A, campaign, campaign, campaign, self.now, count),
+            )
+
+    async def test_a_bulk_undo_that_trips_a_unique_name_goes_row_by_row(self) -> None:
+        """#342 review: in one batch a name leaves E for F, then another name with the
+        same words moves from G to E. Undone in one statement, the second can reach E
+        before the first has left: the savepoint catches it and the rows go one by
+        one, with the same result."""
+        e, f, g = await self.add("Edda"), await self.add("Finn"), await self.add("Gwen")
+        a1 = await self.memory.add_alias(GUILD_A, self.c, e, "Red", kind="short", source="dm")
+        a2 = await self.memory.add_alias(GUILD_A, self.c, g, "Red", kind="short", source="dm")
+        before = await self.snapshot()
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            await w.update_rows(ALIASES, {a1.value.id: {"entity_id": f}})
+            await w.update_rows(ALIASES, {a2.value.id: {"entity_id": e}})
+            batch = w.batch
+        assert batch is not None
+        after = await self.snapshot()
+        undone = await self.memory.undo(GUILD_A, self.c, batch, source="dm")
+        self.assertEqual(await self.snapshot(), before)
+        assert undone.batch is not None
+        await self.memory.undo(GUILD_A, self.c, undone.batch, source="dm")  # redo
+        self.assertEqual(await self.snapshot(), after)
+
+    async def test_update_rows_refuses_bad_columns(self) -> None:
+        a = await self.add("Edda")
+        (own,) = await self.memory.aliases(GUILD_A, self.c, entity_id=a)
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            for rows in (
+                {own.id: {"nope": 1}},  # not a column
+                {own.id: {"id": "x"}},  # the key never changes
+            ):
+                with self.subTest(rows), self.assertRaises(ValueError):
+                    await w.update_rows(ALIASES, rows)
+            other = (await w.select(ENTITIES_TABLE, " LIMIT 1"))[0]["id"]
+            with self.assertRaises(ValueError):  # each row must set the same columns
+                await w.update_rows(
+                    ALIASES, {own.id: {"secret": True}, other: {"status": CONFIRMED}}
+                )
+
     async def test_undo_twice_is_refused(self) -> None:
         w = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="X", source="dm")
         assert w.batch is not None
@@ -1163,8 +1406,10 @@ class Renaming(MemoryTest):
             status=CONFIRMED, secret=True,
         )  # fmt: skip
         stranger = await self.add("the hooded stranger", status=CONFIRMED)
+        before = await self.snapshot()
         with self.assertRaises(MemoryRuleError):
             await self.memory.merge(GUILD_A, self.c, stranger, a, source="dm", dm_said_same=True)
+        self.assertEqual(await self.snapshot(), before)  # the bulk moves went back too
         await self.memory.merge(GUILD_A, self.c, a, stranger, source="dm", dm_said_same=True)
         self.assertEqual(
             await self.keys(a), {"belleros": CONFIRMED, "the hooded stranger": CONFIRMED}
@@ -1262,3 +1507,158 @@ class LookupInPostgres(MemoryTest):
         restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
         aliases = await self.memory.aliases(GUILD_B, restored.id)
         self.assertEqual([x.sound_codes for x in aliases], [("PLRS",)])
+
+
+class MergeMatchesTheOldWalk(MemoryTest):
+    """#342 review: on seeded random graphs, the set-based merge leaves every table, flag
+    and change-log row as the old row-by-row merge did (tests/merge_reference.py), and a
+    bulk undo leaves the same as undoing one row at a time."""
+
+    PREDICATES = ("located_in", "member_of", "ally_of", "enemy_of", "kin_of", "knows")
+
+    async def build(self, campaign: str, seed: int) -> tuple[str, str]:
+        """The same graph every time for a seed, ids and all."""
+        rng = random.Random(seed)
+        ids = (f"{n:032x}" for n in itertools.count(seed * 1_000_000))
+        self.ids = patch("dmbot.memory.store.new_id", side_effect=lambda: next(ids))
+        self.ids.start()
+        self.addCleanup(self.ids.stop)
+        self.now = 1_700_000_000
+
+        async def step(write: Awaitable[Any]) -> Any:
+            self.now += 1
+            try:
+                return await write
+            except MemoryRuleError:
+                return None
+
+        types = ("npc", "npc", "npc", "place", "place", "spell")
+        names = ["Keep", "Gone"] + [f"Someone {n}" for n in range(10)]
+        ents = []
+        for name in names:
+            written = await step(
+                self.memory.add_entity(
+                    GUILD_A, campaign, type="npc" if name in ("Keep", "Gone") else
+                    rng.choice(types), name=name, source="dm",
+                )
+            )  # fmt: skip
+            ents.append(written.value.id)
+        keep, gone = ents[0], ents[1]
+        for n in range(8):  # names, some shared, some secret, some used by someone
+            for owner in (keep, gone):
+                if rng.random() < 0.6:
+                    await step(
+                        self.memory.add_alias(
+                            GUILD_A, campaign, owner, f"Nick {n}", kind="short", source="dm",
+                            secret=rng.random() < 0.3,
+                            status=CONFIRMED if rng.random() < 0.3 else PROPOSED,
+                        )
+                    )  # fmt: skip
+        for n in range(3):
+            await step(
+                self.memory.add_alias(
+                    GUILD_A, campaign, rng.choice(ents[2:]), f"Called {n}", kind="nickname",
+                    source="dm", used_by=gone,
+                )
+            )  # fmt: skip
+        facts = []
+        for _ in range(40):
+            a = rng.choice([keep, gone, gone, *ents[2:]])
+            b = rng.choice([keep, gone, *ents[2:]])
+            pred = rng.choice(self.PREDICATES)
+            dm = rng.random() < 0.5
+            written = await step(
+                self.memory.add_relation(
+                    GUILD_A, campaign, a, pred, b, source="dm" if dm else "cleaner",
+                    confidence=1.0 if dm else 0.5, secret=rng.random() < 0.2,
+                    status=CONFIRMED if dm and rng.random() < 0.5 else PROPOSED,
+                )
+            )  # fmt: skip
+            if written is not None:
+                facts.append(written.value[0].id)
+        for fact_id in rng.sample(facts, k=min(4, len(facts))):
+            await step(
+                self.memory.update_relation(
+                    GUILD_A, campaign, fact_id, status=REJECTED, source="dm"
+                )
+            )
+        for n in range(5):
+            await step(
+                self.memory.add_mention(
+                    GUILD_A, campaign, gone, line_ref=f"s1:{n}", span=(0, 4),
+                    confidence=0.9, method="exact", source="cleaner",
+                )
+            )  # fmt: skip
+        await step(
+            self.memory.add_correction(
+                GUILD_A, campaign, "gon", action="fix", entity_id=gone, source="dm"
+            )
+        )
+        self.ids.stop()
+        return keep, gone
+
+    async def logged(self, campaign: str, batch: int | None) -> list[str]:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT table_name, row_id, op, before, after FROM memory_changes"
+                " WHERE campaign_id = %s AND batch = %s",
+                (campaign, batch),
+            )
+            return sorted(json.dumps(dict(r), sort_keys=True) for r in await cur.fetchall())
+
+    async def test_seeded_graphs(self) -> None:
+        from tests import merge_reference
+
+        compared = 0
+        for seed in range(8):
+            with self.subTest(seed=seed):
+                old = (await self.campaigns.create(GUILD_A, f"Old {seed}", DM)).id
+                new = (await self.campaigns.create(GUILD_A, f"New {seed}", DM)).id
+                keep, gone = await self.build(old, seed)
+                self.assertEqual(await self.build(new, seed), (keep, gone))
+                self.assertEqual(
+                    await self.snapshot(GUILD_A, old), await self.snapshot(GUILD_A, new)
+                )
+                start = seed * 1_000_000 + 900_000
+                with patch("dmbot.memory.store.new_id", side_effect=(
+                    f"{n:032x}" for n in itertools.count(start)
+                ).__next__):  # fmt: skip
+                    try:
+                        old_batch = await merge_reference.merge(
+                            self.memory, GUILD_A, old, keep, gone, source="dm", dm_said_same=True
+                        )
+                    except MemoryRuleError:
+                        old_batch = None
+                with patch("dmbot.memory.store.new_id", side_effect=(
+                    f"{n:032x}" for n in itertools.count(start)
+                ).__next__):  # fmt: skip
+                    if old_batch is None:  # refused before: refused now, nothing changed
+                        snap = await self.snapshot(GUILD_A, new)
+                        with self.assertRaises(MemoryRuleError):
+                            await self.memory.merge(
+                                GUILD_A, new, keep, gone, source="dm", dm_said_same=True
+                            )
+                        self.assertEqual(await self.snapshot(GUILD_A, new), snap)
+                        continue
+                    merged = await self.memory.merge(
+                        GUILD_A, new, keep, gone, source="dm", dm_said_same=True
+                    )
+                self.assertEqual(
+                    await self.snapshot(GUILD_A, old), await self.snapshot(GUILD_A, new)
+                )
+                self.assertEqual(
+                    await self.logged(old, old_batch), await self.logged(new, merged.batch)
+                )
+                # Undo: one row at a time in the old copy, in bulk in the new one.
+                assert merged.batch is not None
+                with patch("dmbot.memory._changes._undo_run_or_not", AsyncMock(return_value=False)):
+                    row_by_row = await self.memory.undo(GUILD_A, old, old_batch, source="dm")
+                bulk = await self.memory.undo(GUILD_A, new, merged.batch, source="dm")
+                self.assertEqual(
+                    await self.snapshot(GUILD_A, old), await self.snapshot(GUILD_A, new)
+                )
+                self.assertEqual(
+                    await self.logged(old, row_by_row.batch), await self.logged(new, bulk.batch)
+                )
+                compared += 1
+        self.assertGreaterEqual(compared, 5)  # most seeds merge
