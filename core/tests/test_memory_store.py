@@ -7,8 +7,8 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 from unittest.mock import patch
 
+from psycopg import AsyncConnection, sql
 from psycopg import errors as pg_errors
-from psycopg import sql
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
@@ -33,6 +33,15 @@ from tests.pg import DatabaseTest
 GUILD_A, GUILD_B = 111, 222
 DM = 7
 
+SERVES = PredicateTerm(
+    "sworn_to",
+    "is sworn to",
+    "Who someone works for.",
+    ("character",),
+    ("character",),
+    max_per_subject=2,
+    core=False,
+)
 BORN_IN = PredicateTerm(
     "born_in",
     "was born in",
@@ -410,6 +419,177 @@ class Rules(MemoryTest):
         self.assertEqual([f.kind for f in written.value[1]], [WRONG_OBJECT])
         written = await self.relate(fireball, "member_of", a, source="cleaner", confidence=0.4)
         self.assertEqual([f.kind for f in written.value[1]], [WRONG_SUBJECT, WRONG_OBJECT])
+
+    async def test_flags_whose_clash_is_gone_are_closed_after_a_session(self) -> None:
+        """#164: rejecting one side of a clash (or an undo, or an edit) ends it, but left
+        its flag open. The after-session cleanup closes it; real problems stay open."""
+        cerric = await self.add("Cerric")
+        p1, p2 = (
+            await self.add("Brynwater", type="place"),
+            await self.add("Thornewick", type="place"),
+        )
+        first = await self.relate(cerric, "located_in", p1)
+        clash = await self.relate(cerric, "located_in", p2, source="cleaner", confidence=0.5)
+        fireball = await self.add("Fireball", type="spell")
+        wrong = await self.relate(cerric, "member_of", fireball, source="cleaner", confidence=0.4)
+        self.assertEqual([f.kind for f in clash.value[1]], [TOO_MANY])
+        nothing = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual((nothing.value, nothing.batch), ([], None))  # every clash still real
+        await self.memory.update_relation(
+            GUILD_A, self.c, first.value[0].id, status=REJECTED, source="dm"
+        )
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual([f.id for f in closed.value], [clash.value[1][0].id])
+        still = await self.memory.flags(GUILD_A, self.c)
+        self.assertEqual({f.id for f in still}, {f.id for f in wrong.value[1]})
+        assert closed.batch is not None
+        await self.memory.undo(GUILD_A, self.c, closed.batch, source="dm")  # can be undone
+        self.assertEqual(len(await self.memory.flags(GUILD_A, self.c)), len(still) + 1)
+
+    async def test_a_merge_that_ends_a_clash_leaves_nothing_to_close(self) -> None:
+        """Two places that turn out to be one: the two facts fold into one and the flag
+        goes with the folded fact, so the cleanup finds nothing. His member_of flag
+        (wrong kind) is a different problem and stays."""
+        cerric = await self.add("Cerric")
+        town = await self.add("Bryn Shander", type="place")
+        same_town = await self.add("Bryn", type="place")
+        await self.relate(cerric, "located_in", town)
+        await self.relate(cerric, "located_in", same_town, source="cleaner", confidence=0.5)
+        fireball = await self.add("Fireball", type="spell")
+        await self.relate(cerric, "member_of", fireball, source="cleaner", confidence=0.4)
+        await self.memory.merge(GUILD_A, self.c, town, same_town, source="dm")
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(closed.value, [])
+        kinds = {f.kind for f in await self.memory.flags(GUILD_A, self.c)}
+        self.assertEqual(kinds, {WRONG_OBJECT})
+
+    async def test_a_merge_can_still_be_undone_after_its_flag_is_closed(self) -> None:
+        """#348: the cleanup closing a flag the merge made must not block the merge's
+        Undo (it used to fail with "changed again since")."""
+        cerric, twin = await self.add("Cerric"), await self.add("Ceric")
+        p1, p2 = (
+            await self.add("Brynwater", type="place"),
+            await self.add("Thornewick", type="place"),
+        )
+        own = await self.relate(cerric, "located_in", p1)
+        await self.relate(twin, "located_in", p2, source="cleaner", confidence=0.5)
+        merged = await self.memory.merge(GUILD_A, self.c, cerric, twin, source="dm")
+        self.assertEqual([f.kind for f in await self.memory.flags(GUILD_A, self.c)], [TOO_MANY])
+        await self.memory.update_relation(  # the other fact, not one the merge moved
+            GUILD_A, self.c, own.value[0].id, status=REJECTED, source="dm"
+        )
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(len(closed.value), 1)
+        assert merged.batch is not None
+        await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
+        entities = {e.id for e in await self.memory.entities(GUILD_A, self.c)}
+        self.assertIn(twin, entities)  # split again
+        self.assertEqual(await self.memory.flags(GUILD_A, self.c), [])  # the merge's flag
+
+    async def test_undoing_a_batch_of_several_closed_flags_works(self) -> None:
+        """#348 review, a guard for #342's set-based undo: a batch that inserted two
+        flags, both later closed by the cleanup, can still be undone."""
+        cerric = await self.add("Cerric")
+        fireball = await self.add("Fireball", type="spell")
+        pair = await self.relate(fireball, "member_of", cerric, source="cleaner", confidence=0.4)
+        self.assertEqual([f.kind for f in pair.value[1]], [WRONG_SUBJECT, WRONG_OBJECT])
+        await self.memory.set_entity_type(GUILD_A, self.c, fireball, "npc", source="dm")
+        await self.memory.set_entity_type(GUILD_A, self.c, cerric, "faction", source="dm")
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(len(closed.value), 2)
+        assert pair.batch is not None
+        await self.memory.undo(GUILD_A, self.c, pair.batch, source="dm")
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c, include_secret=True), [])
+        self.assertEqual(await self.memory.flags(GUILD_A, self.c), [])
+
+    async def test_naming_the_right_kind_closes_a_wrong_kind_flag(self) -> None:
+        cerric = await self.add("Cerric")
+        tower = await self.add("The Tower", type="spell")  # wrongly a spell
+        wrong = await self.relate(cerric, "located_in", tower, source="cleaner", confidence=0.4)
+        self.assertEqual([f.kind for f in wrong.value[1]], [WRONG_OBJECT])
+        await self.memory.set_entity_type(GUILD_A, self.c, tower, "place", source="dm")
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual([f.id for f in closed.value], [wrong.value[1][0].id])
+
+    async def test_still_too_many_stays_flagged(self) -> None:
+        """Room for two, four given. Each TOO_MANY flag names one partner: rejecting a
+        partner closes only the flags naming it, while the clash with the others (still
+        three for two places) stays flagged. Dropping to two closes them all."""
+        await self.memory.add_predicate(
+            GUILD_A, self.c, SERVES, examples=["x"], reason="y", source="entitybot"
+        )
+        cerric = await self.add("Cerric")
+        lords = [await self.add(f"Lord {n}") for n in range(4)]
+        facts = [(await self.relate(cerric, "sworn_to", lord)).value for lord in lords[:2]]
+        third = await self.relate(cerric, "sworn_to", lords[2], source="cleaner", confidence=0.5)
+        fourth = await self.relate(cerric, "sworn_to", lords[3], source="cleaner", confidence=0.5)
+        self.assertTrue(third.value[1] and fourth.value[1])  # both over the limit
+        await self.memory.update_relation(
+            GUILD_A, self.c, facts[0][0].id, status=REJECTED, source="dm"
+        )
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        rejected = facts[0][0].id
+        self.assertEqual({f.other_id for f in closed.value}, {rejected})
+        still = await self.memory.flags(GUILD_A, self.c)
+        self.assertTrue(still)  # three left for two places: still a clash
+        self.assertNotIn(rejected, {f.other_id for f in still})
+        await self.memory.update_relation(
+            GUILD_A, self.c, facts[1][0].id, status=REJECTED, source="dm"
+        )
+        await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(await self.memory.flags(GUILD_A, self.c), [])
+
+    async def test_another_campaigns_flags_are_left_alone(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Sunken City", DM)).id
+        for campaign in (self.c, other):
+            cerric = await self.add("Cerric", campaign=campaign)
+            p1 = await self.add("Brynwater", type="place", campaign=campaign)
+            p2 = await self.add("Thornewick", type="place", campaign=campaign)
+            first = await self.memory.add_relation(
+                GUILD_A, campaign, cerric, "located_in", p1, source="dm", confidence=1.0
+            )
+            await self.memory.add_relation(
+                GUILD_A, campaign, cerric, "located_in", p2, source="cleaner", confidence=0.5
+            )
+            await self.memory.update_relation(
+                GUILD_A, campaign, first.value[0].id, status=REJECTED, source="dm"
+            )
+        await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(await self.memory.flags(GUILD_A, self.c), [])
+        self.assertEqual(len(await self.memory.flags(GUILD_A, other)), 1)  # its own turn
+
+    async def closing_statements(self, flags: int) -> int:
+        """Statements for the cleanup to close `flags` stale flags."""
+        town = await self.add(f"Bryn Shander {flags}", type="place")
+        inn = await self.add(f"Inn {flags}", type="place")
+        firsts = []
+        for n in range(flags):
+            npc = await self.add(f"Guard {flags}-{n}")
+            firsts.append((await self.relate(npc, "located_in", town)).value[0].id)
+            await self.relate(npc, "located_in", inn, source="cleaner", confidence=0.5)
+        for fact_id in firsts:
+            await self.memory.update_relation(
+                GUILD_A, self.c, fact_id, status=REJECTED, source="dm"
+            )
+        statements = 0
+        real = AsyncConnection.execute
+
+        async def counting(conn: Any, *args: Any, **kw: Any) -> Any:
+            nonlocal statements
+            statements += 1
+            return await real(conn, *args, **kw)
+
+        with patch.object(AsyncConnection, "execute", counting):
+            closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(len(closed.value), flags)
+        return statements
+
+    async def test_checking_many_flags_takes_a_few_statements(self) -> None:
+        one = await self.closing_statements(1)
+        thirty = await self.closing_statements(30)
+        # The checks are a fixed few statements; closing is 3 per flag until it reuses
+        # part 1's bulk update (it was 6 per flag).
+        self.assertLessEqual(thirty - one, 3 * 29)
 
     async def test_saying_a_fact_again_only_strengthens_it(self) -> None:
         a, b = await self.add("Gorrak"), await self.add("Tamsin")

@@ -891,6 +891,28 @@ class AfterSession(NamesTest):
     def table(self) -> Table:
         return make_table(self.campaign.id)
 
+    async def test_flags_that_no_longer_apply_are_closed(self) -> None:
+        cid = self.campaign.id
+
+        async def add(name: str, kind: str) -> str:
+            written = await self.memory.add_entity(GUILD, cid, type=kind, name=name, source="dm")
+            return written.value.id
+
+        cerric = await add("Cerric", "npc")
+        p1, p2 = await add("Brynwater", "place"), await add("Thornewick", "place")
+        first = await self.memory.add_relation(
+            GUILD, cid, cerric, "located_in", p1, source="dm", confidence=1.0
+        )
+        await self.memory.add_relation(
+            GUILD, cid, cerric, "located_in", p2, source="cleaner", confidence=0.5
+        )
+        self.assertEqual(len(await self.memory.flags(GUILD, cid)), 1)
+        await self.memory.update_relation(
+            GUILD, cid, first.value[0].id, status=REJECTED, source="dm"
+        )
+        await self.bot.close_stale_flags(self.table())  # one of the after-session steps
+        self.assertEqual(await self.memory.flags(GUILD, cid), [])
+
     async def test_new_names_are_suggested_to_the_dm(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])

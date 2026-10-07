@@ -278,6 +278,20 @@ class Changes(Scope):
         )
 
 
+def _only_closed_since(table: Table, current: dict[str, Any] | None, after: Any) -> bool:
+    """A flag the after-session cleanup closed since this batch (#348): still the batch's
+    own row, so undoing the batch may go ahead. Undoing an insert deletes the flag;
+    undoing an update restores the flag as it was, open again if it was open then (the
+    next cleanup closes it again if the clash is still gone)."""
+    return (
+        table is FLAGS
+        and current is not None
+        and after is not None
+        and (after["status"], current["status"]) == ("open", "resolved")
+        and {**current, "status": after["status"]} == after
+    )
+
+
 async def undo_batch(changes: Changes, batch: int) -> None:
     """Reverse every row change of one batch, newest first.
 
@@ -304,7 +318,7 @@ async def undo_batch(changes: Changes, batch: int) -> None:
     for change in rows:
         table = BY_NAME[change["table_name"]]
         current = await changes.get(table, change["row_id"])
-        if current != change["after"]:
+        if current != change["after"] and not _only_closed_since(table, current, change["after"]):
             raise MemoryRuleError(CHANGED_SINCE)
         if change["op"] == "insert":
             await changes.delete(table, change["row_id"])
