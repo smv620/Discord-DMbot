@@ -6,6 +6,7 @@ import { CoreLink } from "./coreLink.js";
 import { Logger } from "./log.js";
 import type { CoreCommand } from "./protocol.js";
 import { READY_TIMEOUT_MS, TableSession } from "./voice.js";
+import { noteVoiceMembers } from "./voiceMembers.js";
 
 /**
  * ears entry point. Logs in with the shared bot token using only the voice-state
@@ -28,11 +29,12 @@ const client = new Client({
   shardCount: config.shards.count,
 });
 
-async function isBotOrUnknown(guildId: string, userId: string): Promise<boolean> {
+/** Whether a user is a bot, or undefined if they can't be found (treated as a bot). */
+async function lookUpBot(guildId: string, userId: string): Promise<boolean | undefined> {
   const guild = client.guilds.cache.get(guildId);
-  if (!guild) return true;
+  if (!guild) return undefined;
   const member = guild.members.cache.get(userId) ?? (await guild.members.fetch(userId).catch(() => null));
-  return member ? member.user.bot : true;
+  return member?.user.bot;
 }
 
 async function handleCommand(command: CoreCommand): Promise<void> {
@@ -78,7 +80,7 @@ async function handleCommand(command: CoreCommand): Promise<void> {
         adapterCreator: guild.voiceAdapterCreator,
         allowlist,
         link,
-        isBotOrUnknown: (userId) => isBotOrUnknown(command.guildId, userId),
+        lookUpBot: (userId) => lookUpBot(command.guildId, userId),
         debugAudio: config.debugAudio,
         log,
         onClosed: () => {
@@ -86,6 +88,8 @@ async function handleCommand(command: CoreCommand): Promise<void> {
         },
       });
       sessions.set(command.guildId, session);
+      // Know who's a bot before anyone speaks, so capture starts on the first packet.
+      noteVoiceMembers(session, guild.voiceStates.cache.values(), (userId) => lookUpBot(command.guildId, userId));
       try {
         await session.ready();
         // ready() includes the DAVE (end-to-end encryption) handshake.
@@ -139,6 +143,12 @@ link.on("connected", () => {
       link.send({ type: "status", state: "left", guildId });
     }
   }, CONFIRM_MS);
+});
+
+// Someone joins the table channel: note whether they're a bot before they speak.
+client.on(Events.VoiceStateUpdate, (_oldState, newState) => {
+  const session = sessions.get(newState.guild.id);
+  if (session) noteVoiceMembers(session, [newState], (userId) => lookUpBot(newState.guild.id, userId));
 });
 
 link.on("disconnected", () => {
