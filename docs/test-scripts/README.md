@@ -19,8 +19,9 @@ Both scripts take about a minute and score the same 12 D&D terms.
 
 **Recordings** (for the session twin, #299, and offline speech-to-text checks): `DMOnlyAudio.m4a`
 (dm-only.md), `dm-and-player.m4a` (dm-and-player.md) and `stt-bakeoff.m4a` (stt-bakeoff.md, the
-owner reading alone, 2026-10-07). The bake-off recording is the better test for name
-resolution: 24 campaign names, each said several times, with 2-second pauses between lines.
+owner reading alone, 2026-10-07, read straight through without the script's 2-second
+pauses). The bake-off recording is the better test for name resolution: 24 campaign names,
+each said several times, at a natural pace.
 
 **Sending it:** paste the script into a Discord message (it fits, and Discord shows the bold
 labels) rather than sending the file.
