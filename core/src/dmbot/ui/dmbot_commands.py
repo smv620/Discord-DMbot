@@ -165,7 +165,7 @@ class CampaignPicker(_Menu):
                 placeholder="Or pick another campaign…",
                 options=[
                     discord.SelectOption(
-                        label=logic.shorten(c.name, logic.OPTION_LABEL_MAX),
+                        label=logic.name_label(c.name),
                         value=c.id,
                         description=logic.option_description(c, now),
                     )
@@ -247,7 +247,9 @@ class NewCampaignForm(discord.ui.Modal, title="New campaign"):
 
 
 class NewCampaignSettings(_Menu):
-    """Recommended settings are pre-selected; the DM can just press Create."""
+    """Recommended settings are pre-selected; the DM can just press Create. One row of
+    buttons per setting, short enough for a phone (#112): one tap to change a setting,
+    the chosen one blue with a tick, the full wording in the message above."""
 
     def __init__(self, name: str) -> None:
         super().__init__()
@@ -262,41 +264,42 @@ class NewCampaignSettings(_Menu):
         return "\n".join(
             [
                 f"**New campaign: {self.name}**",
-                "These are the recommended settings. Change any of them, "
+                "These are the recommended settings. Tap a button to change one, "
                 "then press **Create campaign**.",
                 *logic.settings_summary(self.target, self.fallback, self.optional, self.visibility),
             ]
         )
 
-    def _select(self, row: int, choices: dict[str, str], current: str, attr: str) -> None:
-        async def changed(interaction: discord.Interaction) -> None:
-            value = select.values[0]
-            if attr == "optional":
-                self.optional = value == "on"
-            else:
-                setattr(self, attr, value)
-            self._build()
-            await _replace(interaction, self.text(), self)
+    def _choices(self, row: int, choices: dict[str, str], current: str, attr: str) -> None:
+        for value, label in choices.items():
 
-        select = _Select(
-            changed,
-            row=row,
-            options=[
-                discord.SelectOption(label=label, value=value, default=value == current)
-                for value, label in choices.items()
-            ],
-        )
-        self.add_item(select)
+            async def changed(interaction: discord.Interaction, value: str = value) -> None:
+                if attr == "optional":
+                    self.optional = value == "on"
+                else:
+                    setattr(self, attr, value)
+                self._build()
+                await _replace(interaction, self.text(), self)
+
+            chosen = value == current
+            self.add_item(
+                _Button(
+                    changed,
+                    label=logic.chosen_label(label, chosen),
+                    style=discord.ButtonStyle.primary if chosen else discord.ButtonStyle.secondary,
+                    row=row,
+                )
+            )
 
     def _build(self) -> None:
         self.clear_items()
         fallbacks = logic.fallback_choices(self.target)
         if self.fallback not in fallbacks:
             self.fallback = next(iter(fallbacks))
-        self._select(0, logic.main_rules_choices(), self.target, "target")
-        self._select(1, fallbacks, self.fallback, "fallback")
-        self._select(2, logic.OPTIONAL_RULES_CHOICES, "on" if self.optional else "off", "optional")
-        self._select(3, logic.visibility_choices(), self.visibility, "visibility")
+        self._choices(0, logic.main_rules_choices(), self.target, "target")
+        self._choices(1, fallbacks, self.fallback, "fallback")
+        self._choices(2, logic.OPTIONAL_RULES_CHOICES, "on" if self.optional else "off", "optional")
+        self._choices(3, logic.visibility_choices(), self.visibility, "visibility")
         self.add_item(
             _Button(
                 self._create,

@@ -14,5 +14,8 @@ Judge from the DM's seat mid-session — distracted, running combat, no time to 
 - Do errors say what went wrong and what to do next?
 - Is consent clear to players, and is it obvious when the bot is listening?
 - Are command names discoverable and consistent with existing ones?
+- Does it fit a phone? Button and menu-choice labels DMbot writes are at most about 25
+  characters (phones cut longer ones off, #112); explanations go in the message text,
+  which wraps. Prefer buttons over a menu for two or three choices.
 
 Give concrete rewrites for any text you'd change. Mark each finding BLOCKING or SUGGESTION.

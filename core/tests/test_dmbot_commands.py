@@ -1,9 +1,10 @@
 """The /dmbot commands' first steps, with fake Discord interactions."""
 
 import json
+import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -130,3 +131,56 @@ class CommandTests(DatabaseTest):
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         sent = it.followup.send.call_args.kwargs["file"]
         self.assertTrue(sent.filename.endswith(".dmbot.json"))
+
+
+class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
+    """#112: the settings are short buttons that fit a phone, one row per setting."""
+
+    def items(self, view: Any) -> list[Any]:
+        return list(view.children)
+
+    def labels(self, view: Any) -> dict[int, list[str]]:
+        rows: dict[int, list[str]] = {}
+        for item in self.items(view):
+            rows.setdefault(item.row, []).append(item.label)
+        return rows
+
+    press: Any = SimpleNamespace()
+
+    async def test_one_row_per_setting_and_the_recommended_ones_are_ticked(self) -> None:
+        from dmbot.ui.logic import PHONE_LABEL_MAX
+
+        view = cmds.NewCampaignSettings("Frostmaiden")
+        self.assertEqual(
+            self.labels(view),
+            {
+                0: ["✓ Main rules: 2024", "Main rules: 2014"],
+                1: ["✓ If missing: 2014 rules", "If missing: nothing"],
+                2: ["✓ Optional rules: on", "Optional rules: off"],
+                3: ["DM screen: DM only", "✓ DM screen: players peek", "DM screen: everyone"],
+                4: ["✅ Create campaign"],
+            },
+        )
+        self.assertFalse(any(isinstance(i, discord.ui.Select) for i in self.items(view)))
+        for item in self.items(view):
+            self.assertLessEqual(len(item.label or ""), PHONE_LABEL_MAX)
+        ticked = [i for i in self.items(view) if (i.label or "").startswith("✓")]
+        self.assertTrue(all(i.style is discord.ButtonStyle.primary for i in ticked))
+
+    async def test_one_tap_changes_a_setting(self) -> None:
+        view = cmds.NewCampaignSettings("Frostmaiden")
+        (button,) = [i for i in self.items(view) if i.label == "Main rules: 2014"]
+        with patch.object(cmds, "_replace", AsyncMock()) as replaced:
+            await button.callback(self.press)
+        self.assertEqual(view.target, "2014")
+        self.assertEqual(view.fallback, "2024")  # the old backup can't be the main rules
+        rows = self.labels(view)
+        self.assertEqual(rows[0], ["Main rules: 2024", "✓ Main rules: 2014"])
+        self.assertEqual(rows[1], ["✓ If missing: 2024 rules", "If missing: nothing"])
+        text = replaced.call_args.args[1]
+        self.assertIn("**Main rules:** 2014 rules (older)", text)
+        (off,) = [i for i in self.items(view) if i.label == "Optional rules: off"]
+        with patch.object(cmds, "_replace", AsyncMock()):
+            await off.callback(self.press)
+        self.assertFalse(view.optional)
+        self.assertIn("✓ Optional rules: off", self.labels(view)[2])
