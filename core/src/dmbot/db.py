@@ -150,8 +150,16 @@ class Database:
     @asynccontextmanager
     async def plan_writer(self, user_id: int) -> AsyncIterator[Conn]:
         """The only way to change a person's plan (`entitlements`): for the payment
-        webhook and Try It (dmbot.web, #435). Everything else reads plans."""
+        webhook and Try It (dmbot.web, #435). Everything else reads plans.
+
+        One plan change per person at a time: a lock held until the transaction ends, so
+        two payment events (or an event and Try It) arriving together can't both act on
+        "no plan yet" and overwrite each other."""
         async with self._with(user_id=str(int(user_id)), plan_writer="payments") as conn:
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"dmbot.plan_writer:{int(user_id)}",),
+            )
             yield conn
 
     @asynccontextmanager

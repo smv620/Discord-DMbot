@@ -225,6 +225,11 @@ def create_app(
         if plan_id not in paid_plan_ids():
             raise HTTPException(status_code=400, detail="unknown_plan")
         plan = plans.load().by_id[plan_id]
+        current = await entitlements.get(db, session.user_id)
+        if current is not None and current.plan != "try-it" and current.status != "lapsed":
+            # A paid plan is working: change it on the billing page, never a second
+            # subscription (or a second first-month offer).
+            raise HTTPException(status_code=409, detail="has_paid_plan")
         first_month: int | None = None
         if plan.first_month_after_trial_cents is not None and await first_paid_month_after_trial(
             db, session.user_id
@@ -264,22 +269,29 @@ def create_app(
         """The payment company's events: signature checked, each applied once."""
         if payments is None or provider_name != payments.name:
             raise HTTPException(status_code=404, detail="not_found")
-        length = int(request.headers.get("content-length") or 0)
-        if length > MAX_WEBHOOK_BYTES:
-            raise HTTPException(status_code=413, detail="too_large")
-        body = await request.body()
-        if len(body) > MAX_WEBHOOK_BYTES or not payments.verify(body, request.headers):
+        # Read at most 64 KB, whatever Content-Length says (or doesn't).
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_WEBHOOK_BYTES:
+                raise HTTPException(status_code=413, detail="too_large")
+        if not payments.verify(body, request.headers):
             log.warning("Payment webhook with a bad signature refused")
             raise HTTPException(status_code=400, detail="bad_signature")
         try:
             event = payments.parse(body)
-        except (ValueError, KeyError, TypeError):
-            log.warning("Payment webhook body couldn't be read")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            log.error("A signed payment event couldn't be read: needs a person to look at it")
             raise HTTPException(status_code=400, detail="bad_event") from None
         if event is None:
             return Response(status_code=200)  # an event DMbot doesn't use
         outcome = await entitlements_writer.apply_event(db, event, now=clock())
         log.info("Payment event %s for user %s: %s", event.event_id, event.user_id, outcome)
+        if outcome == "retry":
+            # Too early (its "started" hasn't arrived): the company delivers it again later.
+            raise HTTPException(status_code=503, detail="retry_later")
+        if outcome == "rejected":
+            raise HTTPException(status_code=422, detail="bad_event")
         return Response(status_code=200)
 
     return app

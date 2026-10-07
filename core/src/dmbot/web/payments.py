@@ -111,6 +111,8 @@ class FakeProvider:
 
     def parse(self, body: bytes) -> PaymentEvent | None:
         raw = json.loads(body)
+        if not isinstance(raw, dict):
+            raise ValueError("a payment event must be a JSON object")
         kind = raw.get("kind")
         if kind not in (
             "subscription_started",
@@ -126,12 +128,23 @@ class FakeProvider:
             kind=kind,
             user_id=int(raw["user_id"]),
             occurred_at=int(raw["occurred_at"]),
-            plan=raw.get("plan"),
-            period_start=raw.get("period_start"),
-            period_end=raw.get("period_end"),
-            customer_id=raw.get("customer_id"),
-            subscription_id=raw.get("subscription_id"),
+            plan=None if raw.get("plan") is None else str(raw["plan"]),
+            period_start=_whole(raw.get("period_start")),
+            period_end=_whole(raw.get("period_end")),
+            customer_id=None if raw.get("customer_id") is None else str(raw["customer_id"]),
+            subscription_id=(
+                None if raw.get("subscription_id") is None else str(raw["subscription_id"])
+            ),
         )
+
+
+def _whole(value: object) -> int | None:
+    """A whole number of seconds, or None; anything else is a malformed event."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("expected whole seconds")
+    return value
 
 
 def paid_plan_ids() -> tuple[PlanId, ...]:
