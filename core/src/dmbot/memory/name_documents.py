@@ -16,7 +16,10 @@ import html
 import io
 import logging
 import re
+import time
 import zipfile
+from collections.abc import Callable
+from html.parser import HTMLParser
 from pathlib import PurePath
 
 from dmbot.memory.models import name_key
@@ -27,9 +30,8 @@ CHUNK_CHARS = 40_000  # one AI request
 MAX_XML_BYTES = 5 * 1024 * 1024  # a Word file's text, unpacked
 MAX_PDF_PAGES = 500
 TEXT_TYPES = (".txt", ".md", ".csv", ".text", "")  # also .doc, refused with its own words
-DOCUMENT_TYPES = (".pdf", ".docx")
+DOCUMENT_TYPES = (".pdf", ".docx", ".html", ".htm")
 log = logging.getLogger(__name__)
-_GDOC = re.compile(r"^https://docs\.google\.com/document/(?:u/\d+/)?d/([A-Za-z0-9_-]{20,})")
 
 
 class DocumentError(ValueError):
@@ -48,7 +50,8 @@ def kind_of_file(filename: str) -> str:
 
 UNREADABLE = "DMbot couldn't open that file. It may be damaged: save it again and try."
 TYPES_HELP = (
-    "DMbot can read .txt, .pdf and .docx (Word) files. Save it as one of those and try again."
+    "DMbot can read PDF, Word (.docx), text (.txt) and web page (.html) files. Save it as "
+    "one of those and try again."
 )
 
 
@@ -63,6 +66,8 @@ def text_of(filename: str, raw: bytes) -> str:
             text = _pdf_text(raw)
         elif suffix == ".docx":
             text = _docx_text(raw)
+        elif suffix in (".html", ".htm"):
+            text = html_text(decode_text(raw))
         elif suffix == ".doc":
             raise DocumentError(
                 "Old Word files (.doc) can't be read. In Word, use Save As > Word Document "
@@ -164,13 +169,80 @@ def _docx_text(raw: bytes) -> str:
     return "\n".join(paragraphs)
 
 
-def google_doc_export(link: str) -> str | None:
-    """The plain-text export address for a Google Docs share link, or None if it isn't
-    one. Only docs.google.com: DMbot fetches nothing else."""
-    match = _GDOC.match(link.strip())
-    if match is None:
-        return None
-    return f"https://docs.google.com/document/d/{match[1]}/export?format=txt"
+_SPACES = re.compile(r"\s+")
+MAX_HTML_CHARS = 2_000_000  # of a page's code read for its text; real pages fit easily
+HTML_TIME_S = 3.0  # reading a page's text stops after this, keeping what it has
+_HTML_PIECE = 64 * 1024
+# A tag longer than this is attribute spam, not a page (Python's reader would build every
+# attribute first: gigabytes for a 10 MB tag). `[^<>]` can't run past a tag: one pass.
+_GIANT_TAG = re.compile(r"<[^<>]{4096,}>?")
+_RUN_OF_LT = re.compile(r"<{2,}")
+
+
+class _PageText(HTMLParser):
+    """A web page's readable text: no scripts, styles or titles, one line per paragraph,
+    heading or list item. Python's own HTML reader: nothing is run or fetched."""
+
+    _SKIP = frozenset({"script", "style", "noscript", "template", "svg", "title", "head"})
+    _BLOCK = frozenset(
+        {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section",
+         "article", "header", "footer", "nav", "blockquote", "pre", "dt", "dd", "td", "th",
+         "table", "ul", "ol"}
+    )  # fmt: skip
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.size = 0
+        self._skipping = 0
+
+    @property
+    def full(self) -> bool:
+        return self.size >= MAX_DOCUMENT_CHARS
+
+    def _new_line(self) -> None:
+        if not self.full:
+            self.parts.append("\n")
+            self.size += 1  # counted too, so the text never runs over the limit
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "body":
+            self._skipping = 0  # </head> is optional: the page starts here
+        elif tag in self._SKIP:
+            self._skipping += 1
+        elif tag in self._BLOCK:
+            self._new_line()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIP:
+            self._skipping = max(0, self._skipping - 1)
+        elif tag in self._BLOCK:
+            self._new_line()
+
+    def handle_data(self, data: str) -> None:
+        if self._skipping or self.full:
+            return
+        text = _SPACES.sub(" ", data)  # in a page, a line break in text is a space
+        text = text[: MAX_DOCUMENT_CHARS - self.size]
+        self.parts.append(text)
+        self.size += len(text)
+
+
+def html_text(page: str, *, clock: Callable[[], float] = time.monotonic) -> str:
+    """The readable text of a web page (see _PageText). A long page is shortened to what
+    fits, never refused: its code is read up to MAX_HTML_CHARS, its text up to
+    MAX_DOCUMENT_CHARS, for at most HTML_TIME_S, so a hostile page can't hold up the bot."""
+    page = _RUN_OF_LT.sub("<", _GIANT_TAG.sub(" ", page[:MAX_HTML_CHARS]))
+    reader = _PageText()
+    stop = clock() + HTML_TIME_S
+    for at in range(0, len(page), _HTML_PIECE):
+        reader.feed(page[at : at + _HTML_PIECE])
+        if reader.full or clock() > stop:
+            break
+    else:
+        reader.close()
+    lines = (" ".join(line.split()) for line in "".join(reader.parts).splitlines())
+    return "\n".join(line for line in lines if line)
 
 
 def chunks(text: str, size: int = CHUNK_CHARS) -> list[str]:

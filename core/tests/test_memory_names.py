@@ -3,7 +3,7 @@ names DMbot suggests after a session, and names as speech-to-text hints."""
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -674,6 +674,121 @@ class Lists(NamesTest):
         text, _ = it.response.edited[0]
         self.assertIn("page 2 of 2", text)
         self.assertIn("**Place 24**", text)
+
+    async def test_add_many_offers_a_link_and_an_upload(self) -> None:
+        from dmbot.ui import name_lists
+
+        menu = name_lists.AddMany(self.campaign.id)
+        labels = [getattr(c, "label", "") for c in menu.children]
+        self.assertEqual(
+            labels,
+            ["📋 Paste a list", "🔗 Paste a link", "📎 Upload a file", "📄 Get the template"],
+        )
+        it = self.it()
+        await menu._link(it)
+        self.assertIsInstance(it.response.modal, name_lists.LinkForm)
+        it = self.it()
+        await menu._upload(it)
+        self.assertIsInstance(it.response.modal, name_lists.UploadForm)
+        self.assertIn("file** box", name_lists.format_help(secrets=True))  # the fallback
+
+    async def test_a_link_pasted_as_a_list_is_read_and_offered_to_the_ai(self) -> None:
+        from dmbot.fetch import Fetched
+        from dmbot.ui import name_lists
+
+        fake: Any = SimpleNamespace(complete=AsyncMock())
+        self.bot.ai = fake
+        self.fresh()
+        before = await self.names()
+        link = "https://docs.google.com/document/d/1lHeFJAheOyz-suXZS644R86dLMt/edit?usp=drivesdk"
+        form = name_lists.PasteForm(self.campaign.id, secrets=True)
+        form.lines = SimpleNamespace(value=f"  {link}\n")  # type: ignore[assignment]
+        got = Fetched(b"Rime of the Frostmaiden. Auril the Frostmaiden rules.", "link.txt")
+        it = self.it()
+        with patch("dmbot.fetch.fetch", AsyncMock(return_value=got)) as fetched:
+            await form.on_submit(it)
+        fetched.assert_awaited_once_with(link)
+        message = it.followup.send.call_args.args[0]
+        self.assertIn("Find the names in the linked page or file", message)
+        self.assertIn("right to use", message)
+        self.assertIsInstance(it.followup.send.call_args.kwargs["view"], name_lists.AIOffer)
+        self.assertEqual(await self.names(), before)  # nothing added: never one long name
+        fake.complete.assert_not_called()  # only after the DM presses Find names
+
+    async def test_a_link_that_cant_be_read_says_why_and_adds_nothing(self) -> None:
+        from dmbot import fetch
+        from dmbot.ui import name_lists
+
+        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        before = await self.names()
+        form = name_lists.LinkForm(self.campaign.id)
+        form.link = SimpleNamespace(value="https://example.com/private")  # type: ignore[assignment]
+        it = self.it()
+        failed = AsyncMock(side_effect=fetch.LinkError(fetch.NOT_SHARED))
+        with patch("dmbot.fetch.fetch", failed):
+            await form.on_submit(it)
+        self.assertEqual(it.followup.send.call_args.args[0], fetch.NOT_SHARED)
+        self.assertEqual(await self.names(), before)
+
+    async def test_a_link_without_the_ai_is_refused_before_fetching(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.bot.ai = None
+        self.fresh()
+        before = await self.names()
+        it = self.it()
+        with patch("dmbot.fetch.fetch", AsyncMock()) as fetched:
+            await name_lists.take_link(it, self.campaign.id, "https://example.com/list.txt")
+        fetched.assert_not_called()  # nothing downloaded for nobody to read
+        self.assertIn("can't read documents or links here", it.response.sent[0][0])
+        self.assertEqual(await self.names(), before)
+
+    async def test_one_link_at_a_time_per_server(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        name_lists._link_busy.add(GUILD)
+        self.addCleanup(name_lists._link_busy.discard, GUILD)
+        it = self.it()
+        with patch("dmbot.fetch.fetch", AsyncMock()) as fetched:
+            await name_lists.take_link(it, self.campaign.id, "https://example.com/a")
+        fetched.assert_not_called()
+        self.assertIn("already opening a link", it.response.sent[0][0])
+
+    async def test_a_web_page_reaches_the_ai_offer_as_text(self) -> None:
+        from dmbot.fetch import Fetched
+        from dmbot.ui import name_lists
+
+        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        it = self.it()
+        page = Fetched(b"<html><script>x</script><body><p>Auril the Frostmaiden</p>", "link.html")
+        with patch("dmbot.fetch.fetch", AsyncMock(return_value=page)):
+            await name_lists.take_link(it, self.campaign.id, "https://example.com/lore")
+        offer = it.followup.send.call_args.kwargs["view"]
+        self.assertEqual(offer.upload.text, "Auril the Frostmaiden")
+        self.assertTrue(offer.upload.document)
+        self.assertEqual(name_lists._link_busy, set())  # free for the next one
+
+    async def test_an_uploaded_list_is_added_at_once(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.fresh()
+        form = name_lists.UploadForm(self.campaign.id)
+        form.file = SimpleNamespace(component=SimpleNamespace(values=["npcs.txt"]))  # type: ignore[assignment]
+        it = self.it()
+        upload = name_lists.Upload("Ulfgar | NPC", "npcs.txt")
+        reader = AsyncMock(return_value=(upload, None))
+        with patch.object(name_lists, "read_attachment", reader):
+            await form.on_submit(it)
+        reader.assert_awaited_once_with("npcs.txt")
+        self.assertIn("Added 1 name", it.followup.send.call_args.args[0])
+        form.file = SimpleNamespace(component=SimpleNamespace(values=[]))  # type: ignore[assignment]
+        it = self.it()
+        await form.on_submit(it)
+        self.assertIn("No file was added", it.response.sent[0][0])
 
     async def test_the_template_file(self) -> None:
         from dmbot.ui import name_lists

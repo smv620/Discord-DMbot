@@ -378,7 +378,7 @@ async def _find_typeahead(
 @app_commands.describe(
     find="Open one name: type part of it, a nickname, or how it sounds",
     file="Add names from a file: a names list, or a .txt, .pdf or .docx (Word) document",
-    link="Add names from a Google Doc that anyone with the link can view",
+    link="Add names from a link: a document or web page anyone with the link can open",
 )
 @app_commands.autocomplete(find=_find_typeahead)
 async def dmbot_names(
@@ -397,8 +397,11 @@ async def dmbot_names(
     )
     upload = None
     if (file is not None or link) and mine:  # only read for someone who may use it
-        from dmbot.ui.name_lists import read_attachment, read_link
+        from dmbot.ui.name_lists import NO_AI_FOR_DOCUMENTS, read_attachment, read_link
 
+        if file is None and bot.ai is None:  # a link is always for the AI: don't fetch it
+            await _tell(interaction, NO_AI_FOR_DOCUMENTS)
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         if file is not None:
             upload, problem = await read_attachment(file)
