@@ -1062,9 +1062,113 @@ class Review(NamesTest):
         merged = self.slow("merge", it)
         await view._same_picked(it)
         self.assertEqual(merged, ["🔗 Joining **Bellaros** into **Belleros**…"])  # #351
-        self.assertIn("**Bellaros** is another name for **Belleros**", it.response.edited[-1][0])
+        self.assertIn("**Bellaros** is now a name for **Belleros**", it.response.edited[-1][0])
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=belleros.id)
         self.assertIn(("Bellaros", CONFIRMED), {(a.text, a.status) for a in aliases})
+
+    async def test_a_near_match_comes_pre_filled_and_one_press_adds_it(self) -> None:
+        # #394: "Rothgar" sounds like the known Hrothgar
+        hrothgar = await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.suggest("Rothgar")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("Sounds like **Hrothgar**. The same, or new?", text)
+        self.assertIn("· heard 3 times", text)
+        view = kw["view"]
+        labels = [b.label for b in view.children]
+        self.assertEqual(
+            labels,
+            [
+                "✅ It's Hrothgar",
+                "➕ New name",
+                "🔗 Another known name…",
+                "🚫 Not a name",
+                "⏳ Later",
+            ],
+        )
+        self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))
+        it = self.it()
+        await view._another(it)
+        self.assertIn("**Rothgar** is now a name for **Hrothgar**", it.response.edited[-1][0])
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=hrothgar.id)
+        self.assertIn(("Rothgar", CONFIRMED), {(a.text, a.status) for a in aliases})
+        self.assertNotIn("Rothgar", await self.names((PROPOSED,)))
+
+    async def test_new_name_is_still_offered_with_a_match(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.suggest("Rothgar")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        view = it.response.sent[0][1]["view"]
+        await view._yes(self.it())  # "New name": then what it is, as before
+        view.kind = SimpleNamespace(values=["npc"])
+        it = self.it()
+        await view._kind_picked(it)
+        self.assertIn("Added **Rothgar**", it.response.edited[0][0])
+
+    async def test_a_secret_name_is_never_the_match(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], ["Silas Vane"])
+        await self.suggest("Silas Vain")
+        await self.review()  # "Is this a name in your game?": no match offered
+
+    async def test_names_heard_with_it_are_shown_and_confirmed_with_it(self) -> None:
+        written = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="concept", name="Oskar Vane", source="scan"
+        )
+        await self.memory.add_alias(
+            GUILD, self.campaign.id, written.value.id, "Vane", kind="short", source="scan"
+        )
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("Also heard as **Vane**: saved with it.", text)
+        view = kw["view"]
+        await view._yes(self.it())
+        view.kind = SimpleNamespace(values=["npc"])
+        it = self.it()
+        await view._kind_picked(it)
+        self.assertIn("✅ Added **Oskar Vane** (also **Vane**).", it.response.edited[-1][0])
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=written.value.id)
+        self.assertEqual({(a.text, a.status) for a in aliases},
+                         {("Oskar Vane", CONFIRMED), ("Vane", CONFIRMED)})  # fmt: skip
+
+    async def test_a_wrong_guess_can_point_to_someone_else(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        other = await ui.save_name(self.memory, self.campaign, "Hrothmund", "npc", [], [])
+        await self.suggest("Rothgar")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        view = it.response.sent[0][1]["view"]
+        await view._same(self.it())  # "Another known name…"
+        view.same = SimpleNamespace(values=[other.id])
+        it = self.it()
+        await view._same_picked(it)
+        self.assertIn("**Rothgar** is now a name for **Hrothmund**", it.response.edited[-1][0])
+
+    async def test_one_undo_takes_back_the_merge_and_its_names(self) -> None:
+        hrothgar = await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        sid = await self.suggest("Rothgar")
+        await self.memory.add_alias(
+            GUILD, self.campaign.id, sid, "Rothgr", kind="misheard", source="scan"
+        )
+        written = await self.memory.merge(
+            GUILD,
+            self.campaign.id,
+            hrothgar.id,
+            sid,
+            source="dm",
+            dm_said_same=True,
+            confirm_keys=["rothgar", "rothgr"],
+        )
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=hrothgar.id)
+        self.assertTrue({"Rothgar", "Rothgr"} <= {a.text for a in aliases if a.status == CONFIRMED})
+        assert written.batch is not None
+        await self.memory.undo(GUILD, self.campaign.id, written.batch)
+        self.assertIn("Rothgar", await self.names((PROPOSED,)))
+        back = await self.memory.aliases(GUILD, self.campaign.id, entity_id=sid)
+        self.assertEqual({(a.text, a.status) for a in back},
+                         {("Rothgar", PROPOSED), ("Rothgr", PROPOSED)})  # fmt: skip
 
     async def test_a_refused_join_says_so_and_moves_on(self) -> None:
         belleros = await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
@@ -1238,6 +1342,51 @@ class AfterSession(NamesTest):
         text = posted.await_args.args[1]  # type: ignore[union-attr]
         self.assertIn("1 new name to check** from this session: **Bryn Shander**", text)
         self.assertIsInstance(posted.await_args.kwargs["view"], discord.ui.View)  # type: ignore[union-attr]
+
+    async def test_a_name_fixed_live_is_not_suggested_again(self) -> None:
+        # #394: the scan reads the cleaned line, where "Rothgar" was already fixed
+        from dmbot.audio.segmenter import Utterance
+        from dmbot.memory.lookup import CampaignLookup
+
+        await self.consent.grant(GUILD, PLAYER)
+        await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        table = self.table()
+        table.name_lookup = CampaignLookup.build(
+            await self.memory.lookup_data(GUILD, self.campaign.id)
+        )
+        table.scene.note(
+            [(await self.names())["Hrothgar"].id], PLAYER, __import__("time").monotonic()
+        )
+        self.bot.tables[GUILD] = table
+        for words in ("We met Rothgar at dawn.", "Then Rothgar left."):
+            utterance = Utterance(GUILD, PLAYER, 0, 0, bytes(32000), table.segmenter.session)
+            self.bot._deliver_transcript(utterance, words)
+        self.assertIn("Hrothgar", table.heard[0][1])
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        await self.bot.suggest_names(table)
+        self.assertEqual(await self.names((PROPOSED,)), {})
+        posted.assert_not_awaited()
+
+    async def test_one_question_per_thing_with_its_match(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await ui.save_name(self.memory, self.campaign, "Ulfgar", "npc", [], [])
+        table = self.table()
+        table.heard = [
+            (PLAYER, "We met Oskar Vane at dawn. I trust Oskar Vane."),
+            (PLAYER, "Then Vane left. Ask Vane later."),
+            (PLAYER, "We fear Ulfgarr now. We fear Ulfgarr again."),
+        ]
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        await self.bot.suggest_names(table)
+        waiting = await self.names((PROPOSED,))
+        self.assertEqual(set(waiting), {"Oskar Vane", "Ulfgarr"})  # "Vane" folded in
+        aliases = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=waiting["Oskar Vane"].id
+        )
+        self.assertIn("Vane", {a.text for a in aliases})
+        self.assertEqual(waiting["Ulfgarr"].description, "Heard 2 times")  # never a name
 
     async def test_nothing_from_someone_who_stopped(self) -> None:
         await self.consent.grant(GUILD, PLAYER)

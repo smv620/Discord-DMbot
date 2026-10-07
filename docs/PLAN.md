@@ -720,8 +720,28 @@ remembers Belleros is Cerric's mentor"), never "graph", "entity" or "ontology".
   the rule that they record only DM-confirmed facts.
 - **Where names come from:** names the DM adds, characters, the DM's answers to "Did they
   mean…?", Undo presses, the Transcript Cleaner's reports, and an after-session scan of
-  the raw transcript (skipping lines labeled off-topic) that proposes new names for the DM
-  to confirm.
+  the cleaned transcript (skipping lines labeled off-topic) that proposes new names for
+  the DM to confirm.
+- **Names heard during play (#394):** the scan reads the cleaned line, so a known name
+  misheard and fixed live is never suggested as new. **Exact matches are never
+  suggested; near matches come with the match pre-filled; DMbot never merges by sound
+  on its own.**
+  - **Near:** sounds like a confirmed name and is spelled at least 0.8 alike (one word:
+    0.9, as in the Cleaner); never a secret name; when two known names fit about as
+    well, it's offered as new. It's worked out when the DM opens the review (one small
+    query for names sharing its sound codes), never saved: names can change, or be made
+    secret, after the session. The saved note is only "Heard 3 times".
+  - **The review** then reads "📝 **Rothgr** · heard 3 times / Sounds like **Hrothgar**.
+    The same, or new?" with **✅ It's Hrothgar** · **➕ New name** · **🔗 Another known
+    name…** on the first row and **🚫 Not a name** · **⏳ Later** on the second (so a
+    phone never cuts the labels; the same two rows without a match). "It's" merges it
+    as an other name in one change (with the usual guards), so one undo takes it all
+    back.
+  - **Near-duplicates heard in one session** ("Oskar Vane" and "Vane") are one question,
+    grouped before the cap of 10. The shorter is shown ("Also heard as **Vane**: saved
+    with it."), and confirmed or turned down with it; every note names all of them. A word that fits two names ("Lord" in "Lord Neverember" and
+    "Lord Dagult") stays its own question; one-word names fold only at 0.9.
+  - **No auto-accept setting.** Nothing is added until the DM presses a button.
 - **Keeping it tidy (entity resolution):**
   - Nicknames grow: when "Bell" keeps standing for Belleros, EntityBot proposes the alias.
   - Merges: two proposed entities merge automatically only on strong evidence; proposed +
@@ -1149,8 +1169,8 @@ consent check just made still holds:
 - **Stored:** `heard` as before, `text` cleaned. The live transcript channel shows the
   cleaned line; downloads are still "as heard", now labelled
   `[0:42:10] (Mia) {Cerric}: …` with each player's confirmed character. The
-  after-session scan still reads what was heard; scene hints and heard counts read the
-  cleaned line.
+  after-session scan reads the cleaned line too (#394), as do scene hints and heard
+  counts.
 - **Measured offline (synthetic names, one vowel changed):** fixed back 92% at 50 names,
   56% at 500, 31% at 5,000, since in a big campaign more names sound alike and those are
   left alone. Safe, but to check on real campaign data (PyCharm session). About 5 ms per
