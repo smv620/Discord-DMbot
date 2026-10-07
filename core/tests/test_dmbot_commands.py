@@ -221,3 +221,30 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
                 "dm_screen_visibility": "open",
             },
         )
+
+
+class CampaignPickersFitAPhone(unittest.TestCase):
+    """#282: every campaign picker cuts names for a phone; DMbot's own labels fit too."""
+
+    def test_long_names_are_cut_everywhere(self) -> None:
+        from dmbot.ui import names as names_ui
+        from dmbot.ui.logic import NAME_LABEL_MAX, PHONE_LABEL_MAX
+        from tests.test_ui_logic import campaign
+
+        long = "The Very Long and Winding Campaign of the Western Marches, Part Two"
+        campaigns = [campaign(id=f"c{n}", name=f"{long} {n}") for n in range(3)]
+        views: list[Any] = [
+            cmds.CampaignPicker(campaigns),
+            cmds.BackupPicker(campaigns),
+            cmds.RestoreChoice({}, long, campaigns),
+            names_ui.CampaignChoice(campaigns),
+        ]
+        for view in views:
+            with self.subTest(type(view).__name__):
+                for item in list(view.children):
+                    if isinstance(item, discord.ui.Select):
+                        for option in item.options:
+                            self.assertLessEqual(len(option.label), NAME_LABEL_MAX)
+                            self.assertTrue(option.label.endswith("…"))
+                    else:
+                        self.assertLessEqual(len(item.label or ""), PHONE_LABEL_MAX)
