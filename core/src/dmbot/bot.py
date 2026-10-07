@@ -703,6 +703,7 @@ class DMBot(commands.AutoShardedBot):
             return None
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
+        self.pipeline.session_ended(guild_id)  # a new session is told of an outage again
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.

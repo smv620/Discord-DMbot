@@ -82,6 +82,14 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         self.max_keyterm_chars: int | None = None  # longer keyterm lists get a 400
         self.sent: list[list[str]] = []  # keyterms of each request, in order
         self.retry_after: str | None = None  # Retry-After on replies from self.replies
+        self.hold: asyncio.Event | None = None  # the next request waits for this first
+        self.held = asyncio.Event()  # set once that request has arrived
+        # A fake clock for Deepgram's waits, moved forward by its sleeps: tests never
+        # depend on the real clock, and a wait looked at again sees the time pass.
+        self.now = [1000.0]
+        clock = patch.object(dg, "_clock", lambda: self.now[0])
+        clock.start()
+        self.addCleanup(clock.stop)
 
         async def handler(request: web.Request) -> web.Response:
             self.received["auth"] = request.headers.get("Authorization")
@@ -91,6 +99,12 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             self.hits += 1
             terms = [v for k, v in request.query.items() if k == "keyterm"]
             self.sent.append(terms)
+            if self.hold is not None:
+                held, self.hold = self.hold, None
+                self.held.set()
+                await held.wait()  # an answer still on its way while others go on
+                status, body = self.reply
+                return web.json_response(body, status=status)
             if self.replies:
                 status, body = self.replies.pop(0)
                 headers = {"Retry-After": self.retry_after} if self.retry_after else None
@@ -160,6 +174,7 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
 
         async def no_wait(seconds: float) -> None:
             waits.append(seconds)
+            self.now[0] += seconds  # the wait passes
 
         with patch.object(dg, "_sleep", no_wait):
             return await self.t.transcribe(clip(), []), waits
@@ -170,8 +185,7 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(status):
                 text, waits = await self.busy_once("2", status)
                 self.assertEqual((text, self.hits), ("Welcome to Bryn Shander.", 2))
-                self.assertEqual(len(waits), 1)
-                self.assertAlmostEqual(waits[0], 2.0, places=1)
+                self.assertEqual(waits, [2.0])  # exactly: a fake clock, not the real one
                 # Answered: the next clip doesn't wait.
                 self.assertEqual(await self.transcribe_counting_waits(), (text, []))
 
@@ -213,42 +227,54 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.for_dm, dg.BUSY)  # the same words either way
 
     async def test_the_remembered_wait_is_capped_and_expires(self) -> None:
-        now = [1000.0]
-        with patch.object(dg, "_clock", lambda: now[0]):
-            # An hour from a proxy: this clip fails, and the window is only a minute.
-            with self.assertRaises(DeepgramError):
-                await self.busy_once("3600")
-            self.assertEqual(self.t._busy_until, 1000.0 + dg.MAX_BUSY_WINDOW_S)
-            # Inside the window: no request, "busy" at once.
-            now[0] += 30
-            with self.assertRaises(DeepgramError):
-                await self.transcribe_counting_waits()
-            self.assertEqual(self.hits, 1)
-            # 1.5 s left: wait those 1.5 s, not the header's hour, then ask.
-            now[0] = 1000.0 + dg.MAX_BUSY_WINDOW_S - 1.5
-            text, waits = await self.transcribe_counting_waits()
-            self.assertEqual((text, waits, self.hits), ("Welcome to Bryn Shander.", [1.5], 2))
-            # Answered after the window was set: cleared.
-            self.assertEqual(self.t._busy_until, 0.0)
+        # An hour from a proxy: this clip fails, and the window is only a minute.
+        with self.assertRaises(DeepgramError):
+            await self.busy_once("3600")
+        self.assertEqual(self.t._busy_until, 1000.0 + dg.MAX_BUSY_WINDOW_S)
+        # Inside the window: no request, "busy" at once.
+        self.now[0] += 30
+        with self.assertRaises(DeepgramError):
+            await self.transcribe_counting_waits()
+        self.assertEqual(self.hits, 1)
+        # 1.5 s left: wait those 1.5 s, not the header's hour, then ask.
+        self.now[0] = 1000.0 + dg.MAX_BUSY_WINDOW_S - 1.5
+        text, waits = await self.transcribe_counting_waits()
+        self.assertEqual((text, waits, self.hits), ("Welcome to Bryn Shander.", [1.5], 2))
+        # Answered after the window was set: cleared.
+        self.assertEqual(self.t._busy_until, 0.0)
 
-    async def test_an_older_answer_never_clears_a_newer_wait(self) -> None:
-        # This request goes out at 1000.0; meanwhile another clip's 429 set a window at
-        # 1000.5. Its 200 says nothing about now: the window stays (worker pool, #173).
-        self.t._busy_until, self.t._busy_set_at = 1001.0, 1000.5
-        self.assertEqual(await self._request_sent_at(1000.0), "Welcome to Bryn Shander.")
-        self.assertEqual(self.t._busy_until, 1001.0)
+    async def test_a_wait_set_by_another_worker_meanwhile_is_honoured(self) -> None:
+        # Waiting out 1 s, another worker's 429 makes it 1.5 s more: wait that too (#470).
+        self.t._busy_until, self.t._busy_set_at = 1001.0, 1000.0
+        waits: list[float] = []
 
-    async def _request_sent_at(self, sent: float) -> str | None:
-        times = iter([sent - 1, sent])  # _wait_if_busy's look, then the send time
+        async def wait(seconds: float) -> None:
+            waits.append(seconds)
+            self.now[0] += seconds
+            if len(waits) == 1:
+                self.t._busy_until, self.t._busy_set_at = self.now[0] + 1.5, self.now[0]
 
-        def clock() -> float:
-            return next(times, sent)
+        with patch.object(dg, "_sleep", wait):
+            self.assertEqual(await self.t.transcribe(clip(), []), "Welcome to Bryn Shander.")
+        self.assertEqual(waits, [1.0, 1.5])
 
-        async def no_wait(_s: float) -> None:
-            return None
-
-        with patch.object(dg, "_clock", clock), patch.object(dg, "_sleep", no_wait):
-            return await self.t.transcribe(clip(), [])
+    async def test_an_answer_in_flight_never_clears_a_newer_wait(self) -> None:
+        # Two workers (#173, #470): clip A's request is on its way; clip B's gets a 429
+        # with Retry-After 30 (a minute's window at most). A's 200 then arrives: it was
+        # sent before the window, so it says nothing about now. The window stays.
+        release = self.hold = asyncio.Event()
+        first = asyncio.create_task(self.t.transcribe(clip(guild_id=1), []))
+        await asyncio.wait_for(self.held.wait(), 5)  # A is on its way
+        self.now[0] += 0.5
+        self.replies = [(429, {"err_msg": "slow down"})]
+        self.retry_after = "30"
+        with self.assertRaises(DeepgramError):  # 30 s: more than a clip may wait
+            await self.t.transcribe(clip(guild_id=2), [])
+        window = self.t._busy_until
+        self.assertEqual(window, 1000.5 + 30)
+        release.set()
+        self.assertEqual(await first, "Welcome to Bryn Shander.")
+        self.assertEqual(self.t._busy_until, window)  # still waiting it out
 
     async def test_a_refusal_with_retry_after_sets_no_wait(self) -> None:
         self.reply = (401, {"err_msg": "Invalid credentials"})

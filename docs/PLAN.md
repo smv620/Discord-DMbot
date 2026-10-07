@@ -603,7 +603,10 @@ the engine is down for everyone). `TRANSCRIBE_WORKERS` workers take turns betwee
 3 by default with Deepgram or cloud, and exactly 1 with local Whisper (one model on the
 CPU; more would only wait). A server's speech is written one piece at a time and in
 order, so its lines never swap, while a slow table can't hold up the others. When
-writing stops, every table with speech waiting is told, and told again when it works.
+writing stops, every table with speech waiting is told, and told again once it's steady
+(3 answers in a row, or an answer and 30 s without a failure; #470), so a flapping
+engine doesn't churn the DM screen. A table whose session starts during an outage is
+told too. Deepgram's "wait" (Retry-After) is looked at again after each wait.
 Each table's status shows its own backlog and delay.
 
 **End of a session: built (2026-10-06, #109).** When the DM stops DMbot:

@@ -33,6 +33,10 @@ MAX_QUEUED = 256
 # Warn the DM if this many of a server's utterances are waiting: the engine can't keep up.
 BACKLOG_WARN = 16
 FAILURES_BEFORE_ALERT = 3
+# "Working again" only once it's steady (#470): this many answers in a row, or one answer
+# and this long without a failure, so a flapping engine doesn't churn the DM screen.
+SUCCESSES_BEFORE_ALL_CLEAR = 3
+ALL_CLEAR_AFTER_S = 30.0
 LOG_EVERY_NTH_FAILURE = 50
 # Time budget per clip: generous for real work, short enough that the table doesn't
 # lose minutes of text to one stuck clip.
@@ -108,6 +112,9 @@ class TranscriptionPipeline:
         self.last_latency_s: float | None = None  # any server's last clip
         self.latency_of: dict[int, float] = {}  # per server, for its own status
         self._told_stopped: set[int] = set()  # servers told writing stopped
+        self._alerts_lock = asyncio.Lock()  # "stopped" and "working again" never cross
+        self._ok_streak = 0  # answers in a row since writing stopped
+        self._ok_since: float | None = None  # when the first of them came
         self.skipped = 0  # clips that ran over their time budget
         self.slow = 0  # clips slower than SLOW_CLIP_S and their own length
         self._budget_s = budget_s
@@ -175,14 +182,27 @@ class TranscriptionPipeline:
     async def run(self) -> None:
         self._running = True
         try:
-            await asyncio.gather(*(self._work() for _ in range(self._workers)))
+            results = await asyncio.gather(
+                *(self._work() for _ in range(self._workers)), return_exceptions=True
+            )
+            for result in results:  # a worker only ends by a bug: never silently
+                if isinstance(result, BaseException):
+                    log.error("A transcription worker stopped: %r", result)
         finally:
             self._running = False
 
     async def _work(self) -> None:
+        """One worker, for good: a bug in one clip is logged and the next clip taken."""
         while True:
-            guild = await self._turns.get()
-            queue = self._queues[guild]
+            try:
+                await self._take_turn()
+            except Exception:
+                log.exception("A transcription worker hit a problem; carrying on")
+
+    async def _take_turn(self) -> None:
+        guild = await self._turns.get()
+        queue = self._queues[guild]
+        if queue:
             queued_at, utterance = queue.popleft()
             self._writing.add(guild)
             try:
@@ -201,6 +221,10 @@ class TranscriptionPipeline:
                     del self._queues[guild]
                     self._backlog_warned.discard(guild)
             self.last_latency_s = self.latency_of[guild] = time.monotonic() - queued_at
+
+    def session_ended(self, guild_id: int) -> None:
+        """A server's session ended: a new one there during a long outage is told again."""
+        self._told_stopped.discard(guild_id)
 
     async def process(self, utterance: Utterance) -> None:
         # Skip if the table ended or the speaker revoked consent while queued.
@@ -278,6 +302,7 @@ class TranscriptionPipeline:
         guild_id = utterance.guild_id
         self.consecutive_failures += 1
         self.total_failures += 1
+        self._ok_streak, self._ok_since = 0, None
         self.failed_in[utterance.session] += 1
         if self.total_failures == 1 or self.total_failures % LOG_EVERY_NTH_FAILURE == 0:
             # The details are for whoever hosts DMbot: the log, never Discord (#99).
@@ -289,36 +314,56 @@ class TranscriptionPipeline:
             )
         # Every server with speech waiting is told once (the engine is shared), not just
         # the one whose clip failed third.
-        busy = {guild_id, *self._writing, *self._queues} - self._told_stopped
-        if self.consecutive_failures >= FAILURES_BEFORE_ALERT and busy:
-            if isinstance(exc, TranscriptionProblem):
-                # Our own plain sentence about the problem (never raw error text).
-                advice = (
-                    "Whoever hosts DMbot needs to check its speech-to-text settings, then "
-                    "restart it."
-                    if exc.host_can_fix
-                    else "This is on the speech-to-text company's side. You don't need to do "
-                    "anything: DMbot keeps trying and tells you when it works again."
-                )
-                text = (
-                    f"⚠️ **No transcript right now:** {exc.for_dm}. DMbot still hears "
-                    f"everyone who said yes, but writes nothing down. {advice}"
-                )
-            else:
-                text = (
-                    "⚠️ **Writing things down stopped working.** DMbot still hears everyone "
-                    "who said yes, but no words are being written down. Whoever hosts "
-                    "DMbot should check its log. DMbot keeps trying."
-                )
-            self._told_stopped |= busy
-            for guild in sorted(busy):
-                await self._alert(guild, text)
+        if self.consecutive_failures < FAILURES_BEFORE_ALERT:
+            return
+        async with self._alerts_lock:
+            busy = {guild_id, *self._writing, *self._queues} - self._told_stopped
+            if busy:
+                await self._tell_stopped(busy, exc)
+
+    async def _tell_stopped(self, busy: set[int], exc: Exception) -> None:
+        """Tell these servers writing stopped (under the alerts lock)."""
+        if isinstance(exc, TranscriptionProblem):
+            # Our own plain sentence about the problem (never raw error text).
+            advice = (
+                "Whoever hosts DMbot needs to check its speech-to-text settings, then restart it."
+                if exc.host_can_fix
+                else "This is on the speech-to-text company's side. You don't need to do "
+                "anything: DMbot keeps trying and tells you when it works again."
+            )
+            text = (
+                f"⚠️ **No transcript right now:** {exc.for_dm}. DMbot still hears "
+                f"everyone who said yes, but writes nothing down. {advice}"
+            )
+        else:
+            text = (
+                "⚠️ **Writing things down stopped working.** DMbot still hears everyone "
+                "who said yes, but no words are being written down. Whoever hosts "
+                "DMbot should check its log. DMbot keeps trying."
+            )
+        for guild in sorted(busy):
+            await self._alert(guild, text)
+        self._told_stopped |= busy  # after sending: "working again" never comes first
 
     async def _on_success(self, guild_id: int) -> None:
-        told, self._told_stopped = self._told_stopped, set()
         self.consecutive_failures = 0
-        for guild in sorted(told):
-            await self._alert(guild, "✅ Writing things down is working again.")
+        if not self._told_stopped:
+            return
+        now = time.monotonic()
+        self._ok_streak += 1
+        if self._ok_since is None:
+            self._ok_since = now
+        steady = (
+            self._ok_streak >= SUCCESSES_BEFORE_ALL_CLEAR
+            or now - self._ok_since >= ALL_CLEAR_AFTER_S
+        )
+        if not steady:
+            return
+        async with self._alerts_lock:
+            told, self._told_stopped = self._told_stopped, set()
+            self._ok_streak, self._ok_since = 0, None
+            for guild in sorted(told):
+                await self._alert(guild, "✅ Writing things down is working again.")
 
     async def _check_backlog(self, guild_id: int) -> None:
         depth = self.backlog_of(guild_id)
