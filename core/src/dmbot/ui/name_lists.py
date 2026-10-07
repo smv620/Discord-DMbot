@@ -850,7 +850,7 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
         if saved[n.position] is not None
         and (n.like_position is None or saved[n.like_position] is not None)
     ]
-    asked = {n.position for n in near}
+    asked = {n.position for n in p.near}  # every planned one: not counted in `look`
     look = p.look - sum(
         1
         for i, (n, got) in enumerate(zip(new, saved, strict=True))
@@ -957,16 +957,13 @@ def summary_text(
             + (f" ({enriched:,} got new other names)" if enriched else "")
         )
     if near:
-        parts.append(
-            f"{near:,} look like known names, check below"
-            if near > 1
-            else "1 looks like a known name, check below"
-        )
+        parts.append(f"{near:,} look like known names" if near > 1 else "1 looks like a known name")
     if kinds:
-        parts.append(f"{kinds:,} {'has' if kinds == 1 else 'have'} a different kind, check below")
+        parts.append(f"{kinds:,} kinds differ" if kinds > 1 else "1 kind differs")
     if repeated:
         parts.append(f"{repeated:,} listed twice")
-    lines = [f"📥 **{head}** · " + " · ".join(parts) + "." if parts else f"📥 **{head}.**"]
+    below = " Questions below." if near or kinds else ""
+    lines = [f"📥 **{head}** · " + " · ".join(parts) + "." + below if parts else f"📥 **{head}.**"]
     for other, main in swapped[:SHOWN_SWAPPED]:
         lines.append(
             f"• **{_short(other)}** is already another name for **{_short(main)}**. "
@@ -1079,12 +1076,13 @@ def _short(name: str) -> str:
     return _md(logic.shorten(name, SHORT))
 
 
-def _fit(lines: list[str]) -> str:
-    """At most Discord's 2,000 characters, cut between lines, never inside one."""
+def _fit(lines: list[str], limit: int = 1990) -> str:
+    """At most `limit` characters (under Discord's 2,000), cut between lines, never
+    inside one; the "…" line that says so counts too."""
     out: list[str] = []
     size = 0
     for line in lines:
-        if size + len(line) + 1 > 1990:
+        if size + len(line) + 1 > limit - 2:
             out.append("…")
             break
         out.append(line)
@@ -1122,7 +1120,7 @@ class _Questions(discord.ui.View):
         self.busy = True
         try:
             await interaction.response.edit_message(
-                content=_fit(self.text().split("\n")) + SAVING, view=None,
+                content=_fit(self.text().split("\n"), 1990 - len(SAVING)) + SAVING, view=None,
                 allowed_mentions=NO_PINGS,
             )  # fmt: skip
             await work(interaction, campaign, memory)
@@ -1198,7 +1196,7 @@ class NearQuestions(_Questions):
             if count > 1
             else "🔎 **1 name looks like a name DMbot already knows.**",
             "**Same** makes it another name for the known one. **Different** keeps both. "
-            "**Remove** takes it off your list.",
+            "**Remove** drops it: DMbot forgets that spelling.",
         ]
         if not self.answered_any:
             lines.append(ENDS_UNDO)
@@ -1267,6 +1265,14 @@ class NearQuestions(_Questions):
 
             self.page = 0
             await self.run(interaction, work)
+            if act == self._same and len(which) > 1:  # no Undo for a whole page of joins
+                joined = sum(1 for i in which if self.items[i].answer.startswith("🔗"))
+                if joined:
+                    await interaction.followup.send(
+                        f"Joined {joined} name{'' if joined == 1 else 's'}. Wrong? Open the known "
+                        "name with 🔍 Find a name and use Edit other names to drop a spelling.",
+                        ephemeral=True, allowed_mentions=NO_PINGS,
+                    )  # fmt: skip
 
         return handler
 
@@ -1333,7 +1339,7 @@ class NearQuestions(_Questions):
         except MemoryRuleError:
             item.answer = "changed by someone else meanwhile, so DMbot left it."
             return
-        item.answer = "removed."
+        item.answer = "🗑 removed."
         if written.batch is not None:  # its own message, so Undo outlives this one
             view = discord.ui.View(timeout=None)
             view.add_item(UndoButton(campaign.id, item.entity_id, written.batch))
@@ -1389,9 +1395,9 @@ class KindDiffQuestions(_Questions):
     def text(self) -> str:
         count = sum(len(names) for _, _, names in self.pairs) + len(self.later)
         lines = [
-            f"🏷 **{count} names have a different kind in your list.**"
+            f"🏷️ **{count} names have a different kind in your list.**"
             if count > 1
-            else "🏷 **1 name has a different kind in your list.**",
+            else "🏷️ **1 name has a different kind in your list.**",
             "DMbot kept the kind it already had. Change any? Leave this and nothing changes.",
         ]
         if not self.answered_any:

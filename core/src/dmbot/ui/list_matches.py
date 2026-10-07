@@ -100,7 +100,7 @@ def plan(lines: list[ListLine], names: CampaignLookup, *, secrets: bool) -> Plan
         }
         # The name itself decides; otherwise its other names, if they agree. Other names of
         # two different names are no reason to guess: it's saved as a suggestion.
-        target = owner.get(key) or (next(iter(owners)) if len(owners) == 1 else None)
+        target = owner[key] if key in owner else (next(iter(owners)) if len(owners) == 1 else None)
         if isinstance(target, int):  # a name earlier in the list, by another of its names
             _fold_new(out, target, line, owner)
             continue

@@ -609,7 +609,7 @@ class Lists(NamesTest):
         sent = it.followup.send.call_args_list
         summary = sent[0].args[0]
         self.assertIn(
-            "📥 **Added 3 names** · 1 already known · 1 looks like a known name, check below.",
+            "📥 **Added 3 names** · 1 already known · 1 looks like a known name. Questions below.",
             summary,
         )
         self.assertIn("Only one name wrong? Fix or remove it with 🔍 Find a name", summary)
@@ -776,14 +776,17 @@ class Lists(NamesTest):
         sent = await self.add_many("Beleros | NPC\nBellros | NPC\nBellerose | NPC")
         view = sent[1].kwargs["view"]
         self.assertIn("3 names look like names DMbot already knows", sent[1].args[0])
-        await self.press(view, "Same for all 3")
+        it = await self.press(view, "Same for all 3")
+        self.assertIn(
+            "Joined 3 names. Wrong? Open the known name", it.followup.send.call_args.args[0]
+        )
         card = await self.card()
         for name in ("Beleros", "Bellros", "Bellerose"):
             self.assertIn(name, card)
 
     async def test_a_kind_that_differs_is_kept_unless_changed(self) -> None:
         sent = await self.add_many("Belleros | place")
-        self.assertIn("1 has a different kind, check below", sent[0].args[0])
+        self.assertIn("1 kind differs. Questions below.", sent[0].args[0])
         self.assertIn("1. **Belleros**: DMbot has NPC, your list says place.", sent[1].args[0])
         self.assertIn("🪪 **Belleros** · NPC", await self.card())  # kept by default
         await self.press(sent[1].kwargs["view"], "1. Change to place")
@@ -801,8 +804,8 @@ class Lists(NamesTest):
         self.assertEqual(
             sent[0].args[0].splitlines()[:3],
             [
-                "📥 **Added 22 names** · 4 already known · 3 look like known names, check below "
-                "· 2 have a different kind, check below.",
+                "📥 **Added 22 names** · 4 already known · 3 look like known names · 2 kinds "
+                "differ. Questions below.",
                 "• **Bell** is already another name for **Belleros**. Nothing changed.",
                 "• **Vane** is already another name for **Oskar Vane**. Nothing changed.",
             ],

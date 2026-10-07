@@ -94,6 +94,12 @@ class NoGuessing(unittest.TestCase):
         self.assertEqual([(n.name, n.status, n.others) for n in p.new], [("Newname", PROPOSED, ())])
         self.assertEqual((p.more, p.known, p.dropped, p.look), ([], 0, 2, 1))
 
+    def test_the_first_lines_name_said_again_by_another_folds_in(self) -> None:
+        # #425 review: position 0 must count as found.
+        p = run("Thornewick | place | Thorne\nThorne | place | Bell")
+        self.assertEqual([(n.name, n.others) for n in p.new], [("Thornewick", ("Thorne",))])
+        self.assertEqual((p.repeated, p.dropped), (1, 1))  # Bell is Belleros's
+
     def test_a_name_this_list_just_gave_is_listed_twice_not_known(self) -> None:
         p = run("Auril | god | Frosty\nFrosty | god")
         self.assertEqual(p.more, [MoreNames(AURIL, ("Frosty",))])
@@ -146,10 +152,6 @@ class Repeated(unittest.TestCase):
         self.assertEqual(parsed.repeated, 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Bounded(unittest.TestCase):
     """#369 perf-qa: one uploaded list can't keep the bot busy for minutes."""
 
@@ -199,3 +201,7 @@ def list_matches_budget() -> int:
     from dmbot.ui.list_matches import BUDGET
 
     return BUDGET
+
+
+if __name__ == "__main__":
+    unittest.main()

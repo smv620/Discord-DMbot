@@ -71,8 +71,8 @@ Then, in this order:
 
 The first message should start:
 
-> 📥 **Added 22 names** · 4 already known · 3 look like known names, check below · 2 have a
-> different kind, check below.
+> 📥 **Added 22 names** · 4 already known · 3 look like known names · 2 kinds differ.
+> Questions below.
 > • **Bell** is already another name for **Belleros**. Nothing changed.
 > • **Vane** is already another name for **Oskar Vane**. Nothing changed.
 
@@ -81,7 +81,7 @@ Below it come two more messages:
   Quillon? and Brynnwater → Brynwater?. Each has numbered buttons (**1. Same**,
   **1. Different**, **1. Remove**), and there are **Same for all 3** and **Different for
   all 3**. Nothing is joined until you choose.
-- **"🏷 2 names have a different kind in your list."** Varrow: DMbot has god, your list says
+- **"🏷️ 2 names have a different kind in your list."** Varrow: DMbot has god, your list says
   place. Ashen Crown: DMbot has group, your list says place. The buttons are **1. Keep
   god** / **1. Change to place**, **2. Keep group** / **2. Change to place**, and **Keep
   all** / **Change all**. If you ignore them, DMbot keeps what it has.
