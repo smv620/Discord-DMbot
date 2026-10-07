@@ -21,7 +21,7 @@ const pages: [path: string, page: AstroComponentFactory, title: string][] = [
   ["/pricing", Pricing, "Prices · DMbot"],
   ["/install", Install, "Add to Discord · DMbot"],
   ["/account", Account, "My account · DMbot"],
-  ["/legal/terms", Terms, "Terms · DMbot"],
+  ["/legal/terms", Terms, "Terms of use · DMbot"],
   ["/legal/privacy", Privacy, "Privacy · DMbot"],
   ["/legal/refunds", Refunds, "Refunds · DMbot"],
   ["/404", NotFound, "Page not found · DMbot"],
