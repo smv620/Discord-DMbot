@@ -1643,8 +1643,8 @@ class DMBot(commands.AutoShardedBot):
                 names[note.speaker] = (
                     "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
                 )
-            text = fix_notes.message_text(notes, names, transcript_lines.escape)
-            view = None if table.fix_ended else fix_notes_view(table.guild_id, notes)
+            text, shown = fix_notes.message_text(notes, names, transcript_lines.escape)
+            view = None if table.fix_ended else fix_notes_view(table.guild_id, shown)
             if table.fix_message is not None:
                 try:
                     await table.fix_message.edit(content=text, view=view, allowed_mentions=NO_PINGS)
@@ -1718,7 +1718,7 @@ class DMBot(commands.AutoShardedBot):
                 if edit is not None:
                     message, content = edit
                     with contextlib.suppress(discord.HTTPException):
-                        await message.edit(content=content, allowed_mentions=NO_PINGS)  # type: ignore[attr-defined]
+                        await message.edit(content=content, allowed_mentions=NO_PINGS)
         md = discord.utils.escape_markdown
         return fix_notes.done_text(md(note.fix.heard), md(note.fix.written)), allow
 
@@ -2035,8 +2035,7 @@ class DMBot(commands.AutoShardedBot):
                 if ready is None:
                     return
                 text, count = ready
-                answer = await self._post_transcript(table.transcript_channel_id, text)
-                result, sent = answer if isinstance(answer, tuple) else (answer, None)
+                result, sent = await self._post_transcript(table.transcript_channel_id, text)
                 if result == "posted":
                     # The message is kept a little while: an Undo may edit it (#296).
                     table.transcript.posted(count, sent, now=time.monotonic())
@@ -2054,12 +2053,12 @@ class DMBot(commands.AutoShardedBot):
 
     async def _post_transcript(
         self, channel_id: int, text: str
-    ) -> str | tuple[str, discord.Message]:
+    ) -> tuple[str, discord.Message | None]:
         """Post to a transcript channel: "posted", "retry" (a passing problem) or "gone"
         (deleted, or DMbot may no longer post there)."""
         channel = self.get_channel(channel_id)
         if not isinstance(channel, discord.abc.Messageable):
-            return "gone"
+            return "gone", None
         try:
             message = await asyncio.wait_for(
                 # silent: no pop-up or phone notification for every line (Discord's
@@ -2068,10 +2067,10 @@ class DMBot(commands.AutoShardedBot):
                 TRANSCRIPT_POST_TIMEOUT_S,
             )
         except (discord.NotFound, discord.Forbidden):
-            return "gone"
+            return "gone", None
         except (discord.HTTPException, TimeoutError) as exc:
             log.warning("Transcript post to %s failed; will retry: %s", channel_id, exc)
-            return "retry"
+            return "retry", None
         return "posted", message  # kept for a late fix: an Undo may edit it (#296)
 
     async def _transcript_channel(

@@ -19,7 +19,9 @@ words as heard otherwise (a wrong fix is worse than a missed one):
   and brands sound like campaign names too ("Mary" and Mara, 0.75). Words in lower
   case are never changed this way ("Bell or us" waits for the DM's answer, later).
 
-Only confirmed, non-secret names make a fix; a name DMbot only suggested never does.
+Only confirmed, non-secret names make a silent fix. A name DMbot only suggested makes at
+most an unsure one (`Fix.sure` False, spelled at least 0.9 alike), which the DM always
+sees with Undo (#296).
 Nothing is changed inside a secret name, a known name, a "keep as heard" word or the
 name of someone at the table, and no fix goes where the words, with the words around
 them, sound like a secret name ("Silas Vain" for the secret "Silas Vane"). The line is

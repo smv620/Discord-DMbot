@@ -837,10 +837,10 @@ class SaveAndResume(SessionTests):
         await self.bot._on_status(table, Status("joined", guild_id=GUILD))
         sent: list[str] = []
 
-        async def fake_post(channel_id: int, text: str) -> str:
+        async def fake_post(channel_id: int, text: str) -> tuple[str, Any]:
             self.assertEqual(channel_id, TRANSCRIPT)
             sent.append(text)
-            return "posted"
+            return "posted", None
 
         self.bot._post_transcript = fake_post  # type: ignore[method-assign]
         return table, sent
@@ -1291,11 +1291,11 @@ class SaveAndResume(SessionTests):
         table, sent = await self.joined_with_transcript()
         results = iter(["retry", "posted", "posted"])
 
-        async def flaky(channel_id: int, text: str) -> str:
+        async def flaky(channel_id: int, text: str) -> tuple[str, Any]:
             result = next(results)
             if result == "posted":
                 sent.append(text)
-            return result
+            return result, None
 
         self.bot._post_transcript = flaky  # type: ignore[method-assign]
         self.said(table, "hello")
@@ -1318,7 +1318,7 @@ class SaveAndResume(SessionTests):
     async def test_a_lost_channel_stops_the_transcript_and_tells_the_dm_once(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table, _ = await self.joined_with_transcript()
-        gone = AsyncMock(return_value="gone")
+        gone = AsyncMock(return_value=("gone", None))
         self.bot._post_transcript = gone  # type: ignore[method-assign]
         posted = AsyncMock(return_value=True)
         self.bot.post = posted  # type: ignore[method-assign]

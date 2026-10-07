@@ -145,12 +145,14 @@ class FixNotes:
 
 def message_text(
     notes: list[Note], names: dict[int, str], escape: Callable[[str], str] = str
-) -> str:
-    """The DM screen's message. `names`: speaker → display name (already safe to show);
-    `escape` makes heard words and names safe (Discord markdown). Cut to fit Discord."""
+) -> tuple[str, list[Note]]:
+    """The DM screen's message, and the notes it shows. `names`: speaker → display name
+    (already safe to show); `escape` makes heard words and names safe (Discord
+    markdown). Too long for Discord: the oldest whole lines go (never half a line, so
+    no bold or strikethrough breaks), and with them their Undo buttons."""
     if not notes:
-        return f"{HEADER}\n{NOTHING}"
-    lines = [HEADER]
+        return f"{HEADER}\n{NOTHING}", []
+    lines = []
     for note in notes:
         who = names.get(note.speaker, "Someone")
         heard, written = escape(_short(note.fix.heard)), escape(_short(note.fix.written))
@@ -158,5 +160,8 @@ def message_text(
             lines.append(f"{note.number}. ~~{heard} → {written}~~ ({who}): ↩️ undone")
         else:
             lines.append(f"{note.number}. **{heard}** → **{written}** ({who})")
-    text = "\n".join(lines)
-    return text if len(text) <= MESSAGE_MAX else text[: MESSAGE_MAX - 1] + "…"
+    kept = len(lines)
+    while kept > 1 and len(HEADER) + sum(len(x) + 1 for x in lines[-kept:]) > MESSAGE_MAX:
+        kept -= 1
+    shown = notes[-kept:]
+    return "\n".join([HEADER, *lines[-kept:]])[:MESSAGE_MAX], shown

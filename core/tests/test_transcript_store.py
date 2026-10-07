@@ -70,6 +70,31 @@ class StoreTests(DatabaseTest):
         # #317: the /transcript picker's count, for every campaign at once.
         self.assertEqual(await self.store.session_counts(GUILD), {self.campaign.id: 2})
 
+    async def test_a_line_can_be_relabelled_and_heard_never_changes(self) -> None:
+        # #296: an Undo puts the heard words back in a saved line
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        fixed = Line(START * 1000 + 1000, PLAYER, "I saw Beleros", "I saw Belleros")
+        await self.store.add_lines(GUILD, sid, [fixed])
+        changed = await self.store.relabel_line(
+            GUILD, sid, PLAYER, fixed.started_ms, "I saw Beleros"
+        )
+        self.assertEqual(changed, 1)
+        (back,) = await self.store.lines(GUILD, sid)
+        self.assertEqual((back.heard, back.text), ("I saw Beleros", "I saw Beleros"))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT text FROM transcript_lines WHERE session_id = %s", (sid,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertIsNone(row["text"])  # the same as heard again: stored as NULL
+        self.assertEqual(
+            await self.store.relabel_line(GUILD, sid, PLAYER, 1, "x"), 0
+        )  # no such line
+        self.assertEqual(
+            await self.store.relabel_line(OTHER_GUILD, sid, PLAYER, fixed.started_ms, "x"), 0
+        )  # never another server's
+
     async def test_removing_lines_counts_again(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
         ids = await self.store.add_lines(GUILD, sid, [line(1, DM, "a"), line(2, PLAYER, "b")])
