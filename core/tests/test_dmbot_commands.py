@@ -241,7 +241,7 @@ class CampaignPickersFitAPhone(unittest.TestCase):
             cmds.BackupPicker(campaigns),
             cmds.RestoreChoice({}, long, campaigns),
             names_ui.CampaignChoice(campaigns),
-            transcripts.CampaignPicker(campaigns),  # #287
+            transcripts.CampaignPicker(campaigns, {c.id: 1 for c in campaigns}),  # #287
         ]
         for view in views:
             with self.subTest(type(view).__name__):
@@ -256,13 +256,16 @@ class CampaignPickersFitAPhone(unittest.TestCase):
                         self.assertLessEqual(len(item.label or ""), PHONE_LABEL_MAX)
                 self.assertLessEqual(len(menu.placeholder or ""), PHONE_LABEL_MAX)
 
-    def test_a_campaign_never_played_has_no_transcripts_yet(self) -> None:
+    def test_a_campaign_without_saved_transcripts_says_so(self) -> None:
         from dmbot.ui import transcripts
         from tests.test_ui_logic import campaign
 
-        view: Any = transcripts.CampaignPicker(
-            [campaign(), campaign(id="new", name="Brand new", last_played_at=None)]
-        )
+        # #317: played with transcripts off, or restored from a backup, is not enough.
+        played = campaign()
+        restored = campaign(id="restored", name="Restored copy")
+        new = campaign(id="new", name="Brand new", last_played_at=None)
+        view: Any = transcripts.CampaignPicker([played, restored, new], {played.id: 2})
         (menu,) = [i for i in list(view.children) if isinstance(i, discord.ui.Select)]
         self.assertTrue((menu.options[0].description or "").startswith("Last played"))
         self.assertEqual(menu.options[1].description, "No transcripts yet")
+        self.assertEqual(menu.options[2].description, "No transcripts yet")

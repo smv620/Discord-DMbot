@@ -128,7 +128,7 @@ class SessionStore:
             elif routed is not None:
                 log.info("Cleared a leftover restart note (no session was saved): %s", reason)
             else:
-                log.debug("No saved session to remove: %s", reason)
+                log.info("No saved session to remove: %s", reason)  # INFO while #147 is open
         return row is not None
 
     async def guilds_to_resume(self, shards: ShardSettings) -> list[int]:

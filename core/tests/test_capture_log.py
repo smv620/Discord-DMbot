@@ -263,12 +263,13 @@ class LogLineTests(unittest.TestCase):
     def test_health_that_keeps_coming_without_speech_is_dropped_in_the_end(self) -> None:
         # A long overload: ears reports every check, the speech is dropped each time.
         log = CaptureLog()
-        for _ in range(HEALTH_WAIT_MAX_CHECKS):
-            log.add_health(1, 10, 100)
+        for check in range(HEALTH_WAIT_MAX_CHECKS):
+            log.add_health(1, 100 if check == 0 else 10, 100)  # the first report stands out
             log.render(str)
         log.add_health(1, 10, 100)
         log.add_utterance(utt(1, 1.0))
-        self.assertIn("audio 10%", log.log_line() or "")  # at the limit: all still kept
+        # At the limit all are still kept, so the first report lifts it to 20%; 10% if lost.
+        self.assertIn("audio 20%", log.log_line() or "")
         log.render(str)
         for _ in range(HEALTH_WAIT_MAX_CHECKS + 1):
             log.add_health(1, 10, 100)

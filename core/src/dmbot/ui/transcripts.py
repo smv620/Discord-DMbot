@@ -186,12 +186,13 @@ async def transcript_command(interaction: discord.Interaction) -> None:
         await _send(
             interaction,
             "**Which campaign's transcripts?** Pick one below.",
-            CampaignPicker(campaigns),
+            CampaignPicker(campaigns, await bot.transcripts.session_counts(guild.id)),
         )
 
 
 class CampaignPicker(_Menu):
-    def __init__(self, campaigns: list[Campaign]) -> None:
+    def __init__(self, campaigns: list[Campaign], counts: dict[str, int]) -> None:
+        """`counts`: saved transcripts per campaign id (TranscriptStore.session_counts)."""
         super().__init__()
         self.by_id = {c.id: c for c in campaigns}
         now = int(time.time())
@@ -202,9 +203,10 @@ class CampaignPicker(_Menu):
                 discord.SelectOption(
                     label=logic.name_label(c.name),  # fits a phone (#287)
                     value=c.id,
-                    # A campaign never played has nothing to show yet.
+                    # Played with transcripts off, or restored from a backup (backups
+                    # carry no transcript lines): nothing to show yet (#317).
                     description=logic.option_description(c, now)
-                    if c.last_played_at is not None
+                    if counts.get(c.id, 0) > 0
                     else "No transcripts yet",
                 )
                 for c in campaigns[: logic.SELECT_OPTIONS_MAX]

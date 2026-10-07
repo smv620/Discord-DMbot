@@ -51,9 +51,10 @@ class SessionStoreTests(DatabaseTest):
     async def test_other_servers_cannot_see_it(self) -> None:
         await self.store.save(saved(GUILD_A, self.a.id))
         self.assertIsNone(await self.store.get(GUILD_B))
-        with self.assertNoLogs("dmbot.sessions", "INFO"):
+        with self.assertLogs("dmbot.sessions", "INFO") as logs:
             removed = await self.store.clear(GUILD_B, "test")  # another server's: nothing
         self.assertFalse(removed)
+        self.assertEqual(logs.output, ["INFO:dmbot.sessions:No saved session to remove: test"])
         self.assertIsNotNone(await self.store.get(GUILD_A))
 
     async def test_saves_and_removals_are_logged_with_their_reason(self) -> None:
@@ -77,9 +78,10 @@ class SessionStoreTests(DatabaseTest):
         )
         self.assertEqual([getattr(r, "guild_id", None) for r in logs.records], [GUILD_A] * 3)
         self.assertEqual({getattr(r, "campaign_id", None) for r in logs.records}, {self.a.id})
-        # Nothing saved: nothing to say.
-        with self.assertNoLogs(name, "INFO"):
+        # Nothing saved: one INFO line while #147 is open (#317), so it shows in the logs.
+        with self.assertLogs(name, "INFO") as logs:
             self.assertFalse(await self.store.clear(GUILD_A, "test"))
+        self.assertEqual(logs.output, [f"INFO:{name}:No saved session to remove: test"])
 
     async def test_a_leftover_restart_note_is_logged_apart(self) -> None:
         await self.store.save(saved(GUILD_A, self.a.id))

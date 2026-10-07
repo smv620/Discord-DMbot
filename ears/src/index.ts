@@ -57,7 +57,7 @@ async function handleCommand(command: CoreCommand): Promise<void> {
   switch (command.type) {
     case "allowlist": {
       const guildId = command.guildId;
-      applyConsentList(
+      const removed = applyConsentList(
         allowlist,
         guildId,
         command.userIds,
@@ -65,7 +65,8 @@ async function handleCommand(command: CoreCommand): Promise<void> {
         client.guilds.cache.get(guildId)?.voiceStates.cache.values(),
         (userId) => lookUpBot(guildId, userId),
       );
-      log.info(`consent list: ${command.userIds.length} opted in`, { guildId });
+      const left = removed.length > 0 ? `, ${removed.length} opted out` : "";
+      log.info(`consent list: ${command.userIds.length} opted in${left}`, { guildId });
       return;
     }
     case "leave": {
