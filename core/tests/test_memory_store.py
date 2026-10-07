@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 
@@ -723,6 +724,24 @@ class Backups(MemoryTest):
             original.pop(table), copy.pop(table)
         self.assertEqual(copy, original)
         self.assertGreater(await self.memory.version(GUILD_B, restored.id), 0)
+
+    async def test_an_older_plain_backup_keeps_its_secret_names(self) -> None:
+        a = await self.add("Belleros")
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "the hooded stranger", kind="title", secret=True, source="dm"
+        )
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        backup["version"] = 1  # made before #164: plain JSON, no compression
+        plain = json.dumps(backup, indent=1).encode()
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(plain), DM)
+        original, copy = await self.snapshot(), await self.snapshot(GUILD_B, restored.id)
+        for table in ("memory_mentions",):  # not backed up
+            original.pop(table), copy.pop(table)
+        self.assertEqual(copy, original)
+        self.assertIn(
+            ("the hooded stranger", True),
+            {(r["text"], r["secret"]) for r in copy["memory_aliases"]},
+        )
 
     async def test_replacing_from_a_backup_bumps_the_version(self) -> None:
         await self.add("Belleros")

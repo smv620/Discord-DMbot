@@ -120,7 +120,7 @@ class CommandTests(DatabaseTest):
         it = fake_interaction(self.bot)  # not this campaign's DM
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         sent = it.followup.send.call_args
-        self.assertTrue(sent.kwargs["file"].filename.endswith(".dmbot.json"))
+        self.assertTrue(sent.kwargs["file"].filename.endswith(".dmbot.json.gz"))
         self.assertIn("complete copy", sent.args[0])
         self.assertIn("don't open it", sent.args[0])
 
@@ -130,7 +130,31 @@ class CommandTests(DatabaseTest):
         it.user.guild_permissions = discord.Permissions(manage_guild=True)  # both: still fine
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         sent = it.followup.send.call_args.kwargs["file"]
-        self.assertTrue(sent.filename.endswith(".dmbot.json"))
+        self.assertTrue(sent.filename.endswith(".dmbot.json.gz"))
+
+    async def test_an_older_plain_backup_still_restores(self) -> None:
+        mine = await self.campaigns.create(GUILD, "Mine", DM)
+        data = await self.campaigns.export(GUILD, mine.id)
+        data["version"] = 1
+        it = fake_interaction(self.bot)
+        await cmds.dmbot_restore.callback(it, attachment(json.dumps(data).encode()))  # type: ignore[call-arg]
+        self.assertIsInstance(it.followup.send.call_args.kwargs["view"], cmds.RestoreChoice)
+
+    async def test_a_backup_too_big_to_send_says_so(self) -> None:
+        await self.campaigns.create(GUILD, "Huge_*one*", DM)
+        limits = (
+            patch("dmbot.ui.logic.FILE_MAX", 10),  # bigger than Discord sends
+            patch("dmbot.campaigns.store.MAX_BACKUP_BYTES", 10),  # than a restore takes
+        )
+        for limit in limits:
+            with self.subTest(limit), limit:
+                it = fake_interaction(self.bot)
+                await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
+                message = it.followup.send.call_args.args[0]
+                self.assertIn("**Huge\\_\\*one\\*** is too big for DMbot to copy yet", message)
+                self.assertIn("Nothing was lost", message)
+                self.assertIn("Tell whoever runs DMbot", message)  # what to do next
+                self.assertNotIn("file", it.followup.send.call_args.kwargs)
 
 
 PRESS: Any = SimpleNamespace()  # a button press; the view only redraws itself

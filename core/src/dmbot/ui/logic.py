@@ -15,6 +15,7 @@ from dmbot.transcription.config import Engine
 
 # Discord limits.
 BUTTON_LABEL_MAX = 80
+FILE_MAX = 10 * 1024 * 1024  # the biggest file a bot may send
 OPTION_LABEL_MAX = 100
 SELECT_OPTIONS_MAX = 25
 # What a phone shows of a button or menu choice before cutting it off (#112). Labels
@@ -208,7 +209,7 @@ def writing_status(engine: Engine, backlog: int, last_latency_s: float | None) -
 def backup_filename(campaign_name: str, now: int) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", campaign_name.casefold()).strip("-")[:40] or "campaign"
     day = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d")
-    return f"{slug}-{day}.dmbot.json"
+    return f"{slug}-{day}.dmbot.json.gz"  # compressed since #164; .dmbot.json still restores
 
 
 WELCOME_TEXT = (

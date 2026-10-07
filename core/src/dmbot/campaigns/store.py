@@ -12,10 +12,12 @@ and plug into backups by registering an `ExportSection`.
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import time
 import uuid
+import zlib
 from collections.abc import Callable
 from typing import Any, LiteralString, Protocol
 
@@ -41,17 +43,33 @@ from dmbot.logs import log_context
 log = logging.getLogger(__name__)
 
 EXPORT_FORMAT = "dmbot-campaign"
-EXPORT_VERSION = 1
+# 2: written compressed since #164; contents unchanged from 1. Plain files of either
+# version still restore: the file's first bytes, not its version, say if it's packed.
+EXPORT_VERSION = 2
 
 RULE_ID_MAX = 64
 # Discord IDs and Unix timestamps must fit Postgres BIGINT (signed 64-bit).
 INT64_MAX = 2**63 - 1
-# Upper bound on an uploaded backup file, checked before parsing it.
+# Upper bound on a backup's JSON, checked before parsing it: on the file, and on a
+# compressed file while it's unpacked (so a tiny file can't unpack to gigabytes).
 MAX_BACKUP_BYTES = 25 * 1024 * 1024
+GZIP_MAGIC = b"\x1f\x8b"
 
 NOT_HERE = "That campaign doesn't exist in this server."
 NAME_TAKEN = "This server already has a campaign with that name."
-DAMAGED = "This backup file is damaged or isn't a DMbot campaign backup."
+DAMAGED = (
+    "This backup file is damaged or isn't a DMbot campaign backup. "
+    "Pick the file you got from `/dmbot backup`."
+)
+TOO_BIG = "That file is too big to be a DMbot backup. Pick the file you got from `/dmbot backup`."
+NOT_A_BACKUP = (
+    "That file isn't a DMbot campaign backup. Pick the file you got from `/dmbot backup`."
+)
+CAMPAIGN_TOO_BIG = "This campaign is too big for DMbot to copy yet. Nothing was lost."
+
+
+class BackupTooBig(CampaignError):
+    """The campaign is bigger than a restore takes, so no copy is made of it."""
 
 
 class ExportSection(Protocol):
@@ -636,18 +654,44 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
 
 
 def encode_backup(backup: dict[str, Any]) -> bytes:
-    """Serialise a backup for the DM to download. Run off the event loop for big ones."""
-    return json.dumps(backup, ensure_ascii=False, indent=1).encode("utf-8")
+    """Serialise a backup for the DM to download: compressed JSON (#164), so a big
+    campaign still fits in one Discord file. Raises BackupTooBig rather than make a copy
+    a restore would refuse. Run off the event loop for big ones."""
+    text = json.dumps(backup, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(text) > MAX_BACKUP_BYTES:
+        raise BackupTooBig(CAMPAIGN_TOO_BIG)
+    return gzip.compress(text, compresslevel=6, mtime=0)
 
 
 def decode_backup(raw: bytes) -> object:
-    """Parse an uploaded backup file, refusing oversized or non-JSON files."""
+    """Parse an uploaded backup file, compressed or (older backups) plain, refusing
+    oversized or non-JSON files."""
     if len(raw) > MAX_BACKUP_BYTES:
-        raise CampaignError("That backup file is too big.")
+        raise CampaignError(TOO_BIG)
+    if raw.startswith(GZIP_MAGIC):
+        raw = _unpack(raw)
     try:
-        return json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
-        raise CampaignError("That file isn't a DMbot campaign backup.") from exc
+        # From bytes, json finds the encoding itself (UTF-8, or UTF-16/32 with a BOM);
+        # it decodes to a str internally, so memory is the same as decoding here.
+        return json.loads(raw)
+    # ValueError also covers bad UTF-8, bad JSON, and a number too long for Python's
+    # int limit (4,300 digits), which isn't a JSONDecodeError.
+    except (ValueError, RecursionError) as exc:
+        raise CampaignError(NOT_A_BACKUP) from exc
+
+
+def _unpack(raw: bytes) -> bytes:
+    """Unpack a compressed backup, stopping as soon as it would pass MAX_BACKUP_BYTES."""
+    unpacker = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)  # gzip
+    try:
+        text = unpacker.decompress(raw, MAX_BACKUP_BYTES + 1)
+    except zlib.error as exc:
+        raise CampaignError(NOT_A_BACKUP) from exc
+    if len(text) > MAX_BACKUP_BYTES:
+        raise CampaignError(TOO_BIG)
+    if not unpacker.eof or unpacker.unused_data:  # cut short, or more after the end
+        raise CampaignError(NOT_A_BACKUP)
+    return text
 
 
 def _validate_backup(
@@ -657,7 +701,7 @@ def _validate_backup(
     if not isinstance(data, dict) or data.get("format") != EXPORT_FORMAT:
         raise CampaignError(DAMAGED)
     version = data.get("version")
-    if not isinstance(version, int) or isinstance(version, bool):
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         raise CampaignError(DAMAGED)
     if version > EXPORT_VERSION:
         raise CampaignError("This backup was made by a newer DMbot. Update DMbot and try again.")
