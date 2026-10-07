@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
+from urllib.parse import urlsplit
 
 Engine = Literal["whisper-local", "cloud", "deepgram", "none"]
 ENGINES: tuple[Engine, ...] = ("whisper-local", "cloud", "deepgram", "none")
@@ -45,6 +46,18 @@ class TranscriptionSettings:
     # Clips written at once, for different servers (#173). Local Whisper fills the CPU
     # with one; an outside company answers several requests side by side.
     workers: int = 1
+
+    @property
+    def source(self) -> str:
+        """Which speech-to-text writes a session down, for its stored transcript (#173):
+        "engine model host". Never a key. Empty with TRANSCRIBER=none."""
+        if self.engine == "deepgram":
+            return f"deepgram {self.deepgram_model} {urlsplit(self.deepgram_url).hostname}"
+        if self.engine == "cloud":
+            return f"cloud {self.cloud_model} {urlsplit(self.cloud_url).hostname}"
+        if self.engine == "whisper-local":
+            return f"whisper-local {self.whisper_model} local"
+        return ""
 
     @property
     def sends_audio_out(self) -> bool:

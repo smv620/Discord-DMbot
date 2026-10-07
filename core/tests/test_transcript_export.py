@@ -1,6 +1,7 @@
 """Transcript downloads (#41, #125) and the unsaved-lines buffer, without Discord or a
 database."""
 
+import dataclasses
 import unittest
 
 from dmbot.transcript import export
@@ -61,6 +62,17 @@ class Render(unittest.TestCase):
         self.assertEqual(
             export.file_name("X", session(), export.CLEANED), "x-session-7-cleaned.txt"
         )
+
+    def test_the_header_says_which_speech_to_text_wrote_it_in_plain_words(self) -> None:
+        engines = ("deepgram nova-3 api.deepgram.com",)
+        text = export.render("X", dataclasses.replace(session(), engines=engines), [], {})
+        self.assertIn("Written down by Deepgram (nova-3)", text)
+        self.assertNotIn("api.deepgram.com", text)  # the endpoint stays in the database
+        self.assertEqual(
+            export.written_by(["deepgram nova-3 x", "whisper-local small local"]),
+            "Deepgram (nova-3), then Whisper, on DMbot's own computer (small)",
+        )
+        self.assertNotIn("Written down", export.render("X", session(), [], {}))  # older
 
     def test_an_unknown_version_is_refused(self) -> None:
         with self.assertRaises(ValueError):

@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 import time
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 
 from dmbot.transcript.models import Line, TranscriptSession
 
@@ -92,6 +92,25 @@ def _check(version: str) -> None:
         raise ValueError(f"Unknown transcript version: {version!r}")
 
 
+_ENGINE_WORDS = {
+    "deepgram": "Deepgram",
+    "cloud": "a speech-to-text company",
+    "whisper-local": "Whisper, on DMbot's own computer",
+}
+
+
+def written_by(engines: Sequence[str]) -> str:
+    """Which speech-to-text wrote it down, in plain words: "Deepgram (nova-3)". The
+    endpoint's host stays in the database: the file is for everyone in the server."""
+    words = []
+    for source in engines:
+        engine, _, rest = source.partition(" ")
+        model = rest.split(" ")[0] if rest else ""
+        name = _ENGINE_WORDS.get(engine, engine)
+        words.append(f"{name} ({model})" if model else name)
+    return ", then ".join(dict.fromkeys(words))
+
+
 def label(when: str, speaker: str, character: str | None = None) -> str:
     """`[0:42:10] (Mia) {Cerric}`, or `[0:42:10] (Sam)` without a character."""
     speaker, character = _plain(speaker), _plain(character) if character else None
@@ -140,6 +159,7 @@ def render(
     header = [
         f"DMbot transcript: {clean_name(campaign_name)}, session {session.number}",
         f"Started {started}{ran}",
+        *([f"Written down by {written_by(session.engines)}"] if session.engines else []),
         CLEANED_NOTE if version == CLEANED else AS_HEARD_NOTE,
         HOW_TO_READ,
     ]

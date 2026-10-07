@@ -30,6 +30,14 @@ class TranscriptionConfigTests(unittest.TestCase):
             load_transcription_settings({"TRANSCRIBE_WORKERS": "2"})
         self.assertEqual(load_transcription_settings({"TRANSCRIBE_WORKERS": "1"}).workers, 1)
 
+    def test_the_source_names_engine_model_and_host_never_a_key(self) -> None:
+        deepgram = {"TRANSCRIBER": "deepgram", "DEEPGRAM_API_KEY": "dg-secret"}
+        source = load_transcription_settings(deepgram).source
+        self.assertEqual(source, "deepgram nova-3 api.deepgram.com")
+        self.assertNotIn("dg-secret", source)
+        self.assertEqual(load_transcription_settings({}).source, "whisper-local small local")
+        self.assertEqual(load_transcription_settings({"TRANSCRIBER": "none"}).source, "")
+
     def test_language_auto(self) -> None:
         self.assertEqual(load_transcription_settings({"TRANSCRIBE_LANGUAGE": "auto"}).language, "")
 

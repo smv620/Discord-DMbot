@@ -24,16 +24,23 @@ class TranscriptStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def open_session(self, guild_id: int, campaign_id: str, started_at: int) -> str:
+    async def open_session(
+        self, guild_id: int, campaign_id: str, started_at: int, engine: str = ""
+    ) -> str:
         """The session's ID, creating its row. A session resumed after a restart (same
-        campaign and start time) gets its own row back."""
+        campaign and start time) gets its own row back. `engine`: which speech-to-text
+        writes it down ("engine model host"), added if it's new to the session."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
-                " VALUES (%s, %s, %s, %s)"
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at, engines)"
+                " VALUES (%s, %s, %s, %s, %s)"
                 " ON CONFLICT (campaign_id, guild_id, started_at)"
-                " DO UPDATE SET ended_at = NULL RETURNING id",
-                (uuid.uuid4().hex, guild_id, campaign_id, started_at),
+                " DO UPDATE SET ended_at = NULL, engines = CASE"
+                "   WHEN EXCLUDED.engines = '{}' OR transcript_sessions.engines @> EXCLUDED.engines"
+                "   THEN transcript_sessions.engines"
+                "   ELSE transcript_sessions.engines || EXCLUDED.engines END"
+                " RETURNING id",
+                (uuid.uuid4().hex, guild_id, campaign_id, started_at, [engine] if engine else []),
             )
             row = await cur.fetchone()
             assert row is not None
@@ -171,4 +178,5 @@ def _session(row: dict[str, Any]) -> TranscriptSession:
         lines=int(row["line_count"]),
         speakers=tuple(sorted(int(u) for u in row["speakers"])),
         number=int(row["number"]),
+        engines=tuple(row.get("engines") or ()),
     )
