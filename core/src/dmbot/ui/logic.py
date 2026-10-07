@@ -70,9 +70,19 @@ def played_line(campaign: Campaign) -> str:
     return f"last played <t:{campaign.last_played_at}:f>"
 
 
+_NAME_TAIL = 12  # the end of a long name stays visible: "(restored 2)", "Season 2"
+
+
 def name_label(name: str) -> str:
-    """A campaign's name in a button or menu, short enough for a phone."""
-    return shorten(name, NAME_LABEL_MAX)
+    """A campaign's name as a menu choice (never a button), short enough for a phone.
+    A long name is cut in the middle, so its end still tells copies and seasons apart:
+    "Curse of Strahd Fri…(restored 2)"."""
+    name = " ".join(name.split())
+    if len(name) <= NAME_LABEL_MAX:
+        return name
+    tail = name[-_NAME_TAIL:].lstrip()
+    head = name[: NAME_LABEL_MAX - 1 - len(tail)].rstrip()
+    return f"{head}…{tail}"
 
 
 def option_description(campaign: Campaign, now: int) -> str:

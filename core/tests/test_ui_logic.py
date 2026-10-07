@@ -154,8 +154,15 @@ class MenuChoices(unittest.TestCase):
 
         self.assertEqual(name_label("Rime of the Frostmaiden"), "Rime of the Frostmaiden")
         long = name_label("The Very Long and Winding Campaign of the Western Marches")
-        self.assertEqual(len(long), NAME_LABEL_MAX)
-        self.assertTrue(long.endswith("…"))
+        self.assertLessEqual(len(long), NAME_LABEL_MAX)
+        self.assertIn("…", long)
+        self.assertTrue(long.endswith("tern Marches"))  # the end stays visible
+        # Restored copies differ only at the end ("(restored 2)"): never the same label.
+        base = "Curse of Strahd Fridays"
+        labels = {name_label(f"{base}{end}") for end in ("", " (restored)", " (restored 2)")}
+        self.assertEqual(len(labels), 3)
+        self.assertTrue(all(len(label) <= NAME_LABEL_MAX for label in labels))
+        self.assertEqual(name_label("  Spaced   out  "), "Spaced out")
 
 
 class VoiceDefault(unittest.TestCase):

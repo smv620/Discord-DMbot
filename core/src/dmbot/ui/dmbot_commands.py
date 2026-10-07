@@ -497,11 +497,16 @@ class RestoreChoice(_Menu):
             )
         )
         if replaceable:
+            now = _now()
             self.pick = _Select(
                 self._picked,
-                placeholder="Or replace one of your campaigns…",
+                placeholder="Or replace a campaign…",
                 options=[
-                    discord.SelectOption(label=logic.name_label(c.name), value=c.id)
+                    discord.SelectOption(
+                        label=logic.name_label(c.name),
+                        value=c.id,
+                        description=logic.option_description(c, now),
+                    )
                     for c in replaceable[: logic.SELECT_OPTIONS_MAX]
                 ],
                 row=1,
@@ -522,7 +527,8 @@ class RestoreChoice(_Menu):
             return
         await _replace(
             interaction,
-            f"⚠️ Replace **{target.name}** with the copy of **{self.name}**?\n"
+            f"⚠️ Replace **{target.name}** ({logic.played_line(target)}) with the copy of "
+            f"**{self.name}**?\n"
             f"Everything in **{target.name}** will be swapped for what's in the copy. "
             "This can't be undone, so you may want to download it first.",
             ConfirmReplace(self, target),
@@ -691,6 +697,12 @@ async def dmbot_restore(interaction: discord.Interaction, file: discord.Attachme
     await _send(
         interaction,
         f"**Restore the copy of {name}?**\n"
-        "You'll be its DM. `/dmbot start` will ask which voice channel to use.",
+        "You'll be its DM. `/dmbot start` will ask which voice channel to use."
+        + (
+            "\nOr pick one of your campaigns below to swap it for this copy. DMbot asks "
+            "before replacing anything."
+            if replaceable
+            else ""
+        ),
         RestoreChoice(data, name, replaceable),
     )
