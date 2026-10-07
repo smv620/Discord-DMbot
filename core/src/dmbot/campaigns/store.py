@@ -13,6 +13,7 @@ and plug into backups by registering an `ExportSection`.
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from collections.abc import Callable
@@ -35,6 +36,9 @@ from dmbot.campaigns.models import (
     name_key,
 )
 from dmbot.db import Conn, Database, row_int
+from dmbot.logs import log_context
+
+log = logging.getLogger(__name__)
 
 EXPORT_FORMAT = "dmbot-campaign"
 EXPORT_VERSION = 1
@@ -395,9 +399,24 @@ class CampaignStore:
             await self._require(conn, guild_id, campaign_id)
             for section in self._sections.values():
                 await section.clear(conn, guild_id, campaign_id)
+            # The saved session would go with the campaign anyway (ON DELETE CASCADE);
+            # removing it here logs it and leaves no restart note behind (#147).
+            cur = await conn.execute(
+                "DELETE FROM active_sessions WHERE guild_id = %s AND campaign_id = %s"
+                " RETURNING guild_id",
+                (guild_id, campaign_id),
+            )
+            had_session = await cur.fetchone() is not None
+            if had_session:
+                await conn.execute(
+                    "DELETE FROM live_session_guilds WHERE guild_id = %s", (guild_id,)
+                )
             await conn.execute(
                 "DELETE FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
             )
+        if had_session:
+            with log_context(guild_id=guild_id, campaign_id=campaign_id):
+                log.info("Saved session removed: its campaign was deleted")
 
     # ---- backups -------------------------------------------------------------
 
