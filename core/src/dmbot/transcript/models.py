@@ -58,6 +58,14 @@ class TranscriptBuffer:
         self._waiting = []
         return batch
 
+    def relabel(self, user_id: int, started_ms: int, text: str) -> bool:
+        """A waiting line's cleaned words changed (an Undo, #296); True if it was here."""
+        for i, waiting in enumerate(self._waiting):
+            if (waiting.user_id, waiting.started_ms) == (user_id, started_ms):
+                self._waiting[i] = Line(waiting.started_ms, waiting.user_id, waiting.heard, text)
+                return True
+        return False
+
     def put_back(self, batch: list[Line]) -> None:
         """Saving failed: keep the batch, ahead of anything newer."""
         self._waiting = batch + self._waiting
