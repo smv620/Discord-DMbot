@@ -19,6 +19,10 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   first, then "Wrong? Fix or remove it with the buttons below."; the card has 🏷️ Also
   called… on row 2 and 🧭 Connect to… on row 3; edit menus say "✏️ Fix, change or
   remove a name…". A campaign backup still downloads and restores.
+- #410 (#164 part 3, CloudDev): core only; new optional setting MEMORY_CHANGELOG_KEEP_DAYS
+  (default 30, no .env change needed). Check: 🗑 Remove a name says "Press **Undo** within
+  30 days to bring it back."; after a session the log may show "Deleted N change-log
+  row(s) too old to undo" (only if the campaign has changes older than 30 days).
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
