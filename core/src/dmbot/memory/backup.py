@@ -8,6 +8,7 @@ file are untrusted and fully checked before anything is written.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from typing import Any
 
@@ -142,33 +143,23 @@ class MemorySection:
     name = "memory"
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
-        out: list[Any] = []
+        fetched: list[tuple[str, Table, list[Any]]] = []
         for tag, table in _TAGS.items():
             order = sql.SQL(" ORDER BY {}").format(sql.Identifier(table.key))
             cur = await conn.execute(scoped_select(table, order), (guild_id, campaign_id))
-            for raw in await cur.fetchall():
-                row = row_of(raw, table)
-                if table is RELATIONS:
-                    row["mention_ids"] = []  # mentions aren't backed up
-                out.append({"table": tag, **row})
-        return out
+            fetched.append((tag, table, await cur.fetchall()))
+        # Building the rows is pure CPU (a big campaign takes a good fraction of a
+        # second): off the event loop, so voice and other servers don't wait (#164).
+        return await asyncio.to_thread(_dump_rows, fetched)
 
-    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: list[Any]) -> None:
-        by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
-        for raw in rows:
-            if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
-                raise CampaignError(DAMAGED)
-            table = _TAGS[raw["table"]]
-            if set(raw) != {"table", *table.columns}:
-                raise CampaignError(DAMAGED)
-            if not all(_valid(c, raw[c]) for c in table.columns):
-                raise CampaignError(DAMAGED)
-            if table is RELATIONS and raw["mention_ids"]:
-                raise CampaignError(DAMAGED)
-            if table is ALIASES:  # worked out again, not taken from the file
-                raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
-            by_tag[raw["table"]].append(raw)
-        _check_terms(by_tag)
+    def check(self, rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
+        """Every value checked and sound codes worked out: pure CPU, which the store
+        runs in a worker thread before its transaction (#164)."""
+        return _checked_rows(rows)
+
+    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
+        """`rows` as `check` returned them, or straight from a file (checked here)."""
+        by_tag = rows if isinstance(rows, dict) else await asyncio.to_thread(_checked_rows, rows)
         try:
             for tag, table in _TAGS.items():
                 if not by_tag[tag]:
@@ -203,6 +194,39 @@ class MemorySection:
                 (guild_id, campaign_id),
             )
         await bump_version(conn, guild_id, campaign_id)
+
+
+def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
+    """The file's rows from the database's, each with its table tag."""
+    out: list[Any] = []
+    for tag, table, raws in fetched:
+        for raw in raws:
+            row = row_of(raw, table)
+            if table is RELATIONS:
+                row["mention_ids"] = []  # mentions aren't backed up
+            out.append({"table": tag, **row})
+    return out
+
+
+def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
+    """A backup's memory rows, every value checked, grouped by table tag. Untrusted:
+    raises CampaignError(DAMAGED) on anything out of shape."""
+    by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
+    for raw in rows:
+        if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
+            raise CampaignError(DAMAGED)
+        table = _TAGS[raw["table"]]
+        if set(raw) != {"table", *table.columns}:
+            raise CampaignError(DAMAGED)
+        if not all(_valid(c, raw[c]) for c in table.columns):
+            raise CampaignError(DAMAGED)
+        if table is RELATIONS and raw["mention_ids"]:
+            raise CampaignError(DAMAGED)
+        if table is ALIASES:  # worked out again, not taken from the file
+            raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
+        by_tag[raw["table"]].append(raw)
+    _check_terms(by_tag)
+    return by_tag
 
 
 def _type_term(r: dict[str, Any]) -> TypeTerm:

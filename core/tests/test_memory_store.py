@@ -5,6 +5,7 @@ import contextlib
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
+from unittest.mock import patch
 
 from psycopg import errors as pg_errors
 from psycopg import sql
@@ -742,6 +743,59 @@ class Backups(MemoryTest):
             ("the hooded stranger", True),
             {(r["text"], r["secret"]) for r in copy["memory_aliases"]},
         )
+
+    async def test_backups_check_and_build_rows_off_the_event_loop(self) -> None:
+        """#164: a big campaign's rows take a good fraction of a second to check or
+        build; that CPU runs in a worker thread while the event loop (voice, other
+        servers) carries on. Each step asks the loop to run something: on the loop
+        itself that would wait forever (5 s here), so no timing threshold to flake."""
+        from dmbot.campaigns import store as campaign_store
+        from dmbot.memory import backup
+
+        await self.add("Belleros")
+        loop = asyncio.get_running_loop()
+        ran: list[str] = []
+
+        def watched(name: str, real: Any) -> Any:
+            def run(*args: Any) -> Any:
+                asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(timeout=5)
+                ran.append(name)
+                return real(*args)
+
+            return run
+
+        with (
+            patch.object(backup, "_dump_rows", watched("dump", backup._dump_rows)),
+            patch.object(backup, "_checked_rows", watched("check", backup._checked_rows)),
+            patch.object(
+                campaign_store,
+                "_validate_backup",
+                watched("validate", campaign_store._validate_backup),
+            ),
+        ):
+            data = await self.campaigns.export(GUILD_A, self.c)
+            await self.campaigns.import_backup(GUILD_B, data, DM)
+        self.assertEqual(ran, ["dump", "validate", "check"])
+
+    async def test_a_damaged_file_is_refused_before_anything_is_touched(self) -> None:
+        """The memory rows are checked before the restore's transaction opens: a bad
+        file never locks or clears the campaign it would replace."""
+        await self.add("Belleros")
+        before = await self.snapshot()
+        data = await self.campaigns.export(GUILD_A, self.c)
+        data["sections"]["memory"].append({"table": "entity", "id": "not an id"})
+        opened = 0
+        real = self.db.guild
+
+        def counting(*args: Any, **kw: Any) -> Any:
+            nonlocal opened
+            opened += 1
+            return real(*args, **kw)
+
+        with patch.object(self.db, "guild", counting), self.assertRaises(CampaignError):
+            await self.campaigns.import_backup(GUILD_A, data, DM, replace_campaign_id=self.c)
+        self.assertEqual(opened, 0)
+        self.assertEqual(await self.snapshot(), before)
 
     async def test_replacing_from_a_backup_bumps_the_version(self) -> None:
         await self.add("Belleros")
