@@ -116,6 +116,27 @@ class Database:
             yield conn
 
     @asynccontextmanager
+    async def user(self, user_id: int, *, guild_id: int | None = None) -> AsyncIterator[Conn]:
+        """A transaction that can only see one person's website rows (#435): their
+        account, plan, sessions and installs. With `guild_id`, that server's rows too
+        (used when a signed-in person acts on one server, such as installing DMbot)."""
+        async with self._pool.connection() as conn, conn.transaction():
+            await conn.execute("SELECT set_config('dmbot.user_id', %s, true)", (str(int(user_id)),))
+            if guild_id is not None:
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild_id)),)
+                )
+            yield conn
+
+    @asynccontextmanager
+    async def session(self, id_hash: str) -> AsyncIterator[Conn]:
+        """A transaction that can see only the website session with this cookie hash,
+        to find who is signed in before the person is known."""
+        async with self._pool.connection() as conn, conn.transaction():
+            await conn.execute("SELECT set_config('dmbot.session', %s, true)", (id_hash,))
+            yield conn
+
+    @asynccontextmanager
     async def unscoped(self) -> AsyncIterator[Conn]:
         """A transaction with no server set: server tables look empty.
 

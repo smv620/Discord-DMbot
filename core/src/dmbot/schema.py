@@ -6,6 +6,9 @@ Rules:
   the `guild_isolation` row-level-security policy (see `_isolate`). Child tables reference
   their parent with `(id, guild_id)`, so a row can't point at another server's data.
 - Discord IDs are BIGINT. Timestamps are Unix seconds (BIGINT), matching the app.
+- Tables holding a *person's* data (the website's accounts, #435) have a `user_id` and
+  the `user_isolation` policy (see `_isolate_user`) instead; list them in
+  USER_ISOLATED_TABLES.
 - Exception: a *routing* table may skip row-level security if it holds nothing but
   Discord server IDs (no names, settings, or campaign data), because a process has to
   find its servers before it can open a per-server transaction. List it in
@@ -447,6 +450,125 @@ MEMORY_HEARD = f"""
     CREATE INDEX memory_heard_by_speaker ON memory_heard (guild_id, speaker_id);
     """ + _isolate("memory_heard")
 
+
+def _isolate_user(table: str) -> str:
+    """Row-level security for a person's own rows (website accounts, #435): only the
+    signed-in user's rows are visible or writable. Set by Database.user()."""
+    return f"""
+    ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE {table} FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON {table}
+        USING (user_id = dmbot_current_user())
+        WITH CHECK (user_id = dmbot_current_user());
+    """
+
+
+WEB_ACCOUNTS = (
+    """
+    -- The website's signed-in person, set by Database.user() (#435), or NULL (sees nothing).
+    CREATE FUNCTION dmbot_current_user() RETURNS BIGINT
+        LANGUAGE sql STABLE
+        AS $fn$ SELECT NULLIF(current_setting('dmbot.user_id', true), '')::BIGINT $fn$;
+
+    -- The hash of the session cookie presented with this request, so the session can be
+    -- found before the user is known. Knowing the hash means holding the cookie.
+    CREATE FUNCTION dmbot_current_session() RETURNS TEXT
+        LANGUAGE sql STABLE
+        AS $fn$ SELECT NULLIF(current_setting('dmbot.session', true), '') $fn$;
+
+    -- A person who signed in on the website with Discord. Email is what Discord gives us
+    -- (scope `email`), used only for account and plan messages (privacy page, #433).
+    CREATE TABLE web_users (
+        user_id            BIGINT PRIMARY KEY,
+        email              TEXT,
+        created_at         BIGINT NOT NULL,
+        last_sign_in_at    BIGINT NOT NULL,
+        -- Try It can be started once per Discord user (#435).
+        try_it_started_at  BIGINT
+    );
+
+    -- What each person has paid for. Written ONLY by the payment webhook
+    -- (dmbot.web.entitlements); the bot's plan rules (#437) read it.
+    -- `plan` matches web/src/content/plans.json; caps are copied in at write time so a
+    -- later price-list change never alters a plan someone already bought.
+    CREATE TABLE entitlements (
+        user_id          BIGINT PRIMARY KEY REFERENCES web_users ON DELETE CASCADE,
+        plan             TEXT NOT NULL
+            CHECK (plan IN ('try-it', 'table', 'two-tables', 'guild', 'pro')),
+        status           TEXT NOT NULL CHECK (status IN ('active', 'grace', 'lapsed')),
+        hours_cap        INTEGER NOT NULL CHECK (hours_cap >= 0),
+        campaign_cap     INTEGER NOT NULL CHECK (campaign_cap >= 0),
+        period_start     BIGINT NOT NULL,
+        period_end       BIGINT NOT NULL CHECK (period_end > period_start),
+        -- Status "grace": a failed payment must be fixed by then (7 days, #437).
+        grace_ends_at    BIGINT,
+        provider         TEXT NOT NULL,
+        -- The payment company's own ids, for its customer page. Never card data.
+        provider_customer_id      TEXT,
+        provider_subscription_id  TEXT,
+        -- The newest event applied, so an older event arriving late can't undo it.
+        last_event_at    BIGINT NOT NULL,
+        updated_at       BIGINT NOT NULL,
+        CHECK ((status = 'grace') = (grace_ends_at IS NOT NULL))
+    );
+
+    -- Payment events already applied, so a repeated delivery changes nothing (#435).
+    CREATE TABLE payment_events (
+        provider     TEXT NOT NULL,
+        event_id     TEXT NOT NULL,
+        user_id      BIGINT NOT NULL,
+        received_at  BIGINT NOT NULL,
+        PRIMARY KEY (provider, event_id)
+    );
+    CREATE INDEX payment_events_by_user ON payment_events (user_id);
+
+    -- Website sessions. The cookie holds a random token; only its SHA-256 is stored, so a
+    -- database leak can't be used to sign in. The Discord token is never stored: the
+    -- servers Discord listed at sign-in are kept here, for this session only.
+    CREATE TABLE web_sessions (
+        id_hash     TEXT PRIMARY KEY,
+        user_id     BIGINT NOT NULL REFERENCES web_users ON DELETE CASCADE,
+        created_at  BIGINT NOT NULL,
+        expires_at  BIGINT NOT NULL,
+        -- [{"id": "...", "name": "...", "manage": true}], from the `guilds` scope.
+        guilds      JSONB NOT NULL DEFAULT '[]'
+    );
+    CREATE INDEX web_sessions_by_user ON web_sessions (user_id);
+    CREATE INDEX web_sessions_expiry ON web_sessions (expires_at);
+
+    -- Who added DMbot to which server (owner decision on #435). `via`: 'site' when added
+    -- through the website's install button (the person is known), 'link' when the bot
+    -- joined through a plain invite link (the person fills in later with "Link this
+    -- server"). Visible to that server, and to the person who installed it.
+    CREATE TABLE installs (
+        guild_id              BIGINT PRIMARY KEY,
+        installed_by_user_id  BIGINT,
+        installed_at          BIGINT NOT NULL,
+        via                   TEXT NOT NULL CHECK (via IN ('site', 'link'))
+    );
+    CREATE INDEX installs_by_user ON installs (installed_by_user_id)
+        WHERE installed_by_user_id IS NOT NULL;
+    """
+    + _isolate_user("web_users")
+    + _isolate_user("entitlements")
+    + _isolate_user("payment_events")
+    + """
+    ALTER TABLE web_sessions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE web_sessions FORCE ROW LEVEL SECURITY;
+    CREATE POLICY session_isolation ON web_sessions
+        USING (user_id = dmbot_current_user() OR id_hash = dmbot_current_session())
+        WITH CHECK (user_id = dmbot_current_user());
+
+    ALTER TABLE installs ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE installs FORCE ROW LEVEL SECURITY;
+    CREATE POLICY install_isolation ON installs
+        USING (guild_id = dmbot_current_guild()
+               OR installed_by_user_id = dmbot_current_user())
+        WITH CHECK (guild_id = dmbot_current_guild()
+                    OR installed_by_user_id = dmbot_current_user());
+    """
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -458,6 +580,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0008_played_by", PLAYED_BY),
     ("0009_transcripts", TRANSCRIPTS),
     ("0010_memory_heard", MEMORY_HEARD),
+    ("0011_web_accounts", WEB_ACCOUNTS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -472,6 +595,16 @@ ISOLATED_TABLES = (
     "transcript_sessions",
     "transcript_lines",
     "memory_heard",
+)
+# A person's own rows (the website, #435): row-level security on `user_id`, set by
+# Database.user(). Sessions can also be found by their cookie hash (Database.session()),
+# and installs are visible to their server and to the person who installed DMbot.
+USER_ISOLATED_TABLES = (
+    "web_users",
+    "entitlements",
+    "payment_events",
+    "web_sessions",
+    "installs",
 )
 # Hold only server IDs (see the rules at the top of this file).
 ROUTING_TABLES = ("live_session_guilds",)

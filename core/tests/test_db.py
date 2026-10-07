@@ -6,7 +6,7 @@ import uuid
 from psycopg import errors as pg_errors
 
 from dmbot.db import Database, DatabaseError, drop_schema
-from dmbot.schema import ISOLATED_TABLES, MIGRATIONS, UNSCOPED_TABLES
+from dmbot.schema import ISOLATED_TABLES, MIGRATIONS, UNSCOPED_TABLES, USER_ISOLATED_TABLES
 from tests.pg import SUPERUSER_URL, TEST_URL, DatabaseTest
 
 GUILD_A, GUILD_B = 111, 222
@@ -108,8 +108,11 @@ class RowLevelSecurity(DatabaseTest):
                 " WHERE relnamespace = current_schema()::regnamespace AND relkind = 'r'"
             )
             tables = {r["relname"]: r for r in await cur.fetchall()}
-        self.assertEqual(set(tables), set(ISOLATED_TABLES) | set(UNSCOPED_TABLES))
-        for name in ISOLATED_TABLES:
+        self.assertEqual(
+            set(tables),
+            set(ISOLATED_TABLES) | set(USER_ISOLATED_TABLES) | set(UNSCOPED_TABLES),
+        )
+        for name in (*ISOLATED_TABLES, *USER_ISOLATED_TABLES):
             self.assertTrue(tables[name]["relrowsecurity"], name)
             self.assertTrue(tables[name]["relforcerowsecurity"], name)
 
