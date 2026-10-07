@@ -23,6 +23,18 @@ first; rebuild core and ears: both changed). Check, in this order:
     campaign menus in backup, restore and names cut long names in the middle so a
     restored copy can be told apart. Check on a phone.
   - #266 (web): docs only, nothing to check.
+Deploy development @ d9e82f1 instead (same deploy, four more PRs; rebuild both):
+  - #293 (dev1, #147): every save/removal of the saved session is logged with its
+    reason. Check: `docker compose logs core | grep -i "session saved\|removed"` after
+    a start, a /dmbot stop and a restart; no WARNING "wasn't saved" on a normal stop.
+  - #302 (CloudDev, #287): /transcript campaign menu fits a phone, "Last played …".
+  - #304 (CloudDev, #21): npm/Node pins only; the docker images job built, so just
+    confirm ears starts. Also run `npm view npm@10.9.8 version` once (see #318).
+  - #306 (dev3, #298): someone who opts in mid-session is looked up before they
+    speak. Check: opt in while the table runs, say one sentence at once: ears
+    `audio` received == expected and the first word is kept; after a withdrawal the
+    capture stops at once. DM-screen audio % waits from the latest health report
+    and gives up after ~2 min without speech.
 Then run 8 below covers the rest.
 
 ------------------------------------------------------------------------------
