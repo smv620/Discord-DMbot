@@ -90,8 +90,8 @@ from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
-from dmbot.memory.models import DESCRIPTION_MAX, DM, FIX, KEEP, Heard, MemoryRuleError, name_key
-from dmbot.memory.scan import find_new_names, group_alike, with_matches
+from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
+from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import PLAYER_CHARACTER, HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.store import MemoryStore
@@ -1784,19 +1784,12 @@ class DMBot(commands.AutoShardedBot):
                 if not name.startswith("<@"):
                     skip.add(name_key(name))
                     skip.update(name_key(word) for word in name.split())
-            # One question per thing ("Oskar Vane", also "Vane"), and the known name each
-            # one sounds like, so the DM can say "another name for it" in one press (#394).
-            found = group_alike(find_new_names(lines, skip))
-            if self.lookup is not None:
-                try:
-                    found = with_matches(await self.lookup.get(gid, cid), found)
-                except Exception:
-                    log.exception("Couldn't load the campaign's names to match suggestions")
+            # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
+            # (#394). Which known name each sounds like is worked out when the DM looks,
+            # never saved: names can change, or be made secret, before then.
+            found = group_alike(find_new_names(lines, skip, limit=None))[:MAX_SUGGESTIONS]
             added: list[str] = []
             for suggestion in found:
-                heard = f"Heard {suggestion.times} times"
-                if suggestion.match is not None:
-                    heard += f" · sounds like {suggestion.match.name}"
                 try:
                     written = await self.memory.add_entity(
                         gid,
@@ -1804,16 +1797,25 @@ class DMBot(commands.AutoShardedBot):
                         type="concept",
                         name=suggestion.name,
                         source="scan",
-                        description=heard[:DESCRIPTION_MAX],
+                        description=f"Heard {suggestion.times} times",
                     )
-                    for other in suggestion.also:  # suggested with it, confirmed with it
-                        await self.memory.add_alias(
-                            gid, cid, written.value.id, other, kind="short", source="scan"
-                        )
                 except MemoryRuleError as exc:
                     log.info("Skipped a suggested name: %s", exc)
                     continue
                 added.append(suggestion.name)
+                for other in suggestion.also:  # suggested with it, confirmed with it
+                    part = name_key(other) in name_key(suggestion.name)
+                    try:
+                        await self.memory.add_alias(
+                            gid,
+                            cid,
+                            written.value.id,
+                            other,
+                            kind="short" if part else "misheard",
+                            source="scan",
+                        )
+                    except MemoryRuleError as exc:
+                        log.info("Skipped a name heard with a suggestion: %s", exc)
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()

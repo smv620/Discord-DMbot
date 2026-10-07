@@ -125,9 +125,14 @@ def _candidates(
 
 
 def find_new_names(
-    lines: Iterable[str], skip_keys: Iterable[str] = (), *, min_times: int = MIN_TIMES
+    lines: Iterable[str],
+    skip_keys: Iterable[str] = (),
+    *,
+    min_times: int = MIN_TIMES,
+    limit: int | None = MAX_SUGGESTIONS,
 ) -> list[Suggestion]:
-    """Names in these lines (as heard) worth asking the DM about, most heard first."""
+    """Names in these lines (cleaned, so names fixed live are known) worth asking the DM
+    about, most heard first. `limit=None`: all of them (group them, then cap)."""
     sentences = _sentences(lines)
     skip = frozenset({name_key(k) for k in skip_keys} | COMMON | GAME_TERMS)
     lower_words = {w.casefold() for words in sentences for w in words if w[:1].islower()}
@@ -149,69 +154,98 @@ def find_new_names(
         if times >= min_times and key in mid_sentence
     ]
     found.sort(key=lambda s: (-s.times, s.name))
-    return found[:MAX_SUGGESTIONS]
+    return found if limit is None else found[:limit]
 
 
-def _alike(a: str, b: str) -> float:
-    """How alike two spellings are, 0 to 1, ignoring case, spaces and punctuation."""
-    return difflib.SequenceMatcher(
+def _alike(a: str, b: str, need: float = 0.0) -> float:
+    """How alike two spellings are, 0 to 1, ignoring case, spaces and punctuation;
+    0 at once when they can't reach `need` (a quick check first, for big campaigns)."""
+    matcher = difflib.SequenceMatcher(
         None, name_key(a).replace(" ", ""), name_key(b).replace(" ", "")
-    ).ratio()
+    )
+    if matcher.real_quick_ratio() < need or matcher.quick_ratio() < need:
+        return 0.0
+    return matcher.ratio()
+
+
+Candidate = tuple[str, str, str]  # (entity ID, a name of it as written, its own name)
+
+
+def near_match_in(name: str, candidates: Iterable[Candidate]) -> Match | None:
+    """The known name this one sounds like and is spelled much like, if there's one
+    clear best. `candidates`: confirmed, non-secret names that share a sound code with
+    it (the review is in the DM screen, which players may peek at). Never merged on its
+    own: the DM decides."""
+    need = NEAR_ONE_WORD if len(name.split()) == 1 else NEAR
+    best: dict[str, tuple[float, str]] = {}
+    for entity_id, text, own in candidates:
+        alike = _alike(name, text, need - TIE)
+        if alike > best.get(entity_id, (0.0, ""))[0]:
+            best[entity_id] = (alike, own)
+    ranked = sorted(best.items(), key=lambda kv: -kv[1][0])
+    if not ranked or ranked[0][1][0] < need:
+        return None
+    if len(ranked) > 1 and ranked[0][1][0] - ranked[1][1][0] < TIE:
+        return None  # two known names fit about as well: offer it as new
+    entity_id, (alike, own) = ranked[0]
+    return Match(entity_id, own, alike)
+
+
+def sound_keys(name: str) -> tuple[str, ...]:
+    """The sound codes a suggested name is looked up by."""
+    return sound_codes(name.replace(" ", ""))
 
 
 def near_match(lookup: CampaignLookup, name: str) -> Match | None:
-    """The known name this one sounds like and is spelled much like, if there's one
-    clear best: confirmed entries only, and never a secret name (the review is in the
-    DM screen, which players may peek at). Never merged on its own: the DM decides."""
-    need = NEAR_ONE_WORD if len(name.split()) == 1 else NEAR
-    best: dict[str, float] = {}
-    for code in sound_codes(name.replace(" ", "")):
+    """`near_match_in` against the campaign's names in memory."""
+    seen: dict[str, Candidate] = {}
+    for code in sound_keys(name):
         for entry in lookup.by_sound.get(code, ()):
             entity = lookup.entities.get(entry.entity_id)
             if entry.secret or not entry.confirmed or entity is None:
                 continue
-            if entity.status != CONFIRMED:
-                continue
-            alike = _alike(name, entry.text)
-            if alike > best.get(entry.entity_id, 0.0):
-                best[entry.entity_id] = alike
-    ranked = sorted(best.items(), key=lambda kv: -kv[1])
-    if not ranked or ranked[0][1] < need:
-        return None
-    if len(ranked) > 1 and ranked[0][1] - ranked[1][1] < TIE:
-        return None  # two known names fit about as well: offer it as new
-    entity_id, alike = ranked[0]
-    return Match(entity_id, lookup.entities[entity_id].name, alike)
+            if entity.status == CONFIRMED:
+                seen.setdefault(entry.alias_id, (entry.entity_id, entry.text, entity.name))
+    return near_match_in(name, seen.values())
 
 
 def _same_thing(a: str, b: str) -> bool:
     """Is the shorter one part of the longer ("Vane" in "Oskar Vane"), or do they sound
-    and look alike?"""
+    and look alike (one-word names: as alike as the Cleaner needs, "Kael" isn't
+    "Kaela")?"""
     short, long_ = sorted((name_key(a).split(), name_key(b).split()), key=len)
     if len(short) < len(long_) and (long_[: len(short)] == short or long_[-len(short) :] == short):
         return True
-    return bool(set(sound_codes(a.replace(" ", ""))) & set(sound_codes(b.replace(" ", "")))) and (
-        _alike(a, b) >= NEAR
-    )
+    need = NEAR_ONE_WORD if len(short) == 1 and len(long_) == 1 else NEAR
+    return bool(set(sound_keys(a)) & set(sound_keys(b))) and _alike(a, b, need) >= need
 
 
 def group_alike(found: list[Suggestion]) -> list[Suggestion]:
-    """One suggestion per thing: near-duplicates heard this session are folded into the
-    longest of them ("Oskar Vane", also "Vane"), with their times added up."""
+    """One suggestion per thing: a near-duplicate heard this session is folded into the
+    longest one it matches ("Oskar Vane", also "Vane"), with their times added up, but
+    only when it matches exactly one: "Lord" between "Lord Neverember" and "Lord Dagult"
+    stays its own question."""
+    ordered = sorted(found, key=lambda s: (-len(s.name.split()), -s.times, s.name))
+    fits = {
+        s.name: [g.name for g in ordered if g.name != s.name and _same_thing(s.name, g.name)]
+        for s in ordered
+    }
     groups: list[Suggestion] = []
-    for suggestion in sorted(found, key=lambda s: (-len(s.name.split()), -s.times, s.name)):
-        for i, group in enumerate(groups):
-            if any(_same_thing(suggestion.name, n) for n in (group.name, *group.also)):
-                groups[i] = replace(
-                    group, also=(*group.also, suggestion.name), times=group.times + suggestion.times
-                )
-                break
+    for suggestion in ordered:
+        homes = [
+            i
+            for i, g in enumerate(groups)
+            if any(_same_thing(suggestion.name, n) for n in (g.name, *g.also))
+        ]
+        longer = [
+            n for n in fits[suggestion.name] if len(n.split()) >= len(suggestion.name.split())
+        ]
+        if len(homes) == 1 and len(longer) <= 1:
+            g = groups[homes[0]]
+            groups[homes[0]] = replace(
+                g, also=(*g.also, suggestion.name), times=g.times + suggestion.times
+            )
         else:
             groups.append(suggestion)
     groups.sort(key=lambda s: (-s.times, s.name))
     return groups
-
-
-def with_matches(lookup: CampaignLookup, found: list[Suggestion]) -> list[Suggestion]:
-    """Each suggestion with the known name it sounds like, if any (#394)."""
-    return [replace(s, match=near_match(lookup, s.name)) for s in found]

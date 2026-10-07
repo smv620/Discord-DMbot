@@ -725,12 +725,17 @@ remembers Belleros is Cerric's mentor"), never "graph", "entity" or "ontology".
   on its own.**
   - **Near:** sounds like a confirmed name and is spelled at least 0.8 alike (one word:
     0.9, as in the Cleaner); never a secret name; when two known names fit about as
-    well, it's offered as new.
-  - **The review** then offers **✅ Another name for Hrothgar** (one press; it's merged
-    as an other name, with the usual guards, and can be undone), **➕ New name**,
-    **🚫 Not a name** and **Later**.
+    well, it's offered as new. It's worked out when the DM opens the review (one small
+    query for names sharing its sound codes), never saved: names can change, or be made
+    secret, after the session. The saved note is only "Heard 3 times".
+  - **The review** then reads "📝 **Rothgr** · heard 3 times / Sounds like **Hrothgar**.
+    Same one, or someone new?" with **✅ It's Hrothgar** · **➕ No, someone new** ·
+    **🔗 Someone else I know…** · **🚫 Not a name** · **⏳ Later**. "It's" merges it as
+    an other name in one change (with the usual guards), so one undo takes it all back.
   - **Near-duplicates heard in one session** ("Oskar Vane" and "Vane") are one question,
-    with the shorter shown as "Also heard as" and confirmed with it.
+    grouped before the cap of 10. The shorter is shown as "Also heard" and confirmed or
+    turned down with it. A word that fits two names ("Lord" in "Lord Neverember" and
+    "Lord Dagult") stays its own question; one-word names fold only at 0.9.
   - **No auto-accept setting.** Nothing is added until the DM presses a button.
 - **Keeping it tidy (entity resolution):**
   - Nicknames grow: when "Bell" keeps standing for Belleros, EntityBot proposes the alias.

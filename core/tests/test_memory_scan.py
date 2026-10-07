@@ -11,7 +11,6 @@ from dmbot.memory.scan import (
     find_new_names,
     group_alike,
     near_match,
-    with_matches,
 )
 
 
@@ -119,9 +118,9 @@ class NearMatchTest(unittest.TestCase):
         )
         self.assertIsNone(near_match(names, "Marene"))
 
-    def test_with_matches(self) -> None:
-        (s,) = with_matches(self.lookup(), [Suggestion("Rothgar", 3)])
-        self.assertEqual(s.match.name if s.match else None, "Hrothgar")
+    def test_a_long_name_is_matched_quickly_and_right(self) -> None:
+        names = self.lookup(("b" * 32, "Neverember", "npc", False, CONFIRMED))
+        self.assertEqual(getattr(near_match(names, "Nevermber"), "name", None), "Neverember")
 
 
 class GroupAlikeTest(unittest.TestCase):
@@ -131,7 +130,25 @@ class GroupAlikeTest(unittest.TestCase):
 
     def test_two_spellings_that_sound_alike(self) -> None:
         (group,) = group_alike([Suggestion("Ulfgarr", 2), Suggestion("Ulfgar", 4)])
-        self.assertEqual(group.times, 6)
+        self.assertEqual((group.name, group.also, group.times), ("Ulfgar", ("Ulfgarr",), 6))
+
+    def test_one_word_names_need_to_be_very_alike_to_fold(self) -> None:
+        names = {g.name for g in group_alike([Suggestion("Kael", 2), Suggestion("Kaela", 2)])}
+        self.assertEqual(names, {"Kael", "Kaela"})  # 0.89: two different people, maybe
+
+    def test_a_word_shared_by_two_names_stays_its_own_question(self) -> None:
+        found = [
+            Suggestion("Lord Neverember", 3),
+            Suggestion("Lord Dagult", 3),
+            Suggestion("Lord", 2),
+        ]
+        groups = {g.name: g.also for g in group_alike(found)}
+        self.assertEqual(groups, {"Lord Neverember": (), "Lord Dagult": (), "Lord": ()})
+
+    def test_all_found_before_the_cap(self) -> None:
+        lines = [f"We saw Name{chr(65 + i)}x twice. Again Name{chr(65 + i)}x." for i in range(12)]
+        self.assertEqual(len(find_new_names(lines, limit=None)), 12)
+        self.assertEqual(len(find_new_names(lines)), MAX_SUGGESTIONS)
 
     def test_different_names_stay_apart(self) -> None:
         names = {

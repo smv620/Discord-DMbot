@@ -15,7 +15,7 @@ Only the DM's word confirms anything (`source="dm"`); other sources propose.
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -295,6 +295,26 @@ class MemoryStore:
                 [entity_id, entity_id, include_secret, *scope.ids],
             )
             return [_alias(r) for r in rows]
+
+    async def sound_alikes(
+        self, guild_id: int, campaign_id: str, codes: Sequence[str], *, limit: int = 500
+    ) -> list[tuple[str, str, str]]:
+        """Confirmed, non-secret names of confirmed entries that share a sound code with
+        `codes`, as (entity ID, name as written, the entry's own name): one small query,
+        for matching a suggested name without loading the whole campaign (#394)."""
+        if not codes:
+            return []
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT a.entity_id, a.text, e.name FROM memory_aliases a"
+                " JOIN memory_entities e ON e.id = a.entity_id"
+                " AND e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
+                " WHERE a.guild_id = %s AND a.campaign_id = %s AND a.status = 'confirmed'"
+                " AND NOT a.secret AND e.status = 'confirmed' AND a.sound_codes && %s::text[]"
+                " ORDER BY a.entity_id, a.id LIMIT %s",
+                (*scope.ids, list(codes), limit),
+            )
+            return [(r["entity_id"], r["text"], r["name"]) for r in await cur.fetchall()]
 
     async def relations(
         self,
@@ -789,13 +809,15 @@ class MemoryStore:
         *,
         source: str,
         dm_said_same: bool = False,
+        confirm_keys: Collection[str] = (),
     ) -> Written[Entity]:
         """Two entries are the same person or thing: move everything onto `keep_id`.
 
         Two proposed entries of the same kind may merge on strong evidence. If either is
         confirmed, or their kinds differ, only the DM can say they're the same. Facts
         moved over are checked again (duplicates folded, problems flagged). Undo splits
-        them again.
+        them again. `confirm_keys`: names the DM just said mean `keep_id` (from a
+        suggestion), confirmed in the same change, so one undo takes it all back.
         """
         if keep_id == gone_id:
             raise MemoryRuleError("That's the same entry.")
@@ -816,6 +838,14 @@ class MemoryStore:
                     ENTITIES, keep_id, {"type": gone["type"], "played_by": gone["played_by"]}
                 )
             await _move_aliases(w, keep_id, gone_id)
+            if confirm_keys:
+                if source != DM:
+                    raise ValueError("Only the DM confirms names")
+                for row in await w.select(
+                    ALIASES, " AND entity_id = %s AND key = ANY(%s)", [keep_id, list(confirm_keys)]
+                ):
+                    if row["status"] != CONFIRMED:
+                        await w.update(ALIASES, row["id"], {"status": CONFIRMED})
             own = await w.select(
                 ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
             )
