@@ -229,6 +229,7 @@ class CampaignPickersFitAPhone(unittest.TestCase):
 
     def test_long_names_are_cut_and_told_apart(self) -> None:
         from dmbot.ui import names as names_ui
+        from dmbot.ui import transcripts
         from dmbot.ui.logic import NAME_LABEL_MAX, PHONE_LABEL_MAX
         from tests.test_ui_logic import campaign
 
@@ -240,6 +241,7 @@ class CampaignPickersFitAPhone(unittest.TestCase):
             cmds.BackupPicker(campaigns),
             cmds.RestoreChoice({}, long, campaigns),
             names_ui.CampaignChoice(campaigns),
+            transcripts.CampaignPicker(campaigns),  # #287
         ]
         for view in views:
             with self.subTest(type(view).__name__):
@@ -253,3 +255,14 @@ class CampaignPickersFitAPhone(unittest.TestCase):
                     if not isinstance(item, discord.ui.Select):
                         self.assertLessEqual(len(item.label or ""), PHONE_LABEL_MAX)
                 self.assertLessEqual(len(menu.placeholder or ""), PHONE_LABEL_MAX)
+
+    def test_a_campaign_never_played_has_no_transcripts_yet(self) -> None:
+        from dmbot.ui import transcripts
+        from tests.test_ui_logic import campaign
+
+        view: Any = transcripts.CampaignPicker(
+            [campaign(), campaign(id="new", name="Brand new", last_played_at=None)]
+        )
+        (menu,) = [i for i in list(view.children) if isinstance(i, discord.ui.Select)]
+        self.assertTrue((menu.options[0].description or "").startswith("Last played"))
+        self.assertEqual(menu.options[1].description, "No transcripts yet")
