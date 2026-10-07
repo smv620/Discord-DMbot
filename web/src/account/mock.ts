@@ -9,7 +9,21 @@ import type { PlanId } from "../content/pricing";
 import type { AccountApi, Campaign, Me, Person } from "./api";
 import { ApiError } from "./api";
 
-export type Scenario = "signed-out" | "no-plan" | "try-it" | "table" | "grace" | "lapsed" | "down";
+export const scenarios = [
+  "signed-out",
+  "no-plan",
+  "try-it",
+  "table",
+  "grace",
+  "lapsed",
+  "down",
+] as const;
+export type Scenario = (typeof scenarios)[number];
+
+/** The ?demo= value if it names a scenario, otherwise "table". */
+export function pickScenario(value: string | null): Scenario {
+  return scenarios.find((s) => s === value) ?? "table";
+}
 
 const user: Person = { id: "100000000000000001", name: "Belleros" };
 

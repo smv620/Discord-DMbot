@@ -14,7 +14,8 @@
     "preview": "astro preview",
     "typecheck": "astro check",
     "test": "vitest run",
-    "check:links": "node scripts/check-links.mjs"
+    "check:links": "node scripts/check-links.mjs",
+    "check:csp": "node scripts/check-csp.mjs"
   },
   "dependencies": {
     "@astrojs/preact": "^6.0.6",

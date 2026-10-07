@@ -21,13 +21,19 @@ export function hoursUsedLine(used: number, cap: number): string {
   return `About ${Math.min(rounded, cap - 1)} of ${cap} hours used`;
 }
 
-export function hoursLeftLine(used: number, cap: number, renewsOn: string | null): string {
-  if (used >= cap) {
-    return renewsOn
-      ? `Your hours start again on ${shortDate(renewsOn)}. Need more now? Add 10 hours.`
-      : "Need more now? Add 10 hours.";
-  }
-  return renewsOn ? `Your hours start again on ${shortDate(renewsOn)}.` : "";
+export function hoursLeftLine(
+  used: number,
+  cap: number,
+  renewsOn: string | null,
+  plan: PlanId,
+): string {
+  const again = renewsOn ? `Your hours start again on ${shortDate(renewsOn)}.` : "";
+  if (used < cap) return again;
+  const more =
+    plan === "try-it"
+      ? "Pick a plan below to keep playing."
+      : "Need more now? Tap Change plan to add 10 hours.";
+  return again ? `${again} ${more}` : more;
 }
 
 export const planName = (id: PlanId): string => byId[id].name;
@@ -40,15 +46,18 @@ export const text = {
   signInLead: "Sign in with Discord to see your plan, your hours and your campaigns.",
   signIn: "Sign in with Discord",
   signInNote: "DMbot only asks Discord for your name, your email and your list of servers.",
-  newHere: "New here? Sign in, then start Try It. It's free and needs no card.",
+  startTryItFree: "Start Try It, free",
+  startTryItSignIn: "Free for 30 days. No card needed. You'll sign in with Discord first.",
+  haveAccount: "Already have a plan?",
   seePrices: "See the plans",
   signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",
 
   // Errors
-  down: "We can't reach DMbot right now. Try again in a minute.",
+  down: "DMbot isn't answering right now. Tap Try again in a minute.",
   tryAgain: "Try again",
   actionFailed: "That didn't work. Try again in a minute.",
-  signedOutNow: "You've been signed out. Sign in again to carry on.",
+  signedOutNow: "You've been signed out. Tap Sign in with Discord to carry on.",
+  busy: "One moment…",
 
   greeting: (name: string): string => `Hi, ${name}.`,
   signOut: "Sign out",
@@ -63,8 +72,10 @@ export const text = {
   changePlan: "Change plan",
   pickPlan: "Pick a plan",
   hoursBarLabel: "Hours used this month",
-  grace: (date: string): string =>
-    `Your last payment didn't go through. Fix it by ${shortDate(date)} to keep your plan.`,
+  grace: (date: string | null): string =>
+    date
+      ? `Your last payment didn't go through. Fix it by ${shortDate(date)} to keep your plan.`
+      : "Your last payment didn't go through. Fix it soon to keep your plan.",
   fixPayment: "Fix my payment",
   lapsed:
     "Your plan has stopped. Your campaigns are kept for 120 days. Pick a plan to play again.",
@@ -83,10 +94,10 @@ export const text = {
   // Hand over
   handOverQuestion: (campaign: string): string => `Who should take over ${campaign}?`,
   handOverNote:
-    "They need a plan with room for one more campaign. After that, it uses their hours, not yours.",
+    "They become the DM. You can't undo this; only they can hand it back. After this, it uses their hours, not yours.",
   handOverNobody:
-    "Nobody can take it yet. The person needs a plan with room for one more campaign.",
-  handOverConfirm: "Hand it over",
+    "Nobody can take it yet. Ask the person to sign in here and start a plan (Try It is free). Then tap Hand over again.",
+  handOverConfirm: "Give it to them",
   handOverDone: (campaign: string, person: string): string =>
     `Done. ${campaign} now belongs to ${person}.`,
   noFreeSlot: "Their plan is full. Ask them to pause a campaign or pick a bigger plan.",
@@ -101,12 +112,13 @@ export const text = {
 
   // Delete
   deleteHeading: "Delete my account and data",
-  deleteStart: "Delete my account and data",
+  deleteStart: "Start deleting",
   deleteWarning:
-    "This deletes your account, your plan and the campaigns you run, and stops any payments. Backups that people already downloaded are not deleted. Lines you said in other people's campaigns stay there.",
+    "First: hand over or save your campaigns. Your players lose any campaign you run. To save one, type /dmbot backup in Discord. Then this deletes your account and plan, and stops payments. Backups people already have stay. So do lines you said in other people's games.",
+  deleteHandOverLink: "Hand over a campaign first",
   deleteNext: "Delete everything",
   keep: "Keep my account",
-  deleteSure: "Are you sure? This can't be undone.",
+  deleteSure: "Last check: your campaigns and account go for good. This can't be undone.",
   deleteConfirm: "Yes, delete it all now",
   deleted: "Done. Your account and data are deleted. You can close this page.",
 };

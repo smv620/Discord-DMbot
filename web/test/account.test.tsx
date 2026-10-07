@@ -8,7 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import Account from "../src/account/Account";
 import { ApiError, httpApi } from "../src/account/api";
 import { candidates, mockApi, type Scenario } from "../src/account/mock";
-import { hoursUsedLine, text } from "../src/content/account";
+import { isSafeRedirect } from "../src/account/redirect";
+import { hoursLeftLine, hoursUsedLine, text } from "../src/content/account";
 
 afterEach(() => {
   cleanup();
@@ -209,7 +210,122 @@ describe("actions", () => {
   });
 });
 
+describe("safety", () => {
+  it("does an action once, however fast the taps", async () => {
+    const api = mockApi("no-plan");
+    let release: () => void = () => {};
+    let started = 0;
+    api.startTryIt = () => {
+      started += 1;
+      return new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    const start = await screen.findByRole("button", { name: text.startTryIt });
+    fireEvent.click(start);
+    fireEvent.click(start);
+    await screen.findAllByRole("button", { name: text.busy });
+    fireEvent.click(screen.getAllByRole("button", { name: text.busy })[0] as HTMLElement);
+    release();
+    await waitFor(() => expect(screen.queryAllByRole("button", { name: text.busy })).toHaveLength(0));
+    expect(started).toBe(1);
+  });
+
+  it("refuses to send the browser anywhere but Discord or the payment company", async () => {
+    const api = mockApi("table");
+    api.billingPortalUrl = () => Promise.resolve("https://evil.example/login");
+    const go = vi.fn<(url: string) => void>();
+    render(<Account api={api} go={go} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.changePlan }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.actionFailed);
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  it("shows a failure inside the section that failed", async () => {
+    const api = mockApi("table");
+    api.installUrl = () => Promise.reject(new ApiError("server"));
+    render(<Account api={api} go={vi.fn()} />);
+    const row = await waitFor(() => {
+      const found = document.querySelector('[data-server="200000000000000002"]');
+      if (!found) throw new Error("not yet");
+      return found;
+    });
+    fireEvent.click(row.querySelector("button") as HTMLButtonElement);
+    const alert = await screen.findByRole("alert");
+    expect(alert.closest("section")?.getAttribute("aria-labelledby")).toBe("servers-heading");
+  });
+
+  it("keeps the page when only the refresh after a change fails", async () => {
+    const api = mockApi("no-plan");
+    const realMe = api.me.bind(api);
+    let calls = 0;
+    api.me = () => (++calls === 1 ? realMe() : Promise.reject(new ApiError("network")));
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.startTryIt }));
+    await waitFor(() => expect(calls).toBe(2));
+    expect(screen.queryByText(text.down)).toBeNull();
+    expect(screen.getByText("Hi, Belleros.")).toBeTruthy();
+  });
+
+  it("offers Fix my payment in grace even without a date", async () => {
+    const api = mockApi("grace");
+    const realMe = api.me.bind(api);
+    api.me = async () => {
+      const me = await realMe();
+      return me && me.plan ? { ...me, plan: { ...me.plan, graceEndsOn: null } } : me;
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    expect(await screen.findByText(text.grace(null))).toBeTruthy();
+    expect(screen.getByRole("button", { name: text.fixPayment })).toBeTruthy();
+  });
+
+  it("signed out: Start Try It is the main button, with the plans under it", async () => {
+    show("signed-out");
+    const links = await screen.findAllByRole("link");
+    const labels = links.map((l) => l.textContent);
+    expect(labels.indexOf(text.startTryItFree)).toBeLessThan(labels.indexOf("Choose Table"));
+    expect(screen.getByText(text.startTryItSignIn)).toBeTruthy();
+    expect(screen.getByRole("link", { name: text.startTryItFree }).className).toBe("button");
+  });
+
+  it("puts Keep first on the last delete step", async () => {
+    show("table");
+    fireEvent.click(await screen.findByRole("button", { name: text.deleteStart }));
+    fireEvent.click(screen.getByRole("button", { name: text.deleteNext }));
+    await screen.findByRole("button", { name: text.deleteConfirm });
+    const section = document.querySelector('[aria-labelledby="delete-heading"]') as HTMLElement;
+    const order = [...section.querySelectorAll("button")].map((b) => b.textContent);
+    expect(order).toEqual([text.keep, text.deleteConfirm]);
+  });
+});
+
+describe("redirects", () => {
+  it.each([
+    ["https://discord.com/oauth2/authorize?client_id=1", true],
+    ["https://checkout.paddle.com/x", true],
+    ["https://sandbox-checkout.paddle.com/x", true],
+    ["https://dmbot.lemonsqueezy.com/checkout", true],
+    ["#demo-billing", true],
+    ["http://discord.com/", false],
+    ["https://discord.com.evil.example/", false],
+    ["https://evildiscord.com/", false],
+    ["https://user:pw@discord.com/", false],
+    ["javascript:alert(1)", false],
+    ["/account", false],
+  ])("%s → %s", (url, ok) => {
+    expect(isSafeRedirect(url)).toBe(ok);
+  });
+});
+
 describe("hours words", () => {
+  it("tells a Try It user and a paid user different next steps at the cap", () => {
+    expect(hoursLeftLine(8, 8, null, "try-it")).toBe("Pick a plan below to keep playing.");
+    expect(hoursLeftLine(18, 18, "2026-10-14", "table")).toBe(
+      "Your hours start again on Oct 14. Need more now? Tap Change plan to add 10 hours.",
+    );
+  });
+
   it.each([
     [0, 18, "None of your 18 hours used yet"],
     [0.3, 18, "Less than 1 of 18 hours used"],
@@ -266,6 +382,14 @@ describe("the HTTP client", () => {
     await httpApi("https://api.example", fetcher).confirmDelete("secret-token");
     expect(calls[0]?.url).toBe("https://api.example/account/delete");
     expect(calls[0]?.init.body).toBe(JSON.stringify({ confirm_token: "secret-token" }));
+  });
+
+  it("treats a 403 without a code as not allowed, and a broken 500 as a server error", async () => {
+    const forbidden = httpApi("https://api.example", fakeFetch(403).fetcher);
+    await expect(forbidden.signOut()).rejects.toMatchObject({ kind: "not-allowed" });
+    const broken = httpApi("https://api.example", (async () =>
+      new Response("<html>oops</html>", { status: 500 })) as unknown as typeof fetch);
+    await expect(broken.billingPortalUrl()).rejects.toMatchObject({ kind: "server" });
   });
 
   it("escapes ids in paths", async () => {

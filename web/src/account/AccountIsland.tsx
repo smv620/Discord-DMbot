@@ -19,9 +19,8 @@ export default function AccountIsland() {
       return;
     }
     // Only in a mock build: the pretend API is a separate chunk, never loaded otherwise.
-    void import("./mock").then(({ mockApi }) => {
-      const demo = new URLSearchParams(search).get("demo") ?? "table";
-      setApi(mockApi(demo as Parameters<typeof mockApi>[0]));
+    void import("./mock").then(({ mockApi, pickScenario }) => {
+      setApi(mockApi(pickScenario(new URLSearchParams(search).get("demo"))));
     });
   }, [search]);
 

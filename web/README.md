@@ -20,10 +20,12 @@ npm run typecheck  # astro check: TypeScript and .astro files
 npm test           # Vitest: one smoke test per page, plus the trademark check
 npm run build      # static site in dist/
 npm run check:links  # after build: every internal link points at a real file
+npm run check:csp    # after build: every inline script is allowed by the CSP
 npm run preview    # serve dist/ to check the build
 ```
 
-CI runs `typecheck`, `test`, `build` and `check:links` in the `web` job on every push.
+CI runs `typecheck`, `test`, `build`, `check:links` and `check:csp` in the `web` job on every
+push.
 
 ### The account page and the web API
 
@@ -31,7 +33,7 @@ CI runs `typecheck`, `test`, `build` and `check:links` in the `web` job on every
 (#435). Set the API's address when building:
 
 ```bash
-PUBLIC_API_BASE=https://api.example npm run build   # default: /api on the same site
+PUBLIC_API_BASE=https://api.example.com npm run build   # default: /api on the same site
 PUBLIC_API_BASE=mock npm run dev                     # pretend API, no core needed
 ```
 
@@ -40,10 +42,15 @@ With `mock`, add `?demo=` to the address to see each state: `signed-out`, `no-pl
 pretend API is never included in a real build. `src/account/api.ts` is the contract with
 #435: change both together.
 
-`npm run build` also runs `scripts/csp-hashes.mjs`, which adds the hashes of Astro's small
+**The API must be on the same site as the website**: `/api` on the same address, or a
+subdomain of the website's domain (`api.example.com` for `example.com`). The sign-in
+cookie is `SameSite=Lax`, and browsers don't send it to another site.
+
+`npm run build` also runs `scripts/csp-hashes.mjs`. It adds the hashes of Astro's small
 inline island loader to `script-src` in `dist/_headers`, so the Content-Security-Policy
-never needs `'unsafe-inline'` for scripts. If the API is on another address, add it to
-`connect-src` in `public/_headers`.
+never needs `'unsafe-inline'` for scripts, and adds the API's address to `connect-src`
+when `PUBLIC_API_BASE` is a full address. `npm run check:csp` (in CI) checks the result.
+A `mock` build can't be deployed to the live site (branch `main`).
 
 ## Layout
 
