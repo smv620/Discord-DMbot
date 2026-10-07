@@ -126,6 +126,16 @@ class NewName:
 
 
 @dataclass(frozen=True, slots=True)
+class MoreNames:
+    """New other names and secret names for a name DMbot already knows, from a list the
+    DM gave (📥 Add many, #369): saved in the same change as the list's new names."""
+
+    entity_id: str
+    others: tuple[str, ...] = ()
+    secrets: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Entity:
     id: str
     type: str

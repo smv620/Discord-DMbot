@@ -836,6 +836,9 @@ names panel nor the speech-to-text hints can be a fixed list.
     all"); unanswered ones wait in Check new names. A kind that differs on an exact match
     is asked the same way, and kept as DMbot has it when ignored. Repeated lines in one
     list pool their other names. Non-DMs matching a secret name see no hint of it.
+    Both kinds of question come as their own messages right under the summary, since
+    one message holds only five rows of buttons; the summary keeps the kind menus and
+    Undo, which also takes back the other names added to known names.
     The download is a file, sent privately:
     "This file includes secret names. Don't share it with players." A campaign holds
     up to about 10,000 names.

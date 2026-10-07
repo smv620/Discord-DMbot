@@ -13,6 +13,7 @@ import io
 import logging
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -27,8 +28,8 @@ from dmbot.memory.models import (
     CONFIRMED,
     DM,
     PROPOSED,
+    REJECTED,
     MemoryRuleError,
-    NewName,
     TooLateToUndo,
     days,
     name_key,
@@ -57,9 +58,9 @@ from dmbot.memory.name_list import (
     render,
     template,
 )
-from dmbot.memory.sounds import sound_codes
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import NO_PINGS, _bot, _Button, _Menu, _replace, _Select, _send, _tell
+from dmbot.ui.list_matches import UNKNOWN_KIND, KindDiffers, Near, plan
 from dmbot.ui.names import (
     KIND_SHORT,
     KINDS,
@@ -78,6 +79,7 @@ log = logging.getLogger(__name__)
 PER_PAGE = 20
 PAGE_MAX = 1800  # the page's text, under Discord's 2,000 characters
 SHOWN_PROBLEMS = 5
+SHOWN_SWAPPED = 3
 PASTE_MAX = 4000  # what a form field holds
 TEMPLATE_FILE = "dmbot-names-template.txt"
 LINK_MAX = 2000  # a form field for one link
@@ -529,17 +531,6 @@ def read_upload(raw: bytes) -> tuple[str | None, str | None]:
     return text, None
 
 
-def _sounds_known(names: CampaignLookup, name: str) -> bool:
-    """It sounds like a different name everyone may know (Bell Eros and Belleros). Uses
-    the copy's sound index: one look-up per sound, never a scan of every name."""
-    key = name_key(name)
-    return any(
-        entry.confirmed and not entry.secret and entry.key != key
-        for code in sound_codes(name)
-        for entry in names.by_sound.get(code, ())
-    )
-
-
 ONLY_DM_SECRETS = "only the campaign's DM can add secret names"
 AI_READS_PER_DAY = 20  # per server, for the operator's bill (bring-your-own keys: #50)
 AI_TIME_LIMIT_S = 600  # well inside Discord's 15 minutes to answer
@@ -809,35 +800,12 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
         return
     secrets_ok = sees_secrets(campaign, interaction.user.id)
     parsed = parse(text, secrets=secrets_ok)
-    # Names everyone may know. For anyone but the campaign's DMs, a clash with a secret
-    # name looks exactly like no clash: they never learn one exists.
-    taken = {e.key for e in names.names if secrets_ok or not e.secret}
-    new: list[NewName] = []
-    groups: dict[str, list[int]] = {}  # kind word ("" for none) → positions in `new`
-    known = look = dropped = 0
-    for line in parsed.lines:
-        key = name_key(line.name)
-        if key in taken:
-            known += 1
-            continue
-        others = tuple(o for o in line.others if name_key(o) not in taken)
-        secret = tuple(x for x in line.secrets if name_key(x) not in taken)
-        dropped += len(line.others) - len(others) + len(line.secrets) - len(secret)
-        # No kind, or it sounds like a known name: saved as a suggestion, waiting in
-        # 📝 Check new names.
-        sounds_known = _sounds_known(names, line.name)
-        unclear = line.kind is None or sounds_known
-        look += unclear
-        if line.kind is None and not sounds_known:
-            # Asked once per word after saving: "every wizard is an NPC".
-            groups.setdefault(" ".join(line.kind_word.casefold().split()), []).append(len(new))
-        new.append(
-            NewName(
-                line.name, line.kind or "concept", PROPOSED if unclear else CONFIRMED,
-                others, secret,
-            )
-        )  # fmt: skip
-        taken.update({key, *map(name_key, others), *map(name_key, secret)})
+    # Same names fold in, near names are asked about (#369). For anyone but the campaign's
+    # DMs, a clash with a secret name looks exactly like no clash: they never learn one
+    # exists.
+    # Pure CPU, bounded but up to a second or so on a big list: off the event loop.
+    p = await asyncio.to_thread(plan, parsed.lines, names, secrets=secrets_ok)
+    new = p.new
     room = MAX_NAMES - len(names.entities)
     if len(new) > room:
         await _tell(
@@ -847,12 +815,13 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
         )
         return
     batch = None
-    added = 0
-    if new:
+    saved: list[str | None] = []
+    if new or p.more:
         try:
             written = await memory.add_names(
-                campaign.guild_id, campaign.id, new, source=DM, secret_clashes=secrets_ok
-            )
+                campaign.guild_id, campaign.id, new, source=DM, secret_clashes=secrets_ok,
+                more=p.more,
+            )  # fmt: skip
         except MemoryRuleError as exc:
             await _tell(interaction, f"Nothing was added. {exc}")
             return
@@ -861,41 +830,76 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
             await _tell(interaction, "Nothing was added: something went wrong. Try again.")
             return
         batch = written.batch
-        added = sum(1 for i in written.value if i is not None)
-        # Saved by someone else at the same moment: counted as already known.
-        known += len(new) - added
-        look -= sum(
-            1 for n, i in zip(new, written.value, strict=True) if i is None and n.status == PROPOSED
+        saved = written.value[: len(new)]
+        # What was really added; for anyone but the DMs, what was asked for, since the
+        # store quietly skips a secret name the entry has: no hint one exists.
+        enriched = (
+            sum(1 for i in written.value[len(new) :] if i is not None)
+            if secrets_ok
+            else len(p.more)
         )
         changed(interaction, campaign)
-    saved = written.value if new else []
+    else:
+        enriched = 0
+    added = sum(1 for i in saved if i is not None)
+    # Saved by someone else at the same moment: counted as already known.
+    known = p.known + len(new) - added
+    near = [
+        n
+        for n in p.near
+        if saved[n.position] is not None
+        and (n.like_position is None or saved[n.like_position] is not None)
+    ]
+    asked = {n.position for n in near}
+    look = p.look - sum(
+        1
+        for i, (n, got) in enumerate(zip(new, saved, strict=True))
+        if got is None and n.status == PROPOSED and i not in asked
+    )
     kinds = {
         word: ids
-        for word, positions in groups.items()
-        if (ids := [i for p in positions if (i := saved[p]) is not None])
+        for word, positions in p.groups.items()
+        if (ids := [i for pos in positions if (i := saved[pos]) is not None])
     }
+    counts = Counts(added, look, known, p.dropped, enriched, p.swapped, p.repeated)
     await _send_summary(
-        interaction, campaign, parsed, added, look, known, dropped, batch, kinds, memory.keep_days
+        interaction, campaign, parsed, counts, batch, kinds, near, p.kinds, memory.keep_days
     )
+    if near:
+        await NearQuestions.send(interaction, campaign.id, near, saved)
+    if p.kinds:
+        await KindDiffQuestions.send(interaction, campaign.id, p.kinds)
+
+
+@dataclass(frozen=True, slots=True)
+class Counts:
+    added: int
+    look: int
+    known: int
+    dropped: int
+    enriched: int
+    swapped: list[tuple[str, str]]
+    repeated: int  # lines that named a name earlier in the list by another of its names
 
 
 async def _send_summary(
     interaction: discord.Interaction,
     campaign: Campaign,
     parsed: Parsed,
-    added: int,
-    look: int,
-    known: int,
-    dropped: int,
+    c: Counts,
     batch: int | None,
     kinds: dict[str, list[str]],
+    near: list[Near],
+    differ: list[KindDiffers],
     undo_days: int,
 ) -> None:
     lines = [
         summary_text(
-            added, look, known, parsed.repeated, dropped, parsed.refused, undo_days=undo_days
+            c.added, c.look, c.known, parsed.repeated + c.repeated, c.dropped, parsed.refused,
+            enriched=c.enriched, near=len(near), kinds=len(differ), swapped=c.swapped,
+            undo_days=undo_days,
         )
-    ]
+    ]  # fmt: skip
     asked = sorted(kinds.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:KIND_QUESTIONS]
     if asked:
         words = ", ".join(
@@ -909,9 +913,9 @@ async def _send_summary(
             lines.append(f"{len(kinds) - len(asked)} more wait in 📝 Check new names.")
     # The buttons keep working after a restart; the kind menus while DMbot keeps running.
     view = KindQuestions(campaign.id, asked)
-    if look:
+    if c.look or near:
         view.add_item(ReviewButton(campaign.id))
-    if batch is not None and added:
+    if batch is not None and (c.added or c.enriched):
         view.add_item(UndoListButton(campaign.id, batch))
     for item in view.children:
         if not isinstance(item, KindSelect):
@@ -933,13 +937,43 @@ def summary_text(
     refused: list[tuple[int, str]],
     *,
     undo_days: int = 30,
+    enriched: int = 0,
+    near: int = 0,
+    kinds: int = 0,
+    swapped: Sequence[tuple[str, str]] = (),
 ) -> str:
-    """What happened, what needs doing first."""
+    """What happened, what needs doing first. `enriched`: known names that got new other
+    names; `near` and `kinds`: questions sent below; `swapped`: (other name, main name)
+    for lines that gave a known name's other name as the name (#369)."""
 
     def n(count: int, word: str) -> str:
         return f"{count:,} {word}{'' if count == 1 else 's'}"
 
-    lines = [f"📥 **Added {n(added, 'name')}.**" if added else "📥 **No new names were added.**"]
+    head = f"Added {n(added, 'name')}" if added else "No new names were added"
+    parts: list[str] = []
+    if known:
+        parts.append(
+            f"{known:,} already known"
+            + (f" ({enriched:,} got new other names)" if enriched else "")
+        )
+    if near:
+        parts.append(
+            f"{near:,} look like known names, check below"
+            if near > 1
+            else "1 looks like a known name, check below"
+        )
+    if kinds:
+        parts.append(f"{kinds:,} {'has' if kinds == 1 else 'have'} a different kind, check below")
+    if repeated:
+        parts.append(f"{repeated:,} listed twice")
+    lines = [f"📥 **{head}** · " + " · ".join(parts) + "." if parts else f"📥 **{head}.**"]
+    for other, main in swapped[:SHOWN_SWAPPED]:
+        lines.append(
+            f"• **{_short(other)}** is already another name for **{_short(main)}**. "
+            "Nothing changed."
+        )
+    if len(swapped) > SHOWN_SWAPPED:
+        lines.append(f"• … and {len(swapped) - SHOWN_SWAPPED} more like that.")
     if refused:
         lines.append(
             f"⚠️ **{n(len(refused), 'line')} {'wasn' if len(refused) == 1 else 'weren'}'t "
@@ -952,19 +986,12 @@ def summary_text(
         they = "it sounds" if look == 1 else "they sound"
         lines.append(
             f"📝 **{n(look, 'name')} {'needs' if look == 1 else 'need'} you to check "
-            f"{'it' if look == 1 else 'them'}** (no kind, or {they} like a name DMbot already "
-            "knows). Press 📝 Check new names."
+            f"{'it' if look == 1 else 'them'}** (no kind, or {they} like a known name when said "
+            "out loud). Press 📝 Check new names."
         )
-    skipped = []
-    if known:
-        skipped.append(f"{n(known, 'name')} DMbot already knows")
-    if repeated:
-        skipped.append(f"{n(repeated, 'name')} listed twice")
     if dropped:
-        skipped.append(f"{n(dropped, 'other name')} already used by another name")
-    if skipped:
-        lines.append(f"Skipped: {', '.join(skipped)}.")
-    if added:
+        lines.append(f"Left out: {n(dropped, 'other name')} already used by another name.")
+    if added or enriched:
         lines.append(
             f"Wrong list? Press **Undo** to take it all back. Undo stops working after "
             f"{days(undo_days)}, or once you check or change any of these names, or one is "
@@ -972,7 +999,7 @@ def summary_text(
         )
         # After Undo, since fixing one name ends Undo for the list (#353 review).
         lines.append("Only one name wrong? Fix or remove it with 🔍 Find a name in `/dmbot names`.")
-    return "\n".join(lines)
+    return _fit(lines)
 
 
 KIND_QUESTIONS = 4  # one menu per unknown kind word; the 5th row holds the buttons
@@ -1037,6 +1064,400 @@ class KindQuestions(discord.ui.View):
         await interaction.response.edit_message(
             content=content[:2000], view=self, allowed_mentions=NO_PINGS
         )
+
+
+# ---- after 📥 Add many: names that look like known ones, kinds that differ (#369) -------
+
+QUESTION_ROWS = 4  # one question per row; the 5th row holds the "for all" buttons
+SAVING = "\n⏳ Saving…"
+SHORT = 40  # a name in a question line: long ones are cut, so the message always fits
+ENDS_UNDO = "Wrong list? Press **Undo** on the message above first: answering here ends Undo."
+WENT_WRONG = "something went wrong, so it was left as it is."
+
+
+def _short(name: str) -> str:
+    return _md(logic.shorten(name, SHORT))
+
+
+def _fit(lines: list[str]) -> str:
+    """At most Discord's 2,000 characters, cut between lines, never inside one."""
+    out: list[str] = []
+    size = 0
+    for line in lines:
+        if size + len(line) + 1 > 1990:
+            out.append("…")
+            break
+        out.append(line)
+        size += len(line) + 1
+    return "\n".join(out)
+
+
+class _Questions(discord.ui.View):
+    """Questions under the summary, answered while DMbot keeps running. Each answer saves
+    with the buttons taken away (no second press), and the message always comes back."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(timeout=60 * 60)
+        self.campaign_id = campaign_id
+        self.busy = False
+        self.answered_any = False
+
+    def text(self) -> str:
+        raise NotImplementedError
+
+    def build(self) -> None:
+        raise NotImplementedError
+
+    def done(self) -> bool:
+        raise NotImplementedError
+
+    async def run(self, interaction: discord.Interaction, work: Any) -> None:
+        if self.busy:  # pressed again while saving
+            await interaction.response.defer()
+            return
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        memory = _memory(interaction)
+        if campaign is None or memory is None:
+            return
+        self.busy = True
+        try:
+            await interaction.response.edit_message(
+                content=_fit(self.text().split("\n")) + SAVING, view=None,
+                allowed_mentions=NO_PINGS,
+            )  # fmt: skip
+            await work(interaction, campaign, memory)
+            changed(interaction, campaign)
+        finally:
+            self.busy = False
+            self.answered_any = True
+            self.build()
+            if self.done():
+                self.stop()
+            await interaction.edit_original_response(
+                content=self.text(), view=None if self.done() else self,
+                allowed_mentions=NO_PINGS,
+            )  # fmt: skip
+
+
+@dataclass(slots=True)
+class _NearItem:
+    entity_id: str  # the new name, saved as a suggestion
+    name: str
+    like: str
+    like_id: str  # the known name's entry
+    answer: str = ""  # what happened, once answered
+
+
+class NearQuestions(_Questions):
+    """ "Aurill → Auril?": the same name, different, or remove it, four at a time.
+    Unanswered ones wait in 📝 Check new names (which offers Same as…), so nothing is
+    lost. DMbot never joins names by sound on its own."""
+
+    def __init__(self, campaign_id: str, items: list[_NearItem]) -> None:
+        super().__init__(campaign_id)
+        self.items = items
+        self.page = 0
+        self.build()
+
+    @classmethod
+    async def send(
+        cls,
+        interaction: discord.Interaction,
+        campaign_id: str,
+        near: list[Near],
+        saved: list[str | None],
+    ) -> None:
+        items = []
+        for n in near:
+            new_id, like_id = saved[n.position], n.entity_id
+            if like_id is None and n.like_position is not None:
+                like_id = saved[n.like_position]
+            if new_id is not None and like_id is not None:
+                items.append(_NearItem(new_id, n.name, n.like, like_id))
+        if not items:
+            return
+        view = cls(campaign_id, items)
+        await interaction.followup.send(
+            view.text(), view=view, ephemeral=True, allowed_mentions=NO_PINGS
+        )
+
+    def pending(self) -> list[int]:
+        return [i for i, item in enumerate(self.items) if not item.answer]
+
+    def done(self) -> bool:
+        return not self.pending()
+
+    def _shown(self) -> list[int]:
+        start = self.page * QUESTION_ROWS
+        return self.pending()[start : start + QUESTION_ROWS]
+
+    def text(self) -> str:
+        count = len(self.items)
+        lines = [
+            f"🔎 **{count} names look like names DMbot already knows.**"
+            if count > 1
+            else "🔎 **1 name looks like a name DMbot already knows.**",
+            "**Same** makes it another name for the known one. **Different** keeps both. "
+            "**Remove** takes it off your list.",
+        ]
+        if not self.answered_any:
+            lines.append(ENDS_UNDO)
+        answered = [i for i, item in enumerate(self.items) if item.answer]
+        if len(answered) > 6:
+            lines.append(f"✅ {len(answered)} answered.")
+        else:
+            lines += [
+                f"{i + 1}. **{_short(self.items[i].name)}**: {self.items[i].answer}"
+                for i in answered
+            ]
+        shown = self._shown()
+        lines += [
+            f"{i + 1}. **{_short(self.items[i].name)}** → **{_short(self.items[i].like)}**?"
+            for i in shown
+        ]
+        pending = self.pending()
+        if not pending:
+            lines.append("All checked.")
+        else:
+            if len(pending) > len(shown):
+                lines.append(f"{len(pending) - len(shown)} more after these: press **More ▶**.")
+            lines.append("Not now? They wait in 📝 Check new names.")
+        return _fit(lines)
+
+    def build(self) -> None:
+        self.clear_items()
+        for row, i in enumerate(self._shown()):
+            for word, style, act in (
+                ("Same", discord.ButtonStyle.primary, self._same),
+                ("Different", discord.ButtonStyle.secondary, self._different),
+                ("Remove", discord.ButtonStyle.secondary, self._remove),
+            ):
+                self.add_item(
+                    _Button(self._answer(act, [i]), label=f"{i + 1}. {word}", style=style, row=row)
+                )
+        pending = self.pending()
+        if len(pending) > 2:
+            n = len(pending)
+            self.add_item(
+                _Button(
+                    self._answer(self._same, pending), label=f"Same for all {n}", row=QUESTION_ROWS
+                )
+            )
+            self.add_item(
+                _Button(
+                    self._answer(self._different, pending), label=f"Different for all {n}",
+                    row=QUESTION_ROWS,
+                )
+            )  # fmt: skip
+        if len(pending) > QUESTION_ROWS:
+            self.add_item(_Button(self._more, label="More ▶", row=QUESTION_ROWS))
+
+    def _answer(self, act: Any, which: list[int]) -> Any:
+        async def handler(interaction: discord.Interaction) -> None:
+            async def work(it: discord.Interaction, campaign: Campaign, memory: Any) -> None:
+                for i in which:
+                    item = self.items[i]
+                    if item.answer:
+                        continue
+                    try:
+                        await act(it, campaign, memory, item, len(which) == 1)
+                    except Exception:
+                        log.exception("Answering a name that looks like a known one failed")
+                        item.answer = WENT_WRONG
+
+            self.page = 0
+            await self.run(interaction, work)
+
+        return handler
+
+    async def _same(
+        self, it: discord.Interaction, campaign: Campaign, memory: Any, item: _NearItem, one: bool
+    ) -> None:
+        from dmbot.ui.name_card import UndoButton
+
+        try:
+            written = await memory.merge(
+                campaign.guild_id, campaign.id, item.like_id, item.entity_id, source=DM,
+                dm_said_same=True,
+            )  # fmt: skip
+            # The DM said so: its spelling is a confirmed other name now (as in the review).
+            key = name_key(item.name)
+            for alias in await memory.aliases(
+                campaign.guild_id, campaign.id, entity_id=item.like_id
+            ):
+                if alias.key == key and alias.status != CONFIRMED:
+                    await memory.update_alias(
+                        campaign.guild_id, campaign.id, alias.id, status=CONFIRMED, source=DM
+                    )
+        except MemoryRuleError as exc:
+            item.answer = f"couldn't join them. {exc}"
+            return
+        item.answer = f"🔗 now another name for **{_short(item.like)}**."
+        if one and written.batch is not None:  # its own message, so Undo outlives this one
+            view = discord.ui.View(timeout=None)
+            view.add_item(UndoButton(campaign.id, item.entity_id, written.batch))
+            await it.followup.send(
+                f"Joined **{_short(item.name)}** to **{_short(item.like)}**. Wrong? **Undo** "
+                "splits them again.",
+                view=view, ephemeral=True, allowed_mentions=NO_PINGS,
+            )  # fmt: skip
+
+    async def _different(
+        self, it: discord.Interaction, campaign: Campaign, memory: Any, item: _NearItem, one: bool
+    ) -> None:
+        entity = await memory.entity(campaign.guild_id, campaign.id, item.entity_id)
+        if entity is None or entity.status != PROPOSED:
+            item.answer = "changed by someone else meanwhile, so DMbot left it."
+            return
+        if entity.type == UNKNOWN_KIND:  # no kind yet: 📝 Check new names asks for it
+            item.answer = "kept both. It waits in 📝 Check new names to say what it is."
+            return
+        try:
+            await memory.set_entity_status(
+                campaign.guild_id, campaign.id, item.entity_id, CONFIRMED, source=DM
+            )
+        except MemoryRuleError:
+            item.answer = "changed by someone else meanwhile, so DMbot left it."
+            return
+        item.answer = "✅ kept both."
+
+    async def _remove(
+        self, it: discord.Interaction, campaign: Campaign, memory: Any, item: _NearItem, one: bool
+    ) -> None:
+        from dmbot.ui.name_card import UndoButton
+
+        try:
+            written = await memory.set_entity_status(
+                campaign.guild_id, campaign.id, item.entity_id, REJECTED, source=DM
+            )
+        except MemoryRuleError:
+            item.answer = "changed by someone else meanwhile, so DMbot left it."
+            return
+        item.answer = "removed."
+        if written.batch is not None:  # its own message, so Undo outlives this one
+            view = discord.ui.View(timeout=None)
+            view.add_item(UndoButton(campaign.id, item.entity_id, written.batch))
+            await it.followup.send(
+                f"Removed **{_short(item.name)}**. Wrong? **Undo** brings it back.",
+                view=view, ephemeral=True, allowed_mentions=NO_PINGS,
+            )  # fmt: skip
+
+    async def _more(self, interaction: discord.Interaction) -> None:
+        pages = -(-len(self.pending()) // QUESTION_ROWS)
+        self.page = (self.page + 1) % max(pages, 1)
+        self.build()
+        await interaction.response.edit_message(
+            content=self.text(), view=self, allowed_mentions=NO_PINGS
+        )
+
+
+def _who(names: list[KindDiffers], shown: int = 3) -> str:
+    out = ", ".join(f"**{_short(d.name)}**" for d in names[:shown])
+    return out + (f" and {len(names) - shown} more" if len(names) > shown else "")
+
+
+class KindDiffQuestions(_Questions):
+    """ "Varrow: DMbot has god, your list says place." once per pair of kinds. DMbot
+    keeps the kind it has unless the DM says otherwise."""
+
+    def __init__(self, campaign_id: str, pairs: list[tuple[str, str, list[KindDiffers]]]) -> None:
+        super().__init__(campaign_id)
+        self.pairs = pairs[:QUESTION_ROWS]
+        self.later = [d for _, _, names in pairs[QUESTION_ROWS:] for d in names]
+        self.answers: dict[int, str] = {}
+        self.build()
+
+    @classmethod
+    async def send(
+        cls, interaction: discord.Interaction, campaign_id: str, differ: list[KindDiffers]
+    ) -> None:
+        grouped: dict[tuple[str, str], list[KindDiffers]] = {}
+        for d in differ:
+            grouped.setdefault((d.have, d.want), []).append(d)
+        pairs = sorted(
+            ((have, want, names) for (have, want), names in grouped.items()),
+            key=lambda p: (-len(p[2]), p[0], p[1]),
+        )
+        view = cls(campaign_id, pairs)
+        await interaction.followup.send(
+            view.text(), view=view, ephemeral=True, allowed_mentions=NO_PINGS
+        )
+
+    def done(self) -> bool:
+        return len(self.answers) == len(self.pairs)
+
+    def text(self) -> str:
+        count = sum(len(names) for _, _, names in self.pairs) + len(self.later)
+        lines = [
+            f"🏷 **{count} names have a different kind in your list.**"
+            if count > 1
+            else "🏷 **1 name has a different kind in your list.**",
+            "DMbot kept the kind it already had. Change any? Leave this and nothing changes.",
+        ]
+        if not self.answered_any:
+            lines.append(ENDS_UNDO)
+        for i, (have, want, names) in enumerate(self.pairs):
+            line = (
+                f"{i + 1}. {_who(names)}: DMbot has {KIND_SHORT.get(have, have)}, your list "
+                f"says {KIND_SHORT.get(want, want)}."
+            )
+            lines.append(line + (f" {self.answers[i]}" if i in self.answers else ""))
+        if self.later:
+            lines.append(
+                f"Also kept as they are: {_who(self.later)}. To change one, open its card."
+            )
+        if self.done():
+            lines.append("All checked.")
+        return _fit(lines)
+
+    def build(self) -> None:
+        self.clear_items()
+        for i, (have, want, _) in enumerate(self.pairs):
+            if i in self.answers:
+                continue
+            keep = f"{i + 1}. Keep {KIND_SHORT.get(have, have)}"
+            use = f"{i + 1}. Change to {KIND_SHORT.get(want, want)}"
+            self.add_item(_Button(self._answer([i], False), label=keep[:80], row=i))
+            self.add_item(
+                _Button(
+                    self._answer([i], True), label=use[:80], style=discord.ButtonStyle.primary,
+                    row=i,
+                )
+            )  # fmt: skip
+        left = [i for i in range(len(self.pairs)) if i not in self.answers]
+        if len(left) > 1:
+            self.add_item(_Button(self._answer(left, False), label="Keep all", row=QUESTION_ROWS))
+            self.add_item(_Button(self._answer(left, True), label="Change all", row=QUESTION_ROWS))
+
+    def _answer(self, which: list[int], change: bool) -> Any:
+        async def handler(interaction: discord.Interaction) -> None:
+            async def work(it: discord.Interaction, campaign: Campaign, memory: Any) -> None:
+                for i in which:
+                    if i in self.answers:
+                        continue
+                    have, want, names = self.pairs[i]
+                    if not change:
+                        self.answers[i] = f"✅ Kept {KIND_SHORT.get(have, have)}."
+                        continue
+                    done = 0
+                    try:
+                        for d in names:
+                            try:
+                                await memory.set_entity_type(
+                                    campaign.guild_id, campaign.id, d.entity_id, want, source=DM
+                                )
+                            except MemoryRuleError:
+                                continue  # changed or removed since
+                            done += 1
+                    except Exception:
+                        log.exception("Changing kinds after a names list failed")
+                    self.answers[i] = f"✅ Changed {done} to {KIND_SHORT.get(want, want)}." + (
+                        "" if done == len(names) else " (The rest were changed or removed already.)"
+                    )
+
+            await self.run(interaction, work)
+
+        return handler
 
 
 class UndoListButton(
@@ -1133,7 +1554,8 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
     await interaction.followup.send(
         f"📤 **All {count:,} name{'' if count == 1 else 's'} for {_md(campaign.name)}.** "
         f"{warning}Names still waiting in 📝 Check new names aren't included. Edit it and add "
-        f"it again with {UPLOAD} (names DMbot already knows are skipped).",
+        f"it again with {UPLOAD} (names DMbot already knows aren't added twice; they get any "
+        "new other names).",
         file=_file(text, f"names-{_slug(campaign.name)}-{day}.txt"),
         ephemeral=True,
         allowed_mentions=NO_PINGS,

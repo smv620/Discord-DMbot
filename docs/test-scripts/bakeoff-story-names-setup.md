@@ -69,24 +69,31 @@ Then, in this order:
 
 ### B. After #369
 
-The message should read:
+The first message should start:
 
-> 📥 **Added 22 names** · 2 already known · 3 look like names DMbot already knows, check below
-> · 2 kinds differ, check below
+> 📥 **Added 22 names** · 4 already known · 3 look like known names, check below · 2 have a
+> different kind, check below.
+> • **Bell** is already another name for **Belleros**. Nothing changed.
+> • **Vane** is already another name for **Oskar Vane**. Nothing changed.
 
-And:
-- It says Bell is another name for Belleros and Vane is another name for Oskar Vane, and that
-  nothing changed.
-- **"3 names look like names DMbot already knows"**, with Gorrack → Gorrak?, Quilon →
-  Quillon? and Brynnwater → Brynwater?, and **Same for all** and **Different for all**
-  buttons.
-- It asks about kinds: "**Varrow** is a god here; your list says place", with **Keep god** and
-  **Change to place**. The same goes for Ashen Crown (group or place). If you ignore it,
-  DMbot keeps what it has.
-- **Undo** still takes everything back, if you press it before choosing anything.
+Below it come two more messages:
+- **"🔎 3 names look like names DMbot already knows."** with Gorrack → Gorrak?, Quilon →
+  Quillon? and Brynnwater → Brynwater?. Each has numbered buttons (**1. Same**,
+  **1. Different**, **1. Remove**), and there are **Same for all 3** and **Different for
+  all 3**. Nothing is joined until you choose.
+- **"🏷 2 names have a different kind in your list."** Varrow: DMbot has god, your list says
+  place. Ashen Crown: DMbot has group, your list says place. The buttons are **1. Keep
+  god** / **1. Change to place**, **2. Keep group** / **2. Change to place**, and **Keep
+  all** / **Change all**. If you ignore them, DMbot keeps what it has.
 
-If #369 ends up counting differently (for example 19 added rather than 22), the server session
-updates this line when it deploys #369.
+Then, in this order:
+1. **Look only. Don't choose anything yet**, because choosing one turns Undo off.
+2. Press **Undo** under the first message. It should take away all 22 names and leave your 10.
+3. Upload the file again and try the buttons: **Same for all** should make Gorrack, Quilon
+   and Brynnwater other names of your three names, and **1. Change to place** should
+   change Varrow.
+
+(A file and test in the code check these numbers: `test_the_owners_bulk_import_test_reads_as_its_setup_says`.)
 
 ## 4. Report it
 
@@ -95,6 +102,6 @@ each:
 
 - [ ] Added 22
 - [ ] 3 to check (A), or 3 that look like known names (B)
-- [ ] Skipped or already known 4 (A), or 2 already known and 2 kinds differ (B)
+- [ ] Skipped 4 (A), or 4 already known and 2 kinds differ (B)
 - [ ] Same as… offered for Gorrack, Quilon and Brynnwater
 - [ ] Undo left just your 10 names
