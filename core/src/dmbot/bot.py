@@ -104,6 +104,7 @@ from dmbot.ui.dmbot_commands import dmbot_group
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
+from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.transcripts import DownloadButton, download_view, ended_text, transcript_command
 
 log = logging.getLogger(__name__)
