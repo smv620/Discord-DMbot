@@ -56,6 +56,10 @@ class WebSettings:
     def oauth_redirect_uri(self) -> str:
         return f"{self.api_url.rstrip('/')}/auth/discord/callback"
 
+    @property
+    def install_redirect_uri(self) -> str:
+        return f"{self.api_url.rstrip('/')}/install/callback"
+
 
 def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     env = os.environ if env is None else env

@@ -14,6 +14,8 @@ from urllib.parse import urlencode
 import aiohttp
 
 SCOPES = "identify email guilds"
+# Adding DMbot to a server through the website: the bot and its commands, plus who did it.
+INSTALL_SCOPES = "bot applications.commands identify"
 API = "https://discord.com/api/v10"
 AUTHORIZE_URL = "https://discord.com/oauth2/authorize"
 
@@ -61,6 +63,14 @@ class DiscordOAuth(Protocol):
 
     async def user(self, token: str) -> DiscordUser: ...
 
+    def install_url(self, state: str, redirect_uri: str, guild_id: int, permissions: int) -> str:
+        """Discord's page to add DMbot to this one server."""
+        ...
+
+    async def exchange_install(self, code: str, redirect_uri: str) -> tuple[str, int | None]:
+        """The access token and the server Discord says DMbot was added to."""
+        ...
+
     async def guilds(self, token: str) -> list[DiscordGuild]: ...
 
     async def revoke(self, token: str) -> None: ...
@@ -92,6 +102,34 @@ class HttpDiscord:
             }
         )
         return f"{AUTHORIZE_URL}?{query}"
+
+    def install_url(self, state: str, redirect_uri: str, guild_id: int, permissions: int) -> str:
+        query = urlencode(
+            {
+                "client_id": self._client_id,
+                "response_type": "code",
+                "scope": INSTALL_SCOPES,
+                "permissions": str(permissions),
+                "guild_id": str(guild_id),
+                "disable_guild_select": "true",
+                "redirect_uri": redirect_uri,
+                "state": state,
+            }
+        )
+        return f"{AUTHORIZE_URL}?{query}"
+
+    async def exchange_install(self, code: str, redirect_uri: str) -> tuple[str, int | None]:
+        data = await self._request(
+            "POST",
+            f"{self._api}/oauth2/token",
+            data={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri},
+            auth=aiohttp.BasicAuth(self._client_id, self._client_secret),
+        )
+        if not isinstance(data, dict) or not isinstance(data.get("access_token"), str):
+            raise DiscordError("Discord's token answer had no access token")
+        guild = data.get("guild")
+        guild_id = int(guild["id"]) if isinstance(guild, dict) and "id" in guild else None
+        return str(data["access_token"]), guild_id
 
     async def _request(self, method: str, url: str, **kwargs: Any) -> Any:
         if self._http is None:  # one connection pool for every sign-in
