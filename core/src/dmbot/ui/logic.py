@@ -131,7 +131,7 @@ def settings_summary(
         f"• **If missing** (the main rules don't cover something): {fallback_words(fallback)}",
         "• **Optional rules** from Xanathar's and Tasha's: "
         f"all {'on' if optional_rules else 'off'} "
-        "(switch single rules later with `/dmbot optionalrules`)",
+        "(pick which ones later with `/dmbot optionalrules`)",
         f"• **DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
     ]
 

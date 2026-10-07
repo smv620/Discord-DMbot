@@ -54,6 +54,23 @@ class Catalog(unittest.TestCase):
         self.assertEqual(older, {r.id for r in optional.CATALOG})
         self.assertEqual(optional.applying("an unknown ruleset"), [])
 
+    def test_unchecked_rules_are_offered_to_2024_too(self) -> None:
+        # Nobody has named the 2024 section that covers these; offering does no harm.
+        newer = {r.id for r in optional.applying("2024")}
+        self.assertIn("xge-identify-spell", newer)
+        self.assertIn("xge-falling-rate", newer)
+
+    def test_the_covered_note_follows_the_catalog(self) -> None:
+        left_out = optional.covered_by("2024")
+        self.assertEqual(
+            {r.id for r in left_out},
+            {r.id for r in optional.CATALOG} - {r.id for r in optional.applying("2024")},
+        )
+        for r in left_out:
+            self.assertIn(r.name[1:], ui.COVERED_2024)
+        self.assertNotIn("Spotting a spell"[1:], ui.COVERED_2024)
+        self.assertEqual(ui.covered_note("2014"), "")  # 2014 leaves nothing out
+
     def test_a_rule_follows_the_default_until_the_dm_switches_it(self) -> None:
         self.assertTrue(optional.is_on("xge-sleep", {}, True))
         self.assertFalse(optional.is_on("xge-sleep", {}, False))
@@ -84,6 +101,11 @@ class Command(DatabaseTest):
             if user_id == MANAGER
             else discord.Permissions.none()
         )
+        edited: list[tuple[str, Any]] = []
+
+        async def edit_original_response(*, content: str = "", view: Any = None, **_: Any) -> None:
+            edited.append((content, view))
+
         return SimpleNamespace(
             client=self.bot,
             guild=SimpleNamespace(id=GUILD),
@@ -91,7 +113,14 @@ class Command(DatabaseTest):
             user=user,
             response=FakeResponse(),
             followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(side_effect=edit_original_response),
+            edited=edited,
         )
+
+    @staticmethod
+    def told(it: Any) -> str:
+        """The private follow-up sent after the switch answered Discord."""
+        return str(it.followup.send.await_args.args[0])
 
     async def open_list(self, user_id: int = DM) -> Any:
         it = self.it(user_id)
@@ -114,7 +143,7 @@ class Command(DatabaseTest):
         self.assertIn("doesn't check rules yet", text)
         self.assertIn("add to your main rules (2024 rules).", text)  # no "(newest)" here
         self.assertNotIn("Customizing your origin", text)  # not for the 2024 rules
-        self.assertTrue(text.endswith("You make every call at the table."))  # below the list
+        self.assertTrue(text.endswith(ui.DISCLAIMER))  # below the list
         self.assertIn(ui.COVERED_2024, text)
         self.assertNotIn("supplement", text.lower())  # plain words
         labels = [o.label for o in kw["view"].pick.options]
@@ -130,7 +159,7 @@ class Command(DatabaseTest):
         it = await self.switch(menu, "xge-sleep", MANAGER)
         overrides = await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id)
         self.assertEqual(overrides, {"xge-sleep": False})
-        text, view = it.response.edited[0]
+        text, view = it.edited[0]
         self.assertTrue(text.startswith("⬜ **Sleeping in armor** is now off.\n📚"))  # news first
         self.assertIn("⬜ **Sleeping in armor**:", text)
         self.assertNotIn(ui.NO_SCREEN_NOTE, text)
@@ -145,6 +174,23 @@ class Command(DatabaseTest):
         overrides = await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id)
         self.assertEqual(overrides, {"xge-sleep": True})
 
+    async def test_the_switch_answers_discord_before_the_slow_steps(self) -> None:
+        menu = (await self.open_list()).response.sent[0][1]["view"]
+        it = self.it()
+        order: list[str] = []
+        it.response.defer = AsyncMock(side_effect=lambda **_: order.append("defer"))
+
+        async def slow_post(*_: Any) -> bool:
+            order.append("post")
+            return True
+
+        self.posted.side_effect = slow_post
+        (value,) = [o.value for o in menu.pick.options if o.value.startswith("xge-sleep:")]
+        menu.pick._values = [value]
+        await menu._switch(it)
+        self.assertEqual(order, ["defer", "post"])
+        self.assertTrue(it.edited[0][0].startswith("⬜ **Sleeping in armor** is now off."))
+
     async def test_an_old_menu_never_flips_a_rule_the_wrong_way(self) -> None:
         old = (await self.open_list()).response.sent[0][1]["view"]
         newer = (await self.open_list()).response.sent[0][1]["view"]
@@ -158,7 +204,7 @@ class Command(DatabaseTest):
         await self.campaigns.add_dm(GUILD, self.campaign.id, PLAYER)
         await self.campaigns.remove_dm(GUILD, self.campaign.id, DM)  # no longer this DM's
         it = await self.switch(menu, "xge-sleep")
-        self.assertIn("Only this campaign's DM", it.response.sent[0][0])
+        self.assertIn("Only this campaign's DM", self.told(it))
         self.assertEqual(await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id), {})
         self.posted.assert_not_awaited()
 
@@ -167,7 +213,7 @@ class Command(DatabaseTest):
         menu = (await self.open_list()).response.sent[0][1]["view"]
         await self.campaigns.set_rulesets(GUILD, self.campaign.id, "2024", "2014")
         it = await self.switch(menu, "tce-custom-origin")  # 2014 only
-        self.assertIn("isn't in this campaign's list", it.response.sent[0][0])
+        self.assertIn("isn't in this campaign's list", self.told(it))
         self.assertEqual(await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id), {})
 
     async def test_without_a_dm_screen_the_choice_is_still_saved(self) -> None:
@@ -184,7 +230,7 @@ class Command(DatabaseTest):
         self.posted.return_value = False  # the channel was deleted
         menu = (await self.open_list()).response.sent[0][1]["view"]
         it = await self.switch(menu, "tce-parley")
-        text, _ = it.response.edited[0]
+        text, _ = it.edited[0]
         self.assertTrue(
             text.startswith(f"⬜ **Talking with monsters** is now off. {ui.NO_SCREEN_NOTE}\n")
         )
@@ -198,7 +244,7 @@ class Command(DatabaseTest):
         self.assertLessEqual(len(text), 700)
         self.assertTrue(text.startswith("✅ news\n"))
         self.assertIn("\n…\n" + ui.COVERED_2024, text)
-        self.assertTrue(text.endswith("You make every call at the table."))
+        self.assertTrue(text.endswith(ui.DISCLAIMER))
         whole = {f"✅ **{r.name}**: {r.summary}" for r in optional.applying("2024")}
         listed = [line for line in text.split("\n")[1:] if line.startswith("✅")]
         self.assertTrue(listed)
@@ -209,7 +255,7 @@ class Command(DatabaseTest):
         (value,) = [o.value for o in menu.pick.options if o.value.startswith("tce-parley:")]
         menu.pick._values = [value]
         it = self.it()
-        it.response.edit_message = AsyncMock(
+        it.edit_original_response = AsyncMock(
             side_effect=discord.HTTPException(MagicMock(status=404, reason="gone"), "gone")
         )
         await menu._switch(it)
@@ -218,7 +264,7 @@ class Command(DatabaseTest):
             {"tce-parley": False},
         )
         self.posted.assert_awaited_once()  # the DM screen was told first
-        self.assertEqual(it.response.sent[0][0], "Saved. ⬜ **Talking with monsters** is now off.")
+        self.assertEqual(self.told(it), "Saved. ⬜ **Talking with monsters** is now off.")
 
     async def test_too_late_to_answer_still_saves_quietly(self) -> None:
         self.posted.return_value = False
@@ -227,11 +273,11 @@ class Command(DatabaseTest):
         menu.pick._values = [value]
         it = self.it()
         gone = discord.HTTPException(MagicMock(status=404, reason="gone"), "gone")
-        it.response.edit_message = AsyncMock(side_effect=gone)
-        it.response.send_message = AsyncMock(side_effect=gone)
+        it.edit_original_response = AsyncMock(side_effect=gone)
+        it.followup.send = AsyncMock(side_effect=gone)
         await menu._switch(it)  # doesn't raise
-        it.response.send_message.assert_awaited_once()
-        self.assertIn(ui.NO_SCREEN_NOTE, it.response.send_message.await_args.args[0])
+        it.followup.send.assert_awaited_once()
+        self.assertIn(ui.NO_SCREEN_NOTE, it.followup.send.await_args.args[0])
         self.assertEqual(
             await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id),
             {"tce-parley": False},
@@ -270,7 +316,7 @@ class Command(DatabaseTest):
         self.assertLessEqual(len(text), 2000)
         last = optional.applying("2014")[-1]
         self.assertIn(f"**{last.name}**: {last.summary}\n", text)  # nothing cut
-        self.assertTrue(text.endswith("You make every call at the table."))
+        self.assertTrue(text.endswith(ui.DISCLAIMER))
 
     async def test_a_campaign_with_rules_off_by_default_shows_them_off(self) -> None:
         await self.campaigns.set_optional_rules_default(GUILD, self.campaign.id, False)

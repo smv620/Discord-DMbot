@@ -315,7 +315,7 @@ optional Xanathar's rule that the 2024 books don't include or change. New campai
 which optional rules to use, **default: on**. `/dmbot optionalrules` toggles them any time. House
 rules can still override them.
 
-**Xanathar's and Tasha's are not legacy books (owner, 2026-10-07).** Unlike the 2014
+**Xanathar's and Tasha's are not legacy books (web, 2026-10-07, #49).** Unlike the 2014
 Player's Handbook, Monster Manual and Dungeon Master's Guide, they are not marked legacy
 as a whole; only their parts that the 2024 core rules reprint or replace are:
 - A subclass, spell, feat or rule the 2024 books reprint or update is replaced: use the 2024
@@ -324,8 +324,10 @@ as a whole; only their parts that the 2024 core rules reprint or replace are:
 - Everything the 2024 books don't reprint or update stays usable with a 2024 target,
   untagged: unique rules, downtime activities, magic tattoos, subclasses without a 2024
   version. The optional-rules catalog (`core/src/dmbot/rules/optional.py`) follows this:
-  a rule is listed for 2024 unless the 2024 books cover it (knots, tools, falling rate,
-  spotting a spell, custom origins, Tasha's class features).
+  a rule is listed for 2024 unless the 2024 books cover it (knots, tools, custom origins,
+  Tasha's class features). A rule nobody has checked against the 2024 books stays listed
+  (offering it does no harm; the DM decides), and the "not listed" note is built from
+  the catalog.
 
 Lookups must match renamed content (e.g. 2024 dropped many creator names from spell
 titles), so the rules index keys each entry by a normalized name plus known aliases,

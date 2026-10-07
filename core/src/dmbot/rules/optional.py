@@ -62,14 +62,14 @@ CATALOG: tuple[OptionalRule, ...] = (
         "Spotting a spell",
         "Use your reaction and an Arcana check to recognize a spell as it's cast.",
         XANATHAR,
-        ("2014",),  # the 2024 rules treat studying a spell differently; check before widening
+        # Not checked against the 2024 rules yet: offering a rule does no harm (the DM
+        # decides), hiding one wrongly does. Narrow it only by naming the 2024 section.
     ),
     OptionalRule(
         "xge-falling-rate",
         "How fast you fall",
         "A long fall takes time: you drop up to 500 feet each round.",
-        XANATHAR,
-        ("2014",),  # the 2024 falling rule already includes it
+        XANATHAR,  # not checked against the 2024 rules yet, so offered to both
     ),
     OptionalRule(
         "tce-custom-origin",
@@ -109,6 +109,11 @@ def rule(rule_id: str) -> OptionalRule | None:
 def applying(target_ruleset: str) -> list[OptionalRule]:
     """The rules that can add to a campaign's main rules, in catalog order."""
     return [r for r in CATALOG if target_ruleset in r.applies_to]
+
+
+def covered_by(target_ruleset: str) -> list[OptionalRule]:
+    """The rules not offered for these main rules, because they have their own version."""
+    return [r for r in CATALOG if target_ruleset not in r.applies_to]
 
 
 def is_on(rule_id: str, overrides: Mapping[str, bool], default: bool) -> bool:
