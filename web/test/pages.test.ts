@@ -104,7 +104,22 @@ describe("no trademarks", () => {
     });
   }
 
-  const sources = [...files(join(root, "src")), ...files(join(root, "public"))];
+  // The one allowed mention: src/content/legal.ts says we are *not* connected to the
+  // publisher. That file may hold that sentence and nothing else that matches.
+  const disclaimerFile = join(root, "src", "content", "legal.ts");
+  const sources = [...files(join(root, "src")), ...files(join(root, "public"))].filter(
+    (file) => file !== disclaimerFile,
+  );
+
+  it("allows the publisher's name only in the not-affiliated sentence", () => {
+    const text = readFileSync(disclaimerFile, "utf8").replace(
+      "DMbot is not affiliated with or endorsed by Wizards of the Coast.",
+      "",
+    );
+    for (const pattern of banned) {
+      expect(text, `found ${pattern}`).not.toMatch(pattern);
+    }
+  });
 
   it.each(sources.map((file) => [file.slice(root.length)]))("%s is clean", (relative) => {
     const text = readFileSync(join(root, relative), "utf8");

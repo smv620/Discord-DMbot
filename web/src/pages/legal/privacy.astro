@@ -1,12 +1,182 @@
 ---
-import Base from "../../layouts/Base.astro";
+import LegalPage from "../../components/LegalPage.astro";
+import {
+  deletionWarningDays,
+  keepAfterStopPaying,
+  minimumAge,
+  operator,
+  paymentProvider,
+  retentionRows,
+} from "../../content/legal";
+
+const [firstWarning, lastWarning] = deletionWarningDays;
 ---
 
-<Base title="Privacy" description="What DMbot keeps about you, why, and how to delete it.">
-  <div class="prose">
-    <h1>Privacy</h1>
-    <p>What DMbot keeps about you, why, and how to delete it will be here.</p>
-    <p class="muted">This page is being written. Check back soon.</p>
-    <a class="button" href="/">Go to the home page</a>
-  </div>
-</Base>
+<LegalPage
+  title="Privacy"
+  description="What DMbot keeps about you, who sees it, how long we keep it, and how to delete it."
+  heading="Privacy"
+  summary="DMbot only records people who said yes. We never keep the sound of your voice: it is turned into text and the sound is thrown away. Everyone in your Discord server can read what was written down. We keep your Discord id, your email and the ids of your servers so you can sign in and use your plan. We don't sell anything about you, and there are no ads. You can stop being recorded at any time, and you can delete everything from My account."
+>
+  <h2>Who looks after your information</h2>
+  <p>
+    DMbot is run by {operator.name}, {operator.address}. Write to {operator.email} about anything
+    on this page.
+  </p>
+
+  <h2>What we keep</h2>
+  <h3>When you sign in to this website</h3>
+  <ul>
+    <li>
+      Your <strong>Discord user id</strong> and the <strong>email</strong> Discord gives us. We
+      use the email only to tell you about your account and plan.
+    </li>
+    <li>
+      The <strong>ids of the Discord servers</strong> you're in, so we can show which ones have
+      DMbot. We don't keep your server list once you sign out, only the ids of servers that use
+      DMbot. {"{{CHECK: confirm with #435 what /me stores}}"}
+    </li>
+    <li>
+      Sign-in uses Discord. We never see your Discord password, and we don't keep your Discord
+      sign-in token after you sign out.
+    </li>
+  </ul>
+
+  <h3>When DMbot is in your game</h3>
+  <ul>
+    <li>
+      <strong>Your yes.</strong> When you press "I consent", we keep the date, the wording you
+      agreed to, and how you agreed. That's how we prove you said yes.
+    </li>
+    <li>
+      <strong>What was said.</strong> The words of people who said yes, written down as text, with
+      the time they were said. Nobody else is ever recorded, and bots are never recorded.
+    </li>
+    <li>
+      <strong>Your campaign.</strong> The names, places and notes your table makes, the game
+      master's notes and settings, and any adventure or rulebook text the game master shares.
+    </li>
+    <li>
+      <strong>Your voice is not kept.</strong> The sound is sent to be written down and then
+      thrown away. To fix a misheard name, DMbot may hold the last minute of sound in memory and
+      ask again; it is never saved to disk.
+    </li>
+  </ul>
+
+  <h3>When you pay</h3>
+  <p>
+    Payments go through {paymentProvider}. They are the seller, and they hold your card or
+    PayPal details; we never see them. They tell us your plan, whether it's paid, and when it
+    renews.
+  </p>
+
+  <h2>Who can see it</h2>
+  <ul>
+    <li>
+      <strong>What was said</strong> can be read and downloaded by everyone in the Discord server
+      where the game is played. The question you say yes to tells you this.
+    </li>
+    <li>
+      <strong>The game master's notes</strong> are for the game master. Players see them only if
+      the game master allows it.
+    </li>
+    <li>
+      <strong>Backups</strong> of a paid campaign hold everything in it, including the game
+      master's secrets, and anyone in the server may download one. This keeps a campaign safe if
+      its game master leaves.
+    </li>
+    <li>Nobody outside your server sees your campaign. Campaigns never share information.</li>
+  </ul>
+
+  <h2>Companies that help us</h2>
+  <p>We share only what each one needs to do its job:</p>
+  <ul>
+    <li><strong>Discord</strong>: where DMbot runs, and how you sign in.</li>
+    <li><strong>Deepgram</strong>: turns the sound of people who said yes into text.</li>
+    <li>
+      <strong>Anthropic</strong>: the AI that helps with names, rules and story notes. It gets the
+      text it needs, not sound.
+    </li>
+    <li><strong>{paymentProvider}</strong>: takes payments.</li>
+    <li>
+      <strong>Cloudflare</strong>: delivers this website. {"{{CHECK: once the owner sets it up}}"}
+    </li>
+    <li>
+      <strong>{"{{HOSTING PROVIDER}}"}</strong>: the server DMbot and its database run on.
+      {"{{CHECK: name and country}}"}
+    </li>
+  </ul>
+  <p>
+    Some of these companies are in the United States. {"{{CHECK: transfer safeguards for people in the EU and UK}}"}
+  </p>
+  <p>We don't sell your information and we don't use it for ads.</p>
+  <p>
+    If a server uses its own AI or speech key, we keep that key locked (encrypted), use it only
+    for that server, and never show it in full.
+  </p>
+
+  <h2>How long we keep it</h2>
+  <p>A campaign is deleted this long after its last game:</p>
+  <table>
+    <thead>
+      <tr><th scope="col">Plan</th><th scope="col">Kept after the last game</th></tr>
+    </thead>
+    <tbody>
+      {
+        retentionRows.map((row) => (
+          <tr>
+            <td>{row.plan}</td>
+            <td>{row.keep}</td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+  <p>
+    If a plan stops being paid, its campaigns are kept for {keepAfterStopPaying}. We message the
+    game master on Discord {firstWarning} days and {lastWarning} days before anything is deleted.
+    Backups people already downloaded are theirs to keep or delete.
+  </p>
+  <p>Account details are deleted when you delete your account. {"{{CHECK: anything payment law says we must keep, such as invoices}}"}</p>
+
+  <h2>Your choices</h2>
+  <ul>
+    <li>
+      <strong>Stop being recorded</strong> at any time: press "Stop recording me" in the message
+      DMbot sends you, or type <code>/consent revoke</code> in Discord.
+    </li>
+    <li>
+      <strong>Delete everything</strong> about you from <a href="/account">My account</a>. It
+      happens straight away.
+    </li>
+    <li>
+      <strong>Ask for a copy</strong> of what we keep, or ask us to fix it, by writing to
+      {operator.email}. {"{{CHECK: rights under GDPR, UK GDPR and US state laws, and how fast we must answer}}"}
+    </li>
+  </ul>
+
+  <h2>Cookies</h2>
+  <p>
+    This website uses one cookie, only to keep you signed in. It can't be read by other websites
+    or by code on the page. There are no tracking or ad cookies.
+  </p>
+
+  <h2>Keeping it safe</h2>
+  <p>
+    Everything travels over a locked (encrypted) connection. Keys and secrets are stored
+    encrypted, and our logs hold ids, never what you said or your payment details.
+    {"{{CHECK: say how the database itself is encrypted on the server}}"}
+  </p>
+
+  <h2>Children</h2>
+  <p>
+    You must be at least {minimumAge} to use Discord, so you must be at least {minimumAge} to use
+    DMbot. {"{{CHECK: older age where local law requires it, for example 16 in some EU countries}}"}
+  </p>
+
+  <h2>Changes</h2>
+  <p>
+    If we change what we keep or who sees it, we'll update this page and ask everyone who is
+    recorded to say yes again before DMbot records them.
+  </p>
+</LegalPage>
