@@ -8,22 +8,8 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-<<<<<<< HEAD
-Deploy development @ 1d98a83 (one deploy covers all of these; back up the database
-first; rebuild core and ears: both changed). Check, in this order:
-  - #270 (dev3, ears): the first word after each pause is no longer cut. Score
-    first-word errors after each ((dramatic pause)) against run 7.
-  - #276 (dev3): the DM screen's audio % no longer drops counts when a check runs
-    before the speech is transcribed. Compare its % with the ears audio lines.
-  - #283 (dev2): Transcript Cleaner step 1. Lines in #dmb-transcript-... are
-    labelled "(speaker) {character}" and misheard confirmed names are fixed live
-    (say "Bell Eros" with Belleros known). Secret names never appear. The download
-    is still "as heard" (by design until Cleaner step 2).
-  - #284 and #288 (CloudDev): /dmbot start settings are buttons that fit a phone;
-    campaign menus in backup, restore and names cut long names in the middle so a
-    restored copy can be told apart. Check on a phone.
-  - #266 (web): docs only, nothing to check.
-Deploy development @ f317d6d instead (same deploy, five more PRs; rebuild both):
+Deploy development @ f317d6d (bb55060 is live; five PRs since; rebuild core and
+ears: both changed). Check, in this order:
   - #293 (dev1, #147): every save/removal of the saved session is logged with its
     reason. Check: `docker compose logs core | grep -i "session saved\|removed"` after
     a start, a /dmbot stop and a restart; no WARNING "wasn't saved" on a normal stop.
@@ -39,10 +25,6 @@ Deploy development @ f317d6d instead (same deploy, five more PRs; rebuild both):
     4 rules for a 2024 campaign, the menu switches one, the DM screen gets one line,
     a player running it is refused. Wording polish follows in #320, so don't log
     string nits.
-Then run 8 below covers the rest.
-=======
-(nothing queued)
->>>>>>> origin/development
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
