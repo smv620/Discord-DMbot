@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -75,7 +76,26 @@ def describe(settings: TranscriptionSettings) -> str:
     return "none (no text)"
 
 
-def commit() -> str:
+_SHA = re.compile(r"[0-9a-f]{4,40}")
+
+
+def _commit_id(value: str | None) -> str | None:
+    """A commit id, shortened, or None: nothing else may go in the public log."""
+    if not value:
+        return None
+    value = value.strip().casefold()
+    return value[:7] if _SHA.fullmatch(value) else None
+
+
+def commit(given: str | None = None) -> str:
+    """Which code was replayed, for the record: `--commit`, then GIT_COMMIT (a container
+    has no git checkout to ask), then git itself. Only a commit id goes in the public log."""
+    if found := _commit_id(given):
+        return found
+    if found := _commit_id(env := os.environ.get("GIT_COMMIT")):
+        return found
+    if env:
+        print("replay: GIT_COMMIT isn't a commit id; ignoring it", file=sys.stderr)
     try:
         out = subprocess.run(
             ["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
@@ -133,6 +153,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--realtime", action="store_true", help="send audio as it was spoken, to time the delay"
     )
     parser.add_argument("--log", action="store_true", help="append to docs/testing-history.log")
+    parser.add_argument(
+        "--commit", help="the commit being replayed (default: GIT_COMMIT, then git)"
+    )
     parser.add_argument("--history", type=Path, default=HISTORY, help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
@@ -145,6 +168,13 @@ async def main_async(args: argparse.Namespace) -> int:
         settings = load_transcription_settings(env)
     except TranscriptionConfigError as exc:
         print(f"replay: {exc}", file=sys.stderr)
+        return 2
+    if args.commit and _commit_id(args.commit) is None:
+        print(
+            "replay: --commit takes a commit id: 4 to 40 of the digits and letters a-f "
+            "(see git rev-parse HEAD)",
+            file=sys.stderr,
+        )
         return 2
     if settings.sends_audio_out and args.transcriber != settings.engine:
         # TRANSCRIBER in the environment (in the bot's container, say) must not send
@@ -218,7 +248,7 @@ async def main_async(args: argparse.Namespace) -> int:
             name=args.script.stem,
             recording=public_name(args.recording),
             engine=describe(settings),
-            commit=commit(),
+            commit=commit(args.commit),
             result=result,
             score=names,
             cut=cut,
@@ -228,7 +258,7 @@ async def main_async(args: argparse.Namespace) -> int:
             script=script,
             recording=public_name(args.recording),
             engine=describe(settings),
-            commit=commit(),
+            commit=commit(args.commit),
             result=result,
             score=score(script, heard),
             cut=cut,
