@@ -647,7 +647,7 @@ plus the list of fixes between them.
   ("Cleaned: names spelled right, off-topic chat left out." "As heard: exactly what
   DMbot heard, word for word."). It's a shortcut: **anyone in the server** can get the
   same choice with `/transcript`.
-  Until the Cleaner exists, it's one **[🎙 Download transcript]** button. The message adds
+  Before #296 it was one **[🎙 Download transcript]** button (old ones still work). The message adds
   "If the DM fixes names later, download again for the updated version."
 - **The cleaned file starts with a note:** "DMbot fixed the spelling of some names. The
   'As heard' file has the exact words."
@@ -1109,9 +1109,29 @@ consent check just made still holds:
   56% at 500, 31% at 5,000, since in a big campaign more names sound alike and those are
   left alone. Safe, but to check on real campaign data (PyCharm session). About 5 ms per
   60-word line at 5,000 names.
-- **Next:** Undo notes for medium fixes (proposed names), "Did they mean…?", re-checking
-  earlier lines after a correction, cleaned and both downloads, then off-topic hiding
-  (#52).
+- **Next:** Undo notes for medium fixes (proposed names), re-checking earlier lines
+  after a correction, then off-topic hiding (#52).
+
+**Transcript Cleaner step 2, in progress (2026-10-07, #296).**
+- **"Did they mean…?":** a word that sounds like two or three confirmed names (each
+  spelled at least 0.7 alike, none secret, none only suggested, not next to a secret
+  name) stays as heard, and the DM screen asks: "❓ **Mia said "Marin"**: did they
+  mean… [Maren] [Marron] [Keep as heard]". The buttons show each entry's own name. One
+  question is open at a time, and each word is asked about at most once per session.
+  No scene is needed to ask. Only the campaign's DMs can answer. A name becomes a
+  fixed spelling (`add_correction`, fix, source DM) and **Keep as heard** becomes a
+  keep rule, so the same words are handled silently from the next line. Consent is
+  checked before the question is posted and before the answer is saved. If the
+  speaker stops being recorded, their question is taken down without repeating their
+  words. Questions live with the running session: after it ends, or after a restart,
+  a press says the question expired and the line stays as heard. Not yet: Type it…,
+  fixing the line that was asked about, and the quiet verbosity level.
+- **Cleaned and both downloads:** the end-of-session message has **[📄 Cleaned]**,
+  **[🎙 As heard]** and **[Both (2 files)]**, with one line explaining each. `/transcript`
+  asks which version once the session is picked. The cleaned file says names were fixed
+  as the transcript channel showed them (`…-cleaned.txt`). Buttons sent before this
+  still give the "as heard" file.
+- **Undo notes for medium fixes:** waiting for a decision on where they go (#296).
 
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled
