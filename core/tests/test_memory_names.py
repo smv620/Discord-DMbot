@@ -907,7 +907,7 @@ class Review(NamesTest):
         view.same = SimpleNamespace(values=[belleros.id])  # type: ignore[assignment]
         it = self.it()
         await view._same_picked(it)
-        self.assertIn("**Bellaros** is another name for **Belleros**", it.response.edited[0][0])
+        self.assertIn("**Bellaros** is now a name for **Belleros**", it.response.edited[0][0])
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=belleros.id)
         self.assertIn(("Bellaros", CONFIRMED), {(a.text, a.status) for a in aliases})
 
@@ -1191,7 +1191,7 @@ class AfterSession(NamesTest):
             GUILD, self.campaign.id, entity_id=waiting["Oskar Vane"].id
         )
         self.assertIn("Vane", {a.text for a in aliases})
-        self.assertEqual(waiting["Ulfgarr"].description, "Heard 4 times")  # never a name
+        self.assertEqual(waiting["Ulfgarr"].description, "Heard 2 times")  # never a name
 
     async def test_nothing_from_someone_who_stopped(self) -> None:
         await self.consent.grant(GUILD, PLAYER)

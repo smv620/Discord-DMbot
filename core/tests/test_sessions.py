@@ -920,7 +920,8 @@ class SaveAndResume(SessionTests):
         (saved,) = table.unsaved.take(lambda _: True)
         self.assertEqual((saved.heard, saved.text), ("I think Beleros has it",
                                                      "I think Belleros has it"))  # fmt: skip
-        self.assertEqual(table.heard[-1], (PLAYER, "I think Beleros has it"))  # for the scan
+        # the scan reads the cleaned line, so a name fixed live isn't new (#394)
+        self.assertEqual(table.heard[-1], (PLAYER, "I think Belleros has it"))
         self.assertEqual(table.heard_counts[(eid, PLAYER)], 1)
         self.assertTrue(table.vocabulary.is_name("beleros"))
         self.bot.stop_recording(GUILD, PLAYER)
