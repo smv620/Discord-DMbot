@@ -26,7 +26,7 @@ class Line:
     started_ms: int  # Unix milliseconds, when the speech started
     user_id: int
     heard: str  # exactly what speech-to-text wrote
-    text: str  # cleaned (the same as `heard` until the Transcript Cleaner)
+    text: str  # cleaned: misheard names fixed (dmbot.transcript.cleaner)
 
 
 @dataclass(slots=True)

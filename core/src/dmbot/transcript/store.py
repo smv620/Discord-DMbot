@@ -63,7 +63,7 @@ class TranscriptStore:
                     [line.started_ms for line in lines],
                     [line.user_id for line in lines],
                     [line.heard for line in lines],
-                    # NULL while the cleaned text is the same as heard (always, for now)
+                    # NULL while the cleaned text is the same as heard (no names fixed)
                     [None if line.text == line.heard else line.text for line in lines],
                 ),
             )
