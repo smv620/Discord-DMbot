@@ -7,25 +7,33 @@ import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import Home from "../src/pages/index.astro";
-import Pricing from "../src/pages/pricing.astro";
-import Install from "../src/pages/install.astro";
-import Account from "../src/pages/account.astro";
-import Terms from "../src/pages/legal/terms.astro";
-import Privacy from "../src/pages/legal/privacy.astro";
-import Refunds from "../src/pages/legal/refunds.astro";
-import NotFound from "../src/pages/404.astro";
+// Every file in src/pages gets a smoke test; a new page without an entry here fails below.
+const found = import.meta.glob<{ default: AstroComponentFactory }>("../src/pages/**/*.astro", {
+  eager: true,
+});
 
-const pages: [path: string, page: AstroComponentFactory, title: string][] = [
-  ["/", Home, "DMbot"],
-  ["/pricing", Pricing, "Prices · DMbot"],
-  ["/install", Install, "Add to Discord · DMbot"],
-  ["/account", Account, "My account · DMbot"],
-  ["/legal/terms", Terms, "Terms of use · DMbot"],
-  ["/legal/privacy", Privacy, "Privacy · DMbot"],
-  ["/legal/refunds", Refunds, "Refunds · DMbot"],
-  ["/404", NotFound, "Page not found · DMbot"],
+function page(file: string): AstroComponentFactory {
+  const module = found[`../src/pages/${file}`];
+  if (!module) throw new Error(`no page ${file}`);
+  return module.default;
+}
+
+// [path, file, tab title, kept out of search results]
+const pages: [path: string, file: string, title: string, noindex: boolean][] = [
+  ["/", "index.astro", "DMbot", false],
+  ["/pricing", "pricing.astro", "Prices · DMbot", false],
+  ["/install", "install.astro", "Add to Discord · DMbot", false],
+  ["/account", "account.astro", "My account · DMbot", true],
+  ["/legal/terms", "legal/terms.astro", "Terms of use · DMbot", false],
+  ["/legal/privacy", "legal/privacy.astro", "Privacy · DMbot", false],
+  ["/legal/refunds", "legal/refunds.astro", "Refunds · DMbot", false],
+  ["/404", "404.astro", "Page not found · DMbot", true],
 ];
+
+it("has a smoke test for every page", () => {
+  const listed = pages.map(([, file]) => `../src/pages/${file}`).sort();
+  expect(Object.keys(found).sort()).toEqual(listed);
+});
 
 let container: AstroContainer;
 
@@ -37,12 +45,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe.each(pages)("page %s", (path, page, title) => {
-  it("renders with a title, one heading and no console errors", async () => {
+describe.each(pages)("page %s", (path, file, title, noindex) => {
+  it("renders with a title and one heading, without logging to the console", async () => {
     const errors = vi.spyOn(console, "error");
     const warnings = vi.spyOn(console, "warn");
 
-    const html = await container.renderToString(page, {
+    const html = await container.renderToString(page(file), {
       request: new Request(`https://dmbot.example${path}`),
     });
 
@@ -53,27 +61,29 @@ describe.each(pages)("page %s", (path, page, title) => {
     expect(html.match(/<h1[\s>]/g)).toHaveLength(1);
     expect(errors).not.toHaveBeenCalled();
     expect(warnings).not.toHaveBeenCalled();
+    // Astro's own logger may bypass console; these spies catch what pages and components log.
+  });
+
+  it(noindex ? "is kept out of search results" : "may be listed by search engines", async () => {
+    const html = await container.renderToString(page(file), {
+      request: new Request(`https://dmbot.example${path}`),
+    });
+    expect(html.includes('<meta name="robots" content="noindex"')).toBe(noindex);
   });
 });
 
-describe("signed-in area", () => {
-  it("keeps /account out of search results", async () => {
-    const html = await container.renderToString(Account, {
-      request: new Request("https://dmbot.example/account"),
-    });
-    expect(html).toContain('<meta name="robots" content="noindex"');
-  });
-
-  it("lets search engines index the public pages", async () => {
-    const html = await container.renderToString(Pricing, {
+describe("menu", () => {
+  it("marks only the current page", async () => {
+    const html = await container.renderToString(page("pricing.astro"), {
       request: new Request("https://dmbot.example/pricing"),
     });
-    expect(html).not.toContain('name="robots"');
+    expect(html.match(/aria-current="page"/g)).toHaveLength(1);
+    expect(html).toMatch(/<a href="\/pricing" aria-current="page"/);
   });
 });
 
 // The site must never use the game's trademarks or the publisher's name (README.md).
-// Say "5e-compatible tabletop games" instead.
+// Say "5e-compatible tabletop games" instead. README.md names them on purpose, so it isn't scanned.
 describe("no trademarks", () => {
   const banned = [
     /D\s*&(amp;)?\s*D/i,
@@ -82,7 +92,7 @@ describe("no trademarks", () => {
     /\bWotC\b/i,
     /D&D Beyond/i,
     /Forgotten Realms/i,
-    /Player'?s Handbook/i,
+    /Player['’]?s Handbook/i,
     /Monster Manual/i,
   ];
   const root = fileURLToPath(new URL("..", import.meta.url));

@@ -1,0 +1,14 @@
+# Security headers for Cloudflare Pages (https://developers.cloudflare.com/pages/configuration/headers/).
+# The site has no inline scripts and loads nothing from other sites. Astro inlines small
+# stylesheets, hence 'unsafe-inline' for styles only. When /account calls the web API on
+# another address, add that address to connect-src.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+/account
+  Cache-Control: no-store

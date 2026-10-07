@@ -2,7 +2,7 @@
 
 The customer website: static pages (home, prices, legal, how to add DMbot) and one small
 signed-in area (`/account`). Built with [Astro](https://astro.build) and TypeScript in
-strict mode. Built and maintained by the **WebDev** session.
+strict mode. Built and maintained by the **WebDev** session (issue label `session: WebDev`).
 
 The site holds no plan rules and no campaign data. The signed-in area talks to the web API
 in core (`core/src/dmbot/web/`, FastAPI, its own container), because the plan rules and
@@ -19,10 +19,11 @@ npm run dev        # http://localhost:4321, reloads on save
 npm run typecheck  # astro check: TypeScript and .astro files
 npm test           # Vitest: one smoke test per page, plus the trademark check
 npm run build      # static site in dist/
+npm run check:links  # after build: every internal link points at a real file
 npm run preview    # serve dist/ to check the build
 ```
 
-CI runs `typecheck`, `test` and `build` in the `web` job on every push.
+CI runs `typecheck`, `test`, `build` and `check:links` in the `web` job on every push.
 
 ## Layout
 
@@ -31,7 +32,8 @@ CI runs `typecheck`, `test` and `build` in the `web` job on every push.
   Light and dark follow the device setting. Change colors here, never in a page.
 - `src/pages/`: one file per page. `/account` is the signed-in area and is kept out of
   search results.
-- `test/`: Vitest smoke tests.
+- `test/`: Vitest smoke tests. A new page needs a line in `test/pages.test.ts` (the test fails until it has one).
+- `public/_headers`: security headers for Cloudflare Pages (CSP, no framing). Add the web API address to `connect-src` when `/account` starts calling it.
 
 Interactivity, when a page needs it, goes in a Preact island; there is no UI framework
 until then.
