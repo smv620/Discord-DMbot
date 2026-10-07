@@ -15,15 +15,16 @@ words as heard otherwise (a wrong fix is worse than a missed one):
   session ("Thorn" next to "a thorn" is a word); all capitals are left alone. A word
   starting a sentence gets a capital anyway, so it counts only once it was also
   written with one mid-sentence. One word alone also needs the name in the scene (said
-  in the last ~10 minutes), since real names and brands sound like campaign names too
-  ("Mary" and Mara); a player's character, usually in the scene, must also be spelled
-  more alike. Words in lower case are never
-  changed this way ("Bell or us" waits for the DM's answer, later).
+  in the last ~10 minutes) and spelled closer (at least 0.8 alike), since real names
+  and brands sound like campaign names too ("Mary" and Mara, 0.75). Words in lower
+  case are never changed this way ("Bell or us" waits for the DM's answer, later).
 
 Only confirmed, non-secret names make a fix; a name DMbot only suggested never does.
 Nothing is changed inside a secret name, a known name, a "keep as heard" word or the
 name of someone at the table, and no fix goes where the words, with the words around
-them, sound like a secret name ("Silas Vain" for the secret "Silas Vane"), so a fix can
+them, sound like a secret name ("Silas Vain" for the secret "Silas Vane"). The line is
+checked again as written: a DM's fixed spelling needs no likeness, so "Silas Bane" with
+the rule "Bane" → Vane would write "Silas Vane"; such a fix is taken back. So a fix can
 never write a secret identity into a transcript. A fix writes the
 name the way it was said ("the Frostwolfs" → "the Frostwolves", not "Frostwolf tribe"):
 the spelling of what was said, never the meaning.
@@ -32,6 +33,7 @@ the spelling of what was said, never the meaning.
 from __future__ import annotations
 
 import difflib
+import logging
 import re
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
@@ -42,12 +44,14 @@ from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.memory.scene import PLAYER_CHARACTER, WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
 
+log = logging.getLogger(__name__)
+
 MAX_JOINED = 3  # a name split into at most this many words ("Ka Zeth", "Bry N Shander")
 MIN_LETTERS = 4  # shorter words sound like too many names
 MIN_LIKENESS = 0.7  # how alike the spelling must be (0 to 1) for a fix by sound
-# One word to a player's character: their names come up all the time, so real first
-# names nearby ("Mary" for Mara, 0.75) must not be pulled in.
-MIN_LIKENESS_CHARACTER = 0.8
+# One word alone, by sound: real first names sound like campaign names ("Mary" for the
+# NPC or character Mara, 0.75), so one word must be spelled closer than a joined name.
+MIN_LIKENESS_ONE_WORD = 0.8
 # Runs of words checked against secret names, per line. Enough for any real campaign
 # (a few dozen); past it, the line's remaining fixes are dropped: no fix is the safe way.
 SECRET_CHECKS_PER_LINE = 400
@@ -207,24 +211,76 @@ def clean(
     fixes = [
         fix
         for fix in [
-            *_known_names(lookup, heard),
+            *_known_names(lookup, heard, person_keys),
             *_by_sound(lookup, heard, words, known, vocabulary, scene),
         ]
-        if not _near_secret(lookup, words, fix, near)
+        if not _near_secret(lookup, words, fix.start, fix.end, near)
     ]
     fixes.sort(key=lambda f: f.start)
-    out, at = [], 0
+    text, fixes = _without_secrets(lookup, heard, fixes, near)
+    if near.ran_out:
+        log.debug("Secret-name check ran out for a line: %d fix(es) kept", len(fixes))
+    return Cleaned(text, tuple(fixes))
+
+
+def _apply(heard: str, fixes: list[Fix]) -> tuple[str, list[tuple[int, int]]]:
+    """The line with `fixes` (in order) applied, and where each written name now is."""
+    out, spans, at, length = [], [], 0, 0
     for fix in fixes:
-        out += [heard[at : fix.start], fix.written]
+        before = heard[at : fix.start]
+        out += [before, fix.written]
+        length += len(before)
+        spans.append((length, length + len(fix.written)))
+        length += len(fix.written)
         at = fix.end
     out.append(heard[at:])
-    return Cleaned("".join(out), tuple(fixes))
+    return "".join(out), spans
 
 
-def _known_names(lookup: CampaignLookup, heard: str) -> list[Fix]:
+def _without_secrets(
+    lookup: CampaignLookup, heard: str, fixes: list[Fix], near: _SecretChecks
+) -> tuple[str, list[Fix]]:
+    """The cleaned line, checked again as written: a fix whose name, with the words
+    around it, is (or sounds like) a secret name is taken back, and the line rebuilt,
+    until none is. The heard words alone can't show this: a spelling the DM fixed needs
+    no likeness, so "Silas Bane" with the rule "Bane" → Vane writes "Silas Vane"."""
+    left = SECRET_CHECKS_PER_LINE  # one budget for the line as written, however rebuilt
+    while True:
+        text, spans = _apply(heard, fixes)
+        if not fixes or not lookup.secret_lengths:
+            return text, fixes
+        words = list(WORD.finditer(text))
+        secret = _secret_spans(lookup, words)
+        checks = _SecretChecks(left=left)  # answers are new each time: the text changed
+        bad = {
+            i
+            for i, (begin, end) in enumerate(spans)
+            if any(begin < b and a < end for a, b in secret)
+            or _near_secret(lookup, words, begin, end, checks)
+        }
+        left, near.ran_out = checks.left, near.ran_out or checks.ran_out
+        if not bad:
+            return text, fixes
+        fixes = [fix for i, fix in enumerate(fixes) if i not in bad]
+
+
+def _secret_spans(lookup: CampaignLookup, words: list[re.Match[str]]) -> list[tuple[int, int]]:
+    """Where a secret name stands, word for word, in a line (characters)."""
+    keys = [name_key(_stem(w.group())) for w in words]
+    spans = []
+    for size in group_sizes(lookup):
+        for start in range(len(words) - size + 1):
+            key = " ".join(keys[start : start + size])
+            if any(e.secret for e in lookup.by_key.get(key, ())):
+                spans.append((words[start].start(), words[start + size - 1].end()))
+    return spans
+
+
+def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> list[Fix]:
     """Fixes for names DMbot already matches word for word: another spelling of the
     same letters, or a spelling the DM fixed. The longest name wins where they overlap;
-    a place that could be two different entries is left alone."""
+    a place that could be two different entries is left alone, and so is the name of
+    someone at the table (a DM's rule "Sara" → Cerric never renames a player Sara)."""
     by_span: dict[tuple[int, int], list[tuple[str, str]]] = {}
     for found in find_mentions(lookup, heard):
         by_span.setdefault(found.span, []).append((found.entity_id, found.method))
@@ -234,6 +290,8 @@ def _known_names(lookup: CampaignLookup, heard: str) -> list[Fix]:
         if any(span[0] < end and start < span[1] for start, end in taken):
             continue
         taken.append(span)
+        if name_key(heard[span[0] : span[1]]) in person_keys:
+            continue
         hits = by_span[span]
         if len({entity_id for entity_id, _ in hits}) != 1:
             continue  # two entries answer to it: not sure which
@@ -317,7 +375,7 @@ def _by_sound(
             start, end = words[i].start(), words[run[-1]].end()
             said = _stem(heard[start:end])
             fix = _sounds_like(lookup, said, start)
-            if fix is not None and size == 1 and not _one_word_ok(lookup, fix, scene):
+            if fix is not None and size == 1 and not _one_word_ok(fix, scene):
                 fix = None
             if fix is not None:
                 fixes.append(fix)
@@ -359,15 +417,10 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | None:
     return Fix(start, start + len(said), said, best.text, best.entity_id, SOUND)
 
 
-def _one_word_ok(lookup: CampaignLookup, fix: Fix, scene: Collection[str]) -> bool:
-    """Is there enough to fix one word alone: its name in the scene, and for a player's
-    character, spelled more alike?"""
-    if fix.entity_id not in scene:
-        return False
-    entity = lookup.entities.get(fix.entity_id)
-    if entity is not None and entity.type == PLAYER_CHARACTER:
-        return likeness(fix.heard, fix.written) >= MIN_LIKENESS_CHARACTER
-    return True
+def _one_word_ok(fix: Fix, scene: Collection[str]) -> bool:
+    """Is there enough to fix one word alone: its name in the scene, and spelled closer
+    than a joined name must be?"""
+    return fix.entity_id in scene and likeness(fix.heard, fix.written) >= MIN_LIKENESS_ONE_WORD
 
 
 @dataclass(slots=True)
@@ -376,13 +429,15 @@ class _SecretChecks:
     may still be checked."""
 
     seen: dict[tuple[int, int], bool] = field(default_factory=dict)  # (start, words)
-    left: int = SECRET_CHECKS_PER_LINE
+    left: int = field(default_factory=lambda: SECRET_CHECKS_PER_LINE)
+    ran_out: bool = False  # some fix was dropped because the checks ran out
 
 
 def _near_secret(
     lookup: CampaignLookup,
     words: list[re.Match[str]],
-    fix: Fix,
+    begin: int,
+    end: int,
     near: _SecretChecks,
 ) -> bool:
     """Do the fixed words, with the words around them, sound like a secret name? Then
@@ -394,7 +449,7 @@ def _near_secret(
     campaign with very many secret names can't stall voice."""
     if not lookup.secret_lengths:
         return False
-    inside = [i for i, w in enumerate(words) if w.start() < fix.end and fix.start < w.end()]
+    inside = [i for i, w in enumerate(words) if w.start() < end and begin < w.end()]
     if not inside:
         return False
     first, last = inside[0], inside[-1]
@@ -411,6 +466,7 @@ def _near_secret(
         for start in range(max(0, last - size + 1), min(first, len(words) - size) + 1):
             if (start, size) not in near.seen:
                 if near.left <= 0:
+                    near.ran_out = True
                     return True
                 near.left -= 1
                 joined = "".join(w.group() for w in words[start : start + size])

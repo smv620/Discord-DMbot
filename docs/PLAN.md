@@ -1084,14 +1084,17 @@ consent check just made still holds:
   first time it starts a sentence; a wrong fix is worse than a missed one. All capitals
   are left alone.
 - **One word alone needs context:** the name was said in the last ~10 minutes (the
-  scene tracker), because real names and brands sound like campaign names ("Mary" and
-  Mara, "Amazon" and Amazonia). A player's character is said so often that it is almost
-  always in the scene, so its spelling must also be closer (at least 0.8 alike). Joined
-  words need none.
+  scene tracker) and must be spelled closer (at least 0.8 alike), because real names
+  and brands sound like campaign names ("Mary" and Mara, 0.75; "Amazon" and Amazonia).
+  Joined words need neither.
 - **Never:** a fix from a name DMbot only suggested (no Undo note yet, so it does
   nothing); a change inside a secret name (of any length); a fix where the words, with
   the words around them, sound like a secret name ("Silas Vain" for "Silas Vane"), or
-  sound like two entries; a fix from an out-of-date copy of the names.
+  sound like two entries; a fix from an out-of-date copy of the names; a DM's fixed
+  spelling that renames someone at the table. **The line is checked again as written:**
+  a DM's fixed spelling needs no likeness, so "Silas Bane" with the rule "Bane" → Vane
+  would write the secret "Silas Vane"; any fix whose written name, with the words
+  around it, is or sounds like a secret name is taken back (#321 review).
 - A fix writes the name the way it was said (the matched other name, not the main
   name); a DM's fixed spelling writes the main name.
 - **Stored:** `heard` as before, `text` cleaned. The live transcript channel shows the

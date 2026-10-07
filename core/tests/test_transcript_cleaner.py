@@ -324,6 +324,37 @@ class MoreTrapsTest(unittest.TestCase):
         self.assertEqual(text("that is Beleros’s sword"), "that is Belleros’s sword")
 
 
+class WrittenSecretTest(unittest.TestCase):
+    """The line as written is checked too (#321 review): a DM's fixed spelling needs no
+    likeness, so it could write a secret name the heard words never showed."""
+
+    def test_a_dm_fix_never_completes_a_secret_name(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Vane"),),
+            more_aliases=(alias(MAREN, "Vane"), alias(BELLEROS, "Silas Vane", secret=True)),
+            corrections=(correction("Bane", MAREN, FIX),),
+        )
+        result = clean(names, "I met Silas Bane today", scene=EVERYONE)
+        self.assertEqual((result.text, result.fixes), ("I met Silas Bane today", ()))
+        # the same rule elsewhere in the line still works
+        self.assertEqual(
+            text("Bane waits. I met Silas Bane", names), "Vane waits. I met Silas Bane"
+        )
+
+    def test_a_dm_rule_never_renames_someone_at_the_table(self) -> None:
+        names = lookup(corrections=(correction("Sara", CERRIC, FIX),))
+        self.assertEqual(text("thanks Sara", names, people=["Sara"]), "thanks Sara")
+
+    def test_a_real_first_name_is_not_pulled_into_an_npc(self) -> None:
+        names = lookup(more=(entity(MAREN, "Mara"),), more_aliases=(alias(MAREN, "Mara"),))
+        self.assertEqual(text("so Mary, your turn", names), "so Mary, your turn")
+
+    def test_no_checks_left_means_no_fixes(self) -> None:
+        with patch.object(cleaner, "SECRET_CHECKS_PER_LINE", 0):
+            result = clean(lookup(), "I think Beleros has the key.", scene=EVERYONE)
+        self.assertEqual((result.text, result.fixes), ("I think Beleros has the key.", ()))
+
+
 class SpeedTest(unittest.TestCase):
     """Work per line, counted rather than timed, so a busy test machine can't fail it
     (#311): the secret-name check codes runs of words, and that's what costs."""
@@ -348,7 +379,8 @@ class SpeedTest(unittest.TestCase):
             for n in range(1, 21)
         )
         names = lookup(more_aliases=secrets)
-        self.assertLessEqual(self.codes_used(names), cleaner.SECRET_CHECKS_PER_LINE + 60)
+        # the heard words and the line as written each have one budget
+        self.assertLessEqual(self.codes_used(names), 2 * cleaner.SECRET_CHECKS_PER_LINE + 60)
 
 
 class VocabularyTest(unittest.TestCase):

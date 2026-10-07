@@ -931,6 +931,33 @@ class SaveAndResume(SessionTests):
         self.said(table, "careful, a thorn")
         self.assertTrue(table.vocabulary.is_word("Thorn"))  # #295
 
+    async def test_someone_in_voice_who_never_agreed_keeps_their_name(self) -> None:
+        import time
+
+        from dmbot.memory.lookup import CampaignLookup, LookupData
+        from dmbot.memory.models import CONFIRMED, Alias, Entity
+
+        self.at_the_table(PLAYER, OTHER_PERSON, DM)
+        await self.consent.grant(GUILD, PLAYER)
+        table, sent = await self.joined_with_transcript()
+        other = next(m for m in self.voice.members if m.id == OTHER_PERSON)
+        other.display_name = "Marin"  # never agreed, so never recorded, but said aloud
+        eid = "c" * 32
+        table.name_lookup = CampaignLookup.build(
+            LookupData(
+                1,
+                (Entity(eid, "npc", "Maren", "", CONFIRMED, None, "dm", 0),),
+                (Alias(eid, eid, "Maren", "maren", "full", None, False, CONFIRMED, (), "dm", 0),),
+                (),
+                (),
+            )
+        )
+        table.scene.note([eid], DM, time.monotonic())  # Maren came up a moment ago
+        table.people = self.bot._everyone_at_table(table, [])
+        self.said(table, "thanks Marin, good call")
+        await self.bot.flush_transcript(table)
+        self.assertIn("thanks Marin, good call", "\n".join(sent))
+
     async def test_everyone_at_the_table_is_protected_from_name_fixes(self) -> None:
         self.at_the_table(PLAYER, OTHER_PERSON, DM)
         await self.start()
