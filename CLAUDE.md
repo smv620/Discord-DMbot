@@ -11,6 +11,8 @@ Dungeon Master. **The bot advises; the DM decides.**
   streams PCM to core. No game logic here, ever.
 - `core/` — Python service. Slash commands, consent, transcription, AI analysis, storage,
   integrations. The owner develops in PyCharm Community, so keep core idiomatic Python.
+- `web/` — the customer website (Astro + TypeScript, static with one signed-in area) and
+  nothing else; its API is Python in `core/` so plan rules and isolation live in one place.
 - `docs/` — plan and design notes. `.claude/agents/` — reviewer team definitions.
 
 ## Commands
@@ -44,8 +46,8 @@ CI runs all of the above on every pull request. Never merge red CI.
 ## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-07)
 DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude
 sessions work on this repo. **Each one has a name, and its name is its issue label:**
-`session: dev1`, `session: dev2`, `session: dev3`, `session: clouddev`, `session: web`
-(and `session: pycharm` when the owner's PC is used). **Assignments come from the issue
+`session: dev1`, `session: dev2`, `session: dev3`, `session: clouddev`, `session: web`,
+`session: WebDev` (and `session: pycharm` when the owner's PC is used). **Assignments come from the issue
 list:** an open issue labelled with your name is yours; take them lowest number first
 unless an issue says otherwise. Say which session you are in every issue and PR. More
 developers can be added by adding a label.
@@ -68,6 +70,12 @@ developers can be added by adding a label.
   no live server. Cloud limits: no server access at all, GitHub only through `gh api`
   (REST; GraphQL is blocked), no deleting branches, and CI is its test runner
   (discord.py, psycopg and pytest aren't installed locally).
+- **WebDev** (Claude Code, its own clone or worktree): the customer website in `web/` and the
+  web API in `core/src/dmbot/web/`. Same rules as the other coding sessions: PRs into
+  `development`, never deploys the bot, never touches the live server; dev1 deploys the
+  API container. It owns the site's words with the ux-critic, never the plan prices or
+  rules: those are owner decisions recorded in docs/PLAN.md, and a change to them is a
+  question on the issue, not a commit.
 - **web** (the coordinating session, cloud): planning, design decisions, `docs/PLAN.md`
   and this file, issue hygiene, reviewing every PR before the owner merges, and the code
   that needs design judgement. Scope questions from any session go in the issue; web
@@ -145,8 +153,9 @@ terminal output or Discord screenshots copied to it.
   visibility allows it: **private** (DM only), **opt-in peek** (the default: hidden, with a
   "Peek behind the DM screen" button that warns about spoilers before granting access),
   or **open**. See docs/PLAN.md.
-- **Backups are complete, and anyone in the server may download one** (owner decision,
-  2026-10-06): a campaign must never be lost if its DM disappears. A backup holds the
+- **Backups are complete, and anyone in the server may download one of a paid campaign**
+  (owner decision, 2026-10-06, narrowed 2026-10-07: Try It campaigns have no backups or
+  downloads; loading a backup needs a subscriber with a free campaign slot, see #437): a campaign must never be lost if its DM disappears. A backup holds the
   whole campaign, unabridged, including secret names and DM notes; that is the one
   exception to keeping DM-screen content from players. The download message says it holds
   the DM's secrets and tells players not to open it. Whoever restores a backup becomes the
