@@ -87,9 +87,8 @@ class CampaignLookup:
     confirmed_neighbours: dict[str, frozenset[str]]
     heard: dict[str, HeardCount] = field(default_factory=dict)
     recent_sessions: tuple[int, ...] = ()
-    # Words in the longest secret name, so every word of one can be left alone, and every
-    # secret name's word count, so the Cleaner checks only runs of about that length.
-    longest_secret: int = 0
+    # Every secret name's word count: all of one is left alone, and the Cleaner checks
+    # only runs of about those lengths.
     secret_lengths: frozenset[int] = frozenset()
 
     @classmethod
@@ -146,7 +145,6 @@ class CampaignLookup:
             {k: frozenset(v) for k, v in confirmed_links.items()},
             {h.entity_id: h for h in data.heard if h.entity_id in entities},
             data.recent_sessions,
-            max(secret_lengths, default=0),
             frozenset(secret_lengths),
         )
 

@@ -16,8 +16,8 @@ words as heard otherwise (a wrong fix is worse than a missed one):
   starting a sentence gets a capital anyway, so it counts only once it was also
   written with one mid-sentence. One word alone also needs the name in the scene (said
   in the last ~10 minutes), since real names and brands sound like campaign names too
-  ("Mary" and Mara); for a player's character, always in the scene, it must also be
-  spelled more alike. Words in lower case are never
+  ("Mary" and Mara); a player's character, usually in the scene, must also be spelled
+  more alike. Words in lower case are never
   changed this way ("Bell or us" waits for the DM's answer, later).
 
 Only confirmed, non-secret names make a fix; a name DMbot only suggested never does.
@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, name_key
 from dmbot.memory.scan import COMMON, GAME_TERMS
-from dmbot.memory.scene import LONGEST_NAME_WORDS, PLAYER_CHARACTER, WORD, find_mentions
+from dmbot.memory.scene import PLAYER_CHARACTER, WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
 
 MAX_JOINED = 3  # a name split into at most this many words ("Ka Zeth", "Bry N Shander")
@@ -48,6 +48,9 @@ MIN_LIKENESS = 0.7  # how alike the spelling must be (0 to 1) for a fix by sound
 # One word to a player's character: their names come up all the time, so real first
 # names nearby ("Mary" for Mara, 0.75) must not be pulled in.
 MIN_LIKENESS_CHARACTER = 0.8
+# Runs of words checked against secret names, per line. Enough for any real campaign
+# (a few dozen); past it, the line's remaining fixes are dropped: no fix is the safe way.
+SECRET_CHECKS_PER_LINE = 400
 WORDS_KEPT = 20_000  # per speaker and kind: the most recently said words are kept
 _POSSESSIVE = ("'s", "’s")
 _SENTENCE_END = re.compile(r"[.!?…]")
@@ -186,11 +189,11 @@ def clean(
         name_key(p.split()[0]) for p in people if p.split()
     }
     n = len(words)
-    longest = max(LONGEST_NAME_WORDS, lookup.longest_secret)
     # Words that are already something DMbot knows: never changed by sound.
     known = [False] * n
-    for start in range(n):
-        for end in range(start + 1, min(n, start + longest) + 1):
+    for size in group_sizes(lookup):
+        for start in range(n - size + 1):
+            end = start + size
             key = " ".join(keys[start:end])
             if (
                 key in lookup.by_key
@@ -200,7 +203,7 @@ def clean(
             ):
                 known[start:end] = [True] * (end - start)
 
-    near: dict[tuple[int, int], bool] = {}  # (first word, words) → sounds like a secret
+    near = _SecretChecks()
     fixes = [
         fix
         for fix in [
@@ -367,18 +370,28 @@ def _one_word_ok(lookup: CampaignLookup, fix: Fix, scene: Collection[str]) -> bo
     return True
 
 
+@dataclass(slots=True)
+class _SecretChecks:
+    """Each run's answer within one line (several fixes share runs), and how many runs
+    may still be checked."""
+
+    seen: dict[tuple[int, int], bool] = field(default_factory=dict)  # (start, words)
+    left: int = SECRET_CHECKS_PER_LINE
+
+
 def _near_secret(
     lookup: CampaignLookup,
     words: list[re.Match[str]],
     fix: Fix,
-    near: dict[tuple[int, int], bool],
+    near: _SecretChecks,
 ) -> bool:
     """Do the fixed words, with the words around them, sound like a secret name? Then
     they may be one misheard ("Silas Vain" for "Silas Vane"), and no fix may go there.
-    Only runs about as long as a secret name are tried (one word more or fewer, as
-    speech-to-text splits and joins words): trying every length made a 32-word secret
-    name cost over half a second per line. `near` remembers each run's answer, since
-    several fixes in a line share runs."""
+    Only runs about as long as a secret name are tried (one word fewer up to two more,
+    as speech-to-text joins and splits words): trying every length made a 32-word
+    secret name cost over half a second per line. `near` remembers each run's answer
+    and limits the work per line: when it runs out, the answer is yes (no fix), so a
+    campaign with very many secret names can't stall voice."""
     if not lookup.secret_lengths:
         return False
     inside = [i for i, w in enumerate(words) if w.start() < fix.end and fix.start < w.end()]
@@ -386,14 +399,24 @@ def _near_secret(
         return False
     first, last = inside[0], inside[-1]
     width = last - first + 1
-    sizes = {n for k in lookup.secret_lengths for n in (k - 1, k, k + 1) if n >= width}
+    # A secret name may be heard as one word fewer, or split into up to MAX_JOINED - 1
+    # more ("Silasvane" as "Si Las Vain"); the fixed words themselves always count.
+    sizes = {
+        n
+        for k in lookup.secret_lengths
+        for n in range(max(1, k - 1), k + MAX_JOINED)
+        if width <= n <= len(words)
+    } | {width}
     for size in sorted(sizes):
         for start in range(max(0, last - size + 1), min(first, len(words) - size) + 1):
-            if (start, size) not in near:
+            if (start, size) not in near.seen:
+                if near.left <= 0:
+                    return True
+                near.left -= 1
                 joined = "".join(w.group() for w in words[start : start + size])
-                near[start, size] = any(
+                near.seen[start, size] = any(
                     e.secret for code in sound_codes(joined) for e in lookup.by_sound.get(code, ())
                 )
-            if near[start, size]:
+            if near.seen[start, size]:
                 return True
     return False

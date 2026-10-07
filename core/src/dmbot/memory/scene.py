@@ -59,6 +59,13 @@ class Found:
     method: str  # "exact": a name or other name; "spelling": a spelling the DM fixed
 
 
+def group_sizes(lookup: CampaignLookup) -> list[int]:
+    """How many words a name in this campaign can have, for matching word for word: 1
+    to LONGEST_NAME_WORDS, and the length of every secret name (so all of one is left
+    alone). Only those, so a long secret name doesn't make every line slow."""
+    return sorted(set(range(1, LONGEST_NAME_WORDS + 1)) | lookup.secret_lengths)
+
+
 def find_mentions(lookup: CampaignLookup, text: str) -> list[Found]:
     """Confirmed entries named in a line, where, and how: their confirmed names and
     other names, or a spelling the DM said means them. A secret name (and any shorter
@@ -67,11 +74,10 @@ def find_mentions(lookup: CampaignLookup, text: str) -> list[Found]:
     words = list(WORD.finditer(text))
     keys = [name_key(w.group()) for w in words]  # once per word, not per group
     n = len(keys)
-    longest = max(LONGEST_NAME_WORDS, lookup.longest_secret)  # a long secret name too
     groups = [
-        (start, end, " ".join(keys[start:end]))
-        for start in range(n)
-        for end in range(start + 1, min(n, start + longest) + 1)
+        (start, start + size, " ".join(keys[start : start + size]))
+        for size in group_sizes(lookup)
+        for start in range(n - size + 1)
     ]
     hidden = [False] * n  # words inside a secret name
     for start, end, key in groups:

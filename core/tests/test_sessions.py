@@ -937,6 +937,13 @@ class SaveAndResume(SessionTests):
         table = self.bot.tables[GUILD]
         # Dee never agreed, but her name is said at the table and must never change
         self.assertEqual(set(self.bot._everyone_at_table(table, ["Mia"])), {"Mia", "Dee", "Sam"})
+        # the DM out of voice is still found; bots never count
+        dm = next(m for m in self.voice.members if m.id == DM)
+        robot = member(12345)
+        robot.bot, robot.display_name = True, "Beleros"
+        self.voice.members = [m for m in self.voice.members if m.id != DM] + [robot]
+        self.guild.get_member = lambda uid: dm if uid == DM else None
+        self.assertEqual(set(self.bot._everyone_at_table(table, [])), {"Mia", "Dee", "Sam"})
 
     async def test_a_failed_post_is_tried_again(self) -> None:
         await self.consent.grant(GUILD, PLAYER)

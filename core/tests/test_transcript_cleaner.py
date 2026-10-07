@@ -1,8 +1,8 @@
 """The Transcript Cleaner's name fixes (#127), without Discord or a database: the
 mishearings it must fix and the traps it must leave alone (docs/PLAN.md)."""
 
-import time
 import unittest
+from unittest.mock import patch
 
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import (
@@ -15,6 +15,8 @@ from dmbot.memory.models import (
     Entity,
     name_key,
 )
+from dmbot.memory.sounds import sound_codes
+from dmbot.transcript import cleaner
 from dmbot.transcript.cleaner import (
     DM_FIX,
     SOUND,
@@ -59,6 +61,7 @@ def lookup(
     more: tuple[Entity, ...] = (),
     more_aliases: tuple[Alias, ...] = (),
     corrections: tuple[Correction, ...] = (),
+    hooded: bool = True,
 ) -> CampaignLookup:
     entities = (
         entity(BELLEROS, "Belleros"),
@@ -72,7 +75,7 @@ def lookup(
     )
     aliases = (
         alias(BELLEROS, "Belleros"),
-        alias(BELLEROS, "the hooded stranger", secret=True),
+        *([alias(BELLEROS, "the hooded stranger", secret=True)] if hooded else []),
         alias(CERRIC, "Cerric"),
         alias(KAZETH, "Ka'zeth"),
         alias(TOWN, "Bryn Shander"),
@@ -274,6 +277,21 @@ class ReviewTrapsTest(unittest.TestCase):
         self.assertEqual(text("I met Silas Vain today", names), "I met Silas Vain today")
         self.assertEqual(text("I met the hooded strangr", names), "I met the hooded strangr")
 
+    def test_a_one_word_secret_split_in_three_still_blocks_a_fix(self) -> None:
+        # #295 review: only secret names of very different lengths, so a 3-word run
+        # must still be checked ("Silasvane" heard as "Si Las Vain")
+        for long_secret in (
+            (),
+            (alias(BELLEROS, "the Red Lady of the Kazeth Hills", secret=True),),
+        ):
+            names = lookup(
+                hooded=False,
+                more_aliases=(alias(BELLEROS, "Silasvane", secret=True), *long_secret),
+                corrections=(correction("Vain", BELLEROS, FIX),),
+            )
+            with self.subTest(long_secret=bool(long_secret)):
+                self.assertEqual(text("I met Si Las Vain today", names), "I met Si Las Vain today")
+
     def test_nothing_changes_inside_a_long_secret_name(self) -> None:
         names = lookup(
             more_aliases=(alias(BELLEROS, "the Red Lady of the Kazeth Hills", secret=True),)
@@ -307,15 +325,30 @@ class MoreTrapsTest(unittest.TestCase):
 
 
 class SpeedTest(unittest.TestCase):
+    """Work per line, counted rather than timed, so a busy test machine can't fail it
+    (#311): the secret-name check codes runs of words, and that's what costs."""
+
+    LINE = " ".join(["then Beleros and the Wolf ran toward Bryn shander"] * 6)
+
+    def codes_used(self, names: CampaignLookup) -> int:
+        with patch("dmbot.transcript.cleaner.sound_codes", wraps=sound_codes) as codes:
+            clean(names, self.LINE, scene=EVERYONE)
+        return codes.call_count
+
     def test_a_very_long_secret_name_stays_quick(self) -> None:
-        # #295: every run length was tried around each fix (over 0.5 s a line here)
-        secret = " ".join(f"word{i}" for i in range(32))
+        # 20 words, within the 100-character limit; every length was tried before
+        secret = " ".join(f"w{i:02d}" for i in range(20))
         names = lookup(more_aliases=(alias(BELLEROS, secret, secret=True),))
-        line = " ".join(["then Beleros and the Wolf ran toward Bryn shander"] * 6)
-        started = time.perf_counter()
-        for _ in range(5):
-            clean(names, line, scene=EVERYONE)
-        self.assertLess((time.perf_counter() - started) / 5, 0.25)  # ~0.03 s; CI is slower
+        self.assertEqual(clean(names, self.LINE, scene=EVERYONE).text.count("Belleros"), 6)
+        self.assertLess(self.codes_used(names), 600)
+
+    def test_many_secret_names_have_a_limit_per_line(self) -> None:
+        secrets = tuple(
+            alias(BELLEROS, " ".join(f"s{n}x{i}" for i in range(n)), secret=True)
+            for n in range(1, 21)
+        )
+        names = lookup(more_aliases=secrets)
+        self.assertLessEqual(self.codes_used(names), cleaner.SECRET_CHECKS_PER_LINE + 60)
 
 
 class VocabularyTest(unittest.TestCase):

@@ -1539,8 +1539,8 @@ class DMBot(commands.AutoShardedBot):
 
     def _everyone_at_table(self, table: Table, consenting: list[str]) -> tuple[str, ...]:
         """Display names the name fixes must never change: people who agreed, the DM(s),
-        and everyone in the voice channel (their names get said too). Used here only,
-        never sent anywhere."""
+        and everyone in the voice channel (their names get said too), as of the last
+        connection to speech-to-text. Used here only, never sent anywhere."""
         names = dict.fromkeys(consenting)
         voice = self.get_channel(table.voice_channel_id)
         members: list[discord.Member | None] = []
