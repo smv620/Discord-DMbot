@@ -69,6 +69,55 @@ class CaptureLogTests(unittest.TestCase):
         log.add_health(1, 50, 50)
         self.assertIsNone(log.render(str))
 
+    def test_health_waits_for_its_speech(self) -> None:
+        # #120: ears reports health when a stream ends; the speech only arrives once
+        # transcribed. A check in between must not throw the counts away.
+        log = CaptureLog()
+        log.add_health(1, 50, 100)
+        self.assertIsNone(log.log_line())
+        self.assertIsNone(log.render(str))
+        log.add_utterance(utt(1, 2.0))
+        self.assertIn("user 1: 1 x speech, 2.0 s, audio 50%", log.log_line() or "")
+        self.assertIn("(50% got through)", log.render(lambda uid: f"P{uid}") or "")
+
+    def test_only_speakers_in_a_check_are_cleared(self) -> None:
+        log = CaptureLog()
+        log.add_utterance(utt(1, 1.0))
+        log.add_health(1, 60, 100)
+        self.assertIsNotNone(log.render(str))
+        log.add_health(2, 40, 100)  # health only: not in the next check yet
+        self.assertIsNone(log.render(str))
+        self.assertIsNone(log.log_line())  # speaker 1 was cleared by the first check
+        log.add_utterance(utt(2, 1.0))
+        self.assertEqual(
+            log.log_line(),
+            "Capture check: 1 speaker(s); user 2: 1 x speech, 1.0 s, audio 40% (audio gaps)",
+        )
+
+    def test_an_early_speaker_is_kept_and_a_complete_one_cleared(self) -> None:
+        log = CaptureLog()
+        log.add_health(1, 70, 100)  # early: speech still being transcribed
+        log.add_utterance(utt(2, 1.0))
+        log.add_health(2, 80, 100)  # complete
+        text = log.render(lambda uid: f"P{uid}")
+        self.assertEqual(text and text.split(" (")[0], "⚠️ **P2's voice is cutting out for DMbot**")
+        log.add_utterance(utt(1, 1.0))
+        self.assertEqual(
+            log.log_line(),
+            "Capture check: 1 speaker(s); user 1: 1 x speech, 1.0 s, audio 70% (audio gaps)",
+        )
+        self.assertIn(
+            "**P1's voice is cutting out for DMbot** (70% got through)",
+            log.render(lambda uid: f"P{uid}") or "",
+        )
+        self.assertIsNone(log.log_line())
+
+    def test_speech_without_health_is_still_cleared(self) -> None:
+        log = CaptureLog()
+        log.add_utterance(utt(1, 1.0))
+        self.assertIsNone(log.render(str))
+        self.assertIsNone(log.log_line())
+
 
 class AudioHealthTests(unittest.TestCase):
     def test_flagged_never_shows_95_or_more(self) -> None:

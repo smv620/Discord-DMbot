@@ -80,11 +80,19 @@ class CaptureLog:
         return f"Capture check: {len(parts)} speaker(s); " + "; ".join(parts)
 
     def render(self, name_of: Callable[[int], str], now: float = 0.0) -> str | None:
-        """A warning for the DM screen if someone's voice is cutting out, then reset.
-        None (and still reset) otherwise. `now` is a monotonic time in seconds."""
+        """A warning for the DM screen if someone's voice is cutting out, then reset the
+        speakers this check covered. None (and still reset) otherwise. `now` is a
+        monotonic time in seconds.
+
+        A speaker whose audio health has arrived but whose speech hasn't (it's still
+        being transcribed) isn't covered yet: their counts are kept for the next check
+        (#120)."""
         gaps: list[tuple[str, int]] = []
         for user_id, s in sorted(self._stats.items(), key=lambda kv: -kv[1].seconds):
-            if s.utterances == 0 or s.frames_expected == 0:
+            if s.utterances == 0:
+                continue
+            del self._stats[user_id]
+            if s.frames_expected == 0:
                 continue
             percent, _ = audio_health(s.frames_received, s.frames_expected)
             if percent >= DM_WARN_PERCENT:
@@ -97,7 +105,6 @@ class CaptureLog:
             ):
                 self._warned[user_id] = (percent, now)
                 gaps.append((name_of(user_id), percent))
-        self._stats.clear()
         if not gaps:
             return None
         tail = (
