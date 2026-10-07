@@ -653,7 +653,9 @@ building:
   (`frostmaiden-session-7-as-heard.txt`): a short header, then
   `[0:42:10] (Mia) {Cerric}: …` per line (#53; no `{…}` for someone who plays no
   character, such as the DM, until speaker tagging). The file says it's what DMbot wrote down, with no fixes, and that some words
-  may be misheard. While DMbot is still recording that session it warns first
+  may be misheard, and which speech-to-text wrote it ("Speech to text: Deepgram, an
+  online service (model nova-3)"; #173). Each session stores its engines as "engine model host" (more than
+  one if a resumed session switched); the endpoint's host stays in the database. While DMbot is still recording that session it warns first
   ([Download anyway] [Cancel]), in different words for the DM and players. Replies
   are deferred first, since building a file can take more than Discord's 3 seconds.
 - When a session ends, the DM(s) and everyone recorded get a private message with one

@@ -2123,7 +2123,10 @@ class DMBot(commands.AutoShardedBot):
             return False
         try:
             table.transcript_session_id = await self.transcripts.open_session(
-                table.guild_id, table.campaign_id, table.started_at or int(time.time())
+                table.guild_id,
+                table.campaign_id,
+                table.started_at or int(time.time()),
+                self.settings.transcription.source,
             )
         except Exception:
             log.exception("Couldn't start saving the transcript; will retry")

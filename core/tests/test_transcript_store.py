@@ -52,6 +52,20 @@ class StoreTests(DatabaseTest):
         assert session is not None
         self.assertIsNone(session.ended_at)  # running again
 
+    async def test_each_session_records_which_speech_to_text_wrote_it(self) -> None:
+        deepgram = "deepgram nova-3 api.deepgram.com"
+        sid = await self.store.open_session(GUILD, self.campaign.id, START, deepgram)
+        await self.store.add_lines(GUILD, sid, [line(1, DM, "a")])
+        await self.store.open_session(GUILD, self.campaign.id, START, deepgram)  # resumed
+        session = await self.store.session(GUILD, sid)
+        assert session is not None
+        self.assertEqual(session.engines, (deepgram,))  # once, however often it resumes
+        # A restart that switched engine: both, in order. No engine (none): nothing new.
+        await self.store.open_session(GUILD, self.campaign.id, START, "whisper-local small local")
+        await self.store.open_session(GUILD, self.campaign.id, START)
+        (listed,) = await self.store.sessions(GUILD, self.campaign.id)
+        self.assertEqual(listed.engines, (deepgram, "whisper-local small local"))
+
     async def test_sessions_are_numbered_and_listed_newest_first_with_counts(self) -> None:
         old = await self.store.open_session(GUILD, self.campaign.id, START)
         empty = await self.store.open_session(GUILD, self.campaign.id, START + 3600)
