@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-07 by dev1 (deployed ee1bb03; ready for run 8 and the #147 repro)
+Last updated: 2026-10-07 by dev1 (deployed a3d12ef; ready for run 8 and the #147 repro)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -8,14 +8,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-Deploy development @ 8ad6e70 (ee1bb03 is live; two PRs since; rebuild ears and
-core). Check:
-  - #337 (dev2, #318): ears image built with `npm ci`. Confirm ears starts and
-    connects to core; nothing else changes.
-  - #329 (CloudDev, #317): ears waits 30 s before re-asking about a member the lookup
-    couldn't find (log line "N opted out" on a consent push); /transcript shows "No
-    transcripts yet" for a campaign played with transcripts off; "No saved session to
-    remove" now at INFO. Nothing to do live beyond a glance at the logs.
+(nothing queued)
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -29,12 +22,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: ee1bb03 (2026-10-07 08:36 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: a3d12ef (2026-10-07 15:22 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since ee1bb03, ask it to redeploy first. Use a steady connection (run 8a
+      moved since a3d12ef, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -97,6 +90,9 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     4 rules for a 2024 campaign, the menu switches one, the DM screen gets one line,
     a player running it is refused. Wording polish follows in #320, so don't log
     string nits.
+  Deployed 2026-10-07 15:22 (a3d12ef)
+  - #329: a consent push logs "N opted out"; /transcript says "No transcripts yet"
+    for a campaign played with transcripts off
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
