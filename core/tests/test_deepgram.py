@@ -2,6 +2,7 @@
 
 import asyncio
 import unittest
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -81,6 +82,7 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         self.hits = 0
         self.max_keyterm_chars: int | None = None  # longer keyterm lists get a 400
         self.sent: list[list[str]] = []  # keyterms of each request, in order
+        self.retry_after: str | None = None  # Retry-After on replies from self.replies
 
         async def handler(request: web.Request) -> web.Response:
             self.received["auth"] = request.headers.get("Authorization")
@@ -92,7 +94,8 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             self.sent.append(terms)
             if self.replies:
                 status, body = self.replies.pop(0)
-                return web.json_response(body, status=status)
+                headers = {"Retry-After": self.retry_after} if self.retry_after else None
+                return web.json_response(body, status=status, headers=headers)
             if self.max_keyterm_chars is not None and sum(map(len, terms)) > self.max_keyterm_chars:
                 return web.json_response({"err_msg": "too many keyterm tokens"}, status=400)
             status, body = self.reply
@@ -143,6 +146,47 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             text = await self.t.transcribe(clip(), [])
         self.assertEqual(text, "Welcome to Bryn Shander.")
         self.assertEqual(self.hits, 2)
+
+    async def busy_once(self, retry_after: str | None) -> tuple[str | None, list[float]]:
+        """One 429 with this Retry-After, then the usual answer. Returns the text and
+        the waits DMbot made."""
+        self.replies = [(429, {"err_msg": "slow down"})]
+        self.retry_after = retry_after
+        waits: list[float] = []
+
+        async def no_wait(seconds: float) -> None:
+            waits.append(seconds)
+
+        # Only deepgram's view of asyncio: the test server keeps the real one.
+        fake = SimpleNamespace(sleep=no_wait, get_running_loop=asyncio.get_running_loop)
+        with patch.object(dg, "asyncio", fake):
+            return await self.t.transcribe(clip(), []), waits
+
+    async def test_waits_as_long_as_deepgram_asks(self) -> None:
+        text, waits = await self.busy_once("2")
+        self.assertEqual((text, waits, self.hits), ("Welcome to Bryn Shander.", [2.0], 2))
+
+    async def test_usual_pause_without_a_usable_retry_after(self) -> None:
+        for value in (None, "Wed, 21 Oct 2026 07:28:00 GMT", "nan"):
+            self.hits = 0
+            with self.subTest(value):
+                _, waits = await self.busy_once(value)
+                self.assertEqual(waits, [dg.RETRY_DELAY_S])
+
+    async def test_no_retry_when_the_wait_would_run_past_the_clip(self) -> None:
+        # A 0.1 s clip has the minimum budget (10 s): 30 s plus another try can't fit.
+        with self.assertRaises(DeepgramError) as ctx:
+            await self.busy_once("30")
+        self.assertEqual(self.hits, 1)  # said at once, not after the budget runs out
+        self.assertIn("busy", str(ctx.exception))
+        self.assertFalse(ctx.exception.host_can_fix)
+
+    def test_retry_after_parsing(self) -> None:
+        self.assertEqual(dg.retry_after_s(" 3 "), 3.0)
+        self.assertEqual(dg.retry_after_s("0.5"), 0.5)
+        self.assertEqual(dg.retry_after_s("-4"), 0.0)
+        self.assertIsNone(dg.retry_after_s(None))
+        self.assertIsNone(dg.retry_after_s("soon"))
 
     async def test_gives_up_after_second_failure(self) -> None:
         self.reply = (503, {"err_msg": "down"})
