@@ -561,10 +561,14 @@ class SaveAndResume(SessionTests):
     async def test_resume_starts_once(self) -> None:
         bot = await self.restart()
         bot._resume_with_retries = AsyncMock()  # type: ignore[method-assign]
-        await bot.on_ready()
-        await bot.on_ready()  # Discord reconnected: must not start again
+        with self.assertLogs("dmbot.bot", "INFO") as logs:
+            await bot.on_ready()
+            await bot.on_ready()  # Discord reconnected: must not start again
         await asyncio.gather(*bot._background)
         bot._resume_with_retries.assert_awaited_once()
+        # How many servers DMbot is in, once per start, as a count (#426).
+        counted = [r.getMessage() for r in logs.records if "server(s)" in r.getMessage()]
+        self.assertEqual(counted, [f"Connected to {len(bot.guilds)} server(s)"])
 
     async def test_a_saved_session_counts_as_playing(self) -> None:
         await self.start()

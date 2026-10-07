@@ -1080,6 +1080,8 @@ class DMBot(commands.AutoShardedBot):
         if self._resume_started:
             return
         self._resume_started = True
+        # A count, never names: answers "who has DMbot?" from the log (#426).
+        log.info("Connected to %d server(s)", len(self.guilds))
         # Log (don't post: restarts would spam) servers where DMbot lacks something.
         for guild in self.guilds:
             me = cast(discord.Member | None, guild.me)  # None while the guild is loading
