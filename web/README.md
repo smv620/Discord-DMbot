@@ -25,6 +25,26 @@ npm run preview    # serve dist/ to check the build
 
 CI runs `typecheck`, `test`, `build` and `check:links` in the `web` job on every push.
 
+### The account page and the web API
+
+`/account` is one Preact island (`src/account/`) that talks to the web API in core
+(#435). Set the API's address when building:
+
+```bash
+PUBLIC_API_BASE=https://api.example npm run build   # default: /api on the same site
+PUBLIC_API_BASE=mock npm run dev                     # pretend API, no core needed
+```
+
+With `mock`, add `?demo=` to the address to see each state: `signed-out`, `no-plan`,
+`try-it`, `table`, `grace`, `lapsed`, `down` (for example `/account?demo=grace`). The
+pretend API is never included in a real build. `src/account/api.ts` is the contract with
+#435: change both together.
+
+`npm run build` also runs `scripts/csp-hashes.mjs`, which adds the hashes of Astro's small
+inline island loader to `script-src` in `dist/_headers`, so the Content-Security-Policy
+never needs `'unsafe-inline'` for scripts. If the API is on another address, add it to
+`connect-src` in `public/_headers`.
+
 ## Layout
 
 - `src/layouts/Base.astro`: the one layout (head tags, menu, footer with legal links).

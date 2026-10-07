@@ -1,5 +1,6 @@
 # Security headers for Cloudflare Pages (https://developers.cloudflare.com/pages/configuration/headers/).
-# The site has no inline scripts and loads nothing from other sites. Astro inlines small
+# Nothing loads from other sites. Inline scripts (Astro's island loader) are allowed by
+# hash: scripts/csp-hashes.mjs adds them to script-src after the build. Astro inlines small
 # stylesheets, hence 'unsafe-inline' for styles only. When /account calls the web API on
 # another address, add that address to connect-src.
 /*
