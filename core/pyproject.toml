@@ -23,6 +23,10 @@ whisper = [
     "faster-whisper>=1.1",
     "numpy>=1.26",
 ]
+# The session twin (python -m dmbot.devtools.replay, #299) reading m4a/mp3 recordings.
+twin = [
+    "av>=12",
+]
 dev = [
     "numpy>=1.26",
     "pytest>=8",

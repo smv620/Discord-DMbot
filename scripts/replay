@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Replays a recording through core's real speech path and scores it against its script:
+# a digital twin of a live test, with no Discord and no ears (#299).
+#
+#   scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-only.md
+#   scripts/replay REC --script SCRIPT --transcriber deepgram --log
+#
+# The engine comes from the environment like the bot's (TRANSCRIBER, DEEPGRAM_API_KEY, ...).
+# This script never reads .env. Needs core installed with the twin extra:
+#   cd core && pip install -e ".[twin]"   (in core/.venv, which this script prefers)
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+python=${DMBOT_PYTHON:-python3}
+if [[ -z ${DMBOT_PYTHON:-} && -x $root/core/.venv/bin/python ]]; then
+  python=$root/core/.venv/bin/python
+fi
+exec "$python" -m dmbot.devtools.replay "$@"

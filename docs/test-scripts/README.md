@@ -100,6 +100,25 @@ Ignore capitals, punctuation and hyphens. "It's" = "it is", "3" = "three", "Ten 
   bunch up there, the start of each piece of speech is being cut (#121, an ears problem,
   not speech-to-text).
 
+## Replaying a recording (the session twin, #299)
+
+A recording of `dm-only.md` or `dm-and-player.md` can be scored without anyone in voice. It
+goes through core's real speech path (the Segmenter, the transcription pipeline and the same
+speech-to-text as the bot) and comes out scored the way this page describes.
+
+```bash
+scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-only.md \
+  --transcriber deepgram          # or whisper-local, cloud; --log adds a "Twin run"
+```
+
+- Recordings other than 16 kHz mono WAV need `pip install -e ".[twin]"` in `core/`.
+- The engine's settings come from the environment, as for the bot.
+- `--realtime` sends the audio as it was spoken, to time the delay a table would see.
+- **What it doesn't model:** Discord and ears. Pieces are cut at 1 s of near-silence (set
+  so `DMOnlyAudio.m4a` matches run 7), no audio is lost, and a recording's dramatic pauses
+  are quiet, not muted. So use replays to compare speech-to-text and changes to core, and
+  live runs for audio and pieces of speech.
+
 ## Record
 
 One entry per run in `docs/testing-history.log`:
