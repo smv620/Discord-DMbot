@@ -8,7 +8,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-  - #405 (dev2, #394): not merged yet; deploy when it lands.
+  - #405 (2549714, dev2, #394): names heard during play. With Hrothgar a confirmed NPC,
+    say "Rothgar" twice where it isn't fixed live; after stop, Check new names says
+    "Sounds like Hrothgar. The same, or new?" with It's Hrothgar / New name / Another
+    known name... (Not a name and Later on a second row); It's Hrothgar adds it as an
+    other name. "Oskar Vane" then "Vane": one question, "Also heard as Vane". A name
+    made secret before the review is never offered.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
