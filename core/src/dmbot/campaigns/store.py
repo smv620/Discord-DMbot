@@ -12,6 +12,7 @@ and plug into backups by registering an `ExportSection`.
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
 import logging
@@ -83,7 +84,9 @@ class ExportSection(Protocol):
       or emptied) campaign; `clear` removes that campaign's rows. All three run inside the
       store's transaction and must filter by **both** guild_id and campaign_id.
     - `load` receives rows from an **untrusted file**: validate every field and raise
-      `CampaignError` with a plain message when something is wrong.
+      `CampaignError` with a plain message when something is wrong. A section with a
+      lot of rows may also have a pure `check(rows)`: it runs in a worker thread before
+      the transaction opens, and `load` then gets what it returned (#164).
     - Never export server-specific IDs (channels, roles, messages); they mean nothing
       in another server.
     """
@@ -462,6 +465,23 @@ class CampaignStore:
             "sections": sections,
         }
 
+    def _checked(self, data: object) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The backup's campaign settings and each section's rows, checked. Pure."""
+        info, sections = _validate_backup(data, set(self._sections))
+        checked: dict[str, Any] = {}
+        for name, rows in sections.items():
+            check = getattr(self._sections[name], "check", None)
+            if check is None:
+                checked[name] = rows
+                continue
+            try:
+                checked[name] = check(rows)
+            except CampaignError:
+                raise
+            except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+                raise CampaignError(DAMAGED) from exc
+        return info, checked
+
     async def import_backup(
         self,
         guild_id: int,
@@ -478,7 +498,10 @@ class CampaignStore:
         `data` is untrusted: it's fully validated before anything is written, and the
         whole restore happens in one transaction.
         """
-        info, sections = _validate_backup(data, set(self._sections))
+        # Checking a big file is pure CPU: in a worker thread, so the event loop (voice,
+        # other servers) carries on, and before the transaction, so no locks are held
+        # meanwhile (#164).
+        info, sections = await asyncio.to_thread(self._checked, data)
         async with self._db.guild(guild_id) as conn:
             if replace_campaign_id is not None:
                 await conn.execute(
