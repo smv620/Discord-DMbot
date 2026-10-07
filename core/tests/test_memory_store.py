@@ -606,6 +606,101 @@ class Undo(MemoryTest):
         self.assertEqual(len(await self.memory.relations(GUILD_A, self.c)), 1)
 
 
+class Lists(MemoryTest):
+    async def test_a_list_is_one_change_and_one_undo(self) -> None:
+        from dmbot.memory.models import NewName
+
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [
+                NewName("Belleros", "npc", CONFIRMED, ("Bell",), ("the hooded stranger",)),
+                NewName("Odd Thing", "concept", PROPOSED),
+            ],
+            source="dm",
+        )
+        a, b = written.value
+        assert a is not None and b is not None
+        aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=a, include_secret=True)
+        self.assertEqual(
+            {(x.text, x.secret) for x in aliases},
+            {("Belleros", False), ("Bell", False), ("the hooded stranger", True)},
+        )
+        thing = await self.memory.entity(GUILD_A, self.c, b)
+        assert thing is not None and written.batch is not None
+        self.assertEqual(thing.status, PROPOSED)
+        await self.memory.undo_names(GUILD_A, self.c, written.batch)
+        self.assertEqual(await self.memory.entities(GUILD_A, self.c), [])
+
+    async def test_names_already_used_are_skipped_inside_the_save(self) -> None:
+        from dmbot.memory.models import NewName
+
+        await self.add("Belleros", status=CONFIRMED)
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [
+                NewName("belleros", "npc", CONFIRMED),
+                NewName("Kesh", "npc", CONFIRMED, ("Belleros",)),
+            ],
+            source="dm",
+        )
+        skipped, kesh = written.value
+        self.assertIsNone(skipped)
+        assert kesh is not None
+        keys = {x.key for x in await self.memory.aliases(GUILD_A, self.c, entity_id=kesh)}
+        self.assertEqual(keys, {"kesh"})  # its other name was already Belleros's
+
+    async def test_undoing_a_list_is_refused_after_a_connection_or_for_other_changes(self) -> None:
+        from dmbot.memory.models import NewName
+
+        written = await self.memory.add_names(
+            GUILD_A, self.c, [NewName("Kesh", "npc", CONFIRMED)], source="dm"
+        )
+        (kesh,) = written.value
+        assert kesh is not None and written.batch is not None
+        other = await self.add("Ulfgar")
+        await self.relate(kesh, "knows", other)
+        with self.assertRaises(MemoryRuleError):  # never deletes the connection silently
+            await self.memory.undo_names(GUILD_A, self.c, written.batch)
+        renamed = await self.memory.rename_entity(GUILD_A, self.c, other, "Ulf", source="dm")
+        assert renamed.batch is not None
+        with self.assertRaises(MemoryRuleError):  # not a list of names
+            await self.memory.undo_names(GUILD_A, self.c, renamed.batch)
+
+    async def test_a_whole_group_gets_its_kind_in_one_change(self) -> None:
+        from dmbot.memory.models import NewName
+
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [NewName(f"Mage {n}", "concept", PROPOSED, (f"M{n}",)) for n in range(3)],
+            source="dm",
+        )
+        ids = [i for i in written.value if i is not None]
+        await self.memory.set_entity_status(GUILD_A, self.c, ids[0], REJECTED, source="dm")
+        done = await self.memory.confirm_kinds(GUILD_A, self.c, ids, "npc", source="dm")
+        self.assertEqual(done.value, 2)  # one was removed in between
+        confirmed = await self.memory.entities(GUILD_A, self.c, statuses=[CONFIRMED])
+        self.assertEqual(
+            {(e.name, e.type) for e in confirmed}, {("Mage 1", "npc"), ("Mage 2", "npc")}
+        )
+        aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=ids[1])
+        self.assertTrue(all(a.status == CONFIRMED for a in aliases))
+
+    async def test_only_the_dm_and_never_a_players_character(self) -> None:
+        from dmbot.memory.models import NewName
+
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.add_names(
+                GUILD_A, self.c, [NewName("X", "npc", CONFIRMED)], source="entitybot"
+            )
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.add_names(
+                GUILD_A, self.c, [NewName("X", "player_character", CONFIRMED)], source="dm"
+            )
+
+
 class Backups(MemoryTest):
     async def test_memory_survives_backup_and_restore(self) -> None:
         await self.memory.add_predicate(

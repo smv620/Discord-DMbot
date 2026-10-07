@@ -105,6 +105,18 @@ def check_status_change(old: str | None, new: str, source: str) -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class NewName:
+    """One name from a list the DM gave (📥 Add many): saved with its other names and
+    secret names, all in one change."""
+
+    name: str
+    type: str
+    status: str
+    others: tuple[str, ...] = ()
+    secrets: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Entity:
     id: str
     type: str

@@ -23,6 +23,7 @@ from dmbot.db import Database, row_int
 from dmbot.memory import notify
 from dmbot.memory._changes import (
     ALIASES,
+    CHANGED_SINCE,
     CORRECTIONS,
     ENTITIES,
     FLAGS,
@@ -61,6 +62,7 @@ from dmbot.memory.models import (
     Heard,
     HeardCount,
     MemoryRuleError,
+    NewName,
     Relation,
     Written,
     check_status_change,
@@ -451,6 +453,95 @@ class MemoryStore:
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
             return Written(_entity(row), w.batch)
 
+    async def add_names(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        names: Sequence[NewName],
+        *,
+        source: str,
+        secret_clashes: bool = True,
+    ) -> Written[list[str | None]]:
+        """Many names at once (📥 Add many), each with its other and secret names, in one
+        change: one Undo (`undo_names`) takes the whole list back, and live transcription
+        reloads its names once. Only the DM gives lists. Returns the new entries' IDs, in
+        order; None for a name that another entry already has by now (two lists saved at
+        once: memory writes for a campaign happen one at a time, so this check is exact).
+        Other names already used elsewhere are left out the same way. `secret_clashes`:
+        whether a secret name counts as used (False for anyone but the campaign's DMs, who
+        must never learn one exists)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can add a list of names.")
+        for n in names:
+            _check_choice(n.status, LIVE, "entity status")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            cur = await w.conn.execute(
+                "SELECT key FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
+                " AND status <> 'rejected' AND (%s OR NOT secret) AND entity_id IN"
+                + _LIVE_ENTITY_IDS,
+                (*w.ids, secret_clashes, *w.ids),
+            )
+            used = {str(r["key"]) for r in await cur.fetchall()}
+            ids: list[str | None] = []
+            for n in names:
+                onto.active_type(n.type)
+                if onto_is_pc(onto, n.type):
+                    raise MemoryRuleError("A player's character needs its player.")
+                name = clean_text(n.name)
+                if lookup_key(name) in used:
+                    ids.append(None)
+                    continue
+                row = await w.insert(
+                    ENTITIES,
+                    {
+                        "id": new_id(), "type": n.type, "name": name, "description": "",
+                        "status": n.status, "merged_into": None, "source": source,
+                        "created_at": w.now, "played_by": None,
+                    },
+                )  # fmt: skip
+                seen = {lookup_key(name)}
+                aliases = [(name, "full", False)]
+                aliases += [(clean_text(t), "nickname", False) for t in n.others]
+                aliases += [(clean_text(t), "title", True) for t in n.secrets]
+                for text, kind, secret in aliases:
+                    key = lookup_key(text)
+                    if (key in seen or key in used) and kind != "full":
+                        continue
+                    seen.add(key)
+                    await w.insert(
+                        ALIASES, _new_alias(w, row["id"], text, kind, n.status, secret, None)
+                    )
+                used |= seen
+                ids.append(row["id"])
+            return Written(ids, w.batch)
+
+    async def undo_names(self, guild_id: int, campaign_id: str, batch: int) -> Written[None]:
+        """Take back a whole list from `add_names`. Refused unless that batch only added
+        names (from the DM), and, like any undo, if any of them changed or anything links
+        to them since (a connection, a mention, a DM fix): nothing is deleted silently."""
+        async with self._write(guild_id, campaign_id, "undo", undoes=batch) as w:
+            cur = await w.conn.execute(
+                "SELECT bool_and(op = 'insert' AND source = 'dm' AND table_name IN"
+                " ('memory_entities', 'memory_aliases')) AS names_only, count(*) AS n"
+                " FROM memory_changes WHERE guild_id = %s AND campaign_id = %s AND batch = %s",
+                (*w.ids, batch),
+            )
+            row = await cur.fetchone()
+            if row is None or not row["n"] or not row["names_only"]:
+                raise MemoryRuleError(NOT_FOUND)
+            cur = await w.conn.execute(
+                "SELECT 1 FROM memory_heard h JOIN memory_changes c"
+                " ON c.guild_id = h.guild_id AND c.campaign_id = h.campaign_id"
+                " AND c.row_id = h.entity_id AND c.table_name = 'memory_entities'"
+                " WHERE c.guild_id = %s AND c.campaign_id = %s AND c.batch = %s LIMIT 1",
+                (*w.ids, batch),
+            )
+            if await cur.fetchone() is not None:  # heard in a session since: keep them
+                raise MemoryRuleError(CHANGED_SINCE)
+            await undo_batch(w, batch)
+            return Written(None, w.batch)
+
     async def set_entity_type(
         self, guild_id: int, campaign_id: str, entity_id: str, type: str, *, source: str
     ) -> Written[Entity]:
@@ -568,6 +659,32 @@ class MemoryStore:
             ):
                 await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
             return Written(_entity(row), w.batch)
+
+    async def confirm_kinds(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str], type: str, *, source: str
+    ) -> Written[int]:
+        """The DM says what a whole group of suggested names is (📥 Add many: "every
+        'wizard' is an NPC"): each still waiting is confirmed as that kind, with its names,
+        in one change. Returns how many were confirmed."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can confirm that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            onto.active_type(type)
+            if onto_is_pc(onto, type):
+                raise MemoryRuleError("A player's character needs its player.")
+            done = 0
+            for entity_id in entity_ids:
+                current = await w.get(ENTITIES, entity_id)
+                if current is None or current["status"] != PROPOSED:
+                    continue  # checked or removed since
+                await w.update(ENTITIES, entity_id, {"type": type, "status": CONFIRMED})
+                for alias in await w.select(
+                    ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
+                ):
+                    await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
+                done += 1
+            return Written(done, w.batch)
 
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
         """Every name and word DMbot already has an answer for in this campaign, whatever
