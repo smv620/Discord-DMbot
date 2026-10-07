@@ -142,13 +142,18 @@ class CommandTests(DatabaseTest):
 
     async def test_a_backup_too_big_to_send_says_so(self) -> None:
         await self.campaigns.create(GUILD, "Huge", DM)
-        it = fake_interaction(self.bot)
-        with patch("dmbot.ui.logic.FILE_MAX", 10):
-            await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
-        message = it.followup.send.call_args.args[0]
-        self.assertIn("too big to send", message)
-        self.assertIn("Nothing was lost", message)
-        self.assertNotIn("file", it.followup.send.call_args.kwargs)
+        limits = (
+            patch("dmbot.ui.logic.FILE_MAX", 10),  # bigger than Discord sends
+            patch("dmbot.campaigns.store.MAX_BACKUP_BYTES", 10),  # than a restore takes
+        )
+        for limit in limits:
+            with self.subTest(limit), limit:
+                it = fake_interaction(self.bot)
+                await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
+                message = it.followup.send.call_args.args[0]
+                self.assertIn("too big to download", message)
+                self.assertIn("Nothing was lost", message)
+                self.assertNotIn("file", it.followup.send.call_args.kwargs)
 
 
 PRESS: Any = SimpleNamespace()  # a button press; the view only redraws itself

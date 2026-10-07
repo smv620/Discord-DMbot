@@ -20,7 +20,14 @@ from discord import app_commands
 
 from dmbot.campaigns import DEFAULT_DM_SCREEN_VISIBILITY, Campaign, CampaignError
 from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET, clean_name, name_key
-from dmbot.campaigns.store import MAX_BACKUP_BYTES, decode_backup, encode_backup
+from dmbot.campaigns.store import (
+    MAX_BACKUP_BYTES,
+    NOT_A_BACKUP,
+    TOO_BIG,
+    BackupTooBig,
+    decode_backup,
+    encode_backup,
+)
 from dmbot.logs import set_log_context
 from dmbot.ui import logic
 
@@ -441,13 +448,16 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True, thinking=True)
     data = await bot.campaigns.export(guild.id, campaign.id)
-    raw = await asyncio.to_thread(encode_backup, data)
-    if len(raw) > logic.FILE_MAX:  # Discord would refuse it
-        log.warning("Backup of %s is %d bytes, too big to send", campaign.id, len(raw))
+    try:
+        raw = await asyncio.to_thread(encode_backup, data)
+    except BackupTooBig:
+        raw = None  # bigger than a restore takes: no copy that can't come back
+    if raw is None or len(raw) > logic.FILE_MAX:  # or bigger than Discord sends
+        log.warning("Backup of campaign %s is too big to make", campaign.id)
         await _tell(
             interaction,
-            f"**{campaign.name}** is too big to send as one file (over 10 MB). Nothing was "
-            "lost: the campaign is still here. Tell whoever hosts DMbot.",
+            f"**{campaign.name}** is too big to download as one file. Nothing was lost: the "
+            "campaign is still here. DMbot can't make a copy of a campaign this big yet.",
         )
         return
     file = discord.File(io.BytesIO(raw), filename=logic.backup_filename(campaign.name, _now()))
@@ -683,7 +693,7 @@ async def dmbot_restore(interaction: discord.Interaction, file: discord.Attachme
         await _tell(interaction, NOT_IN_SERVER)
         return
     if file.size > MAX_BACKUP_BYTES:
-        await _tell(interaction, "That backup file is too big.")
+        await _tell(interaction, TOO_BIG)
         return
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
@@ -697,7 +707,7 @@ async def dmbot_restore(interaction: discord.Interaction, file: discord.Attachme
         return
     name = logic.backup_campaign_name(data)
     if name is None:
-        await _tell(interaction, "That file isn't a DMbot campaign backup.")
+        await _tell(interaction, NOT_A_BACKUP)
         return
     campaigns = await _bot(interaction).campaigns.list_campaigns(guild.id)
     # Only a campaign's own DM may replace it (the store enforces this too).

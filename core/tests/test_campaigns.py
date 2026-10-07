@@ -215,6 +215,17 @@ class ExportImport(StoreTest):
         self.assertEqual(r1.name, "Frostmaiden (restored)")
         self.assertEqual(r2.name, "Frostmaiden (restored 2)")
 
+    async def test_an_older_plain_backup_file_restores_in_full(self) -> None:
+        from dmbot.campaigns.store import decode_backup
+
+        original = await self.make_full()
+        backup = await self.store.export(GUILD_A, original.id)
+        backup["version"] = 1  # made before #164: plain JSON, no compression
+        plain = json.dumps(backup, indent=1).encode()
+        restored = await self.store.import_backup(GUILD_B, decode_backup(plain), DM)
+        again = await self.store.export(GUILD_B, restored.id)
+        self.assertEqual(again["sections"], {**backup["sections"]})
+
     async def test_replace_existing(self) -> None:
         original = await self.make_full()
         backup = await self.store.export(GUILD_A, original.id)
@@ -336,36 +347,46 @@ class BackupFiles(unittest.TestCase):
         with self.assertRaisesRegex(CampaignError, "too big"):
             store_mod.decode_backup(bomb)
         raw = store_mod.encode_backup({"format": EXPORT_FORMAT})
-        for broken in (raw[:-10], b"\x1f\x8b" + b"junk" * 10):  # cut short, or not gzip
+        more = (raw + raw, raw + b"junk")  # a second part, or anything after the end
+        for broken in (raw[:-10], b"\x1f\x8b" + b"junk" * 10, *more):
             with self.assertRaisesRegex(CampaignError, "isn't a DMbot campaign backup"):
                 store_mod.decode_backup(broken)
 
-    def test_the_biggest_campaign_that_restores_fits_in_one_discord_file(self) -> None:
-        """A backup as big as a restore takes (MAX_BACKUP_BYTES of JSON) must download
-        as one file Discord accepts. Rows shaped like campaign memory: random IDs, names,
-        descriptions and the same keys over and over."""
+    def test_a_big_campaign_fits_in_one_discord_file(self) -> None:
+        """15 MB of campaign JSON (far more than any campaign so far) downloads as one
+        file. Varied words, so it doesn't compress better than real text: 25 MB of such
+        text comes to about 10 MB, which is why encode_backup refuses past that."""
         from dmbot.campaigns import store as store_mod
         from dmbot.ui.logic import FILE_MAX
 
         rng = random.Random(164)
-        words = ["the", "old", "tower", "frost", "giant", "of", "Bryn", "Shander", "goblin"]
+        syllables = ["al", "be", "cor", "dan", "eth", "fi", "gor", "hal", "is", "jun", "ka"]
+        words = ["".join(rng.choices(syllables, k=rng.randint(1, 4))) for _ in range(3000)]
 
         def row(n: int) -> dict[str, object]:
             return {
                 "id": uuid.UUID(int=rng.getrandbits(128)).hex,
-                "type": rng.choice(["npc", "place", "item", "faction"]),
-                "name": f"{rng.choice(words).title()} {rng.choice(words)} {n}",
-                "description": " ".join(rng.choice(words) for _ in range(12)),
-                "status": "confirmed",
-                "secret": rng.random() < 0.1,
-                "created_at": 1_700_000_000 + n,
+                "speaker_id": rng.randint(10**17, 10**18),
+                "text": " ".join(rng.choices(words, k=rng.randint(5, 30))),
+                "started_ms": n * 1500,
             }
 
         rows: list[dict[str, object]] = []
-        data = {"format": EXPORT_FORMAT, "sections": {"memory": {"memory_entities": rows}}}
-        while len(json.dumps(data)) < store_mod.MAX_BACKUP_BYTES - 50_000:
-            rows += [row(len(rows) + i) for i in range(5_000)]
-        self.assertLess(len(store_mod.encode_backup(data)), FILE_MAX)
+        data = {"format": EXPORT_FORMAT, "sections": {"transcripts": {"lines": rows}}}
+        size = 0
+        while size < 15 * 1024 * 1024:
+            rows.append(row(len(rows)))
+            size += len(json.dumps(rows[-1], separators=(",", ":"))) + 1
+        raw = store_mod.encode_backup(data)
+        self.assertLess(len(raw), FILE_MAX)
+        self.assertEqual(store_mod.decode_backup(raw), data)  # and it comes back
+
+    def test_no_copy_is_made_that_a_restore_would_refuse(self) -> None:
+        from dmbot.campaigns import store as store_mod
+
+        too_big = {"format": EXPORT_FORMAT, "notes": "x" * store_mod.MAX_BACKUP_BYTES}
+        with self.assertRaises(store_mod.BackupTooBig):  # it would compress to almost nothing
+            store_mod.encode_backup(too_big)
 
     def test_rejects_oversized_and_garbage(self) -> None:
         from dmbot.campaigns import store as store_mod
