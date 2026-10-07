@@ -130,8 +130,14 @@ async def _send(interaction: discord.Interaction, text: str, view: _Menu | None 
 
 
 async def _replace(interaction: discord.Interaction, text: str, view: _Menu | None) -> None:
-    """Swap the menu message this button or menu belongs to for the next step."""
-    await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
+    """Swap the menu message this button or menu belongs to for the next step. Once
+    answered (a quick "…ing" first, before a slow step, #351), the same message is
+    edited through the webhook. Only for that message: never after _tell or _send,
+    whose message it would overwrite."""
+    if interaction.response.is_done():
+        await interaction.edit_original_response(content=text, view=view, allowed_mentions=NO_PINGS)
+    else:
+        await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
     if view is not None:
         view.origin = interaction
 
