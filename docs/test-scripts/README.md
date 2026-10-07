@@ -63,9 +63,10 @@ Stage directions:
 Ignore capitals, punctuation and hyphens. "It's" = "it is", "3" = "three", "Ten Towns" =
 "Ten-Towns".
 
-- **Audio:** from the ears `audio …` lines in the server logs (more complete than the DM
-  screen's %): add up `received` and `expected` for the script. 95–100% passes; 90–94% is
-  borderline, so repeat once; under 90% fails (same as LIVE_TEST.md).
+- **Audio:** from the ears `audio …` lines in the server logs: add up `received` and
+  `expected` for the script. (Core's `Capture check:` lines show only a % per check, not
+  counts, and the DM screen only warns below 90%, so use the ears lines.) 95–100% passes;
+  90–94% is borderline, so repeat once; under 90% fails (same as LIVE_TEST.md).
 - **Pieces of speech:** count the ears `audio …` lines (core's own cut at 15 s adds pieces
   ears doesn't see). dm-and-player: the DM about 6 (4 lines + 2 dramatic pauses) and the
   players about 4 in total (one per `[Player]` line). dm-only: about 7 (2 paragraphs + 5

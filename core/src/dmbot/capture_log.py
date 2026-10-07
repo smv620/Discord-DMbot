@@ -22,6 +22,10 @@ HEALTH_WARN_PERCENT = 95
 DM_WARN_PERCENT = 90
 WARN_AGAIN_DROP = 10
 WARN_AGAIN_AFTER_S = 600.0
+# Audio health whose speech hasn't arrived is kept for this many checks (about a minute
+# at one check every 15 s), then dropped: that speech isn't coming (the person opted
+# out, or the speech queue was full), and old gaps mustn't land in a later, clean check.
+HEALTH_WAIT_CHECKS = 4
 
 
 def audio_health(received: int, expected: int) -> tuple[int, bool]:
@@ -42,6 +46,12 @@ class _SpeakerStats:
     seconds: float = 0.0
     frames_received: int = 0
     frames_expected: int = 0
+    checks_waited: int = 0  # checks since health arrived without speech
+
+    @property
+    def covered(self) -> bool:
+        """Whether a check reports (and then resets) this speaker: once speech arrived."""
+        return self.utterances > 0
 
 
 class CaptureLog:
@@ -65,10 +75,11 @@ class CaptureLog:
 
     def log_line(self) -> str | None:
         """One line for the terminal log: user IDs and numbers only, never names or
-        words (#37). Call before render(), which resets. None if nothing was captured."""
+        words (#37). Call before render(), which resets the speakers it covers. None if
+        nothing was captured."""
         parts: list[str] = []
         for user_id, s in sorted(self._stats.items()):
-            if s.utterances == 0:
+            if not s.covered:
                 continue
             part = f"user {user_id}: {s.utterances} x speech, {s.seconds:.1f} s"
             if s.frames_expected > 0:
@@ -80,11 +91,25 @@ class CaptureLog:
         return f"Capture check: {len(parts)} speaker(s); " + "; ".join(parts)
 
     def render(self, name_of: Callable[[int], str], now: float = 0.0) -> str | None:
-        """A warning for the DM screen if someone's voice is cutting out, then reset.
-        None (and still reset) otherwise. `now` is a monotonic time in seconds."""
+        """A warning for the DM screen if someone's voice is cutting out, then reset the
+        speakers this check covered. None (and still reset) otherwise. `now` is a
+        monotonic time in seconds.
+
+        A speaker whose audio health has arrived but whose speech hasn't (it's still
+        being transcribed) isn't covered yet: their counts are kept for the next check
+        (#120), for up to HEALTH_WAIT_CHECKS checks. Health and speech are paired per
+        speaker, not per piece of speech, so a check's % can include a piece that is
+        still being transcribed; every count is still reported exactly once."""
         gaps: list[tuple[str, int]] = []
+        # sorted() copies, so entries can be deleted inside the loop.
         for user_id, s in sorted(self._stats.items(), key=lambda kv: -kv[1].seconds):
-            if s.utterances == 0 or s.frames_expected == 0:
+            if not s.covered:
+                s.checks_waited += 1
+                if s.checks_waited > HEALTH_WAIT_CHECKS:
+                    del self._stats[user_id]
+                continue
+            del self._stats[user_id]
+            if s.frames_expected == 0:
                 continue
             percent, _ = audio_health(s.frames_received, s.frames_expected)
             if percent >= DM_WARN_PERCENT:
@@ -97,7 +122,6 @@ class CaptureLog:
             ):
                 self._warned[user_id] = (percent, now)
                 gaps.append((name_of(user_id), percent))
-        self._stats.clear()
         if not gaps:
             return None
         tail = (
