@@ -183,19 +183,29 @@ async def transcript_command(interaction: discord.Interaction) -> None:
     elif len(campaigns) == 1:
         await show_sessions(interaction, campaigns[0])
     else:
-        await _send(interaction, "**Which campaign?**", CampaignPicker(campaigns))
+        await _send(
+            interaction,
+            "**Which campaign's transcripts?** Pick one below.",
+            CampaignPicker(campaigns),
+        )
 
 
 class CampaignPicker(_Menu):
     def __init__(self, campaigns: list[Campaign]) -> None:
         super().__init__()
         self.by_id = {c.id: c for c in campaigns}
+        now = int(time.time())
         self.pick = _Select(
             self._picked,
             placeholder="Which campaign?",
             options=[
                 discord.SelectOption(
-                    label=logic.shorten(c.name, logic.OPTION_LABEL_MAX), value=c.id
+                    label=logic.name_label(c.name),  # fits a phone (#287)
+                    value=c.id,
+                    # A campaign never played has nothing to show yet.
+                    description=logic.option_description(c, now)
+                    if c.last_played_at is not None
+                    else "No transcripts yet",
                 )
                 for c in campaigns[: logic.SELECT_OPTIONS_MAX]
             ],

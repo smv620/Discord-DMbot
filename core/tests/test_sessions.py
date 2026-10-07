@@ -315,8 +315,18 @@ class SaveAndResume(SessionTests):
             (saved.campaign_id, saved.voice_channel_id, saved.screen_channel_id, saved.started_by),
             (self.campaign.id, VOICE, SCREEN, DM),
         )
-        await self.bot.stop_session(GUILD, DM, False)
+        with self.assertLogs("dmbot.sessions", "INFO") as logs:
+            await self.bot.stop_session(GUILD, DM, False)
         self.assertIsNone(await self.sessions.get(GUILD))
+        self.assertIn(f"Saved session removed: /dmbot stop by user {DM}", logs.output[-1])
+
+    async def test_stopping_a_session_that_wasnt_saved_is_a_warning(self) -> None:
+        await self.start()
+        await self.sessions.clear(GUILD, "test")  # the row goes missing, as in #147
+        with self.assertLogs("dmbot.bot", "WARNING") as logs:
+            await self.bot.stop_session(GUILD, DM, False)
+        self.assertIn("Stopped a session that wasn't saved", "\n".join(logs.output))
+        self.assertNotIn(GUILD, self.bot.tables)  # it still stops
 
     async def test_a_failed_save_does_not_start(self) -> None:
         self.sessions.save = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
@@ -418,9 +428,13 @@ class SaveAndResume(SessionTests):
         old = saved.started_at - bot_module.MAX_RESUME_AGE_S - 60
         await self.sessions.save(dataclasses.replace(saved, started_at=old))
         bot = await self.restart()
-        await bot.resume_sessions()
+        with self.assertLogs("dmbot.sessions", "INFO") as logs:
+            await bot.resume_sessions()
         self.assertNotIn(GUILD, bot.tables)
         self.assertTrue(any("too long ago" in t for t in self.screen_posts()))
+        self.assertIn(
+            "Saved session removed: not resumed: started over 16 hours ago", logs.output[-1]
+        )
 
     async def test_no_resume_when_dmbot_left_the_server(self) -> None:
         await self.start()
@@ -599,10 +613,10 @@ class SaveAndResume(SessionTests):
         self.assertIn("Session started again after a restart", "\n".join(logs.output))
 
         bot = await self.restart()  # saved again, not running in this process
-        with self.assertLogs("dmbot.bot", level="INFO") as logs:
+        with self.assertLogs("dmbot.sessions", level="INFO") as logs:
             await bot.stop_session(GUILD, DM, False)
         self.assertIn(
-            f"Saved session ended before it resumed: /dmbot stop by user {DM}",
+            f"Saved session removed: /dmbot stop by user {DM} before it resumed",
             "\n".join(logs.output),
         )
 

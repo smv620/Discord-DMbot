@@ -129,7 +129,8 @@ def settings_summary(
     return [
         f"• **Main rules:** {ruleset_label(target)}",
         f"• **If missing** (the main rules don't cover something): {fallback_words(fallback)}",
-        f"• **Optional rules** from Xanathar's and Tasha's: {'on' if optional_rules else 'off'}",
+        f"• **Optional rules** from Xanathar's and Tasha's: {'on' if optional_rules else 'off'} "
+        "(change one at a time later with `/dmbot optionalrules`)",
         f"• **DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
     ]
 
@@ -228,6 +229,7 @@ HELP_TEXT = (
     "• `/dmbot start`: pick your campaign and voice channel, then start listening\n"
     "• `/dmbot stop`: stop listening\n"
     "• `/dmbot names`: the names DMbot listens for (characters, places, NPCs)\n"
+    "• `/dmbot optionalrules`: turn optional rules from Xanathar's and Tasha's on or off\n"
     "• `/transcript`: download what was said in a session (anyone in the server)\n"
     "• `/dmbot backup`: download a complete copy of a campaign (anyone can)\n"
     "• `/dmbot restore`: bring a campaign back from a copy\n"

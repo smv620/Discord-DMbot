@@ -1,7 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-07 by the server session (deployed ef07603; AI key set; ready
-for run 8)
+Last updated: 2026-10-07 by dev1 (deployed bb55060; ready for run 8)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -9,6 +8,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+<<<<<<< HEAD
 Deploy development @ 1d98a83 (one deploy covers all of these; back up the database
 first; rebuild core and ears: both changed). Check, in this order:
   - #270 (dev3, ears): the first word after each pause is no longer cut. Score
@@ -23,7 +23,7 @@ first; rebuild core and ears: both changed). Check, in this order:
     campaign menus in backup, restore and names cut long names in the middle so a
     restored copy can be told apart. Check on a phone.
   - #266 (web): docs only, nothing to check.
-Deploy development @ d9e82f1 instead (same deploy, four more PRs; rebuild both):
+Deploy development @ f317d6d instead (same deploy, five more PRs; rebuild both):
   - #293 (dev1, #147): every save/removal of the saved session is logged with its
     reason. Check: `docker compose logs core | grep -i "session saved\|removed"` after
     a start, a /dmbot stop and a restart; no WARNING "wasn't saved" on a normal stop.
@@ -35,7 +35,14 @@ Deploy development @ d9e82f1 instead (same deploy, four more PRs; rebuild both):
     `audio` received == expected and the first word is kept; after a withdrawal the
     capture stops at once. DM-screen audio % waits from the latest health report
     and gives up after ~2 min without speech.
+  - #314 (CloudDev, #49): /dmbot optionalrules. Check as DM: the private list shows
+    4 rules for a 2024 campaign, the menu switches one, the DM screen gets one line,
+    a player running it is refused. Wording polish follows in #320, so don't log
+    string nits.
 Then run 8 below covers the rest.
+=======
+(nothing queued)
+>>>>>>> origin/development
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -44,17 +51,17 @@ Why: run 7 gave the Deepgram baseline with the DM alone. Still open: two speaker
 player stopping, a first-time question, and a first live look at PRs #192 (#188),
 #184, #194, #195 (#190), #196, #202, #206 (#107), #207 (#108), #208 (#99), #214
 (scene hints), #220 (heard counts), #223 and #226 (name card), and now #241, #244,
-#249, #262. Nothing blocks it.
+#249, #262, #270, #276, #283, #284, #288. Nothing blocks it.
 Already confirmed in run 8a: consent carries over, Stop recording me and I consent
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: ef07603 (2026-10-07 03:29 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: bb55060 (2026-10-07 08:08 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since ef07603, ask it to redeploy first. Use a steady connection (run 8a
+      moved since bb55060, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -93,6 +100,13 @@ What to check
   - A scene with many names: no Deepgram 400 in the logs, or "Deepgram refused N
     keyterms" followed by transcript lines still appearing (#262)
   - Don't paste a link into Paste a list: known bug #264
+  Deployed 2026-10-07 08:08 (bb55060)
+  - #270: first word after each ((dramatic pause)) not cut: score against run 7
+  - #276: the DM screen's audio % matches the ears audio lines
+  - #283: transcript lines read "(speaker) {character}"; say "Bell Eros" with
+    Belleros known: fixed live. Secret names never appear. Download stays "as heard"
+  - #284, #288 (on a phone): /dmbot start settings are buttons that fit; long
+    campaign names in backup, restore and names menus are cut in the middle
 
 Later: speech-to-text bake-off (#128, docs/STT_BAKEOFF.md: needs 2-4 readers of
 stt-bakeoff.md); one-click install live check (#104, merged in #150).
