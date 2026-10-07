@@ -496,3 +496,16 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     and ears rebuilt; "ears connected" at 08:36:31 after ~3 s of the usual "core link
     down; retrying" while core started; no other warnings or errors.
   Not yet live-tested: all of the above. Run 8's checklist and the #147 repro cover them.
+
+==============================================================================
+2026-10-07  Server: deploy a3d12ef (dev1, no test run)
+==============================================================================
+  - 15:22 UTC  development @ a3d12ef (= 8ad6e70 plus log changes): #337 (ears image
+    built with npm ci, #318), #329 (ears waits 30 s before re-asking about a member it
+    couldn't find; /transcript says "No transcripts yet" for a campaign played with
+    transcripts off; "No saved session to remove" at INFO). No migrations, no .env
+    changes. Database backed up first (15:20 UTC, outside the repo; pg_restore -l reads
+    19 tables); no session was live. Core and ears rebuilt (the build ran `npm ci`);
+    ears "connected to core" and core "ears connected" at 15:22:15; no warnings or
+    errors beyond the usual start-up retries.
+  Not yet live-tested: #329's behaviours. Run 8's checklist covers them.
