@@ -838,15 +838,9 @@ class MemoryStore:
                 await w.update(
                     ENTITIES, keep_id, {"type": gone["type"], "played_by": gone["played_by"]}
                 )
-            await _move_aliases(w, keep_id, gone_id)
-            if confirm_keys:
-                if source != DM:
-                    raise ValueError("Only the DM confirms names")
-                for row in await w.select(
-                    ALIASES, " AND entity_id = %s AND key = ANY(%s)", [keep_id, list(confirm_keys)]
-                ):
-                    if row["status"] != CONFIRMED:
-                        await w.update(ALIASES, row["id"], {"status": CONFIRMED})
+            if confirm_keys and source != DM:
+                raise ValueError("Only the DM confirms names")
+            await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
             own = await w.select(
                 ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
             )
@@ -1360,22 +1354,33 @@ async def _delete_relation(w: Changes, relation_id: str) -> None:
     await w.delete(RELATIONS, relation_id)
 
 
-async def _move_aliases(w: Changes, keep_id: str, gone_id: str) -> None:
+async def _move_aliases(
+    w: Changes, keep_id: str, gone_id: str, confirm: frozenset[str] = frozenset()
+) -> None:
     """The other entry's names move over in one statement (#164); a name both have is
-    kept once, with the stronger status and any secret mark."""
+    kept once, with the stronger status and any secret mark. Names whose key is in
+    `confirm` (the DM just said they mean `keep_id`) are confirmed as they move, in the
+    same row change, so one undo puts them back exactly."""
     keep_aliases = {a["key"]: a for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
-    moving = []
+    moving: list[str] = []
+    confirming: list[str] = []
     for alias in await w.select(ALIASES, " AND entity_id = %s", [gone_id]):
+        said = alias["key"] in confirm
         twin = keep_aliases.get(alias["key"])
         if twin is None:
-            moving.append(alias["id"])
+            (confirming if said and alias["status"] != CONFIRMED else moving).append(alias["id"])
             continue
-        upgrade = _upgrade(twin, alias["status"], alias["secret"], DM)
+        status = CONFIRMED if said else alias["status"]
+        upgrade = _upgrade(twin, status, alias["secret"], DM)
         await w.delete(ALIASES, alias["id"])
         if upgrade:
             await w.update(ALIASES, twin["id"], upgrade)
     if moving:
         await w.update_where(ALIASES, {"entity_id": keep_id}, " AND id = ANY(%s)", [moving])
+    if confirming:
+        await w.update_where(
+            ALIASES, {"entity_id": keep_id, "status": CONFIRMED}, " AND id = ANY(%s)", [confirming]
+        )
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
 
 
