@@ -22,12 +22,18 @@ import { encodeAudioFrame } from "./protocol.js";
 /** End a speaker's stream after this much silence; one stream = one utterance. */
 const SILENCE_END_MS = 800;
 
+/** Someone Discord can't find is denied without asking again for this long. */
+export const UNKNOWN_RETRY_MS = 30_000;
+
 /**
  * Asks Discord whether a user is a bot: true or false, or undefined if they can't be
  * found (treated as a bot: deny by default). Only used for someone the session never
  * saw in the channel, because packets that arrive while it runs are lost.
  */
 export type BotLookup = (userId: string) => Promise<boolean | undefined>;
+
+/** Bot status if discord.js already has the member cached, without waiting. */
+export type BotPeek = (userId: string) => boolean | undefined;
 
 interface SpeakerPipeline {
   stream: AudioReceiveStream;
@@ -42,6 +48,7 @@ export interface TableSessionOptions {
   adapterCreator: DiscordGatewayAdapterCreator;
   allowlist: Allowlist;
   link: Pick<CoreLink, "send" | "sendAudio" | "droppedAudioFrames">;
+  peekBot: BotPeek;
   lookUpBot: BotLookup;
   /** Log per-utterance audio health (user IDs and counts only). */
   debugAudio?: boolean;
@@ -67,8 +74,13 @@ export class TableSession {
   private readonly connection: VoiceConnection;
   private readonly speakers = new Map<string, SpeakerPipeline>();
   private readonly pending = new Set<string>();
-  /** Bot or person, for everyone seen in the channel; bot status never changes. */
+  /**
+   * Bot or person, for everyone seen in the channel. Bot status never changes, so
+   * entries stay until the session ends (a few dozen people at most).
+   */
   private readonly bots = new Map<string, boolean>();
+  /** People Discord couldn't find, and when to ask again. */
+  private readonly unknownUntil = new Map<string, number>();
   private readonly states = new SpeakerStates();
   private destroyed = false;
 
@@ -102,7 +114,14 @@ export class TableSession {
    * subscribed to the moment it starts (see onSpeakingStart).
    */
   noteMember(userId: string, isBot: boolean): void {
-    if (!this.destroyed) this.bots.set(userId, isBot);
+    if (this.destroyed) return;
+    this.bots.set(userId, isBot);
+    this.unknownUntil.delete(userId);
+  }
+
+  /** Whether this session already knows if the user is a bot. */
+  knows(userId: string): boolean {
+    return this.bots.has(userId);
   }
 
   /** Stop capturing these users immediately (consent revoked, or a pause). */
@@ -121,6 +140,7 @@ export class TableSession {
     this.destroyed = true;
     for (const userId of [...this.speakers.keys()]) this.endSpeaker(userId, false);
     this.bots.clear();
+    this.unknownUntil.clear();
     if (this.connection.state.status !== VoiceConnectionStatus.Destroyed) {
       this.connection.destroy();
     }
@@ -131,21 +151,29 @@ export class TableSession {
    * The receiver emits "start" for a speaker's first packet and then routes that same
    * packet to their subscription, if any. Deciding and subscribing synchronously here
    * keeps the first packet and everything after it; any await loses what arrives
-   * meanwhile. So bot status comes from the members noted in advance, and Discord is
-   * only asked about someone never seen in the channel.
+   * meanwhile. So bot status comes from the members noted in advance (or discord.js's
+   * member cache), and Discord is only asked about someone never seen in the channel.
    */
   private onSpeakingStart(userId: string): void {
     if (this.destroyed || this.speakers.has(userId) || this.pending.has(userId)) return;
-    const isBot = this.bots.get(userId);
+    let isBot = this.bots.get(userId);
     if (isBot === undefined) {
-      void this.lookUpThenAdmit(userId);
+      isBot = this.options.peekBot(userId);
+      if (isBot !== undefined) this.bots.set(userId, isBot);
+    }
+    if (isBot !== undefined) {
+      this.admit(userId, isBot);
       return;
     }
-    this.admit(userId, isBot);
+    if ((this.unknownUntil.get(userId) ?? 0) > Date.now()) {
+      this.admit(userId, true); // couldn't be found just now: deny without asking again
+      return;
+    }
+    void this.lookUpThenAdmit(userId);
   }
 
   private async lookUpThenAdmit(userId: string): Promise<void> {
-    // Nobody who hasn't opted in is looked up, let alone captured.
+    // Nobody who hasn't opted in is looked up when they speak, let alone captured.
     if (!this.options.allowlist.isAllowed(this.guildId, userId, false)) {
       this.noteState(userId, false, "not opted in, or a bot");
       return;
@@ -153,9 +181,10 @@ export class TableSession {
     this.options.log.debug(`user ${userId} wasn't seen joining; looking them up`, { guildId: this.guildId });
     this.pending.add(userId);
     try {
-      const isBot = await this.options.lookUpBot(userId);
+      const isBot = await this.options.lookUpBot(userId).catch(() => undefined);
       if (this.destroyed) return;
-      if (isBot !== undefined) this.bots.set(userId, isBot);
+      if (isBot === undefined) this.unknownUntil.set(userId, Date.now() + UNKNOWN_RETRY_MS);
+      else this.bots.set(userId, isBot);
       this.admit(userId, isBot ?? true); // checks consent again: it may have changed
     } finally {
       this.pending.delete(userId);

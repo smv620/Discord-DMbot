@@ -11,17 +11,20 @@ export interface VoiceMember {
 export interface MemberNotes {
   readonly channelId: string;
   noteMember(userId: string, isBot: boolean): void;
+  knows(userId: string): boolean;
 }
 
 /**
  * Note whether each person in the session's channel is a bot, before they speak, so
- * capture can start on their first packet. Anyone discord.js hasn't cached is looked
- * up in the background; anyone who can't be found stays unknown and is looked up
- * again if they speak.
+ * capture can start on their first packet. Someone discord.js hasn't cached is looked
+ * up in the background, but only if they've opted in and aren't known yet (voice
+ * states change on every mute or deafen); anyone who can't be found stays unknown and
+ * is looked up again if they speak.
  */
 export function noteVoiceMembers(
   session: MemberNotes,
   states: Iterable<VoiceMember>,
+  optedIn: (userId: string) => boolean,
   lookUpBot: BotLookup,
 ): void {
   for (const state of states) {
@@ -31,6 +34,7 @@ export function noteVoiceMembers(
       continue;
     }
     const userId = state.id;
+    if (session.knows(userId) || !optedIn(userId)) continue;
     void lookUpBot(userId).then(
       (isBot) => {
         if (isBot !== undefined) session.noteMember(userId, isBot);
