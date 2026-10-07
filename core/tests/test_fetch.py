@@ -2,6 +2,7 @@
 public internet can be reached, including through redirects and DNS."""
 
 import asyncio
+import gzip
 import inspect
 import ipaddress
 import unittest
@@ -64,11 +65,15 @@ class Addresses(unittest.TestCase):
             "100.64.0.1", "0.0.0.0", "224.0.0.1", "::1", "fe80::1", "fc00::1",
             "::ffff:127.0.0.1", "::ffff:169.254.169.254", "192.0.2.1",
             "64:ff9b::a00:1", "64:ff9b::a9fe:a9fe", "::ffff:0:a00:1", "::7f00:1",
+            "2002:a00:1::1", "2002:a9fe:a9fe::1",  # 6to4 around 10.0.0.1, 169.254.169.254
+            "2001:0:4136:e378:8000:63bf:f5ff:fffe",  # Teredo, client 10.0.0.1
         ]  # fmt: skip
         for ip in refused:
             with self.subTest(ip):
                 self.assertFalse(is_public(ipaddress.ip_address(ip)))
-        for ip in ("8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "64:ff9b::808:808"):
+        public = ("8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "64:ff9b::808:808",
+                  "2002:808:808::1")  # fmt: skip
+        for ip in public:
             with self.subTest(ip):
                 self.assertTrue(is_public(ipaddress.ip_address(ip)))
 
@@ -105,6 +110,9 @@ class Addresses(unittest.TestCase):
         self.assertFalse(fetch.sign_in_page(".html", wiki, "notdropbox.com"))
         published = yarl.URL(f"https://docs.google.com/document/d/e/{DOC}/pub")
         self.assertFalse(fetch.sign_in_page(".html", published, "docs.google.com"))
+        # Google Drive's page (private, or too big to scan) says to download it.
+        self.assertEqual(fetch.sign_in_message("drive.google.com"), fetch.DRIVE_PAGE)
+        self.assertEqual(fetch.sign_in_message("bit.ly", "docs.google.com"), fetch.NOT_SHARED)
 
 
 class Resolver(unittest.IsolatedAsyncioTestCase):
@@ -228,6 +236,27 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
         with patch.object(fetch, "MAX_BYTES", 1000):
             self.assertEqual(await self.refused("/big"), fetch.TOO_BIG)
             self.assertEqual(await self.refused("/stream"), fetch.TOO_BIG)
+
+    async def test_compressed_replies_are_unpacked_a_piece_at_a_time(self) -> None:
+        seen: dict[str, str] = {}
+
+        def gzipped(body: bytes, encoding: str = "gzip") -> Any:
+            def reply(request: web.Request) -> web.Response:
+                seen["asked"] = request.headers.get("Accept-Encoding", "")
+                return web.Response(
+                    body=gzip.compress(body),
+                    headers={"Content-Type": "text/plain", "Content-Encoding": encoding},
+                )
+
+            return reply
+
+        self.routes["/small"] = gzipped(b"Auril")
+        self.routes["/bomb"] = gzipped(b"\0" * (20 * 1024 * 1024))  # ~20 KB on the wire
+        self.routes["/br"] = gzipped(b"Auril", encoding="br")
+        self.assertEqual((await self.get("/small")).data, b"Auril")
+        self.assertEqual(seen["asked"], "gzip")
+        self.assertEqual(await self.refused("/bomb"), fetch.TOO_BIG)
+        self.assertEqual(await self.refused("/br"), fetch.WRONG_TYPE)
 
     async def test_slow_and_odd_replies(self) -> None:
         async def slow(_request: web.Request) -> web.Response:

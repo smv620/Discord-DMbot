@@ -297,14 +297,15 @@ def format_help(*, secrets: bool) -> str:
     parts = "name | kind | other names | secret names" if secrets else "name | kind | other names"
     return (
         "📥 **Add many names at once.** Paste a list, paste a link, or upload a file (PDF, "
-        "Word or text).\n"
+        "Word, text or web page).\n"
         "A list written like the template is added straight away. For anything else, "
         "DMbot's AI finds the names and shows you the list first: nothing is added until "
-        "you press Add.\n"
+        "you press **Add these names**.\n"
         f"Template: one name per line, `{parts}`. Only the name is needed. Separate other "
         "names with `,` or `;`. Kinds: NPC, place, group, creature, item, god, spell, event, "
         "other. Names with no kind wait in 📝 Check new names.\n"
-        "No upload box in the form? Type `/dmbot names` and add the file in its **file** box."
+        "If 📎 Upload a file shows no place to pick a file, type `/dmbot names` and add the "
+        "file in its **file** box."
     )
 
 
@@ -318,7 +319,8 @@ class AddMany(_Menu):
         )
         self.add_item(_Button(self._link, label="🔗 Paste a link", style=grey))
         self.add_item(_Button(self._upload, label="📎 Upload a file", style=grey))
-        self.add_item(_Button(self._template, label="📄 Get the template", style=grey))
+        # On its own row, so four buttons never get squeezed on a phone.
+        self.add_item(_Button(self._template, label="📄 Get the template", style=grey, row=1))
 
     async def _paste(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -391,7 +393,7 @@ class LinkForm(discord.ui.Modal, title="Add names from a link"):
 
 class UploadForm(discord.ui.Modal, title="Add names from a file"):
     file: discord.ui.Label[UploadForm] = discord.ui.Label(
-        text="A names list, or a PDF, Word or .txt document",
+        text="A list, or a PDF, Word, text or web page file",  # 45 characters at most
         component=discord.ui.FileUpload(max_values=1),
     )
 
@@ -419,6 +421,21 @@ NO_AI_FOR_DOCUMENTS = (
     "into the template instead: 📥 Add many > 📄 Get the template."
 )
 _link_busy: set[int] = set()  # servers opening a link right now
+LINK_BUSY = (
+    "DMbot is already opening another link for this server. Wait a few seconds and try again."
+)
+
+
+async def read_link_once(guild_id: int, link: str) -> tuple[Upload | None, str | None]:
+    """read_link, one link at a time per server: every way in (🔗 Paste a link, a link
+    pasted as a list, `/dmbot names link:`) goes through here."""
+    if guild_id in _link_busy:
+        return None, LINK_BUSY
+    _link_busy.add(guild_id)
+    try:
+        return await read_link(link)
+    finally:
+        _link_busy.discard(guild_id)
 
 
 async def take_link(interaction: discord.Interaction, campaign_id: str, link: str) -> None:
@@ -432,15 +449,10 @@ async def take_link(interaction: discord.Interaction, campaign_id: str, link: st
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
         return
     if campaign.guild_id in _link_busy:
-        await _tell(interaction, "DMbot is already opening a link for this server. Try again "
-                    "when it's done.")  # fmt: skip
+        await _tell(interaction, LINK_BUSY)
         return
-    _link_busy.add(campaign.guild_id)
-    try:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        upload, problem = await read_link(link)
-    finally:
-        _link_busy.discard(campaign.guild_id)
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    upload, problem = await read_link_once(campaign.guild_id, link)
     if upload is None:
         await _tell(interaction, problem or "DMbot couldn't read that.")
         return
@@ -564,8 +576,8 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
 
 def _ai_offer_text(upload: Upload, parsed: Parsed | None) -> str:
     rights = (
-        "Its text goes to Anthropic (an AI company) to be read. Only press 🤖 Find names if "
-        "you have the right to use this material: DMbot doesn't check."
+        "**Pressing 🤖 Find names confirms you have the right to use this material.** Its "
+        "text goes to Anthropic (an AI company) to be read. DMbot doesn't check."
     )
     if parsed is None:
         return (
