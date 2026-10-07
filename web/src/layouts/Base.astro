@@ -13,7 +13,8 @@ interface Props {
 
 const { title, description, noindex = false } = Astro.props;
 const fullTitle = title === "DMbot" ? title : `${title} · DMbot`;
-const path = Astro.url.pathname;
+// Built pages see their file name ("/pricing.html", "/index.html"); links don't have it.
+const path = Astro.url.pathname.replace(/(\/index)?\.html$/, "") || "/";
 
 const menu = [
   { href: "/pricing", label: "Prices" },
