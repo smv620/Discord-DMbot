@@ -41,6 +41,10 @@ dmbot = "dmbot.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# The plan facts (#432, #437): a copy of web/src/content/plans.json; a test keeps them equal.
+dmbot = ["plans.json"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
