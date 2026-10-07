@@ -1,6 +1,7 @@
 """The plain-text names list: the template, reading a list, and a download (pure)."""
 
 import unittest
+from pathlib import Path
 
 from dmbot.memory.name_list import HEADER, TEMPLATE, OutName, parse, render
 
@@ -76,3 +77,29 @@ class Download(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SCRIPTS = Path(__file__).resolve().parents[2] / "docs" / "test-scripts"
+
+
+class BakeoffStoryNames(unittest.TestCase):
+    """docs/test-scripts/bakeoff-story-names.txt, the owner's bulk-import test (#368)."""
+
+    def test_the_test_file_reads_cleanly(self) -> None:
+        parsed = parse((SCRIPTS / "bakeoff-story-names.txt").read_text(), secrets=False)
+        self.assertEqual(parsed.refused, [])
+        self.assertEqual(parsed.repeated, 0)
+        self.assertEqual(len(parsed.lines), 26)  # the story's 29 names, less the 3 left out
+        self.assertTrue(all(line.kind is not None for line in parsed.lines))
+        by_name = {line.name: line for line in parsed.lines}
+        self.assertEqual(by_name["Bell"].others, ("Belleros",))  # swapped on purpose
+        self.assertEqual(by_name["Varrow"].kind, "place")  # a different kind on purpose
+        for left_out in ("Cerric", "Mirelle", "Kael"):
+            self.assertNotIn(left_out, by_name)
+
+    def test_the_setup_block_reads_cleanly(self) -> None:
+        text = (SCRIPTS / "bakeoff-story-names-setup.md").read_text()
+        block = text.split("```")[1]
+        parsed = parse(block, secrets=False)
+        self.assertEqual(parsed.refused, [])
+        self.assertEqual(len(parsed.lines), 10)

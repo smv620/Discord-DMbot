@@ -529,3 +529,61 @@ class PublicLogTests(unittest.TestCase):
                 self.assertEqual(replay_main.main(argv), 0)
             self.assertIn("Zanzibarquux", out.getvalue())  # shown on screen
             self.assertNotIn("Zanzibarquux", history.read_text())  # never logged
+
+
+class StoryScriptTests(unittest.TestCase):
+    """docs/test-scripts/bakeoff-story.md, the twin's name test (#367)."""
+
+    # Every name in stt-bakeoff.md's name list, the nickname, and the spells in its lines.
+    NAMES = (
+        "Cerric",
+        "Belleros",
+        "Bell",
+        "Hrothgar",
+        "Vhalzimar",
+        "Ka'zeth",
+        "Mirelle",
+        "Orrin",
+        "Ysolde",
+        "Quillon",
+        "Dravenmoor",
+        "Brynwater",
+        "Kael",
+        "Nyxara",
+        "Thornewick",
+        "Ilvaris",
+        "Sorrowmere",
+        "Gorrak",
+        "Elowen",
+        "Varrow",
+        "Zephyrine",
+        "Tamsin",
+        "Lirael",
+        "Saelith",
+        "Oskar Vane",
+        "Ashen Crown",
+        "Detect Magic",
+        "Cure Wounds",
+        "Fireball",
+        "Bardic Inspiration",
+    )
+
+    def test_the_story_parses_and_uses_every_name_twice(self) -> None:
+        script = load_script(SCRIPTS / "bakeoff-story.md")
+        self.assertEqual(script.turns, 8)
+        self.assertEqual(script.pauses, 3)
+        self.assertGreater(script.count(Part.WHISPER), 0)
+        self.assertTrue(350 <= len(script.words) <= 550, len(script.words))
+        said_words = words(" ".join(w.text for w in script.words))
+        self.assertEqual(len(self.NAMES), 30)
+        for name in self.NAMES:
+            target = words(name)
+            said = sum(
+                said_words[i : i + len(target)] == target
+                for i in range(len(said_words) - len(target) + 1)
+            )
+            self.assertGreaterEqual(said, 2, name)
+
+    def test_the_story_has_no_digits(self) -> None:
+        script = load_script(SCRIPTS / "bakeoff-story.md")
+        self.assertFalse(any(ch.isdigit() for w in script.words for ch in w.text))

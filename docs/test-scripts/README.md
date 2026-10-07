@@ -14,6 +14,7 @@ words, who said them, and where the silences are. That lets us check:
 | 2 (DM + 1 player) | [dm-and-player.md](dm-and-player.md) | The DM reads `[DM]`, the player reads `[Player]` |
 | 3 or more (DM + players) | [dm-and-player.md](dm-and-player.md) | The DM reads `[DM]`. The players split the `[Player]` lines and agree who reads which before starting (for example, in voice-channel order) |
 | Speech-to-text bake-off (#128), 2–4 readers | [stt-bakeoff.md](stt-bakeoff.md) | Each reader reads every line, recorded on their own device (not through DMbot). About 6–8 minutes |
+| Twin name test, 1 reader (#367) | [bakeoff-story.md](bakeoff-story.md) | One reader, alone, recorded on their own device: a three-minute story with every bake-off name at least twice. The recording, `bakeoff-story.m4a`, goes next to it once the owner records it. Its names list for the Add many test is [bakeoff-story-names.txt](bakeoff-story-names.txt), with [the setup](bakeoff-story-names-setup.md) (#368) |
 
 Both scripts take about a minute and score the same 12 D&D terms.
 
