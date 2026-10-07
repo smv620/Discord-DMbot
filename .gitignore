@@ -244,3 +244,6 @@ logs/
 # Shared live-testing logs (kept in git so every Claude session can read them)
 !docs/testing-status.log
 !docs/testing-history.log
+
+# Claude Code: per-machine permissions (approved commands), never shared
+.claude/settings.local.json
