@@ -6,6 +6,10 @@ was said (the tricky lines); and the word error rate of the everyday lines.
 Names are scored wherever they land in the text, not line by line: the recording is one
 reader going straight through, so pieces of speech are cut wherever the pauses fall, as
 at a real table. A name cut in half by a piece boundary is a real finding.
+
+One known blur: when a wrongly written name sits right next to a name that was left out,
+the alignment can match the heard word to either one (both cost the same edits), so
+"wrong" and "not at all" may swap between those two names. The totals stay right.
 """
 
 from __future__ import annotations

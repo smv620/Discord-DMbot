@@ -143,14 +143,17 @@ class MemorySection:
     name = "memory"
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
-        fetched: list[tuple[str, Table, list[Any]]] = []
+        out: list[Any] = []
         for tag, table in _TAGS.items():
             order = sql.SQL(" ORDER BY {}").format(sql.Identifier(table.key))
             cur = await conn.execute(scoped_select(table, order), (guild_id, campaign_id))
-            fetched.append((tag, table, await cur.fetchall()))
-        # Building the rows is pure CPU (a big campaign takes a good fraction of a
-        # second): off the event loop, so voice and other servers don't wait (#164).
-        return await asyncio.to_thread(_dump_rows, fetched)
+            raws = await cur.fetchall()
+            # Building the rows is pure CPU (a big campaign takes a good fraction of a
+            # second): off the event loop, so voice and other servers don't wait (#164).
+            # One table at a time, so only one table's raw rows are held at once (#393).
+            out += await asyncio.to_thread(_dump_rows, [(tag, table, raws)])
+            del raws
+        return out
 
     def check(self, rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         """Every value checked and sound codes worked out: pure CPU, which the store
