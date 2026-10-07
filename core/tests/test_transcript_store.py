@@ -315,7 +315,7 @@ class BotTests(DatabaseTest):
         it = self.it(STRANGER)
         await view._picked(it)
         self.assertTrue(it.response.deferred)
-        self.assertIn("0:00:42 Mia: We ride at dawn.", file_text(it))
+        self.assertIn("[0:00:42] (Mia): We ride at dawn.", file_text(it))
         name = next(f for f in followups(it) if "file" in f[1])[1]["file"].filename
         self.assertEqual(name, "frostmaiden-session-1-as-heard.txt")
 
