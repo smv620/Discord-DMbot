@@ -245,7 +245,7 @@ screen channel (only the DM can see it) and optionally to DMs.
 | `/dmbot backup` · `/dmbot restore` | Download a complete copy of a campaign, secrets included (anyone in the server, so a campaign is never lost if its DM disappears; decided 2026-10-06, #229; whoever restores a copy becomes its DM); bring one back from a copy (restore needs a file, which only a command can take) |
 | `/dmbot help` | A short, friendly guide with buttons |
 | `/houserules` | List, add, edit, and remove house rules for the current campaign |
-| `/optionalrules` | Turn optional rules (e.g. Xanathar's, Tasha's) on or off for the current campaign |
+| `/dmbot optionalrules` | Turn optional rules (e.g. Xanathar's, Tasha's) on or off for the current campaign (built in #49: a catalog of rule names, one-line summaries and their books, never book text; each change noted in the DM screen) |
 | `/transcript` | Download a session transcript: **cleaned**, **as heard** (raw), or **both** (#125). Anyone in the server can use it. If DMbot is still recording, the DM is told "This transcript ends at 19:42. To get the whole session, stop with `/dmbot stop` first." and a player is told "This transcript ends at 19:42. You'll get a message with the full transcript when the DM ends the session." [Download anyway] [Cancel] |
 
 `/consent give · revoke` stay as hidden fallbacks for people with DMs off.
@@ -312,7 +312,7 @@ the order itself never changes. Content from the fallback ruleset is tagged
 contradicts an optional rule from a supplement (e.g. Xanathar's Guide, Tasha's Cauldron),
 the fallback applies. Example: going 24 hours without a long rest risks exhaustion — an
 optional Xanathar's rule that the 2024 books don't include or change. New campaigns ask
-which optional rules to use, **default: on**. `/optionalrules` toggles them any time. House
+which optional rules to use, **default: on**. `/dmbot optionalrules` toggles them any time. House
 rules can still override them.
 
 Lookups must match renamed content (e.g. 2024 dropped many creator names from spell
