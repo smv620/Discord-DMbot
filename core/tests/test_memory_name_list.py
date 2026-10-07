@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 
 from dmbot.memory.name_list import HEADER, TEMPLATE, OutName, parse, render
+from dmbot.memory.sounds import sound_codes
+from dmbot.transcript.cleaner import likeness
 
 
 class Template(unittest.TestCase):
@@ -75,10 +77,6 @@ class Download(unittest.TestCase):
         self.assertNotIn("hooded", render(names, campaign="Frostmaiden", secrets=False))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 SCRIPTS = Path(__file__).resolve().parents[2] / "docs" / "test-scripts"
 
 
@@ -103,3 +101,47 @@ class BakeoffStoryNames(unittest.TestCase):
         parsed = parse(block, secrets=False)
         self.assertEqual(parsed.refused, [])
         self.assertEqual(len(parsed.lines), 10)
+
+    def test_the_setup_note_matches_the_file(self) -> None:
+        # The live test's expected numbers rest on these (bakeoff-story-names-setup.md).
+        setup = {
+            line.name: line
+            for line in parse(
+                (SCRIPTS / "bakeoff-story-names-setup.md").read_text().split("```")[1],
+                secrets=False,
+            ).lines
+        }
+        listed = {
+            line.name: line
+            for line in parse(
+                (SCRIPTS / "bakeoff-story-names.txt").read_text(), secrets=False
+            ).lines
+        }
+        for left_out in ("Cerric", "Mirelle", "Kael"):
+            self.assertIn(left_out, setup)
+        self.assertEqual(setup["Belleros"].others, ("Bell",))
+        self.assertEqual(setup["Oskar Vane"].others, ("Vane",))
+        self.assertEqual(listed["Vane"].others, ("Oskar Vane",))
+        self.assertEqual((setup["Varrow"].kind, listed["Varrow"].kind), ("deity", "place"))
+        self.assertEqual(
+            (setup["Ashen Crown"].kind, listed["Ashen Crown"].kind), ("faction", "place")
+        )
+
+    def test_only_the_close_spellings_sound_like_known_names(self) -> None:
+        known = ["Cerric", "Mirelle", "Kael", "Gorrak", "Quillon", "Brynwater", "Belleros", "Bell"]
+        known += ["Oskar Vane", "Vane", "Varrow", "Ashen Crown"]
+        codes = {code for name in known for code in sound_codes(name)}
+        close = {"Gorrack": "Gorrak", "Quilon": "Quillon", "Brynnwater": "Brynwater"}
+        for near, original in close.items():
+            self.assertTrue(set(sound_codes(near)) & set(sound_codes(original)), near)
+            self.assertTrue(0.9 <= likeness(near, original) <= 0.95, near)
+        lines = parse((SCRIPTS / "bakeoff-story-names.txt").read_text(), secrets=False).lines
+        exact = {"Bell", "Vane", "Varrow", "Ashen Crown"}
+        for line in lines:
+            if line.name in close or line.name in exact:
+                continue
+            self.assertFalse(set(sound_codes(line.name)) & codes, line.name)
+
+
+if __name__ == "__main__":
+    unittest.main()
