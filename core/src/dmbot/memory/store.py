@@ -14,6 +14,7 @@ Only the DM's word confirms anything (`source="dm"`); other sources propose.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Sequence
@@ -200,6 +201,7 @@ def _stronger(status_a: str, status_b: str) -> str:
 
 
 DAY = 24 * 60 * 60
+YIELD_AFTER_S = 0.015  # the flag check gives the event loop a turn this often
 
 
 class MemoryStore:
@@ -211,6 +213,10 @@ class MemoryStore:
         self._db = db
         self._clock = clock
         self.keep_days = keep_days  # how long Undo works: older change-log rows are pruned
+        # The memory version each campaign's flags were last checked at (#347): nothing
+        # changed since, nothing to check. Only in this process; a restart checks again.
+        # A deleted campaign's entry stays: a few bytes, and never matched again.
+        self._flags_checked: dict[tuple[int, str], int] = {}
 
     @asynccontextmanager
     async def _write(
@@ -1000,56 +1006,21 @@ class MemoryStore:
         or a rejected fact can end a clash without touching the flag. Each flagged fact
         is checked again exactly as when it was flagged; a flag whose problem is still
         found stays open. Logged like any change (as EntityBot's upkeep), so it can be
-        undone. A few statements however many flags are open."""
+        undone. A few statements however many flags are open. Skipped when the memory
+        hasn't changed since the last check (#347); the same flag found twice (a fact
+        moved by a merge is checked again) is closed but for the oldest. The closed flags
+        come back in id order."""
+        checked = (guild_id, campaign_id)
         async with self._read(guild_id, campaign_id) as scope:  # no lock if nothing's open
+            if self._flags_checked.get(checked) == scope.version:
+                return Written([], None)
             if not await scope.select(FLAGS, " AND status = 'open' LIMIT 1"):
+                self._flags_checked[checked] = scope.version
                 return Written([], None)
         async with self._write(guild_id, campaign_id, "entitybot") as w:
-            by_fact: dict[str, list[dict[str, Any]]] = {}
-            for flag in await w.select(FLAGS, " AND status = 'open' ORDER BY created_at, id"):
-                by_fact.setdefault(flag["relation_id"], []).append(flag)
-            if not by_fact:
-                return Written([], None)
-            onto = await _load_ontology(w)
-            facts = [
-                _relation(r)
-                for r in await w.select(RELATIONS, " AND id = ANY(%s)", [sorted(by_fact)])
-            ]
-            ends = sorted({e for f in facts for e in (f.subject_id, f.object_id)})
-            types = {
-                e["id"]: e["type"] for e in await w.select(ENTITIES, " AND id = ANY(%s)", [ends])
-            }
-            touching: dict[str, list[Relation]] = {}
-            for r in await _relations_touching(w, *ends):
-                for e in {r.subject_id, r.object_id}:
-                    touching.setdefault(e, []).append(r)
-            stale: list[str] = []
-            for fact in facts:
-                if fact.predicate not in onto.predicates:
-                    continue  # a term DMbot can't check any more: leave it to the DM
-                still: set[tuple[str, str | None]] = set()
-                if fact.status != REJECTED:  # a rejected fact clashes with nothing
-                    others = {
-                        r.id: r
-                        for e in (fact.subject_id, fact.object_id)
-                        for r in touching.get(e, [])
-                        if r.id != fact.id
-                    }
-                    problems = check_relation(
-                        onto,
-                        fact,
-                        types[fact.subject_id],
-                        types[fact.object_id],
-                        list(others.values()),
-                    )
-                    still = {(p.kind, p.other_id) for p in problems}
-                stale += [
-                    f["id"] for f in by_fact[fact.id] if (f["kind"], f["other_id"]) not in still
-                ]
-            closed = [
-                _flag(await w.update(FLAGS, flag_id, {"status": "resolved"})) for flag_id in stale
-            ]
-            return Written(closed, w.batch)
+            closed = await _close_stale_flags(w)
+        self._flags_checked[checked] = w.version  # after its own closes, if any
+        return Written(closed, w.batch)
 
     # ---- mentions and corrections -------------------------------------------------------
 
@@ -1295,6 +1266,66 @@ class MemoryStore:
             f"Too late to undo: Undo works for {days(self.keep_days)}, and not from before a "
             "backup was loaded."
         )
+
+
+async def _close_stale_flags(w: Changes) -> list[Flag]:
+    """The cleanup's work, inside its write: see MemoryStore.resolve_stale_flags."""
+    by_fact: dict[str, list[dict[str, Any]]] = {}
+    for flag in await w.select(FLAGS, " AND status = 'open' ORDER BY created_at, id"):
+        by_fact.setdefault(flag["relation_id"], []).append(flag)
+    if not by_fact:
+        return []
+    onto = await _load_ontology(w)
+    facts = [
+        _relation(r) for r in await w.select(RELATIONS, " AND id = ANY(%s)", [sorted(by_fact)])
+    ]
+    ends = sorted({e for f in facts for e in (f.subject_id, f.object_id)})
+    types = {e["id"]: e["type"] for e in await w.select(ENTITIES, " AND id = ANY(%s)", [ends])}
+    # Only the facts a check can use (#347 perf-qa): the same pair (contradictions) and,
+    # for a "how many" rule, the same end with the same term. Not every fact on both
+    # ends, which made a busy name cost flags times facts.
+    by_end: dict[tuple[str, str], list[Relation]] = {}
+    by_pair: dict[frozenset[str], list[Relation]] = {}
+    for r in await _relations_touching(w, *ends):
+        for e in {r.subject_id, r.object_id}:
+            by_end.setdefault((e, r.predicate), []).append(r)
+        by_pair.setdefault(frozenset((r.subject_id, r.object_id)), []).append(r)
+    stale: list[str] = []
+    mark = time.perf_counter()
+    for fact in facts:
+        if time.perf_counter() - mark > YIELD_AFTER_S:
+            await asyncio.sleep(0)  # a long check lets voice and other servers in
+            mark = time.perf_counter()
+        still: set[tuple[str, str | None]] = set()
+        if fact.predicate not in onto.predicates:  # a term DMbot can't check any more:
+            still = {(f["kind"], f["other_id"]) for f in by_fact[fact.id]}  # the DM's call
+        elif fact.status != REJECTED:  # a rejected fact clashes with nothing
+            term = onto.predicates[fact.predicate]
+            others = {
+                r.id: r for r in by_pair.get(frozenset((fact.subject_id, fact.object_id)), [])
+            }
+            if term.max_per_subject is not None:
+                for end in (
+                    (fact.subject_id, fact.object_id) if term.symmetric else (fact.subject_id,)
+                ):
+                    others.update((r.id, r) for r in by_end.get((end, term.key), []))
+            others.pop(fact.id, None)
+            problems = check_relation(
+                onto,
+                fact,
+                types[fact.subject_id],
+                types[fact.object_id],
+                list(others.values()),
+            )
+            still = {(p.kind, p.other_id) for p in problems}
+        seen: set[tuple[str, str | None]] = set()
+        for f in by_fact[fact.id]:  # oldest first
+            problem = (f["kind"], f["other_id"])
+            if problem not in still or problem in seen:  # gone, or found twice
+                stale.append(f["id"])
+            seen.add(problem)
+    rows = await w.update_rows(FLAGS, {flag_id: {"status": "resolved"} for flag_id in stale})
+    return [_flag(r) for r in rows]
 
 
 # ---- helpers (inside a write) ----------------------------------------------------------
