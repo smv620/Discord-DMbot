@@ -863,6 +863,8 @@ class SaveAndResume(SessionTests):
         self.assertNotIn("from the last session", "\n".join(sent))
 
     async def test_misheard_names_are_fixed_and_what_was_heard_is_kept(self) -> None:
+        import time
+
         from dmbot.memory.lookup import CampaignLookup, LookupData
         from dmbot.memory.models import CONFIRMED, Alias, Entity
         from dmbot.transcript.models import TranscriptBuffer
@@ -893,6 +895,7 @@ class SaveAndResume(SessionTests):
                 (),
             )
         )
+        table.scene.note([eid], DM, time.monotonic())  # Belleros came up a moment ago
         table.unsaved = TranscriptBuffer()
         self.bot.transcripts = object()  # type: ignore[assignment]  # only checked for None
         self.said(table, "I think Beleros has it")

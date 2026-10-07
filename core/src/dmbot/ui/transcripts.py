@@ -56,8 +56,8 @@ def ended_text(campaign_name: str) -> str:
     """The private message to the DM and everyone recorded, when DMbot stops."""
     return (
         f"The session for **{discord.utils.escape_markdown(campaign_name)}** has ended. "
-        "Press the button to download what was said, as a text file. It has exactly what "
-        "DMbot wrote down, with no fixes.\n"
+        "Press the button to download what was said, as a text file. It has the words "
+        "exactly as DMbot heard them, before any name fixes.\n"
         "Anyone in the server can also get it with `/transcript`."
     )
 

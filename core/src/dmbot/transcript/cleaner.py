@@ -12,15 +12,18 @@ words as heard otherwise (a wrong fix is worse than a missed one):
   split ("Ka Zeth"), that sounds like exactly one confirmed name (`lookup.by_sound`) and
   is spelled much like it. A word counts as unknown when speech-to-text gave it a
   capital, it isn't a common word or a game term, and nobody said it in lower case this
-  session ("Thorn" next to "a thorn" is a word). A word starting a sentence gets a
-  capital anyway, so it counts only once it was also written with one mid-sentence.
-  Words in lower case are never changed this way ("Bell or us" waits for the DM's
-  answer, later).
+  session ("Thorn" next to "a thorn" is a word); all capitals are left alone. A word
+  starting a sentence gets a capital anyway, so it counts only once it was also
+  written with one mid-sentence. One word alone also needs the name in the scene (said
+  in the last ~10 minutes) or to be a player's character, since real names and brands
+  sound like campaign names too ("Mary" and Mara). Words in lower case are never
+  changed this way ("Bell or us" waits for the DM's answer, later).
 
 Only confirmed, non-secret names make a fix; a name DMbot only suggested never does.
 Nothing is changed inside a secret name, a known name, a "keep as heard" word or the
-name of someone at the table, and a word that also sounds like a secret name is left
-alone, so a fix can never write a secret identity into a transcript. A fix writes the
+name of someone at the table, and no fix goes where the words, with the words around
+them, sound like a secret name ("Silas Vain" for the secret "Silas Vane"), so a fix can
+never write a secret identity into a transcript. A fix writes the
 name the way it was said ("the Frostwolfs" → "the Frostwolves", not "Frostwolf tribe"):
 the spelling of what was said, never the meaning.
 """
@@ -29,7 +32,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 
 from dmbot.memory.lookup import CampaignLookup, NameEntry
@@ -41,7 +44,7 @@ from dmbot.memory.sounds import sound_codes
 MAX_JOINED = 3  # a name split into at most this many words ("Ka Zeth", "Bry N Shander")
 MIN_LETTERS = 4  # shorter words sound like too many names
 MIN_LIKENESS = 0.7  # how alike the spelling must be (0 to 1) for a fix by sound
-WORDS_KEPT = 5_000  # per speaker: words said in lower case this session
+WORDS_KEPT = 20_000  # per speaker and kind: the most recently said words are kept
 _POSSESSIVE = ("'s", "’s")
 _SENTENCE_END = re.compile(r"[.!?…]")
 
@@ -72,17 +75,19 @@ class Vocabulary:
     with the running session only; a speaker who stops being recorded is forgotten."""
 
     limit: int = WORDS_KEPT
-    lower: dict[int, set[str]] = field(default_factory=dict)
-    named: dict[int, set[str]] = field(default_factory=dict)
+    # Insertion-ordered, so the least recently said word goes first when one is full.
+    lower: dict[int, dict[str, None]] = field(default_factory=dict)
+    named: dict[int, dict[str, None]] = field(default_factory=dict)
 
     def note(self, speaker: int, text: str) -> None:
-        lower, named = _lower_words(text), _named_words(text)
-        for kept, new in ((self.lower, lower), (self.named, named)):
-            mine = kept.setdefault(speaker, set())
+        lower = {w.casefold() for w in _lower_words(text)}
+        for kept, new in ((self.lower, lower), (self.named, _named_words(text))):
+            mine = kept.setdefault(speaker, {})
             for word in new:
-                if len(mine) >= self.limit:
-                    break
-                mine.add(word)
+                mine.pop(word, None)
+                mine[word] = None
+                if len(mine) > self.limit:
+                    del mine[next(iter(mine))]
 
     def is_word(self, word: str) -> bool:
         return _said(self.lower, word.casefold())
@@ -95,7 +100,7 @@ class Vocabulary:
         self.named.pop(speaker, None)
 
 
-def _said(kept: dict[int, set[str]], key: str) -> bool:
+def _said(kept: dict[int, dict[str, None]], key: str) -> bool:
     return any(key in words for words in kept.values())
 
 
@@ -165,18 +170,23 @@ def clean(
     *,
     vocabulary: Vocabulary | None = None,
     people: Iterable[str] = (),
+    scene: Collection[str] = (),
 ) -> Cleaned:
     """The line with the names it's sure were misheard fixed, and the fixes made.
     `vocabulary`: what this session's lines said about words (see `Vocabulary`), this
-    line not included; `people`: display names of people at the table, never changed."""
+    line not included; `people`: display names of people at the table (and their first
+    words), never changed; `scene`: entries said lately (see `SceneTracker.scene`)."""
     words = list(WORD.finditer(heard))
-    keys = [name_key(w.group()) for w in words]
-    person_keys = {name_key(p) for p in people}
+    keys = [name_key(_stem(w.group())) for w in words]
+    person_keys = {name_key(p) for p in people} | {
+        name_key(p.split()[0]) for p in people if p.split()
+    }
     n = len(words)
+    longest = max(LONGEST_NAME_WORDS, lookup.longest_secret)
     # Words that are already something DMbot knows: never changed by sound.
     known = [False] * n
     for start in range(n):
-        for end in range(start + 1, min(n, start + LONGEST_NAME_WORDS) + 1):
+        for end in range(start + 1, min(n, start + longest) + 1):
             key = " ".join(keys[start:end])
             if (
                 key in lookup.by_key
@@ -186,7 +196,14 @@ def clean(
             ):
                 known[start:end] = [True] * (end - start)
 
-    fixes = [*_known_names(lookup, heard), *_by_sound(lookup, heard, words, known, vocabulary)]
+    fixes = [
+        fix
+        for fix in [
+            *_known_names(lookup, heard),
+            *_by_sound(lookup, heard, words, known, vocabulary, scene),
+        ]
+        if not _near_secret(lookup, words, fix)
+    ]
     fixes.sort(key=lambda f: f.start)
     out, at = [], 0
     for fix in fixes:
@@ -248,12 +265,15 @@ def _by_sound(
     words: list[re.Match[str]],
     known: list[bool],
     vocabulary: Vocabulary | None,
+    scene: Collection[str],
 ) -> list[Fix]:
     """Unknown capitalized words (1 to MAX_JOINED in a row) that sound like exactly one
     confirmed name and are spelled much like it. A word starting a sentence has its
     capital anyway, so it counts only once it was also written with one mid-sentence
     (in this line or earlier this session): "Thorn bushes everywhere" is never
-    "Thorin"."""
+    "Thorin". One word alone also needs the name to be in the scene or a player's
+    character: real names and brands sound like campaign names too ("Mary" and Mara),
+    while a split name ("Ka Zeth") is no real word."""
     lower = {w.casefold() for w in _lower_words(heard)}
     named = _named_words(heard)
     starts = _starts(heard, words)
@@ -262,8 +282,8 @@ def _by_sound(
         word = words[i].group()
         if known[i] or not word[:1].isupper():
             return False
-        if not last and word.endswith(_POSSESSIVE):
-            return False
+        if len(word) > 1 and word.isupper():
+            return False  # all capitals: more likely "NPC" or "AC" than a name
         stem = _stem(word)
         key = name_key(stem)
         if key in COMMON or key in GAME_TERMS or stem.casefold() in lower:
@@ -274,18 +294,23 @@ def _by_sound(
             return stem.casefold() in named or (vocabulary is not None and vocabulary.is_name(stem))
         return True
 
+    # Once per word: as the last word of a run (may end in "'s") and inside one.
+    as_last = [unknown(i, True) for i in range(len(words))]
+    inside = [ok and not words[i].group().endswith(_POSSESSIVE) for i, ok in enumerate(as_last)]
     fixes = []
     i = 0
     while i < len(words):
         for size in range(min(MAX_JOINED, len(words) - i), 0, -1):
             run = range(i, i + size)
-            if not all(unknown(j, j == run[-1]) for j in run):
+            if not as_last[run[-1]] or not all(inside[j] for j in run[:-1]):
                 continue
             if any(heard[words[j].end() : words[j + 1].start()] != " " for j in run[:-1]):
                 continue  # only words with a plain space between are one split name
             start, end = words[i].start(), words[run[-1]].end()
             said = _stem(heard[start:end])
             fix = _sounds_like(lookup, said, start)
+            if fix is not None and size == 1 and not _in_context(lookup, fix.entity_id, scene):
+                fix = None
             if fix is not None:
                 fixes.append(fix)
                 i += size
@@ -310,15 +335,41 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | None:
     matches: dict[str, NameEntry] = {}
     for code in sound_codes(joined):
         for entry in lookup.by_sound.get(code, ()):
+            if entry.secret:
+                return None  # it could be a secret name: never guess around one
+            if matches and entry.entity_id != next(iter(matches.values())).entity_id:
+                return None  # more than one entry sounds like it
             matches.setdefault(entry.alias_id, entry)
-    if any(e.secret for e in matches.values()):
-        return None  # it could be a secret name: never guess around one
-    if len({e.entity_id for e in matches.values()}) != 1:
-        return None  # nothing, or more than one entry, sounds like it
+    if not matches:
+        return None
     usable = [e for e in matches.values() if e.confirmed]
     if not usable:
         return None  # only a name DMbot suggested: never a silent fix
     best = max(usable, key=lambda e: (likeness(said, e.text), e.text))
-    if likeness(said, best.text) < MIN_LIKENESS:
+    if likeness(said, best.text) < MIN_LIKENESS or best.text == said:
         return None
     return Fix(start, start + len(said), said, best.text, best.entity_id, SOUND)
+
+
+def _in_context(lookup: CampaignLookup, entity_id: str, scene: Collection[str]) -> bool:
+    entity = lookup.entities.get(entity_id)
+    return entity_id in scene or (entity is not None and entity.type == PLAYER_CHARACTER)
+
+
+def _near_secret(lookup: CampaignLookup, words: list[re.Match[str]], fix: Fix) -> bool:
+    """Do the fixed words, with the words around them, sound like a secret name? Then
+    they may be one misheard ("Silas Vain" for "Silas Vane"), and no fix may go there."""
+    if not lookup.longest_secret:
+        return False
+    inside = [i for i, w in enumerate(words) if w.start() < fix.end and fix.start < w.end()]
+    if not inside:
+        return False
+    first, last = inside[0], inside[-1]
+    longest = max(lookup.longest_secret, last - first + 1)
+    for start in range(max(0, last - longest + 1), first + 1):
+        for end in range(last + 1, min(len(words), start + longest) + 1):
+            joined = "".join(w.group() for w in words[start:end])
+            for code in sound_codes(joined):
+                if any(e.secret for e in lookup.by_sound.get(code, ())):
+                    return True
+    return False

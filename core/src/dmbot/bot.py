@@ -1476,7 +1476,11 @@ class DMBot(commands.AutoShardedBot):
         assert table.name_lookup is not None
         try:
             result = clean(
-                table.name_lookup, heard, vocabulary=table.vocabulary, people=table.people
+                table.name_lookup,
+                heard,
+                vocabulary=table.vocabulary,
+                people=table.people,
+                scene=table.scene.scene(time.monotonic()).keys(),
             )
         except Exception:
             now = time.monotonic()
@@ -1520,6 +1524,8 @@ class DMBot(commands.AutoShardedBot):
             if now - self._hints_failed_at > HINTS_FAIL_LOG_S:
                 self._hints_failed_at = now
                 log.exception("Couldn't load the campaign's names for hints")
+            # Never fix names from an old copy: a name may have just been made secret.
+            table.name_lookup = None
             return people
         table.name_lookup = lookup  # for matching written-down lines to the scene
         table.people = tuple(people)  # for the name fixes, never changed into a name

@@ -67,10 +67,11 @@ def find_mentions(lookup: CampaignLookup, text: str) -> list[Found]:
     words = list(WORD.finditer(text))
     keys = [name_key(w.group()) for w in words]  # once per word, not per group
     n = len(keys)
+    longest = max(LONGEST_NAME_WORDS, lookup.longest_secret)  # a long secret name too
     groups = [
         (start, end, " ".join(keys[start:end]))
         for start in range(n)
-        for end in range(start + 1, min(n, start + LONGEST_NAME_WORDS) + 1)
+        for end in range(start + 1, min(n, start + longest) + 1)
     ]
     hidden = [False] * n  # words inside a secret name
     for start, end, key in groups:

@@ -87,6 +87,8 @@ class CampaignLookup:
     confirmed_neighbours: dict[str, frozenset[str]]
     heard: dict[str, HeardCount] = field(default_factory=dict)
     recent_sessions: tuple[int, ...] = ()
+    # Words in the longest secret name, so every word of one can be left alone.
+    longest_secret: int = 0
 
     @classmethod
     def build(cls, data: LookupData) -> CampaignLookup:
@@ -141,6 +143,7 @@ class CampaignLookup:
             {k: frozenset(v) for k, v in confirmed_links.items()},
             {h.entity_id: h for h in data.heard if h.entity_id in entities},
             data.recent_sessions,
+            max((len(e.key.split()) for e in names if e.secret), default=0),
         )
 
     def exact(self, heard: str) -> tuple[NameEntry, ...]:

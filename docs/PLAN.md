@@ -458,7 +458,7 @@ so the docs always show names the way Discord does. For the campaign
 | Channel | Name in Discord | Built in |
 |---|---|---|
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
-| Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06: lines as heard until the Cleaner) |
+| Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
 | Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
 | Game time (clock, effects, rests) | `dmb-time-rmfthfrstmdn` | Phase 4 |
 | NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Phase 5 |
@@ -554,8 +554,8 @@ Code changes: #87.
   each message is built. Speech from a stopped session never reaches the next one.
   Speech is escaped (no formatting, pings or links; link previews off). Every post (lines
   and the card) is sent silently, so nobody gets a pop-up or phone notification for it;
-  the channel still shows as unread. Until the Cleaner
-  (Phase 2b) lines are as heard and have no `{entity}` labels (#53).
+  the channel still shows as unread. Misheard names are fixed since 2026-10-07 (#127);
+  the channel has no `{entity}` labels (#53).
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,
   #109); at shutdown, waiting lines are posted first.
@@ -635,8 +635,8 @@ speech-to-text produced, never changed) and **cleaned** (after the Transcript Cl
 plus the list of fixes between them.
 - **Live:** the cleaned lines stream into `#dmb-transcript-<short name>`, grouped into a
   message every few seconds (Discord allows a bot about 5 messages per 5 seconds per
-  channel, and edits share that limit). Before the Cleaner exists (Phase 2b), lines
-  appear as heard. Each session opens and closes with a divider ("── 🔴 Session started ·
+  channel, and edits share that limit). Misheard names are fixed before a line
+  appears (#127, step 1). Each session opens and closes with a divider ("── 🔴 Session started ·
   Oct 5, 7:30 pm ──", "── ⏹ Session ended ──"). Speaker names are bold, Discord's own
   message time replaces per-line times, and transcribed text can never ping anyone.
 - **Late fixes:** messages from the last ~30 s are edited in place. Older fixes update the
@@ -651,9 +651,9 @@ plus the list of fixes between them.
   "If the DM fixes names later, download again for the updated version."
 - **The cleaned file starts with a note:** "DMbot fixed the spelling of some names. The
   'As heard' file has the exact words."
-- **Downloads use readable labels** (`0:42:10 Cerric (Mia): …`, `Narrator (Sam): …`,
-  `Mia (table talk): …`) with time since the session started. The `{entity}` format
-  below is the stored and backup format.
+- **Downloads use the transcript format** `[0:42:10] (Mia) {Cerric}: …` with time
+  since the session started (owner decision, 2026-10-07, replacing the readable labels
+  `0:42:10 Cerric (Mia): …`), and a header line explaining it.
 - Transcripts never contain DM-screen content. The Cleaner never **adds** a secret
   identity to a line; the "as heard" version contains only what was actually said.
 
@@ -1080,10 +1080,15 @@ consent check just made still holds:
   table, and not said in lower case this session. A word starting a sentence counts
   only once it was also written with a capital mid-sentence (in that line or earlier),
   so "Thorn bushes…" is never "Thorin". Without a dictionary this misses a name the
-  first time it starts a sentence; a wrong fix is worse than a missed one.
+  first time it starts a sentence; a wrong fix is worse than a missed one. All capitals
+  are left alone.
+- **One word alone needs context:** the name was said in the last ~10 minutes (the
+  scene tracker) or is a player's character, because real names and brands sound like
+  campaign names ("Mary" and Mara, "Amazon" and Amazonia). Joined words need none.
 - **Never:** a fix from a name DMbot only suggested (no Undo note yet, so it does
-  nothing); a change inside a secret name; a word that also sounds like a secret name
-  or like two entries.
+  nothing); a change inside a secret name (of any length); a fix where the words, with
+  the words around them, sound like a secret name ("Silas Vain" for "Silas Vane"), or
+  sound like two entries; a fix from an out-of-date copy of the names.
 - A fix writes the name the way it was said (the matched other name, not the main
   name); a DM's fixed spelling writes the main name.
 - **Stored:** `heard` as before, `text` cleaned. The live transcript channel shows the
@@ -1091,6 +1096,10 @@ consent check just made still holds:
   `[0:42:10] (Mia) {Cerric}: …` with each player's confirmed character. The
   after-session scan still reads what was heard; scene hints and heard counts read the
   cleaned line.
+- **Measured offline (synthetic names, one vowel changed):** fixed back 92% at 50 names,
+  56% at 500, 31% at 5,000, since in a big campaign more names sound alike and those are
+  left alone. Safe, but to check on real campaign data (PyCharm session). About 5 ms per
+  60-word line at 5,000 names.
 - **Next:** Undo notes for medium fixes (proposed names), "Did they mean…?", re-checking
   earlier lines after a correction, cleaned and both downloads, then off-topic hiding
   (#52).

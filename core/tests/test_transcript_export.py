@@ -29,7 +29,8 @@ class Render(unittest.TestCase):
         head, body = text.split("\n\n", 1)
         self.assertIn("DMbot transcript: Rime of the Frostmaiden, session 7", head)
         self.assertIn("Started 2023-11-14 22:13 UTC, ran 2 h 14 min", head)
-        self.assertIn("with no fixes. Some words and names may be misheard", head)
+        self.assertIn("before it fixed any names, so some names may be misheard", head)
+        self.assertIn("(person) {their character}", head)
         self.assertIn("Only people who agreed were recorded", head)
         self.assertEqual(
             body.splitlines(), ["[0:00:05] (Mia): I cast Shield.", "[0:42:10] (Dee): Run!"]

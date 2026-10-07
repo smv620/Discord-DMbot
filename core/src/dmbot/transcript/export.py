@@ -19,13 +19,16 @@ from collections.abc import Iterable, Mapping
 from dmbot.transcript.models import Line, TranscriptSession
 
 UNKNOWN_SPEAKER = "Someone"
+_BRACKETS = str.maketrans("", "", "()[]{}")
 NAME_MAX = 80
 FILE_NAME_MAX = 60
 
 AS_HEARD_NOTE = (
-    "As heard: what DMbot wrote down, with no fixes. Some words and names may be "
-    "misheard. Only people who agreed were recorded."
+    "As heard: the words exactly as DMbot heard them, before it fixed any names, so "
+    "some names may be misheard. The transcript channel shows the fixed names. Only "
+    "people who agreed were recorded."
 )
+HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."
 
 
 def clean_name(raw: str | None) -> str:
@@ -76,7 +79,13 @@ def file_name(campaign_name: str, session: TranscriptSession) -> str:
 
 def label(when: str, speaker: str, character: str | None = None) -> str:
     """`[0:42:10] (Mia) {Cerric}`, or `[0:42:10] (Sam)` without a character."""
+    speaker, character = _plain(speaker), _plain(character) if character else None
     return f"[{when}] ({speaker}) {{{character}}}" if character else f"[{when}] ({speaker})"
+
+
+def _plain(name: str) -> str:
+    """No brackets of any kind, so a name can't make a line look like someone else's."""
+    return " ".join(name.translate(_BRACKETS).split()) or UNKNOWN_SPEAKER
 
 
 def render(
@@ -114,6 +123,7 @@ def render(
         f"DMbot transcript: {clean_name(campaign_name)}, session {session.number}",
         f"Started {started}{ran}",
         AS_HEARD_NOTE,
+        HOW_TO_READ,
     ]
     if running:
         header.append(

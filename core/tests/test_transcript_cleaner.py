@@ -27,6 +27,8 @@ from dmbot.transcript.cleaner import (
 
 BELLEROS, CERRIC, KAZETH, TOWN, GUESS, TRIBE, THORIN, MAREN, MARRON = (c * 32 for c in "abcdefghi")
 MIA, DEE = 8, 9
+# Every entry in the scene: the traps must hold even then.
+EVERYONE = frozenset((BELLEROS, CERRIC, KAZETH, TOWN, GUESS, TRIBE, THORIN, MAREN, MARRON))
 
 
 def entity(
@@ -83,12 +85,13 @@ def lookup(
 
 
 def text(heard: str, names: CampaignLookup | None = None, **kwargs: object) -> str:
+    kwargs.setdefault("scene", EVERYONE)
     return clean(names or lookup(), heard, **kwargs).text  # type: ignore[arg-type]
 
 
 class MishearingsTest(unittest.TestCase):
     def test_a_name_heard_misspelled_mid_sentence_is_fixed(self) -> None:
-        result = clean(lookup(), "I think Beleros has the key.")
+        result = clean(lookup(), "I think Beleros has the key.", scene=EVERYONE)
         self.assertEqual(result.text, "I think Belleros has the key.")
         (fix,) = result.fixes
         self.assertEqual((fix.heard, fix.written, fix.entity_id, fix.how),
@@ -136,7 +139,7 @@ class MishearingsTest(unittest.TestCase):
         self.assertEqual(text("Beleros runs. I follow Beleros"), "Belleros runs. I follow Belleros")
 
     def test_several_fixes_in_one_line(self) -> None:
-        result = clean(lookup(), "then Beleros and Ka Zeth ride to Bryn shander")
+        result = clean(lookup(), "then Beleros and Ka Zeth ride to Bryn shander", scene=EVERYONE)
         self.assertEqual(result.text, "then Belleros and Ka'zeth ride to Bryn Shander")
         self.assertEqual(len(result.fixes), 3)
 
@@ -229,6 +232,70 @@ class TrapsTest(unittest.TestCase):
         self.assertEqual(clean(lookup(), "").text, "")
 
 
+class ReviewTrapsTest(unittest.TestCase):
+    """Wrong fixes found in review (#127): real names, secret names misheard."""
+
+    def test_a_single_word_needs_the_name_in_the_scene(self) -> None:
+        self.assertEqual(text("I think Beleros has it", scene=()), "I think Beleros has it")
+        self.assertEqual(
+            text("I think Beleros has it", scene={BELLEROS}), "I think Belleros has it"
+        )
+
+    def test_a_split_name_needs_no_scene(self) -> None:
+        self.assertEqual(text("we meet Ka Zeth", scene=()), "we meet Ka'zeth")
+
+    def test_a_player_character_is_always_in_context(self) -> None:
+        self.assertEqual(text("then Ceric shoots", scene=()), "then Cerric shoots")
+
+    def test_real_names_and_brands_outside_the_scene_stay(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Mara"), entity(MARRON, "Amazonia", "place")),
+            more_aliases=(alias(MAREN, "Mara"), alias(MARRON, "Amazonia")),
+        )
+        for heard in ("I saw Mary at the shop", "I ordered from Amazon yesterday"):
+            with self.subTest(heard=heard):
+                self.assertEqual(text(heard, names, scene={BELLEROS}), heard)
+
+    def test_a_dm_fix_never_lands_inside_a_misheard_secret_name(self) -> None:
+        names = lookup(
+            more_aliases=(alias(BELLEROS, "Silas Vane", secret=True),),
+            corrections=(correction("Vain", BELLEROS, FIX), correction("Strangr", BELLEROS, FIX)),
+        )
+        self.assertEqual(text("I met Silas Vain today", names), "I met Silas Vain today")
+        self.assertEqual(text("I met the hooded strangr", names), "I met the hooded strangr")
+
+    def test_nothing_changes_inside_a_long_secret_name(self) -> None:
+        names = lookup(
+            more_aliases=(alias(BELLEROS, "the Red Lady of the Kazeth Hills", secret=True),)
+        )
+        heard = "I met the Red Lady of the Kazeth Hills"
+        self.assertEqual(text(heard, names), heard)
+
+    def test_a_right_name_with_an_ending_is_no_fix(self) -> None:
+        self.assertEqual(clean(lookup(), "I said Belleros's", scene=EVERYONE).fixes, ())
+
+    def test_all_capitals_are_left_alone(self) -> None:
+        self.assertEqual(text("I saw BELEROS today"), "I saw BELEROS today")
+
+    def test_the_first_word_of_a_display_name_is_protected(self) -> None:
+        self.assertEqual(text("thanks Belaros", people=["Belaros J"]), "thanks Belaros")
+
+
+class MoreTrapsTest(unittest.TestCase):
+    def test_one_speakers_lower_case_word_protects_anothers_capital(self) -> None:
+        vocabulary = Vocabulary()
+        vocabulary.note(MIA, "careful, a thorn")
+        self.assertEqual(text("I see a Thorn", vocabulary=vocabulary), "I see a Thorn")
+        vocabulary.forget_speaker(MIA)
+        self.assertEqual(text("I see a Thorn", vocabulary=vocabulary), "I see a Thorin")
+
+    def test_words_split_by_punctuation_are_not_joined(self) -> None:
+        self.assertEqual(text("we meet Ka, Zeth"), "we meet Ka, Zeth")
+
+    def test_a_curly_possessive(self) -> None:
+        self.assertEqual(text("that is Beleros’s sword"), "that is Belleros’s sword")
+
+
 class VocabularyTest(unittest.TestCase):
     def test_forget_speaker(self) -> None:
         vocabulary = Vocabulary()
@@ -239,10 +306,12 @@ class VocabularyTest(unittest.TestCase):
         self.assertFalse(vocabulary.is_word("thorn"))
         self.assertFalse(vocabulary.is_name("beleros"))
 
-    def test_bounded(self) -> None:
+    def test_bounded_keeping_the_latest(self) -> None:
         vocabulary = Vocabulary(limit=2)
-        vocabulary.note(DEE, "one two three four")
+        vocabulary.note(DEE, "one two three")
+        vocabulary.note(DEE, "four")
         self.assertEqual(len(vocabulary.lower[DEE]), 2)
+        self.assertTrue(vocabulary.is_word("four"))
 
 
 class CharactersTest(unittest.TestCase):
