@@ -72,6 +72,7 @@ class CaptureLog:
         # Cap each report, so one over-counted clip can't hide a gap in another.
         stats.frames_received += max(0, min(received, expected))
         stats.frames_expected += max(0, expected)
+        stats.checks_waited = 0  # the wait for speech counts from the latest report
 
     def log_line(self) -> str | None:
         """One line for the terminal log: user IDs and numbers only, never names or

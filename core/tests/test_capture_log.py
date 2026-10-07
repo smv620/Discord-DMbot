@@ -233,3 +233,14 @@ class LogLineTests(unittest.TestCase):
         log.render(str)
         log.add_utterance(utt(1, 1.0))
         self.assertEqual(log.log_line(), "Capture check: 1 speaker(s); user 1: 1 x speech, 1.0 s")
+
+    def test_the_wait_counts_from_the_latest_health(self) -> None:
+        log = CaptureLog()
+        log.add_health(1, 50, 100)  # before check 1
+        log.render(str)
+        log.render(str)
+        log.add_health(1, 20, 100)  # before check 3, after waiting 2 checks
+        for _ in range(HEALTH_WAIT_CHECKS):  # checks 3-6
+            self.assertIsNone(log.render(str))
+        log.add_utterance(utt(1, 1.0))
+        self.assertIn("audio 35%", log.log_line() or "")  # both reports still there
