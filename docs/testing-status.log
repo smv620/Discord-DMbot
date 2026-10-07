@@ -15,6 +15,11 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
     Check: the "cleaned, without the limit" line against the "script text" line (at most
     9 of 15 on this script); known names suggested again; rules words suggested.
 
+- #414 (#393, CloudDev): core only. Check: ➕ Add a name shows "✅ DMbot will remember …"
+  first, then "Wrong? Fix or remove it with the buttons below."; the card has 🏷️ Also
+  called… on row 2 and 🧭 Connect to… on row 3; edit menus say "✏️ Fix, change or
+  remove a name…". A campaign backup still downloads and restores.
+
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
 ------------------------------------------------------------------------------
