@@ -164,8 +164,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--lead-in-ms",
         type=_milliseconds,
-        default=0,
-        help="also send this much audio before each piece (default 0)",
+        default=audio.LEAD_IN_MS,
+        help=f"also send this much audio before each piece (default {audio.LEAD_IN_MS})",
     )
     parser.add_argument(
         "--hangover-ms",
