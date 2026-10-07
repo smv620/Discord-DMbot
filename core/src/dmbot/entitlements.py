@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, cast
 
+from psycopg import pq
+
 from dmbot.db import Conn, Database
 from dmbot.plans import PlanId
 
@@ -59,17 +61,27 @@ async def get(db: Database, user_id: int) -> Entitlement | None:
 
 async def read(conn: Conn, user_id: int) -> Entitlement | None:
     """This person's plan, inside a transaction the caller already has open (for example
-    `/dmbot start`'s server transaction, #437). It lets that transaction see this person's
-    website rows too (it sets dmbot.user_id for the rest of the transaction), and nothing
-    of anyone else's."""
+    `/dmbot start`'s server transaction, #437). The person is set only for this one read
+    and then put back as it was, so the rest of the caller's transaction sees nothing more
+    of anyone's website rows than before."""
+    if conn.info.transaction_status != pq.TransactionStatus.INTRANS:
+        raise RuntimeError("entitlements.read needs an open transaction (use Database.guild)")
+    cur = await conn.execute("SELECT current_setting('dmbot.user_id', true) AS before")
+    before = await cur.fetchone()
     await conn.execute("SELECT set_config('dmbot.user_id', %s, true)", (str(int(user_id)),))
-    cur = await conn.execute(
-        "SELECT user_id, plan, status, hours_cap, extra_hours, campaign_cap, period_start,"
-        " period_end, grace_ends_at, lapsed_at, plan_changed_at"
-        " FROM entitlements WHERE user_id = %s",
-        (user_id,),
-    )
-    row = await cur.fetchone()
+    try:
+        cur = await conn.execute(
+            "SELECT user_id, plan, status, hours_cap, extra_hours, campaign_cap, period_start,"
+            " period_end, grace_ends_at, lapsed_at, plan_changed_at"
+            " FROM entitlements WHERE user_id = %s",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+    finally:
+        await conn.execute(
+            "SELECT set_config('dmbot.user_id', %s, true)",
+            ((before or {}).get("before") or "",),
+        )
     if row is None:
         return None
     return Entitlement(

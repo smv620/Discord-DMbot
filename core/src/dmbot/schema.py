@@ -690,13 +690,14 @@ INSTALLS_LEFT = """
     --       DO UPDATE SET left_at = NULL
     --   and when it leaves: UPDATE installs SET left_at = now WHERE guild_id = guild.
     -- - The website, after Discord confirms an install (Database.user(install_guild=...)):
-    --     INSERT ... VALUES (guild, me, now, 'site') ON CONFLICT (guild_id) DO NOTHING
-    --   then, if a row was already there,
-    --     UPDATE installs SET installed_by_user_id = me, via = 'site', left_at = NULL
-    --       WHERE guild_id = guild AND (installed_by_user_id IS NULL
-    --                                   OR installed_by_user_id = me)
-    --   (two statements, because INSERT ... ON CONFLICT DO UPDATE would check the update
-    --   policy against someone else's row and fail instead of leaving it alone).
+    --     INSERT ... VALUES (guild, me, now, 'site') ON CONFLICT (guild_id) DO UPDATE
+    --       SET installed_by_user_id = EXCLUDED.installed_by_user_id, via = 'site',
+    --           left_at = NULL
+    --       WHERE installs.installed_by_user_id IS NULL
+    --          OR installs.installed_by_user_id = EXCLUDED.installed_by_user_id
+    --       RETURNING guild_id
+    --   Someone else's install is skipped quietly (the WHERE is applied before the update
+    --   policy; checked on Postgres 16): no row comes back, and the site says so.
     ALTER TABLE installs ADD COLUMN left_at BIGINT;
     COMMENT ON TABLE installs IS
         'Who added DMbot to which server. Never deleted on leave: left_at is set. '

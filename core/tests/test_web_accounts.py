@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 
 from dmbot import entitlements, install
+from dmbot.campaigns.store import CampaignStore
 from dmbot.web import tokens
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
@@ -327,6 +328,22 @@ class Accounts(DatabaseTest):
     async def test_the_old_single_delete_path_is_gone(self) -> None:
         response = await self.client.post("/account/delete", headers=HEADERS)
         self.assertIn(response.status_code, (404, 405))
+
+    async def test_a_server_dmbot_left_is_offered_again_even_with_campaigns(self) -> None:
+        await CampaignStore(self.db, clock=lambda: self.now).create(QUILLON.id, "Ashen Crown", 9)
+        await self.joined_by_link(QUILLON.id)
+        async with self.db.guild(QUILLON.id) as conn:
+            await conn.execute("UPDATE installs SET left_at = 1 WHERE guild_id = %s", (QUILLON.id,))
+        me = await self.me()
+        server = next(s for s in me["servers"] if s["id"] == str(QUILLON.id))
+        self.assertFalse(server["hasDmbot"])
+
+    async def test_a_server_from_before_installs_were_recorded_counts_by_its_campaigns(
+        self,
+    ) -> None:
+        await CampaignStore(self.db, clock=lambda: self.now).create(QUILLON.id, "Ashen Crown", 9)
+        server = next(s for s in (await self.me())["servers"] if s["id"] == str(QUILLON.id))
+        self.assertTrue(server["hasDmbot"])
 
     async def test_a_server_dmbot_left_is_offered_again(self) -> None:
         await self.joined_by_link(QUILLON.id)

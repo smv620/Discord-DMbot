@@ -58,6 +58,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                     here = await conn.execute(
                         "SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s"
                         "   AND left_at IS NULL) AS installed,"
+                        " EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s) AS recorded,"
                         " (SELECT installed_by_user_id FROM installs WHERE guild_id = %(g)s)"
                         "   AS installer,"
                         " EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %(g)s) AS played",
@@ -87,7 +88,11 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                     {
                         "id": str(guild.id),
                         "name": guild.name,
-                        "hasDmbot": installed or bool(found and found["played"]),
+                        # In the server now: an install without a leave. Campaigns count only
+                        # for servers from before installs were recorded (no row at all);
+                        # a server DMbot has left is offered again even with campaigns.
+                        "hasDmbot": installed
+                        or bool(found and found["played"] and not found["recorded"]),
                         # Joined through a plain link and nobody has said who added it.
                         "canLink": installed and installer is None,
                         "installedByYou": installer == session.user_id,
@@ -100,7 +105,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
         )
         cur = await conn.execute(
             "SELECT guild_id, installed_at, via FROM installs"
-            " WHERE installed_by_user_id = %s ORDER BY installed_at",
+            " WHERE installed_by_user_id = %s AND left_at IS NULL ORDER BY installed_at",
             (session.user_id,),
         )
         installs = [
