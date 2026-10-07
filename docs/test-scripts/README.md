@@ -126,6 +126,13 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
   --transcriber deepgram          # or whisper-local, cloud; --log adds a "Twin run"
 ```
 
+- **The name scan (#395):** with `--names FILE` (a names list, or a setup note such as
+  `bakeoff-story-names-setup.md`), the campaign knows those names: they go as hints, the real
+  Cleaner fixes them when misheard, and after the replay the bot's after-session name scan
+  runs on the text as heard (what it scans today) and on the cleaned text (#394). The record
+  counts the story names it suggests, the known names it suggests again and the suggestions
+  that aren't names. The scan also runs for `stt-bakeoff.md` and `bakeoff-story.md` without
+  `--names`, with no names known.
 - Recordings other than 16 kHz mono WAV need `pip install -e ".[twin]"` in `core/`.
 - The engine's settings come from the environment, as for the bot.
 - `--realtime` sends the audio as it was spoken, to time the delay a table would see.
