@@ -318,6 +318,7 @@ class DMBot(commands.AutoShardedBot):
             deliver=self._deliver_transcript,
             alert=self._alert_dm,
             outside=settings.transcription.sends_audio_out,
+            workers=settings.transcription.workers,
         )
         self.ears = EarsServer(
             host=settings.ears_host,

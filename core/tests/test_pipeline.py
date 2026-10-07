@@ -2,6 +2,7 @@ import asyncio
 import unittest
 from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from dmbot.audio.segmenter import Utterance
@@ -437,3 +438,127 @@ class ClipBudgetTests(unittest.IsolatedAsyncioTestCase):
         # "transcript" is the channel's everyday name; "transcribe" is jargon.
         for jargon in ("whisper", "transcrib", "timeout", "model", "engine"):
             self.assertNotIn(jargon, SKIPPED_ALERT.lower())
+
+
+class GatedTranscriber(FakeTranscriber):
+    """Server 1's clips wait for a gate (a slow table); other servers' answer at once.
+    Records how many clips of each server were being written at the same time."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+        self.writing: dict[int, int] = {}
+        self.most_at_once: dict[int, int] = {}
+        self.order: list[tuple[int, int]] = []  # (server, start_ms) as written
+
+    async def transcribe(self, utterance: Utterance, hints: list[str]) -> str | None:
+        guild = utterance.guild_id
+        self.writing[guild] = self.writing.get(guild, 0) + 1
+        self.most_at_once[guild] = max(self.most_at_once.get(guild, 0), self.writing[guild])
+        try:
+            if guild == 1:
+                await self.gate.wait()
+            await asyncio.sleep(0)
+            self.order.append((guild, utterance.start_ms))
+            return f"line {utterance.start_ms}"
+        finally:
+            self.writing[guild] -= 1
+
+
+class WorkerPool(unittest.IsolatedAsyncioTestCase):
+    """Several workers, one queue per server (#173)."""
+
+    def make(self, engine: FakeTranscriber, workers: int, queue_size: int = 64) -> Any:
+        self.delivered: list[tuple[int, str | None]] = []
+
+        async def hints(utterance: Utterance) -> list[str]:
+            return []
+
+        async def alert(guild_id: int, message: str) -> None:
+            return None
+
+        return TranscriptionPipeline(
+            engine,
+            FakeConsent({7}),
+            is_active=lambda u: True,
+            hints=hints,
+            deliver=lambda u, t: self.delivered.append((u.guild_id, t)),
+            alert=alert,
+            queue_size=queue_size,
+            workers=workers,
+        )
+
+    @staticmethod
+    def clip(guild: int, at_ms: int) -> Utterance:
+        return Utterance(guild, 7, at_ms, at_ms + 1000, ONE_SECOND, 0)
+
+    async def wait_for(self, done: Callable[[], bool]) -> None:
+        for _ in range(200):
+            if done():
+                return
+            await asyncio.sleep(0.005)
+        self.fail("timed out")
+
+    async def test_a_slow_table_doesnt_hold_up_the_others(self) -> None:
+        engine = GatedTranscriber()
+        p = self.make(engine, workers=2)
+        p.enqueue(self.clip(1, 0))  # server 1 hangs on this one
+        for at in (0, 1000, 2000):
+            p.enqueue(self.clip(2, at))
+        task = asyncio.create_task(p.run())
+        await self.wait_for(lambda: len([d for d in self.delivered if d[0] == 2]) == 3)
+        self.assertEqual([d for d in self.delivered if d[0] == 1], [])  # still waiting
+        engine.gate.set()
+        await self.wait_for(lambda: len(self.delivered) == 4)
+        task.cancel()
+
+    async def test_one_server_is_written_one_clip_at_a_time_in_order(self) -> None:
+        engine = GatedTranscriber()
+        engine.gate.set()
+        p = self.make(engine, workers=3)
+        for at in range(0, 10_000, 1000):
+            p.enqueue(self.clip(1, at))
+            p.enqueue(self.clip(2, at))
+        task = asyncio.create_task(p.run())
+        await self.wait_for(lambda: len(self.delivered) == 20)
+        task.cancel()
+        self.assertEqual(engine.most_at_once, {1: 1, 2: 1})  # never two at once
+        for guild in (1, 2):
+            starts = [at for g, at in engine.order if g == guild]
+            self.assertEqual(starts, sorted(starts))  # lines never swap
+
+    async def test_servers_take_turns(self) -> None:
+        engine = GatedTranscriber()
+        engine.gate.set()
+        p = self.make(engine, workers=1)
+        for at in range(3):
+            p.enqueue(self.clip(1, at))
+        p.enqueue(self.clip(2, 0))
+        task = asyncio.create_task(p.run())
+        await self.wait_for(lambda: len(self.delivered) == 4)
+        task.cancel()
+        # Server 2's one clip doesn't wait behind all of server 1's.
+        self.assertEqual([g for g, _ in engine.order], [1, 2, 1, 1])
+
+    async def test_each_server_has_its_own_queue(self) -> None:
+        p = self.make(FakeTranscriber(), workers=1, queue_size=2)
+        results = [p.enqueue(self.clip(1, at)) for at in range(3)]
+        self.assertEqual(results, [True, True, False])  # server 1 is full
+        self.assertTrue(p.enqueue(self.clip(2, 0)))  # server 2 still has room
+        self.assertEqual((p.dropped, p.backlog, p.backlog_of(1), p.backlog_of(2)), (1, 3, 2, 1))
+
+    async def test_the_backlog_warning_is_per_server(self) -> None:
+        alerts: list[int] = []
+
+        async def alert(guild_id: int, message: str) -> None:
+            alerts.append(guild_id)
+
+        p = self.make(FakeTranscriber(), workers=1, queue_size=BACKLOG_WARN * 2)
+        p._alert = alert
+        for at in range(BACKLOG_WARN):
+            p.enqueue(self.clip(1, at))
+        p.enqueue(self.clip(2, 0))
+        await p._check_backlog(2)  # server 2 has 1 waiting: no warning for it
+        await p._check_backlog(1)
+        await p._check_backlog(1)  # once, not again
+        self.assertEqual(alerts, [1])
