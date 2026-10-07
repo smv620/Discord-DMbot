@@ -79,12 +79,23 @@ def describe(settings: TranscriptionSettings) -> str:
 _SHA = re.compile(r"[0-9a-f]{4,40}")
 
 
+def _commit_id(value: str | None) -> str | None:
+    """A commit id, shortened, or None: nothing else may go in the public log."""
+    if not value:
+        return None
+    value = value.strip().casefold()
+    return value[:7] if _SHA.fullmatch(value) else None
+
+
 def commit(given: str | None = None) -> str:
     """Which code was replayed, for the record: `--commit`, then GIT_COMMIT (a container
     has no git checkout to ask), then git itself. Only a commit id goes in the public log."""
-    for value in (given, os.environ.get("GIT_COMMIT")):
-        if value and _SHA.fullmatch(value.strip().casefold()):
-            return value.strip().casefold()[:7]
+    if found := _commit_id(given):
+        return found
+    if found := _commit_id(env := os.environ.get("GIT_COMMIT")):
+        return found
+    if env:
+        print("replay: GIT_COMMIT isn't a commit id; ignoring it", file=sys.stderr)
     try:
         out = subprocess.run(
             ["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
@@ -158,8 +169,12 @@ async def main_async(args: argparse.Namespace) -> int:
     except TranscriptionConfigError as exc:
         print(f"replay: {exc}", file=sys.stderr)
         return 2
-    if args.commit and not _SHA.fullmatch(args.commit.strip().casefold()):
-        print("replay: --commit takes a commit id (letters a-f and digits)", file=sys.stderr)
+    if args.commit and _commit_id(args.commit) is None:
+        print(
+            "replay: --commit takes a commit id: 4 to 40 of the digits and letters a-f "
+            "(see git rev-parse HEAD)",
+            file=sys.stderr,
+        )
         return 2
     if settings.sends_audio_out and args.transcriber != settings.engine:
         # TRANSCRIBER in the environment (in the bot's container, say) must not send

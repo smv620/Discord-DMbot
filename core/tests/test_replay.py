@@ -6,11 +6,12 @@ import math
 import os
 import re
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
 import wave
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import AbstractContextManager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -583,15 +584,52 @@ class StoryScriptTests(unittest.TestCase):
 
 
 class CommitTests(unittest.TestCase):
-    def test_the_commit_comes_from_the_option_then_the_environment(self) -> None:
-        with patch.dict(os.environ, {"GIT_COMMIT": "1D2E04DABCDEF"}):
-            self.assertEqual(replay_main.commit("abc1234ff"), "abc1234")
+    def git(self, out: str = "fallbk1") -> AbstractContextManager[object]:
+        done = subprocess.CompletedProcess(args=[], returncode=0, stdout=out + "\n")
+        return patch.object(subprocess, "run", return_value=done)
+
+    def test_the_option_wins_then_the_environment_then_git(self) -> None:
+        with patch.dict(os.environ, {"GIT_COMMIT": "1D2E04DABCDEF"}), self.git():
+            self.assertEqual(replay_main.commit(" ABC1234FF "), "abc1234")
             self.assertEqual(replay_main.commit(), "1d2e04d")
-        with patch.dict(os.environ, {"GIT_COMMIT": "not a sha; rm -rf"}):
-            self.assertNotIn("rm", replay_main.commit())  # never into the public log
+        with patch.dict(os.environ, {}, clear=True), self.git():
+            self.assertEqual(replay_main.commit(), "fallbk1")
+
+    def test_a_bad_environment_value_is_skipped_with_a_note(self) -> None:
+        with (
+            patch.dict(os.environ, {"GIT_COMMIT": "not a sha; rm -rf"}),
+            self.git(),
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            self.assertEqual(replay_main.commit(), "fallbk1")
+        self.assertIn("isn't a commit id", err.getvalue())
+        self.assertNotIn("rm -rf", err.getvalue())  # never echoed
+
+    def test_no_git_either(self) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(subprocess, "run", side_effect=OSError),
+        ):
+            self.assertEqual(replay_main.commit(), "unknown")
 
     def test_a_bad_commit_option_is_refused(self) -> None:
-        argv = ["x.wav", "--script", str(SCRIPTS / "dm-only.md"), "--commit", "hello world"]
-        with redirect_stderr(io.StringIO()) as err:
-            self.assertEqual(replay_main.main(argv), 2)
-        self.assertIn("--commit takes a commit id", err.getvalue())
+        for bad in ("hello world", "abc"):
+            argv = ["x.wav", "--script", str(SCRIPTS / "dm-only.md"), "--commit", bad]
+            with redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(replay_main.main(argv), 2)
+            self.assertIn("--commit takes a commit id", err.getvalue())
+
+    def test_the_commit_reaches_the_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            history = folder / "history.log"
+            argv = [str(CommandLineTests.wav(CommandLineTests(), folder)), "--script"]
+            argv += [str(SCRIPTS / "dm-only.md"), "--transcriber", "whisper-local"]
+            argv += ["--commit", "deadbeef", "--log", "--history", str(history)]
+            engine = ScriptedTranscriber(["Your story starts"])
+            with (
+                patch.object(replay_main, "build_transcriber", return_value=engine),
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(replay_main.main(argv), 0)
+            self.assertIn("commit: deadbee", history.read_text())

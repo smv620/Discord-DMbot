@@ -4,11 +4,13 @@
 #
 #   scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-only.md
 #   scripts/replay REC --script SCRIPT --transcriber deepgram --log
+#   scripts/replay REC --script SCRIPT --commit "$(git rev-parse HEAD)"   (outside a checkout)
 #
 # The engine comes from the environment like the bot's (TRANSCRIBER, DEEPGRAM_API_KEY, ...).
 # This script never reads .env. Needs core installed with the twin extra:
 #   cd core && pip install -e ".[twin]"   (in core/.venv, which this script prefers)
-# On the server: run it from the host's venv, never inside the bot's container and never
+# On the server: run it from the host's venv or a throwaway container from the core image
+# (give it --commit or GIT_COMMIT there), never inside the running bot's container and never
 # during a live session (speech-to-text competes with the bot for CPU). It runs at low
 # priority, and holds the whole recording in memory: keep to the one-minute scripts.
 set -euo pipefail
