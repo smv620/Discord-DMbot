@@ -836,7 +836,20 @@ class Lists(NamesTest):
         with patch("dmbot.fetch.fetch", AsyncMock()) as fetched:
             await name_lists.take_link(it, self.campaign.id, "https://example.com/a")
         fetched.assert_not_called()
-        self.assertIn("already opening a link", it.response.sent[0][0])
+        self.assertEqual(it.response.sent[0][0], name_lists.LINK_BUSY)
+        # Every way in shares the guard, the slash command's link box too.
+        with patch("dmbot.fetch.fetch", AsyncMock()) as fetched:
+            got = await name_lists.read_link_once(GUILD, "https://example.com/b")
+        self.assertEqual(got, (None, name_lists.LINK_BUSY))
+        fetched.assert_not_called()
+        # The place is freed even when reading fails.
+        name_lists._link_busy.discard(GUILD)
+        with (
+            patch("dmbot.fetch.fetch", AsyncMock(side_effect=RuntimeError("boom"))),
+            self.assertRaises(RuntimeError),
+        ):
+            await name_lists.read_link_once(GUILD, "https://example.com/c")
+        self.assertEqual(name_lists._link_busy, set())
 
     async def test_a_web_page_reaches_the_ai_offer_as_text(self) -> None:
         from dmbot.fetch import Fetched
