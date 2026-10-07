@@ -37,6 +37,23 @@ HISTORY = REPO / "docs" / "testing-history.log"
 TEST_SCRIPTS = REPO / "docs" / "test-scripts"
 
 
+# List prices per minute of audio, to tell whoever runs a replay roughly what it costs.
+# Check the company's current prices before relying on them.
+PRICE_PER_MINUTE = {"deepgram": 0.0043, "cloud": 0.006}
+
+
+def cost_line(settings: TranscriptionSettings, seconds: float) -> str | None:
+    """What an outside engine is sent, and about what it costs; None for local engines."""
+    if not settings.sends_audio_out:
+        return None
+    company = settings.company or settings.engine
+    model = settings.deepgram_model if settings.engine == "deepgram" else settings.cloud_model
+    dollars = seconds / 60 * PRICE_PER_MINUTE.get(settings.engine, 0.0)
+    return (
+        f"sends {seconds:.0f} s of audio to {company} (about ${dollars:.3f} at {model} list prices)"
+    )
+
+
 def describe(settings: TranscriptionSettings) -> str:
     if settings.engine == "deepgram":
         return f"deepgram {settings.deepgram_model}"
@@ -110,6 +127,15 @@ async def main_async(args: argparse.Namespace) -> int:
     except TranscriptionConfigError as exc:
         print(f"replay: {exc}", file=sys.stderr)
         return 2
+    if settings.sends_audio_out and args.transcriber != settings.engine:
+        # TRANSCRIBER in the environment (in the bot's container, say) must not send
+        # audio out and run up a bill without being asked.
+        print(
+            f"replay: TRANSCRIBER={settings.engine} sends audio to an outside company and "
+            f"costs money; say so with --transcriber {settings.engine}",
+            file=sys.stderr,
+        )
+        return 2
     if args.log and settings.engine == "none":
         print("replay: --log needs an engine that writes text (not none)", file=sys.stderr)
         return 2
@@ -123,6 +149,10 @@ async def main_async(args: argparse.Namespace) -> int:
         print(f"replay: {exc}", file=sys.stderr)
         return 2
     pieces = list(audio.pieces(pcm, silence_dbfs=args.silence_db, speech_end_ms=args.speech_end_ms))
+    sent_s = sum(len(piece.frames) for piece in pieces) * audio.FRAME_MS / 1000
+    cost = cost_line(settings, sent_s)
+    if cost:
+        print(f"replay: {cost}", file=sys.stderr)
     try:
         result = await replay(
             pieces,
@@ -130,6 +160,7 @@ async def main_async(args: argparse.Namespace) -> int:
             hints=args.hint,
             realtime=args.realtime,
             outside=settings.sends_audio_out,
+            end_delay_ms=args.speech_end_ms,
         )
     except TranscriberUnavailable as exc:
         print(f"replay: the speech-to-text engine can't start: {exc}", file=sys.stderr)
@@ -143,6 +174,8 @@ async def main_async(args: argparse.Namespace) -> int:
         result=result,
         score=scored,
     )
+    if cost:
+        lines.insert(2, cost)
     print("\n".join(lines))
     print("\nheard:")
     print("\n".join(f"  {line}" for line in heard_lines(result)))

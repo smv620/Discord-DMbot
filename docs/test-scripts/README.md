@@ -114,10 +114,16 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
 - Recordings other than 16 kHz mono WAV need `pip install -e ".[twin]"` in `core/`.
 - The engine's settings come from the environment, as for the bot.
 - `--realtime` sends the audio as it was spoken, to time the delay a table would see.
+- An outside engine (`deepgram`, `cloud`) costs money: it runs only when `--transcriber`
+  names it, and says first how much audio it sends and roughly what that costs.
+- **On the server:** run it from the host's venv, never inside the bot's container and never
+  during a live session (speech-to-text competes with the bot). It holds the whole recording
+  in memory, so keep to the one-minute scripts.
 - **What it doesn't model:** Discord and ears. Pieces are cut at 1 s of near-silence (set
   so `DMOnlyAudio.m4a` matches run 7), no audio is lost, and a recording's dramatic pauses
-  are quiet, not muted. So use replays to compare speech-to-text and changes to core, and
-  live runs for audio and pieces of speech.
+  are quiet, not muted. It scores the text as heard, before the name cleaning the transcript
+  channel shows (part 2 of #299). So use replays to compare speech-to-text and changes to
+  core, and live runs for audio and pieces of speech.
 
 ## Record
 

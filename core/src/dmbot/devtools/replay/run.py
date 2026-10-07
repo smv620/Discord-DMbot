@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.devtools.replay.audio import FRAME_MS, HANGOVER_MS, Piece
+from dmbot.devtools.replay.audio import FRAME_MS, SPEECH_END_MS, Piece
 from dmbot.ears.protocol import AudioFrame
 from dmbot.transcription.base import MIN_UTTERANCE_S, Transcriber
 from dmbot.transcription.pipeline import QUEUE_SIZE, TranscriptionPipeline
@@ -25,8 +25,8 @@ TWIN_GUILD = 1
 TWIN_SPEAKER = 1001
 DRAIN_TIMEOUT_S = 600.0
 # Live, core hears a piece has ended when ears says so: the client's hangover after the
-# last loud frame, then ears' 800 ms with no packets.
-END_DELAY_MS = HANGOVER_MS + 800
+# last loud frame, then ears' 800 ms with no packets. The same quiet that ends a piece.
+END_DELAY_MS = SPEECH_END_MS
 
 
 class TwinConsent:
@@ -74,6 +74,7 @@ async def replay(
     hints: Sequence[str] = (),
     realtime: bool = False,
     outside: bool = False,
+    end_delay_ms: int = END_DELAY_MS,
 ) -> Replay:
     """Write the pieces down. `realtime` sends each frame at its time and ends each piece
     when ears would, so waits mean what they mean live; otherwise everything is queued
@@ -126,7 +127,7 @@ async def replay(
                 await until(at_ms)
                 if full := segmenter.add(AudioFrame(TWIN_GUILD, TWIN_SPEAKER, at_ms, pcm)):
                     await enqueue(full)  # the 15 s cut
-            await until(piece.end_ms + END_DELAY_MS)
+            await until(piece.end_ms + end_delay_ms)
             if (utterance := segmenter.end(TWIN_SPEAKER)) is not None:
                 await enqueue(utterance)
         result.finished = await pipeline.drain(segmenter.session, DRAIN_TIMEOUT_S)

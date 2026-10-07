@@ -1,7 +1,9 @@
+import ast
 import asyncio
 import datetime as dt
 import io
 import math
+import os
 import struct
 import sys
 import tempfile
@@ -245,7 +247,16 @@ class IsolationTests(unittest.TestCase):
         for path in src.rglob("*.py"):
             if "devtools" in path.parts:
                 continue
-            self.assertNotIn("devtools", path.read_text(encoding="utf-8"), path)
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    self.assertNotIn("devtools", name, path)
 
 
 class CutModelTests(unittest.TestCase):
@@ -415,3 +426,106 @@ class CommandLineTests(unittest.TestCase):
                 self.assertEqual(replay_main.main(argv), 2)
             self.assertIn("--log needs an engine", err.getvalue())
             self.assertFalse(history.exists())
+
+
+class ReviewFixTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.script = load_script(SCRIPTS / "dm-only.md")
+
+    def test_words_added_after_the_whisper_count_in_part_1(self) -> None:
+        pieces = [*DM_ONLY_PIECES[:3], "Thanks for watching.", *DM_ONLY_PIECES[3:]]
+        self.assertEqual(score(self.script, pieces).part1.added, 3)
+
+    def test_two_words_heard_as_one_is_one_error(self) -> None:
+        pieces = list(DM_ONLY_PIECES)
+        pieces[0] = pieces[0].replace("front door", "frontdoor")
+        result = score(self.script, pieces)
+        self.assertEqual((result.part1.wrong, result.part1.missing), (1, 0))
+
+    def test_one_word_heard_as_two_is_one_error(self) -> None:
+        pieces = list(DM_ONLY_PIECES)
+        pieces[1] = pieces[1].replace("inside", "in side")
+        result = score(self.script, pieces)
+        self.assertEqual((result.part1.wrong, result.part1.added), (1, 0))
+
+    def test_a_note_right_after_a_turn_is_not_read(self) -> None:
+        script = parse_script(
+            "## Part 1\n**[DM]:** Hello there.\n**[Don't read this out loud.]** Shh.\n"
+        )
+        self.assertEqual([w.text for w in script.words], ["Hello", "there."])
+
+    def test_realtime_ends_pieces_after_the_chosen_quiet(self) -> None:
+        engine = ScriptedTranscriber(["hi"])
+        result = asyncio.run(replay([piece_at(0)], engine, realtime=True, end_delay_ms=100))
+        self.assertLess(result.took_s, (300 + END_DELAY_MS) / 1000)
+
+
+class CostTests(unittest.TestCase):
+    def wav(self, folder: Path) -> Path:
+        return CommandLineTests.wav(CommandLineTests(), folder)
+
+    def run_main(self, argv: list[str], env: dict[str, str]) -> tuple[int, str, list[object]]:
+        built: list[object] = []
+
+        def build(settings: object) -> ScriptedTranscriber:
+            built.append(settings)
+            return ScriptedTranscriber(["Your story starts"])
+
+        err = io.StringIO()
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(replay_main, "build_transcriber", side_effect=build),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(err),
+        ):
+            code = replay_main.main(argv)
+        return code, err.getvalue(), built
+
+    def test_a_paid_engine_set_only_in_the_environment_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = [str(self.wav(Path(tmp))), "--script", str(SCRIPTS / "dm-only.md")]
+            env = {"TRANSCRIBER": "deepgram", "DEEPGRAM_API_KEY": "test-not-a-key"}
+            code, err, built = self.run_main(argv, env)
+        self.assertEqual(code, 2)
+        self.assertIn("--transcriber deepgram", err)
+        self.assertEqual(built, [])  # nothing was sent anywhere
+
+    def test_a_named_paid_engine_runs_and_says_what_it_sends(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = [str(self.wav(Path(tmp))), "--script", str(SCRIPTS / "dm-only.md")]
+            argv += ["--transcriber", "deepgram"]
+            env = {"DEEPGRAM_API_KEY": "test-not-a-key"}
+            code, err, built = self.run_main(argv, env)
+        self.assertEqual(code, 0)
+        self.assertRegex(err, r"sends \d+ s of audio to Deepgram \(about \$\d+\.\d{3} at nova-3")
+        self.assertEqual(len(built), 1)
+
+    def test_the_command_line_engine_beats_the_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = [str(self.wav(Path(tmp))), "--script", str(SCRIPTS / "dm-only.md")]
+            argv += ["--transcriber", "whisper-local"]
+            code, _, built = self.run_main(argv, {"TRANSCRIBER": "deepgram"})
+        self.assertEqual(code, 0)
+        self.assertEqual([getattr(b, "engine", None) for b in built], ["whisper-local"])
+
+
+class PublicLogTests(unittest.TestCase):
+    def test_the_repos_own_recordings_keep_their_names(self) -> None:
+        self.assertEqual(replay_main.public_name(SCRIPTS / "DMOnlyAudio.m4a"), "DMOnlyAudio.m4a")
+        self.assertEqual(replay_main.public_name(Path("/tmp/Alice reading.m4a")), "a recording")
+
+    def test_the_log_never_holds_what_was_heard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            history = folder / "history.log"
+            engine = ScriptedTranscriber(["Zanzibarquux said this"])
+            argv = [str(CommandLineTests.wav(CommandLineTests(), folder)), "--script"]
+            argv += [str(SCRIPTS / "dm-only.md"), "--transcriber", "whisper-local"]
+            argv += ["--log", "--history", str(history)]
+            with (
+                patch.object(replay_main, "build_transcriber", return_value=engine),
+                redirect_stdout(io.StringIO()) as out,
+            ):
+                self.assertEqual(replay_main.main(argv), 0)
+            self.assertIn("Zanzibarquux", out.getvalue())  # shown on screen
+            self.assertNotIn("Zanzibarquux", history.read_text())  # never logged

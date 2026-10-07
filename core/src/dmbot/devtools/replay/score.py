@@ -110,6 +110,40 @@ def align(ref: Sequence[str], hyp: Sequence[str]) -> list[Step]:
     return steps
 
 
+def merge_splits(steps: list[Step], ref: Sequence[str], hyp: Sequence[str]) -> list[Step]:
+    """One word heard as two ("long sword") or two heard as one ("frontdoor") is one
+    error, as a person scoring by hand counts it, not a wrong word plus a missing or
+    added one."""
+    out: list[Step] = []
+    i = 0
+    while i < len(steps):
+        if i + 1 < len(steps):
+            a, b = steps[i], steps[i + 1]
+            kinds = {a.kind, b.kind}
+            # Two script words heard as one.
+            if kinds == {"wrong", "missing"} and a.ref is not None and b.ref is not None:
+                heard = a.hyp if a.hyp is not None else b.hyp
+                assert heard is not None
+                if hyp[heard] == ref[a.ref] + ref[b.ref]:
+                    first, second = (a, b) if a.kind == "wrong" else (b, a)
+                    out += sorted(
+                        (first, Step("ok", second.ref, None)), key=lambda step: step.ref or 0
+                    )
+                    i += 2
+                    continue
+            # One script word heard as two.
+            if kinds == {"wrong", "added"} and a.hyp is not None and b.hyp is not None:
+                word = a.ref if a.ref is not None else b.ref
+                assert word is not None
+                if ref[word] == hyp[a.hyp] + hyp[b.hyp]:
+                    out.append(a if a.kind == "wrong" else b)
+                    i += 2
+                    continue
+        out.append(steps[i])
+        i += 1
+    return out
+
+
 @dataclass(slots=True)
 class PartScore:
     total: int = 0
@@ -152,7 +186,7 @@ def score(script: Script, pieces: Sequence[str]) -> Score:
         if heard:
             piece_starts.add(len(hyp))
         hyp.extend(heard)
-    steps = align(ref_words, hyp)
+    steps = merge_splits(align(ref_words, hyp), ref_words, hyp)
 
     part1 = PartScore(total=script.count(Part.ONE))
     whisper_heard = whisper_total = 0
@@ -175,7 +209,7 @@ def score(script: Script, pieces: Sequence[str]) -> Score:
         if step.ref is None:
             if added_from is None:
                 added_from = before
-            if last_part is Part.ONE:
+            if last_part in (Part.ONE, Part.WHISPER):  # after the whisper is still Part 1
                 part1.added += 1
             continue
         added_from = None

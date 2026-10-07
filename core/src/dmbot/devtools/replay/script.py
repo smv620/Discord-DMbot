@@ -70,6 +70,8 @@ def parse_script(text: str, name: str = "script") -> Script:
                 raise ValueError(f"{name}: a turn before '## Part 1'")
             current = [match.group(2)]
             turns.append((match.group(1), part, current))
+        elif line.startswith("**["):
+            current = None  # a note such as [Don't read this out loud.] ends the turn
         elif current is not None:
             current.append(line)
     words: list[Word] = []
