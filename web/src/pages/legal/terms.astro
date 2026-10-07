@@ -1,0 +1,157 @@
+---
+import LegalPage from "../../components/LegalPage.astro";
+import {
+  keepAfterStopPaying,
+  minimumAge,
+  notAffiliated,
+  operator,
+  paymentGraceDays,
+  paymentProvider,
+} from "../../content/legal";
+---
+
+<LegalPage
+  title="Terms of use"
+  description="The rules for using DMbot: plans, recording, what DMbot does and doesn't do, and ending your account."
+  heading="Terms of use"
+  summary="DMbot listens to your game in Discord and quietly helps the game master (DM). It only records people who said yes, and everyone in the server can read what it writes down. DMbot gives advice; the game master decides. It can mishear and make mistakes, so check anything important. Plans are paid monthly through our payment company, and you can change or stop any time. Don't use DMbot to record people who haven't agreed, and only share books or adventures you have the right to use."
+>
+  <h2>Who we are</h2>
+  <p>
+    DMbot is run by {operator.name}, {operator.address} ("we"). By adding DMbot to a server or
+    signing in, you agree to these terms.
+  </p>
+
+  <h2>Who can use DMbot</h2>
+  <ul>
+    <li>
+      You must be at least {minimumAge}, and follow Discord's own rules.
+      {"{{CHECK: older age where local law requires it}}"}
+    </li>
+    <li>
+      The person who adds DMbot to a server, or runs a campaign, is responsible for using it
+      fairly in that server.
+    </li>
+  </ul>
+
+  <h2>Recording and saying yes</h2>
+  <ul>
+    <li>
+      DMbot records only people who said yes (the "I consent" button or
+      <code>/consent give</code>). Anyone can stop at any time with "Stop recording me" or
+      <code>/consent revoke</code>.
+    </li>
+    <li>
+      What DMbot writes down can be read by everyone in that Discord server, and downloaded on
+      paid plans.
+    </li>
+    <li>
+      Don't try to record people who haven't agreed, for example by playing their voice through
+      someone else's microphone.
+    </li>
+  </ul>
+
+  <h2>What DMbot does, and doesn't</h2>
+  <ul>
+    <li>
+      DMbot gives the game master quiet advice. It never makes up story and never decides. The
+      game master decides.
+    </li>
+    <li>
+      DMbot can mishear words, mix up names, and get rules wrong. Every rules tip shows where it
+      comes from and how sure DMbot is. Check anything that matters.
+    </li>
+    <li>
+      We work hard to keep DMbot running, but we can't promise it never stops or never loses a
+      line. {"{{CHECK: service-level wording}}"}
+    </li>
+  </ul>
+
+  <h2>Plans and payment</h2>
+  <ul>
+    <li>
+      Plans, prices and hours are on the <a href="/pricing">Prices</a> page. Paid plans renew
+      every month until you stop them. The first month of Table after Try It costs $1.99.
+      {"{{CHECK: does Try It turn into a paid plan by itself after 30 days, or only when you pick one? Say so here.}}"}
+    </li>
+    <li>
+      Payments are taken by {paymentProvider}, who is the seller. Their terms apply to the
+      payment, and they add any sales tax.
+    </li>
+    <li>
+      You can change or stop your plan any time from <a href="/account">My account</a>. A stopped
+      plan runs until the end of the month you paid for.
+      {"{{CHECK: confirm with the payment company's cancellation rules}}"}
+    </li>
+    <li>
+      If a payment fails, you have {paymentGraceDays} days to fix it before the plan stops. After
+      that, campaigns are kept for {keepAfterStopPaying}, then deleted.
+    </li>
+    <li>Refunds are explained on the <a href="/legal/refunds">Refunds</a> page.</li>
+    <li>
+      We may change prices. We'll tell you at least {"{{CHECK: 30}}"} days before a change
+      reaches your plan.
+    </li>
+  </ul>
+
+  <h2>Your campaign and your words</h2>
+  <ul>
+    <li>
+      Your campaign, notes and what your table says belong to you and your table. You let us store
+      and process them only to run DMbot for you.
+    </li>
+    <li>
+      When a game master shares an adventure or a rulebook, they confirm they have the right to
+      use it. We don't check this and give no legal advice. It stays in that one campaign, and the
+      game master can delete it.
+    </li>
+    <li>
+      If someone tells us shared material breaks their rights, we may remove it.
+      {"{{CHECK: notice-and-takedown address and process}}"}
+    </li>
+    <li>
+      Backups of a paid campaign hold the campaign, including the game master's secrets.
+      Anyone in the server may download one. Whoever loads a backup becomes the game master of
+      that copy.
+    </li>
+  </ul>
+
+  <h2>Fair use</h2>
+  <p>
+    Don't use DMbot to break the law, to harass anyone, to share content Discord doesn't allow,
+    or to get around plan limits. Don't try to break into DMbot or other people's campaigns. We
+    may pause or close an account that does this.
+  </p>
+
+  <h2>Ending</h2>
+  <ul>
+    <li>
+      You can delete your account and data any time from <a href="/account">My account</a>.
+      {"{{CHECK: what account deletion removes (#435)}}"}
+    </li>
+    <li>
+      We may stop offering DMbot. If we do, we'll give paid users at least {"{{CHECK: 30}}"} days'
+      notice and time to download their backups.
+    </li>
+  </ul>
+
+  <h2>Our responsibility</h2>
+  <p>
+    DMbot is provided as it is. As far as the law allows, we're not responsible for losses caused
+    by mistakes in its advice or by its being unavailable, and our total responsibility is
+    limited to what you paid us in the last 12 months.
+    {"{{CHECK: a lawyer should word this section for the owner's country and for consumer law}}"}
+  </p>
+
+  <h2>Not connected to the game's publisher</h2>
+  <p>{notAffiliated}</p>
+
+  <h2>Changes to these terms</h2>
+  <p>
+    If we change these terms, we'll update this page and tell signed-in users before the change
+    starts. If the question people say yes to changes, DMbot asks everyone again before it records them.
+  </p>
+
+  <h2>The law that applies</h2>
+  <p>{"{{CHECK: governing law and courts, set by the owner}}"}</p>
+</LegalPage>

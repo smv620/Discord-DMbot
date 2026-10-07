@@ -18,6 +18,7 @@ import math
 import sys
 import wave
 from array import array
+from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -136,13 +137,17 @@ def pieces(
     silence_dbfs: float = SILENCE_DBFS,
     speech_end_ms: int = SPEECH_END_MS,
     hangover_ms: int = HANGOVER_MS,
+    lead_in_ms: int = 0,
     levels: list[float] | None = None,
 ) -> Iterator[Piece]:
     """Pieces of speech: from the first loud frame to the last one before
     `speech_end_ms` of silence. Inside a piece, up to `hangover_ms` of quiet after speech
-    is sent, as the Discord client does; longer quiet isn't."""
+    is sent, as the Discord client does; longer quiet isn't. `lead_in_ms`: also send this
+    much of the audio just before each piece, as a voice gate opens a little early (live,
+    the client's packets start before the first loud moment)."""
     end_frames = speech_end_ms // FRAME_MS
-    hangover_frames = hangover_ms // FRAME_MS
+    hangover_frames = max(0, hangover_ms // FRAME_MS)
+    before: deque[tuple[int, bytes]] = deque(maxlen=max(0, lead_in_ms // FRAME_MS))
     current: list[tuple[int, bytes]] = []
     quiet: list[tuple[int, bytes]] = []
     for index in range(0, len(pcm) - FRAME_BYTES + 1, FRAME_BYTES):
@@ -152,7 +157,10 @@ def pieces(
         loud = level > silence_dbfs
         if not current:
             if loud:
-                current = [frame]
+                current = [*before, frame]
+                before.clear()
+            elif before.maxlen:
+                before.append(frame)
             continue
         if loud:
             current.extend(quiet[:hangover_frames])
@@ -162,6 +170,8 @@ def pieces(
             quiet.append(frame)
             if len(quiet) >= end_frames:
                 yield Piece(tuple(current))
+                if before.maxlen:
+                    before.extend(quiet)  # the quiet that ended it can lead into the next
                 current, quiet = [], []
     if current:
         yield Piece(tuple(current))

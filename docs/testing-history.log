@@ -635,3 +635,32 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     restarted: "Connected to 1 server(s)", "ears connected", no warnings or errors.
   Not yet live-tested: #414 (glance), #410 (the first "Deleted N change-log row(s)"
   after a session: record N and how long it took).
+
+==============================================================================
+2026-10-07  Server: deploy 84f1790 (dev1, no test run)
+==============================================================================
+  - 21:11 UTC  development @ 84f1790: #309 (Deepgram Retry-After, capped window, #173),
+    #464 (transcription worker pool, one queue per server, #173), #405 (names heard
+    during play: cleaned text, sound pre-match, #394), #456 (Transcript Cleaner fixes
+    from suggested names with Undo notes, #296 part 1), #425 (Add many folds in known
+    names, asks about near ones, #369), #436 (memory flags: bulk close, #347), #461
+    (website accounts schema, #435 part 1), #448 (twin options), web/ PRs #440 #446
+    #450 #459 (the website: not deployed anywhere yet).
+  - Database backed up first (21:10 UTC, "pre0011", outside the repo; pg_restore -l
+    reads 19 tables); no session was live. scripts/update-env added TRANSCRIBE_WORKERS
+    (blank: the default). Core rebuilt: "Database updated: 0011_web_accounts", 25 tables
+    now (19 + the 6 new ones, nothing else changed), "ears connected", "Connected to 1
+    server(s)", no warnings or errors. Running config: deepgram, 3 workers.
+
+==============================================================================
+2026-10-07  Twin runs (dev1): dm-only lead-in 0 vs 100 ms on Deepgram, code @ 84f1790
+==============================================================================
+  As before (throwaway container from the core image; key never read or printed).
+  No name hints. Part 1 and Part 2 the same both ways (0 of 33 wrong; 7 of 12).
+                       lead-in 0 ms        lead-in 100 ms
+    whisper            part                all
+    pauses that split  5 of 5              4 of 5
+    first-word errors  "Your", "The"       "The"
+    longest piece      7.3 s               7.4 s
+  100 ms of lead-in saved one first word and the whole whisper; one pause stopped
+  splitting the speech. Results also on #299.

@@ -81,6 +81,7 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         self.hits = 0
         self.max_keyterm_chars: int | None = None  # longer keyterm lists get a 400
         self.sent: list[list[str]] = []  # keyterms of each request, in order
+        self.retry_after: str | None = None  # Retry-After on replies from self.replies
 
         async def handler(request: web.Request) -> web.Response:
             self.received["auth"] = request.headers.get("Authorization")
@@ -92,7 +93,8 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             self.sent.append(terms)
             if self.replies:
                 status, body = self.replies.pop(0)
-                return web.json_response(body, status=status)
+                headers = {"Retry-After": self.retry_after} if self.retry_after else None
+                return web.json_response(body, status=status, headers=headers)
             if self.max_keyterm_chars is not None and sum(map(len, terms)) > self.max_keyterm_chars:
                 return web.json_response({"err_msg": "too many keyterm tokens"}, status=400)
             status, body = self.reply
@@ -143,6 +145,128 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             text = await self.t.transcribe(clip(), [])
         self.assertEqual(text, "Welcome to Bryn Shander.")
         self.assertEqual(self.hits, 2)
+
+    async def busy_once(
+        self, retry_after: str | None, status: int = 429
+    ) -> tuple[str | None, list[float]]:
+        """One busy reply with this Retry-After, then the usual answer. Returns the text
+        and the waits DMbot made (without really waiting)."""
+        self.replies = [(status, {"err_msg": "slow down"})]
+        self.retry_after = retry_after
+        return await self.transcribe_counting_waits()
+
+    async def transcribe_counting_waits(self) -> tuple[str | None, list[float]]:
+        waits: list[float] = []
+
+        async def no_wait(seconds: float) -> None:
+            waits.append(seconds)
+
+        with patch.object(dg, "_sleep", no_wait):
+            return await self.t.transcribe(clip(), []), waits
+
+    async def test_waits_as_long_as_deepgram_asks(self) -> None:
+        for status in (429, 503):
+            self.hits = 0
+            with self.subTest(status):
+                text, waits = await self.busy_once("2", status)
+                self.assertEqual((text, self.hits), ("Welcome to Bryn Shander.", 2))
+                self.assertEqual(len(waits), 1)
+                self.assertAlmostEqual(waits[0], 2.0, places=1)
+                # Answered: the next clip doesn't wait.
+                self.assertEqual(await self.transcribe_counting_waits(), (text, []))
+
+    async def test_usual_pause_without_a_usable_retry_after(self) -> None:
+        values = (None, "Wed, 21 Oct 2026 07:28:00 GMT", "nan", "inf", "1e400", "-4")
+        for value in values:
+            with self.subTest(value):
+                _, waits = await self.busy_once(value)
+                self.assertEqual(waits, [dg.RETRY_DELAY_S])
+
+    async def test_a_long_wait_fails_the_clip_at_once(self) -> None:
+        # One worker writes for every table: waiting 30 s would hold them all up.
+        for value in ("30", "3600"):
+            self.hits = 0
+            self.t._busy_until = 0.0
+            with self.subTest(value), self.assertRaises(DeepgramError) as ctx:
+                await self.busy_once(value)
+            self.assertEqual(self.hits, 1)
+            self.assertEqual(ctx.exception.for_dm, dg.BUSY)
+            self.assertFalse(ctx.exception.host_can_fix)
+
+    async def test_later_clips_respect_the_wait_without_asking_again(self) -> None:
+        with self.assertRaises(DeepgramError):
+            await self.busy_once("30")
+        self.assertEqual(self.hits, 1)
+        with self.assertRaises(DeepgramError) as ctx:
+            await self.transcribe_counting_waits()  # well inside the 30 s
+        self.assertEqual(self.hits, 1)  # no request sent
+        self.assertEqual(ctx.exception.for_dm, dg.BUSY)
+
+    async def test_busy_twice_says_busy(self) -> None:
+        self.reply = (429, {"err_msg": "slow down"})
+        with (
+            patch("dmbot.transcription.deepgram.RETRY_DELAY_S", 0),
+            self.assertRaises(DeepgramError) as ctx,
+        ):
+            await self.t.transcribe(clip(), [])
+        self.assertEqual(self.hits, 2)
+        self.assertEqual(ctx.exception.for_dm, dg.BUSY)  # the same words either way
+
+    async def test_the_remembered_wait_is_capped_and_expires(self) -> None:
+        now = [1000.0]
+        with patch.object(dg, "_clock", lambda: now[0]):
+            # An hour from a proxy: this clip fails, and the window is only a minute.
+            with self.assertRaises(DeepgramError):
+                await self.busy_once("3600")
+            self.assertEqual(self.t._busy_until, 1000.0 + dg.MAX_BUSY_WINDOW_S)
+            # Inside the window: no request, "busy" at once.
+            now[0] += 30
+            with self.assertRaises(DeepgramError):
+                await self.transcribe_counting_waits()
+            self.assertEqual(self.hits, 1)
+            # 1.5 s left: wait those 1.5 s, not the header's hour, then ask.
+            now[0] = 1000.0 + dg.MAX_BUSY_WINDOW_S - 1.5
+            text, waits = await self.transcribe_counting_waits()
+            self.assertEqual((text, waits, self.hits), ("Welcome to Bryn Shander.", [1.5], 2))
+            # Answered after the window was set: cleared.
+            self.assertEqual(self.t._busy_until, 0.0)
+
+    async def test_an_older_answer_never_clears_a_newer_wait(self) -> None:
+        # This request goes out at 1000.0; meanwhile another clip's 429 set a window at
+        # 1000.5. Its 200 says nothing about now: the window stays (worker pool, #173).
+        self.t._busy_until, self.t._busy_set_at = 1001.0, 1000.5
+        self.assertEqual(await self._request_sent_at(1000.0), "Welcome to Bryn Shander.")
+        self.assertEqual(self.t._busy_until, 1001.0)
+
+    async def _request_sent_at(self, sent: float) -> str | None:
+        times = iter([sent - 1, sent])  # _wait_if_busy's look, then the send time
+
+        def clock() -> float:
+            return next(times, sent)
+
+        async def no_wait(_s: float) -> None:
+            return None
+
+        with patch.object(dg, "_clock", clock), patch.object(dg, "_sleep", no_wait):
+            return await self.t.transcribe(clip(), [])
+
+    async def test_a_refusal_with_retry_after_sets_no_wait(self) -> None:
+        self.reply = (401, {"err_msg": "Invalid credentials"})
+        self.retry_after = "30"
+        self.replies = [(401, {"err_msg": "Invalid credentials"})]
+        with self.assertRaises(DeepgramError):
+            await self.t.transcribe(clip(), [])
+        self.assertEqual(self.t._busy_until, 0.0)  # only "busy" answers set a wait
+
+    def test_retry_after_parsing(self) -> None:
+        self.assertEqual(dg.retry_after_s(" 3 "), 3.0)
+        self.assertEqual(dg.retry_after_s("0.5"), 0.5)
+        self.assertEqual(dg.retry_after_s("0"), 0.0)
+        for broken in ("-4", "inf", "-inf", "1e400", "9" * 400):  # never a window
+            self.assertIsNone(dg.retry_after_s(broken), broken)
+        self.assertIsNone(dg.retry_after_s(None))
+        self.assertIsNone(dg.retry_after_s("nan"))
+        self.assertIsNone(dg.retry_after_s("soon"))
 
     async def test_gives_up_after_second_failure(self) -> None:
         self.reply = (503, {"err_msg": "down"})

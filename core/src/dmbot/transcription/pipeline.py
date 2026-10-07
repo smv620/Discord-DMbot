@@ -1,4 +1,5 @@
-"""Transcription pipeline: a bounded queue of utterances and one worker.
+"""Transcription pipeline: a bounded queue of utterances per Discord server, and a few
+workers that take turns between servers (#173).
 
 Kept free of Discord so every rule here is unit-testable:
 - consent is checked before AND after transcription (a revoke mid-call discards the text)
@@ -6,6 +7,8 @@ Kept free of Discord so every rule here is unit-testable:
 - repeated engine failures raise one alert to the DM, and one when service recovers
 - failures are logged with a throttle so a dead engine can't flood the logs
 - every clip has a time budget, so one stuck clip can't hold up the ones behind it (#137)
+- each server's clips are written one at a time and in order (lines never swap), while
+  `workers` servers can be written for at once: one slow table can't hold up the others
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -23,8 +26,11 @@ from dmbot.transcription.base import MIN_UTTERANCE_S, Transcriber, Transcription
 
 log = logging.getLogger(__name__)
 
-QUEUE_SIZE = 64
-# Warn the DM if this many utterances are waiting: the engine can't keep up.
+QUEUE_SIZE = 64  # per Discord server
+# Across all servers: a clip is up to 480 KB of audio, so this bounds memory (~120 MB at
+# worst) when the engine is down for every table at once.
+MAX_QUEUED = 256
+# Warn the DM if this many of a server's utterances are waiting: the engine can't keep up.
 BACKLOG_WARN = 16
 FAILURES_BEFORE_ALERT = 3
 LOG_EVERY_NTH_FAILURE = 50
@@ -75,6 +81,8 @@ class TranscriptionPipeline:
         queue_size: int = QUEUE_SIZE,
         budget_s: Callable[[float], float] = clip_budget_s,
         outside: bool = False,
+        workers: int = 1,
+        max_queued: int = MAX_QUEUED,
     ) -> None:
         # True when another company does the writing down (TRANSCRIBER=deepgram or cloud):
         # slowness is theirs, so alerts don't suggest a smaller Whisper model.
@@ -85,16 +93,26 @@ class TranscriptionPipeline:
         self._hints = hints
         self._deliver = deliver
         self._alert = alert
-        self._queue: asyncio.Queue[tuple[float, Utterance]] = asyncio.Queue(queue_size)
+        self._queue_size = queue_size
+        self._max_queued = max_queued
+        self._workers = max(1, workers)
+        # Each server's clips in order, and whose turn it is: a server is in `_turns`
+        # once when it has clips waiting and none being written, so workers go round
+        # the servers and never write two of one server's clips at once.
+        self._queues: dict[int, deque[tuple[float, Utterance]]] = {}
+        self._turns: asyncio.Queue[int] = asyncio.Queue()
+        self._writing: set[int] = set()
         self.dropped = 0
         self.consecutive_failures = 0
         self.total_failures = 0
-        self.last_latency_s: float | None = None
+        self.last_latency_s: float | None = None  # any server's last clip
+        self.latency_of: dict[int, float] = {}  # per server, for its own status
+        self._told_stopped: set[int] = set()  # servers told writing stopped
         self.skipped = 0  # clips that ran over their time budget
         self.slow = 0  # clips slower than SLOW_CLIP_S and their own length
         self._budget_s = budget_s
         self._last_skip_alert: dict[int, float] = {}  # per Discord server
-        self._backlog_warned = False
+        self._backlog_warned: set[int] = set()  # servers told they're falling behind
         # Per Discord server, for the end-of-session summary (#109).
         # Per session (Utterance.session), for the end-of-session summary (#109).
         self.missed_in: Counter[int] = Counter()  # skipped or dropped clips
@@ -102,22 +120,31 @@ class TranscriptionPipeline:
         # Clips queued but not finished, per session, so a stopping session can wait for
         # its own last words (not other servers' backlog).
         self.pending: Counter[int] = Counter()
-        self._running = False  # a worker is taking clips off the queue
+        self._running = False  # workers are taking clips off the queues
         self._stop_waiting = False  # shutting down: nobody waits for the queue any more
 
     @property
     def backlog(self) -> int:
-        return self._queue.qsize()
+        """Clips waiting, across all servers."""
+        return sum(len(q) for q in self._queues.values())
+
+    def backlog_of(self, guild_id: int) -> int:
+        queue = self._queues.get(guild_id)
+        return len(queue) if queue else 0
 
     def enqueue(self, utterance: Utterance) -> bool:
-        """Queue an utterance. Returns False (and counts a drop) if the queue is full."""
-        try:
-            self._queue.put_nowait((time.monotonic(), utterance))
-        except asyncio.QueueFull:
+        """Queue an utterance. Returns False (and counts a drop) if its server's queue is
+        full: one busy table never pushes out another's speech."""
+        guild = utterance.guild_id
+        queue = self._queues.setdefault(guild, deque())
+        if len(queue) >= self._queue_size or self.backlog >= self._max_queued:
             self.dropped += 1
             self.missed_in[utterance.session] += 1
             return False
+        queue.append((time.monotonic(), utterance))
         self.pending[utterance.session] += 1
+        if len(queue) == 1 and guild not in self._writing:
+            self._turns.put_nowait(guild)  # nothing of this server waiting or being written
         return True
 
     async def drain(self, session: int, timeout_s: float) -> bool:
@@ -148,20 +175,32 @@ class TranscriptionPipeline:
     async def run(self) -> None:
         self._running = True
         try:
-            await self._work()
+            await asyncio.gather(*(self._work() for _ in range(self._workers)))
         finally:
             self._running = False
 
     async def _work(self) -> None:
         while True:
-            queued_at, utterance = await self._queue.get()
+            guild = await self._turns.get()
+            queue = self._queues[guild]
+            queued_at, utterance = queue.popleft()
+            self._writing.add(guild)
             try:
-                with log_context(guild_id=utterance.guild_id):
-                    await self._check_backlog(utterance.guild_id)
+                with log_context(guild_id=guild):
+                    await self._check_backlog(guild)
                     await self.process(utterance)
+            except Exception:
+                # Never let one clip stop a worker: the others would go on unseen.
+                log.exception("Writing down a clip failed unexpectedly")
             finally:
                 self.pending[utterance.session] -= 1
-            self.last_latency_s = time.monotonic() - queued_at
+                self._writing.discard(guild)
+                if queue:
+                    self._turns.put_nowait(guild)  # back of the line: others go first
+                else:
+                    del self._queues[guild]
+                    self._backlog_warned.discard(guild)
+            self.last_latency_s = self.latency_of[guild] = time.monotonic() - queued_at
 
     async def process(self, utterance: Utterance) -> None:
         # Skip if the table ended or the speaker revoked consent while queued.
@@ -248,14 +287,18 @@ class TranscriptionPipeline:
                 type(exc).__name__,
                 exc,
             )
-        if self.consecutive_failures == FAILURES_BEFORE_ALERT:
+        # Every server with speech waiting is told once (the engine is shared), not just
+        # the one whose clip failed third.
+        busy = {guild_id, *self._writing, *self._queues} - self._told_stopped
+        if self.consecutive_failures >= FAILURES_BEFORE_ALERT and busy:
             if isinstance(exc, TranscriptionProblem):
                 # Our own plain sentence about the problem (never raw error text).
                 advice = (
                     "Whoever hosts DMbot needs to check its speech-to-text settings, then "
                     "restart it."
                     if exc.host_can_fix
-                    else "This is on the speech-to-text company's side; DMbot keeps trying."
+                    else "This is on the speech-to-text company's side. You don't need to do "
+                    "anything: DMbot keeps trying and tells you when it works again."
                 )
                 text = (
                     f"⚠️ **No transcript right now:** {exc.for_dm}. DMbot still hears "
@@ -267,17 +310,20 @@ class TranscriptionPipeline:
                     "who said yes, but no words are being written down. Whoever hosts "
                     "DMbot should check its log. DMbot keeps trying."
                 )
-            await self._alert(guild_id, text)
+            self._told_stopped |= busy
+            for guild in sorted(busy):
+                await self._alert(guild, text)
 
     async def _on_success(self, guild_id: int) -> None:
-        if self.consecutive_failures >= FAILURES_BEFORE_ALERT:
-            await self._alert(guild_id, "✅ Writing things down is working again.")
+        told, self._told_stopped = self._told_stopped, set()
         self.consecutive_failures = 0
+        for guild in sorted(told):
+            await self._alert(guild, "✅ Writing things down is working again.")
 
     async def _check_backlog(self, guild_id: int) -> None:
-        depth = self.backlog
-        if depth >= BACKLOG_WARN and not self._backlog_warned:
-            self._backlog_warned = True
+        depth = self.backlog_of(guild_id)
+        if depth >= BACKLOG_WARN and guild_id not in self._backlog_warned:
+            self._backlog_warned.add(guild_id)
             log.warning(
                 "Transcription backlog: %d utterances waiting%s",
                 depth,
@@ -294,4 +340,4 @@ class TranscriptionPipeline:
                 ),
             )
         elif depth < BACKLOG_WARN // 2:
-            self._backlog_warned = False
+            self._backlog_warned.discard(guild_id)

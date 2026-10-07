@@ -1,0 +1,47 @@
+---
+import LegalPage from "../../components/LegalPage.astro";
+import { keepAfterStopPaying, operator, paymentProvider } from "../../content/legal";
+---
+
+<LegalPage
+  title="Refunds"
+  description="How refunds for DMbot work, and how to ask for one."
+  heading="Refunds"
+  summary="You can stop your plan any time, and it keeps working until the end of the month you paid for. If something went wrong, ask us and we'll look at it fairly. Refunds are paid back by our payment company to the card or account you paid with."
+>
+  <h2>Stopping your plan</h2>
+  <p>
+    Stop your plan any time from <a href="/account">My account</a>. You won't be charged again.
+    Your plan keeps working until the end of the month you paid for. After that, your campaigns
+    are kept for {keepAfterStopPaying} in case you come back.
+  </p>
+
+  <h2>When you can get money back</h2>
+  <ul>
+    <li>
+      <strong>A new plan you haven't used:</strong> {"{{CHECK: refund window for an unused new plan, for example 14 days, set by the owner}}"}
+    </li>
+    <li>
+      <strong>Charged by mistake</strong>, or charged twice: we refund it.
+      {"{{CHECK: owner's rule}}"}
+    </li>
+    <li>
+      <strong>DMbot didn't work</strong> for a long time because of a problem on our side: ask us,
+      and we'll look at it. {"{{CHECK: owner's rule for outages}}"}
+    </li>
+    <li>
+      <strong>Extra hours</strong> you've already used can't be refunded.
+      {"{{CHECK: owner's rule, for used and unused extra hours}}"}
+    </li>
+  </ul>
+  <p>
+    {"{{CHECK: legal withdrawal rights for people in the EU and UK (usually 14 days for digital services), and how the payment company applies them}}"}
+  </p>
+
+  <h2>How to ask</h2>
+  <p>
+    Write to {operator.email} from the email on your account, and say what happened. We answer
+    within {"{{CHECK: 5}}"} working days. Refunds are made by {paymentProvider} to the card or
+    account you paid with, and can take a few days to show.
+  </p>
+</LegalPage>

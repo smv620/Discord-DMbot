@@ -150,6 +150,18 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help=f"this much silence ends a piece of speech (default {audio.SPEECH_END_MS})",
     )
     parser.add_argument(
+        "--lead-in-ms",
+        type=int,
+        default=0,
+        help="also send this much audio before each piece (default 0)",
+    )
+    parser.add_argument(
+        "--hangover-ms",
+        type=int,
+        default=audio.HANGOVER_MS,
+        help=f"quiet inside a piece kept up to this long (default {audio.HANGOVER_MS})",
+    )
+    parser.add_argument(
         "--realtime", action="store_true", help="send audio as it was spoken, to time the delay"
     )
     parser.add_argument("--log", action="store_true", help="append to docs/testing-history.log")
@@ -168,6 +180,9 @@ async def main_async(args: argparse.Namespace) -> int:
         settings = load_transcription_settings(env)
     except TranscriptionConfigError as exc:
         print(f"replay: {exc}", file=sys.stderr)
+        return 2
+    if args.lead_in_ms < 0 or args.hangover_ms < 0:
+        print("replay: --lead-in-ms and --hangover-ms can't be negative", file=sys.stderr)
         return 2
     if args.commit and _commit_id(args.commit) is None:
         print(
@@ -203,11 +218,23 @@ async def main_async(args: argparse.Namespace) -> int:
     levels = audio.frame_levels(pcm)
     silence = args.silence_db if args.silence_db is not None else audio.silence_dbfs_for(levels)
     pieces = list(
-        audio.pieces(pcm, silence_dbfs=silence, speech_end_ms=args.speech_end_ms, levels=levels)
+        audio.pieces(
+            pcm,
+            silence_dbfs=silence,
+            speech_end_ms=args.speech_end_ms,
+            hangover_ms=args.hangover_ms,
+            lead_in_ms=args.lead_in_ms,
+            levels=levels,
+        )
     )
+    # As used: whole 20 ms frames, and quiet as long as speech_end_ms ends a piece.
+    lead_in = args.lead_in_ms // audio.FRAME_MS * audio.FRAME_MS
+    hangover = min(args.hangover_ms, args.speech_end_ms - audio.FRAME_MS)
+    hangover = hangover // audio.FRAME_MS * audio.FRAME_MS
     left_out_s = sum(p.end_ms - p.start_ms - len(p.frames) * audio.FRAME_MS for p in pieces)
     cut = (
-        f"{args.speech_end_ms / 1000:g} s quieter than {silence:.0f} dBFS ends a piece: "
+        f"{args.speech_end_ms / 1000:g} s quieter than {silence:.0f} dBFS ends a piece "
+        f"(lead-in {lead_in} ms, quiet kept inside up to {hangover} ms): "
         f"{len(pieces)} pieces before core's 15 s cut, {left_out_s / 1000:.0f} s of quiet "
         "inside them left out"
     )
