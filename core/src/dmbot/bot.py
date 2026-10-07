@@ -1614,9 +1614,10 @@ class DMBot(commands.AutoShardedBot):
             self.lookup.mark_stale(guild_id, campaign_id)  # the next line uses the answer
         undo = (campaign_id, written.batch) if written.batch is not None else None
         # After the save: if they stopped being recorded meanwhile, their words stay down.
-        if not book.is_open(question_id) or not self.consent.has_consent(guild_id, asked.speaker):
-            if book.is_open(question_id):
-                book.close()
+        if not book.is_open(question_id):
+            return name_questions.GONE, True, undo  # Stop already takes its message down
+        if not self.consent.has_consent(guild_id, asked.speaker):
+            book.close()
             table.question_message = None
             return name_questions.GONE, True, undo
         book.close()

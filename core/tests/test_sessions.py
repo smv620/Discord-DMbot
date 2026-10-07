@@ -976,7 +976,7 @@ class SaveAndResume(SessionTests):
         table, _, posted, _ = await self.asked_about_marin()
         channel, text, view = posted.await_args.args
         self.assertEqual(channel, SCREEN)  # the DM screen, never the transcript channel
-        self.assertIn('heard Mia say "Marin"', text)
+        self.assertIn('say "Marin".**', text)
         labels = [item.item.label for item in view.children]
         self.assertEqual(sorted(labels[:2]), ["Maren", "Marron"])
         self.assertEqual(labels[2], 'Keep "Marin"')

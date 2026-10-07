@@ -280,9 +280,11 @@ class BotTests(DatabaseTest):
         self.assertEqual(set(users), {DM, PLAYER})
         call = users[PLAYER].send.await_args
         self.assertIn("The session for **Frostmaiden** has ended", call.args[0])
-        button = call.kwargs["view"].children[0]
         sid = table.transcript_session_id
-        self.assertEqual(button.custom_id, f"dmbot:transcript:{GUILD}:{sid}")
+        self.assertEqual(
+            [b.custom_id for b in call.kwargs["view"].children],
+            [f"dmbot:transcript:{GUILD}:{sid}:{c}" for c in ("cleaned", "heard", "both")],
+        )
         session = await self.store.session(GUILD, sid or "")
         assert session is not None and session.ended_at is not None
 
