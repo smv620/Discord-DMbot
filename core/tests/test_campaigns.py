@@ -65,7 +65,7 @@ class CreateAndList(StoreTest):
     async def test_ruleset_validation(self) -> None:
         with self.assertRaises(CampaignError):
             await self.make("A", target_ruleset="5e-homebrew")
-        with self.assertRaisesRegex(CampaignError, "different"):
+        with self.assertRaisesRegex(CampaignError, "can.t be the same"):
             await self.make("B", target_ruleset="2024", fallback_ruleset="2024")
         c = await self.make("C", target_ruleset="2014", fallback_ruleset="none")
         self.assertEqual(c.fallback_ruleset, "none")

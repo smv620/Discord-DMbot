@@ -5,11 +5,12 @@ from dmbot.consent_dm import CONSENT_LABEL, STOP_LABEL
 from dmbot.transcription.config import Engine
 from dmbot.ui.logic import (
     BUTTON_LABEL_MAX,
+    CONTINUE_LABEL,
     HELP_TEXT,
+    PHONE_LABEL_MAX,
     ago,
     backup_filename,
     can_run,
-    continue_label,
     default_voice_channel,
     option_description,
     played_line,
@@ -81,15 +82,18 @@ class Wording(unittest.TestCase):
         self.assertEqual(option_description(campaign(last_played_at=None), NOW), "Not played yet")
 
     def test_labels_fit_discord_limits(self) -> None:
-        label = continue_label(campaign(name="x" * 200))
-        self.assertLessEqual(len(label), BUTTON_LABEL_MAX)
-        self.assertTrue(label.endswith("…"))
+        # The most-tapped button fits a phone; the message above it names the campaign.
+        self.assertLessEqual(len(CONTINUE_LABEL), PHONE_LABEL_MAX)
+        self.assertLessEqual(len(shorten("x" * 200, BUTTON_LABEL_MAX)), BUTTON_LABEL_MAX)
         self.assertEqual(shorten("  a   b ", 10), "a b")
 
     def test_settings_summary_is_plain(self) -> None:
         text = "\n".join(settings_summary("2024", "none", False, "private"))
         self.assertIn("2024 rules (newest)", text)
-        self.assertIn("None (main rules only)", text)
+        self.assertIn("skip it, use only the main rules", text)
+        self.assertIn(
+            "use the 2014 rules (older)", "\n".join(settings_summary("2024", "2014", True, "peek"))
+        )
         self.assertIn("off", text)
         self.assertIn("Only the DM", text)
         for jargon in ("fallback", "target", "ruleset", "visibility"):
@@ -118,7 +122,9 @@ class MenuChoices(unittest.TestCase):
         self.assertEqual(main_rules_choices()["2024"], "Main rules: 2024")
         fb = fallback_choices("2024")
         self.assertNotIn("2024", fb)
-        self.assertEqual(fb, {"2014": "If missing: 2014 rules", "none": "If missing: nothing"})
+        self.assertEqual(fb, {"2014": "If missing: use 2014", "none": "If missing: skip it"})
+        for choices in (main_rules_choices(), fallback_choices("2014"), visibility_choices()):
+            self.assertLessEqual(len(choices), 5)  # Discord: 5 buttons a row
         self.assertTrue(all(v.startswith("DM screen: ") for v in visibility_choices().values()))
         every = [
             *main_rules_choices().values(),

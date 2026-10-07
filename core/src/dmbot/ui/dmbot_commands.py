@@ -149,7 +149,7 @@ class CampaignPicker(_Menu):
         self.add_item(
             _Button(
                 self._continue,
-                label=logic.continue_label(last),
+                label=logic.CONTINUE_LABEL,
                 style=discord.ButtonStyle.primary,
                 row=0,
             )
@@ -264,8 +264,8 @@ class NewCampaignSettings(_Menu):
         return "\n".join(
             [
                 f"**New campaign: {self.name}**",
-                "These are the recommended settings. Tap a button to change one, "
-                "then press **Create campaign**.",
+                "Blue ✓ buttons are chosen (we recommend these). Tap another to change "
+                "it, then press **▶ Create campaign**.",
                 *logic.settings_summary(self.target, self.fallback, self.optional, self.visibility),
             ]
         )
@@ -288,6 +288,8 @@ class NewCampaignSettings(_Menu):
                     label=logic.chosen_label(label, chosen),
                     style=discord.ButtonStyle.primary if chosen else discord.ButtonStyle.secondary,
                     row=row,
+                    # The same id after every redraw, so a quick second tap still lands.
+                    custom_id=f"dmbot:newcampaign:{attr}:{value}",
                 )
             )
 
@@ -303,9 +305,10 @@ class NewCampaignSettings(_Menu):
         self.add_item(
             _Button(
                 self._create,
-                label="✅ Create campaign",
+                label="▶ Create campaign",
                 style=discord.ButtonStyle.success,
                 row=4,
+                custom_id="dmbot:newcampaign:create",
             )
         )
 

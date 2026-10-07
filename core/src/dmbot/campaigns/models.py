@@ -79,9 +79,11 @@ def check_rulesets(target: str, fallback: str) -> None:
     if target not in RULESETS:
         raise CampaignError("Please pick a main ruleset from the list.")
     if fallback != FALLBACK_NONE and fallback not in RULESETS:
-        raise CampaignError("Please pick a backup ruleset from the list, or none.")
+        raise CampaignError("Please pick what to use when the main rules don't cover something.")
     if fallback == target:
-        raise CampaignError("The backup ruleset must be different from the main one.")
+        raise CampaignError(
+            "'If missing' can't be the same rules as 'Main rules'. Pick the other one, or skip it."
+        )
 
 
 def check_dm_screen_visibility(value: str) -> None:

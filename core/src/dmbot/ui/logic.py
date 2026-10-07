@@ -17,8 +17,9 @@ from dmbot.transcription.config import Engine
 BUTTON_LABEL_MAX = 80
 OPTION_LABEL_MAX = 100
 SELECT_OPTIONS_MAX = 25
-# What a phone shows of a button or menu choice before cutting it off (#112). Choices
-# DMbot writes itself stay within this; names people chose are cut to NAME_LABEL_MAX.
+# What a phone shows of a button or menu choice before cutting it off (#112). Labels
+# DMbot writes itself stay within this. Names people chose (a campaign's) are cut to
+# NAME_LABEL_MAX, only in menu lists, which open full-width; never in buttons.
 PHONE_LABEL_MAX = 25
 NAME_LABEL_MAX = 32
 
@@ -80,8 +81,7 @@ def option_description(campaign: Campaign, now: int) -> str:
     return shorten(f"Last played {ago(campaign.last_played_at, now)}", OPTION_LABEL_MAX)
 
 
-def continue_label(campaign: Campaign) -> str:
-    return f"▶ Continue: {name_label(campaign.name)}"
+CONTINUE_LABEL = "▶ Continue last campaign"  # the message above names it
 
 
 def default_voice_channel(
@@ -104,6 +104,13 @@ def ruleset_label(ruleset: str) -> str:
     return RULESETS.get(ruleset, ruleset)
 
 
+def fallback_words(fallback: str) -> str:
+    """What happens when the main rules don't cover something, as its buttons say it."""
+    if fallback == FALLBACK_NONE:
+        return "skip it, use only the main rules"
+    return f"use the {ruleset_label(fallback)}"
+
+
 def settings_summary(
     target: str, fallback: str, optional_rules: bool, visibility: str
 ) -> list[str]:
@@ -111,7 +118,7 @@ def settings_summary(
     phone; buttons don't). Each line starts with the words its buttons start with."""
     return [
         f"• **Main rules:** {ruleset_label(target)}",
-        f"• **If missing** (the main rules don't cover something): {ruleset_label(fallback)}",
+        f"• **If missing** (the main rules don't cover something): {fallback_words(fallback)}",
         f"• **Optional rules** from Xanathar's and Tasha's: {'on' if optional_rules else 'off'}",
         f"• **DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
     ]
@@ -126,8 +133,8 @@ def main_rules_choices() -> dict[str, str]:
 
 
 def fallback_choices(target: str) -> dict[str, str]:
-    choices = {k: f"If missing: {k} rules" for k in RULESETS if k != target}
-    choices[FALLBACK_NONE] = "If missing: nothing"
+    choices = {k: f"If missing: use {k}" for k in RULESETS if k != target}
+    choices[FALLBACK_NONE] = "If missing: skip it"
     return choices
 
 
@@ -136,11 +143,11 @@ OPTIONAL_RULES_CHOICES = {
     "off": "Optional rules: off",
 }
 
-_SCREEN_SHORT = {"private": "DM only", "peek": "players peek", "open": "everyone"}
+_SCREEN_SHORT = {"private": "only the DM", "peek": "players peek", "open": "everyone"}
 
 
 def visibility_choices() -> dict[str, str]:
-    return {k: f"DM screen: {_SCREEN_SHORT.get(k, k)}" for k in DM_SCREEN_VISIBILITY}
+    return {k: f"DM screen: {_SCREEN_SHORT[k]}" for k in DM_SCREEN_VISIBILITY}
 
 
 def chosen_label(label: str, chosen: bool) -> str:
