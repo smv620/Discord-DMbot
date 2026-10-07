@@ -41,6 +41,17 @@ export interface Server {
   id: string;
   name: string;
   hasDmbot: boolean;
+  /** DMbot joined through a plain invite link and nobody has said who added it. */
+  canLink: boolean;
+  installedByYou: boolean;
+}
+
+/** A server this person added DMbot to (#435). */
+export interface Install {
+  serverId: string;
+  serverName: string;
+  installedAt: string | null;
+  via: "site" | "link";
 }
 
 export interface Person {
@@ -53,6 +64,7 @@ export interface Me {
   plan: MyPlan | null;
   campaigns: Campaign[];
   servers: Server[];
+  installs: Install[];
 }
 
 /** Why a call failed, in a form the page can turn into plain words. */
@@ -61,6 +73,12 @@ export type ApiErrorKind =
   | "signed-out" // the session ended
   | "no-free-slot" // hand-over: that person's plan is full
   | "not-allowed" // not your campaign, or not allowed right now
+  | "sign-in-again" // acting for a server or deleting needs a sign-in from the last day
+  | "try-it-used" // Try It was used before
+  | "has-plan" // a plan already works (Try It or a second checkout)
+  | "payments-off" // the payment company isn't set up yet
+  | "already-linked" // someone else already said they added DMbot to this server
+  | "not-installed" // DMbot isn't in that server yet
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -82,8 +100,10 @@ export interface AccountApi {
   checkoutUrl(plan: PlanId): Promise<string>;
   /** The payment company's page to change plan, fix a payment or stop. */
   billingPortalUrl(): Promise<string>;
-  /** Discord's page to add DMbot to one of your servers. */
-  installUrl(serverId: string): Promise<string>;
+  /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
+  installUrl(serverId: string): string;
+  /** Say you added DMbot to a server it joined through a plain link. */
+  linkServer(serverId: string): Promise<void>;
   /** People who can take over a campaign (they have a plan with room for it). */
   handoverCandidates(campaignId: string): Promise<Person[]>;
   handover(campaignId: string, toUserId: string): Promise<void>;
@@ -96,6 +116,13 @@ export interface AccountApi {
 const errorKinds: Record<string, ApiErrorKind> = {
   no_free_slot: "no-free-slot",
   not_allowed: "not-allowed",
+  sign_in_again: "sign-in-again",
+  try_it_used: "try-it-used",
+  try_it_has_plan: "has-plan",
+  has_paid_plan: "has-plan",
+  payments_off: "payments-off",
+  already_linked: "already-linked",
+  not_installed: "not-installed",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
@@ -153,10 +180,10 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     },
     checkoutUrl: (plan) => url("/billing/checkout", { plan }),
     billingPortalUrl: () => url("/billing/portal"),
-    installUrl: async (serverId) =>
-      ((await call("GET", `/install-link?server_id=${encodeURIComponent(serverId)}`)) as {
-        url: string;
-      }).url,
+    installUrl: (serverId) => `${root}/install?server_id=${encodeURIComponent(serverId)}`,
+    linkServer: async (serverId) => {
+      await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
+    },
     handoverCandidates: async (campaignId) =>
       (await call("GET", `/campaigns/${encodeURIComponent(campaignId)}/handover-candidates`)) as
         Person[],

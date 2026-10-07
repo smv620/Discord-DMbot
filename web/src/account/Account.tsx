@@ -35,8 +35,8 @@ interface Shared {
   go: (url: string) => void;
   /** Fetch the account again after a change. A failure keeps what's on screen. */
   refresh: () => Promise<void>;
-  /** The session ended: back to sign-in. */
-  signedOut: () => void;
+  /** The session ended (or must be renewed): back to sign-in, with a message. */
+  signedOut: (notice?: string) => void;
 }
 
 const SharedContext = createContext<Shared | null>(null);
@@ -71,7 +71,11 @@ function useAction() {
           signedOut();
           return;
         }
-        setNotice(explain?.(apiError) ?? text.actionFailed);
+        if (apiError.kind === "sign-in-again") {
+          signedOut(text.signInAgain);
+          return;
+        }
+        setNotice(explain?.(apiError) ?? text.errors[apiError.kind] ?? text.actionFailed);
       } finally {
         running.current = false;
         setBusy(false);
@@ -121,7 +125,12 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
   const load = useCallback(async () => {
     try {
       const me = await api.me();
-      const failed = new URLSearchParams(search).get("signin") === "failed";
+      const params = new URLSearchParams(search);
+      if (me && params.get("install") === "sign_in_again") {
+        setState({ kind: "signed-out", notice: text.signInAgain });
+        return;
+      }
+      const failed = params.get("signin") === "failed";
       setState(
         me
           ? { kind: "signed-in", me }
@@ -145,8 +154,8 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
     }
   }, [api]);
 
-  const signedOut = useCallback(() => {
-    setState({ kind: "signed-out", notice: text.signedOutNow });
+  const signedOut = useCallback((notice: string = text.signedOutNow) => {
+    setState({ kind: "signed-out", notice });
   }, []);
 
   const safeGo = useCallback(
@@ -191,6 +200,7 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
     case "signed-in":
       body = (
         <SignedIn
+          installResult={installResult(search)}
           me={state.me}
           onDeleted={() => setState({ kind: "deleted" })}
           onSignedOutByChoice={() => setState({ kind: "signed-out", notice: null })}
@@ -236,12 +246,20 @@ function SignedOut({ notice }: { notice: string | null }) {
   );
 }
 
+/** The message for coming back from adding DMbot (?install=done etc.), or null. */
+function installResult(search: string): string | null {
+  const result = new URLSearchParams(search).get("install");
+  return result === null ? null : (text.install[result] ?? text.install["failed"] ?? null);
+}
+
 function SignedIn({
   me,
+  installResult: installMessage,
   onDeleted,
   onSignedOutByChoice,
 }: {
   me: Me;
+  installResult: string | null;
   onDeleted: () => void;
   onSignedOutByChoice: () => void;
 }) {
@@ -266,6 +284,11 @@ function SignedIn({
         </button>
       </div>
       <Notice message={notice} />
+      {installMessage && (
+        <p class={installMessage === text.install["done"] ? "ok" : "warn"} role="status">
+          {installMessage}
+        </p>
+      )}
       <PlanSection me={me} />
       <CampaignsSection me={me} />
       <ServersSection me={me} />
@@ -521,7 +544,7 @@ function CampaignRow({
 }
 
 function ServersSection({ me }: { me: Me }) {
-  const { api, go } = useShared();
+  const { api, refresh } = useShared();
   const { busy, notice, run } = useAction();
   return (
     <section aria-labelledby="servers-heading" class="panel">
@@ -536,16 +559,31 @@ function ServersSection({ me }: { me: Me }) {
             {me.servers.map((s) => (
               <li key={s.id} data-server={s.id}>
                 <span>{s.name}</span>
-                {s.hasDmbot ? (
-                  <span class="muted">{text.alreadyThere}</span>
-                ) : (
-                  <ActionButton
-                    busy={busy}
-                    kind="secondary"
-                    onClick={() => void run(async () => go(await api.installUrl(s.id)))}
-                  >
+                {!s.hasDmbot ? (
+                  // A plain link: the API checks, then sends the browser on to Discord.
+                  <a class="button secondary" href={api.installUrl(s.id)}>
                     {text.addTo}
-                  </ActionButton>
+                  </a>
+                ) : s.canLink ? (
+                  <>
+                    <ActionButton
+                      busy={busy}
+                      kind="secondary"
+                      onClick={() =>
+                        void run(async () => {
+                          await api.linkServer(s.id);
+                          await refresh();
+                        })
+                      }
+                    >
+                      {text.linkServer}
+                    </ActionButton>
+                    <span class="muted small">{text.linkNote}</span>
+                  </>
+                ) : (
+                  <span class="muted">
+                    {s.installedByYou ? text.youAddedIt : text.alreadyThere}
+                  </span>
                 )}
               </li>
             ))}

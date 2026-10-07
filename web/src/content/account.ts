@@ -56,6 +56,20 @@ export const text = {
   down: "DMbot isn't answering right now. Tap Try again in a minute.",
   tryAgain: "Try again",
   actionFailed: "That didn't work. Try again in a minute.",
+  signInAgain: "For your safety, sign in again first. Tap Sign in with Discord.",
+  errors: {
+    "try-it-used": "You've already used Try It. Pick a plan to keep playing.",
+    "has-plan": "You already have a plan. Tap Change plan to switch.",
+    "payments-off": "Paying for a plan isn't open yet. Please try again soon.",
+    "already-linked": "Someone else already said they added DMbot to this server.",
+    "not-installed": "DMbot isn't in this server yet. Tap Add DMbot first.",
+    "no-free-slot": "Their plan is full. Ask them to pause a campaign or pick a bigger plan.",
+  } as Record<string, string>,
+  install: {
+    done: "Done! DMbot is in your server. In Discord, type /dmbot start to begin.",
+    failed: "DMbot wasn't added. Tap Add DMbot to try again.",
+    not_allowed: "You can only add DMbot to servers you run.",
+  } as Record<string, string>,
   signedOutNow: "You've been signed out. Tap Sign in with Discord to carry on.",
   busy: "One moment…",
 
@@ -105,7 +119,10 @@ export const text = {
 
   // Servers
   serversHeading: "Add DMbot to a server",
-  serversNote: "These are the Discord servers you can add DMbot to.",
+  serversNote: "These are the Discord servers you run.",
+  linkServer: "This is mine",
+  linkNote: "DMbot is here, but nobody has said who added it. If you did, tap This is mine.",
+  youAddedIt: "You added DMbot here",
   noServers: "You don't run any Discord servers. Ask a server's owner to add DMbot.",
   addTo: "Add DMbot",
   alreadyThere: "DMbot is here",
