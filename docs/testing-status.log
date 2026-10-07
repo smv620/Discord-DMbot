@@ -8,7 +8,13 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued)
+  - #327 + #376 (369dc51, dev3, #299): the session twin. Nothing to deploy, but a run
+    for dev1: from the host venv (cd core && pip install -e ".[twin]"), not the bot's
+    container, not during a live session, then:
+      scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-only.md --transcriber deepgram --log
+      scripts/replay docs/test-scripts/stt-bakeoff.m4a --script docs/test-scripts/stt-bakeoff.md --transcriber deepgram --log
+    Check: dm-only within a few points of run 7 (part 1: 0 of 33, part 2: 10 of 12); the
+    bake-off record's names line, and once more with --no-hints. About 4 min of audio in all.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
