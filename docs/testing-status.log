@@ -10,6 +10,15 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
   - #405 (dev2, #394): not merged yet; deploy when it lands.
 
+- #425 (#369, CloudDev): core only. Check: the owner's bulk-import test,
+  docs/test-scripts/bakeoff-story-names-setup.md section B: "📥 Added 22 names · 4 already
+  known · 3 look like known names · 2 kinds differ. Questions below.", then the near-name
+  message (1. Same / 1. Different / 1. Remove) and the kind message. Press nothing,
+  then Undo takes all 22 back.
+- #436 (#347 items 2-4, CloudDev): core only, no visible change. After a session the
+  log may show "Closed N memory flag(s) that no longer apply"; a second session with no
+  memory changes in between skips the check.
+
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
 ------------------------------------------------------------------------------
