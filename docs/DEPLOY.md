@@ -43,6 +43,21 @@ nano .env        # fill in DISCORD_TOKEN, EARS_SHARED_SECRET, TRANSCRIBER (and
 chmod 600 .env   # only you can read your secrets
 ```
 
+To add or change a key later, for example from your phone over SSH, skip the editor:
+
+```bash
+cd Discord-DMbot
+scripts/set-key                    # pick from a list of keys and tokens
+scripts/set-key DEEPGRAM_API_KEY   # or name the one you want
+```
+
+Paste the key when asked. You won't see it as you paste; that's normal. Paste once, then
+press Enter. The helper shows back only the key's length and last 4 characters, and
+keeps `.env` at `chmod 600`. If DMbot is running it offers to restart it, which drops the
+bot from voice for about a minute, so don't do it mid-session. Keys go into the server's
+`.env` only: never paste them into chat or issues. It sets only keys, tokens and secrets;
+edit `.env` for anything else, including the database passwords (see below).
+
 Make both database passwords long, random, and letters and numbers only
 (`openssl rand -hex 24`). Compose runs Postgres for you and sets `DATABASE_URL`; the
 database is not reachable from outside the server.
@@ -74,6 +89,16 @@ in a volume, so restarts are fast.
 | Stop | `docker compose down` |
 | See logs | `docker compose logs -f core` (or `ears`) |
 | Status | `docker compose ps` |
+| Update `.env` after an update changes `.env.example` | `scripts/update-env` (add `--check` to only look) |
+| Add or change a key | `scripts/set-key` |
+
+Updates never change your `.env`. When one brings a new `.env.example`, run
+`scripts/update-env`. It rebuilds `.env` in the new layout, keeps every value you had, and
+puts settings it doesn't know at the end. Your old file is saved next to it as
+`.env.backup-…`. If a value runs over several lines it stops and changes nothing, so fix
+that line first. It then lists empty keys: fill in the ones you use with `scripts/set-key`.
+Then restart with `docker compose up -d` (DMbot leaves voice for about a minute, so not
+mid-session).
 
 **After updating,** look at core's log (`docker compose logs core`). Updates never change
 your `.env`, so if `.env.example` gained new settings, the log names them at start-up
