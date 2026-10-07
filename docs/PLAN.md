@@ -1264,12 +1264,52 @@ message in their DM conversation with DMbot** (hold the mic button, speak, relea
 DMbot transcribes it, answers in the DM screen, and logs it there as
 `[DM Sidebar Discussion]`. The table never hears it, and it never goes into a transcript. An optional hotkey helper app for the DM's PC may come later.
 
-**AI and speech API keys (decided 2026-10-04).** Start with **bring your own key**: each
-server's DM or admin enters their own Anthropic API key (and a cloud speech-to-text key if
-used) through a private pop-up form, never typed in a channel. Keys are stored encrypted
-and per server; usage and spending limits live in their own provider account. A paid
-service (the owner's key, metered and billed per server) may follow later; the code
-keeps a single "who pays for this call" seam so that switch stays small.
+**Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
+keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
+keys. DMbot runs on the operator's keys and bills **by hours and campaigns** through the
+customer website (`web/`, #431–#435); the plan rules in the bot are #437. The "who pays
+for this call" seam stays, pointing at the operator's keys.
+
+**Plans and pricing (owner decisions, 2026-10-07).** The plan belongs to one Discord user
+(the DM); every campaign has one owner whose hours and campaign count it uses; co-DMs
+need no plan; "Hand over this campaign" moves ownership to another subscriber. Hours are
+DMbot's listening time, start to stop, rounded up to the minute, pooled per month, no
+roll-over. Every plan has every feature; only hours and campaigns differ, except that
+Try It has no backups or downloads. The site keeps the words in one place; the bot's
+messages use the same ones.
+
+| Plan | Hours a month | Campaigns | Price |
+|---|---|---|---|
+| Try It | 8, for 30 days, one per Discord account | 1 | free |
+| Table | 18 ("about 4 hours a week") | 1 | $8.99 (first month $1.99 after Try It) |
+| Two Tables | 43 ("about 10 hours a week") | 2 | $17.99 |
+| Guild | 87 ("about 20 hours a week") | 5 | $34.99 |
+| Pro | 217 ("about 50 hours a week"); needs the bigger server | 20 | coming soon |
+| Extra hours | +10 this month | — | $4.99 |
+
+Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
+campaign active, under the campaign cap) and at anything that spends tokens (AI Find
+names, later story memory and rules lookups), plus backup, restore and transcript
+download (paid campaigns only; restoring needs a subscriber with a free slot, who becomes
+the owner). Warnings on the DM screen at 80% and 90% of the hours; at the cap DMbot
+finishes the session (up to 2 hours of grace, once a month), then refuses to start until
+renewal or a top-up. On a downgrade or lapse the first N campaigns started afterwards
+are active (N = new cap), the rest are paused with their data kept. Retention: 60 days
+after the last session on Try It, 6 months on Table, 1 year on the other plans, and 120
+days after a plan stops paying; the DM is warned at 14 and 3 days; deletion on request is
+immediate. Cost basis for these prices: about $0.30 per table-hour (Deepgram Nova-3 clip
+pricing on roughly 36–60 speech-minutes per hour, Claude Haiku for the AI features,
+hosting); to be measured with the twin and run 8 before the promotion to `main`.
+Discord servers cost nothing and are not counted.
+
+**Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
+with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
+email guilds`); payments through a merchant-of-record hosted checkout (Paddle or Lemon
+Squeezy, owner's choice) with its customer portal for plan changes; the API is FastAPI in
+`core/src/dmbot/web/`, its own container, the only writer of the `entitlements` table via
+the provider's webhook. No D&D or Wizards trademarks or art: "for 5e-compatible tabletop
+games". Terms, privacy and refund pages before launch. Settings stay in Discord for now;
+the site is account, plan, campaigns, invite and marketing.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's
