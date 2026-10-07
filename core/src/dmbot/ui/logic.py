@@ -197,7 +197,7 @@ HELP_TEXT = (
     "• `/dmbot stop`: stop listening\n"
     "• `/dmbot names`: the names DMbot listens for (characters, places, NPCs)\n"
     "• `/transcript`: download what was said in a session (anyone in the server)\n"
-    "• `/dmbot backup`: download a copy of a campaign\n"
+    "• `/dmbot backup`: download a complete copy of a campaign (anyone can)\n"
     "• `/dmbot restore`: bring a campaign back from a copy\n"
     "\n"
     "**Recording:** DMbot only records people who say yes. When the DM starts a "
