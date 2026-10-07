@@ -149,6 +149,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             await self.pipeline.process(utt())
         (alert,) = self.alerts
         self.assertIn("company's side", alert)
+        self.assertIn("You don't need to do anything", alert)  # and it says when it's back
         self.assertNotIn("HTTP", alert)  # no for_dm given: a plain fallback, not the log text
         self.assertNotIn(".env", alert)
 

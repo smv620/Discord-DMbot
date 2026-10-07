@@ -1,7 +1,6 @@
 """Deepgram Nova-3 engine (#170) against a local fake of Deepgram's pre-recorded API."""
 
 import asyncio
-import math
 import unittest
 from typing import Any
 from unittest.mock import patch
@@ -177,14 +176,15 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await self.transcribe_counting_waits(), (text, []))
 
     async def test_usual_pause_without_a_usable_retry_after(self) -> None:
-        for value in (None, "Wed, 21 Oct 2026 07:28:00 GMT", "nan"):
+        values = (None, "Wed, 21 Oct 2026 07:28:00 GMT", "nan", "inf", "1e400", "-4")
+        for value in values:
             with self.subTest(value):
                 _, waits = await self.busy_once(value)
                 self.assertEqual(waits, [dg.RETRY_DELAY_S])
 
     async def test_a_long_wait_fails_the_clip_at_once(self) -> None:
         # One worker writes for every table: waiting 30 s would hold them all up.
-        for value in ("30", "inf"):
+        for value in ("30", "3600"):
             self.hits = 0
             self.t._busy_until = 0.0
             with self.subTest(value), self.assertRaises(DeepgramError) as ctx:
@@ -212,12 +212,58 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.hits, 2)
         self.assertEqual(ctx.exception.for_dm, dg.BUSY)  # the same words either way
 
+    async def test_the_remembered_wait_is_capped_and_expires(self) -> None:
+        now = [1000.0]
+        with patch.object(dg, "_clock", lambda: now[0]):
+            # An hour from a proxy: this clip fails, and the window is only a minute.
+            with self.assertRaises(DeepgramError):
+                await self.busy_once("3600")
+            self.assertEqual(self.t._busy_until, 1000.0 + dg.MAX_BUSY_WINDOW_S)
+            # Inside the window: no request, "busy" at once.
+            now[0] += 30
+            with self.assertRaises(DeepgramError):
+                await self.transcribe_counting_waits()
+            self.assertEqual(self.hits, 1)
+            # 1.5 s left: wait those 1.5 s, not the header's hour, then ask.
+            now[0] = 1000.0 + dg.MAX_BUSY_WINDOW_S - 1.5
+            text, waits = await self.transcribe_counting_waits()
+            self.assertEqual((text, waits, self.hits), ("Welcome to Bryn Shander.", [1.5], 2))
+            # Answered after the window was set: cleared.
+            self.assertEqual(self.t._busy_until, 0.0)
+
+    async def test_an_older_answer_never_clears_a_newer_wait(self) -> None:
+        # This request goes out at 1000.0; meanwhile another clip's 429 set a window at
+        # 1000.5. Its 200 says nothing about now: the window stays (worker pool, #173).
+        self.t._busy_until, self.t._busy_set_at = 1001.0, 1000.5
+        self.assertEqual(await self._request_sent_at(1000.0), "Welcome to Bryn Shander.")
+        self.assertEqual(self.t._busy_until, 1001.0)
+
+    async def _request_sent_at(self, sent: float) -> str | None:
+        times = iter([sent - 1, sent])  # _wait_if_busy's look, then the send time
+
+        def clock() -> float:
+            return next(times, sent)
+
+        async def no_wait(_s: float) -> None:
+            return None
+
+        with patch.object(dg, "_clock", clock), patch.object(dg, "_sleep", no_wait):
+            return await self.t.transcribe(clip(), [])
+
+    async def test_a_refusal_with_retry_after_sets_no_wait(self) -> None:
+        self.reply = (401, {"err_msg": "Invalid credentials"})
+        self.retry_after = "30"
+        self.replies = [(401, {"err_msg": "Invalid credentials"})]
+        with self.assertRaises(DeepgramError):
+            await self.t.transcribe(clip(), [])
+        self.assertEqual(self.t._busy_until, 0.0)  # only "busy" answers set a wait
+
     def test_retry_after_parsing(self) -> None:
         self.assertEqual(dg.retry_after_s(" 3 "), 3.0)
         self.assertEqual(dg.retry_after_s("0.5"), 0.5)
         self.assertEqual(dg.retry_after_s("0"), 0.0)
-        self.assertEqual(dg.retry_after_s("-4"), 0.0)
-        self.assertEqual(dg.retry_after_s("inf"), math.inf)
+        for broken in ("-4", "inf", "-inf", "1e400", "9" * 400):  # never a window
+            self.assertIsNone(dg.retry_after_s(broken), broken)
         self.assertIsNone(dg.retry_after_s(None))
         self.assertIsNone(dg.retry_after_s("nan"))
         self.assertIsNone(dg.retry_after_s("soon"))

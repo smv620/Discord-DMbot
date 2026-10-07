@@ -24,9 +24,9 @@ from dmbot.transcription.config import TranscriptionSettings
 
 log = logging.getLogger(__name__)
 
-# Two tries (4 s + 1 s pause + 4 s) fit inside the pipeline's 10 s minimum budget per
-# clip (#155), so a hung Deepgram shows up as a failure ("isn't working"), not as
-# "couldn't keep up". Replies took 0.12-0.6 s in testing. A refused keyterm list (#209)
+# Two tries (4 s + a pause of at most 2 s + 4 s) fit inside the pipeline's 10 s minimum
+# budget per clip (#155), so a hung Deepgram shows up as a failure ("isn't working"), not
+# as "couldn't keep up". Replies took 0.12-0.6 s in testing. A refused keyterm list (#209)
 # adds one or two more requests; refusals come back fast, and the budget still cuts off
 # the rare clip that is refused slowly.
 REQUEST_TIMEOUT_S = 4
@@ -34,8 +34,12 @@ CONNECT_TIMEOUT_S = 2
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 RETRY_DELAY_S = 1.0  # when Deepgram doesn't say how long to wait (Retry-After)
 # The longest wait honoured (#173). One worker writes for every table, so a longer wait
-# would hold all of them up: the clip fails as "busy" instead.
-MAX_RETRY_WAIT_S = 3.0
+# would hold all of them up: the clip fails as "busy" instead. 2 s keeps two tries and the
+# wait inside the clip budget (4 + 2 + 4 = 10 s).
+MAX_RETRY_WAIT_S = 2.0
+# The longest a Retry-After is remembered for every clip: after this, a clip asks again,
+# so no header (a huge number, or an hour from a proxy) can silence the table for long.
+MAX_BUSY_WINDOW_S = 60.0
 BUSY = "Deepgram is busy"
 # Reasons for the log (with settings names); DM_REASONS has the DM screen's words.
 STATUS_REASONS = {
@@ -51,6 +55,12 @@ DM_REASONS = {401: "Deepgram didn't accept DMbot's key", 403: "Deepgram didn't a
 # Statuses the host can fix in .env or their Deepgram account (not an outage).
 HOST_FIXABLE = frozenset({400, 401, 402, 403})
 _sleep = asyncio.sleep  # replaced in tests
+
+
+def _clock() -> float:  # replaced in tests
+    return asyncio.get_running_loop().time()
+
+
 # Deepgram rejects keyterm lists over about 500 tokens with a 400. Invented names split
 # into many tokens, so the length cap is cautious, and a 400 with keyterms is retried
 # with half of them, then none (#209).
@@ -99,14 +109,15 @@ def fallbacks(terms: list[str]) -> list[list[str]]:
 
 
 def retry_after_s(value: str | None) -> float | None:
-    """Seconds from a Retry-After header, or None if it's missing or a date (#173)."""
+    """Seconds from a Retry-After header, or None if it's missing, a date, negative or not
+    a finite number: then the usual pause applies (#173)."""
     if value is None:
         return None
     try:
         seconds = float(value.strip())
     except ValueError:
         return None  # an HTTP date: rare from an API, so use the usual pause
-    return None if math.isnan(seconds) else max(0.0, seconds)
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
 
 
 def request_params(settings: TranscriptionSettings, terms: list[str]) -> list[tuple[str, str]]:
@@ -147,9 +158,12 @@ class DeepgramTranscriber:
         # 400s raise at once instead of paying for the fallbacks on every clip. Any
         # answer clears it (one clip Deepgram couldn't read isn't a settings problem).
         self._400_is_settings = False
-        # Loop time until which Deepgram asked DMbot to wait (Retry-After). It applies to
-        # the whole account, so every clip waits for it instead of asking again first.
+        # Loop time until which Deepgram asked DMbot to wait (Retry-After, at most
+        # MAX_BUSY_WINDOW_S). It applies to the whole account, so every clip waits for it
+        # instead of asking again first. A 200 to a request sent after it was set clears
+        # it; otherwise it expires on its own.
         self._busy_until = 0.0
+        self._busy_set_at = 0.0
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -192,7 +206,7 @@ class DeepgramTranscriber:
 
     async def _wait_if_busy(self) -> None:
         """Wait out a Retry-After that's still running, or fail at once if it's too long."""
-        left = self._busy_until - asyncio.get_running_loop().time()
+        left = self._busy_until - _clock()
         if left > MAX_RETRY_WAIT_S:
             raise DeepgramError(f"{BUSY} (asked to wait {left:.0f} s more)", for_dm=BUSY)
         if left > 0:
@@ -207,6 +221,7 @@ class DeepgramTranscriber:
         params = request_params(s, terms)
         for attempt in (1, 2):
             await self._wait_if_busy()
+            sent_at = _clock()
             pause = 0.0  # before the second try, when Deepgram gave no Retry-After
             try:
                 async with self._get_session().post(
@@ -214,11 +229,16 @@ class DeepgramTranscriber:
                 ) as resp:
                     if resp.status == 200:
                         self._400_is_settings = False
-                        self._busy_until = 0.0
+                        if sent_at >= self._busy_set_at:
+                            # Sent after the last "wait": it really is answering again.
+                            # (An older request's 200 must not clear a newer window.)
+                            self._busy_until = 0.0
                         return transcript(await resp.json(content_type=None))
                     asked = retry_after_s(resp.headers.get("Retry-After"))
                     if asked is not None and resp.status in RETRY_STATUSES:
-                        self._busy_until = asyncio.get_running_loop().time() + asked
+                        now = _clock()
+                        self._busy_until = now + min(asked, MAX_BUSY_WINDOW_S)
+                        self._busy_set_at = now
                     if attempt == 1 and resp.status in RETRY_STATUSES:
                         if asked is not None and asked > MAX_RETRY_WAIT_S:
                             # Too long to hold every table up: say so now.
