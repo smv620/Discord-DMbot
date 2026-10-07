@@ -1233,6 +1233,61 @@ class Lists(MemoryTest):
         await self.memory.undo_names(GUILD_A, self.c, written.batch)
         self.assertEqual(await self.memory.entities(GUILD_A, self.c), [])
 
+    async def test_known_names_get_other_names_in_the_same_change(self) -> None:
+        from dmbot.memory.models import MoreNames, NewName
+
+        bel = await self.add("Belleros", status=CONFIRMED)
+        ulf = await self.add("Ulfgar", status=CONFIRMED)
+        gone = await self.add("Gone")
+        await self.memory.set_entity_status(GUILD_A, self.c, gone, REJECTED, source="dm")
+        before = await self.snapshot()
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [NewName("Bryn Shander", "place", CONFIRMED)],
+            source="dm",
+            more=[
+                MoreNames(bel, ("the old knight", "Ulfgar"), ("the hooded stranger",)),
+                MoreNames(gone, ("Ghost",)),  # forgotten since: left out
+            ],
+        )
+        aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=bel, include_secret=True)
+        self.assertEqual(
+            {(x.text, x.secret, x.status) for x in aliases},
+            {
+                ("Belleros", False, CONFIRMED),
+                ("the old knight", False, CONFIRMED),
+                ("the hooded stranger", True, CONFIRMED),
+            },  # Ulfgar is another name's: left out
+        )
+        self.assertEqual(len(await self.memory.aliases(GUILD_A, self.c, entity_id=ulf)), 1)
+        assert written.batch is not None
+        await self.memory.undo_names(GUILD_A, self.c, written.batch)  # one Undo for all
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_a_name_the_entry_has_secretly_or_turned_down_is_skipped_quietly(self) -> None:
+        from dmbot.memory.models import MoreNames
+
+        bel = await self.add("Belleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, bel, "the hooded stranger", kind="title", source="dm",
+            status=CONFIRMED, secret=True,
+        )  # fmt: skip
+        bel_alias = (
+            await self.memory.add_alias(GUILD_A, self.c, bel, "Bel", kind="short", source="dm")
+        ).value
+        await self.memory.update_alias(GUILD_A, self.c, bel_alias.id, status=REJECTED, source="dm")
+        written = await self.memory.add_names(
+            GUILD_A, self.c, [], source="dm", secret_clashes=False,
+            more=[MoreNames(bel, ("the hooded stranger", "Bel"))],
+        )  # fmt: skip
+        self.assertEqual(written.value, [None])  # nothing added, and no error to give it away
+        aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=bel, include_secret=True)
+        self.assertEqual(
+            sorted((x.text, x.secret) for x in aliases if x.status != REJECTED),
+            [("Belleros", False), ("the hooded stranger", True)],
+        )
+
     async def test_names_already_used_are_skipped_inside_the_save(self) -> None:
         from dmbot.memory.models import NewName
 

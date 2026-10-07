@@ -3,6 +3,7 @@ names DMbot suggests after a session, and names as speech-to-text hints."""
 
 import asyncio
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -583,10 +584,20 @@ class Lists(NamesTest):
         from dmbot.memory.lookup import LookupCache
 
         self.bot.lookup = LookupCache(self.memory)
-        await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], ["the stranger"])
+        self.bell = await ui.save_name(
+            self.memory, self.campaign, "Belleros", "npc", [], ["the stranger"]
+        )
 
     def fresh(self) -> None:
         self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+
+    async def card(self) -> str:
+        from dmbot.ui import name_card
+
+        self.fresh()
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        return str(it.response.sent[0][0])
 
     async def test_add_many_saves_skips_and_asks_about_unclear_ones(self) -> None:
         from dmbot.ui import name_lists
@@ -595,14 +606,19 @@ class Lists(NamesTest):
         it = self.it()
         text = "# note\nBryn Shander | place | Bryn\nBelleros | npc\nUlfgar\nBell Eros | npc"
         await name_lists.import_list(it, self.campaign.id, text)
-        summary = it.followup.send.call_args.args[0]
-        self.assertIn("Added 3 names", summary)
+        sent = it.followup.send.call_args_list
+        summary = sent[0].args[0]
+        self.assertIn(
+            "📥 **Added 3 names** · 1 already known · 1 looks like a known name. Questions below.",
+            summary,
+        )
         self.assertIn("Only one name wrong? Fix or remove it with 🔍 Find a name", summary)
-        self.assertIn("2 names need you to check them", summary)  # no kind; sounds like Belleros
-        self.assertIn("1 name DMbot already knows", summary)
+        self.assertIn("1 name needs you to check it", summary)  # Ulfgar: no kind
+        self.assertIn("1. **Bell Eros** → **Belleros**?", sent[1].args[0])  # asked, not joined
         self.assertIn("Bryn Shander", await self.names())
         self.assertIn("Ulfgar", await self.names((PROPOSED,)))
-        view = it.followup.send.call_args.kwargs["view"]
+        self.assertIn("Bell Eros", await self.names((PROPOSED,)))
+        view = sent[0].kwargs["view"]
         (undo,) = [c for c in view.children if isinstance(c, name_lists.UndoListButton)]
         it = self.it()
         it.edit_original_response = AsyncMock()
@@ -630,6 +646,176 @@ class Lists(NamesTest):
             "Remove the wrong names from their cards (`/dmbot names`).",
         )
         self.assertIn("Bryn Shander", await self.names())
+
+    async def add_many(self, text: str) -> list[Any]:
+        from dmbot.ui import name_lists
+
+        self.fresh()
+        it = self.it()
+        await name_lists.import_list(it, self.campaign.id, text)
+        return list(it.followup.send.call_args_list)
+
+    async def press(self, view: Any, label: str) -> Any:
+        (button,) = [c for c in view.children if getattr(c, "label", "") == label][:1]
+        it = self.it()
+        it.edit_original_response = AsyncMock()
+        await button.callback(it)
+        return it
+
+    async def test_a_known_name_gets_its_new_other_names_and_undo_takes_them_back(self) -> None:
+        from dmbot.ui import name_lists
+
+        sent = await self.add_many("Belleros | NPC | the old knight, Bell")
+        summary = sent[0].args[0]
+        self.assertIn(
+            "No new names were added** · 1 already known (1 got new other names)", summary
+        )
+        self.assertIn("the old knight", await self.card())
+        (undo,) = [
+            c for c in sent[0].kwargs["view"].children if isinstance(c, name_lists.UndoListButton)
+        ]
+        it = self.it()
+        it.edit_original_response = AsyncMock()
+        await undo.callback(it)
+        self.assertNotIn("the old knight", await self.card())
+        self.assertIn("Belleros", await self.names())  # the known name stays
+
+    async def test_a_swapped_name_and_other_name_changes_nothing(self) -> None:
+        await self.add_many("Belleros | NPC | Bell")
+        sent = await self.add_many("Bell | NPC | Belleros")
+        self.assertIn(
+            "**Bell** is already another name for **Belleros**. Nothing changed.", sent[0].args[0]
+        )
+        self.assertEqual(len(sent), 1)
+
+    async def test_a_near_name_is_asked_and_same_joins_it(self) -> None:
+        sent = await self.add_many("Beleros | NPC")
+        view = sent[1].kwargs["view"]
+        self.assertIn("Beleros", await self.names((PROPOSED,)))  # not joined on its own
+        it = await self.press(view, "1. Same")
+        self.assertIn(
+            "now another name for **Belleros**",
+            it.edit_original_response.call_args.kwargs["content"],
+        )
+        self.assertNotIn("Beleros", await self.names((PROPOSED,)))
+        self.assertIn("Beleros", await self.card())  # one of Belleros's other names now
+
+    async def test_different_keeps_both_and_remove_removes(self) -> None:
+        sent = await self.add_many("Beleros | NPC\nBellros | NPC")
+        view = sent[1].kwargs["view"]
+        await self.press(view, "1. Different")
+        self.assertIn("Beleros", await self.names())  # confirmed: both kept
+        it = await self.press(view, "2. Remove")
+        self.assertNotIn("Bellros", await self.names((PROPOSED,)))
+        self.assertIn("All checked.", it.edit_original_response.call_args.kwargs["content"])
+        undo_message = it.followup.send.call_args
+        self.assertIn("Removed **Bellros**. Wrong? **Undo**", undo_message.args[0])
+
+    async def test_a_manager_folding_in_a_secret_name_sees_what_any_name_gives(self) -> None:
+        from dmbot.ui import name_lists
+
+        def first_line(it: Any) -> str:
+            return str(it.followup.send.call_args_list[0].args[0].splitlines()[0])
+
+        results = []
+        for other in ("the stranger", "the old knight"):  # a secret name, then a new one
+            self.fresh()
+            it = self.it(MANAGER)
+            await name_lists.import_list(it, self.campaign.id, f"Belleros | NPC | {other}")
+            results.append(first_line(it))
+        self.assertEqual(results[0], results[1])
+        self.assertNotIn("the stranger", await self.card_for(MANAGER))
+
+    async def card_for(self, user: int) -> str:
+        from dmbot.ui import name_card
+
+        self.fresh()
+        it = self.it(user)
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        return str(it.response.sent[0][0])
+
+    async def test_different_for_all_and_more(self) -> None:
+        text = "\n".join(
+            f"{n} | NPC" for n in ("Beleros", "Bellros", "Bellerose", "Bellleros", "Belleross")
+        )
+        sent = await self.add_many(text)
+        view = sent[1].kwargs["view"]
+        self.assertIn("1 more after these: press **More ▶**.", sent[1].args[0])
+        it = await self.press(view, "More ▶")
+        self.assertIn("5. **Belleross** → **Belleros**?", it.response.edited[0][0])
+        it = await self.press(view, "Different for all 5")
+        self.assertIn("All checked.", it.edit_original_response.call_args.kwargs["content"])
+        names = await self.names()
+        for name in ("Beleros", "Bellros", "Bellerose", "Bellleros", "Belleross"):
+            self.assertIn(name, names)
+
+    async def test_keep_all_and_change_all(self) -> None:
+        from dmbot.ui import names as panel
+
+        await panel.save_name(self.memory, self.campaign, "Auril", "deity", [], [])
+        await panel.save_name(self.memory, self.campaign, "Ulfgar", "npc", [], [])
+        sent = await self.add_many("Auril | place\nUlfgar | place")
+        view = sent[1].kwargs["view"]
+        self.assertIn(panel.KIND_SHORT["deity"], sent[1].args[0])
+        it = await self.press(view, "Change all")
+        content = it.edit_original_response.call_args.kwargs["content"]
+        self.assertEqual(content.count("✅ Changed 1 to place."), 2)
+        self.assertIn("All checked.", content)
+
+    async def test_a_long_summary_still_fits_discord(self) -> None:
+        from dmbot.ui import name_lists
+
+        long = ["x" * 100 + str(i) for i in range(20)]
+        text = name_lists.summary_text(
+            3, 0, 20, 0, 0, [(i, "a" * 300) for i in range(5)],
+            swapped=[(n, n + "y") for n in long],
+        )  # fmt: skip
+        self.assertLessEqual(len(text), 2000)
+
+    async def test_same_for_all(self) -> None:
+        sent = await self.add_many("Beleros | NPC\nBellros | NPC\nBellerose | NPC")
+        view = sent[1].kwargs["view"]
+        self.assertIn("3 names look like names DMbot already knows", sent[1].args[0])
+        it = await self.press(view, "Same for all 3")
+        self.assertIn(
+            "Joined 3 names. Wrong? Open the known name", it.followup.send.call_args.args[0]
+        )
+        card = await self.card()
+        for name in ("Beleros", "Bellros", "Bellerose"):
+            self.assertIn(name, card)
+
+    async def test_a_kind_that_differs_is_kept_unless_changed(self) -> None:
+        sent = await self.add_many("Belleros | place")
+        self.assertIn("1 kind differs. Questions below.", sent[0].args[0])
+        self.assertIn("1. **Belleros**: DMbot has NPC, your list says place.", sent[1].args[0])
+        self.assertIn("🪪 **Belleros** · NPC", await self.card())  # kept by default
+        await self.press(sent[1].kwargs["view"], "1. Change to place")
+        self.assertIn("🪪 **Belleros** · place", await self.card())
+
+    async def test_the_owners_bulk_import_test_reads_as_its_setup_says(self) -> None:
+        """docs/test-scripts/bakeoff-story-names-setup.md, step 1 then step 2 (#368)."""
+        first = script_file("bakeoff-story-names-setup.md").split("```")[1].strip()
+        await self.memory.set_entity_status(
+            GUILD, self.campaign.id, self.bell.id, REJECTED, source="dm"
+        )  # a new campaign: only the setup's names
+        sent = await self.add_many(first)
+        self.assertEqual(sent[0].args[0].splitlines()[0], "📥 **Added 10 names.**")
+        sent = await self.add_many(script_file("bakeoff-story-names.txt"))
+        self.assertEqual(
+            sent[0].args[0].splitlines()[:3],
+            [
+                "📥 **Added 22 names** · 4 already known · 3 look like known names · 2 kinds "
+                "differ. Questions below.",
+                "• **Bell** is already another name for **Belleros**. Nothing changed.",
+                "• **Vane** is already another name for **Oskar Vane**. Nothing changed.",
+            ],
+        )
+        near = sent[1].args[0]
+        for question in ("**Quilon** → **Quillon**?", "**Brynnwater** → **Brynwater**?",
+                         "**Gorrack** → **Gorrak**?"):  # fmt: skip
+            self.assertIn(question, near)
+        self.assertIn("**Varrow**: DMbot has god, your list says place.", sent[2].args[0])
+        self.assertIn("**Ashen Crown**: DMbot has group, your list says place.", sent[2].args[0])
 
     async def test_an_unknown_kind_is_asked_once_for_all_its_names(self) -> None:
         from dmbot.ui import name_lists
@@ -760,6 +946,7 @@ class Lists(NamesTest):
         summary = it.followup.send.call_args.args[0]
         # A clash with a secret name looks exactly like no clash: saved like any other.
         self.assertIn("Added 1 name.", summary)
+        self.assertEqual(it.followup.send.call_count, 1)  # nothing asked about it
         self.assertNotIn("need you to check", summary)
         self.assertIn("only the campaign's DM can add secret names", summary)
         self.fresh()
@@ -1252,6 +1439,12 @@ class Review(NamesTest):
 
         ranked = ui.ranked_same_as("Bell or us", [e("Gorrak"), e("Belleros"), e("Tamsin")])
         self.assertEqual(ranked[0].name, "Belleros")
+
+
+def script_file(name: str) -> str:
+    """A file from docs/test-scripts."""
+    path = Path(__file__).resolve().parents[2] / "docs" / "test-scripts" / name
+    return path.read_text(encoding="utf-8")
 
 
 def make_table(campaign_id: str) -> Table:

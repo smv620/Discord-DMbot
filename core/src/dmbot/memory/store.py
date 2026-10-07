@@ -64,6 +64,7 @@ from dmbot.memory.models import (
     Heard,
     HeardCount,
     MemoryRuleError,
+    MoreNames,
     NewName,
     Relation,
     TooLateToUndo,
@@ -496,6 +497,7 @@ class MemoryStore:
         *,
         source: str,
         secret_clashes: bool = True,
+        more: Sequence[MoreNames] = (),
     ) -> Written[list[str | None]]:
         """Many names at once (📥 Add many), each with its other and secret names, in one
         change: one Undo (`undo_names`) takes the whole list back, and live transcription
@@ -504,7 +506,11 @@ class MemoryStore:
         once: memory writes for a campaign happen one at a time, so this check is exact).
         Other names already used elsewhere are left out the same way. `secret_clashes`:
         whether a secret name counts as used (False for anyone but the campaign's DMs, who
-        must never learn one exists)."""
+        must never learn one exists). `more`: other names for names DMbot already knows
+        (#369), in the same change, so the same Undo takes them back; one whose entry has
+        gone, or whose name is used by now or that entry already has (even as a secret or
+        a name the DM said isn't it), is left out quietly. The returned IDs then go on with
+        one per `more` entry: its entry's ID if any name was added, else None."""
         if source != DM:
             raise MemoryRuleError("Only the DM can add a list of names.")
         for n in names:
@@ -518,6 +524,38 @@ class MemoryStore:
                 (*w.ids, secret_clashes, *w.ids),
             )
             used = {str(r["key"]) for r in await cur.fetchall()}
+            folded: list[str | None] = []
+            wanted = sorted({m.entity_id for m in more})
+            live = {
+                str(r["id"]): str(r["status"])
+                for r in await w.select(ENTITIES, " AND id = ANY(%s)", [wanted])
+                if r["status"] in LIVE
+            }
+            # Every name they have, secret or turned down too: never a second copy, and
+            # never an error that would tell a player a secret name exists.
+            has_keys: dict[str, set[str]] = {}
+            for r in await w.select(ALIASES, " AND entity_id = ANY(%s)", [sorted(live)]):
+                has_keys.setdefault(str(r["entity_id"]), set()).add(str(r["key"]))
+            for m in more:
+                if m.entity_id not in live:
+                    folded.append(None)  # forgotten or joined to another since
+                    continue
+                status = live[m.entity_id]
+                has = has_keys.setdefault(m.entity_id, set())
+                extra = [(clean_text(t), "nickname", False) for t in m.others]
+                extra += [(clean_text(t), "title", True) for t in m.secrets]
+                added = False
+                for text, kind, secret in extra:
+                    if (key := lookup_key(text)) in used or key in has:
+                        continue
+                    used.add(key)
+                    has.add(key)
+                    await w.insert(
+                        ALIASES,
+                        _new_alias(w, m.entity_id, text, kind, status, secret, None),
+                    )
+                    added = True
+                folded.append(m.entity_id if added else None)
             ids: list[str | None] = []
             for n in names:
                 onto.active_type(n.type)
@@ -549,7 +587,7 @@ class MemoryStore:
                     )
                 used |= seen
                 ids.append(row["id"])
-            return Written(ids, w.batch)
+            return Written(ids + folded, w.batch)
 
     async def undo_names(self, guild_id: int, campaign_id: str, batch: int) -> Written[None]:
         """Take back a whole list from `add_names`. Refused unless that batch only added
