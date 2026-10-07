@@ -42,6 +42,9 @@ class TranscriptionSettings:
     deepgram_api_key: str = field(default="", repr=False)
     deepgram_model: str = "nova-3"
     deepgram_url: str = DEFAULT_DEEPGRAM_URL
+    # Clips written at once, for different servers (#173). Local Whisper fills the CPU
+    # with one; an outside company answers several requests side by side.
+    workers: int = 1
 
     @property
     def sends_audio_out(self) -> bool:
@@ -72,6 +75,25 @@ def _positive_int(name: str, value: str) -> int:
     return int(value)
 
 
+MAX_WORKERS = 16
+
+
+def _workers(value: str, engine: str) -> int:
+    workers = _positive_int("TRANSCRIBE_WORKERS", value)
+    if engine == "whisper-local" and workers > 1:
+        # One model behind one lock: extra workers would only wait, and their clips'
+        # time would run out while waiting (skipped clips, lost text).
+        raise TranscriptionConfigError(
+            "TRANSCRIBE_WORKERS must be 1 with TRANSCRIBER=whisper-local (it fills the CPU). "
+            "Leave it blank."
+        )
+    if workers > MAX_WORKERS:
+        raise TranscriptionConfigError(
+            f"TRANSCRIBE_WORKERS can be at most {MAX_WORKERS}, got {workers}."
+        )
+    return workers
+
+
 def load_transcription_settings(env: Mapping[str, str]) -> TranscriptionSettings:
     def get(name: str, default: str) -> str:
         return env.get(name, "").strip() or default
@@ -94,6 +116,9 @@ def load_transcription_settings(env: Mapping[str, str]) -> TranscriptionSettings
         deepgram_api_key=get("DEEPGRAM_API_KEY", ""),
         deepgram_model=get("DEEPGRAM_MODEL", "nova-3"),
         deepgram_url=get("DEEPGRAM_LISTEN_URL", DEFAULT_DEEPGRAM_URL),
+        workers=_workers(
+            get("TRANSCRIBE_WORKERS", "3" if engine in OUTSIDE_ENGINES else "1"), engine
+        ),
     )
     if settings.engine == "cloud" and not settings.cloud_api_key:
         raise TranscriptionConfigError(

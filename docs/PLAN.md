@@ -597,6 +597,15 @@ campaign's DMs or a server manager; anyone else is told how to stop recording
 themselves). Only the newest listening message has the button, it comes off when the
 session ends, and it works after a restart. The help card says how to stop too.
 
+**Writing speech down for several tables: built (2026-10-07, #173).** Each Discord
+server has its own queue of speech (64 pieces; 256 across all servers bound memory when
+the engine is down for everyone). `TRANSCRIBE_WORKERS` workers take turns between servers:
+3 by default with Deepgram or cloud, and exactly 1 with local Whisper (one model on the
+CPU; more would only wait). A server's speech is written one piece at a time and in
+order, so its lines never swap, while a slow table can't hold up the others. When
+writing stops, every table with speech waiting is told, and told again when it works.
+Each table's status shows its own backlog and delay.
+
 **End of a session: built (2026-10-06, #109).** When the DM stops DMbot:
 - Nothing said before the stop is lost: speech still being heard is closed off and
   queued, and the session stays "ending" until its own queued speech is written down

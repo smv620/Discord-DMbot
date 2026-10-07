@@ -15,6 +15,21 @@ class TranscriptionConfigTests(unittest.TestCase):
         self.assertEqual((s.engine, s.whisper_model, s.language), ("whisper-local", "small", "en"))
         self.assertEqual((s.whisper_compute_type, s.whisper_beam_size), ("auto", 1))
 
+    def test_workers_default_by_engine_and_are_checked(self) -> None:
+        self.assertEqual(load_transcription_settings({}).workers, 1)  # Whisper fills the CPU
+        deepgram = {"TRANSCRIBER": "deepgram", "DEEPGRAM_API_KEY": "k"}
+        self.assertEqual(load_transcription_settings(deepgram).workers, 3)
+        self.assertEqual(
+            load_transcription_settings({**deepgram, "TRANSCRIBE_WORKERS": "5"}).workers, 5
+        )
+        for bad in ("0", "x", "-2", "17"):
+            with self.subTest(bad), self.assertRaises(TranscriptionConfigError):
+                load_transcription_settings({**deepgram, "TRANSCRIBE_WORKERS": bad})
+        # Local Whisper: one model behind one lock, so only 1 works.
+        with self.assertRaisesRegex(TranscriptionConfigError, "must be 1"):
+            load_transcription_settings({"TRANSCRIBE_WORKERS": "2"})
+        self.assertEqual(load_transcription_settings({"TRANSCRIBE_WORKERS": "1"}).workers, 1)
+
     def test_language_auto(self) -> None:
         self.assertEqual(load_transcription_settings({"TRANSCRIBE_LANGUAGE": "auto"}).language, "")
 
