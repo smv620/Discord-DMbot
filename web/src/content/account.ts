@@ -34,7 +34,7 @@ export function hoursLeftLine(
   const more =
     plan === "try-it"
       ? "Pick a plan below to keep playing."
-      : `Need more now? Tap Change plan to add ${extra}.`;
+      : `Need more now? Tap Change plan, then add ${extra}.`;
   return again ? `${again} ${more}` : more;
 }
 
@@ -52,8 +52,8 @@ export const text = {
   signIn: "Sign in with Discord",
   signInNote: "DMbot only asks Discord for your name, your email and your list of servers.",
   startTryItFree: "Start Try It, free",
-  startTryItSignIn: "Free for 30 days. No card needed. You'll sign in with Discord first.",
-  confirmAfterSignIn: "You'll sign in with Discord, then confirm your plan.",
+  startTryItSignIn:
+    "Free for 30 days. No card needed. You'll sign in with Discord first, then confirm your plan.",
   haveAccount: "Already have a plan?",
   seePrices: "See the plans",
   signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",

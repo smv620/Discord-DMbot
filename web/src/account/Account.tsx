@@ -227,7 +227,6 @@ function SignedOut({ notice }: { notice: string | null }) {
           {text.startTryItFree}
         </a>
         <p class="muted small">{text.startTryItSignIn}</p>
-        <p class="muted small">{text.confirmAfterSignIn}</p>
         <PlanList
           choose={(id) => (
             <a class="button secondary" href={signIn}>
@@ -676,7 +675,7 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
                   try {
                     await api.confirmDelete(token);
                   } catch (error) {
-                    reset(); // back to the start, so trying again gets a new confirmation
+                    reset(); // back to step 0 ("Start deleting"): a retry gets a new confirmation
                     throw error;
                   }
                   onDeleted();

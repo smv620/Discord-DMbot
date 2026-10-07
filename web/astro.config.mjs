@@ -16,6 +16,10 @@ export default defineConfig({
   // Preact only where a page needs interactivity: the signed-in area (/account).
   integrations: [preact()],
   trailingSlash: "never",
+  // Small stylesheets stay inline ("auto"). "never" was considered (#469): Astro's island
+  // loader writes an inline <style> anyway, so the CSP keeps 'unsafe-inline' for styles
+  // either way, and external CSS would only add a render-blocking request. Account data is
+  // shown as text by Preact (escaped), never as markup or styles.
   build: {
     format: "file",
   },

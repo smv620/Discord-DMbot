@@ -8,6 +8,12 @@ import {
   paymentGraceDays,
   paymentProvider,
 } from "../../content/legal";
+import { byId, formatPrice } from "../../content/pricing";
+
+const firstMonth = {
+  plan: byId.table.name,
+  price: formatPrice(byId.table.firstMonthAfterTrialCents ?? 0),
+};
 ---
 
 <LegalPage
@@ -71,7 +77,7 @@ import {
   <ul>
     <li>
       Plans, prices and hours are on the <a href="/pricing">Prices</a> page. Paid plans renew
-      every month until you stop them. The first month of Table after Try It costs $1.99.
+      every month until you stop them. The first month of {firstMonth.plan} after Try It costs {firstMonth.price}.
       {"{{CHECK: does Try It turn into a paid plan by itself after 30 days, or only when you pick one? Say so here.}}"}
     </li>
     <li>

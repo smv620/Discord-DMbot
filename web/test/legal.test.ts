@@ -97,7 +97,7 @@ describe("the facts #433 asks for", () => {
   const terms = (): string => text(doc("terms").querySelector("main"));
 
   it("names what we keep and who helps us", () => {
-    for (const fact of ["Discord user id", "email", "ids of your Discord servers that use DMbot", "Deepgram", "Anthropic"]) {
+    for (const fact of ["Discord account number", "email", "ids of your Discord servers that use DMbot", "Deepgram", "Anthropic"]) {
       expect(privacy()).toContain(fact);
     }
   });

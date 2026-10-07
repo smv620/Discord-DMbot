@@ -131,7 +131,7 @@ export const extraHours = {
   hours: data.extraHours.hours,
   /** "$4.99 for 10 hours" */
   priceLine: `${formatPrice(data.extraHours.priceCents)} for ${data.extraHours.hours} hours`,
-  line: `Run out? Add ${data.extraHours.hours} hours from My account. They last until the end of this month.`,
+  line: `Run out? In My account, tap Change plan to add ${data.extraHours.hours} hours. They last until the end of this month.`,
 };
 
 /** What every plan does, after "every plan": one list, used twice below. */
@@ -169,7 +169,7 @@ export const questions: readonly Question[] = [
   },
   {
     question: "Do unused hours carry over?",
-    answer: `No. Your hours are for the month. Next month you get a full set again. If you run out, you can add ${extraHours.hours} more hours.`,
+    answer: `No. Your hours are for the month. Next month you get a full set again. If you run out, you can add ${extraHours.hours} more hours (on paid plans).`,
   },
   {
     question: "What's different between the plans?",
@@ -200,6 +200,6 @@ export const questions: readonly Question[] = [
   {
     question: "Can I delete everything?",
     answer:
-      "Yes. Ask from My account and we delete it all. Backups other people already downloaded are theirs to delete.",
+      "Yes, from My account. Your account and the campaigns you run go straight away. Backups people downloaded, and lines you said in other people's games, stay.",
   },
 ];

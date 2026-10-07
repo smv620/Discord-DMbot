@@ -408,7 +408,7 @@ describe("hours words", () => {
   it("tells a Try It user and a paid user different next steps at the cap", () => {
     expect(hoursLeftLine(8, 8, null, "try-it")).toBe("Pick a plan below to keep playing.");
     expect(hoursLeftLine(18, 18, "2026-10-14", "table")).toBe(
-      "Your hours start again on Oct 14. Need more now? Tap Change plan to add 10 hours for $4.99.",
+      "Your hours start again on Oct 14. Need more now? Tap Change plan, then add 10 hours for $4.99.",
     );
   });
 

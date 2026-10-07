@@ -24,11 +24,16 @@ for (const page of htmlFiles(dist)) {
   }
 }
 
-// A real build must not contain the pretend API (src/account/mock.ts).
+// A real build must not contain the pretend API (src/account/mock.ts): neither its chunk
+// nor its marker. This reads the shell's PUBLIC_API_BASE only; a mock build set through
+// web/.env instead fails here, which is the safe way round.
 if (process.env.PUBLIC_API_BASE !== "mock") {
   const assets = join(dist, "_astro");
   for (const name of existsSync(assets) ? readdirSync(assets) : []) {
-    if (readFileSync(join(assets, name), "utf8").includes("dmbot-pretend-api-7f3c")) {
+    if (
+      /^mock\./.test(name) ||
+      readFileSync(join(assets, name), "utf8").includes("dmbot-pretend-api-7f3c")
+    ) {
       problems.push(`_astro/${name} contains the pretend API; build without PUBLIC_API_BASE=mock`);
     }
   }

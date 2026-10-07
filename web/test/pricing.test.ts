@@ -106,6 +106,21 @@ describe("the plan file's shape", () => {
     }
     expect(facts.order).toContain(facts.recommended);
     expect(Number.isInteger(facts.paymentGraceDays)).toBe(true);
+    const whole = (n: unknown): boolean => Number.isInteger(n) && (n as number) >= 0;
+    const wholeOrNull = (n: unknown): boolean => n === null || whole(n);
+    for (const id of facts.order) {
+      const p = facts.plans[id as keyof typeof facts.plans];
+      expect(wholeOrNull(p.priceCents), `${id} priceCents`).toBe(true);
+      expect(whole(p.campaigns) && p.campaigns > 0, `${id} campaigns`).toBe(true);
+      expect(wholeOrNull(p.trialDays), `${id} trialDays`).toBe(true);
+      expect(wholeOrNull(p.aboutHoursPerWeek), `${id} aboutHoursPerWeek`).toBe(true);
+      expect(wholeOrNull(p.firstMonthAfterTrialCents), `${id} firstMonth`).toBe(true);
+      expect(typeof p.backups, `${id} backups`).toBe("boolean");
+      expect(whole(p.keepAfterLastSession.count), `${id} keep`).toBe(true);
+    }
+    expect(whole(facts.extraHours.hours) && whole(facts.extraHours.priceCents)).toBe(true);
+    expect(whole(facts.keepAfterPlanStopsPaying.count)).toBe(true);
+    expect(facts.deletionWarningDaysBefore.every(whole)).toBe(true);
   });
 });
 
@@ -164,7 +179,9 @@ describe("the words match the numbers", () => {
     expect(answer("Can I give a campaign to someone else?")).toMatch(
       /tap Hand over next to the campaign.*room for it/,
     );
-    expect(answer("Can I delete everything?")).toMatch(/we delete it all/);
+    expect(answer("Can I delete everything?")).toMatch(
+      /^Yes, from My account\. Your account and the campaigns you run go straight away\./,
+    );
   });
 });
 
