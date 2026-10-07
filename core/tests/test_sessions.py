@@ -1307,7 +1307,8 @@ class SaveAndResume(SessionTests):
         channel = MagicMock(spec=discord.TextChannel)
         channel.send = AsyncMock()
         self.bot.get_channel = MagicMock(return_value=channel)  # type: ignore[method-assign]
-        self.assertEqual(await self.bot._post_transcript(5, "**Mia:** hi"), "posted")
+        result = await self.bot._post_transcript(5, "**Mia:** hi")
+        self.assertEqual(result[0], "posted")  # with the message, kept for a late fix
         call = channel.send.await_args
         assert call is not None
         self.assertTrue(call.kwargs["silent"])
