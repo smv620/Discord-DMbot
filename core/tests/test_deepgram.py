@@ -20,8 +20,8 @@ def reply(text: str) -> dict[str, Any]:
     return {"results": {"channels": [{"alternatives": [{"transcript": text}]}]}}
 
 
-def clip() -> Utterance:
-    return Utterance(1, 2, 0, 0, bytes(3200))
+def clip(guild_id: int = 1, session: int = 0) -> Utterance:
+    return Utterance(guild_id, 2, 0, 0, bytes(3200), session=session)
 
 
 class KeytermTests(unittest.TestCase):
@@ -37,6 +37,8 @@ class KeytermTests(unittest.TestCase):
         long = ["x" * 250, "y" * 250, "z" * 250]
         self.assertEqual(dg.keyterms(long), ["x" * 250, "y" * 250])  # third goes over 600
         self.assertEqual(dg.keyterms(long, max_chars=300), ["x" * 250])
+        # One long name doesn't push out the shorter ones after it.
+        self.assertEqual(dg.keyterms(["x" * 150, "Auril"], max_chars=100), ["Auril"])
 
     def test_fallbacks_halve_then_drop_keyterms(self) -> None:
         self.assertEqual(dg.fallbacks(["a", "b", "c"]), [["a", "b", "c"], ["a"], []])
@@ -88,9 +90,12 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             self.hits += 1
             terms = [v for k, v in request.query.items() if k == "keyterm"]
             self.sent.append(terms)
+            if self.replies:
+                status, body = self.replies.pop(0)
+                return web.json_response(body, status=status)
             if self.max_keyterm_chars is not None and sum(map(len, terms)) > self.max_keyterm_chars:
                 return web.json_response({"err_msg": "too many keyterm tokens"}, status=400)
-            status, body = self.replies.pop(0) if self.replies else self.reply
+            status, body = self.reply
             return web.json_response(body, status=status)
 
         app = web.Application()
@@ -168,16 +173,53 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             text = await self.t.transcribe(clip(), ["Auril", "Bryn Shander"])
         self.assertEqual(text, "Welcome to Bryn Shander.")
         self.assertEqual(self.sent, [["Auril", "Bryn Shander"], ["Auril"], []])
-        # Hints come back on later clips, a few at least (MIN_KEYTERM_CHARS).
+        # Hints come back on later clips, a few at least: MIN_KEYTERM_CHARS, exactly.
         self.sent.clear()
         self.max_keyterm_chars = None
-        await self.t.transcribe(clip(), ["Auril", "Bryn Shander"])
-        self.assertEqual(self.sent, [["Auril", "Bryn Shander"]])
+        names = [f"Name{i:02}" for i in range(40)]  # 6 characters each
+        await self.t.transcribe(clip(), names)
+        self.assertEqual(sum(map(len, self.sent[0])), 96)  # 16 names fit in 100
+        self.assertEqual(self.sent[0], names[:16])
+
+    async def test_the_learned_length_only_goes_down(self) -> None:
+        names = [f"Caer-Dineval-{i:02}" for i in range(30)]  # 15 characters each
+        self.max_keyterm_chars = 250
+        with self.assertLogs("dmbot.transcription.deepgram", "WARNING"):
+            await self.t.transcribe(clip(), names)  # 15 names worked: 225 characters
+            self.max_keyterm_chars = 100
+            await self.t.transcribe(clip(), names)  # only none worked: down to the floor
+        self.max_keyterm_chars = None
+        self.sent.clear()
+        await self.t.transcribe(clip(), names[:3])  # a short list works at once
+        await self.t.transcribe(clip(), names)
+        self.assertEqual([len(t) for t in self.sent], [3, 6])  # 100 characters, not 225
+
+    async def test_one_campaigns_refusals_never_limit_another(self) -> None:
+        names = [f"Caer-Dineval-{i:02}" for i in range(30)]
+        self.max_keyterm_chars = 250
+        with self.assertLogs("dmbot.transcription.deepgram", "WARNING"):
+            await self.t.transcribe(clip(guild_id=1, session=1), names)
+        self.max_keyterm_chars = None
+        self.sent.clear()
+        await self.t.transcribe(clip(guild_id=2, session=2), names)  # another server
+        await self.t.transcribe(clip(guild_id=1, session=3), names)  # the next session
+        self.assertEqual([len(t) for t in self.sent], [30, 30])
+
+    async def test_busy_then_refused_still_falls_back(self) -> None:
+        self.max_keyterm_chars = 6
+        self.replies = [(429, {"err_msg": "slow down"})]
+        with (
+            patch("dmbot.transcription.deepgram.RETRY_DELAY_S", 0),
+            self.assertLogs("dmbot.transcription.deepgram", "WARNING"),
+        ):
+            text = await self.t.transcribe(clip(), ["Auril", "Bryn Shander"])
+        self.assertEqual(text, "Welcome to Bryn Shander.")
+        self.assertEqual(self.sent, [["Auril", "Bryn Shander"]] * 2 + [["Auril"]])
 
     async def test_a_400_without_keyterms_points_at_the_settings(self) -> None:
         self.reply = (400, {"err_msg": "bad model"})
         with (
-            self.assertLogs("dmbot.transcription.deepgram", "WARNING"),
+            self.assertLogs("dmbot.transcription.deepgram", "WARNING") as logs,
             self.assertRaises(DeepgramError) as ctx,
         ):
             await self.t.transcribe(clip(), ["Auril", "Bryn Shander"])
@@ -185,6 +227,21 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("400", str(ctx.exception))
         self.assertTrue(ctx.exception.host_can_fix)  # even without keyterms: settings
         self.assertNotIn("Auril", str(ctx.exception))
+        self.assertNotIn("Auril", "\n".join(logs.output))
+        # Later clips don't pay for the fallbacks again: one request, then the error.
+        self.sent.clear()
+        with self.assertRaises(DeepgramError):
+            await self.t.transcribe(clip(), ["Auril", "Bryn Shander"])
+        self.assertEqual(self.sent, [["Auril", "Bryn Shander"]])
+        # One answer shows it wasn't the settings after all: the fallbacks come back.
+        self.reply = (200, reply("ok"))
+        await self.t.transcribe(clip(), [])
+        self.reply = (400, {"err_msg": "too many keyterm tokens"})
+        self.replies = [(400, {}), (200, reply("Auril"))]
+        self.sent.clear()
+        with self.assertLogs("dmbot.transcription.deepgram", "WARNING"):
+            self.assertEqual(await self.t.transcribe(clip(), ["Auril", "Bryn Shander"]), "Auril")
+        self.assertEqual(self.sent, [["Auril", "Bryn Shander"], ["Auril"]])
 
     async def test_no_speech_is_none(self) -> None:
         self.reply = (200, reply(""))
