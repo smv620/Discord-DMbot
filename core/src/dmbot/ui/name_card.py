@@ -64,7 +64,9 @@ from dmbot.ui.names import (
 
 log = logging.getLogger(__name__)
 ALSO_CALLED = "➕ Also called…"  # adds another name for this one
-TRY_AGAIN = "Something went wrong, and nothing was changed. Open the name again to retry."
+TRY_AGAIN = (
+    "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
+)
 
 CARD_MAX = 1900  # under Discord's 2,000 characters
 SHOWN = 3  # per section, then "… and N more"

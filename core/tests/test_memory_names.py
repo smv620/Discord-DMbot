@@ -879,6 +879,18 @@ class Review(NamesTest):
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=belleros.id)
         self.assertIn(("Bellaros", CONFIRMED), {(a.text, a.status) for a in aliases})
 
+    async def test_a_refused_join_says_so_and_moves_on(self) -> None:
+        belleros = await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+        await self.suggest("Bellaros")
+        view, _ = await self.review()
+        await view._same(self.it())
+        view.same = SimpleNamespace(values=[belleros.id])  # type: ignore[assignment]
+        it = self.it()
+        refused = AsyncMock(side_effect=MemoryRuleError("gone"))
+        with patch.object(self.memory, "merge", refused):
+            await view._same_picked(it)
+        self.assertIn(ui.NOT_JOINED, it.response.edited[-1][0])  # still in the review
+
     async def test_not_a_name_is_never_suggested_again(self) -> None:
         await self.suggest("Wall")
         view, _ = await self.review()

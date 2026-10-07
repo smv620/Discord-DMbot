@@ -78,6 +78,8 @@ NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
 )
 GONE = "That name was just changed or removed. Run `/dmbot names` to try again."
+# In the review, where the next suggestion is already on screen (#372 review).
+NOT_JOINED = "That name was just changed or removed, so they weren't joined. Here's the next one."
 # Editing and removing live on each name's card; say how to get there (#353).
 EDIT_HINT = (
     "To fix a spelling, change what a name is, or remove it, pick it below or press 🔍 Find a name."
@@ -864,7 +866,7 @@ class SuggestionReview(_Menu):
                 if alias.key == heard and alias.status != CONFIRMED:
                     await memory.update_alias(gid, cid, alias.id, status=CONFIRMED, source=DM)
         except MemoryRuleError:
-            await self._next(interaction, campaign, memory, note=GONE)  # back in place
+            await self._next(interaction, campaign, memory, note=NOT_JOINED)  # back in place
             return
         note = f"🔗 Got it: **{_md(entity.name)}** is another name for **{_md(keep.name)}**."
         await self._saved(interaction, campaign, memory, note)
