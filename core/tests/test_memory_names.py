@@ -2,6 +2,7 @@
 names DMbot suggests after a session, and names as speech-to-text hints."""
 
 import asyncio
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -71,6 +72,12 @@ class NamesTest(DatabaseTest):
             memory=self.memory,
         )
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+
+    async def forget_old_undo(self) -> None:
+        """Jump past the days Undo works for, then run the after-session cleanup (#164)."""
+        self.memory._clock = lambda: time.time() + 31 * 24 * 60 * 60
+        with self.assertLogs("dmbot.bot", "INFO"):
+            await self.bot.prune_old_changes(make_table(self.campaign.id))
 
     def it(self, user_id: int = DM) -> Any:
         user = MagicMock(spec=discord.Member)
@@ -282,6 +289,27 @@ class NameCards(NamesTest):
         self.assertIn("↩️ **Belleros** is back", it.response.edited[-1][0])
         self.assertIn("Belleros", await self.names())
 
+    async def test_undo_says_when_it_is_too_late(self) -> None:
+        from dmbot.ui import name_card
+
+        view = name_card.ConfirmRemove(self.campaign.id, self.bell.id)
+        it = self.it()
+        await view._forget(it)
+        content, undo_view = it.response.edited[0]
+        self.assertIn("Press **Undo** within 30 days to bring it back.", content)
+        (undo,) = undo_view.children
+        assert isinstance(undo, name_card.UndoButton)
+        await self.forget_old_undo()
+        it = self.it()
+        await undo.callback(it)
+        self.assertEqual(
+            it.response.edited[-1][0],  # in place (#351)
+            "Too late to undo: Undo works for 30 days, and not from before a backup was loaded. "
+            "Add it again with ➕ Add a name on the names panel (its other names and "
+            "connections need adding again too).",
+        )
+        self.assertNotIn("Belleros", await self.names())
+
     async def test_change_what_it_is_shows_at_once(self) -> None:
         from dmbot.ui import name_card
 
@@ -381,6 +409,7 @@ class NameCards(NamesTest):
         self.assertIn("🔗 Done: **Bell Eros** is now another name for **Belleros**", content)
         self.assertNotIn("Bell Eros", await self.names())
         self.assertIn("Bell Eros", await self.card())  # now one of its other names
+        self.assertIn("Press **Undo** within 30 days to split", it.followup.send.call_args.args[0])
         lasting = it.followup.send.call_args.kwargs["view"]  # outlives the card's menu
         self.assertIsNone(lasting.timeout)
         (undo,) = [c for c in lasting.children if isinstance(c, name_card.UndoButton)]
@@ -561,7 +590,7 @@ class Lists(NamesTest):
         await name_lists.import_list(it, self.campaign.id, text)
         summary = it.followup.send.call_args.args[0]
         self.assertIn("Added 3 names", summary)
-        self.assertIn("Only one name wrong? Run `/dmbot names` and use 🔍 Find a name", summary)
+        self.assertIn("Only one name wrong? Fix or remove it with 🔍 Find a name", summary)
         self.assertIn("2 names need you to check them", summary)  # no kind; sounds like Belleros
         self.assertIn("1 name DMbot already knows", summary)
         self.assertIn("Bryn Shander", await self.names())
@@ -575,6 +604,25 @@ class Lists(NamesTest):
             "Took the whole list back", it.edit_original_response.call_args.kwargs["content"]
         )
         self.assertNotIn("Bryn Shander", await self.names())
+
+    async def test_undo_for_a_list_says_when_it_is_too_late(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.fresh()
+        it = self.it()
+        await name_lists.import_list(it, self.campaign.id, "Bryn Shander | place")
+        self.assertIn("stops working after 30 days, or once", it.followup.send.call_args.args[0])
+        view = it.followup.send.call_args.kwargs["view"]
+        (undo,) = [c for c in view.children if isinstance(c, name_lists.UndoListButton)]
+        await self.forget_old_undo()
+        it = self.it()
+        await undo.callback(it)
+        self.assertEqual(
+            it.followup.send.call_args.args[0],
+            "Too late to undo: Undo works for 30 days, and not from before a backup was loaded. "
+            "Remove the wrong names from their cards (`/dmbot names`).",
+        )
+        self.assertIn("Bryn Shander", await self.names())
 
     async def test_an_unknown_kind_is_asked_once_for_all_its_names(self) -> None:
         from dmbot.ui import name_lists
@@ -1113,6 +1161,32 @@ def clip(table: Table) -> Any:
 class AfterSession(NamesTest):
     def table(self) -> Table:
         return make_table(self.campaign.id)
+
+    async def test_old_undo_history_goes_last_and_a_failure_is_only_logged(self) -> None:
+        order = MagicMock()
+        steps = (
+            "finish_transcript", "_remove_stop_button", "post_summary", "post_session_summary",
+            "keep_heard_names", "suggest_names", "close_stale_flags",
+        )  # fmt: skip
+        for name in steps:
+            setattr(order, name, AsyncMock(return_value=0))
+        order.prune_changes = AsyncMock(side_effect=RuntimeError("down"))
+        with (
+            patch.multiple(self.bot, **{name: getattr(order, name) for name in steps}),
+            patch.object(self.memory, "prune_changes", order.prune_changes),
+            self.assertLogs("dmbot.bot", "ERROR") as logs,
+        ):
+            await self.bot._after_session(self.table(), 0, True)
+        called = [c[0] for c in order.mock_calls]
+        self.assertEqual(called[-1], "prune_changes")  # after everything that writes
+        self.assertIn("After the session: old undo history failed", logs.output[0])
+
+    async def test_no_memory_or_no_campaign_prunes_nothing(self) -> None:
+        with patch.object(self.memory, "prune_changes", AsyncMock()) as prune:
+            await self.bot.prune_old_changes(make_table(None))  # type: ignore[arg-type]
+            self.bot.memory = None
+            await self.bot.prune_old_changes(self.table())
+        prune.assert_not_awaited()
 
     async def test_flags_that_no_longer_apply_are_closed(self) -> None:
         cid = self.campaign.id

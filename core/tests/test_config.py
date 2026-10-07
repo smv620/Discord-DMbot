@@ -53,3 +53,20 @@ class ShardAndLogSettings(unittest.TestCase):
         ):
             with self.subTest(env=env), self.assertRaisesRegex(ConfigError, message):
                 load_settings({**BASE, **env})
+
+
+class MemorySettings(unittest.TestCase):
+    def test_undo_is_kept_30_days_by_default(self) -> None:
+        self.assertEqual(load_settings(BASE).memory_keep_days, 30)
+
+    def test_read(self) -> None:
+        s = load_settings({**BASE, "MEMORY_CHANGELOG_KEEP_DAYS": " 7 "})
+        self.assertEqual(s.memory_keep_days, 7)
+
+    def test_bad_values(self) -> None:
+        for raw in ("0", "-1", "x", "1.5", "²", "3651", "9" * 30):
+            with (
+                self.subTest(raw=raw),
+                self.assertRaisesRegex(ConfigError, "MEMORY_CHANGELOG_KEEP_DAYS"),
+            ):
+                load_settings({**BASE, "MEMORY_CHANGELOG_KEEP_DAYS": raw})

@@ -118,6 +118,18 @@ class UndoTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(it.followup.send.await_args.args[0], questions.UNDO_FAILED)
         it.edit_original_response.assert_not_awaited()
 
+    async def test_too_late(self) -> None:
+        from dmbot.memory.models import TooLateToUndo
+
+        bot = self.bot(undo=TooLateToUndo("Too late to undo."))
+        it = self.press(bot, DM_ID)
+        await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
+        self.assertEqual(
+            it.followup.send.await_args.args[0],
+            "Too late to undo. Fix the name on its card instead: `/dmbot names`.",
+        )
+        it.edit_original_response.assert_not_awaited()
+
     async def test_a_database_error_still_answers(self) -> None:
         bot = self.bot(undo=RuntimeError("down"))
         it = self.press(bot, DM_ID)

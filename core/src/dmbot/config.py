@@ -21,6 +21,9 @@ class ConfigError(ValueError):
     pass
 
 
+MAX_KEEP_DAYS = 3650  # ten years: plenty, and far from overflowing a timestamp
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     discord_token: str = field(repr=False)
@@ -37,6 +40,8 @@ class Settings:
     # AI text calls (reading a document into a names list). Empty: switched off.
     ai_key: str = field(default="", repr=False)
     ai_model: str = DEFAULT_MODEL
+    # How long Undo works on campaign memory; older change-log entries are deleted (#164).
+    memory_keep_days: int = 30
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -77,6 +82,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if log_level not in LOG_LEVELS:
         raise ConfigError(f"LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}.")
 
+    keep_raw = get("MEMORY_CHANGELOG_KEEP_DAYS") or "30"
+    keep_days = int(keep_raw) if keep_raw.isascii() and keep_raw.isdigit() else 0
+    if not 1 <= keep_days <= MAX_KEEP_DAYS:
+        raise ConfigError(
+            f"MEMORY_CHANGELOG_KEEP_DAYS must be a whole number of days from 1 to "
+            f'{MAX_KEEP_DAYS}, got "{keep_raw}".'
+        )
+
     return Settings(
         discord_token=get("DISCORD_TOKEN"),
         ears_secret=get("EARS_SHARED_SECRET"),
@@ -91,4 +104,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         log_level=log_level,
         ai_key=get("ANTHROPIC_API_KEY"),
         ai_model=get("AI_MODEL") or DEFAULT_MODEL,
+        memory_keep_days=keep_days,
     )

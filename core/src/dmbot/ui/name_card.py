@@ -29,6 +29,8 @@ from dmbot.memory.models import (
     Alias,
     MemoryRuleError,
     Relation,
+    TooLateToUndo,
+    days,
     is_id,
     name_key,
 )
@@ -629,7 +631,9 @@ class ConfirmRemove(_Menu):
         if written.batch is not None:
             view.add_item(UndoButton(campaign.id, self.entity_id, written.batch))
         await interaction.response.edit_message(
-            content=f"Forgot **{_md(written.value.name)}**.", view=view
+            content=f"Forgot **{_md(written.value.name)}**. Wrong? Press **Undo** within "
+            f"{days(memory.keep_days)} to bring it back.",
+            view=view,
         )
 
     async def _keep(self, interaction: discord.Interaction) -> None:
@@ -677,16 +681,22 @@ class UndoButton(
         await _replace(interaction, f"↩️ Undoing… bringing back **{_md(entity.name)}**.", None)
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
-        except MemoryRuleError:
+        except MemoryRuleError as exc:
             now = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
             if now is not None and now.status not in (REJECTED, MERGED):  # a second press
                 await _replace(interaction, f"↩️ **{_md(entity.name)}** is already back.", None)
                 return
+            reason = (
+                str(exc)  # too old (#164)
+                if isinstance(exc, TooLateToUndo)
+                else f"Couldn't undo: **{_md(entity.name)}** was changed again since."
+            )
             await _replace(
                 interaction,
-                f"Couldn't undo: **{_md(entity.name)}** was changed again since. "
+                f"{reason} "
                 + (
-                    "Add it again with ➕ Add a name on the names panel."
+                    "Add it again with ➕ Add a name on the names panel (its other names and "
+                    "connections need adding again too)."
                     if entity.status == REJECTED
                     else "To split them, open the card's Edit other names, press ✖ Not this "
                     "name, add it again with ➕ Add a name, then fix any connections."
@@ -1055,7 +1065,8 @@ class SameConfirm(_Menu):
             view = discord.ui.View(timeout=None)
             view.add_item(UndoButton(campaign.id, gone_id, written.batch))
             await interaction.followup.send(
-                f"Wrong? **Undo** splits **{_md(gone[1])}** and **{_md(kept[1])}** again.",
+                f"Wrong? Press **Undo** within {days(memory.keep_days)} to split "
+                f"**{_md(gone[1])}** and **{_md(kept[1])}** again.",
                 view=view,
                 ephemeral=True,
                 allowed_mentions=discord.AllowedMentions.none(),

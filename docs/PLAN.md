@@ -154,6 +154,9 @@ database.
   - **Undo** works per operation ("batch"): each row change is logged with its before and
     after values. Undo is refused if those rows changed again since, and a delete is
     refused while anything still links to the row, so undo never removes later facts.
+    Undo works for at least 30 days (`MEMORY_CHANGELOG_KEEP_DAYS`): after each session, older
+    change-log rows are deleted, whole batches at a time, so the log doesn't outgrow
+    the memory. Undo texts say so, and pressing an older Undo says it's too late (#164).
   - **Backups** include everything except the change log (a restored campaign starts
     with a fresh undo history) and mentions, which are most of the size (about 15 MB
     for a long campaign) and are rebuilt as new sessions are transcribed.

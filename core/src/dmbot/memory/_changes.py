@@ -14,7 +14,7 @@ from psycopg import errors, sql
 from psycopg.types.json import Jsonb
 
 from dmbot.db import Conn
-from dmbot.memory.models import MemoryRuleError
+from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 
 NOT_FOUND = "DMbot doesn't remember that any more."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
@@ -469,7 +469,7 @@ async def undo_batch(changes: Changes, batch: int) -> None:
     )
     rows = await cur.fetchall()
     if not rows:
-        raise MemoryRuleError(NOT_FOUND)
+        raise TooLateToUndo(NOT_FOUND)  # pruned (#164); the store says how long Undo works
     start = 0
     while start < len(rows):
         end = start + 1
