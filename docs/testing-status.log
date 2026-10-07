@@ -14,6 +14,16 @@ In development @ 1b68f6b (a3d12ef is live; core only). Check:
     notes it in the DM screen. New-campaign settings say "pick which ones later".
   - #345 (CloudDev, #164 part 2): /dmbot backup gives a .dmbot.json.gz file;
     /dmbot restore takes it back, and an older .dmbot.json still restores.
+  - #321 (dd7f687, dev2, #295): Transcript Cleaner follow-ups. With a player's character
+    and an NPC as confirmed names: a real first name like "Mary" stays as said; a name
+    misheard after it came up is fixed; someone in voice who didn't agree keeps their
+    display name; secret names are never written.
+  - #334 (d4f9f9d, dev2, #296 parts 2-3): "Did they mean…?" and cleaned downloads. With
+    two confirmed names that sound alike (e.g. Maren, Marron), say "Marin" twice: the
+    DM screen asks; a player pressing gets "Only the DM"; the DM's answer shows Undo;
+    "Marin" is then fixed silently; an ignored question says "Not answered" after 5
+    min; no new question for 2-3 min after one closes. At stop: Cleaned / As heard /
+    Both give the right files; /transcript gives the cleaned file with As heard below.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
