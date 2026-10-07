@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +19,7 @@ from dmbot.consent import ConsentStore
 from dmbot.consent_dm import ALREADY_RECORDED
 from dmbot.dm_screen import DMScreenError
 from dmbot.sessions import SessionStore
+from dmbot.transcript import questions as name_questions
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
 from tests.pg import DatabaseTest
 
@@ -923,6 +925,197 @@ class SaveAndResume(SessionTests):
         self.assertTrue(table.vocabulary.is_name("beleros"))
         self.bot.stop_recording(GUILD, PLAYER)
         self.assertFalse(table.vocabulary.is_name("beleros"))  # forgotten with them
+
+    def two_alike(self) -> Any:
+        """A campaign where "Marin" sounds like both Maren and Marron (#296)."""
+        from dmbot.memory.lookup import CampaignLookup, LookupData
+        from dmbot.memory.models import CONFIRMED, Alias, Entity
+
+        names = (("a" * 32, "Maren"), ("b" * 32, "Marron"))
+        return CampaignLookup.build(
+            LookupData(
+                1,
+                tuple(Entity(e, "npc", n, "", CONFIRMED, None, "dm", 0) for e, n in names),
+                tuple(
+                    Alias(
+                        e[:16] + "0" * 16,
+                        e,
+                        n,
+                        n.lower(),
+                        "full",
+                        None,
+                        False,
+                        CONFIRMED,
+                        (),
+                        "dm",
+                        0,
+                    )
+                    for e, n in names
+                ),
+                (),
+                (),
+            )
+        )
+
+    async def asked_about_marin(self) -> tuple[Any, Any, Any, Any]:
+        """A question asked; the table, its message, the post and the campaign memory."""
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        table.name_lookup = self.two_alike()
+        import time
+
+        table.scene.note(["a" * 32], DM, time.monotonic())  # Maren came up: it matters
+        message = MagicMock(edit=AsyncMock())
+        self.bot.post_message = AsyncMock(return_value=message)  # type: ignore[method-assign]
+        memory: Any = MagicMock(add_correction=AsyncMock(return_value=MagicMock(batch=41)))
+        self.addCleanup(setattr, self.bot, "memory", self.bot.memory)  # put back after
+        self.bot.memory = memory
+        self.said(table, "then Marin speaks")
+        for _ in range(5):
+            await asyncio.sleep(0)  # the question is posted in the background
+        return table, message, self.bot.post_message, memory
+
+    async def test_the_dm_is_asked_did_they_mean(self) -> None:
+        table, _, posted, _ = await self.asked_about_marin()
+        channel, text, view = posted.await_args.args
+        self.assertEqual(channel, SCREEN)  # the DM screen, never the transcript channel
+        self.assertIn('say "Marin"** ("…then Marin speaks…")', text)
+        labels = [item.item.label for item in view.children]
+        self.assertEqual(sorted(labels[:2]), ["Maren", "Marron"])
+        self.assertEqual(labels[2], 'Keep "Marin"')
+        # one open question at a time: a new word isn't asked about yet
+        self.said(table, "then Marrin agrees")
+        await asyncio.sleep(0)
+        self.assertEqual(posted.await_count, 1)
+
+    async def test_only_the_dm_answers_and_the_answer_is_saved(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", PLAYER)
+        self.assertFalse(done)
+        self.assertIn("Only the DM", text)
+        text, done, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        entity_id, name = asked.options[0]
+        self.assertIn(f"**{name}**", text)
+        add = memory.add_correction
+        add.assert_awaited_once()
+        self.assertEqual(add.await_args.args[2], "Marin")
+        self.assertEqual(add.await_args.kwargs["entity_id"], entity_id)
+        self.assertEqual(add.await_args.kwargs["source"], "dm")
+        self.assertEqual(undo, (table.campaign_id, 41))  # Undo takes this change back
+        again, _, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertIn("closed", again)  # answered once only
+
+    async def test_keep_as_heard_is_saved(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        await self.bot.answer_name_question(GUILD, asked.id, "keep", DM)
+        self.assertEqual(memory.add_correction.await_args.kwargs["action"], "keep")
+
+    async def test_a_press_while_saving_waits_and_a_failure_reopens(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def slow(*_: Any, **__: Any) -> Any:
+            started.set()
+            await release.wait()
+            raise RuntimeError("database down")
+
+        memory.add_correction.side_effect = slow
+        first = asyncio.create_task(self.bot.answer_name_question(GUILD, asked.id, "0", DM))
+        await started.wait()
+        text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "1", DM)
+        self.assertEqual((text, done), (name_questions.BUSY, False))
+        release.set()
+        with self.assertRaises(RuntimeError):
+            await first
+        self.assertTrue(table.questions.is_open(asked.id))  # open again, buttons still work
+        self.assertIsNotNone(table.question_message)
+
+    async def test_someone_who_stops_while_the_answer_saves_stays_hidden(self) -> None:
+        table, message, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+
+        async def revoke_meanwhile(*_: Any, **__: Any) -> Any:
+            self.bot.stop_recording(GUILD, PLAYER)
+            return MagicMock(batch=7)
+
+        memory.add_correction.side_effect = revoke_meanwhile
+        text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        self.assertNotIn("Marin", text)  # their words aren't shown again
+        for _ in range(3):
+            await asyncio.sleep(0)
+        self.assertNotIn("Marin", message.edit.await_args.kwargs["content"])
+
+    async def test_a_speaker_who_stops_closes_their_question(self) -> None:
+        table, message, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        self.bot.stop_recording(GUILD, PLAYER)
+        for _ in range(3):
+            await asyncio.sleep(0)
+        self.assertIsNone(table.questions.open)
+        self.assertNotIn("Marin", message.edit.await_args.kwargs["content"])  # words gone
+        text, _, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertIn("closed", text)
+        memory.add_correction.assert_not_awaited()
+
+    async def test_an_unanswered_question_expires_then_a_cooldown(self) -> None:
+        table, message, posted, _ = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        table.questions.open = replace(asked, asked_at=asked.asked_at - 10_000)
+        self.said(table, "then Marrin agrees")
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertEqual(
+            message.edit.await_args.kwargs["content"], '⌛ Not answered: "Marin" stays as heard.'
+        )
+        self.assertEqual(posted.await_count, 1)  # the cooldown: not straight away
+        table.questions.closed_at = -10_000.0  # the cooldown has passed
+        self.said(table, "then Marrin agrees")
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertEqual(posted.await_count, 2)
+
+    async def test_stopping_the_session_closes_its_question(self) -> None:
+        table, message, _, _ = await self.asked_about_marin()
+        await self.bot.stop_table(GUILD, "test")
+        for _ in range(3):
+            await asyncio.sleep(0)
+        self.assertIsNone(table.questions.open)
+        self.assertIn("Not answered", message.edit.await_args.kwargs["content"])
+
+    async def test_the_session_ending_while_the_answer_saves_still_says_got_it(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+
+        async def end_meanwhile(*_: Any, **__: Any) -> Any:
+            await self.bot.stop_table(GUILD, "test")
+            return MagicMock(batch=8)
+
+        memory.add_correction.side_effect = end_meanwhile
+        text, done, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        self.assertIn("Got it", text)  # not "stopped being recorded": they didn't
+        self.assertEqual(undo, (table.campaign_id, 8))
+
+    async def test_an_answer_saved_before_offers_no_undo(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        memory.add_correction.return_value = MagicMock(batch=None)  # already there
+        _, done, undo = await self.bot.answer_name_question(GUILD, asked.id, "keep", DM)
+        self.assertTrue(done)
+        self.assertIsNone(undo)
 
     async def test_lower_case_words_count_even_without_the_names(self) -> None:
         await self.consent.grant(GUILD, PLAYER)

@@ -448,6 +448,72 @@ class SpeedTest(unittest.TestCase):
         self.assertLessEqual(self.codes_used(names), 2 * cleaner.SECRET_CHECKS_PER_LINE + 60)
 
 
+class QuestionTest(unittest.TestCase):
+    """Two or three confirmed names sounding alike: the DM is asked (#296)."""
+
+    def alike(self, *more: Entity, **kwargs: object) -> CampaignLookup:
+        entities = (entity(MAREN, "Maren"), entity(MARRON, "Marron"), *more)
+        return lookup(
+            more=entities,
+            more_aliases=tuple(alias(e.id, e.name) for e in entities),
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    def test_two_names_sounding_alike_ask_the_dm(self) -> None:
+        result = clean(self.alike(), "then Marin speaks", scene=EVERYONE)
+        self.assertEqual(result.text, "then Marin speaks")  # left as heard
+        (question,) = result.questions
+        self.assertEqual(question.heard, "Marin")
+        self.assertEqual({name for _, name in question.options}, {"Maren", "Marron"})
+        self.assertEqual(question.start, len("then "))
+
+    def test_no_scene_needed_to_ask(self) -> None:
+        self.assertEqual(len(clean(self.alike(), "then Marin speaks", scene=()).questions), 1)
+
+    def test_never_about_a_secret_name(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Maren"), entity(MARRON, "Marron")),
+            more_aliases=(alias(MAREN, "Maren"), alias(MARRON, "Marron", secret=True)),
+        )
+        self.assertEqual(clean(names, "then Marin speaks", scene=EVERYONE).questions, ())
+
+    def test_never_with_a_suggested_name(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Maren"), entity(MARRON, "Marron", status=PROPOSED)),
+            more_aliases=(alias(MAREN, "Maren"), alias(MARRON, "Marron", status=PROPOSED)),
+        )
+        self.assertEqual(clean(names, "then Marin speaks", scene=EVERYONE).questions, ())
+
+    def test_not_when_too_many_sound_alike(self) -> None:
+        extra = tuple(
+            entity(c * 32, n) for c, n in zip("jkl", ("Marun", "Moran", "Myren"), strict=True)
+        )
+        names = self.alike(*extra)
+        self.assertEqual(clean(names, "then Marin speaks", scene=EVERYONE).questions, ())
+
+    def test_a_player_character_needs_the_closer_spelling(self) -> None:
+        # "Mary" sounds like the character Mara and the NPC Mari, at 0.75 each
+        names = lookup(
+            more=(
+                entity(MAREN, "Mara", "player_character", played_by=DEE),
+                entity(MARRON, "Mari"),
+            ),
+            more_aliases=(alias(MAREN, "Mara"), alias(MARRON, "Mari")),
+        )
+        self.assertEqual(clean(names, "so Mary, your turn", scene=EVERYONE).questions, ())
+
+    def test_not_next_to_a_secret_name(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Maren"), entity(MARRON, "Marron")),
+            more_aliases=(
+                alias(MAREN, "Maren"),
+                alias(MARRON, "Marron"),
+                alias(BELLEROS, "Silas Maryn", secret=True),  # near, not the same words
+            ),
+        )
+        self.assertEqual(clean(names, "I met Silas Marin", scene=EVERYONE).questions, ())
+
+
 class VocabularyTest(unittest.TestCase):
     def test_forget_speaker(self) -> None:
         vocabulary = Vocabulary()

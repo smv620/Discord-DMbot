@@ -4,8 +4,9 @@ A download is a plain .txt file anyone can open: a short header, then one line p
 of speech (#53): the time since the session started, the speaker, and the character
 they play, `[0:42:10] (Mia) {Cerric}: …` (no `{…}` for someone without one, such as the
 DM). Speaker names are display names at download time (DMbot doesn't store names);
-characters are the campaign's player characters at download time. For now the only
-version is "as heard". Sessions are named by number
+characters are the campaign's player characters at download time. Each session comes
+in two versions (#296): "cleaned" (names spelled right, what the transcript channel
+showed) and "as heard" (exactly what speech-to-text wrote). Sessions are named by number
 ("Session 7"), since a date in UTC can look like the wrong day to an evening table.
 """
 
@@ -25,10 +26,18 @@ FILE_NAME_MAX = 60
 
 AS_HEARD_NOTE = (
     "As heard: the words exactly as DMbot heard them, before it fixed any names, so "
-    "some names may be misheard. The transcript channel shows the fixed names. Only "
-    "people who agreed were recorded."
+    'some names may be misheard. The "Cleaned" version (/transcript) has the names '
+    "fixed. Only people who agreed were recorded."
+)
+CLEANED_NOTE = (
+    "Cleaned: DMbot fixed the spelling of names it was sure about; a few may still be "
+    'wrong. For the exact words, download the "As heard" version with /transcript. '
+    "Only people who agreed were recorded."
 )
 HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."
+
+AS_HEARD, CLEANED = "as-heard", "cleaned"
+VERSIONS = (CLEANED, AS_HEARD)
 
 
 def clean_name(raw: str | None) -> str:
@@ -71,10 +80,16 @@ def session_label(session: TranscriptSession, *, running: bool = False) -> str:
     return f"Session {session.number} · {how_long} · {_day(session)} (UTC)"
 
 
-def file_name(campaign_name: str, session: TranscriptSession) -> str:
-    """'rime-of-the-frostmaiden-session-7-as-heard.txt': safe on every system."""
+def file_name(campaign_name: str, session: TranscriptSession, version: str = AS_HEARD) -> str:
+    """'rime-of-the-frostmaiden-session-7-cleaned.txt': safe on every system."""
+    _check(version)
     slug = re.sub(r"[^a-z0-9]+", "-", campaign_name.lower()).strip("-")[:FILE_NAME_MAX]
-    return f"{slug or 'campaign'}-session-{session.number}-as-heard.txt"
+    return f"{slug or 'campaign'}-session-{session.number}-{version}.txt"
+
+
+def _check(version: str) -> None:
+    if version not in VERSIONS:
+        raise ValueError(f"Unknown transcript version: {version!r}")
 
 
 def label(when: str, speaker: str, character: str | None = None) -> str:
@@ -96,10 +111,12 @@ def render(
     *,
     characters: Mapping[int, str] | None = None,
     running: bool = False,
+    version: str = AS_HEARD,
 ) -> str:
     """The whole file. `names`: speaker ID → display name (missing ones show as
     'Someone'); `characters`: speaker ID → the character they play. `running`: DMbot
-    is still recording this session."""
+    is still recording this session. `version`: CLEANED or AS_HEARD."""
+    _check(version)
     start_ms = session.started_at * 1000
     playing = characters or {}
     shown: dict[int, tuple[str, str | None]] = {}  # each name cleaned once
@@ -112,7 +129,8 @@ def render(
                 clean_name(character) if character else None,
             )
         when = clock((line.started_ms - start_ms) / 1000)
-        body.append(f"{label(when, *shown[line.user_id])}: {' '.join(line.heard.split())}")
+        said = line.text if version == CLEANED else line.heard
+        body.append(f"{label(when, *shown[line.user_id])}: {' '.join(said.split())}")
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))
     ran = (
         f", ran {duration(session.ended_at - session.started_at)}"
@@ -122,7 +140,7 @@ def render(
     header = [
         f"DMbot transcript: {clean_name(campaign_name)}, session {session.number}",
         f"Started {started}{ran}",
-        AS_HEARD_NOTE,
+        CLEANED_NOTE if version == CLEANED else AS_HEARD_NOTE,
         HOW_TO_READ,
     ]
     if running:

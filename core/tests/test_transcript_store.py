@@ -285,9 +285,11 @@ class BotTests(DatabaseTest):
         self.assertEqual(set(users), {DM, PLAYER})
         call = users[PLAYER].send.await_args
         self.assertIn("The session for **Frostmaiden** has ended", call.args[0])
-        button = call.kwargs["view"].children[0]
         sid = table.transcript_session_id
-        self.assertEqual(button.custom_id, f"dmbot:transcript:{GUILD}:{sid}")
+        self.assertEqual(
+            [b.custom_id for b in call.kwargs["view"].children],
+            [f"dmbot:transcript:{GUILD}:{sid}:{c}" for c in ("cleaned", "heard", "both")],
+        )
         session = await self.store.session(GUILD, sid or "")
         assert session is not None and session.ended_at is not None
 
@@ -320,9 +322,29 @@ class BotTests(DatabaseTest):
         it = self.it(STRANGER)
         await view._picked(it)
         self.assertTrue(it.response.deferred)
+        # the cleaned file at once, with the word-for-word one a press away
         self.assertIn("[0:00:42] (Mia): We ride at dawn.", file_text(it))
+        (_, kw), *_ = [f for f in followups(it) if "file" in f[1]]
+        self.assertEqual(kw["file"].filename, "frostmaiden-session-1-cleaned.txt")
+        it = await self.press(kw["view"], "🎙 As heard")
         name = next(f for f in followups(it) if "file" in f[1])[1]["file"].filename
         self.assertEqual(name, "frostmaiden-session-1-as-heard.txt")
+
+    async def press(self, view: Any, label: str) -> Any:
+        it = self.it(STRANGER)
+        button = next(b for b in view.children if b.label == label)
+        await button.callback(it)
+        return it
+
+    async def test_both_versions_come_as_two_files(self) -> None:
+        sid = await self.finished_session()
+        it = self.it(PLAYER)
+        await ui.DownloadButton(GUILD, sid, "both").callback(it)  # sent when it ended
+        (_, kw), *_ = [f for f in followups(it) if "files" in f[1]]
+        self.assertEqual(
+            [f.filename for f in kw["files"]],
+            ["frostmaiden-session-1-cleaned.txt", "frostmaiden-session-1-as-heard.txt"],
+        )
 
     async def test_a_running_session_warns_first(self) -> None:
         await self.consent.grant(GUILD, PLAYER)

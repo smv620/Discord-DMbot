@@ -21,7 +21,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.transcript import cleaner, export
-from dmbot.transcript.models import TranscriptSession
+from dmbot.transcript.models import Line, TranscriptSession
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NO_PINGS,
@@ -49,15 +49,38 @@ NOT_AVAILABLE = (
 NONE_YET = "No saved transcripts here yet. DMbot saves one every time it listens to a session."
 GONE = "That transcript isn't there anymore. Run `/transcript` to see what's saved."
 TOO_BIG = "This transcript is too big to send as one file. Ask whoever runs DMbot for help."
+TOO_BIG_BOTH = (
+    "Both versions together are too big to send at once. Try 📄 Cleaned or 🎙 As heard on its own."
+)
 FAILED = "Something went wrong getting that transcript. Try again in a moment."
+
+
+# Which file(s) a choice gives, its button label, and the button ID's ending.
+CHOICES: dict[str, tuple[tuple[str, ...], str]] = {
+    "cleaned": ((export.CLEANED,), "📄 Cleaned"),
+    "heard": ((export.AS_HEARD,), "🎙 As heard"),
+    "both": ((export.CLEANED, export.AS_HEARD), "📄🎙 Both"),
+}
+VERSION_HELP = (
+    "📄 **Cleaned:** misheard names fixed (the easiest to read).\n"
+    "🎙 **As heard:** word for word, before DMbot fixed any names."
+)
+SENT = {
+    (export.CLEANED,): "📄 Here's the cleaned transcript: names spelled right. Open it in any "
+    "text app.",
+    (export.AS_HEARD,): "🎙 Here's the transcript as heard, word for word. Open it in any text app.",
+    (export.CLEANED, export.AS_HEARD): "📄🎙 Here are both versions: cleaned and as heard. "
+    "Open them in any text app.",
+}
+WORD_FOR_WORD = "Want the exact words? Press 🎙 **As heard**."
 
 
 def ended_text(campaign_name: str) -> str:
     """The private message to the DM and everyone recorded, when DMbot stops."""
     return (
         f"The session for **{discord.utils.escape_markdown(campaign_name)}** has ended. "
-        "Press the button to download what was said, as a text file. It has the words "
-        "exactly as DMbot heard them, before any name fixes.\n"
+        "Download the transcript:\n"
+        f"{VERSION_HELP}\n"
         "Anyone in the server can also get it with `/transcript`."
     )
 
@@ -113,9 +136,13 @@ def _running(bot: DMBot, session: TranscriptSession) -> bool:
 
 
 async def make_file(
-    bot: DMBot, guild: discord.Guild | None, guild_id: int, session_id: str
-) -> discord.File | str:
-    """The download, or what to tell the person instead."""
+    bot: DMBot,
+    guild: discord.Guild | None,
+    guild_id: int,
+    session_id: str,
+    versions: tuple[str, ...] = (export.AS_HEARD,),
+) -> list[discord.File] | str:
+    """The download, one file per version, or what to tell the person instead."""
     store = bot.transcripts
     if store is None:
         return NOT_AVAILABLE
@@ -131,20 +158,57 @@ async def make_file(
     lines = await store.lines(guild_id, session.id)
     names = await display_names(guild, tuple(sorted({line.user_id for line in lines})))
     playing = await player_characters(bot, guild_id, campaign.id)
-    text = export.render(campaign.name, session, lines, names, characters=playing, running=running)
-    data = text.encode("utf-8")
-    if len(data) > FILE_LIMIT:
-        return TOO_BIG
-    return discord.File(io.BytesIO(data), filename=export.file_name(campaign.name, session))
+    files = []
+    total = 0
+    for version in versions:
+        # Off the event loop: a long session's file takes a fifth of a second to build.
+        data = await asyncio.to_thread(
+            _build, campaign.name, session, lines, names, playing, running, version
+        )
+        total += len(data)
+        if total > FILE_LIMIT:  # one message: both files together
+            return TOO_BIG_BOTH if len(versions) > 1 and len(data) <= FILE_LIMIT else TOO_BIG
+        name = export.file_name(campaign.name, session, version)
+        files.append(discord.File(io.BytesIO(data), filename=name))
+    return files
 
 
-async def send_file(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
-    """Answer at once ("DMbot is thinking…"), then send the file privately."""
+def _build(
+    campaign_name: str,
+    session: TranscriptSession,
+    lines: list[Line],
+    names: dict[int, str],
+    playing: dict[int, str],
+    running: bool,
+    version: str,
+) -> bytes:
+    text = export.render(
+        campaign_name,
+        session,
+        lines,
+        names,
+        characters=playing,
+        running=running,
+        version=version,
+    )
+    return text.encode("utf-8")
+
+
+async def send_file(
+    interaction: discord.Interaction,
+    guild_id: int,
+    session_id: str,
+    versions: tuple[str, ...] = (export.AS_HEARD,),
+    *,
+    offer_as_heard: bool = False,
+) -> None:
+    """Answer at once ("DMbot is thinking…"), then send the file(s) privately.
+    `offer_as_heard`: under a cleaned file, a button for the word-for-word one."""
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True, thinking=True)
     bot = _bot(interaction)
     try:
-        result = await make_file(bot, bot.get_guild(guild_id), guild_id, session_id)
+        result = await make_file(bot, bot.get_guild(guild_id), guild_id, session_id, versions)
     except Exception:
         log.exception("Couldn't build a transcript download")
         await _tell(interaction, FAILED)
@@ -152,12 +216,28 @@ async def send_file(interaction: discord.Interaction, guild_id: int, session_id:
     if isinstance(result, str):
         await _tell(interaction, result)
         return
-    await interaction.followup.send(
-        "📄 Here's the transcript. Open it in any text app.",
-        file=result,
-        ephemeral=True,
-        allowed_mentions=NO_PINGS,
-    )
+    many = len(result) > 1
+    text = SENT.get(versions, SENT[(export.AS_HEARD,)])
+    extra: dict[str, Any] = {"files": result} if many else {"file": result[0]}
+    if offer_as_heard:
+        text += f"\n{WORD_FOR_WORD}"
+        extra["view"] = AsHeardToo(guild_id, session_id)
+    await interaction.followup.send(text, **extra, ephemeral=True, allowed_mentions=NO_PINGS)
+
+
+class AsHeardToo(_Menu):
+    """Under the cleaned file from `/transcript`: the word-for-word one, if wanted."""
+
+    def __init__(self, guild_id: int, session_id: str) -> None:
+        super().__init__()
+        self.guild_id = guild_id
+        self.session_id = session_id
+        label = CHOICES["heard"][1]
+        self.add_item(_Button(self._send, label=label, style=discord.ButtonStyle.secondary))
+
+    async def _send(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await send_file(interaction, self.guild_id, self.session_id, (export.AS_HEARD,))
 
 
 # ---- /transcript -----------------------------------------------------------------------
@@ -282,7 +362,12 @@ class SessionPicker(_Menu):
             )
             return
         self.stop()
-        await send_file(interaction, self.guild_id, session.id)
+        await send_cleaned(interaction, self.guild_id, session.id)
+
+
+async def send_cleaned(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
+    """What most people want: the cleaned file, with the word-for-word one a press away."""
+    await send_file(interaction, guild_id, session_id, (export.CLEANED,), offer_as_heard=True)
 
 
 class StillRecording(_Menu):
@@ -297,7 +382,7 @@ class StillRecording(_Menu):
 
     async def _anyway(self, interaction: discord.Interaction) -> None:
         self.stop()
-        await send_file(interaction, self.guild_id, self.session_id)
+        await send_cleaned(interaction, self.guild_id, self.session_id)
 
     async def _cancel(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -309,29 +394,37 @@ class StillRecording(_Menu):
 
 class DownloadButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=r"dmbot:transcript:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})",
+    template=r"dmbot:transcript:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})"
+    r"(?::(?P<choice>cleaned|heard|both))?",
 ):
-    """In a private message: downloads that session's transcript. Works after a restart
-    (the server and session are in the button's ID). Only for people still in that
-    server, since transcripts belong to the server; the session is looked up inside that
-    server only, so a made-up ID finds nothing."""
+    """In a private message: downloads that session's transcript, cleaned, as heard or
+    both. Works after a restart (the server, session and choice are in the button's ID).
+    Buttons sent before there was a choice have none and give the "as heard" file they
+    promised. Only for people still in that server, since transcripts belong to the
+    server; the session is looked up inside that server only, so a made-up ID finds
+    nothing."""
 
-    def __init__(self, guild_id: int, session_id: str) -> None:
+    def __init__(self, guild_id: int, session_id: str, choice: str | None = None) -> None:
+        ending = f":{choice}" if choice else ""
+        label = CHOICES[choice][1] if choice else "🎙 Download transcript"
         super().__init__(
             discord.ui.Button(
-                label="🎙 Download transcript",
-                style=discord.ButtonStyle.primary,
-                custom_id=f"dmbot:transcript:{guild_id}:{session_id}",
+                label=label,
+                style=discord.ButtonStyle.primary
+                if choice in (None, "cleaned")
+                else discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:transcript:{guild_id}:{session_id}{ending}",
             )
         )
         self.guild_id = guild_id
         self.session_id = session_id
+        self.versions = CHOICES[choice][0] if choice else (export.AS_HEARD,)
 
     @classmethod
     async def from_custom_id(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> DownloadButton:
-        return cls(int(match["guild"]), match["session"])
+        return cls(int(match["guild"]), match["session"], match["choice"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         guild = _bot(interaction).get_guild(self.guild_id)
@@ -348,10 +441,11 @@ class DownloadButton(
             except discord.HTTPException:
                 await _tell(interaction, "Discord didn't answer. Try again in a moment.")
                 return
-        await send_file(interaction, self.guild_id, self.session_id)
+        await send_file(interaction, self.guild_id, self.session_id, self.versions)
 
 
 def download_view(guild_id: int, session_id: str) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    view.add_item(DownloadButton(guild_id, session_id))
+    for choice in CHOICES:
+        view.add_item(DownloadButton(guild_id, session_id, choice))
     return view
