@@ -1,21 +1,21 @@
-"""The payment webhook is the only writer of `entitlements` (#435)."""
+"""Only the plan writer changes `entitlements` (#435). The database enforces it (writes
+need Database.plan_writer()); this keeps that door in the web API's payment code."""
 
 import re
 import unittest
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
-WRITE = re.compile(r"\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+entitlements\b", re.IGNORECASE)
-# The webhook's module (#435 part 3). Account deletion removes the row through
-# web_users' ON DELETE CASCADE, never by writing entitlements directly.
-ALLOWED = {SRC / "web" / "entitlements_writer.py"}
+OPENS_WRITER = re.compile(r"\b_?db\.plan_writer\(")
+# The payment webhook and Try It live here (#435 parts 2 and 3).
+ALLOWED_DIR = SRC / "web"
 
 
-class OnlyTheWebhookWrites(unittest.TestCase):
-    def test_no_other_module_writes_entitlements(self) -> None:
-        writers = {
-            path
+class OnlyTheWebApiWritesPlans(unittest.TestCase):
+    def test_only_the_web_api_opens_the_plan_writer(self) -> None:
+        openers = {
+            path.relative_to(SRC).as_posix()
             for path in SRC.rglob("*.py")
-            if WRITE.search(path.read_text("utf-8")) and path not in ALLOWED
+            if OPENS_WRITER.search(path.read_text("utf-8")) and ALLOWED_DIR not in path.parents
         }
-        self.assertEqual(writers, set(), "only the payment webhook may write entitlements")
+        self.assertEqual(openers, set(), "only dmbot.web may change a person's plan")

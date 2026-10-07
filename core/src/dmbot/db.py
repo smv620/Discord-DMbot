@@ -116,24 +116,48 @@ class Database:
             yield conn
 
     @asynccontextmanager
-    async def user(self, user_id: int, *, guild_id: int | None = None) -> AsyncIterator[Conn]:
-        """A transaction that can only see one person's website rows (#435): their
-        account, plan, sessions and installs. With `guild_id`, that server's rows too
-        (used when a signed-in person acts on one server, such as installing DMbot)."""
+    async def _with(self, **settings: str) -> AsyncIterator[Conn]:
+        """A transaction with these `dmbot.*` settings, all cleared when it ends."""
         async with self._pool.connection() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('dmbot.user_id', %s, true)", (str(int(user_id)),))
-            if guild_id is not None:
+            for name, value in settings.items():
                 await conn.execute(
-                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild_id)),)
+                    sql.SQL("SELECT set_config({}, %s, true)").format(sql.Literal(f"dmbot.{name}")),
+                    (value,),
                 )
             yield conn
 
     @asynccontextmanager
+    async def user(self, user_id: int, *, install_guild: int | None = None) -> AsyncIterator[Conn]:
+        """A transaction that can only see one person's website rows (#435): their
+        account, plan (read only), sessions and installs. Never any server's campaigns.
+
+        `install_guild` lets it record or link DMbot's install on that one server, and
+        nothing else of that server's. The caller must first have checked, with Discord,
+        that the person manages that server."""
+        settings = {"user_id": str(int(user_id))}
+        if install_guild is not None:
+            settings["install_guild"] = str(int(install_guild))
+        async with self._with(**settings) as conn:
+            yield conn
+
+    @asynccontextmanager
     async def session(self, id_hash: str) -> AsyncIterator[Conn]:
-        """A transaction that can see only the website session with this cookie hash,
-        to find who is signed in before the person is known."""
-        async with self._pool.connection() as conn, conn.transaction():
-            await conn.execute("SELECT set_config('dmbot.session', %s, true)", (id_hash,))
+        """A transaction that can see only the unexpired website session with this cookie
+        hash, to find who is signed in before the person is known. Read only."""
+        async with self._with(session=id_hash) as conn:
+            yield conn
+
+    @asynccontextmanager
+    async def plan_writer(self, user_id: int) -> AsyncIterator[Conn]:
+        """The only way to change a person's plan (`entitlements`): for the payment
+        webhook and Try It (dmbot.web, #435). Everything else reads plans."""
+        async with self._with(user_id=str(int(user_id)), plan_writer="payments") as conn:
+            yield conn
+
+    @asynccontextmanager
+    async def cleanup(self) -> AsyncIterator[Conn]:
+        """A transaction that can see and delete expired website sessions, nothing else."""
+        async with self._with(cleanup="expired-sessions") as conn:
             yield conn
 
     @asynccontextmanager

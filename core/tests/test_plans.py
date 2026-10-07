@@ -1,11 +1,13 @@
 """The plan facts (#432, #437): the owner's numbers, and the copy the website uses."""
 
 import json
+import re
 import unittest
 from importlib import resources
 from pathlib import Path
+from typing import get_args
 
-from dmbot import plans
+from dmbot import plans, schema
 
 WEB_COPY = Path(__file__).resolve().parents[2] / "web" / "src" / "content" / "plans.json"
 
@@ -42,6 +44,17 @@ class OwnerNumbers(unittest.TestCase):
     def test_unknown_plan_ids_are_refused(self) -> None:
         self.assertIsNone(plans.load().get("free-forever"))
         self.assertEqual(plans.load().get("guild").name, "Guild")  # type: ignore[union-attr]
+
+
+class OneListOfPlanIds(unittest.TestCase):
+    def test_json_type_and_database_agree(self) -> None:
+        ids = list(plans.load().order)
+        self.assertEqual(ids, list(get_args(plans.PlanId)))
+        check = re.search(
+            r"plan\s+TEXT NOT NULL\s+CHECK \(plan IN \(([^)]*)\)\)", schema.WEB_ACCOUNTS
+        )
+        assert check is not None
+        self.assertEqual(re.findall(r"'([^']+)'", check.group(1)), ids)
 
 
 class SameAsTheWebsite(unittest.TestCase):
