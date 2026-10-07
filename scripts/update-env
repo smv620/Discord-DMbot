@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Rebuilds .env in the shape of the current .env.example, keeping every setting you
+# already have. Run it after an update brings a new .env.example (git pull never
+# touches .env). Then use scripts/set-key for any key that is still empty.
+#
+#   scripts/update-env           make the new .env (the old one is kept as a backup)
+#   scripts/update-env --check   only show what would change
+#
+# The new .env has the template's order, comments and new settings. Each setting you
+# had keeps your value exactly. Settings that are no longer in the template are kept at
+# the end, so nothing is lost. Only setting names are printed, never values.
+#
+# Tests point DMBOT_ENV_FILE and DMBOT_ENV_EXAMPLE at temporary files.
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+env_file=${DMBOT_ENV_FILE:-$root/.env}
+example=${DMBOT_ENV_EXAMPLE:-$root/.env.example}
+
+fail() {
+  printf '%s\n' "$1" >&2
+  exit 1
+}
+
+check_only=false
+case ${1:-} in
+  "") ;;
+  --check) check_only=true ;;
+  *) fail "Run scripts/update-env, or scripts/update-env --check to only look." ;;
+esac
+[[ $# -le 1 ]] || fail "Run scripts/update-env, or scripts/update-env --check to only look."
+
+[[ -f $example ]] || fail "Can't find .env.example in $root.
+Check this is your Discord-DMbot folder, then run: git pull"
+[[ -f $env_file ]] || fail "There's no .env to copy settings from yet.
+Run scripts/set-key to make one and add your first key."
+
+umask 077
+work=$(mktemp -d "$env_file.update.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+
+# Pass 1 reads the old .env (last line wins, as in Docker Compose). Pass 2 copies the
+# template, putting the old value into each setting line it has. The report lists names.
+awk -v report="$work/report" '
+  function clean(s) { sub(/\r$/, "", s); return s }
+  FILENAME == ARGV[1] {
+    line = clean($0)
+    if (line !~ /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=/) next
+    sub(/^[ \t]*(export[ \t]+)?/, "", line)
+    name = line; sub(/[ \t]*=.*$/, "", name)
+    value = line; sub(/^[^=]*=[ \t]*/, "", value)
+    if (!(name in old)) order[++count] = name
+    old[name] = value
+    next
+  }
+  {
+    line = clean($0)
+    if (match(line, /^[A-Za-z_][A-Za-z0-9_]*=/)) {
+      name = substr(line, 1, RLENGTH - 1)
+      if (name in done) next          # a name twice in the template: keep the first
+      done[name] = 1
+      if (name in old) { print name "=" old[name]; print "kept " name > report }
+      else { print line; print "new " name > report }
+      next
+    }
+    print line
+  }
+  END {
+    extra = 0
+    for (i = 1; i <= count; i++) {
+      name = order[i]
+      if (name in done) continue
+      if (!extra) {
+        print ""
+        print "# ---- Kept from your old .env: not in .env.example ----"
+        print "# Settings you added yourself (like CORE_EXTRAS), or ones DMbot no longer uses."
+        extra = 1
+      }
+      print name "=" old[name]
+      print "extra " name > report
+    }
+    close(report)
+  }
+' "$env_file" "$example" >"$work/new"
+touch "$work/report"
+
+names() { sed -nE "s/^$1 //p" "$work/report" | paste -sd' ' | sed 's/ /, /g'; }
+kept=$(grep -c '^kept ' "$work/report" || true)
+new=$(names new)
+extra=$(names extra)
+
+# Keys, tokens and secrets that are still empty in the new file.
+empty=$(sed -nE "s/^([A-Z][A-Z0-9_]*(_KEY|_TOKEN|_SECRET))=[\"']{0,2}$/\1/p" "$work/new" \
+  | paste -sd' ' | sed 's/ /, /g')
+
+if cmp -s "$work/new" "$env_file"; then
+  echo "Your .env already matches .env.example. Nothing was changed."
+  changed=false
+else
+  changed=true
+  if $check_only; then
+    echo "This would rebuild .env from .env.example. Nothing was changed yet."
+  else
+    backup="$env_file.backup-$(date +%Y%m%d-%H%M%S)"
+    cp "$env_file" "$backup"
+    chmod 600 "$backup" "$work/new"
+    mv -f "$work/new" "$env_file"
+    echo "Rebuilt .env from .env.example."
+    echo "Your old .env is saved as $(basename "$backup") (delete it once all is well)."
+  fi
+  echo "- Kept your value for $kept settings."
+  [[ -z $new ]] || echo "- New settings, with the template's default: $new"
+  [[ -z $extra ]] || echo "- Not in the template, kept at the end (yours, or no longer used): $extra"
+fi
+if [[ -n $empty ]]; then
+  echo "- Keys still empty (fill in the ones you use): $empty"
+  echo "  To fill one in: scripts/set-key"
+fi
+if $changed && ! $check_only; then
+  echo "DMbot uses the new file after a restart: cd $root && docker compose up -d"
+fi

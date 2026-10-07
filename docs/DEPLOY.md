@@ -89,6 +89,14 @@ in a volume, so restarts are fast.
 | Stop | `docker compose down` |
 | See logs | `docker compose logs -f core` (or `ears`) |
 | Status | `docker compose ps` |
+| Bring `.env` up to date with a new `.env.example` | `scripts/update-env` (`--check` only shows what would change) |
+| Add or change a key | `scripts/set-key` |
+
+Updates never change your `.env`. When one brings a new `.env.example`, run
+`scripts/update-env`: it rebuilds `.env` in the new layout and keeps every value you
+already had (settings that aren't in the template stay at the end). Your old file is saved
+next to it as `.env.backup-…`. It then lists any keys that are still empty; fill them in
+with `scripts/set-key`, then restart with `docker compose up -d`.
 
 The containers restart automatically after a crash or a server reboot. A game that was
 running picks up where it left off: DMbot rejoins the voice channel and posts a note in
