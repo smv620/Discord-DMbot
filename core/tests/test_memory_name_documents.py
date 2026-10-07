@@ -2,10 +2,12 @@
 (pure; the AI call itself is faked in test_memory_names)."""
 
 import io
+import time
 import unittest
 import zipfile
 
 from dmbot.memory.name_documents import (
+    MAX_DOCUMENT_CHARS,
     DocumentError,
     chunks,
     clean_reply,
@@ -57,11 +59,32 @@ class Reading(unittest.TestCase):
             "<style>.x{}</style><ul><li>Auril</li><li>Ulfgar</li></ul><footer>(c)</footer>"
             "</body></html>"
         )
-        self.assertEqual(html_text(page), "Ten-Towns\nBelleros & Bryn Shander\nAuril\nUlfgar")
+        self.assertEqual(
+            html_text(page), "Menu\nTen-Towns\nBelleros & Bryn Shander\nAuril\nUlfgar\n(c)"
+        )
         self.assertEqual(text_of("link.html", page.encode()), html_text(page))
         with self.assertRaises(DocumentError):
             text_of("link.html", b"<html><script>only code</script></html>")
         self.assertEqual(kind_of_file("notes.htm"), "document")
+        # </head> is optional: the page still starts at <body>.
+        self.assertEqual(html_text("<html><head><title>x</title><body><p>Auril"), "Auril")
+
+    def test_hostile_or_huge_pages_are_cut_short_quickly(self) -> None:
+        start = time.monotonic()
+        self.assertEqual(html_text("<a " + "b=1 " * 400_000 + ">Auril"), "Auril")
+        self.assertEqual(html_text("<" * 1_000_000 + "p>Auril"), "Auril")
+        many = "<p>x</p>" * 1_000_000  # 8 MB of code: only the first 2 MB is read
+        self.assertLessEqual(len(html_text(many)), MAX_DOCUMENT_CHARS)
+        self.assertTrue(text_of("link.html", many.encode()).startswith("x\nx"))
+        self.assertLess(time.monotonic() - start, 3)
+        # A long page is shortened to what fits, not refused.
+        long_page = "<p>" + "Auril " * 100_000 + "</p>"
+        self.assertLessEqual(len(html_text(long_page)), MAX_DOCUMENT_CHARS)
+        self.assertTrue(text_of("link.html", long_page.encode()).startswith("Auril"))
+        # Reading stops when its time is up, keeping what it has.
+        ticks = iter(range(100))
+        page = "<p>Auril</p>" + "<p>x</p>" * 100_000
+        self.assertTrue(html_text(page, clock=lambda: next(ticks) * 10.0).startswith("Auril"))
 
 
 class Request(unittest.TestCase):

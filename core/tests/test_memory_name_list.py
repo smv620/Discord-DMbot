@@ -51,13 +51,14 @@ class Reading(unittest.TestCase):
             [
                 "https://docs.google.com/document/d/1lHeFJAheOyz/edit?usp=drivesdk",
                 "www.dndbeyond.com/sources",
+                "docs.google.com/document/d/1lHeFJAheOyz/edit",
                 "Ulfgar | NPC | https://example.com/ulfgar",
                 "Belleros",
             ]
         )
         parsed = parse(text, secrets=True)
         self.assertEqual([line.name for line in parsed.lines], ["Belleros"])
-        self.assertEqual([n for n, _ in parsed.refused], [1, 2, 3])
+        self.assertEqual([n for n, _ in parsed.refused], [1, 2, 3, 4])
         self.assertIn("Paste a link", parsed.refused[0][1])
 
     def test_only_a_dm_adds_secret_names_and_repeats_are_counted(self) -> None:

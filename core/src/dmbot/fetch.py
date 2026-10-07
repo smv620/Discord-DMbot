@@ -32,6 +32,7 @@ from aiohttp.resolver import DefaultResolver
 MAX_BYTES = 10 * 1024 * 1024
 TIMEOUT_S = 30
 MAX_REDIRECTS = 3
+FETCHING = asyncio.Semaphore(3)  # links opened at once, across all servers
 _GDOC = re.compile(r"^/document/(?:u/\d+/)?d/([A-Za-z0-9_-]{20,})")
 _GDRIVE = re.compile(r"^/file/(?:u/\d+/)?d/([A-Za-z0-9_-]{20,})")
 # File hosts whose web pages (not files) mean "sign in" or "not shared with everyone".
@@ -45,6 +46,10 @@ _FILE_HOSTS = (
     "api.onedrive.com",
     "1drv.ms",
     "sharepoint.com",
+    # Where those send someone who isn't signed in.
+    "accounts.google.com",
+    "login.microsoftonline.com",
+    "login.live.com",
 )
 # What the reply is, from its Content-Type: the ending text_of reads it by.
 _TYPES = {
@@ -64,29 +69,54 @@ class LinkError(Exception):
     """Plain words for the DM: why the link can't be read and what to do."""
 
 
-NOT_A_LINK = "That doesn't look like a link. Copy the whole address, starting with https://"
+NOT_A_LINK = (
+    "That doesn't look like a link. Open the page, copy the whole link, and paste it here. "
+    "To add names you typed, use 📋 Paste a list."
+)
 ONLY_HTTPS = (
-    "DMbot only opens secure links (starting with https://). Download the file and add it "
-    "with 📎 Upload a file instead."
+    "DMbot can't open that link because it isn't a secure one. Download the file and add "
+    "it with 📎 Upload a file instead."
 )
-NOT_PUBLIC = "DMbot can't open that address. Use a link anyone on the internet can open."
+NOT_PUBLIC = (
+    "DMbot can't open that link. Use a link anyone can open, or download the file and add "
+    "it with 📎 Upload a file."
+)
 NOT_SHARED = (
-    "DMbot can't open that link: it may need a sign-in. Share it so anyone with the link "
-    "can view it, and try again. Or download the file and add it with 📎 Upload a file."
+    "DMbot can't open that link. It may be private or mistyped. Set sharing to \"Anyone "
+    'with the link" (in Google Docs: Share > General access) and try again, or download '
+    "the file and add it with 📎 Upload a file."
 )
-TOO_BIG = "That's too big (up to 10 MB). Split it into smaller files."
-UNREACHABLE = "DMbot couldn't reach that link. Check it, then try again in a minute."
+TOO_BIG = (
+    "That's too big for DMbot (up to 10 MB). Split it into smaller files and add them with "
+    "📎 Upload a file."
+)
+UNREACHABLE = (
+    "DMbot couldn't open that link just now. Make sure it opens in your browser, then try "
+    "again in a minute."
+)
 WRONG_TYPE = (
-    "DMbot can read documents (.pdf, .docx, .txt) and web pages. That link is something "
-    "else. Download it, save it as one of those, and add it with 📎 Upload a file."
+    "DMbot can read web pages and PDF, Word or text files. That link is something else. "
+    "Download it, save it as one of those, and add it with 📎 Upload a file."
 )
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_V4_IN_V6 = (ipaddress.ip_network("::/96"), ipaddress.ip_network("::ffff:0:0:0/96"))
+# A host made only of digits and dots (or with a colon) is meant as an IP address, even
+# when it isn't written the usual way (127.1, 2130706433): never treat it as a name.
+_NUMERIC_HOST = re.compile(r"^[0-9.]+$|:")
+# A link pasted without https:// in front: one word, a host name, then a path.
+_BARE_LINK = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)+/\S*$", re.IGNORECASE)
 
 
 def is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """On the public internet: not private, loopback, link-local (cloud metadata),
     carrier-grade NAT, multicast, reserved or documentation space."""
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        elif ip in _NAT64:  # IPv6 that a NAT64 gateway turns into this IPv4 address
+            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        elif any(ip in net for net in _V4_IN_V6):  # older ways to write IPv4 in IPv6
+            return False
     return ip.is_global and not ip.is_multicast
 
 
@@ -112,7 +142,7 @@ def direct_url(link: str) -> yarl.URL:
     """The address to fetch for a link: share pages of the usual file hosts become their
     download address; anything else is fetched as it is."""
     text = link.strip().strip("<>")
-    if text.startswith("www."):
+    if text.startswith("www.") or _BARE_LINK.match(text):
         text = "https://" + text
     try:
         url = yarl.URL(text)
@@ -129,7 +159,7 @@ def direct_url(link: str) -> yarl.URL:
         return url.update_query(dl="1")
     if host in ("1drv.ms", "onedrive.live.com"):
         # OneDrive's share pages are a web app; its sharing API serves the file itself.
-        token = base64.urlsafe_b64encode(str(url).encode()).decode().rstrip("=")
+        token = base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")  # as pasted
         return yarl.URL(f"https://api.onedrive.com/v1.0/shares/u!{token}/root/content")
     if _host_is(host, "sharepoint.com"):
         return url.update_query(download="1")
@@ -148,6 +178,8 @@ def check_url(url: yarl.URL, policy: Policy = STRICT) -> None:
     try:
         ip = ipaddress.ip_address(url.host.strip("[]"))
     except ValueError:
+        if _NUMERIC_HOST.search(url.host):
+            raise LinkError(NOT_PUBLIC) from None  # an IP address written oddly
         return  # a name: the resolver checks what it points to
     if not policy.allow_ip(ip):
         raise LinkError(NOT_PUBLIC)
@@ -175,10 +207,16 @@ class _PublicResolver(AbstractResolver):
         await self._inner.close()
 
 
-def sign_in_page(ending: str, *hosts: str) -> bool:
+def sign_in_page(ending: str, url: yarl.URL, *hosts: str) -> bool:
     """A file host answered with a web page instead of the file: it wants a sign-in, or
-    the file isn't shared with everyone. Its text must never reach the AI."""
-    return ending == ".html" and any(_host_is(h, d) for h in hosts for d in _FILE_HOSTS)
+    the file isn't shared with everyone. Its text must never reach the AI. `hosts`: every
+    host on the way, so a short link to a file host is caught too. A Google Doc
+    published to the web (…/pub) is a public page."""
+    if ending != ".html":
+        return False
+    if (url.host or "").casefold() == "docs.google.com" and url.path.endswith("/pub"):
+        return False
+    return any(_host_is(h.casefold(), d) for h in hosts for d in _FILE_HOSTS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,22 +245,24 @@ async def fetch(link: str, policy: Policy = STRICT) -> Fetched:
     """The file or page behind a link. Raises LinkError in plain words for anything that
     goes wrong (never another error, and never with the link in it)."""
     target = direct_url(link)
-    first_host = (target.host or "").casefold()
+    hosts = [target.host or ""]
     timeout = aiohttp.ClientTimeout(total=TIMEOUT_S)
-    connector = aiohttp.TCPConnector(resolver=_PublicResolver(policy), use_dns_cache=False)
     try:
-        async with (
-            asyncio.timeout(TIMEOUT_S),
-            aiohttp.ClientSession(timeout=timeout, connector=connector) as session,
-        ):
-            for _ in range(MAX_REDIRECTS + 1):
-                check_url(target, policy)
-                async with session.get(target, allow_redirects=False) as resp:
-                    if resp.status in (301, 302, 303, 307, 308):
-                        target = target.join(yarl.URL(resp.headers.get("Location", "")))
-                        continue
-                    return await _read(resp, target, first_host)
-            raise LinkError(NOT_SHARED)  # a redirect loop is usually a sign-in page
+        async with FETCHING, asyncio.timeout(TIMEOUT_S):
+            connector = aiohttp.TCPConnector(resolver=_PublicResolver(policy), use_dns_cache=False)
+            async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+                for _ in range(MAX_REDIRECTS + 1):
+                    check_url(target, policy)
+                    async with session.get(target, allow_redirects=False) as resp:
+                        if resp.status in (301, 302, 303, 307, 308):
+                            location = resp.headers.get("Location")
+                            if not location:
+                                raise LinkError(UNREACHABLE)
+                            target = target.join(yarl.URL(location))
+                            hosts.append(target.host or "")
+                            continue
+                        return await _read(resp, target, hosts)
+                raise LinkError(NOT_SHARED)  # a redirect loop is usually a sign-in page
     except LinkError:
         raise
     except (TimeoutError, aiohttp.ClientError, OSError, ValueError) as exc:
@@ -231,7 +271,7 @@ async def fetch(link: str, policy: Policy = STRICT) -> Fetched:
         raise LinkError(UNREACHABLE) from None
 
 
-async def _read(resp: aiohttp.ClientResponse, url: yarl.URL, first_host: str) -> Fetched:
+async def _read(resp: aiohttp.ClientResponse, url: yarl.URL, hosts: list[str]) -> Fetched:
     if resp.status in (401, 403, 404, 410):
         raise LinkError(NOT_SHARED)
     if resp.status != 200:
@@ -239,7 +279,7 @@ async def _read(resp: aiohttp.ClientResponse, url: yarl.URL, first_host: str) ->
     ending = _ending(resp, url)
     if ending is None:
         raise LinkError(WRONG_TYPE)
-    if sign_in_page(ending, (url.host or "").casefold(), first_host):
+    if sign_in_page(ending, url, *hosts):
         raise LinkError(NOT_SHARED)
     if (resp.content_length or 0) > MAX_BYTES:
         raise LinkError(TOO_BIG)

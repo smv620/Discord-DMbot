@@ -390,8 +390,11 @@ async def dmbot_names(
     )
     upload = None
     if (file is not None or link) and mine:  # only read for someone who may use it
-        from dmbot.ui.name_lists import read_attachment, read_link
+        from dmbot.ui.name_lists import NO_AI_FOR_DOCUMENTS, read_attachment, read_link
 
+        if file is None and bot.ai is None:  # a link is always for the AI: don't fetch it
+            await _tell(interaction, NO_AI_FOR_DOCUMENTS)
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         if file is not None:
             upload, problem = await read_attachment(file)

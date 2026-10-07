@@ -123,7 +123,7 @@ HEADER = header(secrets=True)
 TEMPLATE = template(secrets=True)
 _SEPARATORS = re.compile(r"[;,]")
 # A web address is never a name (#264): a pasted link must be read, not added.
-_LINK = re.compile(r"://|^www\.", re.IGNORECASE)
+_LINK = re.compile(r"://|^www\.|^[a-z0-9-]+(?:\.[a-z0-9-]+)+/", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,7 +167,7 @@ def _problem(text: str) -> str | None:
     if len(text.split()) > MAX_WORDS:
         return f"more than {MAX_WORDS} words. Names only, no descriptions"
     if _LINK.search(text):
-        return "that's a link, not a name. To read what it points to, press 🔗 Paste a link"
+        return "a link, not a name (to read a link, use 📥 Add many > 🔗 Paste a link)"
     return None
 
 

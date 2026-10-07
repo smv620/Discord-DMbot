@@ -72,7 +72,11 @@ SHOWN_PROBLEMS = 5
 PASTE_MAX = 4000  # what a form field holds
 TEMPLATE_FILE = "dmbot-names-template.txt"
 LINK_MAX = 2000  # a form field for one link
-_LONE_LINK = re.compile(r"^(?:<?https?://|www\.)\S+$", re.IGNORECASE)
+UPLOAD = "📥 Add many > 📎 Upload a file"
+# One link and nothing else: with https://, www., or bare (docs.google.com/document/…).
+_LONE_LINK = re.compile(
+    r"^(?:<?https?://\S+|www\.\S+|[a-z0-9-]+(?:\.[a-z0-9-]+)+/\S*)$", re.IGNORECASE
+)
 
 
 def _slug(name: str) -> str:
@@ -292,14 +296,15 @@ async def show_browse(interaction: discord.Interaction, campaign_id: str) -> Non
 def format_help(*, secrets: bool) -> str:
     parts = "name | kind | other names | secret names" if secrets else "name | kind | other names"
     return (
-        "📥 **Add many names at once.** Paste a list, give a link to a document or web "
-        "page, or upload a file (PDF, Word or .txt). A list in the template's form is added "
-        "at once. Anything else, DMbot's AI can read and make a list for you to check "
-        "first.\n"
-        f"The template: one name per line, `{parts}`. Only the name is needed. Put a `,` or "
-        "`;` between several other names. Kinds: NPC, place, group, creature, item, god, "
-        "spell, event, other. A name with no kind waits in 📝 Check new names.\n"
-        "Upload button missing? Type `/dmbot names` and pick the file in the **file** box."
+        "📥 **Add many names at once.** Paste a list, paste a link, or upload a file (PDF, "
+        "Word or text).\n"
+        "A list written like the template is added straight away. For anything else, "
+        "DMbot's AI finds the names and shows you the list first: nothing is added until "
+        "you press Add.\n"
+        f"Template: one name per line, `{parts}`. Only the name is needed. Separate other "
+        "names with `,` or `;`. Kinds: NPC, place, group, creature, item, god, spell, event, "
+        "other. Names with no kind wait in 📝 Check new names.\n"
+        "No upload box in the form? Type `/dmbot names` and add the file in its **file** box."
     )
 
 
@@ -339,8 +344,8 @@ class AddMany(_Menu):
             secrets = sees_secrets(campaign, interaction.user.id)
             await interaction.response.send_message(
                 "📄 **The names template.** Lines starting with `###` explain it. Change the "
-                "examples to your own names, save it as a .txt file, then add it with "
-                "📥 Add many > 📎 Upload a file.",
+                f"examples to your own names, then add it with {UPLOAD}, or copy the lines "
+                "into 📋 Paste a list.",
                 file=_file(template(secrets=secrets), TEMPLATE_FILE),
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
@@ -395,6 +400,8 @@ class UploadForm(discord.ui.Modal, title="Add names from a file"):
         self.campaign_id = campaign_id
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        if await _campaign_for(interaction, self.campaign_id) is None:
+            return  # checked before downloading anything
         upload = cast(discord.ui.FileUpload[UploadForm], self.file.component)
         if not upload.values:
             await _tell(interaction, "No file was added. Press 📎 Upload a file and pick one.")
@@ -407,13 +414,33 @@ class UploadForm(discord.ui.Modal, title="Add names from a file"):
         await take_list(interaction, self.campaign_id, got)
 
 
+NO_AI_FOR_DOCUMENTS = (
+    "DMbot can't read documents or links here (its AI isn't switched on). Copy the names "
+    "into the template instead: 📥 Add many > 📄 Get the template."
+)
+_link_busy: set[int] = set()  # servers opening a link right now
+
+
 async def take_link(interaction: discord.Interaction, campaign_id: str, link: str) -> None:
     """Read a link (it can take a while, so answer "thinking" first), then offer its
-    text to the AI. Text from a link is never read as a names list (#264)."""
-    if await _campaign_for(interaction, campaign_id) is None:
+    text to the AI. Text from a link is never read as a names list (#264). One link at a
+    time per server, and nothing is fetched when there's no AI to read it."""
+    campaign = await _campaign_for(interaction, campaign_id)
+    if campaign is None:
         return
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    upload, problem = await read_link(link)
+    if _bot(interaction).ai is None:
+        await _tell(interaction, NO_AI_FOR_DOCUMENTS)
+        return
+    if campaign.guild_id in _link_busy:
+        await _tell(interaction, "DMbot is already opening a link for this server. Try again "
+                    "when it's done.")  # fmt: skip
+        return
+    _link_busy.add(campaign.guild_id)
+    try:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        upload, problem = await read_link(link)
+    finally:
+        _link_busy.discard(campaign.guild_id)
     if upload is None:
         await _tell(interaction, problem or "DMbot couldn't read that.")
         return
@@ -523,11 +550,7 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
             return
     if _bot(interaction).ai is None:
         if upload.document:
-            await _tell(
-                interaction,
-                "DMbot can't read documents here (its AI isn't switched on). Copy the names "
-                "into the template instead: 📥 Add many > 📄 Get the template.",
-            )
+            await _tell(interaction, NO_AI_FOR_DOCUMENTS)
         else:
             await import_list(interaction, campaign.id, upload.text)  # what fits, and why not
         return
@@ -541,8 +564,8 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
 
 def _ai_offer_text(upload: Upload, parsed: Parsed | None) -> str:
     rights = (
-        "Its text goes to Anthropic (an AI company) to be read. Only do this with material "
-        "you have the right to use: DMbot doesn't check."
+        "Its text goes to Anthropic (an AI company) to be read. Only press 🤖 Find names if "
+        "you have the right to use this material: DMbot doesn't check."
     )
     if parsed is None:
         return (
@@ -570,7 +593,7 @@ class AIOffer(_Menu):
         self.add_item(
             _Button(
                 self._read,
-                label="🤖 Find names (I have the right to use this)",
+                label="🤖 Find names",  # the message says what pressing it confirms
                 style=grey if fits_first else blue,
             )
         )
@@ -604,6 +627,8 @@ class AIOffer(_Menu):
             return
         self.stop()
         _ai_busy.add(guild)
+        for old in [k for k in _ai_reads if k[1] != day]:
+            del _ai_reads[old]  # only today counts
         _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
         try:
             await interaction.response.edit_message(
@@ -708,7 +733,7 @@ async def show_ai_list(
         f"🤖 **DMbot's AI found {count} name{'' if count == 1 else 's'} in "
         f"{_md(upload.label)}.** It only lists names written there, but it can miss some or "
         "get a kind wrong. Nothing is added until you press **Add these names**. To change "
-        "many, edit the attached file and add it with `/dmbot names`; or add them and fix "
+        f"many, edit the attached file and add it with {UPLOAD}; or add them and fix "
         "single names on their cards (or **Undo**)."
         + (" " + " ".join(notes) if notes else "")
         + f"\n```\n{shown}\n```"
@@ -717,7 +742,7 @@ async def show_ai_list(
     body = (
         header(secrets=secrets)
         + f"###\n### Made by DMbot's AI from {' '.join(upload.label.split())}. Check it, then "
-        "add it with /dmbot names (the file box).\n" + "\n".join(lines) + "\n"
+        "add it with Add many > Upload a file.\n" + "\n".join(lines) + "\n"
     )
     view = AIPreview(campaign.id, listed, count)
     await interaction.edit_original_response(
@@ -1070,7 +1095,7 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
     await interaction.followup.send(
         f"📤 **All {count:,} name{'' if count == 1 else 's'} for {_md(campaign.name)}.** "
         f"{warning}Names still waiting in 📝 Check new names aren't included. Edit it and add "
-        "it again with `/dmbot names` (names DMbot already knows are skipped).",
+        f"it again with {UPLOAD} (names DMbot already knows are skipped).",
         file=_file(text, f"names-{_slug(campaign.name)}-{day}.txt"),
         ephemeral=True,
         allowed_mentions=NO_PINGS,

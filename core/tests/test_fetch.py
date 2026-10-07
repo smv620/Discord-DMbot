@@ -1,11 +1,14 @@
 """Opening links safely (#264): share links become download links, and nothing but the
 public internet can be reached, including through redirects and DNS."""
 
+import asyncio
+import inspect
 import ipaddress
 import unittest
 from typing import Any
 from unittest.mock import patch
 
+import yarl
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
@@ -29,6 +32,9 @@ class DirectLinks(unittest.TestCase):
             "https://contoso.sharepoint.com/:w:/s/team/Eabc":
                 "https://contoso.sharepoint.com/:w:/s/team/Eabc?download=1",
             "www.example.com/npcs.html": "https://www.example.com/npcs.html",
+            f"docs.google.com/document/d/{DOC}/edit":
+                f"https://docs.google.com/document/d/{DOC}/export?format=txt",
+            "example.com/npcs.pdf": "https://example.com/npcs.pdf",
             " <https://example.com/lore> ": "https://example.com/lore",
         }  # fmt: skip
         for link, want in cases.items():
@@ -57,11 +63,12 @@ class Addresses(unittest.TestCase):
             "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254",
             "100.64.0.1", "0.0.0.0", "224.0.0.1", "::1", "fe80::1", "fc00::1",
             "::ffff:127.0.0.1", "::ffff:169.254.169.254", "192.0.2.1",
+            "64:ff9b::a00:1", "64:ff9b::a9fe:a9fe", "::ffff:0:a00:1", "::7f00:1",
         ]  # fmt: skip
         for ip in refused:
             with self.subTest(ip):
                 self.assertFalse(is_public(ipaddress.ip_address(ip)))
-        for ip in ("8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"):
+        for ip in ("8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "64:ff9b::808:808"):
             with self.subTest(ip):
                 self.assertTrue(is_public(ipaddress.ip_address(ip)))
 
@@ -77,6 +84,9 @@ class Addresses(unittest.TestCase):
             "https://169.254.169.254/latest/meta-data/": fetch.NOT_PUBLIC,
             "https://[::1]/": fetch.NOT_PUBLIC,
             "https://[::ffff:10.0.0.1]/": fetch.NOT_PUBLIC,
+            "https://127.1/": fetch.NOT_PUBLIC,  # IP addresses written oddly
+            "https://2130706433/": fetch.NOT_PUBLIC,
+            "https://127.0.0.1./": fetch.NOT_PUBLIC,
         }
         for link, why in refused.items():
             with self.subTest(link), self.assertRaises(LinkError) as ctx:
@@ -84,11 +94,17 @@ class Addresses(unittest.TestCase):
             self.assertEqual(str(ctx.exception), why)
 
     def test_sign_in_pages_of_file_hosts(self) -> None:
-        self.assertTrue(fetch.sign_in_page(".html", "accounts.google.com", "docs.google.com"))
-        self.assertTrue(fetch.sign_in_page(".html", "www.dropbox.com"))
-        self.assertFalse(fetch.sign_in_page(".pdf", "docs.google.com"))
-        self.assertFalse(fetch.sign_in_page(".html", "forgottenrealms.fandom.com"))
-        self.assertFalse(fetch.sign_in_page(".html", "notdropbox.com"))
+        page = yarl.URL("https://accounts.google.com/signin")
+        wiki = yarl.URL("https://forgottenrealms.fandom.com/wiki/Auril")
+        self.assertTrue(fetch.sign_in_page(".html", page, "docs.google.com", page.host or ""))
+        # A short link that ends at a file host's sign-in page: every host on the way counts.
+        self.assertTrue(fetch.sign_in_page(".html", page, "bit.ly", "accounts.google.com"))
+        self.assertTrue(fetch.sign_in_page(".html", wiki, "www.dropbox.com"))
+        self.assertFalse(fetch.sign_in_page(".pdf", page, "docs.google.com"))
+        self.assertFalse(fetch.sign_in_page(".html", wiki, "forgottenrealms.fandom.com"))
+        self.assertFalse(fetch.sign_in_page(".html", wiki, "notdropbox.com"))
+        published = yarl.URL(f"https://docs.google.com/document/d/e/{DOC}/pub")
+        self.assertFalse(fetch.sign_in_page(".html", published, "docs.google.com"))
 
 
 class Resolver(unittest.IsolatedAsyncioTestCase):
@@ -122,7 +138,10 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
         self.routes: dict[str, Any] = {}
 
         async def handler(request: web.Request) -> web.StreamResponse:
-            return self.routes[request.path](request)  # type: ignore[no-any-return]
+            reply = self.routes[request.path](request)
+            if inspect.isawaitable(reply):
+                reply = await reply
+            return reply  # type: ignore[no-any-return]
 
         app = web.Application()
         app.router.add_route("GET", "/{tail:.*}", handler)
@@ -196,8 +215,30 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
 
     async def test_too_big(self) -> None:
         self.route("/big", web.Response(text="x" * 5000, content_type="text/plain"))
+
+        async def streamed(request: web.Request) -> web.StreamResponse:
+            reply = web.StreamResponse(headers={"Content-Type": "text/plain"})
+            reply.enable_chunked_encoding()  # no size given up front: counted as it comes
+            await reply.prepare(request)
+            for _ in range(10):
+                await reply.write(b"x" * 500)
+            return reply
+
+        self.routes["/stream"] = streamed
         with patch.object(fetch, "MAX_BYTES", 1000):
             self.assertEqual(await self.refused("/big"), fetch.TOO_BIG)
+            self.assertEqual(await self.refused("/stream"), fetch.TOO_BIG)
+
+    async def test_slow_and_odd_replies(self) -> None:
+        async def slow(_request: web.Request) -> web.Response:
+            await asyncio.sleep(5)
+            return web.Response(text="late")
+
+        self.routes["/slow"] = slow
+        self.route("/nowhere", web.Response(status=302))  # a redirect without a Location
+        with patch.object(fetch, "TIMEOUT_S", 0.2):
+            self.assertEqual(await self.refused("/slow"), fetch.UNREACHABLE)
+        self.assertEqual(await self.refused("/nowhere"), fetch.UNREACHABLE)
 
     async def test_nothing_listening(self) -> None:
         await self.server.close()

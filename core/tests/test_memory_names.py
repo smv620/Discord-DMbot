@@ -700,6 +700,7 @@ class Lists(NamesTest):
         from dmbot import fetch
         from dmbot.ui import name_lists
 
+        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
         before = await self.names()
         form = name_lists.LinkForm(self.campaign.id)
@@ -711,19 +712,46 @@ class Lists(NamesTest):
         self.assertEqual(it.followup.send.call_args.args[0], fetch.NOT_SHARED)
         self.assertEqual(await self.names(), before)
 
-    async def test_a_link_without_the_ai_is_refused_plainly(self) -> None:
-        from dmbot.fetch import Fetched
+    async def test_a_link_without_the_ai_is_refused_before_fetching(self) -> None:
         from dmbot.ui import name_lists
 
         self.bot.ai = None
         self.fresh()
         before = await self.names()
         it = self.it()
-        got = Fetched(b"Ulfgar | NPC", "link.txt")  # even if it looks like a list
-        with patch("dmbot.fetch.fetch", AsyncMock(return_value=got)):
+        with patch("dmbot.fetch.fetch", AsyncMock()) as fetched:
             await name_lists.take_link(it, self.campaign.id, "https://example.com/list.txt")
-        self.assertIn("can't read documents here", it.followup.send.call_args.args[0])
+        fetched.assert_not_called()  # nothing downloaded for nobody to read
+        self.assertIn("can't read documents or links here", it.response.sent[0][0])
         self.assertEqual(await self.names(), before)
+
+    async def test_one_link_at_a_time_per_server(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        name_lists._link_busy.add(GUILD)
+        self.addCleanup(name_lists._link_busy.discard, GUILD)
+        it = self.it()
+        with patch("dmbot.fetch.fetch", AsyncMock()) as fetched:
+            await name_lists.take_link(it, self.campaign.id, "https://example.com/a")
+        fetched.assert_not_called()
+        self.assertIn("already opening a link", it.response.sent[0][0])
+
+    async def test_a_web_page_reaches_the_ai_offer_as_text(self) -> None:
+        from dmbot.fetch import Fetched
+        from dmbot.ui import name_lists
+
+        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        it = self.it()
+        page = Fetched(b"<html><script>x</script><body><p>Auril the Frostmaiden</p>", "link.html")
+        with patch("dmbot.fetch.fetch", AsyncMock(return_value=page)):
+            await name_lists.take_link(it, self.campaign.id, "https://example.com/lore")
+        offer = it.followup.send.call_args.kwargs["view"]
+        self.assertEqual(offer.upload.text, "Auril the Frostmaiden")
+        self.assertTrue(offer.upload.document)
+        self.assertEqual(name_lists._link_busy, set())  # free for the next one
 
     async def test_an_uploaded_list_is_added_at_once(self) -> None:
         from dmbot.ui import name_lists
