@@ -1426,9 +1426,11 @@ async def _load_ontology(scope: Scope) -> Ontology:
 
 
 async def _relations_touching(w: Scope, *entity_ids: str) -> list[Relation]:
+    # In id order: the facts a check finds become flags in this order, so the same memory
+    # always gets the same flags, whatever order the rows sit in on disk (#476).
     rows = await w.select(
         RELATIONS,
-        " AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+        " AND (subject_id = ANY(%s) OR object_id = ANY(%s)) ORDER BY id",
         [list(entity_ids), list(entity_ids)],
     )
     return [_relation(r) for r in rows]

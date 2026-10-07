@@ -1838,6 +1838,22 @@ class MergeMatchesTheOldWalk(MemoryTest):
             )
             return sorted(json.dumps(dict(r), sort_keys=True) for r in await cur.fetchall())
 
+    async def test_facts_come_back_in_id_order_whatever_the_disk_order(self) -> None:
+        """#476: an update moves a row to the end of the table on disk; the facts a check
+        reads (and so the flags it makes) must not follow that order."""
+        from dmbot.memory import store as store_module
+
+        hub = await self.add("Bryn Shander", type="place")
+        npcs = [await self.add(f"Guard {n}") for n in range(6)]
+        facts = [(await self.relate(npc, "located_in", hub)).value[0].id for npc in npcs]
+        for fact_id in facts[::2]:  # rewritten: now last on disk
+            await self.memory.update_relation(
+                GUILD_A, self.c, fact_id, status=CONFIRMED, source="dm"
+            )
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            got = [r.id for r in await store_module._relations_touching(w, hub)]
+        self.assertEqual(got, sorted(facts))
+
     async def test_seeded_graphs(self) -> None:
         from tests import merge_reference
 
