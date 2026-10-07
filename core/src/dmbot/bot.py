@@ -909,8 +909,10 @@ class DMBot(commands.AutoShardedBot):
             await self.start_table(table)
         except Exception:
             log.exception("Couldn't start the session")
-            with contextlib.suppress(Exception):
+            try:
                 await self.sessions.clear(guild.id, "the session couldn't start")
+            except Exception:
+                log.exception("Couldn't forget the session that failed to start")
             return False, SAVE_FAILED
         if transcript_problem:
             await self.post(screen_id, transcript_problem)
@@ -953,10 +955,14 @@ class DMBot(commands.AutoShardedBot):
             # Forget the saved session first: if that fails, keep listening rather than
             # stop now and come back by surprise after the next restart.
             try:
-                await self.sessions.clear(guild_id, f"/dmbot stop by user {user_id}")
+                was_saved = await self.sessions.clear(guild_id, f"/dmbot stop by user {user_id}")
             except Exception:
                 log.exception("Couldn't clear the saved session")
                 return STOP_FAILED
+            if not was_saved:
+                # DMbot was listening, so this session should have been saved (#147).
+                with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
+                    log.warning("Stopped a session that wasn't saved: it couldn't have resumed")
             await self.stop_table(guild_id, f"/dmbot stop by user {user_id}")
         name = f" to **{table.campaign_name}**" if table.campaign_name else ""
         saved = self.transcripts is not None and (
@@ -1038,7 +1044,6 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Couldn't stop a saved session")
             return STOP_FAILED
-        log.info("Saved session ended before it resumed: /dmbot stop by user %s", user_id)
         self._resume_when_available.discard(guild_id)
         # In case an ears from before the restart is still in the channel.
         await self.ears.send(leave_command(guild_id))
@@ -1158,7 +1163,9 @@ class DMBot(commands.AutoShardedBot):
             await self.sessions.clear(guild.id, "not resumed: no DM screen DMbot can post in")
             return False
         if now - saved.started_at > MAX_RESUME_AGE_S:
-            await self.sessions.clear(guild.id, "not resumed: session too old")
+            await self.sessions.clear(
+                guild.id, f"not resumed: started over {MAX_RESUME_AGE_S // 3600} hours ago"
+            )
             await self.post(screen_id, resume_too_old_message(campaign.name))
             return False
         me = cast(discord.Member | None, guild.me)

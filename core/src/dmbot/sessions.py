@@ -53,7 +53,8 @@ class SessionStore:
                 " started_at = EXCLUDED.started_at,"
                 " notice_posted = EXCLUDED.notice_posted,"
                 " resume_count = 0, last_resumed_at = NULL"
-                # xmax is 0 only for a row this statement inserted (not one it updated).
+                # xmax is 0 only for a row this statement inserted, not one it updated.
+                # A Postgres internal, not documented behaviour: recheck on upgrades.
                 " RETURNING (xmax = 0) AS inserted",
                 (
                     session.guild_id,
@@ -74,7 +75,7 @@ class SessionStore:
         with log_context(guild_id=session.guild_id, campaign_id=session.campaign_id):
             log.info(
                 "Session saved%s: voice channel %s, started by user %s",
-                "" if row and row["inserted"] else " in place of the one saved before",
+                " in place of the one saved before" if row and not row["inserted"] else "",
                 session.voice_channel_id,
                 session.started_by,
             )
@@ -106,8 +107,9 @@ class SessionStore:
                 (guild_id,),
             )
 
-    async def clear(self, guild_id: int, reason: str) -> None:
-        """Forget the server's saved session. `reason` goes in the log (IDs only)."""
+    async def clear(self, guild_id: int, reason: str) -> bool:
+        """Forget the server's saved session. `reason` goes in the log (IDs only).
+        Returns whether a saved session was there to remove."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM active_sessions WHERE guild_id = %s RETURNING campaign_id",
@@ -119,12 +121,15 @@ class SessionStore:
                 (guild_id,),
             )
             routed = await cur.fetchone()
-        if row is not None:
-            with log_context(guild_id=guild_id, campaign_id=row["campaign_id"]):
-                log.info("Saved session removed: %s", reason)
-        elif routed is not None:
-            with log_context(guild_id=guild_id):
-                log.info("Leftover resume entry removed (no saved session): %s", reason)
+        with log_context(guild_id=guild_id):
+            if row is not None:
+                with log_context(campaign_id=row["campaign_id"]):
+                    log.info("Saved session removed: %s", reason)
+            elif routed is not None:
+                log.info("Cleared a leftover restart note (no session was saved): %s", reason)
+            else:
+                log.debug("No saved session to remove: %s", reason)
+        return row is not None
 
     async def guilds_to_resume(self, shards: ShardSettings) -> list[int]:
         """Servers on these shards that had a session running. IDs only."""
