@@ -1673,6 +1673,15 @@ class Hints(NamesTest):
         self.bot._hint_people_cache[GUILD] = (cached[0] - 60, *cached[1:])  # time passes
         hints = await self.bot._name_hints(clip(table))
         self.assertEqual(sorted(hints[:2]), sorted([f"user{PLAYER}", f"user{DM}"]))
+        # A quick "stop recording me" (before the database write) counts at once too.
+        self.bot.stop_recording(GUILD, PLAYER)
+        self.assertNotIn(f"user{PLAYER}", await self.bot._name_hints(clip(table)))
+        # No voice channel DMbot can see: everyone who agreed goes last, none are lost.
+        self.bot.get_channel = lambda _id: None  # type: ignore[method-assign]
+        table.voice_channel_id = 3  # another channel: not the copy from before
+        hints = await self.bot._name_hints(clip(table))
+        self.assertEqual(hints[0], "Belleros")
+        self.assertIn(f"user{DM}", hints)
 
     async def test_names_said_at_the_table_move_to_the_front(self) -> None:
         from dmbot.audio.segmenter import Utterance
