@@ -8,7 +8,10 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued)
+- #380 (#353, CloudDev): core only. Check: /dmbot names shows "✏️ Edit or remove a name…"
+  and the fix hint; ➕ Add a name replies with the new name's card ("Made a mistake?…");
+  card row 1 is ✏️ Fix spelling | Change what it is | 🗑 Remove this name, row 2 starts
+  with ➕ Also called…; 📥 Add many ends with the "Only one name wrong?" line.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
