@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-07 by dev1 (deployed bb55060; ready for run 8)
+Last updated: 2026-10-07 by dev1 (deployed ee1bb03; ready for run 8 and the #147 repro)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -8,23 +8,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-Deploy development @ f317d6d (bb55060 is live; five PRs since; rebuild core and
-ears: both changed). Check, in this order:
-  - #293 (dev1, #147): every save/removal of the saved session is logged with its
-    reason. Check: `docker compose logs core | grep -i "session saved\|removed"` after
-    a start, a /dmbot stop and a restart; no WARNING "wasn't saved" on a normal stop.
-  - #302 (CloudDev, #287): /transcript campaign menu fits a phone, "Last played …".
-  - #304 (CloudDev, #21): npm/Node pins only; the docker images job built, so just
-    confirm ears starts. Also run `npm view npm@10.9.8 version` once (see #318).
-  - #306 (dev3, #298): someone who opts in mid-session is looked up before they
-    speak. Check: opt in while the table runs, say one sentence at once: ears
-    `audio` received == expected and the first word is kept; after a withdrawal the
-    capture stops at once. DM-screen audio % waits from the latest health report
-    and gives up after ~2 min without speech.
-  - #314 (CloudDev, #49): /dmbot optionalrules. Check as DM: the private list shows
-    4 rules for a 2024 campaign, the menu switches one, the DM screen gets one line,
-    a player running it is refused. Wording polish follows in #320, so don't log
-    string nits.
+(nothing queued)
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -38,12 +22,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: bb55060 (2026-10-07 08:08 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: ee1bb03 (2026-10-07 08:36 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since bb55060, ask it to redeploy first. Use a steady connection (run 8a
+      moved since ee1bb03, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -92,6 +76,20 @@ What to check
 
 Later: speech-to-text bake-off (#128, docs/STT_BAKEOFF.md: needs 2-4 readers of
 stt-bakeoff.md); one-click install live check (#104, merged in #150).
+  Deployed 2026-10-07 08:36 (ee1bb03)
+  - #293 (dev1, #147): every save/removal of the saved session is logged with its
+    reason. Check: `docker compose logs core | grep -i "session saved\|removed"` after
+    a start, a /dmbot stop and a restart; no WARNING "wasn't saved" on a normal stop.
+  - #302 (CloudDev, #287): /transcript campaign menu fits a phone, "Last played …".
+  - #306 (dev3, #298): someone who opts in mid-session is looked up before they
+    speak. Check: opt in while the table runs, say one sentence at once: ears
+    `audio` received == expected and the first word is kept; after a withdrawal the
+    capture stops at once. DM-screen audio % waits from the latest health report
+    and gives up after ~2 min without speech.
+  - #314 (CloudDev, #49): /dmbot optionalrules. Check as DM: the private list shows
+    4 rules for a 2024 campaign, the menu switches one, the DM screen gets one line,
+    a player running it is refused. Wording polish follows in #320, so don't log
+    string nits.
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
