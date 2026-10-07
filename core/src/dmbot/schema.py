@@ -500,9 +500,16 @@ WEB_ACCOUNTS = (
         user_id            BIGINT PRIMARY KEY,
         email              TEXT,
         created_at         BIGINT NOT NULL,
-        last_sign_in_at    BIGINT NOT NULL,
-        -- Try It can be started once per Discord user (#435).
-        try_it_started_at  BIGINT
+        last_sign_in_at    BIGINT NOT NULL
+    );
+
+    -- Discord users who have started Try It, so it can be started only once (#435).
+    -- Only the plan writer adds a row; nobody changes or removes one, and it stays after
+    -- the account is deleted (it holds nothing but the Discord id and a date), so deleting
+    -- and signing up again doesn't give a second free month.
+    CREATE TABLE try_it_used (
+        user_id  BIGINT PRIMARY KEY,
+        used_at  BIGINT NOT NULL
     );
 
     -- What each person has paid for, one row per person. Changed only by the plan writer
@@ -546,11 +553,13 @@ WEB_ACCOUNTS = (
     -- Payment events already applied, so a repeated delivery changes nothing (#435).
     -- Idempotency: INSERT ... ON CONFLICT DO NOTHING RETURNING in the same transaction as
     -- the entitlements change (the primary key spans everyone, even though each person
-    -- sees only their own rows). Events that name no person are not recorded here.
+    -- sees only their own rows). Only the plan writer adds a row; nobody changes or
+    -- removes one, so an event can never be applied twice. Ids only, no payment details.
+    -- Events that name no person are not recorded here.
     CREATE TABLE payment_events (
         provider     TEXT NOT NULL,
         event_id     TEXT NOT NULL,
-        user_id      BIGINT NOT NULL REFERENCES web_users ON DELETE CASCADE,
+        user_id      BIGINT NOT NULL,
         received_at  BIGINT NOT NULL,
         PRIMARY KEY (provider, event_id)
     );
@@ -588,8 +597,23 @@ WEB_ACCOUNTS = (
         WHERE installed_by_user_id IS NOT NULL;
     """
     + _isolate_user("web_users")
-    + _isolate_user("payment_events")
     + """
+    -- try_it_used and payment_events: the person reads their own rows; only the plan
+    -- writer adds one; no policy allows changing or removing a row.
+    ALTER TABLE try_it_used ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE try_it_used FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON try_it_used FOR SELECT
+        USING (user_id = dmbot_current_user());
+    CREATE POLICY plan_writer_insert ON try_it_used FOR INSERT
+        WITH CHECK (user_id = dmbot_current_user() AND dmbot_plan_writer() = 'payments');
+
+    ALTER TABLE payment_events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE payment_events FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON payment_events FOR SELECT
+        USING (user_id = dmbot_current_user());
+    CREATE POLICY plan_writer_insert ON payment_events FOR INSERT
+        WITH CHECK (user_id = dmbot_current_user() AND dmbot_plan_writer() = 'payments');
+
     -- entitlements: the person reads their own row; only the plan writer may change it.
     ALTER TABLE entitlements ENABLE ROW LEVEL SECURITY;
     ALTER TABLE entitlements FORCE ROW LEVEL SECURITY;
@@ -618,8 +642,10 @@ WEB_ACCOUNTS = (
     CREATE POLICY cleanup_delete ON web_sessions FOR DELETE
         USING (dmbot_cleanup() = 'expired-sessions' AND expires_at <= dmbot_now());
 
-    -- installs: seen by its server and by its installer; written only for the server set
-    -- as the transaction's server (the bot) or install server (the website).
+    -- installs: seen by its server and by its installer. The bot writes its own server's
+    -- row (Database.guild). The website writes only the install server's row, only naming
+    -- the signed-in person, and never takes over a row someone else installed or linked.
+    -- Only the bot removes a row.
     ALTER TABLE installs ENABLE ROW LEVEL SECURITY;
     ALTER TABLE installs FORCE ROW LEVEL SECURITY;
     CREATE POLICY install_read ON installs FOR SELECT
@@ -627,12 +653,19 @@ WEB_ACCOUNTS = (
                OR guild_id = dmbot_install_guild()
                OR installed_by_user_id = dmbot_current_user());
     CREATE POLICY install_insert ON installs FOR INSERT
-        WITH CHECK (guild_id = dmbot_current_guild() OR guild_id = dmbot_install_guild());
+        WITH CHECK (guild_id = dmbot_current_guild()
+                    OR (guild_id = dmbot_install_guild()
+                        AND installed_by_user_id = dmbot_current_user()));
     CREATE POLICY install_update ON installs FOR UPDATE
-        USING (guild_id = dmbot_current_guild() OR guild_id = dmbot_install_guild())
-        WITH CHECK (guild_id = dmbot_current_guild() OR guild_id = dmbot_install_guild());
+        USING (guild_id = dmbot_current_guild()
+               OR (guild_id = dmbot_install_guild()
+                   AND (installed_by_user_id IS NULL
+                        OR installed_by_user_id = dmbot_current_user())))
+        WITH CHECK (guild_id = dmbot_current_guild()
+                    OR (guild_id = dmbot_install_guild()
+                        AND installed_by_user_id = dmbot_current_user()));
     CREATE POLICY install_delete ON installs FOR DELETE
-        USING (guild_id = dmbot_current_guild() OR guild_id = dmbot_install_guild());
+        USING (guild_id = dmbot_current_guild());
     """
 )
 
@@ -668,6 +701,7 @@ ISOLATED_TABLES = (
 # and installs are visible to their server and to the person who installed DMbot.
 USER_ISOLATED_TABLES = (
     "web_users",
+    "try_it_used",
     "entitlements",
     "payment_events",
     "web_sessions",

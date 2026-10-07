@@ -257,6 +257,68 @@ class WebAccounts(DatabaseTest):
             )
         self.assertEqual(await self.count("consent", self.db.user(BOB, install_guild=GUILD_A)), 0)
 
+    async def test_try_it_once_even_after_deleting_the_account(self) -> None:
+        await self.add_user(ALICE)
+        add = "INSERT INTO try_it_used (user_id, used_at) VALUES (%s, 0)"
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            async with self.db.user(ALICE) as conn:  # only the plan writer marks it
+                await conn.execute(add, (ALICE,))
+        async with self.db.plan_writer(ALICE) as conn:
+            await conn.execute(add, (ALICE,))
+        async with self.db.user(ALICE) as conn:
+            cur = await conn.execute("DELETE FROM try_it_used")
+            self.assertEqual(cur.rowcount, 0)
+            cur = await conn.execute("UPDATE try_it_used SET used_at = 5")
+            self.assertEqual(cur.rowcount, 0)
+            await conn.execute("DELETE FROM web_users WHERE user_id = %s", (ALICE,))
+        self.assertEqual(await self.count("try_it_used", self.db.user(ALICE)), 1)
+
+    async def test_a_person_cannot_forge_or_forget_payment_events(self) -> None:
+        await self.add_user(ALICE)
+        add = (
+            "INSERT INTO payment_events (provider, event_id, user_id, received_at)"
+            " VALUES ('fake', %s, %s, 0)"
+        )
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            async with self.db.user(ALICE) as conn:  # pre-inserting would block a real event
+                await conn.execute(add, ("evt-9", ALICE))
+        async with self.db.plan_writer(ALICE) as conn:
+            await conn.execute(add, ("evt-1", ALICE))
+        async with self.db.user(ALICE) as conn:  # forgetting would let it apply again
+            cur = await conn.execute("DELETE FROM payment_events")
+            self.assertEqual(cur.rowcount, 0)
+        self.assertEqual(await self.count("payment_events", self.db.user(ALICE)), 1)
+
+    async def test_the_website_names_only_the_signed_in_person_as_installer(self) -> None:
+        await self.add_user(ALICE)
+        await self.add_user(BOB)
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            async with self.db.user(BOB, install_guild=GUILD_A) as conn:
+                await conn.execute(
+                    "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
+                    " VALUES (%s, %s, 0, 'site')",
+                    (GUILD_A, ALICE),
+                )
+
+    async def test_linking_fills_an_empty_installer_but_never_takes_one_over(self) -> None:
+        await self.add_user(ALICE)
+        await self.add_user(BOB)
+        async with self.db.guild(GUILD_A) as conn:  # joined through a plain link
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
+                " VALUES (%s, NULL, 0, 'link')",
+                (GUILD_A,),
+            )
+        link = "UPDATE installs SET installed_by_user_id = %s WHERE guild_id = %s"
+        async with self.db.user(ALICE, install_guild=GUILD_A) as conn:
+            cur = await conn.execute(link, (ALICE, GUILD_A))
+            self.assertEqual(cur.rowcount, 1)
+        async with self.db.user(BOB, install_guild=GUILD_A) as conn:
+            cur = await conn.execute(link, (BOB, GUILD_A))
+            self.assertEqual(cur.rowcount, 0)
+            cur = await conn.execute("DELETE FROM installs")
+            self.assertEqual(cur.rowcount, 0)
+
     async def test_settings_do_not_leak_to_the_next_transaction(self) -> None:
         await self.add_user(ALICE)
         async with self.db.plan_writer(ALICE):
