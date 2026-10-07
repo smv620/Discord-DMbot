@@ -2,6 +2,7 @@
 mishearings it must fix and the traps it must leave alone (docs/PLAN.md)."""
 
 import unittest
+from unittest.mock import patch
 
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import (
@@ -14,6 +15,8 @@ from dmbot.memory.models import (
     Entity,
     name_key,
 )
+from dmbot.memory.sounds import sound_codes
+from dmbot.transcript import cleaner
 from dmbot.transcript.cleaner import (
     DM_FIX,
     SOUND,
@@ -58,6 +61,7 @@ def lookup(
     more: tuple[Entity, ...] = (),
     more_aliases: tuple[Alias, ...] = (),
     corrections: tuple[Correction, ...] = (),
+    hooded: bool = True,
 ) -> CampaignLookup:
     entities = (
         entity(BELLEROS, "Belleros"),
@@ -71,7 +75,7 @@ def lookup(
     )
     aliases = (
         alias(BELLEROS, "Belleros"),
-        alias(BELLEROS, "the hooded stranger", secret=True),
+        *([alias(BELLEROS, "the hooded stranger", secret=True)] if hooded else []),
         alias(CERRIC, "Cerric"),
         alias(KAZETH, "Ka'zeth"),
         alias(TOWN, "Bryn Shander"),
@@ -244,8 +248,17 @@ class ReviewTrapsTest(unittest.TestCase):
     def test_a_split_name_needs_no_scene(self) -> None:
         self.assertEqual(text("we meet Ka Zeth", scene=()), "we meet Ka'zeth")
 
-    def test_a_player_character_is_always_in_context(self) -> None:
-        self.assertEqual(text("then Ceric shoots", scene=()), "then Cerric shoots")
+    def test_a_player_character_needs_the_scene_too(self) -> None:
+        self.assertEqual(text("then Ceric shoots", scene=()), "then Ceric shoots")
+        self.assertEqual(text("then Ceric shoots", scene={CERRIC}), "then Cerric shoots")
+
+    def test_a_real_first_name_is_not_pulled_into_a_players_character(self) -> None:
+        # Mara is a player's character and in the scene; "Mary" is spelled 0.75 alike
+        names = lookup(
+            more=(entity(MAREN, "Mara", "player_character", played_by=DEE),),
+            more_aliases=(alias(MAREN, "Mara"),),
+        )
+        self.assertEqual(text("so Mary, your turn", names), "so Mary, your turn")
 
     def test_real_names_and_brands_outside_the_scene_stay(self) -> None:
         names = lookup(
@@ -263,6 +276,21 @@ class ReviewTrapsTest(unittest.TestCase):
         )
         self.assertEqual(text("I met Silas Vain today", names), "I met Silas Vain today")
         self.assertEqual(text("I met the hooded strangr", names), "I met the hooded strangr")
+
+    def test_a_one_word_secret_split_in_three_still_blocks_a_fix(self) -> None:
+        # #295 review: only secret names of very different lengths, so a 3-word run
+        # must still be checked ("Silasvane" heard as "Si Las Vain")
+        for long_secret in (
+            (),
+            (alias(BELLEROS, "the Red Lady of the Kazeth Hills", secret=True),),
+        ):
+            names = lookup(
+                hooded=False,
+                more_aliases=(alias(BELLEROS, "Silasvane", secret=True), *long_secret),
+                corrections=(correction("Vain", BELLEROS, FIX),),
+            )
+            with self.subTest(long_secret=bool(long_secret)):
+                self.assertEqual(text("I met Si Las Vain today", names), "I met Si Las Vain today")
 
     def test_nothing_changes_inside_a_long_secret_name(self) -> None:
         names = lookup(
@@ -294,6 +322,130 @@ class MoreTrapsTest(unittest.TestCase):
 
     def test_a_curly_possessive(self) -> None:
         self.assertEqual(text("that is Beleros’s sword"), "that is Belleros’s sword")
+
+
+class WrittenSecretTest(unittest.TestCase):
+    """The line as written is checked too (#321 review): a DM's fixed spelling needs no
+    likeness, so it could write a secret name the heard words never showed."""
+
+    def test_a_dm_fix_never_completes_a_secret_name(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Vane"),),
+            more_aliases=(alias(MAREN, "Vane"), alias(BELLEROS, "Silas Vane", secret=True)),
+            corrections=(correction("Bane", MAREN, FIX),),
+        )
+        result = clean(names, "I met Silas Bane today", scene=EVERYONE)
+        self.assertEqual((result.text, result.fixes), ("I met Silas Bane today", ()))
+        # the same rule elsewhere in the line still works
+        self.assertEqual(
+            text("Bane waits. I met Silas Bane", names), "Vane waits. I met Silas Bane"
+        )
+
+    def test_a_dm_rule_never_renames_someone_at_the_table(self) -> None:
+        names = lookup(corrections=(correction("Sara", CERRIC, FIX),))
+        self.assertEqual(text("thanks Sara", names, people=["Sara"]), "thanks Sara")
+
+    def test_a_real_first_name_is_not_pulled_into_an_npc(self) -> None:
+        names = lookup(more=(entity(MAREN, "Mara"),), more_aliases=(alias(MAREN, "Mara"),))
+        self.assertEqual(text("so Mary, your turn", names), "so Mary, your turn")
+
+    def test_a_secret_name_not_in_latin_letters(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Вейна"),),
+            more_aliases=(alias(MAREN, "Вейна"), alias(BELLEROS, "Сайлас Вейн", secret=True)),
+            corrections=(correction("Бейн", MAREN, FIX),),
+        )
+        self.assertEqual(text("Я видел Сайлас Бейн", names), "Я видел Сайлас Бейн")
+        self.assertEqual(text("Бейн ушёл", names), "Вейна ушёл")  # elsewhere it's fixed
+
+    def test_two_fixes_together_never_form_a_secret(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Vane"), entity(MARRON, "Thorne")),
+            more_aliases=(
+                alias(MAREN, "Vane"),
+                alias(MARRON, "Thorne"),
+                alias(BELLEROS, "Vane Thorne", secret=True),
+            ),
+            corrections=(correction("Bane", MAREN, FIX), correction("Horn", MARRON, FIX)),
+        )
+        self.assertEqual(text("I met Bane Horn", names), "I met Bane Horn")
+        self.assertEqual(text("Bane left. Horn stayed.", names), "Vane left. Thorne stayed.")
+
+    def test_rebuilt_until_no_secret_is_left(self) -> None:
+        # Dropping one fix can expose another: Горн Торн, then Торн Дорн
+        ids = [c * 32 for c in "jklm"]
+        written = ["Торн", "Дорн", "Морн", "Корн"]
+        heard = ["Горн", "Ворн", "Борн", "Порн"]
+        names = lookup(
+            more=tuple(entity(i, w) for i, w in zip(ids, written, strict=True)),
+            more_aliases=(
+                *(alias(i, w) for i, w in zip(ids, written, strict=True)),
+                alias(BELLEROS, "Торн Дорн", secret=True),
+                alias(BELLEROS, "Дорн Морн", secret=True),
+                alias(BELLEROS, "Морн Корн", secret=True),
+            ),
+            corrections=tuple(correction(h, i, FIX) for h, i in zip(heard, ids, strict=True)),
+        )
+        result = clean(names, "Горн Ворн Борн Порн", scene=EVERYONE)
+        for secret in ("Торн Дорн", "Дорн Морн", "Морн Корн"):
+            self.assertNotIn(secret, result.text)
+
+    def test_too_many_rebuilds_keep_the_line_as_heard(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Vane"),),
+            more_aliases=(alias(MAREN, "Vane"), alias(BELLEROS, "Silas Vane", secret=True)),
+            corrections=(correction("Bane", MAREN, FIX),),
+        )
+        with patch.object(cleaner, "MAX_REBUILDS", 0), self.assertLogs(cleaner.log, "DEBUG"):
+            result = clean(names, "Bane left", scene=EVERYONE)
+        self.assertEqual((result.text, result.fixes), ("Bane left", ()))
+
+    def test_a_dm_rule_keeps_the_possessive(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Vane"),),
+            more_aliases=(alias(MAREN, "Vane"),),
+            corrections=(correction("Banes", MAREN, FIX),),
+        )
+        self.assertEqual(text("that is Bane's dog", names), "that is Vane's dog")
+
+    def test_a_dm_rule_never_renames_someone_in_any_form(self) -> None:
+        for rule, heard in (("Sara's", "it is Sara's turn"), ("Sara Bell", "thanks Sara Bell")):
+            with self.subTest(rule=rule):
+                names = lookup(corrections=(correction(rule, CERRIC, FIX),))
+                self.assertEqual(text(heard, names, people=["Sara"]), heard)
+
+    def test_no_checks_left_means_no_fixes(self) -> None:
+        with patch.object(cleaner, "SECRET_CHECKS_PER_LINE", 0):
+            result = clean(lookup(), "I think Beleros has the key.", scene=EVERYONE)
+        self.assertEqual((result.text, result.fixes), ("I think Beleros has the key.", ()))
+
+
+class SpeedTest(unittest.TestCase):
+    """Work per line, counted rather than timed, so a busy test machine can't fail it
+    (#311): the secret-name check codes runs of words, and that's what costs."""
+
+    LINE = " ".join(["then Beleros and the Wolf ran toward Bryn shander"] * 6)
+
+    def codes_used(self, names: CampaignLookup) -> int:
+        with patch("dmbot.transcript.cleaner.sound_codes", wraps=sound_codes) as codes:
+            clean(names, self.LINE, scene=EVERYONE)
+        return codes.call_count
+
+    def test_a_very_long_secret_name_stays_quick(self) -> None:
+        # 20 words, within the 100-character limit; every length was tried before
+        secret = " ".join(f"w{i:02d}" for i in range(20))
+        names = lookup(more_aliases=(alias(BELLEROS, secret, secret=True),))
+        self.assertEqual(clean(names, self.LINE, scene=EVERYONE).text.count("Belleros"), 6)
+        self.assertLess(self.codes_used(names), 600)
+
+    def test_many_secret_names_have_a_limit_per_line(self) -> None:
+        secrets = tuple(
+            alias(BELLEROS, " ".join(f"s{n}x{i}" for i in range(n)), secret=True)
+            for n in range(1, 21)
+        )
+        names = lookup(more_aliases=secrets)
+        # the heard words and the line as written each have one budget
+        self.assertLessEqual(self.codes_used(names), 2 * cleaner.SECRET_CHECKS_PER_LINE + 60)
 
 
 class VocabularyTest(unittest.TestCase):

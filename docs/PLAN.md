@@ -624,8 +624,8 @@ building:
 - When a session ends, the DM(s) and everyone recorded get a private message with one
   **[🎙 Download transcript]** button, which works after a restart and only for people
   still in the server. People with private messages off use `/transcript`.
-- Until the Cleaner, there's only the "as heard" version. If saving fails at the start,
-  the DM screen says there'll be no download for this session.
+- Until the cleaned download exists, there's only the "as heard" version. If saving
+  fails at the start, the DM screen says there'll be no download for this session.
 - Still to come: "Delete my past transcripts", retention, cleaned and both downloads
   (Phase 2b), and `{entity}` labels for the DM's lines (narrating, which NPC; #53).
 
@@ -1076,19 +1076,28 @@ consent check just made still holds:
   one confirmed name (`lookup.by_sound`) and is spelled much like it (at least 0.7
   alike). Matching reuses `scene.find_mentions` and the lookup's sound codes.
 - **Unknown word:** capitalized, not a common word or game term (the after-session
-  scan's lists), not a known name, "keep as heard" word or the name of someone at the
-  table, and not said in lower case this session. A word starting a sentence counts
-  only once it was also written with a capital mid-sentence (in that line or earlier),
+  scan's lists), not a known name, "keep as heard" word or the display name of anyone at
+  the table (people who agreed, the DM, everyone in the voice channel; #295), and not
+  said in lower case this session. A word starting a sentence counts only once it was
+  also written with a capital mid-sentence (in that line or earlier),
   so "Thorn bushes…" is never "Thorin". Without a dictionary this misses a name the
   first time it starts a sentence; a wrong fix is worse than a missed one. All capitals
   are left alone.
 - **One word alone needs context:** the name was said in the last ~10 minutes (the
-  scene tracker) or is a player's character, because real names and brands sound like
-  campaign names ("Mary" and Mara, "Amazon" and Amazonia). Joined words need none.
+  scene tracker) and must be spelled closer (at least 0.8 alike), because real names
+  and brands sound like campaign names ("Mary" and Mara, 0.75; "Amazon" and Amazonia).
+  Joined words need neither.
 - **Never:** a fix from a name DMbot only suggested (no Undo note yet, so it does
   nothing); a change inside a secret name (of any length); a fix where the words, with
   the words around them, sound like a secret name ("Silas Vain" for "Silas Vane"), or
-  sound like two entries; a fix from an out-of-date copy of the names.
+  sound like two entries; a fix from an out-of-date copy of the names; a DM's fixed
+  spelling that renames someone at the table. **The line is checked again as written:**
+  a DM's fixed spelling needs no likeness, so "Silas Bane" with the rule "Bane" → Vane
+  would write the secret "Silas Vane"; any fix whose written name, with the words
+  around it, is or sounds like a secret name is taken back (#321 review). Names not
+  in Latin letters have no sound codes, so they're compared with secret names by
+  spelling instead ("Сайлас Вейна" for the secret "Сайлас Вейн"). After 8 rebuilds the
+  line is kept as heard.
 - A fix writes the name the way it was said (the matched other name, not the main
   name); a DM's fixed spelling writes the main name.
 - **Stored:** `heard` as before, `text` cleaned. The live transcript channel shows the

@@ -87,8 +87,11 @@ class CampaignLookup:
     confirmed_neighbours: dict[str, frozenset[str]]
     heard: dict[str, HeardCount] = field(default_factory=dict)
     recent_sessions: tuple[int, ...] = ()
-    # Words in the longest secret name, so every word of one can be left alone.
-    longest_secret: int = 0
+    # Every secret name's word count: all of one is left alone, and the Cleaner checks
+    # only runs of about those lengths.
+    secret_lengths: frozenset[int] = frozenset()
+    # Secret names with no sound codes (not in Latin letters): compared by spelling.
+    codeless_secrets: tuple[str, ...] = ()
 
     @classmethod
     def build(cls, data: LookupData) -> CampaignLookup:
@@ -113,6 +116,7 @@ class CampaignLookup:
             by_key[entry.key].append(entry)
             for code in entry.codes:
                 by_sound[code].append(entry)
+        secret_lengths = {len(entry.key.split()) for entry in names if entry.secret}
         fixes: dict[str, list[str]] = defaultdict(list)
         # A secret alias is never rewritten, even if a "change to" rule says so: that
         # would put the real name over "the hooded stranger".
@@ -143,7 +147,8 @@ class CampaignLookup:
             {k: frozenset(v) for k, v in confirmed_links.items()},
             {h.entity_id: h for h in data.heard if h.entity_id in entities},
             data.recent_sessions,
-            max((len(e.key.split()) for e in names if e.secret), default=0),
+            frozenset(secret_lengths),
+            tuple(sorted({e.key for e in names if e.secret and not e.codes})),
         )
 
     def exact(self, heard: str) -> tuple[NameEntry, ...]:

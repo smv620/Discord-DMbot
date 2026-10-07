@@ -924,6 +924,54 @@ class SaveAndResume(SessionTests):
         self.bot.stop_recording(GUILD, PLAYER)
         self.assertFalse(table.vocabulary.is_name("beleros"))  # forgotten with them
 
+    async def test_lower_case_words_count_even_without_the_names(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        table.name_lookup = None  # the names couldn't be loaded
+        self.said(table, "careful, a thorn")
+        self.assertTrue(table.vocabulary.is_word("Thorn"))  # #295
+
+    async def test_someone_in_voice_who_never_agreed_keeps_their_name(self) -> None:
+        import time
+
+        from dmbot.memory.lookup import CampaignLookup, LookupData
+        from dmbot.memory.models import CONFIRMED, Alias, Entity
+
+        self.at_the_table(PLAYER, OTHER_PERSON, DM)
+        await self.consent.grant(GUILD, PLAYER)
+        table, sent = await self.joined_with_transcript()
+        other = next(m for m in self.voice.members if m.id == OTHER_PERSON)
+        other.display_name = "Marin"  # never agreed, so never recorded, but said aloud
+        eid = "c" * 32
+        table.name_lookup = CampaignLookup.build(
+            LookupData(
+                1,
+                (Entity(eid, "npc", "Maren", "", CONFIRMED, None, "dm", 0),),
+                (Alias(eid, eid, "Maren", "maren", "full", None, False, CONFIRMED, (), "dm", 0),),
+                (),
+                (),
+            )
+        )
+        table.scene.note([eid], DM, time.monotonic())  # Maren came up a moment ago
+        table.people = self.bot._everyone_at_table(table, [])
+        self.said(table, "thanks Marin, good call")
+        await self.bot.flush_transcript(table)
+        self.assertIn("thanks Marin, good call", "\n".join(sent))
+
+    async def test_everyone_at_the_table_is_protected_from_name_fixes(self) -> None:
+        self.at_the_table(PLAYER, OTHER_PERSON, DM)
+        await self.start()
+        table = self.bot.tables[GUILD]
+        # Dee never agreed, but her name is said at the table and must never change
+        self.assertEqual(set(self.bot._everyone_at_table(table, ["Mia"])), {"Mia", "Dee", "Sam"})
+        # the DM out of voice is still found; bots never count
+        dm = next(m for m in self.voice.members if m.id == DM)
+        robot = member(12345)
+        robot.bot, robot.display_name = True, "Beleros"
+        self.voice.members = [m for m in self.voice.members if m.id != DM] + [robot]
+        self.guild.get_member = lambda uid: dm if uid == DM else None
+        self.assertEqual(set(self.bot._everyone_at_table(table, [])), {"Mia", "Dee", "Sam"})
+
     async def test_a_failed_post_is_tried_again(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table, sent = await self.joined_with_transcript()
