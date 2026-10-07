@@ -822,7 +822,18 @@ names panel nor the speech-to-text hints can be a fixed list.
     once, after the last batch). Imported names count as confirmed (the DM gave them);
     a line needs a look when its kind is unclear or it sounds like a different known
     name. Then a summary: "Added 260 names. 40 need a look. [Check them now] [Later]";
-    one **Undo** removes the whole import, every batch. The download is a file, sent privately:
+    one **Undo** removes the whole import, every batch. **Duplicates (decided 2026-10-07,
+    #369): exact matches fold in quietly, near matches ask, DMbot never merges by sound
+    on its own.** A line whose name or other name DMbot already knows is the same name:
+    its new other names are added, its kind is left as it was, and a swapped line
+    (`Frostmaiden | god | Auril` when Auril is known as the Frostmaiden) changes nothing
+    and says so. A close spelling (likeness 0.9, or the same sound at 0.8; one-word
+    names 0.9 only) is saved as a proposed name and asked about after the import, in one
+    grouped message ("Aurill → Auril?" Same name / Different / Skip, with "Same for
+    all"); unanswered ones wait in Check new names. A kind that differs on an exact match
+    is asked the same way, and kept as DMbot has it when ignored. Repeated lines in one
+    list pool their other names. Non-DMs matching a secret name see no hint of it.
+    The download is a file, sent privately:
     "This file includes secret names. Don't share it with players." A campaign holds
     up to about 10,000 names.
   - Nothing is deleted by itself. The after-session check stays capped at 10
