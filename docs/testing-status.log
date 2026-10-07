@@ -18,6 +18,11 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 - #436 (#347 items 2-4, CloudDev): core only, no visible change. After a session the
   log may show "Closed N memory flag(s) that no longer apply"; a second session with no
   memory changes in between skips the check.
+- #448 (dev3, #299): the twin's --lead-in-ms / --hangover-ms. Nothing to deploy; four
+  short runs for dev1 (as before, with --commit), each DMOnlyAudio.m4a --script dm-only.md
+  --transcriber deepgram --log: (1) plain, (2) --lead-in-ms 100, (3) --hangover-ms 1000,
+  (4) both. Check: first-word errors after the pauses and the Part 2 misses (Bryn
+  Shander, Targos, Dexterity saving throw) in each; asked on #299.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
