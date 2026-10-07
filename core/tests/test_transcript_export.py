@@ -52,6 +52,20 @@ class Render(unittest.TestCase):
         text = export.render("X", session(), [fixed], {MIA: "Mia"})
         self.assertIn("(Mia): I saw Beleros\n", text)
 
+    def test_the_cleaned_file_has_the_fixed_names(self) -> None:
+        fixed = Line(START * 1000, MIA, "I saw Beleros", "I saw Belleros")
+        text = export.render("X", session(), [fixed], {MIA: "Mia"}, version=export.CLEANED)
+        self.assertIn("(Mia): I saw Belleros\n", text)
+        self.assertIn("Cleaned: DMbot fixed the spelling of some names", text)
+        self.assertNotIn("As heard:", text)
+        self.assertEqual(
+            export.file_name("X", session(), export.CLEANED), "x-session-7-cleaned.txt"
+        )
+
+    def test_an_unknown_version_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            export.render("X", session(), [], {}, version="raw")
+
     def test_unknown_and_tricky_names_are_safe(self) -> None:
         text = export.render(
             "X", session(), [line(1, MIA, "hi"), line(2, DEE, "yo")], {DEE: "Dee‮\nevil"}
@@ -117,3 +131,26 @@ class Buffer(unittest.TestCase):
         for i in range(MAX_UNSAVED + 3):
             buffer.add(line(i, MIA, f"line {i}"))
         self.assertEqual((len(buffer), buffer.dropped), (MAX_UNSAVED, 3))
+
+
+class DownloadButtons(unittest.TestCase):
+    """The buttons sent when a session ends (#296): their IDs work after a restart."""
+
+    def test_three_choices_and_old_buttons_still_work(self) -> None:
+        from dmbot.ui import transcripts as ui
+
+        view = ui.download_view(1, "a" * 32)
+        ids = [item.custom_id for item in view.children]  # type: ignore[attr-defined]
+        self.assertEqual(
+            ids,
+            [f"dmbot:transcript:1:{'a' * 32}:{c}" for c in ("cleaned", "heard", "both")],
+        )
+        template = ui.DownloadButton.__discord_ui_compiled_template__
+        for custom_id in [*ids, f"dmbot:transcript:1:{'a' * 32}"]:
+            with self.subTest(custom_id=custom_id):
+                self.assertIsNotNone(template.fullmatch(custom_id))
+                self.assertLessEqual(len(custom_id), 100)
+        old = ui.DownloadButton(1, "a" * 32)  # sent before there was a choice
+        self.assertEqual(old.versions, (export.AS_HEARD,))
+        both = ui.DownloadButton(1, "a" * 32, "both")
+        self.assertEqual(both.versions, (export.CLEANED, export.AS_HEARD))
