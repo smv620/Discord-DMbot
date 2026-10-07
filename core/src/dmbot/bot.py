@@ -754,6 +754,7 @@ class DMBot(commands.AutoShardedBot):
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
             ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
+            ("stale flags", lambda: self.close_stale_flags(table)),
         ]
         for name, step in steps:
             try:
@@ -1726,6 +1727,16 @@ class DMBot(commands.AutoShardedBot):
             if member is not None and not member.bot:
                 names.setdefault(member.display_name)
         return tuple(names)
+
+    async def close_stale_flags(self, table: Table) -> None:
+        """After a session: close memory flags whose problem is gone (#164), so the DM
+        isn't asked about clashes an undo or a merge already ended."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            closed = await self.memory.resolve_stale_flags(table.guild_id, table.campaign_id)
+            if closed.value:
+                log.info("Closed %d memory flag(s) that no longer apply", len(closed.value))
 
     async def keep_heard_names(self, table: Table) -> None:
         """After a session: keep how often each known name was said, for ranking hints

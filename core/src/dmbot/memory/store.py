@@ -935,6 +935,47 @@ class MemoryStore:
             row = await w.update(FLAGS, flag_id, {"status": "resolved"})
             return Written(_flag(row), w.batch)
 
+    async def resolve_stale_flags(self, guild_id: int, campaign_id: str) -> Written[list[Flag]]:
+        """Close the open flags whose problem is gone (#164): an undo, a merge, an edit
+        or a rejected fact can end a clash without touching the flag. Each fact is
+        checked again exactly as when it was flagged; a flag whose problem is still found
+        stays open. Logged like any change, so it can be undone."""
+        async with self._write(guild_id, campaign_id, "entitybot") as w:
+            by_fact: dict[str, list[dict[str, Any]]] = {}
+            for flag in await w.select(FLAGS, " AND status = 'open' ORDER BY created_at, id"):
+                by_fact.setdefault(flag["relation_id"], []).append(flag)
+            if not by_fact:
+                return Written([], None)
+            onto = await _load_ontology(w)
+            closed: list[Flag] = []
+            for relation_id, flags in by_fact.items():
+                row = await w.get(RELATIONS, relation_id)
+                if row is None:
+                    continue
+                fact = _relation(row)
+                pred = onto.predicates.get(fact.predicate)
+                if pred is None:
+                    continue  # a term DMbot can't check any more: leave it to the DM
+                still: set[tuple[str, str | None]] = set()
+                if fact.status != REJECTED:  # a rejected fact clashes with nothing
+                    ends = {fact.subject_id, fact.object_id}
+                    types = {
+                        e["id"]: e["type"]
+                        for e in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(ends)])
+                    }
+                    others = [r for r in await _relations_touching(w, *ends) if r.id != fact.id]
+                    still = {
+                        (p.kind, p.other_id)
+                        for p in check_relation(
+                            onto, fact, types[fact.subject_id], types[fact.object_id], others
+                        )
+                    }
+                for flag in flags:
+                    if (flag["kind"], flag["other_id"]) not in still:
+                        row = await w.update(FLAGS, flag["id"], {"status": "resolved"})
+                        closed.append(_flag(row))
+            return Written(closed, w.batch)
+
     # ---- mentions and corrections -------------------------------------------------------
 
     async def add_session_heard(

@@ -410,6 +410,32 @@ class Rules(MemoryTest):
         written = await self.relate(fireball, "member_of", a, source="cleaner", confidence=0.4)
         self.assertEqual([f.kind for f in written.value[1]], [WRONG_SUBJECT, WRONG_OBJECT])
 
+    async def test_flags_whose_clash_is_gone_are_closed_after_a_session(self) -> None:
+        """#164: rejecting one side of a clash (or an undo, or an edit) ends it, but left
+        its flag open. The after-session cleanup closes it; real problems stay open."""
+        cerric = await self.add("Cerric")
+        p1, p2 = (
+            await self.add("Brynwater", type="place"),
+            await self.add("Thornewick", type="place"),
+        )
+        first = await self.relate(cerric, "located_in", p1)
+        clash = await self.relate(cerric, "located_in", p2, source="cleaner", confidence=0.5)
+        fireball = await self.add("Fireball", type="spell")
+        wrong = await self.relate(cerric, "member_of", fireball, source="cleaner", confidence=0.4)
+        self.assertEqual([f.kind for f in clash.value[1]], [TOO_MANY])
+        nothing = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual((nothing.value, nothing.batch), ([], None))  # every clash still real
+        await self.memory.update_relation(
+            GUILD_A, self.c, first.value[0].id, status=REJECTED, source="dm"
+        )
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual([f.id for f in closed.value], [clash.value[1][0].id])
+        still = await self.memory.flags(GUILD_A, self.c)
+        self.assertEqual({f.id for f in still}, {f.id for f in wrong.value[1]})
+        assert closed.batch is not None
+        await self.memory.undo(GUILD_A, self.c, closed.batch, source="dm")  # can be undone
+        self.assertEqual(len(await self.memory.flags(GUILD_A, self.c)), len(still) + 1)
+
     async def test_saying_a_fact_again_only_strengthens_it(self) -> None:
         a, b = await self.add("Gorrak"), await self.add("Tamsin")
         first = await self.relate(a, "ally_of", b, source="cleaner", confidence=0.5)
