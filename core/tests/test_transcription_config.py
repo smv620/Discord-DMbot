@@ -24,7 +24,11 @@ class TranscriptionConfigTests(unittest.TestCase):
         )
         for bad in ("0", "x", "-2", "17"):
             with self.subTest(bad), self.assertRaises(TranscriptionConfigError):
-                load_transcription_settings({"TRANSCRIBE_WORKERS": bad})
+                load_transcription_settings({**deepgram, "TRANSCRIBE_WORKERS": bad})
+        # Local Whisper: one model behind one lock, so only 1 works.
+        with self.assertRaisesRegex(TranscriptionConfigError, "must be 1"):
+            load_transcription_settings({"TRANSCRIBE_WORKERS": "2"})
+        self.assertEqual(load_transcription_settings({"TRANSCRIBE_WORKERS": "1"}).workers, 1)
 
     def test_language_auto(self) -> None:
         self.assertEqual(load_transcription_settings({"TRANSCRIBE_LANGUAGE": "auto"}).language, "")

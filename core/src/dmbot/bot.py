@@ -1033,8 +1033,10 @@ class DMBot(commands.AutoShardedBot):
         p = self.pipeline
         if table is not None:
             lines.append(
-                ui_logic.writing_status(
-                    self.settings.transcription.engine, p.backlog, p.last_latency_s
+                ui_logic.writing_status(  # this server's own queue (#173)
+                    self.settings.transcription.engine,
+                    p.backlog_of(guild_id),
+                    p.latency_of.get(guild_id),
                 )
             )
         if p.dropped or self.ears.rejected_frames or p.total_failures:
@@ -1044,7 +1046,7 @@ class DMBot(commands.AutoShardedBot):
                 p.dropped,
                 p.total_failures,
                 self.ears.rejected_frames,
-                p.backlog,
+                p.backlog_of(guild_id),
             )
             lines.append(
                 "⚠️ Some speech was missed. If this keeps happening, use `/dmbot stop` "

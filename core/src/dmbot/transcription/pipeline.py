@@ -27,6 +27,9 @@ from dmbot.transcription.base import MIN_UTTERANCE_S, Transcriber, Transcription
 log = logging.getLogger(__name__)
 
 QUEUE_SIZE = 64  # per Discord server
+# Across all servers: a clip is up to 480 KB of audio, so this bounds memory (~120 MB at
+# worst) when the engine is down for every table at once.
+MAX_QUEUED = 256
 # Warn the DM if this many of a server's utterances are waiting: the engine can't keep up.
 BACKLOG_WARN = 16
 FAILURES_BEFORE_ALERT = 3
@@ -79,6 +82,7 @@ class TranscriptionPipeline:
         budget_s: Callable[[float], float] = clip_budget_s,
         outside: bool = False,
         workers: int = 1,
+        max_queued: int = MAX_QUEUED,
     ) -> None:
         # True when another company does the writing down (TRANSCRIBER=deepgram or cloud):
         # slowness is theirs, so alerts don't suggest a smaller Whisper model.
@@ -90,6 +94,7 @@ class TranscriptionPipeline:
         self._deliver = deliver
         self._alert = alert
         self._queue_size = queue_size
+        self._max_queued = max_queued
         self._workers = max(1, workers)
         # Each server's clips in order, and whose turn it is: a server is in `_turns`
         # once when it has clips waiting and none being written, so workers go round
@@ -100,7 +105,9 @@ class TranscriptionPipeline:
         self.dropped = 0
         self.consecutive_failures = 0
         self.total_failures = 0
-        self.last_latency_s: float | None = None
+        self.last_latency_s: float | None = None  # any server's last clip
+        self.latency_of: dict[int, float] = {}  # per server, for its own status
+        self._told_stopped: set[int] = set()  # servers told writing stopped
         self.skipped = 0  # clips that ran over their time budget
         self.slow = 0  # clips slower than SLOW_CLIP_S and their own length
         self._budget_s = budget_s
@@ -130,7 +137,7 @@ class TranscriptionPipeline:
         full: one busy table never pushes out another's speech."""
         guild = utterance.guild_id
         queue = self._queues.setdefault(guild, deque())
-        if len(queue) >= self._queue_size:
+        if len(queue) >= self._queue_size or self.backlog >= self._max_queued:
             self.dropped += 1
             self.missed_in[utterance.session] += 1
             return False
@@ -182,6 +189,9 @@ class TranscriptionPipeline:
                 with log_context(guild_id=guild):
                     await self._check_backlog(guild)
                     await self.process(utterance)
+            except Exception:
+                # Never let one clip stop a worker: the others would go on unseen.
+                log.exception("Writing down a clip failed unexpectedly")
             finally:
                 self.pending[utterance.session] -= 1
                 self._writing.discard(guild)
@@ -189,7 +199,8 @@ class TranscriptionPipeline:
                     self._turns.put_nowait(guild)  # back of the line: others go first
                 else:
                     del self._queues[guild]
-            self.last_latency_s = time.monotonic() - queued_at
+                    self._backlog_warned.discard(guild)
+            self.last_latency_s = self.latency_of[guild] = time.monotonic() - queued_at
 
     async def process(self, utterance: Utterance) -> None:
         # Skip if the table ended or the speaker revoked consent while queued.
@@ -276,7 +287,10 @@ class TranscriptionPipeline:
                 type(exc).__name__,
                 exc,
             )
-        if self.consecutive_failures == FAILURES_BEFORE_ALERT:
+        # Every server with speech waiting is told once (the engine is shared), not just
+        # the one whose clip failed third.
+        busy = {guild_id, *self._writing, *self._queues} - self._told_stopped
+        if self.consecutive_failures >= FAILURES_BEFORE_ALERT and busy:
             if isinstance(exc, TranscriptionProblem):
                 # Our own plain sentence about the problem (never raw error text).
                 advice = (
@@ -295,12 +309,15 @@ class TranscriptionPipeline:
                     "who said yes, but no words are being written down. Whoever hosts "
                     "DMbot should check its log. DMbot keeps trying."
                 )
-            await self._alert(guild_id, text)
+            self._told_stopped |= busy
+            for guild in sorted(busy):
+                await self._alert(guild, text)
 
     async def _on_success(self, guild_id: int) -> None:
-        if self.consecutive_failures >= FAILURES_BEFORE_ALERT:
-            await self._alert(guild_id, "✅ Writing things down is working again.")
+        told, self._told_stopped = self._told_stopped, set()
         self.consecutive_failures = 0
+        for guild in sorted(told):
+            await self._alert(guild, "✅ Writing things down is working again.")
 
     async def _check_backlog(self, guild_id: int) -> None:
         depth = self.backlog_of(guild_id)
