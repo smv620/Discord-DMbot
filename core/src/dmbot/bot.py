@@ -1452,10 +1452,14 @@ class DMBot(commands.AutoShardedBot):
         table.totals.add_utterance(utterance)
         cleaned = text
         if text and table.name_lookup is not None:
-            cleaned = self._clean(table, utterance.user_id, text)
+            cleaned = self._clean(table, text)
             named = mentions(table.name_lookup, cleaned)  # once per name per line
             table.scene.note(named, utterance.user_id, time.monotonic())
             table.heard_counts.update((entity_id, utterance.user_id) for entity_id in named)
+        if text:
+            # After cleaning, so a line is never evidence about itself; even when the names
+            # couldn't be loaded, a word said in lower case is a real word next time.
+            table.vocabulary.note(utterance.user_id, text)
         if text and self.transcripts is not None:
             table.unsaved.add(Line(utterance.start_ms, utterance.user_id, text, cleaned or text))
         if text and len(table.heard) < HEARD_MAX:
@@ -1473,7 +1477,7 @@ class DMBot(commands.AutoShardedBot):
                 utterance.start_ms,
             )
 
-    def _clean(self, table: Table, user_id: int, heard: str) -> str:
+    def _clean(self, table: Table, heard: str) -> str:
         """The line with misheard names fixed (#127), from the campaign's names as last
         loaded; as heard if cleaning fails. No await: the consent check just made still
         holds."""
@@ -1492,8 +1496,6 @@ class DMBot(commands.AutoShardedBot):
                 self._clean_failed_at = now
                 log.exception("Couldn't fix names in a line; kept it as heard")
             return heard
-        finally:
-            table.vocabulary.note(user_id, heard)
         if result.fixes:
             log.debug("Fixed %d misheard name(s) in a line", len(result.fixes))
         return result.text
@@ -1532,8 +1534,25 @@ class DMBot(commands.AutoShardedBot):
             table.name_lookup = None
             return people
         table.name_lookup = lookup  # for matching written-down lines to the scene
-        table.people = tuple(people)  # for the name fixes, never changed into a name
+        table.people = self._everyone_at_table(table, people)  # never "fixed" into a name
         return scene_hints(lookup, table.hint_parts, table.scene, time.monotonic(), people=people)
+
+    def _everyone_at_table(self, table: Table, consenting: list[str]) -> tuple[str, ...]:
+        """Display names the name fixes must never change: people who agreed, the DM(s),
+        and everyone in the voice channel (their names get said too). Used here only,
+        never sent anywhere."""
+        names = dict.fromkeys(consenting)
+        voice = self.get_channel(table.voice_channel_id)
+        members: list[discord.Member | None] = []
+        if isinstance(voice, discord.VoiceChannel | discord.StageChannel):
+            members += voice.members
+        guild = self.get_guild(table.guild_id)
+        if guild is not None:
+            members += [guild.get_member(uid) for uid in {table.dm_user_id, *table.dm_user_ids}]
+        for member in members:
+            if member is not None and not member.bot:
+                names.setdefault(member.display_name)
+        return tuple(names)
 
     async def keep_heard_names(self, table: Table) -> None:
         """After a session: keep how often each known name was said, for ranking hints

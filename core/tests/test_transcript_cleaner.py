@@ -1,6 +1,7 @@
 """The Transcript Cleaner's name fixes (#127), without Discord or a database: the
 mishearings it must fix and the traps it must leave alone (docs/PLAN.md)."""
 
+import time
 import unittest
 
 from dmbot.memory.lookup import CampaignLookup, LookupData
@@ -244,8 +245,17 @@ class ReviewTrapsTest(unittest.TestCase):
     def test_a_split_name_needs_no_scene(self) -> None:
         self.assertEqual(text("we meet Ka Zeth", scene=()), "we meet Ka'zeth")
 
-    def test_a_player_character_is_always_in_context(self) -> None:
-        self.assertEqual(text("then Ceric shoots", scene=()), "then Cerric shoots")
+    def test_a_player_character_needs_the_scene_too(self) -> None:
+        self.assertEqual(text("then Ceric shoots", scene=()), "then Ceric shoots")
+        self.assertEqual(text("then Ceric shoots", scene={CERRIC}), "then Cerric shoots")
+
+    def test_a_real_first_name_is_not_pulled_into_a_players_character(self) -> None:
+        # Mara is a player's character and in the scene; "Mary" is spelled 0.75 alike
+        names = lookup(
+            more=(entity(MAREN, "Mara", "player_character", played_by=DEE),),
+            more_aliases=(alias(MAREN, "Mara"),),
+        )
+        self.assertEqual(text("so Mary, your turn", names), "so Mary, your turn")
 
     def test_real_names_and_brands_outside_the_scene_stay(self) -> None:
         names = lookup(
@@ -294,6 +304,18 @@ class MoreTrapsTest(unittest.TestCase):
 
     def test_a_curly_possessive(self) -> None:
         self.assertEqual(text("that is Beleros’s sword"), "that is Belleros’s sword")
+
+
+class SpeedTest(unittest.TestCase):
+    def test_a_very_long_secret_name_stays_quick(self) -> None:
+        # #295: every run length was tried around each fix (over 0.5 s a line here)
+        secret = " ".join(f"word{i}" for i in range(32))
+        names = lookup(more_aliases=(alias(BELLEROS, secret, secret=True),))
+        line = " ".join(["then Beleros and the Wolf ran toward Bryn shander"] * 6)
+        started = time.perf_counter()
+        for _ in range(5):
+            clean(names, line, scene=EVERYONE)
+        self.assertLess((time.perf_counter() - started) / 5, 0.25)  # ~0.03 s; CI is slower
 
 
 class VocabularyTest(unittest.TestCase):

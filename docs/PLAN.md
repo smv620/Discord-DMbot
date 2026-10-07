@@ -624,7 +624,7 @@ building:
 - When a session ends, the DM(s) and everyone recorded get a private message with one
   **[🎙 Download transcript]** button, which works after a restart and only for people
   still in the server. People with private messages off use `/transcript`.
-- Until the Cleaner, there's only the "as heard" version. If saving fails at the start,
+- Until the cleaned download exists, there's only the "as heard" version. If saving fails at the start,
   the DM screen says there'll be no download for this session.
 - Still to come: "Delete my past transcripts", retention, cleaned and both downloads
   (Phase 2b), and `{entity}` labels for the DM's lines (narrating, which NPC; #53).
@@ -1083,8 +1083,11 @@ consent check just made still holds:
   first time it starts a sentence; a wrong fix is worse than a missed one. All capitals
   are left alone.
 - **One word alone needs context:** the name was said in the last ~10 minutes (the
-  scene tracker) or is a player's character, because real names and brands sound like
-  campaign names ("Mary" and Mara, "Amazon" and Amazonia). Joined words need none.
+  scene tracker), because real names and brands sound like campaign names ("Mary" and
+  Mara, "Amazon" and Amazonia). A player's character, nearly always in the scene, must
+  also be spelled more alike (at least 0.8). Joined words need none. Display names of
+  everyone at the table (people who agreed, the DM, everyone in the voice channel) are
+  never changed (#295).
 - **Never:** a fix from a name DMbot only suggested (no Undo note yet, so it does
   nothing); a change inside a secret name (of any length); a fix where the words, with
   the words around them, sound like a secret name ("Silas Vain" for "Silas Vane"), or

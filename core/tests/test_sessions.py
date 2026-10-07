@@ -924,6 +924,20 @@ class SaveAndResume(SessionTests):
         self.bot.stop_recording(GUILD, PLAYER)
         self.assertFalse(table.vocabulary.is_name("beleros"))  # forgotten with them
 
+    async def test_lower_case_words_count_even_without_the_names(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        table.name_lookup = None  # the names couldn't be loaded
+        self.said(table, "careful, a thorn")
+        self.assertTrue(table.vocabulary.is_word("Thorn"))  # #295
+
+    async def test_everyone_at_the_table_is_protected_from_name_fixes(self) -> None:
+        self.at_the_table(PLAYER, OTHER_PERSON, DM)
+        await self.start()
+        table = self.bot.tables[GUILD]
+        # Dee never agreed, but her name is said at the table and must never change
+        self.assertEqual(set(self.bot._everyone_at_table(table, ["Mia"])), {"Mia", "Dee", "Sam"})
+
     async def test_a_failed_post_is_tried_again(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table, sent = await self.joined_with_transcript()

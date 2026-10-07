@@ -4,7 +4,7 @@
 Every fix here is a silent one, so it only fixes what it's sure of, and leaves the
 words as heard otherwise (a wrong fix is worse than a missed one):
 
-- **Same letters, other spelling:** "Kazeth" → "Ka'zeth", "bryn Shander" → "Bryn
+- **Same letters, other spelling:** "Kazeth" → "Ka'zeth", "Bryn shander" → "Bryn
   Shander" (`scene.find_mentions` finds them). A word in lower case is only fixed if
   its letters differ, so "ring the bell" never becomes "Bell".
 - **A spelling the DM fixed:** "Sara" → "Cerric", once the DM said that's who it means.
@@ -15,8 +15,9 @@ words as heard otherwise (a wrong fix is worse than a missed one):
   session ("Thorn" next to "a thorn" is a word); all capitals are left alone. A word
   starting a sentence gets a capital anyway, so it counts only once it was also
   written with one mid-sentence. One word alone also needs the name in the scene (said
-  in the last ~10 minutes) or to be a player's character, since real names and brands
-  sound like campaign names too ("Mary" and Mara). Words in lower case are never
+  in the last ~10 minutes), since real names and brands sound like campaign names too
+  ("Mary" and Mara); for a player's character, always in the scene, it must also be
+  spelled more alike. Words in lower case are never
   changed this way ("Bell or us" waits for the DM's answer, later).
 
 Only confirmed, non-secret names make a fix; a name DMbot only suggested never does.
@@ -44,6 +45,9 @@ from dmbot.memory.sounds import sound_codes
 MAX_JOINED = 3  # a name split into at most this many words ("Ka Zeth", "Bry N Shander")
 MIN_LETTERS = 4  # shorter words sound like too many names
 MIN_LIKENESS = 0.7  # how alike the spelling must be (0 to 1) for a fix by sound
+# One word to a player's character: their names come up all the time, so real first
+# names nearby ("Mary" for Mara, 0.75) must not be pulled in.
+MIN_LIKENESS_CHARACTER = 0.8
 WORDS_KEPT = 20_000  # per speaker and kind: the most recently said words are kept
 _POSSESSIVE = ("'s", "’s")
 _SENTENCE_END = re.compile(r"[.!?…]")
@@ -196,13 +200,14 @@ def clean(
             ):
                 known[start:end] = [True] * (end - start)
 
+    near: dict[tuple[int, int], bool] = {}  # (first word, words) → sounds like a secret
     fixes = [
         fix
         for fix in [
             *_known_names(lookup, heard),
             *_by_sound(lookup, heard, words, known, vocabulary, scene),
         ]
-        if not _near_secret(lookup, words, fix)
+        if not _near_secret(lookup, words, fix, near)
     ]
     fixes.sort(key=lambda f: f.start)
     out, at = [], 0
@@ -271,14 +276,14 @@ def _by_sound(
     confirmed name and are spelled much like it. A word starting a sentence has its
     capital anyway, so it counts only once it was also written with one mid-sentence
     (in this line or earlier this session): "Thorn bushes everywhere" is never
-    "Thorin". One word alone also needs the name to be in the scene or a player's
-    character: real names and brands sound like campaign names too ("Mary" and Mara),
-    while a split name ("Ka Zeth") is no real word."""
+    "Thorin". One word alone also needs the name to be in the scene, and a player's
+    character to be spelled more alike: real names and brands sound like campaign
+    names too ("Mary" and Mara), while a split name ("Ka Zeth") is no real word."""
     lower = {w.casefold() for w in _lower_words(heard)}
     named = _named_words(heard)
     starts = _starts(heard, words)
 
-    def unknown(i: int, last: bool) -> bool:
+    def unknown(i: int) -> bool:
         word = words[i].group()
         if known[i] or not word[:1].isupper():
             return False
@@ -295,7 +300,7 @@ def _by_sound(
         return True
 
     # Once per word: as the last word of a run (may end in "'s") and inside one.
-    as_last = [unknown(i, True) for i in range(len(words))]
+    as_last = [unknown(i) for i in range(len(words))]
     inside = [ok and not words[i].group().endswith(_POSSESSIVE) for i, ok in enumerate(as_last)]
     fixes = []
     i = 0
@@ -309,7 +314,7 @@ def _by_sound(
             start, end = words[i].start(), words[run[-1]].end()
             said = _stem(heard[start:end])
             fix = _sounds_like(lookup, said, start)
-            if fix is not None and size == 1 and not _in_context(lookup, fix.entity_id, scene):
+            if fix is not None and size == 1 and not _one_word_ok(lookup, fix, scene):
                 fix = None
             if fix is not None:
                 fixes.append(fix)
@@ -351,25 +356,44 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | None:
     return Fix(start, start + len(said), said, best.text, best.entity_id, SOUND)
 
 
-def _in_context(lookup: CampaignLookup, entity_id: str, scene: Collection[str]) -> bool:
-    entity = lookup.entities.get(entity_id)
-    return entity_id in scene or (entity is not None and entity.type == PLAYER_CHARACTER)
+def _one_word_ok(lookup: CampaignLookup, fix: Fix, scene: Collection[str]) -> bool:
+    """Is there enough to fix one word alone: its name in the scene, and for a player's
+    character, spelled more alike?"""
+    if fix.entity_id not in scene:
+        return False
+    entity = lookup.entities.get(fix.entity_id)
+    if entity is not None and entity.type == PLAYER_CHARACTER:
+        return likeness(fix.heard, fix.written) >= MIN_LIKENESS_CHARACTER
+    return True
 
 
-def _near_secret(lookup: CampaignLookup, words: list[re.Match[str]], fix: Fix) -> bool:
+def _near_secret(
+    lookup: CampaignLookup,
+    words: list[re.Match[str]],
+    fix: Fix,
+    near: dict[tuple[int, int], bool],
+) -> bool:
     """Do the fixed words, with the words around them, sound like a secret name? Then
-    they may be one misheard ("Silas Vain" for "Silas Vane"), and no fix may go there."""
-    if not lookup.longest_secret:
+    they may be one misheard ("Silas Vain" for "Silas Vane"), and no fix may go there.
+    Only runs about as long as a secret name are tried (one word more or fewer, as
+    speech-to-text splits and joins words): trying every length made a 32-word secret
+    name cost over half a second per line. `near` remembers each run's answer, since
+    several fixes in a line share runs."""
+    if not lookup.secret_lengths:
         return False
     inside = [i for i, w in enumerate(words) if w.start() < fix.end and fix.start < w.end()]
     if not inside:
         return False
     first, last = inside[0], inside[-1]
-    longest = max(lookup.longest_secret, last - first + 1)
-    for start in range(max(0, last - longest + 1), first + 1):
-        for end in range(last + 1, min(len(words), start + longest) + 1):
-            joined = "".join(w.group() for w in words[start:end])
-            for code in sound_codes(joined):
-                if any(e.secret for e in lookup.by_sound.get(code, ())):
-                    return True
+    width = last - first + 1
+    sizes = {n for k in lookup.secret_lengths for n in (k - 1, k, k + 1) if n >= width}
+    for size in sorted(sizes):
+        for start in range(max(0, last - size + 1), min(first, len(words) - size) + 1):
+            if (start, size) not in near:
+                joined = "".join(w.group() for w in words[start : start + size])
+                near[start, size] = any(
+                    e.secret for code in sound_codes(joined) for e in lookup.by_sound.get(code, ())
+                )
+            if near[start, size]:
+                return True
     return False
