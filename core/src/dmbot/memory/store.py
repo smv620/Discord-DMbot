@@ -1430,7 +1430,9 @@ async def _relations_touching(w: Scope, *entity_ids: str) -> list[Relation]:
     # always gets the same flags, whatever order the rows sit in on disk (#476).
     rows = await w.select(
         RELATIONS,
-        " AND (subject_id = ANY(%s) OR object_id = ANY(%s)) ORDER BY id",
+        # Byte order (ids are lowercase hex): the same everywhere, and cheaper than the
+        # database's locale-aware sort.
+        ' AND (subject_id = ANY(%s) OR object_id = ANY(%s)) ORDER BY id COLLATE "C"',
         [list(entity_ids), list(entity_ids)],
     )
     return [_relation(r) for r in rows]
