@@ -349,6 +349,71 @@ class WrittenSecretTest(unittest.TestCase):
         names = lookup(more=(entity(MAREN, "Mara"),), more_aliases=(alias(MAREN, "Mara"),))
         self.assertEqual(text("so Mary, your turn", names), "so Mary, your turn")
 
+    def test_a_secret_name_not_in_latin_letters(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Вейна"),),
+            more_aliases=(alias(MAREN, "Вейна"), alias(BELLEROS, "Сайлас Вейн", secret=True)),
+            corrections=(correction("Бейн", MAREN, FIX),),
+        )
+        self.assertEqual(text("Я видел Сайлас Бейн", names), "Я видел Сайлас Бейн")
+        self.assertEqual(text("Бейн ушёл", names), "Вейна ушёл")  # elsewhere it's fixed
+
+    def test_two_fixes_together_never_form_a_secret(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Vane"), entity(MARRON, "Thorne")),
+            more_aliases=(
+                alias(MAREN, "Vane"),
+                alias(MARRON, "Thorne"),
+                alias(BELLEROS, "Vane Thorne", secret=True),
+            ),
+            corrections=(correction("Bane", MAREN, FIX), correction("Horn", MARRON, FIX)),
+        )
+        self.assertEqual(text("I met Bane Horn", names), "I met Bane Horn")
+        self.assertEqual(text("Bane left. Horn stayed.", names), "Vane left. Thorne stayed.")
+
+    def test_rebuilt_until_no_secret_is_left(self) -> None:
+        # Dropping one fix can expose another: Горн Торн, then Торн Дорн
+        ids = [c * 32 for c in "jklm"]
+        written = ["Торн", "Дорн", "Морн", "Корн"]
+        heard = ["Горн", "Ворн", "Борн", "Порн"]
+        names = lookup(
+            more=tuple(entity(i, w) for i, w in zip(ids, written, strict=True)),
+            more_aliases=(
+                *(alias(i, w) for i, w in zip(ids, written, strict=True)),
+                alias(BELLEROS, "Торн Дорн", secret=True),
+                alias(BELLEROS, "Дорн Морн", secret=True),
+                alias(BELLEROS, "Морн Корн", secret=True),
+            ),
+            corrections=tuple(correction(h, i, FIX) for h, i in zip(heard, ids, strict=True)),
+        )
+        result = clean(names, "Горн Ворн Борн Порн", scene=EVERYONE)
+        for secret in ("Торн Дорн", "Дорн Морн", "Морн Корн"):
+            self.assertNotIn(secret, result.text)
+
+    def test_too_many_rebuilds_keep_the_line_as_heard(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Vane"),),
+            more_aliases=(alias(MAREN, "Vane"), alias(BELLEROS, "Silas Vane", secret=True)),
+            corrections=(correction("Bane", MAREN, FIX),),
+        )
+        with patch.object(cleaner, "MAX_REBUILDS", 0), self.assertLogs(cleaner.log, "DEBUG"):
+            result = clean(names, "Bane left", scene=EVERYONE)
+        self.assertEqual((result.text, result.fixes), ("Bane left", ()))
+
+    def test_a_dm_rule_keeps_the_possessive(self) -> None:
+        names = lookup(
+            more=(entity(MAREN, "Vane"),),
+            more_aliases=(alias(MAREN, "Vane"),),
+            corrections=(correction("Banes", MAREN, FIX),),
+        )
+        self.assertEqual(text("that is Bane's dog", names), "that is Vane's dog")
+
+    def test_a_dm_rule_never_renames_someone_in_any_form(self) -> None:
+        for rule, heard in (("Sara's", "it is Sara's turn"), ("Sara Bell", "thanks Sara Bell")):
+            with self.subTest(rule=rule):
+                names = lookup(corrections=(correction(rule, CERRIC, FIX),))
+                self.assertEqual(text(heard, names, people=["Sara"]), heard)
+
     def test_no_checks_left_means_no_fixes(self) -> None:
         with patch.object(cleaner, "SECRET_CHECKS_PER_LINE", 0):
             result = clean(lookup(), "I think Beleros has the key.", scene=EVERYONE)

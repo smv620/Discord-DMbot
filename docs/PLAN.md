@@ -1094,7 +1094,10 @@ consent check just made still holds:
   spelling that renames someone at the table. **The line is checked again as written:**
   a DM's fixed spelling needs no likeness, so "Silas Bane" with the rule "Bane" → Vane
   would write the secret "Silas Vane"; any fix whose written name, with the words
-  around it, is or sounds like a secret name is taken back (#321 review).
+  around it, is or sounds like a secret name is taken back (#321 review). Names not
+  in Latin letters have no sound codes, so they're compared with secret names by
+  spelling instead ("Сайлас Вейна" for the secret "Сайлас Вейн"). After 8 rebuilds the
+  line is kept as heard.
 - A fix writes the name the way it was said (the matched other name, not the main
   name); a DM's fixed spelling writes the main name.
 - **Stored:** `heard` as before, `text` cleaned. The live transcript channel shows the

@@ -90,6 +90,8 @@ class CampaignLookup:
     # Every secret name's word count: all of one is left alone, and the Cleaner checks
     # only runs of about those lengths.
     secret_lengths: frozenset[int] = frozenset()
+    # Secret names with no sound codes (not in Latin letters): compared by spelling.
+    codeless_secrets: tuple[str, ...] = ()
 
     @classmethod
     def build(cls, data: LookupData) -> CampaignLookup:
@@ -146,6 +148,7 @@ class CampaignLookup:
             {h.entity_id: h for h in data.heard if h.entity_id in entities},
             data.recent_sessions,
             frozenset(secret_lengths),
+            tuple(sorted({e.key for e in names if e.secret and not e.codes})),
         )
 
     def exact(self, heard: str) -> tuple[NameEntry, ...]:

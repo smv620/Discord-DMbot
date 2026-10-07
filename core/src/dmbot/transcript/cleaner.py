@@ -46,6 +46,7 @@ from dmbot.memory.sounds import sound_codes
 
 log = logging.getLogger(__name__)
 
+MAX_REBUILDS = 8  # the line as written is rebuilt at most this often, then left as heard
 MAX_JOINED = 3  # a name split into at most this many words ("Ka Zeth", "Bry N Shander")
 MIN_LETTERS = 4  # shorter words sound like too many names
 MIN_LIKENESS = 0.7  # how alike the spelling must be (0 to 1) for a fix by sound
@@ -245,7 +246,7 @@ def _without_secrets(
     until none is. The heard words alone can't show this: a spelling the DM fixed needs
     no likeness, so "Silas Bane" with the rule "Bane" → Vane writes "Silas Vane"."""
     left = SECRET_CHECKS_PER_LINE  # one budget for the line as written, however rebuilt
-    while True:
+    for _ in range(MAX_REBUILDS):
         text, spans = _apply(heard, fixes)
         if not fixes or not lookup.secret_lengths:
             return text, fixes
@@ -262,6 +263,8 @@ def _without_secrets(
         if not bad:
             return text, fixes
         fixes = [fix for i, fix in enumerate(fixes) if i not in bad]
+    near.ran_out = True  # rebuilt too often: keep the line as heard
+    return heard, []
 
 
 def _secret_spans(lookup: CampaignLookup, words: list[re.Match[str]]) -> list[tuple[int, int]]:
@@ -290,8 +293,11 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
         if any(span[0] < end and start < span[1] for start, end in taken):
             continue
         taken.append(span)
-        if name_key(heard[span[0] : span[1]]) in person_keys:
-            continue
+        said_words = [name_key(_stem(w)) for w in heard[span[0] : span[1]].split()]
+        if name_key(_stem(heard[span[0] : span[1]])) in person_keys or any(
+            w in person_keys for w in said_words
+        ):
+            continue  # someone at the table ("Sara's turn", "thanks Sara Bell")
         hits = by_span[span]
         if len({entity_id for entity_id, _ in hits}) != 1:
             continue  # two entries answer to it: not sure which
@@ -303,6 +309,8 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
         else:
             written = own_name(lookup, entity_id)
             how = DM_FIX
+        if written is not None and said != _stem(said) and written == _stem(written):
+            written += said[len(_stem(said)) :]  # keep the "'s": "Bane's dog" → "Vane's dog"
         if written is not None and written != said:
             fixes.append(Fix(span[0], span[1], said, written, entity_id, how))
     return fixes
@@ -337,9 +345,9 @@ def _by_sound(
     confirmed name and are spelled much like it. A word starting a sentence has its
     capital anyway, so it counts only once it was also written with one mid-sentence
     (in this line or earlier this session): "Thorn bushes everywhere" is never
-    "Thorin". One word alone also needs the name to be in the scene, and a player's
-    character to be spelled more alike: real names and brands sound like campaign
-    names too ("Mary" and Mara), while a split name ("Ka Zeth") is no real word."""
+    "Thorin". One word alone also needs the name to be in the scene and spelled closer
+    (MIN_LIKENESS_ONE_WORD): real names and brands sound like campaign names too
+    ("Mary" and Mara), while a split name ("Ka Zeth") is no real word."""
     lower = {w.casefold() for w in _lower_words(heard)}
     named = _named_words(heard)
     starts = _starts(heard, words)
@@ -470,8 +478,13 @@ def _near_secret(
                     return True
                 near.left -= 1
                 joined = "".join(w.group() for w in words[start : start + size])
-                near.seen[start, size] = any(
-                    e.secret for code in sound_codes(joined) for e in lookup.by_sound.get(code, ())
+                codes = sound_codes(joined)
+                near.seen[start, size] = (
+                    any(e.secret for code in codes for e in lookup.by_sound.get(code, ()))
+                    if codes
+                    # Not in Latin letters, so no sound codes: compare the spelling with
+                    # secret names that have none either ("Сайлас Вейна", "Сайлас Вейн").
+                    else any(likeness(joined, k) >= MIN_LIKENESS for k in lookup.codeless_secrets)
                 )
             if near.seen[start, size]:
                 return True
