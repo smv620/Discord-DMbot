@@ -1,7 +1,7 @@
 import unittest
 
 from dmbot.audio.segmenter import Utterance
-from dmbot.capture_log import CaptureLog, audio_health
+from dmbot.capture_log import HEALTH_WAIT_CHECKS, CaptureLog, audio_health
 
 
 def utt(user: int, seconds: float) -> Utterance:
@@ -100,7 +100,8 @@ class CaptureLogTests(unittest.TestCase):
         log.add_utterance(utt(2, 1.0))
         log.add_health(2, 80, 100)  # complete
         text = log.render(lambda uid: f"P{uid}")
-        self.assertEqual(text and text.split(" (")[0], "⚠️ **P2's voice is cutting out for DMbot**")
+        assert text is not None
+        self.assertTrue(text.startswith("⚠️ **P2's voice is cutting out for DMbot**"), text)
         log.add_utterance(utt(1, 1.0))
         self.assertEqual(
             log.log_line(),
@@ -185,3 +186,50 @@ class LogLineTests(unittest.TestCase):
         self.assertIsNone(log.log_line())
         log.add_health(1, 50, 50)
         self.assertIsNone(log.log_line())
+
+    def test_health_from_several_streams_adds_up_while_it_waits(self) -> None:
+        log = CaptureLog()
+        log.add_health(1, 50, 100)
+        self.assertIsNone(log.render(str))
+        log.add_health(1, 120, 100)  # capped at 100 per report
+        self.assertIsNone(log.render(str))
+        log.add_utterance(utt(1, 1.0))
+        self.assertIn("audio 75%", log.log_line() or "")
+
+    def test_health_whose_speech_never_comes_is_dropped(self) -> None:
+        # The person opted out mid-speech, or the speech queue was full: their gaps
+        # mustn't turn up in a clean check later on.
+        log = CaptureLog()
+        log.add_health(1, 10, 100)
+        for _ in range(HEALTH_WAIT_CHECKS):
+            self.assertIsNone(log.render(str))
+        log.add_utterance(utt(1, 1.0))
+        self.assertIn("audio 10%", log.log_line() or "")  # still waiting: kept
+        log.render(str)
+        log.add_health(1, 10, 100)
+        for _ in range(HEALTH_WAIT_CHECKS + 1):
+            self.assertIsNone(log.render(str))
+        log.add_utterance(utt(1, 1.0))
+        log.add_health(1, 100, 100)
+        self.assertIn("audio 100%", log.log_line() or "")  # waited too long: dropped
+
+    def test_one_check_clears_several_speakers(self) -> None:
+        log = CaptureLog()
+        for user in (1, 2, 3):
+            log.add_utterance(utt(user, float(user)))
+            log.add_health(user, 50, 100)
+        text = log.render(lambda uid: f"P{uid}")
+        self.assertIn("P3 50%, P2 50%, P1 50%", text or "")
+        self.assertIsNone(log.log_line())
+
+    def test_health_is_paired_per_speaker_not_per_piece(self) -> None:
+        # Known limit: a check takes all of a speaker's health so far, including a piece
+        # still being transcribed; that piece then arrives with no %. Nothing is lost.
+        log = CaptureLog()
+        log.add_utterance(utt(1, 1.0))
+        log.add_health(1, 100, 100)
+        log.add_health(1, 50, 100)  # the next piece, not transcribed yet
+        self.assertIn("audio 75%", log.log_line() or "")
+        log.render(str)
+        log.add_utterance(utt(1, 1.0))
+        self.assertEqual(log.log_line(), "Capture check: 1 speaker(s); user 1: 1 x speech, 1.0 s")
