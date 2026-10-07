@@ -42,6 +42,7 @@ log = logging.getLogger(__name__)
 
 REQUEST_HEADER = "X-DMbot-Request"
 FRESH_SIGN_IN_SECONDS = 24 * 3600
+DELETE_SIGN_IN_SECONDS = 15 * 60
 STATE_SECONDS = 600
 MAX_WEBHOOK_BYTES = 64 * 1024
 Clock = Callable[[], int]
@@ -209,10 +210,10 @@ def create_app(
 
     # Adding DMbot to a server, and the account
 
-    def fresh(session: Session) -> None:
-        """Acting for a server, or deleting the account, needs a recent sign-in: the list
-        of servers someone manages is as old as their session."""
-        if clock() - session.created_at > FRESH_SIGN_IN_SECONDS:
+    def fresh(session: Session, seconds: int = FRESH_SIGN_IN_SECONDS) -> None:
+        """Acting for a server needs a recent sign-in (the list of servers someone manages
+        is as old as their session); deleting the account, a very recent one."""
+        if clock() - session.created_at > seconds:
             raise HTTPException(status_code=403, detail="sign_in_again")
 
     def managed(session: Session, server_id: str) -> int:
@@ -259,28 +260,40 @@ def create_app(
         return response
 
     @app.get("/install/callback")
-    async def install_finish(request: Request, signed: Signed) -> Response:
-        session, _token = signed
+    async def install_finish(request: Request) -> Response:
+        def back(result: str) -> RedirectResponse:
+            response = RedirectResponse(f"{account_page}?install={result}", status_code=302)
+            response.delete_cookie(install_cookie, path="/", secure=settings.secure_cookies)
+            return response
+
+        failed = back("failed")
+        try:
+            session, _token = await current_session(request)
+        except HTTPException:
+            return back("signed_out")
         state = request.query_params.get("state", "")
         code = request.query_params.get("code", "")
-        failed = RedirectResponse(f"{account_page}?install=failed", status_code=302)
-        failed.delete_cookie(install_cookie, path="/", secure=settings.secure_cookies)
         cookie = request.cookies.get(install_cookie) or ""
         data = tokens.read(settings.secret_key, "install", state, now=clock())
-        if not code or data is None or not hmac.compare_digest(state, cookie):
+        if not code or data is None or not hmac.compare_digest(state.encode(), cookie.encode()):
             return failed
-        user_raw, guild_raw = data.split("-")
-        if int(user_raw) != session.user_id:
+        try:
+            user_raw, guild_raw = data.split("-")
+            if int(user_raw) != session.user_id:
+                return failed
+            guild_id = int(guild_raw)
+        except ValueError:
             return failed
-        guild_id = int(guild_raw)
         token: str | None = None
         try:
             # The server comes from Discord's answer to the code, never from the address
-            # (anyone can type a guild_id into a link).
+            # (anyone can type a guild_id into a link), and the person from Discord too:
+            # whoever approved on Discord must be the person signed in here.
             token, added_to = await discord.exchange_install(code, settings.install_redirect_uri)
-            if added_to != guild_id:
+            approver = await discord.user(token)
+            if added_to != guild_id or approver.id != session.user_id:
                 return failed
-            await record_install(db, session.user_id, guild_id, now=clock())
+            result = await record_install(db, session.user_id, guild_id, now=clock())
         except DiscordError as exc:
             log.warning("Install failed: %s", exc)
             return failed
@@ -293,10 +306,8 @@ def create_app(
                     await discord.revoke(token)
                 except DiscordError as exc:
                     log.warning("Couldn't revoke an install token: %s", exc)
-        log.info("DMbot installed on server %s by user %s", guild_id, session.user_id)
-        response = RedirectResponse(f"{account_page}?install=done", status_code=302)
-        response.delete_cookie(install_cookie, path="/", secure=settings.secure_cookies)
-        return response
+        log.info("DMbot installed on server %s by user %s: %s", guild_id, session.user_id, result)
+        return back("done" if result == "recorded" else result)
 
     @app.post("/servers/{server_id}/link", status_code=204)
     async def link_server(server_id: str, signed: Signed) -> Response:
@@ -312,8 +323,11 @@ def create_app(
     @app.post("/account/delete")
     async def delete_account(signed: Signed, request: Request) -> Response:
         """Two steps: the first answers a confirmation token, the second (with it) deletes."""
-        session, _token = signed
-        fresh(session)
+        session, cookie_token = signed
+        fresh(session, DELETE_SIGN_IN_SECONDS)
+        # The confirmation belongs to this one session: a copy can't delete an account
+        # made later, or be used from another browser.
+        bound = f"{session.user_id}-{sessions.hash_token(cookie_token)[:32]}"
         try:
             body = await request.json()
         except ValueError:
@@ -321,14 +335,10 @@ def create_app(
         given = body.get("confirm_token") if isinstance(body, dict) else None
         if not isinstance(given, str):
             confirm = tokens.make(
-                settings.secret_key,
-                "delete",
-                str(session.user_id),
-                now=clock(),
-                seconds=STATE_SECONDS,
+                settings.secret_key, "delete", bound, now=clock(), seconds=STATE_SECONDS
             )
             return JSONResponse({"confirm_token": confirm})
-        if tokens.read(settings.secret_key, "delete", given, now=clock()) != str(session.user_id):
+        if tokens.read(settings.secret_key, "delete", given, now=clock()) != bound:
             raise HTTPException(status_code=403, detail="confirm_again")
         # Stop the payments first: a deleted account must never be charged again.
         subscription = await active_subscription(db, session.user_id)

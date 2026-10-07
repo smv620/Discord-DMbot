@@ -34,18 +34,24 @@ async def first_paid_month_after_trial(db: Database, user_id: int) -> bool:
     return bool(row and row["tried"] and not row["paid"])
 
 
-async def record_install(db: Database, user_id: int, guild_id: int, *, now: int) -> None:
-    """DMbot was added to this server through the website by this person (#435)."""
+async def record_install(db: Database, user_id: int, guild_id: int, *, now: int) -> str:
+    """DMbot was added to this server through the website by this person (#435).
+    Returns "recorded", or "already_linked" when someone else is already the installer
+    (DMbot is in the server either way; the first installer stays)."""
     async with db.user(user_id, install_guild=guild_id) as conn:
-        await conn.execute(
+        cur = await conn.execute(
             "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
-            " VALUES (%s, %s, %s, 'site')"
-            " ON CONFLICT (guild_id) DO UPDATE"
-            " SET installed_by_user_id = EXCLUDED.installed_by_user_id"
-            " WHERE installs.installed_by_user_id IS NULL"
-            "   OR installs.installed_by_user_id = EXCLUDED.installed_by_user_id",
+            " VALUES (%s, %s, %s, 'site') ON CONFLICT (guild_id) DO NOTHING RETURNING guild_id",
             (guild_id, user_id, now),
         )
+        if await cur.fetchone() is not None:
+            return "recorded"
+        cur = await conn.execute(
+            "UPDATE installs SET installed_by_user_id = %s, via = 'site'"
+            " WHERE guild_id = %s AND (installed_by_user_id IS NULL OR installed_by_user_id = %s)",
+            (user_id, guild_id, user_id),
+        )
+        return "recorded" if cur.rowcount == 1 else "already_linked"
 
 
 async def link_install(db: Database, user_id: int, guild_id: int, *, now: int) -> str:
@@ -58,13 +64,13 @@ async def link_install(db: Database, user_id: int, guild_id: int, *, now: int) -
         row = await cur.fetchone()
         if row is None:
             return "not_installed"  # the bot records its joins; it hasn't joined here
-        if row["installed_by_user_id"] not in (None, user_id):
-            return "already_linked"
-        await conn.execute(
-            "UPDATE installs SET installed_by_user_id = %s WHERE guild_id = %s",
-            (user_id, guild_id),
+        # One statement decides, so two people linking at once can't both win.
+        cur = await conn.execute(
+            "UPDATE installs SET installed_by_user_id = %s"
+            " WHERE guild_id = %s AND (installed_by_user_id IS NULL OR installed_by_user_id = %s)",
+            (user_id, guild_id, user_id),
         )
-    return "linked"
+    return "linked" if cur.rowcount == 1 else "already_linked"
 
 
 async def active_subscription(db: Database, user_id: int) -> tuple[str, str] | None:

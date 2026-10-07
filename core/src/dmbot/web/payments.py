@@ -66,7 +66,8 @@ class PaymentProvider(Protocol):
     async def billing_url(self, *, customer_id: str, return_url: str) -> str: ...
 
     async def cancel(self, *, subscription_id: str) -> None:
-        """Stop the subscription now (the person is deleting their account)."""
+        """Stop the subscription now (the person is deleting their account). Cancelling a
+        subscription that is already cancelled must succeed, so a retried deletion works."""
         ...
 
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:

@@ -94,7 +94,10 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                     }
                 )
 
-    async with db.user(session.user_id) as conn:
+        # The person's own installs, in the same transaction (one connection per /me).
+        await conn.execute(
+            "SELECT set_config('dmbot.user_id', %s, true)", (str(int(session.user_id)),)
+        )
         cur = await conn.execute(
             "SELECT guild_id, installed_at, via FROM installs"
             " WHERE installed_by_user_id = %s ORDER BY installed_at",

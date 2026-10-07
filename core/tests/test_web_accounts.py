@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -10,7 +11,8 @@ import httpx
 from dmbot import entitlements, install
 from dmbot.web import tokens
 from dmbot.web.app import create_app
-from dmbot.web.payments import FakeProvider
+from dmbot.web.discord import DiscordUser
+from dmbot.web.payments import FakeProvider, PaymentError
 from tests.pg import DatabaseTest
 from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SECRET, SITE, FakeDiscord, settings
 
@@ -53,9 +55,9 @@ class Accounts(DatabaseTest):
             params={"state": query["state"][0], "code": "install-code", "guild_id": str(server)},
         )
 
-    async def me(self) -> dict[str, object]:
+    async def me(self) -> dict[str, Any]:
         response = await self.client.get("/me")
-        result: dict[str, object] = response.json()
+        result: dict[str, Any] = response.json()
         return result
 
     # Install
@@ -73,10 +75,10 @@ class Accounts(DatabaseTest):
         self.assertEqual(self.discord.revoked[-1], "install-token")
         me = await self.me()
         self.assertEqual(
-            [(i["serverId"], i["via"]) for i in me["installs"]],  # type: ignore[attr-defined]
+            [(i["serverId"], i["via"]) for i in me["installs"]],
             [(str(QUILLON.id), "site")],
         )
-        server = next(s for s in me["servers"] if s["id"] == str(QUILLON.id))  # type: ignore[attr-defined]
+        server = next(s for s in me["servers"] if s["id"] == str(QUILLON.id))
         self.assertEqual((server["hasDmbot"], server["installedByYou"]), (True, True))
 
     async def test_the_server_comes_from_discord_not_the_address(self) -> None:
@@ -97,7 +99,7 @@ class Accounts(DatabaseTest):
         self.assertEqual(done.headers["location"], f"{SITE}/account?install=sign_in_again")
 
     async def test_an_install_state_from_another_person_or_purpose_is_refused(self) -> None:
-        start = await self.client.get("/install", params={"server_id": str(QUILLON.id)})
+        await self.client.get("/install", params={"server_id": str(QUILLON.id)})
         self.discord.installed_guild = QUILLON.id
         forged = tokens.make(SECRET, "install", f"424242-{QUILLON.id}", now=self.now, seconds=600)
         delete = tokens.make(SECRET, "delete", str(ALICE.id), now=self.now, seconds=600)
@@ -107,7 +109,65 @@ class Accounts(DatabaseTest):
                 "/install/callback", params={"state": state, "code": "install-code"}
             )
             self.assertEqual(done.headers["location"], f"{SITE}/account?install=failed")
-        self.assertTrue(start.headers["location"].startswith("https://discord.com/"))
+
+    async def test_whoever_approved_on_discord_must_be_the_person_signed_in(self) -> None:
+        self.discord.user_info = DiscordUser(id=31337, name="Someone", email=None)
+        done = await self.install(QUILLON.id)
+        self.assertEqual(done.headers["location"], f"{SITE}/account?install=failed")
+        self.assertEqual((await self.me())["installs"], [])
+
+    async def test_a_state_not_matching_this_browsers_cookie_is_refused(self) -> None:
+        start = await self.client.get("/install", params={"server_id": str(QUILLON.id)})
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        other = tokens.make(
+            SECRET, "install", f"{ALICE.id}-{QUILLON.id}", now=self.now, seconds=600
+        )
+        self.client.cookies.set("__Host-dmbot_install", other, domain="api.dmbot.example")
+        self.discord.installed_guild = QUILLON.id
+        done = await self.client.get(
+            "/install/callback", params={"state": state, "code": "install-code"}
+        )
+        self.assertEqual(done.headers["location"], f"{SITE}/account?install=failed")
+
+    async def test_no_code_or_discord_refusing_is_a_plain_failure(self) -> None:
+        start = await self.client.get("/install", params={"server_id": str(QUILLON.id)})
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        no_code = await self.client.get("/install/callback", params={"state": state})
+        self.assertEqual(no_code.headers["location"], f"{SITE}/account?install=failed")
+        start = await self.client.get("/install", params={"server_id": str(QUILLON.id)})
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        refused = await self.client.get(
+            "/install/callback", params={"state": state, "code": "wrong-code"}
+        )
+        self.assertEqual(refused.headers["location"], f"{SITE}/account?install=failed")
+
+    async def test_coming_back_signed_out_is_a_page_not_an_error(self) -> None:
+        self.client.cookies.delete("__Host-dmbot_session")
+        done = await self.client.get("/install/callback", params={"state": "x", "code": "y"})
+        self.assertEqual(done.headers["location"], f"{SITE}/account?install=signed_out")
+
+    async def test_reinstalling_over_someone_elses_install_keeps_them(self) -> None:
+        async with self.db.user(5) as conn:
+            await conn.execute(
+                "INSERT INTO web_users (user_id, created_at, last_sign_in_at) VALUES (5, 0, 0)"
+            )
+        async with self.db.user(5, install_guild=QUILLON.id) as conn:
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
+                " VALUES (%s, 5, 0, 'site')",
+                (QUILLON.id,),
+            )
+        done = await self.install(QUILLON.id)
+        self.assertEqual(done.headers["location"], f"{SITE}/account?install=already_linked")
+
+    async def test_installing_a_server_dmbot_joined_by_link_records_it_as_yours(self) -> None:
+        await self.joined_by_link(QUILLON.id)
+        await self.install(QUILLON.id)
+        installs = (await self.me())["installs"]
+        self.assertEqual(
+            [(i["serverId"], i["serverName"], i["via"]) for i in installs],
+            [(str(QUILLON.id), QUILLON.name, "site")],
+        )
 
     # Link this server
 
@@ -124,10 +184,10 @@ class Accounts(DatabaseTest):
 
     async def test_linking_a_server_dmbot_joined_by_link(self) -> None:
         await self.joined_by_link(QUILLON.id)
-        server = next(s for s in (await self.me())["servers"] if s["id"] == str(QUILLON.id))  # type: ignore[attr-defined]
+        server = next(s for s in (await self.me())["servers"] if s["id"] == str(QUILLON.id))
         self.assertTrue(server["canLink"])
         self.assertEqual((await self.link(QUILLON.id)).status_code, 204)
-        server = next(s for s in (await self.me())["servers"] if s["id"] == str(QUILLON.id))  # type: ignore[attr-defined]
+        server = next(s for s in (await self.me())["servers"] if s["id"] == str(QUILLON.id))
         self.assertEqual((server["canLink"], server["installedByYou"]), (False, True))
 
     async def test_linking_needs_dmbot_there_and_no_other_installer(self) -> None:
@@ -204,10 +264,64 @@ class Accounts(DatabaseTest):
     async def test_delete_keeps_the_install_without_the_person(self) -> None:
         await self.install(QUILLON.id)
         token = (await self.delete()).json()["confirm_token"]
-        await self.delete(token)
+        self.assertEqual((await self.delete(token)).status_code, 204)
         async with self.db.guild(QUILLON.id) as conn:
             cur = await conn.execute("SELECT installed_by_user_id FROM installs")
             self.assertEqual([r["installed_by_user_id"] for r in await cur.fetchall()], [None])
+
+    async def test_a_link_shows_in_the_persons_installs(self) -> None:
+        await self.joined_by_link(QUILLON.id)
+        await self.link(QUILLON.id)
+        installs = (await self.me())["installs"]
+        self.assertEqual([(i["serverName"], i["via"]) for i in installs], [(QUILLON.name, "link")])
+
+    async def paid_plan(self, provider: str = "fake") -> None:
+        async with self.db.plan_writer(ALICE.id) as conn:
+            await conn.execute(
+                "INSERT INTO entitlements (user_id, plan, status, hours_cap, campaign_cap,"
+                " period_start, period_end, plan_changed_at, provider, provider_subscription_id,"
+                " last_event_at, updated_at) VALUES (%s, 'table', 'active', 18, 1, 0, %s, 0,"
+                " %s, 'sub_9', 0, 0)",
+                (ALICE.id, self.now + 86400, provider),
+            )
+
+    async def test_delete_is_refused_when_payments_cant_be_stopped(self) -> None:
+        await self.paid_plan(provider="paddle")  # not the company this API talks to
+        token = (await self.delete()).json()["confirm_token"]
+        response = await self.delete(token)
+        self.assertEqual(
+            (response.status_code, response.json()), (503, {"error": "payments_unavailable"})
+        )
+        self.assertIsNotNone(await entitlements.get(self.db, ALICE.id))
+
+    async def test_delete_is_refused_when_cancelling_fails(self) -> None:
+        await self.paid_plan()
+
+        async def broken(*, subscription_id: str) -> None:
+            raise PaymentError("down")
+
+        self.provider.cancel = broken  # type: ignore[method-assign]
+        token = (await self.delete()).json()["confirm_token"]
+        self.assertEqual((await self.delete(token)).status_code, 502)
+        self.assertIsNotNone(await entitlements.get(self.db, ALICE.id))
+
+    async def test_a_delete_confirmation_works_only_in_its_own_session(self) -> None:
+        token = (await self.delete()).json()["confirm_token"]
+        self.client.cookies.clear()
+        await self.sign_in()  # the same person, a new session
+        response = await self.delete(token)
+        self.assertEqual((response.status_code, response.json()), (403, {"error": "confirm_again"}))
+
+    async def test_delete_with_a_body_that_isnt_json_asks_for_confirmation(self) -> None:
+        response = await self.client.post(
+            "/account/delete", headers={**HEADERS, "content-type": "application/json"}, content=b"{"
+        )
+        self.assertIn("confirm_token", response.json())
+
+    async def test_delete_needs_a_sign_in_from_the_last_15_minutes(self) -> None:
+        self.now += 16 * 60
+        response = await self.delete()
+        self.assertEqual((response.status_code, response.json()), (403, {"error": "sign_in_again"}))
 
     async def test_delete_needs_a_recent_sign_in(self) -> None:
         self.now += 25 * 3600
