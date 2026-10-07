@@ -1,0 +1,148 @@
+---
+// The one layout every page uses: head tags, header with the menu, footer with the legal links.
+import "../styles/global.css";
+
+interface Props {
+  /** Page name shown in the browser tab, before " · DMbot". */
+  title: string;
+  /** One plain sentence for search results and link previews. */
+  description: string;
+  /** Keep the page out of search results (the signed-in area). */
+  noindex?: boolean;
+}
+
+const { title, description, noindex = false } = Astro.props;
+const fullTitle = title === "DMbot" ? title : `${title} · DMbot`;
+const path = Astro.url.pathname;
+
+const menu = [
+  { href: "/pricing", label: "Prices" },
+  { href: "/install", label: "Add to Discord" },
+  { href: "/account", label: "My account" },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex" />}
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to the page</a>
+    <header class="site-header">
+      <div class="wrap bar">
+        <a class="brand" href="/">DMbot</a>
+        <nav aria-label="Main">
+          <ul>
+            {
+              menu.map((item) => (
+                <li>
+                  <a href={item.href} aria-current={path === item.href ? "page" : undefined}>
+                    {item.label}
+                  </a>
+                </li>
+              ))
+            }
+          </ul>
+        </nav>
+      </div>
+    </header>
+    <main id="main" class="wrap">
+      <slot />
+    </main>
+    <footer class="site-footer">
+      <div class="wrap">
+        <p class="muted">DMbot helps the game master for 5e-compatible tabletop games.</p>
+        <ul>
+          <li><a href="/legal/terms">Terms</a></li>
+          <li><a href="/legal/privacy">Privacy</a></li>
+          <li><a href="/legal/refunds">Refunds</a></li>
+        </ul>
+      </div>
+    </footer>
+  </body>
+</html>
+
+<style>
+  .skip {
+    position: absolute;
+    left: var(--space-2);
+    top: -10rem;
+    padding: var(--space-2) var(--space-4);
+    background: var(--surface);
+    border-radius: var(--radius);
+  }
+
+  .skip:focus {
+    top: var(--space-2);
+  }
+
+  .site-header {
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-4);
+    padding-block: var(--space-2);
+  }
+
+  .brand {
+    font-size: var(--text-lg);
+    font-weight: 700;
+    color: var(--text);
+    text-decoration: none;
+    min-height: var(--tap);
+    display: inline-flex;
+    align-items: center;
+  }
+
+  nav ul,
+  .site-footer ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-4);
+  }
+
+  nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  nav a[aria-current="page"] {
+    font-weight: 700;
+    text-decoration: underline;
+  }
+
+  main {
+    flex: 1;
+    padding-block: var(--space-8) var(--space-12);
+  }
+
+  .site-footer {
+    border-top: 1px solid var(--border);
+    padding-block: var(--space-6);
+    font-size: var(--text-sm);
+  }
+
+  .site-footer a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+  }
+</style>

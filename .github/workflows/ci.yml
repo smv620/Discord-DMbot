@@ -43,6 +43,30 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  web:
+    name: web (customer website)
+    runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: npm ci
+        run: |
+          set -o pipefail
+          npm ci --no-audit --no-fund 2>&1 | tee install.log || {
+            grep -E "npm (error|ERR)" install.log | head -40 | sed 's/^/::error title=npm ci::/'
+            exit 1
+          }
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
   core:
     name: core (Python)
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
