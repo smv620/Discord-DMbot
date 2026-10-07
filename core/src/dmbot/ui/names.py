@@ -334,7 +334,7 @@ class CampaignChoice(_Menu):
             placeholder="Which campaign?",
             options=[
                 discord.SelectOption(
-                    label=logic.shorten(c.name, logic.OPTION_LABEL_MAX),
+                    label=logic.name_label(c.name),
                     value=c.id,
                     description=logic.option_description(c, now),
                 )

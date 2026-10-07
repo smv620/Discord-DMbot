@@ -221,3 +221,35 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
                 "dm_screen_visibility": "open",
             },
         )
+
+
+class CampaignPickersFitAPhone(unittest.TestCase):
+    """#282: every campaign picker cuts names for a phone, and the DM can still tell
+    the choices apart (restored copies differ only at the end of their names)."""
+
+    def test_long_names_are_cut_and_told_apart(self) -> None:
+        from dmbot.ui import names as names_ui
+        from dmbot.ui.logic import NAME_LABEL_MAX, PHONE_LABEL_MAX
+        from tests.test_ui_logic import campaign
+
+        long = "The Very Long and Winding Campaign of the Western Marches"
+        ends = ["", " (restored)", " (restored 2)", " (restored 3)"]
+        campaigns = [campaign(id=f"c{n}", name=long + end) for n, end in enumerate(ends)]
+        views: list[Any] = [
+            cmds.CampaignPicker(campaigns),
+            cmds.BackupPicker(campaigns),
+            cmds.RestoreChoice({}, long, campaigns),
+            names_ui.CampaignChoice(campaigns),
+        ]
+        for view in views:
+            with self.subTest(type(view).__name__):
+                children: list[Any] = list(view.children)
+                (menu,) = [i for i in children if isinstance(i, discord.ui.Select)]
+                labels = [o.label for o in menu.options]
+                self.assertTrue(all(len(label) <= NAME_LABEL_MAX for label in labels))
+                self.assertEqual(len(set(labels)), len(labels))  # never two the same
+                self.assertTrue(all(o.description for o in menu.options))
+                for item in children:
+                    if not isinstance(item, discord.ui.Select):
+                        self.assertLessEqual(len(item.label or ""), PHONE_LABEL_MAX)
+                self.assertLessEqual(len(menu.placeholder or ""), PHONE_LABEL_MAX)
