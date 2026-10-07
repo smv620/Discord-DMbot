@@ -937,9 +937,13 @@ class MemoryStore:
 
     async def resolve_stale_flags(self, guild_id: int, campaign_id: str) -> Written[list[Flag]]:
         """Close the open flags whose problem is gone (#164): an undo, a merge, an edit
-        or a rejected fact can end a clash without touching the flag. Each fact is
-        checked again exactly as when it was flagged; a flag whose problem is still found
-        stays open. Logged like any change, so it can be undone."""
+        or a rejected fact can end a clash without touching the flag. Each flagged fact
+        is checked again exactly as when it was flagged; a flag whose problem is still
+        found stays open. Logged like any change (as EntityBot's upkeep), so it can be
+        undone. A few statements however many flags are open."""
+        async with self._read(guild_id, campaign_id) as scope:  # no lock if nothing's open
+            if not await scope.select(FLAGS, " AND status = 'open' LIMIT 1"):
+                return Written([], None)
         async with self._write(guild_id, campaign_id, "entitybot") as w:
             by_fact: dict[str, list[dict[str, Any]]] = {}
             for flag in await w.select(FLAGS, " AND status = 'open' ORDER BY created_at, id"):
@@ -947,33 +951,44 @@ class MemoryStore:
             if not by_fact:
                 return Written([], None)
             onto = await _load_ontology(w)
-            closed: list[Flag] = []
-            for relation_id, flags in by_fact.items():
-                row = await w.get(RELATIONS, relation_id)
-                if row is None:
-                    continue
-                fact = _relation(row)
-                pred = onto.predicates.get(fact.predicate)
-                if pred is None:
+            facts = [
+                _relation(r)
+                for r in await w.select(RELATIONS, " AND id = ANY(%s)", [sorted(by_fact)])
+            ]
+            ends = sorted({e for f in facts for e in (f.subject_id, f.object_id)})
+            types = {
+                e["id"]: e["type"] for e in await w.select(ENTITIES, " AND id = ANY(%s)", [ends])
+            }
+            touching: dict[str, list[Relation]] = {}
+            for r in await _relations_touching(w, *ends):
+                for e in {r.subject_id, r.object_id}:
+                    touching.setdefault(e, []).append(r)
+            stale: list[str] = []
+            for fact in facts:
+                if fact.predicate not in onto.predicates:
                     continue  # a term DMbot can't check any more: leave it to the DM
                 still: set[tuple[str, str | None]] = set()
                 if fact.status != REJECTED:  # a rejected fact clashes with nothing
-                    ends = {fact.subject_id, fact.object_id}
-                    types = {
-                        e["id"]: e["type"]
-                        for e in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(ends)])
+                    others = {
+                        r.id: r
+                        for e in (fact.subject_id, fact.object_id)
+                        for r in touching.get(e, [])
+                        if r.id != fact.id
                     }
-                    others = [r for r in await _relations_touching(w, *ends) if r.id != fact.id]
-                    still = {
-                        (p.kind, p.other_id)
-                        for p in check_relation(
-                            onto, fact, types[fact.subject_id], types[fact.object_id], others
-                        )
-                    }
-                for flag in flags:
-                    if (flag["kind"], flag["other_id"]) not in still:
-                        row = await w.update(FLAGS, flag["id"], {"status": "resolved"})
-                        closed.append(_flag(row))
+                    problems = check_relation(
+                        onto,
+                        fact,
+                        types[fact.subject_id],
+                        types[fact.object_id],
+                        list(others.values()),
+                    )
+                    still = {(p.kind, p.other_id) for p in problems}
+                stale += [
+                    f["id"] for f in by_fact[fact.id] if (f["kind"], f["other_id"]) not in still
+                ]
+            closed = [
+                _flag(await w.update(FLAGS, flag_id, {"status": "resolved"})) for flag_id in stale
+            ]
             return Written(closed, w.batch)
 
     # ---- mentions and corrections -------------------------------------------------------

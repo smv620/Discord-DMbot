@@ -1730,7 +1730,7 @@ class DMBot(commands.AutoShardedBot):
 
     async def close_stale_flags(self, table: Table) -> None:
         """After a session: close memory flags whose problem is gone (#164), so the DM
-        isn't asked about clashes an undo or a merge already ended."""
+        isn't asked about clashes an undo, a merge, an edit or a rejection ended."""
         if self.memory is None or table.campaign_id is None:
             return
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):

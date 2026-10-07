@@ -5,9 +5,10 @@ import contextlib
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
+from unittest.mock import patch
 
+from psycopg import AsyncConnection, sql
 from psycopg import errors as pg_errors
-from psycopg import sql
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
@@ -435,6 +436,71 @@ class Rules(MemoryTest):
         assert closed.batch is not None
         await self.memory.undo(GUILD_A, self.c, closed.batch, source="dm")  # can be undone
         self.assertEqual(len(await self.memory.flags(GUILD_A, self.c)), len(still) + 1)
+
+    async def test_a_merge_that_ends_a_clash_leaves_nothing_to_close(self) -> None:
+        """Two places that turn out to be one: the two facts fold into one and the flag
+        goes with the folded fact, so the cleanup finds nothing. His member_of flag
+        (wrong kind) is a different problem and stays."""
+        cerric = await self.add("Cerric")
+        town = await self.add("Bryn Shander", type="place")
+        same_town = await self.add("Bryn", type="place")
+        await self.relate(cerric, "located_in", town)
+        await self.relate(cerric, "located_in", same_town, source="cleaner", confidence=0.5)
+        fireball = await self.add("Fireball", type="spell")
+        await self.relate(cerric, "member_of", fireball, source="cleaner", confidence=0.4)
+        await self.memory.merge(GUILD_A, self.c, town, same_town, source="dm")
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(closed.value, [])
+        kinds = {f.kind for f in await self.memory.flags(GUILD_A, self.c)}
+        self.assertEqual(kinds, {WRONG_OBJECT})
+
+    async def test_another_campaigns_flags_are_left_alone(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Sunken City", DM)).id
+        for campaign in (self.c, other):
+            cerric = await self.add("Cerric", campaign=campaign)
+            p1 = await self.add("Brynwater", type="place", campaign=campaign)
+            p2 = await self.add("Thornewick", type="place", campaign=campaign)
+            first = await self.memory.add_relation(
+                GUILD_A, campaign, cerric, "located_in", p1, source="dm", confidence=1.0
+            )
+            await self.memory.add_relation(
+                GUILD_A, campaign, cerric, "located_in", p2, source="cleaner", confidence=0.5
+            )
+            await self.memory.update_relation(
+                GUILD_A, campaign, first.value[0].id, status=REJECTED, source="dm"
+            )
+        await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(await self.memory.flags(GUILD_A, self.c), [])
+        self.assertEqual(len(await self.memory.flags(GUILD_A, other)), 1)  # its own turn
+
+    async def test_checking_many_flags_takes_a_few_statements(self) -> None:
+        town, inn = (
+            await self.add("Bryn Shander", type="place"),
+            await self.add("Inn", type="place"),
+        )
+        firsts = []
+        for n in range(30):
+            npc = await self.add(f"Guard {n}")
+            firsts.append((await self.relate(npc, "located_in", town)).value[0].id)
+            await self.relate(npc, "located_in", inn, source="cleaner", confidence=0.5)
+        for fact_id in firsts:
+            await self.memory.update_relation(
+                GUILD_A, self.c, fact_id, status=REJECTED, source="dm"
+            )
+        statements = 0
+        real = AsyncConnection.execute
+
+        async def counting(conn: Any, *args: Any, **kw: Any) -> Any:
+            nonlocal statements
+            statements += 1
+            return await real(conn, *args, **kw)
+
+        with patch.object(AsyncConnection, "execute", counting):
+            closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(len(closed.value), 30)
+        # The checks are a fixed few statements; closing is 3 per flag until it reuses
+        # part 1's bulk update (it was 6 per flag).
+        self.assertLessEqual(statements, 15 + 3 * 30)
 
     async def test_saying_a_fact_again_only_strengthens_it(self) -> None:
         a, b = await self.add("Gorrak"), await self.add("Tamsin")
