@@ -491,13 +491,24 @@ class QuestionTest(unittest.TestCase):
         names = self.alike(*extra)
         self.assertEqual(clean(names, "then Marin speaks", scene=EVERYONE).questions, ())
 
+    def test_a_player_character_needs_the_closer_spelling(self) -> None:
+        # "Mary" sounds like the character Mara and the NPC Mari, at 0.75 each
+        names = lookup(
+            more=(
+                entity(MAREN, "Mara", "player_character", played_by=DEE),
+                entity(MARRON, "Mari"),
+            ),
+            more_aliases=(alias(MAREN, "Mara"), alias(MARRON, "Mari")),
+        )
+        self.assertEqual(clean(names, "so Mary, your turn", scene=EVERYONE).questions, ())
+
     def test_not_next_to_a_secret_name(self) -> None:
         names = lookup(
             more=(entity(MAREN, "Maren"), entity(MARRON, "Marron")),
             more_aliases=(
                 alias(MAREN, "Maren"),
                 alias(MARRON, "Marron"),
-                alias(BELLEROS, "Silas Marin", secret=True),
+                alias(BELLEROS, "Silas Maryn", secret=True),  # near, not the same words
             ),
         )
         self.assertEqual(clean(names, "I met Silas Marin", scene=EVERYONE).questions, ())

@@ -51,6 +51,7 @@ MAX_JOINED = 3  # a name split into at most this many words ("Ka Zeth", "Bry N S
 MIN_LETTERS = 4  # shorter words sound like too many names
 MIN_LIKENESS = 0.7  # how alike the spelling must be (0 to 1) for a fix by sound
 MAX_OPTIONS = 3  # names offered in one "Did they mean…?"; more sounding alike: no question
+ENTRIES_PER_NAME = 8  # of one entry's names sounding alike, the most weighed per word
 # One word alone, by sound: real first names sound like campaign names ("Mary" for the
 # NPC or character Mara, 0.75), so one word must be spelled closer than a joined name.
 MIN_LIKENESS_ONE_WORD = 0.8
@@ -387,6 +388,7 @@ def _by_sound(
     questions: list[Question] = []
     i = 0
     while i < len(words):
+        asking: tuple[Question, int] | None = None  # the longest run that raised one
         for size in range(min(MAX_JOINED, len(words) - i), 0, -1):
             run = range(i, i + size)
             if not as_last[run[-1]] or not all(inside[j] for j in run[:-1]):
@@ -397,9 +399,9 @@ def _by_sound(
             said = _stem(heard[start:end])
             found = _sounds_like(lookup, said, start)
             if isinstance(found, Question):
-                questions.append(found)  # the DM is asked; no scene needed for that
-                i += size
-                break
+                # The DM is asked (no scene needed), unless fewer words make a sure fix.
+                asking = asking or (found, size)
+                continue
             if found is not None and size == 1 and not _one_word_ok(found, scene):
                 found = None
             if found is not None:
@@ -407,7 +409,11 @@ def _by_sound(
                 i += size
                 break
         else:
-            i += 1
+            if asking is not None:
+                questions.append(asking[0])
+                i += asking[1]
+            else:
+                i += 1
     return fixes, questions
 
 
@@ -425,32 +431,37 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | Questio
     joined = said.replace(" ", "")
     if len(name_key(joined)) < MIN_LETTERS:
         return None
-    by_entity: dict[str, list[NameEntry]] = {}
+    by_entity: dict[str, dict[str, NameEntry]] = {}  # entity → its names, once each
     for code in sound_codes(joined):
         for entry in lookup.by_sound.get(code, ()):
             if entry.secret:
                 return None  # it could be a secret name: never guess around one
-            by_entity.setdefault(entry.entity_id, []).append(entry)
+            mine = by_entity.setdefault(entry.entity_id, {})
+            if len(mine) < ENTRIES_PER_NAME:  # enough to judge; bounds the work
+                mine.setdefault(entry.alias_id, entry)
             if len(by_entity) > MAX_OPTIONS:
                 return None  # sounds like too many names to ask about
     if not by_entity:
         return None
     if len(by_entity) == 1:
-        usable = [e for entries in by_entity.values() for e in entries if e.confirmed]
+        usable = [e for entries in by_entity.values() for e in entries.values() if e.confirmed]
         if not usable:
             return None  # only a name DMbot suggested: never a silent fix
         best = max(usable, key=lambda e: (likeness(said, e.text), e.text))
         if likeness(said, best.text) < MIN_LIKENESS or best.text == said:
             return None
         return Fix(start, start + len(said), said, best.text, best.entity_id, SOUND)
-    if any(not any(e.confirmed for e in entries) for entries in by_entity.values()):
+    if any(not any(e.confirmed for e in entries.values()) for entries in by_entity.values()):
         return None  # one of them is only a suggestion: too unsure to ask
     options = []
     for entity_id, entries in by_entity.items():
         name = own_name(lookup, entity_id)
-        alike = max(likeness(said, e.text) for e in entries if e.confirmed)
+        alike = max(likeness(said, e.text) for e in entries.values() if e.confirmed)
         if name is None or alike < MIN_LIKENESS:
             return None  # not clearly one of these: leave it, don't ask
+        entity = lookup.entities.get(entity_id)
+        if entity is not None and entity.type == PLAYER_CHARACTER and alike < MIN_LIKENESS_ONE_WORD:
+            return None  # a real first name next to a character ("Mary" for Mara): don't ask
         options.append((alike, name, entity_id))
     if any(name == said for _, name, _ in options):
         return None

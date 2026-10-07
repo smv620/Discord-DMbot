@@ -15,14 +15,13 @@ import io
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.transcript import cleaner, export
-from dmbot.transcript.models import TranscriptSession
+from dmbot.transcript.models import Line, TranscriptSession
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NO_PINGS,
@@ -60,9 +59,10 @@ CHOICES: dict[str, tuple[tuple[str, ...], str]] = {
     "both": ((export.CLEANED, export.AS_HEARD), "Both (2 files)"),
 }
 VERSION_HELP = (
-    "📄 **Cleaned:** names spelled right, as the transcript channel showed them.\n"
-    "🎙 **As heard:** exactly what DMbot heard, word for word."
+    "📄 **Cleaned:** misheard names fixed (the easiest to read).\n"
+    "🎙 **As heard:** word for word, before DMbot fixed any names."
 )
+WORD_FOR_WORD = "Want it word for word? Press 🎙 **As heard**."
 
 
 def ended_text(campaign_name: str) -> str:
@@ -149,22 +149,39 @@ async def make_file(
     names = await display_names(guild, tuple(sorted({line.user_id for line in lines})))
     playing = await player_characters(bot, guild_id, campaign.id)
     files = []
+    total = 0
     for version in versions:
-        text = export.render(
-            campaign.name,
-            session,
-            lines,
-            names,
-            characters=playing,
-            running=running,
-            version=version,
+        # Off the event loop: a long session's file takes a fifth of a second to build.
+        data = await asyncio.to_thread(
+            _build, campaign.name, session, lines, names, playing, running, version
         )
-        data = text.encode("utf-8")
-        if len(data) > FILE_LIMIT:
+        total += len(data)
+        if total > FILE_LIMIT:  # one message: both files together
             return TOO_BIG
         name = export.file_name(campaign.name, session, version)
         files.append(discord.File(io.BytesIO(data), filename=name))
     return files
+
+
+def _build(
+    campaign_name: str,
+    session: TranscriptSession,
+    lines: list[Line],
+    names: dict[int, str],
+    playing: dict[int, str],
+    running: bool,
+    version: str,
+) -> bytes:
+    text = export.render(
+        campaign_name,
+        session,
+        lines,
+        names,
+        characters=playing,
+        running=running,
+        version=version,
+    )
+    return text.encode("utf-8")
 
 
 async def send_file(
@@ -172,8 +189,11 @@ async def send_file(
     guild_id: int,
     session_id: str,
     versions: tuple[str, ...] = (export.AS_HEARD,),
+    *,
+    offer_as_heard: bool = False,
 ) -> None:
-    """Answer at once ("DMbot is thinking…"), then send the file(s) privately."""
+    """Answer at once ("DMbot is thinking…"), then send the file(s) privately.
+    `offer_as_heard`: under a cleaned file, a button for the word-for-word one."""
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True, thinking=True)
     bot = _bot(interaction)
@@ -187,12 +207,29 @@ async def send_file(
         await _tell(interaction, result)
         return
     many = len(result) > 1
-    await interaction.followup.send(
-        f"📄 Here's the transcript{' in both versions' if many else ''}. Open it in any text app.",
-        **({"files": result} if many else {"file": result[0]}),
-        ephemeral=True,
-        allowed_mentions=NO_PINGS,
+    text = (
+        f"📄 Here's the transcript{' in both versions' if many else ''}. Open it in any text app."
     )
+    extra: dict[str, Any] = {"files": result} if many else {"file": result[0]}
+    if offer_as_heard:
+        text += f"\n{WORD_FOR_WORD}"
+        extra["view"] = AsHeardToo(guild_id, session_id)
+    await interaction.followup.send(text, **extra, ephemeral=True, allowed_mentions=NO_PINGS)
+
+
+class AsHeardToo(_Menu):
+    """Under the cleaned file from `/transcript`: the word-for-word one, if wanted."""
+
+    def __init__(self, guild_id: int, session_id: str) -> None:
+        super().__init__()
+        self.guild_id = guild_id
+        self.session_id = session_id
+        label = CHOICES["heard"][1]
+        self.add_item(_Button(self._send, label=label, style=discord.ButtonStyle.secondary))
+
+    async def _send(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await send_file(interaction, self.guild_id, self.session_id, (export.AS_HEARD,))
 
 
 # ---- /transcript -----------------------------------------------------------------------
@@ -315,38 +352,12 @@ class SessionPicker(_Menu):
             )
             return
         self.stop()
-        await _replace(interaction, PICK_VERSION, PickVersion(self.guild_id, session.id))
+        await send_cleaned(interaction, self.guild_id, session.id)
 
 
-PICK_VERSION = f"**Which version?**\n{VERSION_HELP}"
-
-
-class PickVersion(_Menu):
-    """Cleaned, as heard, or both: the same choice as the buttons when a session ends."""
-
-    def __init__(self, guild_id: int, session_id: str) -> None:
-        super().__init__()
-        for choice, (versions, label) in CHOICES.items():
-            self.add_item(
-                _Button(
-                    self._sender(versions),
-                    label=label,
-                    style=discord.ButtonStyle.primary
-                    if choice == "cleaned"
-                    else discord.ButtonStyle.secondary,
-                )
-            )
-        self.guild_id = guild_id
-        self.session_id = session_id
-
-    def _sender(
-        self, versions: tuple[str, ...]
-    ) -> Callable[[discord.Interaction], Awaitable[None]]:
-        async def send(interaction: discord.Interaction) -> None:
-            self.stop()
-            await send_file(interaction, self.guild_id, self.session_id, versions)
-
-        return send
+async def send_cleaned(interaction: discord.Interaction, guild_id: int, session_id: str) -> None:
+    """What most people want: the cleaned file, with the word-for-word one a press away."""
+    await send_file(interaction, guild_id, session_id, (export.CLEANED,), offer_as_heard=True)
 
 
 class StillRecording(_Menu):
@@ -361,7 +372,7 @@ class StillRecording(_Menu):
 
     async def _anyway(self, interaction: discord.Interaction) -> None:
         self.stop()
-        await _replace(interaction, PICK_VERSION, PickVersion(self.guild_id, self.session_id))
+        await send_cleaned(interaction, self.guild_id, self.session_id)
 
     async def _cancel(self, interaction: discord.Interaction) -> None:
         self.stop()

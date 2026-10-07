@@ -26,12 +26,13 @@ FILE_NAME_MAX = 60
 
 AS_HEARD_NOTE = (
     "As heard: the words exactly as DMbot heard them, before it fixed any names, so "
-    "some names may be misheard. The transcript channel shows the fixed names. Only "
-    "people who agreed were recorded."
+    'some names may be misheard. The "Cleaned" version (/transcript) has the names '
+    "fixed. Only people who agreed were recorded."
 )
 CLEANED_NOTE = (
-    "Cleaned: DMbot fixed the spelling of some names, as the transcript channel showed "
-    "them. The 'As heard' file has the exact words. Only people who agreed were recorded."
+    "Cleaned: DMbot fixed the spelling of names it was sure about; a few may still be "
+    'wrong. For the exact words, download the "As heard" version with /transcript. '
+    "Only people who agreed were recorded."
 )
 HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."
 

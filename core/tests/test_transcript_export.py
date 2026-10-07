@@ -56,7 +56,7 @@ class Render(unittest.TestCase):
         fixed = Line(START * 1000, MIA, "I saw Beleros", "I saw Belleros")
         text = export.render("X", session(), [fixed], {MIA: "Mia"}, version=export.CLEANED)
         self.assertIn("(Mia): I saw Belleros\n", text)
-        self.assertIn("Cleaned: DMbot fixed the spelling of some names", text)
+        self.assertIn("Cleaned: DMbot fixed the spelling of names it was sure about", text)
         self.assertNotIn("As heard:", text)
         self.assertEqual(
             export.file_name("X", session(), export.CLEANED), "x-session-7-cleaned.txt"

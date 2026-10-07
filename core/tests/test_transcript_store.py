@@ -314,11 +314,12 @@ class BotTests(DatabaseTest):
         view.pick = SimpleNamespace(values=[sid])
         it = self.it(STRANGER)
         await view._picked(it)
-        text, choice = it.response.edited[0]
-        self.assertIn("Which version?", text)
-        it = await self.press(choice, "🎙 As heard")
         self.assertTrue(it.response.deferred)
+        # the cleaned file at once, with the word-for-word one a press away
         self.assertIn("[0:00:42] (Mia): We ride at dawn.", file_text(it))
+        (_, kw), *_ = [f for f in followups(it) if "file" in f[1]]
+        self.assertEqual(kw["file"].filename, "frostmaiden-session-1-cleaned.txt")
+        it = await self.press(kw["view"], "🎙 As heard")
         name = next(f for f in followups(it) if "file" in f[1])[1]["file"].filename
         self.assertEqual(name, "frostmaiden-session-1-as-heard.txt")
 
@@ -330,7 +331,8 @@ class BotTests(DatabaseTest):
 
     async def test_both_versions_come_as_two_files(self) -> None:
         sid = await self.finished_session()
-        it = await self.press(ui.PickVersion(GUILD, sid), "Both (2 files)")
+        it = self.it(PLAYER)
+        await ui.DownloadButton(GUILD, sid, "both").callback(it)  # sent when it ended
         (_, kw), *_ = [f for f in followups(it) if "files" in f[1]]
         self.assertEqual(
             [f.filename for f in kw["files"]],
@@ -352,8 +354,6 @@ class BotTests(DatabaseTest):
         self.assertIn("You'll get the full transcript in a private message", text)
         it = self.it(PLAYER)
         await menu._anyway(it)
-        _, choice = it.response.edited[0]
-        it = await self.press(choice, "📄 Cleaned")
         self.assertIn("still recording", file_text(it))
 
     async def test_an_unknown_or_other_servers_session_is_gone(self) -> None:

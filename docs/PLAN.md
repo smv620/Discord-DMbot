@@ -1113,24 +1113,41 @@ consent check just made still holds:
   after a correction, then off-topic hiding (#52).
 
 **Transcript Cleaner step 2, in progress (2026-10-07, #296).**
-- **"Did they mean…?":** a word that sounds like two or three confirmed names (each
-  spelled at least 0.7 alike, none secret, none only suggested, not next to a secret
-  name) stays as heard, and the DM screen asks: "❓ **Mia said "Marin"**: did they
-  mean… [Maren] [Marron] [Keep as heard]". The buttons show each entry's own name. One
-  question is open at a time, and each word is asked about at most once per session.
-  No scene is needed to ask. Only the campaign's DMs can answer. A name becomes a
-  fixed spelling (`add_correction`, fix, source DM) and **Keep as heard** becomes a
-  keep rule, so the same words are handled silently from the next line. Consent is
-  checked before the question is posted and before the answer is saved. If the
-  speaker stops being recorded, their question is taken down without repeating their
-  words. Questions live with the running session: after it ends, or after a restart,
-  a press says the question expired and the line stays as heard. Not yet: Type it…,
-  fixing the line that was asked about, and the quiet verbosity level.
-- **Cleaned and both downloads:** the end-of-session message has **[📄 Cleaned]**,
-  **[🎙 As heard]** and **[Both (2 files)]**, with one line explaining each. `/transcript`
-  asks which version once the session is picked. The cleaned file says names were fixed
-  as the transcript channel showed them (`…-cleaned.txt`). Buttons sent before this
-  still give the "as heard" file.
+- **"Did they mean…?":**
+  - **When:** a word that sounds like two or three confirmed names stays as heard, and
+    the DM screen asks: "❓ **DMbot heard Mia say "Marin".** Did they mean… Not sure?
+    Ignore this and it stays as heard. [Maren] [Marron] [Keep "Marin"]". Each name must
+    be spelled at least 0.7 alike (0.8 for a player's character), none may be secret or
+    only suggested, and the words must not be next to a secret name. No scene is
+    needed to ask. A question about a longer run of words never blocks a sure fix of
+    fewer words.
+  - **Not flooding the DM screen:** one question is open at a time, each word is asked
+    about at most once per session, and a question nobody answers expires after 5
+    minutes ("Not answered, so the words stay as heard."), so the next one can be
+    asked.
+  - **Answering:** only the campaign's DMs can answer. A name becomes a fixed spelling
+    (`add_correction`, fix, source DM); **Keep** becomes a keep rule. Either way the
+    same words are handled silently from the next line, and the message turns into the
+    answer with **↩️ Undo**. Undo takes back the saved change and works after a
+    restart.
+  - **While saving:** the question stays open, so a second press gets "Already
+    saving", a failed save can be tried again, and the question can still be taken
+    down.
+  - **Consent:** checked before the question is posted, before the answer is saved,
+    and again after. If the speaker stops being recorded, their question is taken down
+    without repeating their words.
+  - **When it closes:** questions live with the running session. When it ends, the
+    open one is closed; after a restart, a press says it's closed.
+  - **Not yet:** Type it…, fixing the line that was asked about, and the quiet
+    verbosity level.
+- **Cleaned and both downloads:**
+  - **At the end of a session:** the message has **[📄 Cleaned]**, **[🎙 As heard]** and
+    **[Both (2 files)]**, one line explaining each. Buttons sent before this still give
+    the "as heard" file.
+  - **`/transcript`:** sends the cleaned file as soon as the session is picked, with
+    **🎙 As heard** under it.
+  - **The files:** each says which version it is and how to get the other. Files are
+    built off the event loop. "Both" must fit Discord's limit together.
 - **Undo notes for medium fixes:** waiting for a decision on where they go (#296).
 
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass

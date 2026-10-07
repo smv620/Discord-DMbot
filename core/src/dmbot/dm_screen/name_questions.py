@@ -1,11 +1,15 @@
 """The buttons on a "Did they mean…?" question in the DM screen (#296).
 
-Each button's ID carries the server, the question and the choice (a name's place in the
-list, or "keep"). Questions live with the running session, so after a restart, or once
-the session ended, a press just says the question expired. Only the campaign's DMs may
-answer; the bot does the rest (`DMBot.answer_name_question`).
+Each answer button's ID carries the server, the question and the choice (a name's place
+in the list, or "keep"). Questions live with the running session, so after a restart,
+or once the session ended, a press just says the question is closed. Only the
+campaign's DMs may answer; the bot does the rest (`DMBot.answer_name_question`).
 
-Register with `bot.add_dynamic_items(NameQuestionButton)` in `setup_hook`.
+Once answered, the message keeps an **↩️ Undo** button. Its ID carries the campaign and
+the saved change, so it works after a restart; the same people who manage the
+campaign's names may press it.
+
+Register with `bot.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton)`.
 """
 
 from __future__ import annotations
@@ -17,11 +21,12 @@ from typing import Any
 
 import discord
 
+from dmbot.memory.models import MemoryRuleError
 from dmbot.transcript import questions
+from dmbot.transcript.cleaner import MAX_OPTIONS
 
 log = logging.getLogger(__name__)
 
-KEEP = "keep"
 NO_PINGS = discord.AllowedMentions.none()
 FAILED = "Something went wrong saving that. Try again in a moment."
 
@@ -33,9 +38,9 @@ class NameQuestionButton(
     def __init__(self, guild_id: int, question_id: str, pick: str, label: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label=label,
+                label=label or "?",
                 style=discord.ButtonStyle.secondary
-                if pick == KEEP
+                if pick == questions.KEEP
                 else discord.ButtonStyle.primary,
                 custom_id=f"dmbot:ask:{guild_id}:{question_id}:{pick}",
             )
@@ -56,20 +61,65 @@ class NameQuestionButton(
         if interaction.guild_id != self.guild_id or not hasattr(bot, "answer_name_question"):
             await _tell(interaction, questions.EXPIRED)
             return
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer()  # the answer edits this message
         try:
-            answer, done = await bot.answer_name_question(
+            answer, done, undo = await bot.answer_name_question(
                 self.guild_id, self.question_id, self.pick, interaction.user.id
             )
         except Exception:
             log.exception("Couldn't save the DM's answer to a name question")
             await interaction.followup.send(FAILED, ephemeral=True)
             return
-        if done and interaction.message is not None:
-            # The question is closed: its message says how, with no buttons left.
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.message.edit(content=answer, view=None)
-        await interaction.followup.send(answer, ephemeral=True, allowed_mentions=NO_PINGS)
+        if not done:  # still open (someone else pressed, or it's being saved)
+            await interaction.followup.send(answer, ephemeral=True, allowed_mentions=NO_PINGS)
+            return
+        view = undo_view(*undo) if undo is not None else None
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=answer, view=view, allowed_mentions=NO_PINGS
+            )
+
+
+class NameAnswerUndoButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:askundo:(?P<campaign>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})",
+):
+    """Takes back an answer to "Did they mean…?" (the saved spelling or keep rule)."""
+
+    def __init__(self, campaign_id: str, batch: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Undo",
+                emoji="↩️",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:askundo:{campaign_id}:{batch}",
+            )
+        )
+        self.campaign_id = campaign_id
+        self.batch = batch
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> NameAnswerUndoButton:
+        return cls(match["campaign"], int(match["batch"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.names import _campaign_for, _memory, changed  # the names panel's rules
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        memory = _memory(interaction)
+        if campaign is None or memory is None:
+            return  # they were told why
+        await interaction.response.defer()
+        try:
+            await memory.undo(campaign.guild_id, campaign.id, self.batch)
+        except MemoryRuleError:
+            await interaction.followup.send(questions.UNDO_FAILED, ephemeral=True)
+            return
+        changed(interaction, campaign)
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(content=questions.UNDONE, view=None)
 
 
 async def _tell(interaction: discord.Interaction, text: str) -> None:
@@ -78,9 +128,17 @@ async def _tell(interaction: discord.Interaction, text: str) -> None:
 
 def question_view(guild_id: int, asked: questions.Asked) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for place, (_, name) in enumerate(asked.options[: len("012")]):
+    for place, (_, name) in enumerate(asked.options[:MAX_OPTIONS]):
         view.add_item(
             NameQuestionButton(guild_id, asked.id, str(place), questions.option_label(name))
         )
-    view.add_item(NameQuestionButton(guild_id, asked.id, KEEP, questions.KEEP_LABEL))
+    view.add_item(
+        NameQuestionButton(guild_id, asked.id, questions.KEEP, questions.keep_label(asked.heard))
+    )
+    return view
+
+
+def undo_view(campaign_id: str, batch: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(NameAnswerUndoButton(campaign_id, batch))
     return view
