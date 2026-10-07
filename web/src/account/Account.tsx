@@ -246,10 +246,23 @@ function SignedOut({ notice }: { notice: string | null }) {
   );
 }
 
+function ForgetInstallResult() {
+  useEffect(forgetInstallResult, []);
+  return null;
+}
+
 /** The message for coming back from adding DMbot (?install=done etc.), or null. */
 function installResult(search: string): string | null {
   const result = new URLSearchParams(search).get("install");
   return result === null ? null : (text.install[result] ?? text.install["failed"] ?? null);
+}
+
+/** Show the ?install= result once: take it out of the address so a reload doesn't repeat it. */
+function forgetInstallResult(): void {
+  if (typeof window === "undefined" || !window.location.search.includes("install=")) return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("install");
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 
 function SignedIn({
@@ -284,6 +297,7 @@ function SignedIn({
         </button>
       </div>
       <Notice message={notice} />
+      {installMessage && <ForgetInstallResult />}
       {installMessage && (
         <p class={installMessage === text.install["done"] ? "ok" : "warn"} role="status">
           {installMessage}
@@ -544,12 +558,10 @@ function CampaignRow({
 }
 
 function ServersSection({ me }: { me: Me }) {
-  const { api, refresh } = useShared();
-  const { busy, notice, run } = useAction();
+  const { api } = useShared();
   return (
     <section aria-labelledby="servers-heading" class="panel">
       <h2 id="servers-heading">{text.serversHeading}</h2>
-      <Notice message={notice} />
       {me.servers.length === 0 ? (
         <p>{text.noServers}</p>
       ) : (
@@ -557,40 +569,46 @@ function ServersSection({ me }: { me: Me }) {
           <p class="muted small">{text.serversNote}</p>
           <ul class="servers">
             {me.servers.map((s) => (
-              <li key={s.id} data-server={s.id}>
-                <span>{s.name}</span>
-                {!s.hasDmbot ? (
-                  // A plain link: the API checks, then sends the browser on to Discord.
-                  <a class="button secondary" href={api.installUrl(s.id)}>
-                    {text.addTo}
-                  </a>
-                ) : s.canLink ? (
-                  <>
-                    <ActionButton
-                      busy={busy}
-                      kind="secondary"
-                      onClick={() =>
-                        void run(async () => {
-                          await api.linkServer(s.id);
-                          await refresh();
-                        })
-                      }
-                    >
-                      {text.linkServer}
-                    </ActionButton>
-                    <span class="muted small">{text.linkNote}</span>
-                  </>
-                ) : (
-                  <span class="muted">
-                    {s.installedByYou ? text.youAddedIt : text.alreadyThere}
-                  </span>
-                )}
-              </li>
+              <ServerRow key={s.id} server={s} api={api} />
             ))}
           </ul>
         </>
       )}
     </section>
+  );
+}
+
+/** One server: its own busy state and message, so tapping one never ties up the rest. */
+function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: AccountApi }) {
+  const { refresh } = useShared();
+  const { busy, notice, run } = useAction();
+  return (
+    <li data-server={s.id}>
+      <span>{s.name}</span>
+      {!s.hasDmbot ? (
+        // A plain link: the API checks, then sends the browser on to Discord.
+        <a class="button secondary" href={api.installUrl(s.id)}>
+          {text.addTo}
+        </a>
+      ) : s.canLink ? (
+        <ActionButton
+          busy={busy}
+          kind="secondary"
+          onClick={() =>
+            void run(async () => {
+              await api.linkServer(s.id);
+              await refresh();
+            })
+          }
+        >
+          {text.linkServer}
+        </ActionButton>
+      ) : (
+        <span class="muted">{s.installedByYou ? text.youAddedIt : text.alreadyThere}</span>
+      )}
+      {s.hasDmbot && s.canLink && <p class="muted small row-note">{text.linkNote}</p>}
+      <Notice message={notice} />
+    </li>
   );
 }
 
