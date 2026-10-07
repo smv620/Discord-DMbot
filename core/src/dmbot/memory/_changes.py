@@ -287,6 +287,7 @@ def _only_closed_since(table: Table, current: dict[str, Any] | None, after: Any)
         table is FLAGS
         and current is not None
         and after is not None
+        and (after["status"], current["status"]) == ("open", "resolved")
         and {**current, "status": after["status"]} == after
     )
 

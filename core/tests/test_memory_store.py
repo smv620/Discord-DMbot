@@ -486,6 +486,22 @@ class Rules(MemoryTest):
         self.assertIn(twin, entities)  # split again
         self.assertEqual(await self.memory.flags(GUILD_A, self.c), [])  # the merge's flag
 
+    async def test_undoing_a_batch_of_several_closed_flags_works(self) -> None:
+        """#348 review, a guard for #342's set-based undo: a batch that inserted two
+        flags, both later closed by the cleanup, can still be undone."""
+        cerric = await self.add("Cerric")
+        fireball = await self.add("Fireball", type="spell")
+        pair = await self.relate(fireball, "member_of", cerric, source="cleaner", confidence=0.4)
+        self.assertEqual([f.kind for f in pair.value[1]], [WRONG_SUBJECT, WRONG_OBJECT])
+        await self.memory.set_entity_type(GUILD_A, self.c, fireball, "npc", source="dm")
+        await self.memory.set_entity_type(GUILD_A, self.c, cerric, "faction", source="dm")
+        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
+        self.assertEqual(len(closed.value), 2)
+        assert pair.batch is not None
+        await self.memory.undo(GUILD_A, self.c, pair.batch, source="dm")
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c, include_secret=True), [])
+        self.assertEqual(await self.memory.flags(GUILD_A, self.c), [])
+
     async def test_naming_the_right_kind_closes_a_wrong_kind_flag(self) -> None:
         cerric = await self.add("Cerric")
         tower = await self.add("The Tower", type="spell")  # wrongly a spell
