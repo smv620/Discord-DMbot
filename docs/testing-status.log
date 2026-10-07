@@ -10,6 +10,17 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
   - #337 (827ce6f, dev2): ears image installs with npm ci (#318). Check: the ears image
     builds and starts, and connects to core.
+  - #321 (dd7f687, dev2): Transcript Cleaner follow-ups (#295). With a player's character
+    and an NPC as confirmed names: a real first name like "Mary" stays as said; a name
+    misheard after it came up is fixed; someone in voice who didn't agree keeps their
+    display name; secret names are never written.
+  - #334 (d4f9f9d, dev2): "Did they mean…?" and cleaned downloads (#296 parts 2-3). With
+    two confirmed names that sound alike (e.g. Maren, Marron), say "Marin" twice: the
+    DM screen asks; a player pressing gets "Only the DM"; the DM's answer shows Undo;
+    "Marin" is then fixed silently; an ignored question says "Not answered" after 5
+    min; no new question for 2-3 min after one closes. At stop: Cleaned / As heard /
+    Both buttons give the right files; /transcript gives the cleaned file with an As
+    heard button.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
