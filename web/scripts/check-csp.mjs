@@ -1,7 +1,7 @@
 // After `npm run build`: every inline script in dist/ must be allowed by its hash in
 // dist/_headers (or the browser blocks it and /account stops working), and only /account
 // may have scripts at all. Usage: node scripts/check-csp.mjs [dist-dir]
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import { htmlFiles, inlineScriptHashes } from "./csp.mjs";
@@ -21,6 +21,16 @@ for (const page of htmlFiles(dist)) {
   }
   for (const hash of inlineScriptHashes(html)) {
     if (!policy?.split(" ").includes(hash)) problems.push(`${name}: inline script ${hash} not allowed`);
+  }
+}
+
+// A real build must not contain the pretend API (src/account/mock.ts).
+if (process.env.PUBLIC_API_BASE !== "mock") {
+  const assets = join(dist, "_astro");
+  for (const name of existsSync(assets) ? readdirSync(assets) : []) {
+    if (readFileSync(join(assets, name), "utf8").includes("dmbot-pretend-api-7f3c")) {
+      problems.push(`_astro/${name} contains the pretend API; build without PUBLIC_API_BASE=mock`);
+    }
   }
 }
 

@@ -1,7 +1,8 @@
 // The pricing page (#432): the owner's numbers, the words built from them, and the page.
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
-import { parseHTML } from "linkedom";
 import { beforeAll, describe, expect, it } from "vitest";
+
+import { parsePage } from "./dom";
 
 import facts from "../src/content/plans.json";
 import {
@@ -67,14 +68,55 @@ describe("the owner's plan facts (#432, #437)", () => {
   });
 });
 
+describe("the plan file's shape", () => {
+  // plans.json is read with a TypeScript cast (JSON imports can't carry its exact types),
+  // so check here that it really has the shape the site and core rely on.
+  it("has every field, with the right kinds of values", () => {
+    expect(Object.keys(facts).sort()).toEqual(
+      [
+        "_comment",
+        "currency",
+        "order",
+        "plans",
+        "extraHours",
+        "paymentGraceDays",
+        "keepAfterPlanStopsPaying",
+        "deletionWarningDaysBefore",
+        "recommended",
+      ].sort(),
+    );
+    expect(Object.keys(facts.plans).sort()).toEqual([...facts.order].sort());
+    for (const id of facts.order) {
+      const plan = facts.plans[id as keyof typeof facts.plans];
+      expect(Object.keys(plan).sort(), id).toEqual(
+        [
+          "name",
+          "priceCents",
+          "hoursPerMonth",
+          "aboutHoursPerWeek",
+          "campaigns",
+          "trialDays",
+          "backups",
+          "keepAfterLastSession",
+          "firstMonthAfterTrialCents",
+        ].sort(),
+      );
+      expect(Number.isInteger(plan.hoursPerMonth) && plan.hoursPerMonth > 0, id).toBe(true);
+      expect(["day", "month", "year"]).toContain(plan.keepAfterLastSession.unit);
+    }
+    expect(facts.order).toContain(facts.recommended);
+    expect(Number.isInteger(facts.paymentGraceDays)).toBe(true);
+  });
+});
+
 describe("the words match the numbers", () => {
   it("builds each hours line from the plan's hours", () => {
     expect(Object.values(byId).map((p) => p.hoursLine)).toEqual([
       "8 hours a month",
-      "About 4 hours a week (18 a month)",
-      "About 10 hours a week (43 a month)",
-      "About 20 hours a week (87 a month)",
-      "About 50 hours a week (217 a month)",
+      "About 4 hours a week (18 hours a month)",
+      "About 10 hours a week (43 hours a month)",
+      "About 20 hours a week (87 hours a month)",
+      "About 50 hours a week (217 hours a month)",
     ]);
   });
 
@@ -106,9 +148,13 @@ describe("the words match the numbers", () => {
     );
     expect(answer("Do unused hours carry over?")).toMatch(/^No\. Your hours are for the month\./);
     expect(answer("What's different between the plans?")).toMatch(
-      /Try It has everything except backups and downloads/,
+      /^Only the hours and how many campaigns you can run\. The free Try It has no backups or downloads; everything else is the same on every plan/,
     );
     expect(answer("Can I change my plan?")).toMatch(/any time/);
+    expect(answer("What if a payment doesn't go through?")).toMatch(/keeps working for 7 days/);
+    expect(answer("What if I move to a plan with fewer campaigns?")).toMatch(
+      /To play a paused one, move to a bigger plan\.$/,
+    );
     expect(answer("What if I move to a plan with fewer campaigns?")).toMatch(
       /Nothing is deleted\. The first campaigns you play after the change keep going.*The rest pause/,
     );
@@ -116,7 +162,7 @@ describe("the words match the numbers", () => {
       "After your last game: 60 days on Try It, 6 months on Table, and 1 year on the other plans. If you stop paying, we keep it for 120 days. We message you on Discord 14 days and 3 days before anything is deleted.",
     );
     expect(answer("Can I give a campaign to someone else?")).toMatch(
-      /Hand over this campaign.*room for another campaign/,
+      /tap Hand over next to the campaign.*room for it/,
     );
     expect(answer("Can I delete everything?")).toMatch(/we delete it all/);
   });
@@ -153,7 +199,7 @@ describe("the pricing page", () => {
     const html = await container.renderToString(Pricing, {
       request: new Request("https://dmbot.example/pricing"),
     });
-    document = parseHTML(html).document;
+    document = parsePage(html);
   });
 
   it("shows the headline as the page heading", () => {
@@ -194,7 +240,7 @@ describe("the pricing page", () => {
 
   it("shows the free plan and extra hours", () => {
     expect(text(one(".try"))).toContain(tryItLine);
-    expect(text(one('[data-plan="extra-hours"]'))).toContain(formatPrice(extraHours.priceCents));
+    expect(text(one('[data-plan="extra-hours"]'))).toContain("$4.99 for 10 hours");
     expect(text(one('[data-plan="extra-hours"]'))).toContain(extraHours.line);
   });
 

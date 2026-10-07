@@ -3,7 +3,6 @@ import PlanCard from "../components/PlanCard.astro";
 import Base from "../layouts/Base.astro";
 import {
   extraHours,
-  formatPrice,
   headline,
   labels,
   plans,
@@ -42,7 +41,7 @@ import {
       <PlanCard plan={pro} />
       <article class="extra" aria-labelledby="extra-heading" data-plan="extra-hours">
         <h3 id="extra-heading">{extraHours.name}</h3>
-        <p class="extra-price">{formatPrice(extraHours.priceCents)}</p>
+        <p class="extra-price">{extraHours.priceLine}</p>
         <p>{extraHours.line}</p>
       </article>
     </div>

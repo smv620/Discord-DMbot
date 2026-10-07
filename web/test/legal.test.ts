@@ -2,8 +2,9 @@
 // match the plan file, so the pages and the pricing never disagree.
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
-import { parseHTML } from "linkedom";
 import { beforeAll, describe, expect, it } from "vitest";
+
+import { parsePage } from "./dom";
 
 import facts from "../src/content/plans.json";
 import { deletionWarnings, notAffiliated, retentionRows } from "../src/content/legal";
@@ -28,7 +29,7 @@ beforeAll(async () => {
     const html = await container.renderToString(page, {
       request: new Request(`https://dmbot.example/legal/${name}`),
     });
-    rendered.set(name, parseHTML(html).document);
+    rendered.set(name, parsePage(html));
   }
 });
 
@@ -43,7 +44,9 @@ describe.each(pages.map(([name]) => [name]))("legal/%s", (name) => {
     const main = doc(name).querySelector("main");
     const short = main?.querySelector(".short");
     expect(text(short?.querySelector("h2") ?? null)).toBe("The short version");
-    expect(text(short?.querySelector("p") ?? null).length).toBeGreaterThan(80);
+    const lines = [...(short?.querySelectorAll("p") ?? [])].map((p) => text(p));
+    expect(lines.join(" ").length).toBeGreaterThan(80);
+    for (const line of lines) expect(line.length).toBeGreaterThan(0);
     expect(text(main?.querySelector(".draft") ?? null)).toMatch(/^Draft for review/);
     expect(text(main?.querySelector(".effective") ?? null)).toContain(
       "{{EFFECTIVE DATE: to be set by the owner}}",

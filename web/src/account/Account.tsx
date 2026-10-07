@@ -227,6 +227,7 @@ function SignedOut({ notice }: { notice: string | null }) {
           {text.startTryItFree}
         </a>
         <p class="muted small">{text.startTryItSignIn}</p>
+        <p class="muted small">{text.confirmAfterSignIn}</p>
         <PlanList
           choose={(id) => (
             <a class="button secondary" href={signIn}>
@@ -633,7 +634,9 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
       )}
       {step === 1 && (
         <>
-          <p>{text.deleteWarning}</p>
+          {text.deleteWarning.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
           <a href="#campaigns">{text.deleteHandOverLink}</a>
           <div class="row">
             <ActionButton
@@ -670,7 +673,12 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
               kind="danger"
               onClick={() =>
                 void run(async () => {
-                  await api.confirmDelete(token);
+                  try {
+                    await api.confirmDelete(token);
+                  } catch (error) {
+                    reset(); // back to the start, so trying again gets a new confirmation
+                    throw error;
+                  }
                   onDeleted();
                 })
               }
