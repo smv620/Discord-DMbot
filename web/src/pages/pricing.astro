@@ -10,6 +10,7 @@ import {
   pro,
   questions,
   tryIt,
+  tryItLine,
 } from "../content/pricing";
 ---
 
@@ -22,17 +23,14 @@ import {
   <section class="try" aria-labelledby="try-heading">
     <div>
       <h2 id="try-heading">{labels.tryItHeading}</h2>
-      <p>
-        {tryIt.hoursLine}, {tryIt.campaignsLine.toLowerCase()}. {tryIt.note}
-      </p>
+      <p>{tryItLine}</p>
     </div>
     <a class="button" href="/account">{tryIt.action}</a>
   </section>
 
-  <section aria-labelledby="plans-heading">
-    <h2 id="plans-heading" class="visually-hidden">{labels.plansHeading}</h2>
+  <section>
     <p class="hint muted" aria-hidden="true">{labels.swipeHint}</p>
-    <div class="plans" role="region" aria-labelledby="plans-heading" tabindex="0">
+    <div class="plans" role="region" aria-label={labels.plansRegion} tabindex="0">
       {plans.map((plan) => <PlanCard plan={plan} />)}
     </div>
     <p class="every muted">{labels.everyPlanHas}</p>
@@ -98,15 +96,6 @@ import {
     margin: 0;
   }
 
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
   /* Phone: one swipeable row, the next card peeking so it's clear there's more. */
   .plans {
     display: flex;
@@ -121,7 +110,13 @@ import {
 
   .plans > :global(*) {
     flex: 0 0 85%;
+    min-width: 0;
     scroll-snap-align: start;
+  }
+
+  /* The row runs edge to edge on a phone, so draw the focus ring inside it. */
+  .plans:focus-visible {
+    outline-offset: -3px;
   }
 
   .hint {
@@ -187,7 +182,7 @@ import {
   }
 
   summary::after {
-    content: "+";
+    content: "+" / "";
     flex: none;
     font-size: var(--text-xl);
     line-height: 1;
@@ -195,7 +190,7 @@ import {
   }
 
   details[open] summary::after {
-    content: "\2212";
+    content: "\2212" / "";
   }
 
   details p {
@@ -210,14 +205,14 @@ import {
 
     .plans {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       overflow: visible;
       margin-inline: 0;
       padding-inline: 0;
     }
 
     .more-grid {
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
 </style>

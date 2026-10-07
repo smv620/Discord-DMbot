@@ -34,7 +34,7 @@ const headingId = `plan-${plan.id}`;
   <p class="hours">{plan.hoursLine}</p>
   <p class="campaigns">{plan.campaignsLine}</p>
   {plan.note && <p class="note">{plan.note}</p>}
-  {!plan.comingSoon && <a class="button" href="/account">{plan.action}</a>}
+  {plan.action && <a class="button" href="/account">{plan.action}</a>}
 </article>
 
 <style>

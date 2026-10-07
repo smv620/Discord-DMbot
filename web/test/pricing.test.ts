@@ -1,36 +1,59 @@
-// The pricing page (#432): the owner's numbers, and what the page shows.
+// The pricing page (#432): the owner's numbers, the words built from them, and the page.
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
+import { parseHTML } from "linkedom";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import facts from "../src/content/plans.json";
 import {
+  byId,
   extraHours,
+  formatPeriod,
   formatPrice,
   headline,
+  labels,
   plans,
   pro,
   questions,
   tryIt,
+  tryItLine,
 } from "../src/content/pricing";
 import Pricing from "../src/pages/pricing.astro";
 
-describe("the owner's plan table (#432)", () => {
-  // These numbers are owner decisions. If this test fails, the change needs the owner's
-  // say-so on #432 first.
+describe("the owner's plan facts (#432, #437)", () => {
+  // Owner decisions. If this test fails, the change needs the owner's say-so on #432 first.
   it("has the decided prices, hours and campaigns", () => {
-    const table = [tryIt, ...plans, pro].map((p) => [
+    const table = Object.values(byId).map((p) => [
       p.name,
       p.priceCents,
       p.hoursPerMonth,
+      p.aboutHoursPerWeek,
       p.campaigns,
     ]);
     expect(table).toEqual([
-      ["Try It", 0, 8, 1],
-      ["Table", 899, 18, 1],
-      ["Two Tables", 1799, 43, 2],
-      ["Guild", 3499, 87, 5],
-      ["Pro", null, 217, 20],
+      ["Try It", 0, 8, null, 1],
+      ["Table", 899, 18, 4, 1],
+      ["Two Tables", 1799, 43, 10, 2],
+      ["Guild", 3499, 87, 20, 5],
+      ["Pro", null, 217, 50, 20],
     ]);
     expect([extraHours.priceCents, extraHours.hours]).toEqual([499, 10]);
+    expect(byId.table.firstMonthAfterTrialCents).toBe(199);
+    expect(tryIt.trialDays).toBe(30);
+  });
+
+  it("has the decided retention and backups", () => {
+    expect(Object.values(byId).map((p) => [p.id, formatPeriod(p.keepAfterLastSession)])).toEqual([
+      ["try-it", "60 days"],
+      ["table", "6 months"],
+      ["two-tables", "1 year"],
+      ["guild", "1 year"],
+      ["pro", "1 year"],
+    ]);
+    expect(formatPeriod(facts.keepAfterPlanStopsPaying as { count: number; unit: "day" })).toBe(
+      "120 days",
+    );
+    expect(facts.deletionWarningDaysBefore).toEqual([14, 3]);
+    expect(Object.values(byId).filter((p) => !p.backups).map((p) => p.id)).toEqual(["try-it"]);
   });
 
   it("keeps the owner's headline word for word", () => {
@@ -40,30 +63,66 @@ describe("the owner's plan table (#432)", () => {
   });
 
   it("marks only Table as the usual pick", () => {
-    expect([tryIt, ...plans, pro].filter((p) => p.recommended).map((p) => p.id)).toEqual([
-      "table",
-    ]);
-  });
-
-  it("states every plan rule", () => {
-    const text = questions.map((q) => `${q.question} ${q.answer}`).join(" ");
-    for (const rule of [
-      /listening, from when you start it to when you stop it/,
-      /Your hours are for the month/,
-      /except backups and downloads/,
-      /any time/,
-      /The others pause\. Nothing in them is deleted/,
-      /60 days on Try It, 6 months on Table, and 1 year on the other plans/,
-      /120 days/,
-      /Hand over this campaign/,
-      /delete it all/,
-    ]) {
-      expect(text).toMatch(rule);
-    }
+    expect(Object.values(byId).filter((p) => p.recommended).map((p) => p.id)).toEqual(["table"]);
   });
 });
 
-describe("formatPrice", () => {
+describe("the words match the numbers", () => {
+  it("builds each hours line from the plan's hours", () => {
+    expect(Object.values(byId).map((p) => p.hoursLine)).toEqual([
+      "8 hours a month",
+      "About 4 hours a week (18 a month)",
+      "About 10 hours a week (43 a month)",
+      "About 20 hours a week (87 a month)",
+      "About 50 hours a week (217 a month)",
+    ]);
+  });
+
+  it("says the owner's Try It and Table notes", () => {
+    expect(tryItLine).toBe("8 hours a month, 1 campaign. Free for 30 days. No backups or downloads.");
+    expect(byId.table.note).toBe("First month $1.99 after Try It.");
+  });
+
+  it("offers no button for Pro and one for every other plan", () => {
+    expect(pro.action).toBeNull();
+    expect([tryIt, ...plans].every((p) => p.action !== null)).toBe(true);
+  });
+
+  it("says 'the other plans' only when they really share one retention period", () => {
+    const others = [byId["two-tables"], byId.guild, byId.pro].map((p) =>
+      formatPeriod(p.keepAfterLastSession),
+    );
+    expect(new Set(others).size).toBe(1);
+  });
+
+  it("states every plan rule from #432", () => {
+    const answer = (q: string): string => {
+      const found = questions.find((item) => item.question === q);
+      if (!found) throw new Error(`no question ${q}`);
+      return found.answer;
+    };
+    expect(answer("What counts as an hour?")).toMatch(
+      /listening, from when you start it to when you stop it/,
+    );
+    expect(answer("Do unused hours carry over?")).toMatch(/^No\. Your hours are for the month\./);
+    expect(answer("What's different between the plans?")).toMatch(
+      /Try It has everything except backups and downloads/,
+    );
+    expect(answer("Can I change my plan?")).toMatch(/any time/);
+    expect(answer("What if I move to a plan with fewer campaigns?")).toMatch(
+      /Nothing is deleted\. The first campaigns you play after the change keep going.*The rest pause/,
+    );
+    expect(answer("How long do you keep my campaign?")).toBe(
+      "After your last game: 60 days on Try It, 6 months on Table, and 1 year on the other plans. If you stop paying, we keep it for 120 days. We message you on Discord 14 days and 3 days before anything is deleted.",
+    );
+    expect(answer("Can I give a campaign to someone else?")).toMatch(
+      /Hand over this campaign.*room for another campaign/,
+    );
+    expect(answer("Can I delete everything?")).toMatch(/we delete it all/);
+  });
+});
+
+describe("formatPrice and formatPeriod", () => {
   it.each([
     [899, "$8.99"],
     [1799, "$17.99"],
@@ -72,71 +131,91 @@ describe("formatPrice", () => {
   ])("%i cents is %s", (cents, shown) => {
     expect(formatPrice(cents)).toBe(shown);
   });
+
+  it("uses the singular for one", () => {
+    expect(formatPeriod({ count: 1, unit: "year" })).toBe("1 year");
+    expect(formatPeriod({ count: 6, unit: "month" })).toBe("6 months");
+  });
 });
 
 describe("the pricing page", () => {
-  let html: string;
+  let document: Document;
+
+  const one = (selector: string, root: ParentNode = document): Element => {
+    const found = root.querySelector(selector);
+    if (!found) throw new Error(`nothing matches ${selector}`);
+    return found;
+  };
+  const text = (el: Element): string => (el.textContent ?? "").replace(/\s+/g, " ").trim();
 
   beforeAll(async () => {
     const container = await AstroContainer.create();
-    html = await container.renderToString(Pricing, {
+    const html = await container.renderToString(Pricing, {
       request: new Request("https://dmbot.example/pricing"),
     });
+    document = parseHTML(html).document;
   });
 
   it("shows the headline as the page heading", () => {
-    expect(html).toMatch(/<h1[^>]*>Pick the hours your table plays\.<\/h1>/);
+    expect(text(one("h1"))).toBe(headline.title);
   });
 
-  it("shows three plan cards in the row, Table first and marked", () => {
-    const row = html.slice(html.indexOf('class="plans"'), html.indexOf('class="every'));
-    expect([...row.matchAll(/data-plan="([^"]+)"/g)].map((m) => m[1])).toEqual([
-      "table",
-      "two-tables",
-      "guild",
-    ]);
-    expect(row).toContain("Most tables pick this");
+  it("shows the three paid plans in the swipe row, Table first and marked", () => {
+    const row = one(".plans");
+    const cards = [...row.querySelectorAll("[data-plan]")];
+    expect(cards.map((c) => c.getAttribute("data-plan"))).toEqual(["table", "two-tables", "guild"]);
+    expect(text(one(".badge", one('[data-plan="table"]')))).toBe(labels.recommendedBadge);
+    expect(row.querySelectorAll(".badge")).toHaveLength(1);
+  });
+
+  it("lets keyboard and screen-reader users reach the swipe row", () => {
+    const row = one(".plans");
+    expect(row.getAttribute("role")).toBe("region");
+    expect(row.getAttribute("tabindex")).toBe("0");
+    expect(row.getAttribute("aria-label")).toBe(labels.plansRegion);
   });
 
   it("puts the hours line directly under each price", () => {
-    for (const plan of plans) {
-      const card = html.slice(html.indexOf(`data-plan="${plan.id}"`));
-      const price = card.indexOf(formatPrice(plan.priceCents ?? 0));
-      const hours = card.indexOf(plan.hoursLine);
-      expect(price).toBeGreaterThan(-1);
-      expect(hours).toBeGreaterThan(price);
-      // Nothing but the end of the price line between them.
-      expect(card.slice(price, hours)).not.toMatch(/<p class="(campaigns|note)"/);
+    for (const plan of [...plans, pro]) {
+      const price = one(`[data-plan="${plan.id}"] .price`);
+      const next = price.nextElementSibling;
+      expect(next?.className).toContain("hours");
+      expect(text(next as Element)).toBe(plan.hoursLine);
+      if (plan.priceCents !== null) expect(text(price)).toContain(formatPrice(plan.priceCents));
     }
   });
 
   it("shows no price for Pro and no button to buy it", () => {
-    const card = html.slice(html.indexOf('data-plan="pro"'), html.indexOf('data-plan="extra-hours"'));
-    expect(card).toContain("Coming soon");
-    expect(card).not.toMatch(/\$\d/);
-    expect(card).not.toContain('class="button"');
+    const card = one('[data-plan="pro"]');
+    expect(text(card)).toContain(labels.comingSoon);
+    expect(text(card)).not.toMatch(/\$\d/);
+    expect(card.querySelector(".button")).toBeNull();
   });
 
-  it("shows extra hours and the free plan", () => {
-    expect(html).toContain("$4.99");
-    expect(html).toContain("Try it free");
-    expect(html).toContain("No backups or downloads.");
+  it("shows the free plan and extra hours", () => {
+    expect(text(one(".try"))).toContain(tryItLine);
+    expect(text(one('[data-plan="extra-hours"]'))).toContain(formatPrice(extraHours.priceCents));
+    expect(text(one('[data-plan="extra-hours"]'))).toContain(extraHours.line);
   });
 
-  it("has every plan rule as a question", () => {
-    for (const q of questions) {
-      expect(html).toContain(`>${q.question.replace("'", "&#39;")}</summary>`);
-    }
+  it("shows every question with its answer", () => {
+    const shown = [...document.querySelectorAll(".faq details")].map((d) => [
+      text(one("summary", d)),
+      text(one("p", d)),
+    ]);
+    expect(shown).toEqual(questions.map((q) => [q.question, q.answer]));
   });
 
   it("has no tick-box feature table", () => {
-    expect(html).not.toContain("<table");
-    expect(html).not.toMatch(/[✓✔✗✘]/);
+    expect(document.querySelector("table")).toBeNull();
+    expect(text(one("main"))).not.toMatch(/[✓✔✗✘]/);
   });
 
-  it("sends every button to the account page for now", () => {
-    const targets = [...html.matchAll(/<a class="button" href="([^"]+)"/g)].map((m) => m[1]);
-    expect(targets.length).toBe(4);
+  it("sends every button to the account page for now (#432)", () => {
+    const targets = [...document.querySelectorAll("main .button")].map((a) =>
+      a.getAttribute("href"),
+    );
+    expect(targets).toHaveLength([tryIt, ...plans].length);
     expect(new Set(targets)).toEqual(new Set(["/account"]));
   });
 });
