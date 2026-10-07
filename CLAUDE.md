@@ -41,19 +41,33 @@ CI runs all of the above on every pull request. Never merge red CI.
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
 
-## Claude sessions and who does what (owner decision, 2026-10-05)
+## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-07)
 DMbot runs on the cloud test server (VPS), not on the owner's PC: the PC no longer hosts
-Postgres, core or ears. Three Claude sessions work on this repo:
-- **Server session** (Claude Code on the test server): **every test that needs the
-  running server**: live tests in Discord, performance and timing, resource use, and
-  reading logs live (`docker compose logs`). It also deploys `development` to the server
-  for testing and maintains the testing logs (below).
-- **PyCharm session** (on the owner's PC): changes and checks that don't need the live
-  server: unit tests, and offline quality checks such as EntityBot resolution or
-  Transcript Cleaner accuracy on saved test sets. It never runs DMbot against Discord.
-- **Web session** (cloud): planning, design, issues, reviews and code changes.
+Postgres, core or ears. The Claude sessions that work on this repo, and the issue label
+each one uses:
+- **Server session** (`session: server`, Claude Code on the test server): **the only
+  session that touches the running bot.** Every test that needs the running server:
+  live tests in Discord, performance and timing, resource use, reading logs live
+  (`docker compose logs`). It alone deploys `development` to the server, runs
+  `docker compose`, changes `.env` (through `scripts/set-key` and
+  `scripts/update-env`), and maintains the testing logs (below).
+- **Dev sessions** (`session: dev2`, `session: dev3`, …; Claude Code on the same
+  server, code only): each works one issue at a time in **its own git worktree**
+  (`git worktree add ../dmbot-dev2 -b <branch> development`), never in the server
+  session's checkout. They run unit tests, lint and type checks there; they never
+  run `docker compose`, never touch `.env`, never start DMbot against Discord, and
+  never deploy. For a live check they say so in the PR and the server session does it.
+- **PyCharm session** (`session: pycharm`, on the owner's PC, when used): the same as a
+  dev session, plus offline quality checks on saved test sets (EntityBot resolution,
+  Transcript Cleaner accuracy).
+- **Web session** (`session: web`, cloud): planning, design, issues, reviews and code
+  changes.
 
 Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
+On the server that copy is the one in Docker Compose, run by the server session.
+
+Sessions don't share a checkout, a branch or an issue: before starting, read the open
+issues and take one nobody holds; say which session you are in the issue and the PR.
 
 ## Issue log: shared memory between Claude sessions
 The sessions don't share memory, so **GitHub Issues are the shared log.**
