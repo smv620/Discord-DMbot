@@ -65,9 +65,11 @@ from dmbot.memory.models import (
     MemoryRuleError,
     NewName,
     Relation,
+    TooLateToUndo,
     Written,
     check_status_change,
     clean_text,
+    days,
     is_id,
     lookup_key,
     new_id,
@@ -197,12 +199,18 @@ def _stronger(status_a: str, status_b: str) -> str:
     return max(status_a, status_b, key=lambda s: order[s])
 
 
+DAY = 24 * 60 * 60
+
+
 class MemoryStore:
     """Reads and writes one campaign's memory at a time. See the module docstring."""
 
-    def __init__(self, db: Database, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self, db: Database, *, clock: Callable[[], float] = time.time, keep_days: int = 30
+    ) -> None:
         self._db = db
         self._clock = clock
+        self.keep_days = keep_days  # how long Undo works: older change-log rows are pruned
 
     @asynccontextmanager
     async def _write(
@@ -521,6 +529,12 @@ class MemoryStore:
         """Take back a whole list from `add_names`. Refused unless that batch only added
         names (from the DM), and, like any undo, if any of them changed or anything links
         to them since (a connection, a mention, a DM fix): nothing is deleted silently."""
+        try:
+            return await self._undo_names(guild_id, campaign_id, batch)
+        except TooLateToUndo:
+            raise TooLateToUndo(self._too_late()) from None
+
+    async def _undo_names(self, guild_id: int, campaign_id: str, batch: int) -> Written[None]:
         async with self._write(guild_id, campaign_id, "undo", undoes=batch) as w:
             cur = await w.conn.execute(
                 "SELECT bool_and(op = 'insert' AND source = 'dm' AND table_name IN"
@@ -529,7 +543,9 @@ class MemoryStore:
                 (*w.ids, batch),
             )
             row = await cur.fetchone()
-            if row is None or not row["n"] or not row["names_only"]:
+            if row is None or not row["n"]:
+                raise TooLateToUndo(NOT_FOUND)
+            if not row["names_only"]:
                 raise MemoryRuleError(NOT_FOUND)
             cur = await w.conn.execute(
                 "SELECT 1 FROM memory_heard h JOIN memory_changes c"
@@ -937,6 +953,24 @@ class MemoryStore:
             row = await w.update(FLAGS, flag_id, {"status": "resolved"})
             return Written(_flag(row), w.batch)
 
+    async def prune_changes(self, guild_id: int, campaign_id: str) -> int:
+        """Delete this campaign's change-log rows older than `keep_days` (#164), so the
+        log doesn't outgrow the memory. Whole batches go together (a batch's rows share
+        one time), and an undo is never older than what it undid, so "already undone"
+        stays true; Undo on a pruned batch says it's too late (`TooLateToUndo`). Runs only
+        after a session, so Undo works for at least `keep_days`. Returns how many rows
+        went."""
+        cutoff = int(self._clock()) - self.keep_days * DAY
+        # A plain server-scoped transaction, no campaign lock: it touches only rows too old
+        # for any write in progress, and an undo reading them sees all of a batch or none.
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "DELETE FROM memory_changes"
+                " WHERE guild_id = %s AND campaign_id = %s AND made_at < %s",
+                (*scope.ids, cutoff),
+            )
+            return cur.rowcount
+
     async def resolve_stale_flags(self, guild_id: int, campaign_id: str) -> Written[list[Flag]]:
         """Close the open flags whose problem is gone (#164): an undo, a merge, an edit
         or a rejected fact can end a clash without touching the flag. Each flagged fact
@@ -1224,9 +1258,19 @@ class MemoryStore:
     ) -> Written[None]:
         """Reverse one operation (see `undo_batch`). Returns the undo's own batch, which
         can be undone in turn to redo."""
-        async with self._write(guild_id, campaign_id, source, undoes=batch) as w:
-            await undo_batch(w, batch)
-            return Written(None, w.batch)
+        try:
+            async with self._write(guild_id, campaign_id, source, undoes=batch) as w:
+                await undo_batch(w, batch)
+                return Written(None, w.batch)
+        except TooLateToUndo:
+            raise TooLateToUndo(self._too_late()) from None
+
+    def _too_late(self) -> str:
+        # Also true after a backup replaced the campaign: that starts a fresh log.
+        return (
+            f"Too late to undo: Undo works for {days(self.keep_days)}, and not from before a "
+            "backup was loaded."
+        )
 
 
 # ---- helpers (inside a write) ----------------------------------------------------------

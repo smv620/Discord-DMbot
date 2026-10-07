@@ -21,7 +21,7 @@ from typing import Any
 
 import discord
 
-from dmbot.memory.models import MemoryRuleError
+from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.transcript import questions
 from dmbot.transcript.cleaner import MAX_OPTIONS
 
@@ -123,6 +123,11 @@ class NameAnswerUndoButton(
         await interaction.response.defer()
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
+        except TooLateToUndo as exc:
+            await interaction.followup.send(
+                f"{exc} Fix the name on its card instead: `/dmbot names`.", ephemeral=True
+            )
+            return
         except MemoryRuleError:
             await interaction.followup.send(questions.UNDO_FAILED, ephemeral=True)
             return

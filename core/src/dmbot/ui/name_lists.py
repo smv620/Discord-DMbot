@@ -23,7 +23,16 @@ from dmbot import fetch
 from dmbot.ai import AIError, AnthropicClient, Reply
 from dmbot.campaigns import Campaign
 from dmbot.memory.lookup import CampaignLookup, NameEntry
-from dmbot.memory.models import CONFIRMED, DM, PROPOSED, MemoryRuleError, NewName, name_key
+from dmbot.memory.models import (
+    CONFIRMED,
+    DM,
+    PROPOSED,
+    MemoryRuleError,
+    NewName,
+    TooLateToUndo,
+    days,
+    name_key,
+)
 from dmbot.memory.name_documents import (
     MAX_DOCUMENT_BYTES,
     TYPES_HELP,
@@ -865,7 +874,9 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
         for word, positions in groups.items()
         if (ids := [i for p in positions if (i := saved[p]) is not None])
     }
-    await _send_summary(interaction, campaign, parsed, added, look, known, dropped, batch, kinds)
+    await _send_summary(
+        interaction, campaign, parsed, added, look, known, dropped, batch, kinds, memory.keep_days
+    )
 
 
 async def _send_summary(
@@ -878,8 +889,13 @@ async def _send_summary(
     dropped: int,
     batch: int | None,
     kinds: dict[str, list[str]],
+    undo_days: int,
 ) -> None:
-    lines = [summary_text(added, look, known, parsed.repeated, dropped, parsed.refused)]
+    lines = [
+        summary_text(
+            added, look, known, parsed.repeated, dropped, parsed.refused, undo_days=undo_days
+        )
+    ]
     asked = sorted(kinds.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:KIND_QUESTIONS]
     if asked:
         words = ", ".join(
@@ -915,6 +931,8 @@ def summary_text(
     repeated: int,
     dropped: int,
     refused: list[tuple[int, str]],
+    *,
+    undo_days: int = 30,
 ) -> str:
     """What happened, what needs doing first."""
 
@@ -948,14 +966,12 @@ def summary_text(
         lines.append(f"Skipped: {', '.join(skipped)}.")
     if added:
         lines.append(
-            "Wrong list? **Undo** takes the whole list back, until you check or change any of "
-            "those names."
+            f"Wrong list? Press **Undo** to take it all back. Undo stops working after "
+            f"{days(undo_days)}, or once you check or change any of these names, or one is "
+            "said in a session."
         )
         # After Undo, since fixing one name ends Undo for the list (#353 review).
-        lines.append(
-            "Only one name wrong? Run `/dmbot names` and use 🔍 Find a name to fix or remove "
-            "it. (After that, Undo can't take the list back.)"
-        )
+        lines.append("Only one name wrong? Fix or remove it with 🔍 Find a name in `/dmbot names`.")
     return "\n".join(lines)
 
 
@@ -1054,6 +1070,11 @@ class UndoListButton(
         await interaction.response.defer()  # a long list takes a while to take back
         try:
             await memory.undo_names(campaign.guild_id, campaign.id, self.batch)
+        except TooLateToUndo as exc:
+            await _tell(
+                interaction, f"{exc} Remove the wrong names from their cards (`/dmbot names`)."
+            )
+            return
         except MemoryRuleError:
             await _tell(
                 interaction,

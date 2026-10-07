@@ -28,6 +28,7 @@ from dmbot.memory.models import (
     REJECTED,
     MemoryRuleError,
     NewName,
+    TooLateToUndo,
     Written,
 )
 from dmbot.memory.ontology import PredicateTerm, TypeTerm
@@ -1663,3 +1664,125 @@ class MergeMatchesTheOldWalk(MemoryTest):
                 )
                 compared += 1
         self.assertGreaterEqual(compared, 5)  # most seeds merge
+
+
+class Pruning(MemoryTest):
+    """The change log keeps `keep_days` of undo history (#164, part 3)."""
+
+    DAY = 24 * 60 * 60
+
+    async def batches(self, guild: int = GUILD_A, campaign: str | None = None) -> set[int]:
+        async with self.db.guild(guild) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT batch FROM memory_changes WHERE campaign_id = %s",
+                (campaign or self.c,),
+            )
+            return {int(r["batch"]) for r in await cur.fetchall()}
+
+    async def test_old_batches_go_and_recent_ones_stay(self) -> None:
+        old = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="Old", source="dm")
+        self.now += 30 * self.DAY  # under 30 days old when pruned below: kept
+        edge = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="Edge", source="dm")
+        self.now += 1
+        new = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="New", source="dm")
+        before = await self.snapshot()
+
+        self.assertGreater(await self.memory.prune_changes(GUILD_A, self.c), 0)
+
+        self.assertEqual(await self.batches(), {edge.batch, new.batch})
+        self.assertEqual(await self.snapshot(), before)  # only the log changes
+        assert old.batch is not None and new.batch is not None
+        with self.assertRaisesRegex(TooLateToUndo, "Undo works for 30 days"):
+            await self.memory.undo(GUILD_A, self.c, old.batch)
+        await self.memory.undo(GUILD_A, self.c, new.batch)
+        self.assertEqual(await self.memory.prune_changes(GUILD_A, self.c), 0)
+
+    async def test_an_undo_kept_after_its_batch_went_still_redoes(self) -> None:
+        before = await self.snapshot()
+        added = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="X", source="dm")
+        after = await self.snapshot()
+        self.now += 31 * self.DAY
+        assert added.batch is not None
+        undone = await self.memory.undo(GUILD_A, self.c, added.batch)
+        assert undone.batch is not None
+
+        await self.memory.prune_changes(GUILD_A, self.c)
+
+        self.assertEqual(await self.batches(), {undone.batch})
+        with self.assertRaisesRegex(MemoryRuleError, "already undone"):
+            await self.memory.undo(GUILD_A, self.c, added.batch)  # never undone twice
+        self.assertEqual(await self.snapshot(), before)
+        await self.memory.undo(GUILD_A, self.c, undone.batch)  # redo
+        self.assertEqual(await self.snapshot(), after)
+
+    async def test_an_undo_goes_with_its_batch(self) -> None:
+        added = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="X", source="dm")
+        assert added.batch is not None
+        await self.memory.undo(GUILD_A, self.c, added.batch)
+        self.now += 31 * self.DAY
+        self.assertGreater(await self.memory.prune_changes(GUILD_A, self.c), 0)
+        self.assertEqual(await self.batches(), set())
+
+    async def test_other_campaigns_and_servers_are_untouched(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Other", DM)).id
+        away = (await self.campaigns.create(GUILD_B, "Away", DM)).id
+        await self.add("Here")
+        await self.add("There", campaign=other)
+        await self.memory.add_entity(GUILD_B, away, type="npc", name="Away", source="dm")
+        self.now += 31 * self.DAY
+
+        await self.memory.prune_changes(GUILD_A, self.c)
+
+        self.assertEqual(await self.batches(), set())
+        self.assertEqual(len(await self.batches(campaign=other)), 1)
+        self.assertEqual(len(await self.batches(GUILD_B, away)), 1)
+
+    async def test_a_list_too_old_to_undo_is_told_apart_from_a_wrong_batch(self) -> None:
+        from dmbot.memory.models import NewName
+
+        listed = await self.memory.add_names(
+            GUILD_A, self.c, [NewName("Bryn Shander", "place", CONFIRMED)], source="dm"
+        )
+        x = await self.add("X")
+        other = await self.memory.set_entity_status(GUILD_A, self.c, x, CONFIRMED, source="dm")
+        assert listed.batch is not None and other.batch is not None
+        with self.assertRaises(MemoryRuleError) as refused:
+            await self.memory.undo_names(GUILD_A, self.c, other.batch)  # not a list
+        self.assertNotIsInstance(refused.exception, TooLateToUndo)
+        self.now += 31 * self.DAY
+        await self.memory.prune_changes(GUILD_A, self.c)
+        with self.assertRaisesRegex(TooLateToUndo, "Undo works for 30 days"):
+            await self.memory.undo_names(GUILD_A, self.c, listed.batch)
+
+    async def test_undo_from_before_a_backup_replaced_the_campaign(self) -> None:
+        added = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="X", source="dm")
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        await self.campaigns.import_backup(GUILD_A, backup, DM, replace_campaign_id=self.c)
+        assert added.batch is not None
+        with self.assertRaisesRegex(TooLateToUndo, "not from before a backup was loaded"):
+            await self.memory.undo(GUILD_A, self.c, added.batch)
+
+    async def test_an_undo_racing_a_prune_keeps_its_own_rows(self) -> None:
+        added = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="X", source="dm")
+        after = await self.snapshot()
+        self.now += 31 * self.DAY
+        assert added.batch is not None
+        async with self.db.guild(GUILD_A) as conn:  # the prune, not yet committed
+            await conn.execute(
+                "DELETE FROM memory_changes WHERE campaign_id = %s AND made_at < %s",
+                (self.c, self.now - 30 * self.DAY),
+            )
+            undone = await self.memory.undo(GUILD_A, self.c, added.batch)  # still sees them
+        assert undone.batch is not None
+        self.assertEqual(await self.batches(), {undone.batch})
+        await self.memory.undo(GUILD_A, self.c, undone.batch)  # redo
+        self.assertEqual(await self.snapshot(), after)
+
+    async def test_the_number_of_days_is_a_setting(self) -> None:
+        memory = MemoryStore(self.db, clock=lambda: self.now, keep_days=1)
+        await self.add("X")
+        self.now += self.DAY
+        self.assertEqual(await memory.prune_changes(GUILD_A, self.c), 0)
+        self.now += 1
+        self.assertGreater(await memory.prune_changes(GUILD_A, self.c), 0)
+        self.assertEqual(await self.batches(), set())

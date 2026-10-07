@@ -755,6 +755,7 @@ class DMBot(commands.AutoShardedBot):
             ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
+            ("old undo history", lambda: self.prune_old_changes(table)),
         ]
         for name, step in steps:
             try:
@@ -1740,6 +1741,17 @@ class DMBot(commands.AutoShardedBot):
             if closed.value:
                 log.info("Closed %d memory flag(s) that no longer apply", len(closed.value))
 
+    async def prune_old_changes(self, table: Table) -> None:
+        """After a session: forget undo history older than MEMORY_CHANGELOG_KEEP_DAYS
+        (#164), so the change log doesn't grow forever. Last, after anything that
+        writes: those writes are new, so they're kept anyway."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            gone = await self.memory.prune_changes(table.guild_id, table.campaign_id)
+            if gone:
+                log.info("Deleted %d change-log row(s) too old to undo", gone)
+
     async def keep_heard_names(self, table: Table) -> None:
         """After a session: keep how often each known name was said, for ranking hints
         next time. Only lines of people who still agree, checked again right before
@@ -2170,7 +2182,7 @@ async def run(settings: Settings) -> None:
             campaigns,
             SessionStore(db),
             transcriber,
-            MemoryStore(db),
+            MemoryStore(db, keep_days=settings.memory_keep_days),
             TranscriptStore(db),
         )
         _close_on_sigterm(bot)

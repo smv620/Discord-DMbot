@@ -39,6 +39,15 @@ class MemoryRuleError(ValueError):
     """A write the memory rules refuse. The message is plain enough to show a DM."""
 
 
+class TooLateToUndo(MemoryRuleError):
+    """Undo of a change the change log no longer holds: older than the days Undo works
+    for (#164), so it was pruned after a session."""
+
+
+def days(n: int) -> str:
+    return f"{n} day" if n == 1 else f"{n} days"
+
+
 @dataclass(frozen=True, slots=True)
 class Heard:
     """How many lines of one speaker named an entry in a session, kept at its end
