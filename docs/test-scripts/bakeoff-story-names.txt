@@ -1,0 +1,45 @@
+### DMbot names list: every name in bakeoff-story.md, for testing Add many (#368)
+###
+### One name per line:  name | kind | other names
+### The story has 29 names. This file has 26 lines, and 7 of them are wrong on purpose,
+### to test how Add many handles names the campaign already has (#369). Before uploading,
+### add the 10 names in bakeoff-story-names-setup.md by hand.
+###
+### Left out on purpose (you add them by hand first; the upload must not touch them):
+###   Cerric, Mirelle, Kael
+### A close spelling of a name you will already have (one letter changed):
+###   Gorrack (you have Gorrak), Quilon (you have Quillon), Brynnwater (you have Brynwater)
+### Name and other name swapped (you have the name the other way round):
+###   Bell | NPC | Belleros     (you have Belleros, other name Bell)
+###   Vane | NPC | Oskar Vane   (you have Oskar Vane, other name Vane)
+### A different kind from the one you will have given it:
+###   Varrow | place            (you have Varrow as a god)
+###   Ashen Crown | place       (you have Ashen Crown as a group)
+###
+### No secret names: those are tested separately.
+Bell | NPC | Belleros
+Hrothgar | NPC
+Vhalzimar | NPC
+Ka'zeth | NPC
+Orrin | NPC
+Ysolde | NPC
+Quilon | NPC
+Dravenmoor | place
+Brynnwater | place
+Nyxara | NPC
+Thornewick | place
+Ilvaris | NPC
+Sorrowmere | place
+Gorrack | NPC
+Elowen | NPC
+Varrow | place
+Zephyrine | NPC
+Tamsin | NPC
+Lirael | NPC
+Saelith | NPC
+Vane | NPC | Oskar Vane
+Ashen Crown | place
+Detect Magic | spell
+Cure Wounds | spell
+Fireball | spell
+Bardic Inspiration | other

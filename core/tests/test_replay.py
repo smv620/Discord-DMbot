@@ -4,6 +4,7 @@ import datetime as dt
 import io
 import math
 import os
+import re
 import struct
 import sys
 import tempfile
@@ -27,6 +28,7 @@ from dmbot.devtools.replay.run import (
 )
 from dmbot.devtools.replay.score import align, score, words
 from dmbot.devtools.replay.script import Part, load_script, parse_script
+from dmbot.devtools.stt_bakeoff.data import NAMES as BAKEOFF_NAMES
 from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE
 from dmbot.transcription.pipeline import QUEUE_SIZE
 
@@ -529,3 +531,52 @@ class PublicLogTests(unittest.TestCase):
                 self.assertEqual(replay_main.main(argv), 0)
             self.assertIn("Zanzibarquux", out.getvalue())  # shown on screen
             self.assertNotIn("Zanzibarquux", history.read_text())  # never logged
+
+
+class StoryScriptTests(unittest.TestCase):
+    """docs/test-scripts/bakeoff-story.md, the twin's name test (#367)."""
+
+    # Every name in stt-bakeoff.md's name list (with the nickname), and the spells in its lines.
+    SPELLS = ("Detect Magic", "Cure Wounds", "Fireball", "Bardic Inspiration")
+
+    def test_the_story_parses_and_uses_every_name_twice(self) -> None:
+        script = load_script(SCRIPTS / "bakeoff-story.md")
+        self.assertEqual(script.turns, 25)
+        self.assertEqual(script.pauses, 2)
+        self.assertGreater(script.count(Part.WHISPER), 0)
+        self.assertTrue(350 <= len(script.words) <= 550, len(script.words))
+        said_words = words(" ".join(w.text for w in script.words))
+        names = [n.canonical for n in BAKEOFF_NAMES] + list(self.SPELLS)
+        self.assertEqual(len(names), 30)
+        for name in names:
+            target = words(name)
+            said = sum(
+                said_words[i : i + len(target)] == target
+                for i in range(len(said_words) - len(target) + 1)
+            )
+            self.assertGreaterEqual(said, 2, name)
+
+    def test_the_story_has_no_digits(self) -> None:
+        script = load_script(SCRIPTS / "bakeoff-story.md")
+        self.assertFalse(any(ch.isdigit() for w in script.words for ch in w.text))
+
+    def test_each_name_is_said_in_two_different_places_in_a_sentence(self) -> None:
+        script = load_script(SCRIPTS / "bakeoff-story.md")
+        text = " ".join(w.text for w in script.words)
+        sentences = [s.strip('"( ') for s in re.split(r'(?<=[.!?])"?\s+', text) if s]
+        for name in [n.canonical for n in BAKEOFF_NAMES] + list(self.SPELLS):
+            found = re.compile(r"(?<![\w'])" + re.escape(name) + r"(?![\w'])")
+            places = set()
+            for sentence in sentences:
+                for match in found.finditer(sentence):
+                    before = sentence[: match.start()].strip(' "(,')
+                    after = sentence[match.end() :].strip(' ".!?,:)')
+                    places.add("start" if not before else "end" if not after else "middle")
+            self.assertGreaterEqual(len(places), 2, f"{name}: {places}")
+
+    def test_no_stretch_runs_into_the_15_second_cut(self) -> None:
+        # About 2.5 words a second: 30 words between breaks stays well under 15 s.
+        text = (SCRIPTS / "bakeoff-story.md").read_text().split("## Part 1", 1)[1]
+        for turn in re.findall(r"\*\*\[DM\]:\*\*(.*?)(?=\n\n|\Z)", text, re.S):
+            for stretch in re.split(r"\(\( (?:dramatic pause|whispering) \)\)", turn):
+                self.assertLessEqual(len(stretch.split()), 30, stretch[:40])
