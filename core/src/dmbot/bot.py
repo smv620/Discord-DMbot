@@ -90,8 +90,8 @@ from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
-from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
-from dmbot.memory.scan import find_new_names
+from dmbot.memory.models import DESCRIPTION_MAX, DM, FIX, KEEP, Heard, MemoryRuleError, name_key
+from dmbot.memory.scan import find_new_names, group_alike, with_matches
 from dmbot.memory.scene import PLAYER_CHARACTER, HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.store import MemoryStore
@@ -1483,7 +1483,8 @@ class DMBot(commands.AutoShardedBot):
         if text and self.transcripts is not None:
             table.unsaved.add(Line(utterance.start_ms, utterance.user_id, text, cleaned or text))
         if text and len(table.heard) < HEARD_MAX:
-            table.heard.append((utterance.user_id, text))
+            # The cleaned line: a known name misheard and fixed live isn't new (#394).
+            table.heard.append((utterance.user_id, cleaned or text))
             if len(table.heard) == HEARD_MAX:
                 log.info("Name scan: kept the first %d lines of this session", HEARD_MAX)
         if text and table.transcript_channel_id is not None:
@@ -1783,18 +1784,32 @@ class DMBot(commands.AutoShardedBot):
                 if not name.startswith("<@"):
                     skip.add(name_key(name))
                     skip.update(name_key(word) for word in name.split())
-            found = find_new_names(lines, skip)
+            # One question per thing ("Oskar Vane", also "Vane"), and the known name each
+            # one sounds like, so the DM can say "another name for it" in one press (#394).
+            found = group_alike(find_new_names(lines, skip))
+            if self.lookup is not None:
+                try:
+                    found = with_matches(await self.lookup.get(gid, cid), found)
+                except Exception:
+                    log.exception("Couldn't load the campaign's names to match suggestions")
             added: list[str] = []
             for suggestion in found:
+                heard = f"Heard {suggestion.times} times"
+                if suggestion.match is not None:
+                    heard += f" · sounds like {suggestion.match.name}"
                 try:
-                    await self.memory.add_entity(
+                    written = await self.memory.add_entity(
                         gid,
                         cid,
                         type="concept",
                         name=suggestion.name,
                         source="scan",
-                        description=f"Heard {suggestion.times} times",
+                        description=heard[:DESCRIPTION_MAX],
                     )
+                    for other in suggestion.also:  # suggested with it, confirmed with it
+                        await self.memory.add_alias(
+                            gid, cid, written.value.id, other, kind="short", source="scan"
+                        )
                 except MemoryRuleError as exc:
                     log.info("Skipped a suggested name: %s", exc)
                     continue

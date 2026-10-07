@@ -21,6 +21,7 @@ from discord import app_commands
 from dmbot.campaigns import Campaign
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, PROPOSED, REJECTED, Entity, MemoryRuleError, name_key
+from dmbot.memory.scan import Match, near_match
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -658,10 +659,46 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
 # ---- checking the names DMbot suggests --------------------------------------------------
 
 
-def suggestion_text(entity: Entity, left: int) -> str:
+REVIEW_LABEL_MAX = 25  # review buttons fit a phone (#394)
+
+
+def suggestion_text(
+    entity: Entity, left: int, *, also: list[str] | None = None, match: Match | None = None
+) -> str:
     heard = f" ({entity.description.lower()})" if entity.description else ""
+    others = f"\nAlso heard as: {', '.join(f'**{_md(a)}**' for a in also)}." if also else ""
     more = f"\n_{_plural(left - 1, 'more name')} after this one._" if left > 1 else ""
-    return f"📝 **{_md(entity.name)}**{heard}\nIs this a name in your game?{more}"
+    question = (
+        f"Is it another name for **{_md(match.name)}**, or someone or something new?"
+        if match is not None
+        else "Is this a name in your game?"
+    )
+    return f"📝 **{_md(entity.name)}**{heard}{others}\n{question}{more}"
+
+
+def another_name_label(name: str) -> str:
+    """ "✅ Another name for Hrothgar", shortened to fit a phone."""
+    full = f"✅ Another name for {name}"
+    if len(full) <= REVIEW_LABEL_MAX:
+        return full
+    return logic.shorten(f"✅ It's {name}", REVIEW_LABEL_MAX)
+
+
+async def _review_match(
+    interaction: discord.Interaction, campaign: Campaign, entity: Entity
+) -> Match | None:
+    """The known name this suggestion sounds like (never a secret one), from the
+    campaign's names in memory; none if they can't be read."""
+    cache = _bot(interaction).lookup
+    if cache is None:
+        return None
+    try:
+        lookup = await cache.get(campaign.guild_id, campaign.id)
+    except Exception:
+        log.exception("Couldn't load the campaign's names for a suggestion")
+        return None
+    match = near_match(lookup, entity.name)
+    return match if match is not None and match.entity_id != entity.id else None
 
 
 async def start_review(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -678,7 +715,8 @@ async def start_review(interaction: discord.Interaction, campaign_id: str) -> No
         return
     waiting.sort(key=lambda e: (e.created_at, e.name))
     view = SuggestionReview(campaign.id, [e.id for e in waiting])
-    await _send(interaction, suggestion_text(waiting[0], len(waiting)), view)
+    text = await view.prepare(interaction, campaign, memory, waiting[0])
+    await _send(interaction, text, view)
 
 
 class SuggestionReview(_Menu):
@@ -689,14 +727,49 @@ class SuggestionReview(_Menu):
         self.campaign_id = campaign_id
         self.queue = entity_ids
         self.later = 0  # left for another time this round
+        self.match: Match | None = None  # the known name the current one sounds like
         self._buttons()
+
+    async def prepare(
+        self,
+        interaction: discord.Interaction,
+        campaign: Campaign,
+        memory: MemoryStore,
+        entity: Entity,
+    ) -> str:
+        """The current suggestion's text, with its buttons set for it."""
+        self.match = await _review_match(interaction, campaign, entity)
+        own = name_key(entity.name)
+        also = [
+            a.text
+            for a in await memory.aliases(campaign.guild_id, campaign.id, entity_id=entity.id)
+            if a.key != own
+        ]
+        self._buttons()
+        return suggestion_text(entity, len(self.queue), also=also, match=self.match)
 
     def _buttons(self) -> None:
         self.clear_items()
-        self.add_item(_Button(self._yes, label="✅ Yes, add it", style=discord.ButtonStyle.success))
-        self.add_item(
-            _Button(self._same, label="🔗 Same as a known name…", style=discord.ButtonStyle.primary)
-        )
+        if self.match is not None:  # sounds like a known name: offer that first (#394)
+            self.add_item(
+                _Button(
+                    self._another,
+                    label=another_name_label(self.match.name),
+                    style=discord.ButtonStyle.success,
+                )
+            )
+            self.add_item(
+                _Button(self._yes, label="➕ New name", style=discord.ButtonStyle.primary)
+            )
+        else:
+            self.add_item(
+                _Button(self._yes, label="✅ Yes, add it", style=discord.ButtonStyle.success)
+            )
+            self.add_item(
+                _Button(
+                    self._same, label="🔗 Same as a known name…", style=discord.ButtonStyle.primary
+                )
+            )
         self.add_item(_Button(self._no, label="🚫 Not a name", style=discord.ButtonStyle.secondary))
         self.add_item(_Button(self._later, label="Later", style=discord.ButtonStyle.secondary))
 
@@ -729,8 +802,7 @@ class SuggestionReview(_Menu):
         while self.queue:
             entity = await memory.entity(campaign.guild_id, campaign.id, self.queue[0])
             if entity is not None and entity.status == PROPOSED:
-                self._buttons()
-                text = suggestion_text(entity, len(self.queue))
+                text = await self.prepare(interaction, campaign, memory, entity)
                 await _replace(interaction, f"{note}\n\n{text}" if note else text, self)
                 return
             self.queue.pop(0)
@@ -846,24 +918,39 @@ class SuggestionReview(_Menu):
         )
 
     async def _same_picked(self, interaction: discord.Interaction) -> None:
+        await self._same_as(interaction, self.same.values[0])
+
+    async def _another(self, interaction: discord.Interaction) -> None:
+        """One press: the suggestion is another name for the known name it sounds like."""
+        if self.match is None:
+            await _tell(interaction, GONE)
+            return
+        await self._same_as(interaction, self.match.entity_id)
+
+    async def _same_as(self, interaction: discord.Interaction, keep_id: str) -> None:
+        """The DM said the suggestion is the same as a known entry: its names (and any
+        heard with it) become that entry's other names. Merging keeps its guards
+        (secret names, player characters) and can be undone."""
         current = await self._current(interaction)
         if current is None:
             return
         campaign, memory, entity = current
         gid, cid = campaign.guild_id, campaign.id
-        keep = await memory.entity(gid, cid, self.same.values[0])
+        keep = await memory.entity(gid, cid, keep_id)
         if keep is None or keep.status != CONFIRMED:
             await _tell(interaction, GONE)
             return
         try:
+            heard = {a.key for a in await memory.aliases(gid, cid, entity_id=entity.id)}
+            heard.add(name_key(entity.name))
             await memory.merge(gid, cid, keep.id, entity.id, source=DM, dm_said_same=True)
-            heard = name_key(entity.name)
             for alias in await memory.aliases(gid, cid, entity_id=keep.id, include_secret=True):
-                if alias.key == heard and alias.status != CONFIRMED:
+                if alias.key in heard and alias.status != CONFIRMED:
                     await memory.update_alias(gid, cid, alias.id, status=CONFIRMED, source=DM)
         except MemoryRuleError:
             await _tell(interaction, GONE)
             return
+        changed(interaction, campaign)
         note = f"🔗 Got it: **{_md(entity.name)}** is another name for **{_md(keep.name)}**."
         await self._saved(interaction, campaign, memory, note)
 

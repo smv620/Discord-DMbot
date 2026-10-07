@@ -3,7 +3,16 @@
 import unittest
 
 from dmbot.devtools.stt_bakeoff.data import LINES, NAMES
-from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names
+from dmbot.memory.lookup import CampaignLookup, LookupData
+from dmbot.memory.models import CONFIRMED, PROPOSED, Alias, Entity, name_key
+from dmbot.memory.scan import (
+    MAX_SUGGESTIONS,
+    Suggestion,
+    find_new_names,
+    group_alike,
+    near_match,
+    with_matches,
+)
 
 
 def names(found: list[Suggestion]) -> list[str]:
@@ -67,3 +76,70 @@ class Scan(unittest.TestCase):
         invented = {n.canonical for n in NAMES}
         self.assertTrue(found <= invented | {"Ashen Crown"}, found - invented)  # nothing else
         self.assertIn("Cerric", found)
+
+
+class NearMatchTest(unittest.TestCase):
+    """Names heard during play that sound like a known name (#394)."""
+
+    def lookup(self, *extra: tuple[str, str, str, bool, str]) -> CampaignLookup:
+        rows = (("a" * 32, "Hrothgar", "npc", False, CONFIRMED), *extra)
+        entities = tuple(
+            Entity(e, kind, n, "", status, None, "dm", 0) for e, n, kind, _, status in rows
+        )
+        aliases = tuple(
+            Alias(e[:16] + "0" * 16, e, n, name_key(n), "full", None, secret, status, (), "dm", 0)
+            for e, n, _, secret, status in rows
+        )
+        return CampaignLookup.build(LookupData(1, entities, aliases, (), ()))
+
+    def test_a_misheard_known_name_comes_with_its_match(self) -> None:
+        match = near_match(self.lookup(), "Rothgar")
+        assert match is not None
+        self.assertEqual((match.entity_id, match.name), ("a" * 32, "Hrothgar"))
+
+    def test_one_word_needs_to_be_spelled_very_alike(self) -> None:
+        names = self.lookup(("b" * 32, "Mara", "player_character", False, CONFIRMED))
+        self.assertIsNone(near_match(names, "Marra"))  # 0.89: offered as new
+
+    def test_two_words_need_a_little_less(self) -> None:
+        names = self.lookup(("b" * 32, "Oskar Vane", "npc", False, CONFIRMED))
+        match = near_match(names, "Oskar Vain")
+        self.assertEqual(match.name if match else None, "Oskar Vane")
+
+    def test_never_a_secret_or_a_suggested_name(self) -> None:
+        secret = self.lookup(("b" * 32, "Belleros", "npc", True, CONFIRMED))
+        self.assertIsNone(near_match(secret, "Bellerros"))
+        suggested = self.lookup(("b" * 32, "Belleros", "npc", False, PROPOSED))
+        self.assertIsNone(near_match(suggested, "Bellerros"))
+
+    def test_two_known_names_about_as_close_means_none(self) -> None:
+        names = self.lookup(
+            ("b" * 32, "Marenne", "npc", False, CONFIRMED),
+            ("c" * 32, "Marrene", "npc", False, CONFIRMED),
+        )
+        self.assertIsNone(near_match(names, "Marene"))
+
+    def test_with_matches(self) -> None:
+        (s,) = with_matches(self.lookup(), [Suggestion("Rothgar", 3)])
+        self.assertEqual(s.match.name if s.match else None, "Hrothgar")
+
+
+class GroupAlikeTest(unittest.TestCase):
+    def test_a_short_name_inside_a_longer_one_is_one_question(self) -> None:
+        (group,) = group_alike([Suggestion("Oskar Vane", 3), Suggestion("Vane", 2)])
+        self.assertEqual((group.name, group.also, group.times), ("Oskar Vane", ("Vane",), 5))
+
+    def test_two_spellings_that_sound_alike(self) -> None:
+        (group,) = group_alike([Suggestion("Ulfgarr", 2), Suggestion("Ulfgar", 4)])
+        self.assertEqual(group.times, 6)
+
+    def test_different_names_stay_apart(self) -> None:
+        names = {
+            g.name for g in group_alike([Suggestion("Oskar Vane", 3), Suggestion("Ulfgar", 2)])
+        }
+        self.assertEqual(names, {"Oskar Vane", "Ulfgar"})
+
+    def test_another_name_of_a_known_entry_is_never_suggested(self) -> None:
+        # "Frostmaiden" is another name of Auril: known_keys skips it already
+        lines = ["We pray to the Frostmaiden.", "The Frostmaiden answers."]
+        self.assertEqual(find_new_names(lines, ["auril", "frostmaiden"]), [])
