@@ -17,7 +17,6 @@ from dmbot.db import Conn
 from dmbot.memory.models import MemoryRuleError
 
 NOT_FOUND = "DMbot doesn't remember that any more."
-LOG_ROWS_PER_STATEMENT = 1000  # 12 values each, well under Postgres's 65,535
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
 
 
@@ -263,17 +262,18 @@ class Changes(Scope):
         differs = sql.SQL(" OR ").join(
             sql.SQL("{} IS DISTINCT FROM %s").format(sql.Identifier(c)) for c in changes
         )
-        old = sql.SQL(
-            "SELECT {} FROM {} WHERE guild_id = %s AND campaign_id = %s{} AND ({}) FOR UPDATE"
-        ).format(
-            sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
-            sql.Identifier(table.name),
-            sql.SQL(where),
-            differs,
-        )
+        # A subquery, so `where` can name columns without saying which copy of the table.
+        rows = sql.SQL(
+            "(SELECT * FROM {} WHERE guild_id = %s AND campaign_id = %s{} AND ({})) o"
+        ).format(sql.Identifier(table.name), sql.SQL(where), differs)
         sets = sql.SQL(", ").join(sql.SQL("{} = %s").format(sql.Identifier(c)) for c in changes)
-        params_all = (*self.ids, *params, *changes.values(), *changes.values())
-        return await self._update_from(table, old, sets, params_all)
+        return await self._update_from(
+            table,
+            sets,
+            rows,
+            sql.SQL("TRUE"),
+            (*changes.values(), *self.ids, *params, *changes.values()),
+        )
 
     async def update_rows(
         self, table: Table, rows: dict[str, dict[str, Any]]
@@ -291,52 +291,44 @@ class Changes(Scope):
             if sorted(changes) != columns:
                 raise ValueError("update_rows needs the same columns for every row")
         new = [{table.key: row_id, **changes} for row_id, changes in rows.items()]
-        differs = sql.SQL(" OR ").join(
-            sql.SQL("t.{0} IS DISTINCT FROM n.{0}").format(sql.Identifier(c)) for c in columns
-        )
-        old = sql.SQL(
-            "SELECT {} FROM {} t JOIN jsonb_populate_recordset(NULL::{}, %s) n USING ({})"
-            " WHERE t.guild_id = %s AND t.campaign_id = %s AND ({}) FOR UPDATE OF t"
-        ).format(
-            sql.SQL(", ").join(sql.SQL("t.{}").format(sql.Identifier(c)) for c in table.columns),
-            sql.Identifier(table.name),
-            sql.Identifier(table.name),
-            sql.Identifier(table.key),
-            differs,
-        )
         sets = sql.SQL(", ").join(sql.SQL("{0} = n.{0}").format(sql.Identifier(c)) for c in columns)
-        new_rows = sql.SQL(", jsonb_populate_recordset(NULL::{}, %s) n").format(
-            sql.Identifier(table.name)
+        joined = sql.SQL("{} o JOIN jsonb_populate_recordset(NULL::{}, %s) n USING ({})").format(
+            sql.Identifier(table.name), sql.Identifier(table.name), sql.Identifier(table.key)
         )
-        key_match = sql.SQL(" AND n.{0} = t.{0}").format(sql.Identifier(table.key))
-        return await self._update_from(
-            table, old, sets, (Jsonb(new), *self.ids, Jsonb(new)), extra=(new_rows, key_match)
+        where = sql.SQL("o.guild_id = %s AND o.campaign_id = %s AND ({})").format(
+            sql.SQL(" OR ").join(
+                sql.SQL("o.{0} IS DISTINCT FROM n.{0}").format(sql.Identifier(c)) for c in columns
+            )
         )
+        return await self._update_from(table, sets, joined, where, (Jsonb(new), *self.ids))
 
     async def _update_from(
         self,
         table: Table,
-        old: sql.Composable,
         sets: sql.Composable,
+        rows: sql.Composable,
+        where: sql.Composable,
         params: Sequence[Any],
-        *,
-        extra: tuple[sql.Composable, sql.Composable] = (sql.SQL(""), sql.SQL("")),
     ) -> list[dict[str, Any]]:
-        """One UPDATE that also returns each row's values before it, then one log write."""
+        """One UPDATE of the rows `rows` (aliased o) picks, returning each row's values
+        before (o, read at the statement's start) and after (t), then one log write.
+        The table is joined to itself on its key, so the plan always uses the key's
+        index, even before Postgres has statistics for the table (#164 review). The
+        campaign row is locked for the whole write, so nothing else changes these rows
+        meanwhile."""
         query = sql.SQL(
-            "WITH old AS ({}) UPDATE {} t SET {} FROM old{}"
-            " WHERE t.guild_id = %s AND t.campaign_id = %s AND t.{} = old.{}{} RETURNING {}"
+            "UPDATE {} t SET {} FROM {} WHERE {} AND t.guild_id = o.guild_id"
+            " AND t.campaign_id = o.campaign_id AND t.{} = o.{} RETURNING {}"
         ).format(
-            old,
             sql.Identifier(table.name),
             sets,
-            extra[0],
+            rows,
+            where,
             sql.Identifier(table.key),
             sql.Identifier(table.key),
-            extra[1],
             sql.SQL(", ").join(
                 [
-                    sql.SQL("old.{0} AS {1}").format(sql.Identifier(c), sql.Identifier("b_" + c))
+                    sql.SQL("o.{0} AS {1}").format(sql.Identifier(c), sql.Identifier("b_" + c))
                     for c in table.columns
                 ]
                 + [
@@ -345,7 +337,7 @@ class Changes(Scope):
                 ]
             ),
         )
-        cur = await self.conn.execute(query, (*params, *self.ids))
+        cur = await self.conn.execute(query, params)
         found = sorted(await cur.fetchall(), key=lambda r: str(r["b_" + table.key]))
         logged = [
             (
@@ -372,44 +364,37 @@ class Changes(Scope):
         op: str,
         rows: Sequence[tuple[str, dict[str, Any] | None, dict[str, Any] | None]],
     ) -> None:
-        """Log many row changes, each with its own version, a thousand to a statement
-        (Postgres takes at most 65,535 values in one statement; each row has 12)."""
-        for start in range(0, len(rows), LOG_ROWS_PER_STATEMENT):
-            await self._log_some(table, op, rows[start : start + LOG_ROWS_PER_STATEMENT])
-
-    async def _log_some(
-        self,
-        table: Table,
-        op: str,
-        rows: Sequence[tuple[str, dict[str, Any] | None, dict[str, Any] | None]],
-    ) -> None:
-        values = []
-        params: list[Any] = []
+        """Log many row changes, each with its own version, in one statement. The rows go
+        as one JSON value, so the statement is the same however many there are (no limit
+        on values, one prepared statement)."""
+        if not rows:
+            return
+        entries = []
         for row_id, before, after in rows:
             self.version += 1
             if self.batch is None:
                 self.batch = self.version
-            values.append(sql.SQL("(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"))
-            params += [
-                *self.ids,
-                self.version,
-                self.batch,
-                table.name,
-                row_id,
-                op,
-                None if before is None else Jsonb(before),
-                None if after is None else Jsonb(after),
-                self.source,
-                self.undoes,
-                self.now,
-            ]
+            entries.append(
+                {
+                    "version": self.version,
+                    "batch": self.batch,
+                    "table_name": table.name,
+                    "row_id": row_id,
+                    "op": op,
+                    "before": before,
+                    "after": after,
+                    "source": self.source,
+                    "undoes": self.undoes,
+                    "made_at": self.now,
+                }
+            )
         self.tables.add(table.name)
         await self.conn.execute(
-            sql.SQL(
-                "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name,"
-                " row_id, op, before, after, source, undoes, made_at) VALUES {}"
-            ).format(sql.SQL(", ").join(values)),
-            params,
+            "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name,"
+            " row_id, op, before, after, source, undoes, made_at)"
+            " SELECT %s, %s, version, batch, table_name, row_id, op, before, after, source,"
+            " undoes, made_at FROM jsonb_populate_recordset(NULL::memory_changes, %s)",
+            (*self.ids, Jsonb(entries)),
         )
 
     async def _log(

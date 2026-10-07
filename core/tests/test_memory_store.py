@@ -833,6 +833,55 @@ class Undo(MemoryTest):
             await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
         self.assertEqual(await self.snapshot(), before)
 
+    async def test_a_flag_on_a_fact_the_merge_folds_away_goes_with_it(self) -> None:
+        """#164 review: the same, for a fact folded into its twin later in the walk."""
+        frida = await self.add("Frida")
+        keep, gone = (
+            await self.add("Neverwinter", type="place"),
+            await self.add("Nevers", type="place"),
+        )
+        await self.relate(frida, "located_in", gone, detail="docks")  # flagged against the next
+        self.now += 1
+        await self.relate(frida, "located_in", gone)  # becomes the same as the last: folded
+        self.now += 1
+        await self.relate(frida, "located_in", keep)
+        await self.check_undo_and_redo(
+            lambda: self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+        )
+
+    async def test_a_merge_with_shared_names_and_facts_undoes_in_bulk(self) -> None:
+        """Rows the merge deleted (twins) come back in bulk, values and all."""
+        keep, gone = await self.add("Belleros"), await self.add("Bell")
+        for n in range(50):
+            friend = await self.add(f"Friend {n}")
+            await self.relate(keep, "ally_of", friend, source="cleaner", confidence=0.5)
+            await self.relate(gone, "ally_of", friend, secret=True)  # folded, upgrades keep's
+            await self.memory.add_alias(
+                GUILD_A, self.c, gone, f"Nick {n}", kind="short", secret=True, source="dm"
+            )
+            await self.memory.add_alias(
+                GUILD_A, self.c, keep, f"Nick {n}", kind="short", source="dm"
+            )
+        await self.check_undo_and_redo(
+            lambda: self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+        )
+
+    async def test_a_bulk_undo_after_one_fact_changed_again_is_refused(self) -> None:
+        keep, gone = await self.add("Belleros"), await self.add("Bell")
+        facts = []
+        for n in range(20):
+            friend = await self.add(f"Friend {n}")
+            facts.append((await self.relate(gone, "ally_of", friend)).value[0])
+        merged = await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+        await self.memory.update_relation(
+            GUILD_A, self.c, facts[7].id, status=CONFIRMED, source="dm"
+        )
+        changed = await self.snapshot()
+        assert merged.batch is not None
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
+        self.assertEqual(await self.snapshot(), changed)  # nothing half undone
+
     async def test_a_flag_on_a_fact_the_merge_drops_goes_with_it(self) -> None:
         """#164 review: a moved fact can be flagged against one dropped later in the
         same merge (it became "X is in X"); that flag must go, not break the merge."""
@@ -848,18 +897,35 @@ class Undo(MemoryTest):
             lambda: self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
         )
 
-    async def test_undoing_a_huge_list_writes_its_log_in_pieces(self) -> None:
-        """#164: more changed rows than Postgres takes values in one statement."""
-        written = await self.memory.add_names(
-            GUILD_A,
-            self.c,
-            [NewName(f"Name {n}", "npc", CONFIRMED, (f"Nick {n}",), ()) for n in range(3000)],
-            source="dm",
-        )
-        assert written.batch is not None
-        await self.memory.undo_names(GUILD_A, self.c, written.batch)  # 6,000 rows back
-        names = await self.memory.entities(GUILD_A, self.c, statuses=[CONFIRMED])
-        self.assertEqual(names, [])
+    async def test_a_merge_of_thousands_of_rows_and_its_undo(self) -> None:
+        """#164: 6,000 moved rows used to need more values than one statement takes;
+        now each table's rows and their log are one statement whatever the count."""
+        keep, gone = await self.add("Belleros"), await self.add("Bell")
+        async with self.db.guild(GUILD_A) as conn:  # quicker than 6,000 add_mention calls
+            await conn.execute(
+                "INSERT INTO memory_mentions (guild_id, campaign_id, id, entity_id, line_ref,"
+                " span_start, span_end, confidence, method, created_at)"
+                " SELECT %s, %s, md5(i::text), %s, 's1:' || i, 0, 4, 0.9, 'exact', %s"
+                " FROM generate_series(1, 6000) i",
+                (GUILD_A, self.c, gone, self.now),
+            )
+        before = await self.snapshot()
+        statements = 0
+        real = AsyncConnection.execute
+
+        async def counting(conn: Any, *args: Any, **kw: Any) -> Any:
+            nonlocal statements
+            statements += 1
+            return await real(conn, *args, **kw)
+
+        with patch.object(AsyncConnection, "execute", counting):
+            merged = await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm")
+            merge_statements, statements = statements, 0
+            assert merged.batch is not None
+            await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
+        self.assertLess(merge_statements, 60)
+        self.assertLess(statements, 60)
+        self.assertEqual(await self.snapshot(), before)
 
     async def test_undo_twice_is_refused(self) -> None:
         w = await self.memory.add_entity(GUILD_A, self.c, type="npc", name="X", source="dm")
