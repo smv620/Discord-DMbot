@@ -5,11 +5,12 @@ from dmbot.consent_dm import CONSENT_LABEL, STOP_LABEL
 from dmbot.transcription.config import Engine
 from dmbot.ui.logic import (
     BUTTON_LABEL_MAX,
+    CONTINUE_LABEL,
     HELP_TEXT,
+    PHONE_LABEL_MAX,
     ago,
     backup_filename,
     can_run,
-    continue_label,
     default_voice_channel,
     option_description,
     played_line,
@@ -81,15 +82,18 @@ class Wording(unittest.TestCase):
         self.assertEqual(option_description(campaign(last_played_at=None), NOW), "Not played yet")
 
     def test_labels_fit_discord_limits(self) -> None:
-        label = continue_label(campaign(name="x" * 200))
-        self.assertLessEqual(len(label), BUTTON_LABEL_MAX)
-        self.assertTrue(label.endswith("…"))
+        # The most-tapped button fits a phone; the message above it names the campaign.
+        self.assertLessEqual(len(CONTINUE_LABEL), PHONE_LABEL_MAX)
+        self.assertLessEqual(len(shorten("x" * 200, BUTTON_LABEL_MAX)), BUTTON_LABEL_MAX)
         self.assertEqual(shorten("  a   b ", 10), "a b")
 
     def test_settings_summary_is_plain(self) -> None:
         text = "\n".join(settings_summary("2024", "none", False, "private"))
         self.assertIn("2024 rules (newest)", text)
-        self.assertIn("None (main rules only)", text)
+        self.assertIn("skip it, use only the main rules", text)
+        self.assertIn(
+            "use the 2014 rules (older)", "\n".join(settings_summary("2024", "2014", True, "peek"))
+        )
         self.assertIn("off", text)
         self.assertIn("Only the DM", text)
         for jargon in ("fallback", "target", "ruleset", "visibility"):
@@ -104,26 +108,54 @@ class Wording(unittest.TestCase):
 
 
 class MenuChoices(unittest.TestCase):
-    def test_choices_explain_themselves(self) -> None:
+    def test_choices_explain_themselves_and_fit_a_phone(self) -> None:
         from dmbot.ui.logic import (
             OPTIONAL_RULES_CHOICES,
+            PHONE_LABEL_MAX,
+            chosen_label,
             fallback_choices,
             main_rules_choices,
             screen_note,
             visibility_choices,
         )
 
-        self.assertEqual(main_rules_choices()["2024"], "Main rules: 2024 rules (newest)")
+        self.assertEqual(main_rules_choices()["2024"], "Main rules: 2024")
         fb = fallback_choices("2024")
         self.assertNotIn("2024", fb)
-        self.assertTrue(all(v.startswith("If the main rules don't cover it") for v in fb.values()))
-        self.assertIn("none", fb)
+        self.assertEqual(fb, {"2014": "If missing: use 2014", "none": "If missing: skip it"})
+        for choices in (main_rules_choices(), fallback_choices("2014"), visibility_choices()):
+            self.assertLessEqual(len(choices), 5)  # Discord: 5 buttons a row
         self.assertTrue(all(v.startswith("DM screen: ") for v in visibility_choices().values()))
-        self.assertTrue(
-            all(len(v) <= 100 for v in [*fb.values(), *OPTIONAL_RULES_CHOICES.values()])
-        )
+        every = [
+            *main_rules_choices().values(),
+            *fallback_choices("2024").values(),
+            *fallback_choices("2014").values(),
+            *OPTIONAL_RULES_CHOICES.values(),
+            *visibility_choices().values(),
+        ]
+        for label in every:  # #112: longer labels run off a phone's screen
+            with self.subTest(label):
+                self.assertLessEqual(len(chosen_label(label, True)), PHONE_LABEL_MAX)
+        self.assertEqual(chosen_label("Main rules: 2024", True), "✓ Main rules: 2024")
         self.assertIn("peek", screen_note("peek"))
         self.assertEqual(screen_note("private"), "")
+
+    def test_the_summary_starts_each_line_like_its_buttons(self) -> None:
+        from dmbot.ui.logic import settings_summary
+
+        lines = settings_summary("2024", "2014", True, "peek")
+        for line, words in zip(
+            lines, ("Main rules", "If missing", "Optional rules", "DM screen"), strict=True
+        ):
+            self.assertTrue(line.startswith(f"• **{words}"), line)
+
+    def test_campaign_names_are_cut_for_a_phone(self) -> None:
+        from dmbot.ui.logic import NAME_LABEL_MAX, name_label
+
+        self.assertEqual(name_label("Rime of the Frostmaiden"), "Rime of the Frostmaiden")
+        long = name_label("The Very Long and Winding Campaign of the Western Marches")
+        self.assertEqual(len(long), NAME_LABEL_MAX)
+        self.assertTrue(long.endswith("…"))
 
 
 class VoiceDefault(unittest.TestCase):

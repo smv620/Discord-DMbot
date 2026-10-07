@@ -17,6 +17,11 @@ from dmbot.transcription.config import Engine
 BUTTON_LABEL_MAX = 80
 OPTION_LABEL_MAX = 100
 SELECT_OPTIONS_MAX = 25
+# What a phone shows of a button or menu choice before cutting it off (#112). Labels
+# DMbot writes itself stay within this. Names people chose (a campaign's) are cut to
+# NAME_LABEL_MAX, only in menu lists, which open full-width; never in buttons.
+PHONE_LABEL_MAX = 25
+NAME_LABEL_MAX = 32
 
 NO_CAMPAIGN_ACCESS = "Only this campaign's DM (or a server manager) can do that."
 
@@ -65,14 +70,18 @@ def played_line(campaign: Campaign) -> str:
     return f"last played <t:{campaign.last_played_at}:f>"
 
 
+def name_label(name: str) -> str:
+    """A campaign's name in a button or menu, short enough for a phone."""
+    return shorten(name, NAME_LABEL_MAX)
+
+
 def option_description(campaign: Campaign, now: int) -> str:
     if campaign.last_played_at is None:
         return "Not played yet"
     return shorten(f"Last played {ago(campaign.last_played_at, now)}", OPTION_LABEL_MAX)
 
 
-def continue_label(campaign: Campaign) -> str:
-    return shorten(f"▶ Continue: {campaign.name}", BUTTON_LABEL_MAX)
+CONTINUE_LABEL = "▶ Continue last campaign"  # the message above names it
 
 
 def default_voice_channel(
@@ -95,42 +104,55 @@ def ruleset_label(ruleset: str) -> str:
     return RULESETS.get(ruleset, ruleset)
 
 
+def fallback_words(fallback: str) -> str:
+    """What happens when the main rules don't cover something, as its buttons say it."""
+    if fallback == FALLBACK_NONE:
+        return "skip it, use only the main rules"
+    return f"use the {ruleset_label(fallback)}"
+
+
 def settings_summary(
     target: str, fallback: str, optional_rules: bool, visibility: str
 ) -> list[str]:
+    """The settings in full, in the message above the buttons (message text wraps on a
+    phone; buttons don't). Each line starts with the words its buttons start with."""
     return [
         f"• **Main rules:** {ruleset_label(target)}",
-        f"• **If the main rules don't cover something:** {ruleset_label(fallback)}",
-        "• **Optional rules** from Xanathar's and Tasha's (where the main rules don't "
-        f"cover them): {'on' if optional_rules else 'off'}",
-        f"• **Who can see the DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
+        f"• **If missing** (the main rules don't cover something): {fallback_words(fallback)}",
+        f"• **Optional rules** from Xanathar's and Tasha's: {'on' if optional_rules else 'off'}",
+        f"• **DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
     ]
 
 
-# Menu choices that still make sense after a choice is made (Discord then hides the
-# menu's placeholder, so each option must say what it's about).
+# Button labels for the new-campaign settings: one row of buttons per setting. Each says
+# what it's about, and all fit a phone (PHONE_LABEL_MAX, #112); the message above explains.
 
 
 def main_rules_choices() -> dict[str, str]:
-    return {k: f"Main rules: {v}" for k, v in RULESETS.items()}
+    return {k: f"Main rules: {k}" for k in RULESETS}
 
 
 def fallback_choices(target: str) -> dict[str, str]:
-    choices = {
-        k: f"If the main rules don't cover it: {v}" for k, v in RULESETS.items() if k != target
-    }
-    choices[FALLBACK_NONE] = "If the main rules don't cover it: use the main rules only"
+    choices = {k: f"If missing: use {k}" for k in RULESETS if k != target}
+    choices[FALLBACK_NONE] = "If missing: skip it"
     return choices
 
 
 OPTIONAL_RULES_CHOICES = {
-    "on": "Optional rules: on (recommended)",
+    "on": "Optional rules: on",
     "off": "Optional rules: off",
 }
 
+_SCREEN_SHORT = {"private": "only the DM", "peek": "players peek", "open": "everyone"}
+
 
 def visibility_choices() -> dict[str, str]:
-    return {k: f"DM screen: {v}" for k, v in DM_SCREEN_VISIBILITY.items()}
+    return {k: f"DM screen: {_SCREEN_SHORT[k]}" for k in DM_SCREEN_VISIBILITY}
+
+
+def chosen_label(label: str, chosen: bool) -> str:
+    """The chosen button is marked with a tick as well as its colour."""
+    return f"✓ {label}" if chosen else label
 
 
 def screen_note(visibility: str) -> str:

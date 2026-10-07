@@ -1,9 +1,10 @@
 """The /dmbot commands' first steps, with fake Discord interactions."""
 
 import json
+import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -130,3 +131,93 @@ class CommandTests(DatabaseTest):
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         sent = it.followup.send.call_args.kwargs["file"]
         self.assertTrue(sent.filename.endswith(".dmbot.json"))
+
+
+PRESS: Any = SimpleNamespace()  # a button press; the view only redraws itself
+
+
+class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
+    """#112: the settings are short buttons that fit a phone, one row per setting."""
+
+    def labels(self, view: Any) -> dict[int, list[str]]:
+        rows: dict[int, list[str]] = {}
+        for item in list(view.children):
+            rows.setdefault(item.row, []).append(item.label)
+        return rows
+
+    async def tap(self, view: Any, label: str) -> AsyncMock:
+        (button,) = [i for i in list(view.children) if i.label == label]
+        with patch.object(cmds, "_replace", AsyncMock()) as replaced:
+            await button.callback(PRESS)
+        return replaced
+
+    async def test_one_row_per_setting_and_the_recommended_ones_are_ticked(self) -> None:
+        from dmbot.ui.logic import PHONE_LABEL_MAX
+
+        view = cmds.NewCampaignSettings("Frostmaiden")
+        self.assertEqual(
+            self.labels(view),
+            {
+                0: ["✓ Main rules: 2024", "Main rules: 2014"],
+                1: ["✓ If missing: use 2014", "If missing: skip it"],
+                2: ["✓ Optional rules: on", "Optional rules: off"],
+                3: ["DM screen: only the DM", "✓ DM screen: players peek", "DM screen: everyone"],
+                4: ["▶ Create campaign"],
+            },
+        )
+        children: list[Any] = list(view.children)
+        self.assertFalse(any(isinstance(i, discord.ui.Select) for i in children))
+        for item in children:
+            self.assertLessEqual(len(item.label or ""), PHONE_LABEL_MAX)
+        ticked = [i for i in children if (i.label or "").startswith("✓")]
+        self.assertTrue(all(i.style is discord.ButtonStyle.primary for i in ticked))
+        ids = [i.custom_id for i in children]
+        self.assertEqual(len(set(ids)), len(ids))
+        again: list[Any] = list(cmds.NewCampaignSettings("Frostmaiden").children)
+        self.assertEqual(ids, [i.custom_id for i in again])  # the same ids after a redraw
+
+    async def test_one_tap_changes_a_setting(self) -> None:
+        view = cmds.NewCampaignSettings("Frostmaiden")
+        replaced = await self.tap(view, "Main rules: 2014")
+        self.assertEqual(view.target, "2014")
+        self.assertEqual(view.fallback, "2024")  # it can't be the same as the main rules
+        rows = self.labels(view)
+        self.assertEqual(rows[0], ["Main rules: 2024", "✓ Main rules: 2014"])
+        self.assertEqual(rows[1], ["✓ If missing: use 2024", "If missing: skip it"])
+        self.assertIn("**Main rules:** 2014 rules (older)", replaced.call_args.args[1])
+        await self.tap(view, "Main rules: 2024")  # not the last button in its row
+        self.assertEqual(view.target, "2024")
+        await self.tap(view, "DM screen: only the DM")  # the first of three
+        self.assertEqual(view.visibility, "private")
+        await self.tap(view, "Optional rules: off")
+        self.assertFalse(view.optional)
+
+    async def test_skip_it_stays_when_the_main_rules_change(self) -> None:
+        view = cmds.NewCampaignSettings("Frostmaiden")
+        await self.tap(view, "If missing: skip it")
+        await self.tap(view, "Main rules: 2014")
+        self.assertEqual(view.fallback, "none")
+        self.assertIn("✓ If missing: skip it", self.labels(view)[1])
+
+    async def test_create_saves_what_was_chosen(self) -> None:
+        view = cmds.NewCampaignSettings("Frostmaiden")
+        for label in ("Main rules: 2014", "If missing: skip it", "Optional rules: off",
+                      "DM screen: everyone"):  # fmt: skip
+            await self.tap(view, label)
+        create = AsyncMock(return_value=SimpleNamespace())
+        it: Any = SimpleNamespace(
+            guild=SimpleNamespace(id=GUILD),
+            user=SimpleNamespace(id=DM),
+            client=SimpleNamespace(campaigns=SimpleNamespace(create=create)),
+        )
+        with patch.object(cmds, "show_voice_step", AsyncMock()):
+            await view._create(it)
+        self.assertEqual(
+            create.call_args.kwargs,
+            {
+                "target_ruleset": "2014",
+                "fallback_ruleset": "none",
+                "optional_rules_default": False,
+                "dm_screen_visibility": "open",
+            },
+        )
