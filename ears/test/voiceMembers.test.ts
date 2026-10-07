@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { afterEach, beforeEach, mock, test } from "node:test";
 import { Allowlist } from "../src/consent.js";
+import { UNKNOWN_RETRY_MS } from "../src/voice.js";
 import { applyConsentList, noteVoiceMembers, type MemberNotes, type VoiceMember } from "../src/voiceMembers.js";
 
 function notes(): MemberNotes & { noted: [string, boolean][] } {
@@ -18,6 +19,9 @@ const bot = { user: { bot: true } };
 const everyone = (): boolean => true;
 const noLookup = (): Promise<undefined> => assert.fail("no lookup expected");
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+beforeEach(() => mock.timers.enable({ apis: ["Date"], now: 1_000_000 }));
+afterEach(() => mock.timers.reset());
 
 test("cached members in the channel are noted at once, without a lookup", () => {
   const session = notes();
@@ -91,18 +95,25 @@ test("a second note while a lookup is running doesn't ask Discord again", async 
   assert.deepEqual(session.noted, [["1", false]]);
 });
 
-test("a lookup that found nobody can run again later", async () => {
+test("someone Discord couldn't find isn't looked up again on every mute, only later", async () => {
   const session = notes();
   const looked: string[] = [];
   const lookUp = (id: string): Promise<undefined> => {
     looked.push(id);
-    return Promise.resolve(undefined);
+    return id === "2" ? Promise.reject(new Error("Discord is down")) : Promise.resolve(undefined);
   };
-  const states: VoiceMember[] = [{ id: "1", channelId: "c1", member: null }];
+  const states: VoiceMember[] = [
+    { id: "1", channelId: "c1", member: null },
+    { id: "2", channelId: "c1", member: null },
+  ];
   noteVoiceMembers(session, states, everyone, lookUp);
   await flush();
+  mock.timers.tick(UNKNOWN_RETRY_MS - 1);
+  noteVoiceMembers(session, states, everyone, lookUp); // a mute, a consent push...
+  assert.deepEqual(looked, ["1", "2"]);
+  mock.timers.tick(1);
   noteVoiceMembers(session, states, everyone, lookUp);
-  assert.deepEqual(looked, ["1", "1"]);
+  assert.deepEqual(looked, ["1", "2", "1", "2"]);
 });
 
 function table(): MemberNotes & { noted: [string, boolean][]; events: string[]; dropSpeakers(ids: readonly string[]): void } {

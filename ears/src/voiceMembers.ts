@@ -1,5 +1,5 @@
 import type { Allowlist } from "./consent.js";
-import type { BotLookup } from "./voice.js";
+import { UNKNOWN_RETRY_MS, type BotLookup } from "./voice.js";
 
 /** The parts of a discord.js VoiceState needed to tell a bot from a person. */
 export interface VoiceMember {
@@ -15,15 +15,19 @@ export interface MemberNotes {
   knows(userId: string): boolean;
 }
 
-/** Lookups still running, per session, so a second note doesn't ask Discord again. */
-const inFlight = new WeakMap<MemberNotes, Set<string>>();
+/**
+ * Per session, people looked up here and when they may be asked about again: never
+ * while a lookup runs, and only after UNKNOWN_RETRY_MS if Discord couldn't find them,
+ * so a mute or deafen doesn't ask again each time.
+ */
+const askedUntil = new WeakMap<MemberNotes, Map<string, number>>();
 
 /**
  * Note whether each person in the session's channel is a bot, before they speak, so
  * capture can start on their first packet. Someone discord.js hasn't cached is looked
  * up in the background, but only if they've opted in and aren't known yet (voice
- * states change on every mute or deafen); anyone who can't be found stays unknown and
- * is looked up again if they speak.
+ * states change on every mute or deafen); anyone who can't be found stays unknown, is
+ * looked up here again after a while, and is looked up again at once if they speak.
  */
 export function noteVoiceMembers(
   session: MemberNotes,
@@ -39,18 +43,22 @@ export function noteVoiceMembers(
     }
     const userId = state.id;
     if (session.knows(userId) || !optedIn(userId)) continue;
-    let running = inFlight.get(session);
-    if (!running) inFlight.set(session, (running = new Set()));
-    if (running.has(userId)) continue;
-    running.add(userId);
-    void lookUpBot(userId)
-      .then(
-        (isBot) => {
-          if (isBot !== undefined) session.noteMember(userId, isBot);
-        },
-        () => undefined, // stays unknown: looked up again when they speak
-      )
-      .finally(() => running.delete(userId));
+    let asked = askedUntil.get(session);
+    if (!asked) {
+      asked = new Map();
+      askedUntil.set(session, asked);
+    }
+    if ((asked.get(userId) ?? 0) > Date.now()) continue;
+    asked.set(userId, Infinity);
+    const found = (isBot: boolean | undefined): void => {
+      if (isBot === undefined) {
+        asked.set(userId, Date.now() + UNKNOWN_RETRY_MS); // looked up at once if they speak
+        return;
+      }
+      asked.delete(userId);
+      session.noteMember(userId, isBot);
+    };
+    void lookUpBot(userId).then(found, () => found(undefined));
   }
 }
 

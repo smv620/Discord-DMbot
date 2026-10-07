@@ -67,6 +67,8 @@ class StoreTests(DatabaseTest):
         one = await self.store.session(GUILD, new)
         assert one is not None
         self.assertEqual((one.number, one.lines), (2, 3))
+        # #317: the /transcript picker's count, for every campaign at once.
+        self.assertEqual(await self.store.session_counts(GUILD), {self.campaign.id: 2})
 
     async def test_removing_lines_counts_again(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
