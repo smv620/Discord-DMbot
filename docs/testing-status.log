@@ -8,7 +8,14 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued)
+Deploy development @ 8ad6e70 (ee1bb03 is live; two PRs since; rebuild ears and
+core). Check:
+  - #337 (dev2, #318): ears image built with `npm ci`. Confirm ears starts and
+    connects to core; nothing else changes.
+  - #329 (CloudDev, #317): ears waits 30 s before re-asking about a member the lookup
+    couldn't find (log line "N opted out" on a consent push); /transcript shows "No
+    transcripts yet" for a campaign played with transcripts off; "No saved session to
+    remove" now at INFO. Nothing to do live beyond a glance at the logs.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
