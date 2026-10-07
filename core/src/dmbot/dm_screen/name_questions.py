@@ -6,8 +6,8 @@ or once the session ended, a press just says the question is closed. Only the
 campaign's DMs may answer; the bot does the rest (`DMBot.answer_name_question`).
 
 Once answered, the message keeps an **↩️ Undo** button. Its ID carries the campaign and
-the saved change, so it works after a restart; the same people who manage the
-campaign's names may press it.
+the saved change, so it works after a restart; like answering, only the campaign's DMs
+may press it.
 
 Register with `bot.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton)`.
 """
@@ -28,7 +28,7 @@ from dmbot.transcript.cleaner import MAX_OPTIONS
 log = logging.getLogger(__name__)
 
 NO_PINGS = discord.AllowedMentions.none()
-FAILED = "Something went wrong saving that. Try again in a moment."
+FAILED = "Something went wrong. Try again in a moment."
 
 
 class NameQuestionButton(
@@ -105,21 +105,47 @@ class NameAnswerUndoButton(
         return cls(match["campaign"], int(match["batch"]))
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        from dmbot.ui.names import _campaign_for, _memory, changed  # the names panel's rules
-
-        campaign = await _campaign_for(interaction, self.campaign_id)
-        memory = _memory(interaction)
+        bot: Any = interaction.client
+        campaigns, memory = getattr(bot, "campaigns", None), getattr(bot, "memory", None)
+        guild = interaction.guild
+        campaign = (
+            await campaigns.get(guild.id, self.campaign_id)
+            if guild is not None and campaigns is not None
+            else None
+        )
         if campaign is None or memory is None:
-            return  # they were told why
+            await _tell(interaction, questions.EXPIRED)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:  # DM-only, like answering
+            await _tell(interaction, questions.UNDO_ONLY_DM)
+            return
+        heard = _quoted(interaction.message.content if interaction.message else "")
         await interaction.response.defer()
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
         except MemoryRuleError:
             await interaction.followup.send(questions.UNDO_FAILED, ephemeral=True)
             return
-        changed(interaction, campaign)
+        except Exception:
+            log.exception("Couldn't undo the DM's answer to a name question")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        lookup = getattr(bot, "lookup", None)
+        if lookup is not None:
+            lookup.mark_stale(campaign.guild_id, campaign.id)  # the next line sees it
         with contextlib.suppress(discord.HTTPException):
-            await interaction.edit_original_response(content=questions.UNDONE, view=None)
+            await interaction.edit_original_response(
+                content=questions.undone_text(heard), view=None, allowed_mentions=NO_PINGS
+            )
+
+
+_QUOTED = re.compile(r'"([^"]+)"')
+
+
+def _quoted(answer: str) -> str | None:
+    """The heard words in an answer message ('✅ Got it: from now on, "Marin" is…')."""
+    found = _QUOTED.search(answer)
+    return found.group(1) if found else None
 
 
 async def _tell(interaction: discord.Interaction, text: str) -> None:

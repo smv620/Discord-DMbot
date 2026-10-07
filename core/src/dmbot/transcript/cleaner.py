@@ -36,7 +36,7 @@ import difflib
 import logging
 import re
 from collections.abc import Collection, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, name_key
@@ -84,6 +84,7 @@ class Question:
     end: int
     heard: str
     options: tuple[tuple[str, str], ...]  # (entity ID, its own name), most alike first
+    context: str = ""  # the bit of the line around the words, for the question
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,12 +230,25 @@ def clean(
         for fix in [*_known_names(lookup, heard, person_keys), *by_sound]
         if not _near_secret(lookup, words, fix.start, fix.end, near)
     ]
-    questions = tuple(q for q in asking if not _near_secret(lookup, words, q.start, q.end, near))
+    questions = tuple(
+        replace(q, context=_around(heard, q.start, q.end))
+        for q in asking
+        if not _near_secret(lookup, words, q.start, q.end, near)
+    )
     fixes.sort(key=lambda f: f.start)
     text, fixes = _without_secrets(lookup, heard, fixes, near)
     if near.ran_out:
         log.debug("Secret-name check ran out for a line: %d fix(es) kept", len(fixes))
     return Cleaned(text, tuple(fixes), questions)
+
+
+def _around(heard: str, start: int, end: int, reach: int = 30) -> str:
+    """A few words either side of the heard words, so the DM sees what was said."""
+    left = (
+        heard[max(0, start - reach) : start].split(" ", 1)[-1] if start > reach else heard[:start]
+    )
+    right = heard[end : end + reach].rsplit(" ", 1)[0] if len(heard) > end + reach else heard[end:]
+    return " ".join(f"{left}{heard[start:end]}{right}".split())
 
 
 def _apply(heard: str, fixes: list[Fix]) -> tuple[str, list[tuple[int, int]]]:

@@ -92,7 +92,7 @@ from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.scan import find_new_names
-from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
+from dmbot.memory.scene import PLAYER_CHARACTER, HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SavedSession, SessionStore
@@ -481,7 +481,7 @@ class DMBot(commands.AutoShardedBot):
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
-            if table.questions.drop_speaker(user_id) is not None:  # their open question goes
+            if table.questions.drop_speaker(user_id, time.monotonic()) is not None:
                 self._track(self._close_question(table), "name-question")
             for key in [k for k in table.heard_counts if k[1] == user_id]:
                 del table.heard_counts[key]
@@ -695,8 +695,11 @@ class DMBot(commands.AutoShardedBot):
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.
         self._ending.setdefault(guild_id, []).append(table)
-        if table.questions.close() is not None:  # an unanswered "Did they mean…?" ends too
-            self._track(self._close_question(table, name_questions.EXPIRED), "name-question")
+        # An unanswered "Did they mean…?" ends too (an answer being saved still finishes).
+        if not table.questions.answering:
+            ended = table.questions.close(name_questions.ENDED, time.monotonic())
+            if ended is not None:
+                self._track(self._close_question(table, self._not_answered(table, ended)), "q")
         for utterance in table.segmenter.flush_all():
             self.pipeline.enqueue(utterance)
         # In the background: /dmbot stop must answer within Discord's 3 seconds. Kept
@@ -1517,49 +1520,85 @@ class DMBot(commands.AutoShardedBot):
         return result
 
     def _offer_question(self, table: Table, speaker: int, result: Cleaned) -> None:
-        """Ask the DM "Did they mean…?" about this line, if there's something to ask and
-        no question open (#296). An unanswered one expires first. Only for the running
-        session: a stopped one still finishing can't be answered any more."""
-        if self.tables.get(table.guild_id) is not table:
+        """Ask the DM "Did they mean…?" about this line, if there's something worth
+        asking (#296): see `QuestionBook` for the limits. An unanswered one expires
+        first. Only for the running session: a stopped one still finishing can't be
+        answered any more."""
+        if self.tables.get(table.guild_id) is not table or table.name_lookup is None:
             return
         now = time.monotonic()
-        if table.questions.expire(now) is not None:
-            self._track(self._close_question(table, name_questions.NOT_ANSWERED), "name-question")
-        asked = table.questions.offer(speaker, result.questions, now)
+        expired = table.questions.expire(now)
+        if expired is not None:
+            self._track(self._close_question(table, self._not_answered(table, expired)), "q")
+        if not result.questions:
+            return
+        lookup, scene = table.name_lookup, table.scene.scene(now)
+        matters = {
+            entity_id
+            for question in result.questions
+            for entity_id, _ in question.options
+            if entity_id in scene
+            or getattr(lookup.entities.get(entity_id), "type", None) == PLAYER_CHARACTER
+        }
+        asked = table.questions.offer(speaker, result.questions, now, matters)
         if asked is not None:
             self._track(self._ask_dm(table, asked), "name-question")
+
+    def _not_answered(self, table: Table, asked: name_questions.Asked) -> str:
+        """The one line an unanswered question shrinks to: their words only while they
+        are still recorded."""
+        if not self.consent.has_consent(table.guild_id, asked.speaker):
+            return name_questions.GONE
+        return name_questions.not_answered_text(discord.utils.escape_markdown(asked.heard))
 
     async def _ask_dm(self, table: Table, asked: name_questions.Asked) -> None:
         """Post "Did they mean…?" to the DM screen (#296). Consent is checked again
         first: this runs after the line was delivered."""
+        book = table.questions
         if not self.consent.has_consent(table.guild_id, asked.speaker):
-            if table.questions.is_open(asked.id):
-                table.questions.close()
+            if book.is_open(asked.id):
+                book.close(name_questions.STOPPED, time.monotonic())
             return
         name = self.name_of(table.guild_id, asked.speaker)
         speaker = "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
-        text = name_questions.question_text(speaker, discord.utils.escape_markdown(asked.heard))
+        md = discord.utils.escape_markdown
+        text = name_questions.question_text(speaker, md(asked.heard), md(asked.context))
         message = await self.post_message(
             table.screen_channel_id, text, question_view(table.guild_id, asked)
         )
         if message is None:
-            if table.questions.is_open(asked.id):
-                table.questions.close()  # not posted: free the slot for the next one
-                table.questions.asked_keys.discard(name_key(asked.heard))  # may ask again
+            if book.is_open(asked.id):  # not posted: free the slot, and ask again later
+                book.close(name_questions.NOT_POSTED, time.monotonic())
             return
-        if table.questions.is_open(asked.id):
+        if book.is_open(asked.id):
             table.question_message = message
-        else:  # closed while posting (they stopped being recorded, or the session ended)
-            with contextlib.suppress(discord.HTTPException):
-                await message.edit(content=name_questions.EXPIRED, view=None)
+            return
+        # Closed while posting: say how, without their words if they stopped.
+        closed = (
+            name_questions.GONE
+            if book.why_closed(asked.id) == name_questions.STOPPED
+            else self._not_answered(table, asked)
+        )
+        with contextlib.suppress(discord.HTTPException):
+            await message.edit(content=closed, view=None)
 
     async def _close_question(self, table: Table, text: str = name_questions.GONE) -> None:
-        """Take the open question's words and buttons down (they stopped being recorded,
-        nobody answered, or the session ended)."""
+        """Take the open question's buttons down, saying why (they stopped being
+        recorded, nobody answered, or the session ended)."""
         message, table.question_message = table.question_message, None
         if message is not None:
             with contextlib.suppress(discord.HTTPException):
                 await message.edit(content=text, view=None)
+
+    def _session_table(self, guild_id: int, question_id: str) -> Table | None:
+        """The table, running or still finishing, whose question this is."""
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if table is not None and (
+                table.questions.is_open(question_id)
+                or table.questions.why_closed(question_id) is not None
+            ):
+                return table
+        return None
 
     async def answer_name_question(
         self, guild_id: int, question_id: str, pick: str, user_id: int
@@ -1568,8 +1607,10 @@ class DMBot(commands.AutoShardedBot):
         are handled silently from now on. What to tell them, whether the question is now
         closed (its message then shows the answer), and what Undo takes back (campaign,
         change). The question stays open while saving, so it can still be taken down if
-        its speaker stops being recorded; consent is checked before and after the save."""
-        table = self.tables.get(guild_id)
+        its speaker stops being recorded; consent is checked before and after the save.
+        A correction the DM made stays if the speaker later stops being recorded: the DM
+        wrote it, and it names no one."""
+        table = self._session_table(guild_id, question_id)
         if table is None or table.campaign_id is None or self.memory is None:
             return name_questions.EXPIRED, True, None
         book = table.questions
@@ -1581,14 +1622,16 @@ class DMBot(commands.AutoShardedBot):
         if begun is name_questions.Begin.BUSY:
             return name_questions.BUSY, False, None
         asked = book.open
-        assert begun is name_questions.Begin.OK and asked is not None
+        if begun is not name_questions.Begin.OK or asked is None:
+            return name_questions.EXPIRED, True, None
+        now = time.monotonic
         if not self.consent.has_consent(guild_id, asked.speaker):
-            book.close()
+            book.close(name_questions.STOPPED, now())
             table.question_message = None
             return name_questions.GONE, True, None
         keep = pick == name_questions.KEEP
         if not keep and not (pick.isdigit() and int(pick) < len(asked.options)):
-            book.close()
+            book.close(name_questions.ANSWERED, now())
             table.question_message = None
             return name_questions.EXPIRED, True, None
         campaign_id = table.campaign_id
@@ -1604,7 +1647,7 @@ class DMBot(commands.AutoShardedBot):
                 )
         except MemoryRuleError:  # the name was removed since: asking again won't help
             if book.is_open(question_id):
-                book.close()
+                book.close(name_questions.ANSWERED, now())
                 table.question_message = None
             return name_questions.NAME_GONE, True, None
         except Exception:
@@ -1612,16 +1655,17 @@ class DMBot(commands.AutoShardedBot):
             raise
         if self.lookup is not None:
             self.lookup.mark_stale(guild_id, campaign_id)  # the next line uses the answer
+        # No batch: it was already saved before, so there's nothing for Undo to take back.
         undo = (campaign_id, written.batch) if written.batch is not None else None
-        # After the save: if they stopped being recorded meanwhile, their words stay down.
-        if not book.is_open(question_id):
-            return name_questions.GONE, True, undo  # Stop already takes its message down
-        if not self.consent.has_consent(guild_id, asked.speaker):
-            book.close()
+        if book.is_open(question_id):
+            book.close(name_questions.ANSWERED, now())
             table.question_message = None
+        # After the save: if they stopped being recorded meanwhile, their words stay down
+        # (Stop already took the message down). A session that ended meanwhile is fine.
+        if book.why_closed(question_id) == name_questions.STOPPED or not self.consent.has_consent(
+            guild_id, asked.speaker
+        ):
             return name_questions.GONE, True, undo
-        book.close()
-        table.question_message = None
         heard = discord.utils.escape_markdown(asked.heard)
         if keep:
             answer = name_questions.kept_text(heard)

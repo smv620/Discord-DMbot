@@ -49,6 +49,9 @@ NOT_AVAILABLE = (
 NONE_YET = "No saved transcripts here yet. DMbot saves one every time it listens to a session."
 GONE = "That transcript isn't there anymore. Run `/transcript` to see what's saved."
 TOO_BIG = "This transcript is too big to send as one file. Ask whoever runs DMbot for help."
+TOO_BIG_BOTH = (
+    "Both versions together are too big to send at once. Try 📄 Cleaned or 🎙 As heard on its own."
+)
 FAILED = "Something went wrong getting that transcript. Try again in a moment."
 
 
@@ -56,13 +59,20 @@ FAILED = "Something went wrong getting that transcript. Try again in a moment."
 CHOICES: dict[str, tuple[tuple[str, ...], str]] = {
     "cleaned": ((export.CLEANED,), "📄 Cleaned"),
     "heard": ((export.AS_HEARD,), "🎙 As heard"),
-    "both": ((export.CLEANED, export.AS_HEARD), "Both (2 files)"),
+    "both": ((export.CLEANED, export.AS_HEARD), "📄🎙 Both"),
 }
 VERSION_HELP = (
     "📄 **Cleaned:** misheard names fixed (the easiest to read).\n"
     "🎙 **As heard:** word for word, before DMbot fixed any names."
 )
-WORD_FOR_WORD = "Want it word for word? Press 🎙 **As heard**."
+SENT = {
+    (export.CLEANED,): "📄 Here's the cleaned transcript: names spelled right. Open it in any "
+    "text app.",
+    (export.AS_HEARD,): "🎙 Here's the transcript as heard, word for word. Open it in any text app.",
+    (export.CLEANED, export.AS_HEARD): "📄🎙 Here are both versions: cleaned and as heard. "
+    "Open them in any text app.",
+}
+WORD_FOR_WORD = "Want the exact words? Press 🎙 **As heard**."
 
 
 def ended_text(campaign_name: str) -> str:
@@ -157,7 +167,7 @@ async def make_file(
         )
         total += len(data)
         if total > FILE_LIMIT:  # one message: both files together
-            return TOO_BIG
+            return TOO_BIG_BOTH if len(versions) > 1 and len(data) <= FILE_LIMIT else TOO_BIG
         name = export.file_name(campaign.name, session, version)
         files.append(discord.File(io.BytesIO(data), filename=name))
     return files
@@ -207,9 +217,7 @@ async def send_file(
         await _tell(interaction, result)
         return
     many = len(result) > 1
-    text = (
-        f"📄 Here's the transcript{' in both versions' if many else ''}. Open it in any text app."
-    )
+    text = SENT.get(versions, SENT[(export.AS_HEARD,)])
     extra: dict[str, Any] = {"files": result} if many else {"file": result[0]}
     if offer_as_heard:
         text += f"\n{WORD_FOR_WORD}"

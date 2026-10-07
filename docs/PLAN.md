@@ -643,12 +643,14 @@ plus the list of fixes between them.
   stored cleaned transcript and the downloads only.
 - **When DMbot stops,** the DM(s) and every player recorded **in that session** get a
   private message: "The session for **<campaign>** has ended. Download the transcript:"
-  **[📄 Cleaned]** **[🎙 As heard]** **[Both (2 files)]**, with one line explaining each
+  **[📄 Cleaned]** **[🎙 As heard]** **[📄🎙 Both]**, with one line explaining each
   ("Cleaned: names spelled right, off-topic chat left out." "As heard: exactly what
   DMbot heard, word for word."). It's a shortcut: **anyone in the server** can get the
   same choice with `/transcript`.
-  Before #296 it was one **[🎙 Download transcript]** button (old ones still work). The message adds
-  "If the DM fixes names later, download again for the updated version."
+  Before #296 it was one **[🎙 Download transcript]** button (old ones still work).
+  Later, once earlier lines are re-fixed after a correction, the message will add "If
+  the DM fixes names later, download again for the updated version." (not yet: a
+  correction applies from the next line only).
 - **The cleaned file starts with a note:** "DMbot fixed the spelling of some names. The
   'As heard' file has the exact words."
 - **Downloads use the transcript format** `[0:42:10] (Mia) {Cerric}: …` with time
@@ -1121,15 +1123,20 @@ consent check just made still holds:
     only suggested, and the words must not be next to a secret name. No scene is
     needed to ask. A question about a longer run of words never blocks a sure fix of
     fewer words.
-  - **Not flooding the DM screen:** one question is open at a time, each word is asked
-    about at most once per session, and a question nobody answers expires after 5
-    minutes ("Not answered, so the words stay as heard."), so the next one can be
-    asked.
+  - **Not flooding the DM screen:** one question is open at a time; after any question
+    closes (answered, expired or taken down) there is a 2½-minute cooldown; each word
+    is asked about at most once per session, and only once it has been heard a second
+    time this session or may be a name in the scene (said in the last ~10 minutes, or
+    a player's character). A question nobody answers expires after 5 minutes and
+    shrinks to one line (`⌛ Not answered: "Marin" stays as heard.`). When the
+    verbosity setting lands, questions must check it.
   - **Answering:** only the campaign's DMs can answer. A name becomes a fixed spelling
     (`add_correction`, fix, source DM); **Keep** becomes a keep rule. Either way the
     same words are handled silently from the next line, and the message turns into the
-    answer with **↩️ Undo**. Undo takes back the saved change and works after a
-    restart.
+    answer with **↩️ Undo**, DM-only like answering. Undo takes back the saved change
+    and works after a restart; an answer that was already saved has no Undo.
+    **A correction the DM made stays if the speaker later stops being recorded** (the
+    DM wrote it, and it names no one; decided 2026-10-07).
   - **While saving:** the question stays open, so a second press gets "Already
     saving", a failed save can be tried again, and the question can still be taken
     down.
@@ -1142,7 +1149,7 @@ consent check just made still holds:
     verbosity level.
 - **Cleaned and both downloads:**
   - **At the end of a session:** the message has **[📄 Cleaned]**, **[🎙 As heard]** and
-    **[Both (2 files)]**, one line explaining each. Buttons sent before this still give
+    **[📄🎙 Both]**, one line explaining each. Buttons sent before this still give
     the "as heard" file.
   - **`/transcript`:** sends the cleaned file as soon as the session is picked, with
     **🎙 As heard** under it.

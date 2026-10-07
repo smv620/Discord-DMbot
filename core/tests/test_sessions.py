@@ -962,6 +962,9 @@ class SaveAndResume(SessionTests):
         await self.consent.grant(GUILD, PLAYER)
         table, _ = await self.joined_with_transcript()
         table.name_lookup = self.two_alike()
+        import time
+
+        table.scene.note(["a" * 32], DM, time.monotonic())  # Maren came up: it matters
         message = MagicMock(edit=AsyncMock())
         self.bot.post_message = AsyncMock(return_value=message)  # type: ignore[method-assign]
         memory: Any = MagicMock(add_correction=AsyncMock(return_value=MagicMock(batch=41)))
@@ -976,7 +979,7 @@ class SaveAndResume(SessionTests):
         table, _, posted, _ = await self.asked_about_marin()
         channel, text, view = posted.await_args.args
         self.assertEqual(channel, SCREEN)  # the DM screen, never the transcript channel
-        self.assertIn('say "Marin".**', text)
+        self.assertIn('say "Marin"** ("…then Marin speaks…")', text)
         labels = [item.item.label for item in view.children]
         self.assertEqual(sorted(labels[:2]), ["Maren", "Marron"])
         self.assertEqual(labels[2], 'Keep "Marin"')
@@ -1064,7 +1067,7 @@ class SaveAndResume(SessionTests):
         self.assertIn("closed", text)
         memory.add_correction.assert_not_awaited()
 
-    async def test_an_unanswered_question_expires_for_the_next(self) -> None:
+    async def test_an_unanswered_question_expires_then_a_cooldown(self) -> None:
         table, message, posted, _ = await self.asked_about_marin()
         asked = table.questions.open
         assert asked is not None
@@ -1072,8 +1075,15 @@ class SaveAndResume(SessionTests):
         self.said(table, "then Marrin agrees")
         for _ in range(5):
             await asyncio.sleep(0)
-        self.assertIn("Not answered", message.edit.await_args.kwargs["content"])
-        self.assertEqual(posted.await_count, 2)  # the next word could be asked about
+        self.assertEqual(
+            message.edit.await_args.kwargs["content"], '⌛ Not answered: "Marin" stays as heard.'
+        )
+        self.assertEqual(posted.await_count, 1)  # the cooldown: not straight away
+        table.questions.closed_at = -10_000.0  # the cooldown has passed
+        self.said(table, "then Marrin agrees")
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertEqual(posted.await_count, 2)
 
     async def test_stopping_the_session_closes_its_question(self) -> None:
         table, message, _, _ = await self.asked_about_marin()
@@ -1081,7 +1091,31 @@ class SaveAndResume(SessionTests):
         for _ in range(3):
             await asyncio.sleep(0)
         self.assertIsNone(table.questions.open)
-        self.assertNotIn("Marin", message.edit.await_args.kwargs["content"])
+        self.assertIn("Not answered", message.edit.await_args.kwargs["content"])
+
+    async def test_the_session_ending_while_the_answer_saves_still_says_got_it(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+
+        async def end_meanwhile(*_: Any, **__: Any) -> Any:
+            await self.bot.stop_table(GUILD, "test")
+            return MagicMock(batch=8)
+
+        memory.add_correction.side_effect = end_meanwhile
+        text, done, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        self.assertIn("Got it", text)  # not "stopped being recorded": they didn't
+        self.assertEqual(undo, (table.campaign_id, 8))
+
+    async def test_an_answer_saved_before_offers_no_undo(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        memory.add_correction.return_value = MagicMock(batch=None)  # already there
+        _, done, undo = await self.bot.answer_name_question(GUILD, asked.id, "keep", DM)
+        self.assertTrue(done)
+        self.assertIsNone(undo)
 
     async def test_lower_case_words_count_even_without_the_names(self) -> None:
         await self.consent.grant(GUILD, PLAYER)

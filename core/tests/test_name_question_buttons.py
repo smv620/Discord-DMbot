@@ -14,6 +14,8 @@ from dmbot.transcript import questions
 
 GUILD = 1234
 ASKED = questions.Asked("0a1b2c3d", 8, "Marin", (("a" * 32, "Maren"), ("b" * 32, "Marron")), 0.0)
+CAMPAIGN = "c" * 32
+DM_ID, PLAYER_ID = 7, 8
 
 
 def interaction(guild_id: int = GUILD, client: Any = None) -> Any:
@@ -73,6 +75,55 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
             await NameQuestionButton(GUILD, ASKED.id, "keep", "Keep").callback(it)
         self.assertIn("Try again", it.followup.send.await_args.args[0])
         it.edit_original_response.assert_not_awaited()
+
+
+class UndoTest(unittest.IsolatedAsyncioTestCase):
+    def bot(self, *, undo: Any = None) -> Any:
+        campaign = MagicMock(guild_id=GUILD, id=CAMPAIGN, dm_user_ids=frozenset({DM_ID}))
+        return MagicMock(
+            campaigns=MagicMock(get=AsyncMock(return_value=campaign)),
+            memory=MagicMock(undo=AsyncMock(side_effect=undo)),
+            lookup=MagicMock(),
+        )
+
+    def press(self, bot: Any, user: int) -> Any:
+        it = interaction(client=bot)
+        it.guild = MagicMock(id=GUILD)
+        it.user = MagicMock(id=user)
+        it.message = MagicMock(content='✅ Got it: from now on, "Marin" is written **Maren**.')
+        return it
+
+    async def test_only_the_dm_can_undo(self) -> None:
+        bot = self.bot()
+        it = self.press(bot, PLAYER_ID)
+        await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
+        self.assertEqual(it.response.send_message.await_args.args[0], questions.UNDO_ONLY_DM)
+        bot.memory.undo.assert_not_awaited()
+
+    async def test_undo_takes_back_that_change(self) -> None:
+        bot = self.bot()
+        it = self.press(bot, DM_ID)
+        await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
+        bot.memory.undo.assert_awaited_once_with(GUILD, CAMPAIGN, 5)
+        bot.lookup.mark_stale.assert_called_once_with(GUILD, CAMPAIGN)
+        content = it.edit_original_response.await_args.kwargs["content"]
+        self.assertIn('"Marin" stays as heard again', content)
+
+    async def test_changed_since(self) -> None:
+        from dmbot.memory.models import MemoryRuleError
+
+        bot = self.bot(undo=MemoryRuleError("changed"))
+        it = self.press(bot, DM_ID)
+        await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
+        self.assertEqual(it.followup.send.await_args.args[0], questions.UNDO_FAILED)
+        it.edit_original_response.assert_not_awaited()
+
+    async def test_a_database_error_still_answers(self) -> None:
+        bot = self.bot(undo=RuntimeError("down"))
+        it = self.press(bot, DM_ID)
+        with self.assertLogs("dmbot.dm_screen.name_questions", "ERROR"):
+            await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
+        self.assertIn("Try again", it.followup.send.await_args.args[0])
 
 
 if __name__ == "__main__":
