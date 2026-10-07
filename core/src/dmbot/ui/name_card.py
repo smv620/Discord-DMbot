@@ -64,6 +64,9 @@ from dmbot.ui.names import (
 
 log = logging.getLogger(__name__)
 ALSO_CALLED = "➕ Also called…"  # adds another name for this one
+TRY_AGAIN = (
+    "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
+)
 
 CARD_MAX = 1900  # under Discord's 2,000 characters
 SHOWN = 3  # per section, then "… and N more"
@@ -246,7 +249,10 @@ async def show_card(
         names, entity_id, connections, secrets=secrets, player=player, full=full, limit=limit
     )
     if text is None or entity is None:
-        await _tell(interaction, GONE)
+        if replace:  # never leave the message pressed on a step that's over
+            await _replace(interaction, GONE, None)
+        else:
+            await _tell(interaction, GONE)
         return
     longer = not full and text != card_text(
         names, entity_id, connections, secrets=secrets, player=player, full=True, limit=limit
@@ -666,10 +672,17 @@ class UndoButton(
         if entity is None or entity.status not in (REJECTED, MERGED):
             await _tell(interaction, "Nothing to undo: that was already undone or changed.")
             return
+        # Answer Discord at once (#351): a big undo can take longer than its 3 seconds.
+        # Saying so in place also takes the button away, so it isn't pressed twice.
+        await _replace(interaction, f"↩️ Undoing… bringing back **{_md(entity.name)}**.", None)
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
         except MemoryRuleError:
-            await _tell(
+            now = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
+            if now is not None and now.status not in (REJECTED, MERGED):  # a second press
+                await _replace(interaction, f"↩️ **{_md(entity.name)}** is already back.", None)
+                return
+            await _replace(
                 interaction,
                 f"Couldn't undo: **{_md(entity.name)}** was changed again since. "
                 + (
@@ -678,7 +691,12 @@ class UndoButton(
                     else "To split them, open the card's Edit other names, press ✖ Not this "
                     "name, add it again with ➕ Add a name, then fix any connections."
                 ),
+                None,
             )
+            return
+        except Exception:
+            log.exception("Undo of batch %s failed", self.batch)
+            await _replace(interaction, TRY_AGAIN, None)
             return
         changed(interaction, campaign)
         note = f"↩️ **{_md(entity.name)}** is back, with its other names and connections."
@@ -1014,15 +1032,22 @@ class SameConfirm(_Menu):
         if kept is None or gone is None or memory is None:
             return
         campaign = kept[0]
+        # Answer Discord at once (#351): a big merge can take longer than its 3 seconds.
+        # Saying so in place also takes the buttons away, so nothing is pressed twice.
+        self.stop()
+        await _replace(interaction, f"🔗 Joining **{_md(gone[1])}** into **{_md(kept[1])}**…", None)
         try:
             written = await memory.merge(
                 campaign.guild_id, campaign.id, keep_id, gone_id, source=DM, dm_said_same=True
             )
         except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't join them. {exc}")
+            await _replace(interaction, f"Couldn't join them. {exc} Nothing was changed.", None)
+            return
+        except Exception:
+            log.exception("Joining %s into %s failed", gone_id, keep_id)
+            await _replace(interaction, TRY_AGAIN, None)
             return
         changed(interaction, campaign)
-        self.stop()
         note = f"🔗 Done: **{_md(gone[1])}** is now another name for **{_md(kept[1])}**."
         await show_card(interaction, campaign.id, keep_id, replace=True, note=note)
         if written.batch is not None:

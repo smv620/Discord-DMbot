@@ -79,6 +79,8 @@ NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
 )
 GONE = "That name was just changed or removed. Run `/dmbot names` to try again."
+# In the review, where the next suggestion is already on screen (#372 review).
+NOT_JOINED = "That name was just changed or removed, so they weren't joined. Here's the next one."
 # Editing and removing live on each name's card; say how to get there (#353).
 EDIT_HINT = (
     "To fix a spelling, change what a name is, or remove it, pick it below or press 🔍 Find a name."
@@ -378,7 +380,7 @@ async def _find_typeahead(
 )
 @app_commands.describe(
     find="Open one name: type part of it, a nickname, or how it sounds",
-    file="Add names from a file: a names list, or a .txt, .pdf or .docx (Word) document",
+    file="Add names from a file: a names list, or a PDF, Word, text or web page file",
     link="Add names from a link: a document or web page anyone with the link can open",
 )
 @app_commands.autocomplete(find=_find_typeahead)
@@ -398,7 +400,7 @@ async def dmbot_names(
     )
     upload = None
     if (file is not None or link) and mine:  # only read for someone who may use it
-        from dmbot.ui.name_lists import NO_AI_FOR_DOCUMENTS, read_attachment, read_link
+        from dmbot.ui.name_lists import NO_AI_FOR_DOCUMENTS, read_attachment, read_link_once
 
         if file is None and bot.ai is None:  # a link is always for the AI: don't fetch it
             await _tell(interaction, NO_AI_FOR_DOCUMENTS)
@@ -407,7 +409,7 @@ async def dmbot_names(
         if file is not None:
             upload, problem = await read_attachment(file)
         else:
-            upload, problem = await read_link(link or "")
+            upload, problem = await read_link_once(guild.id, link or "")
         if upload is None:
             await _tell(interaction, problem or "DMbot couldn't read that.")
             return
@@ -671,10 +673,14 @@ def _heard(entity: Entity) -> str:
 def suggestion_text(
     entity: Entity, left: int, *, also: list[str] | None = None, match: Match | None = None
 ) -> str:
-    others = f"\nAlso heard: {', '.join(f'**{_md(a)}**' for a in also)}" if also else ""
+    others = (
+        f"\nAlso heard as {', '.join(f'**{_md(a)}**' for a in also)}: saved with it."
+        if also
+        else ""
+    )
     more = f"\n_{_plural(left - 1, 'more name')} after this one._" if left > 1 else ""
     question = (
-        f"Sounds like **{_md(match.name)}**. Same one, or someone new?"
+        f"Sounds like **{_md(match.name)}**. The same, or new?"
         if match is not None
         else "Is this a name in your game?"
     )
@@ -733,6 +739,11 @@ class SuggestionReview(_Menu):
         self.also: list[str] = []  # names heard with the current one
         self._buttons()
 
+    def _added(self, entity: Entity) -> str:
+        """ "**Oskar Vane** (also **Vane**)": every name confirmed with it."""
+        also = f" (also {_and([f'**{_md(a)}**' for a in self.also])})" if self.also else ""
+        return f"**{_md(entity.name)}**{also}"
+
     async def prepare(
         self,
         interaction: discord.Interaction,
@@ -756,20 +767,23 @@ class SuggestionReview(_Menu):
         if self.match is not None:  # sounds like a known name: offer that first (#394)
             buttons = [
                 (self._another, its_label(self.match.name), discord.ButtonStyle.success),
-                (self._yes, "➕ No, someone new", discord.ButtonStyle.primary),
-                (self._same, "🔗 Someone else I know…", discord.ButtonStyle.secondary),
+                (self._yes, "➕ New name", discord.ButtonStyle.primary),
+                (self._same, "🔗 Another known name…", discord.ButtonStyle.secondary),
             ]
         else:
             buttons = [
                 (self._yes, "✅ Yes, add it", discord.ButtonStyle.success),
                 (self._same, "🔗 Same as a known name…", discord.ButtonStyle.primary),
             ]
-        buttons += [
-            (self._no, "🚫 Not a name", discord.ButtonStyle.secondary),
-            (self._later, "⏳ Later", discord.ButtonStyle.secondary),
-        ]
         for handler, label, style in buttons:
-            self.add_item(_Button(handler, label=label, style=style))
+            self.add_item(_Button(handler, label=label, style=style, row=0))
+        # The two "not now" answers on their own row, so a phone never cuts the labels.
+        self.add_item(
+            _Button(self._no, label="🚫 Not a name", style=discord.ButtonStyle.secondary, row=1)
+        )
+        self.add_item(
+            _Button(self._later, label="⏳ Later", style=discord.ButtonStyle.secondary, row=1)
+        )
 
     async def _current(
         self, interaction: discord.Interaction
@@ -862,7 +876,7 @@ class SuggestionReview(_Menu):
             await _tell(interaction, GONE)
             return
         changed(interaction, campaign)  # the next card sees it at once
-        await self._saved(interaction, campaign, memory, f"✅ Added **{_md(entity.name)}**.")
+        await self._saved(interaction, campaign, memory, f"✅ Added {self._added(entity)}.")
 
     async def _player_picked(
         self, interaction: discord.Interaction, player: discord.User | discord.Member
@@ -882,7 +896,7 @@ class SuggestionReview(_Menu):
             await _tell(interaction, GONE)
             return
         changed(interaction, campaign)
-        note = f"✅ Added **{_md(entity.name)}**, played by **{_md(player.display_name)}**."
+        note = f"✅ Added {self._added(entity)}, played by **{_md(player.display_name)}**."
         await self._saved(interaction, campaign, memory, note)
 
     async def _same(self, interaction: discord.Interaction) -> None:
@@ -941,6 +955,11 @@ class SuggestionReview(_Menu):
             await _tell(interaction, GONE)
             return
         names = [entity.name, *self.also]
+        # Answer Discord at once (#351): a big merge can take longer than its 3 seconds.
+        # Saying so in place also takes the menu away, so nothing is picked twice.
+        await _replace(
+            interaction, f"🔗 Joining **{_md(entity.name)}** into **{_md(keep.name)}**…", None
+        )
         try:
             # One change: the merge and the names confirmed with it, so one undo.
             await memory.merge(
@@ -953,7 +972,7 @@ class SuggestionReview(_Menu):
                 confirm_keys=[name_key(n) for n in names],
             )
         except MemoryRuleError:
-            await _tell(interaction, GONE)
+            await self._next(interaction, campaign, memory, note=NOT_JOINED)  # back in place
             return
         changed(interaction, campaign)
         shown = _and([f"**{_md(n)}**" for n in names])

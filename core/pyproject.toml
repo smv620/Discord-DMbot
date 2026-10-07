@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "discord.py>=2.7,<3",  # 2.7: file uploads in forms (#264)
     "aiohttp>=3.14",  # dmbot.fetch opens any link: stay on the version tested (#264)
+    "yarl>=1.9",  # imported directly by dmbot.fetch
     "websockets>=13,<17",
     "python-dotenv>=1.0",
     "psycopg[binary]>=3.2",

@@ -22,8 +22,7 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 
-from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, NAME_MAX, name_key
+from dmbot.memory.models import NAME_MAX, name_key
 from dmbot.memory.sounds import sound_codes
 
 MIN_TIMES = 2
@@ -76,7 +75,6 @@ class Match:
 
     entity_id: str
     name: str  # the known entry's own name
-    likeness: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +82,6 @@ class Suggestion:
     name: str  # as heard most often
     times: int
     also: tuple[str, ...] = ()  # near-duplicates folded in ("Vane" with "Oskar Vane")
-    match: Match | None = None  # a known name it sounds like
 
 
 def _sentences(lines: Iterable[str]) -> list[list[str]]:
@@ -129,10 +126,11 @@ def find_new_names(
     skip_keys: Iterable[str] = (),
     *,
     min_times: int = MIN_TIMES,
-    limit: int | None = MAX_SUGGESTIONS,
+    unlimited: bool = False,
 ) -> list[Suggestion]:
     """Names in these lines (cleaned, so names fixed live are known) worth asking the DM
-    about, most heard first. `limit=None`: all of them (group them, then cap)."""
+    about, most heard first: at most MAX_SUGGESTIONS (read when called), or all of them
+    with `unlimited` (to group them, then cap)."""
     sentences = _sentences(lines)
     skip = frozenset({name_key(k) for k in skip_keys} | COMMON | GAME_TERMS)
     lower_words = {w.casefold() for words in sentences for w in words if w[:1].islower()}
@@ -154,7 +152,7 @@ def find_new_names(
         if times >= min_times and key in mid_sentence
     ]
     found.sort(key=lambda s: (-s.times, s.name))
-    return found if limit is None else found[:limit]
+    return found if unlimited else found[:MAX_SUGGESTIONS]
 
 
 def _alike(a: str, b: str, need: float = 0.0) -> float:
@@ -187,26 +185,13 @@ def near_match_in(name: str, candidates: Iterable[Candidate]) -> Match | None:
         return None
     if len(ranked) > 1 and ranked[0][1][0] - ranked[1][1][0] < TIE:
         return None  # two known names fit about as well: offer it as new
-    entity_id, (alike, own) = ranked[0]
-    return Match(entity_id, own, alike)
+    entity_id, (_, own) = ranked[0]
+    return Match(entity_id, own)
 
 
 def sound_keys(name: str) -> tuple[str, ...]:
     """The sound codes a suggested name is looked up by."""
     return sound_codes(name.replace(" ", ""))
-
-
-def near_match(lookup: CampaignLookup, name: str) -> Match | None:
-    """`near_match_in` against the campaign's names in memory."""
-    seen: dict[str, Candidate] = {}
-    for code in sound_keys(name):
-        for entry in lookup.by_sound.get(code, ()):
-            entity = lookup.entities.get(entry.entity_id)
-            if entry.secret or not entry.confirmed or entity is None:
-                continue
-            if entity.status == CONFIRMED:
-                seen.setdefault(entry.alias_id, (entry.entity_id, entry.text, entity.name))
-    return near_match_in(name, seen.values())
 
 
 def _same_thing(a: str, b: str) -> bool:

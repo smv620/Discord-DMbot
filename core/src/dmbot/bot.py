@@ -1787,7 +1787,7 @@ class DMBot(commands.AutoShardedBot):
             # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
             # (#394). Which known name each sounds like is worked out when the DM looks,
             # never saved: names can change, or be made secret, before then.
-            found = group_alike(find_new_names(lines, skip, limit=None))[:MAX_SUGGESTIONS]
+            found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
             added: list[str] = []
             for suggestion in found:
                 try:

@@ -7,10 +7,12 @@ from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import CONFIRMED, PROPOSED, Alias, Entity, name_key
 from dmbot.memory.scan import (
     MAX_SUGGESTIONS,
+    Match,
     Suggestion,
     find_new_names,
     group_alike,
-    near_match,
+    near_match_in,
+    sound_keys,
 )
 
 
@@ -75,6 +77,18 @@ class Scan(unittest.TestCase):
         invented = {n.canonical for n in NAMES}
         self.assertTrue(found <= invented | {"Ashen Crown"}, found - invented)  # nothing else
         self.assertIn("Cerric", found)
+
+
+def near_match(lookup: CampaignLookup, name: str) -> Match | None:
+    """What the review does: candidates as `MemoryStore.sound_alikes` picks them
+    (confirmed, non-secret names of confirmed entries sharing a sound code)."""
+    codes = set(sound_keys(name))
+    candidates = [
+        (e.entity_id, e.text, lookup.entities[e.entity_id].name)
+        for e in lookup.names
+        if e.confirmed and not e.secret and codes & set(e.codes)
+    ]
+    return near_match_in(name, candidates)
 
 
 class NearMatchTest(unittest.TestCase):
@@ -147,7 +161,7 @@ class GroupAlikeTest(unittest.TestCase):
 
     def test_all_found_before_the_cap(self) -> None:
         lines = [f"We saw Name{chr(65 + i)}x twice. Again Name{chr(65 + i)}x." for i in range(12)]
-        self.assertEqual(len(find_new_names(lines, limit=None)), 12)
+        self.assertEqual(len(find_new_names(lines, unlimited=True)), 12)
         self.assertEqual(len(find_new_names(lines)), MAX_SUGGESTIONS)
 
     def test_different_names_stay_apart(self) -> None:

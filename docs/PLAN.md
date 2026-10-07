@@ -729,12 +729,14 @@ remembers Belleros is Cerric's mentor"), never "graph", "entity" or "ontology".
     query for names sharing its sound codes), never saved: names can change, or be made
     secret, after the session. The saved note is only "Heard 3 times".
   - **The review** then reads "📝 **Rothgr** · heard 3 times / Sounds like **Hrothgar**.
-    Same one, or someone new?" with **✅ It's Hrothgar** · **➕ No, someone new** ·
-    **🔗 Someone else I know…** · **🚫 Not a name** · **⏳ Later**. "It's" merges it as
-    an other name in one change (with the usual guards), so one undo takes it all back.
+    The same, or new?" with **✅ It's Hrothgar** · **➕ New name** · **🔗 Another known
+    name…** on the first row and **🚫 Not a name** · **⏳ Later** on the second (so a
+    phone never cuts the labels; the same two rows without a match). "It's" merges it
+    as an other name in one change (with the usual guards), so one undo takes it all
+    back.
   - **Near-duplicates heard in one session** ("Oskar Vane" and "Vane") are one question,
-    grouped before the cap of 10. The shorter is shown as "Also heard" and confirmed or
-    turned down with it. A word that fits two names ("Lord" in "Lord Neverember" and
+    grouped before the cap of 10. The shorter is shown ("Also heard as **Vane**: saved
+    with it."), and confirmed or turned down with it; every note names all of them. A word that fits two names ("Lord" in "Lord Neverember" and
     "Lord Dagult") stays its own question; one-word names fold only at 0.9.
   - **No auto-accept setting.** Nothing is added until the DM presses a button.
 - **Keeping it tidy (entity resolution):**
