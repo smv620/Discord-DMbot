@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { noteVoiceMembers, type MemberNotes, type VoiceMember } from "../src/voiceMembers.js";
+import { Allowlist } from "../src/consent.js";
+import { applyConsentList, noteVoiceMembers, type MemberNotes, type VoiceMember } from "../src/voiceMembers.js";
 
 function notes(): MemberNotes & { noted: [string, boolean][] } {
   const noted: [string, boolean][] = [];
@@ -71,4 +72,81 @@ test("someone already known isn't looked up again when they mute or deafen", () 
   session.noteMember("1", false);
   noteVoiceMembers(session, [{ id: "1", channelId: "c1", member: null }], everyone, noLookup);
   assert.deepEqual(session.noted, [["1", false]]);
+});
+
+test("a second note while a lookup is running doesn't ask Discord again", async () => {
+  const session = notes();
+  const looked: string[] = [];
+  let answer: (isBot: boolean) => void = () => undefined;
+  const lookUp = (id: string): Promise<boolean> => {
+    looked.push(id);
+    return new Promise((resolve) => (answer = resolve));
+  };
+  const states: VoiceMember[] = [{ id: "1", channelId: "c1", member: null }];
+  noteVoiceMembers(session, states, everyone, lookUp);
+  noteVoiceMembers(session, states, everyone, lookUp);
+  assert.deepEqual(looked, ["1"]);
+  answer(false);
+  await flush();
+  assert.deepEqual(session.noted, [["1", false]]);
+});
+
+test("a lookup that found nobody can run again later", async () => {
+  const session = notes();
+  const looked: string[] = [];
+  const lookUp = (id: string): Promise<undefined> => {
+    looked.push(id);
+    return Promise.resolve(undefined);
+  };
+  const states: VoiceMember[] = [{ id: "1", channelId: "c1", member: null }];
+  noteVoiceMembers(session, states, everyone, lookUp);
+  await flush();
+  noteVoiceMembers(session, states, everyone, lookUp);
+  assert.deepEqual(looked, ["1", "1"]);
+});
+
+function table(): MemberNotes & { noted: [string, boolean][]; events: string[]; dropSpeakers(ids: readonly string[]): void } {
+  const events: string[] = [];
+  const base = notes();
+  return {
+    ...base,
+    noted: base.noted,
+    events,
+    noteMember: (id, isBot) => {
+      events.push(`note ${id}`);
+      base.noteMember(id, isBot);
+    },
+    dropSpeakers: (ids) => events.push(`drop ${ids.join(",")}`),
+  };
+}
+
+test("a new consent list drops whoever left, then looks up whoever joined", async () => {
+  const allowlist = new Allowlist();
+  allowlist.set("g", ["1", "2"]);
+  const session = table();
+  const looked: string[] = [];
+  const states: VoiceMember[] = [
+    { id: "2", channelId: "c1", member: null }, // removed in this push
+    { id: "3", channelId: "c1", member: null }, // just opted in
+    { id: "4", channelId: "other", member: null }, // another channel
+  ];
+  const removed = applyConsentList(allowlist, "g", ["1", "3", "4"], session, states, (id) => {
+    looked.push(id);
+    return Promise.resolve(false);
+  });
+  await flush();
+  assert.deepEqual(removed, ["2"]);
+  assert.deepEqual(looked, ["3"]);
+  assert.deepEqual(session.events, ["drop 2", "note 3"]);
+  assert.equal(allowlist.isAllowed("g", "3", false), true);
+});
+
+test("a consent list with no session, or no cached server, still replaces the list", () => {
+  const allowlist = new Allowlist();
+  applyConsentList(allowlist, "g", ["1"], undefined, [{ id: "1", channelId: "c1", member: null }], noLookup);
+  assert.equal(allowlist.isAllowed("g", "1", false), true);
+  const session = table();
+  applyConsentList(allowlist, "g", [], session, undefined, noLookup);
+  assert.deepEqual(session.events, ["drop 1"]);
+  assert.equal(allowlist.isAllowed("g", "1", false), false);
 });

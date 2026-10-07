@@ -6,7 +6,7 @@ import { CoreLink } from "./coreLink.js";
 import { Logger } from "./log.js";
 import type { CoreCommand } from "./protocol.js";
 import { READY_TIMEOUT_MS, TableSession } from "./voice.js";
-import { noteVoiceMembers, type VoiceMember } from "./voiceMembers.js";
+import { applyConsentList, noteVoiceMembers, type VoiceMember } from "./voiceMembers.js";
 
 /**
  * ears entry point. Logs in with the shared bot token using only the voice-state
@@ -56,13 +56,16 @@ async function handleCommand(command: CoreCommand): Promise<void> {
   audit.confirm(command.guildId);
   switch (command.type) {
     case "allowlist": {
-      const removed = allowlist.set(command.guildId, command.userIds);
-      log.info(`consent list: ${command.userIds.length} opted in`, { guildId: command.guildId });
-      const session = sessions.get(command.guildId);
-      session?.dropSpeakers(removed);
-      // Someone who just opted in may not be cached: look them up now, not when they speak.
-      const voiceStates = client.guilds.cache.get(command.guildId)?.voiceStates.cache.values();
-      if (session && voiceStates) noteMembers(command.guildId, session, voiceStates);
+      const guildId = command.guildId;
+      applyConsentList(
+        allowlist,
+        guildId,
+        command.userIds,
+        sessions.get(guildId),
+        client.guilds.cache.get(guildId)?.voiceStates.cache.values(),
+        (userId) => lookUpBot(guildId, userId),
+      );
+      log.info(`consent list: ${command.userIds.length} opted in`, { guildId });
       return;
     }
     case "leave": {

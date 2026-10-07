@@ -1,7 +1,12 @@
 import unittest
 
 from dmbot.audio.segmenter import Utterance
-from dmbot.capture_log import HEALTH_WAIT_CHECKS, CaptureLog, audio_health
+from dmbot.capture_log import (
+    HEALTH_WAIT_CHECKS,
+    HEALTH_WAIT_MAX_CHECKS,
+    CaptureLog,
+    audio_health,
+)
 
 
 def utt(user: int, seconds: float) -> Utterance:
@@ -244,3 +249,30 @@ class LogLineTests(unittest.TestCase):
             self.assertIsNone(log.render(str))
         log.add_utterance(utt(1, 1.0))
         self.assertIn("audio 35%", log.log_line() or "")  # both reports still there
+
+    def test_the_wait_ends_after_the_latest_health(self) -> None:
+        log = CaptureLog()
+        log.add_health(1, 50, 100)
+        log.render(str)
+        log.add_health(1, 20, 100)
+        for _ in range(HEALTH_WAIT_CHECKS + 1):
+            log.render(str)
+        log.add_utterance(utt(1, 1.0))
+        self.assertEqual(log.log_line(), "Capture check: 1 speaker(s); user 1: 1 x speech, 1.0 s")
+
+    def test_health_that_keeps_coming_without_speech_is_dropped_in_the_end(self) -> None:
+        # A long overload: ears reports every check, the speech is dropped each time.
+        log = CaptureLog()
+        for _ in range(HEALTH_WAIT_MAX_CHECKS):
+            log.add_health(1, 10, 100)
+            log.render(str)
+        log.add_health(1, 10, 100)
+        log.add_utterance(utt(1, 1.0))
+        self.assertIn("audio 10%", log.log_line() or "")  # at the limit: all still kept
+        log.render(str)
+        for _ in range(HEALTH_WAIT_MAX_CHECKS + 1):
+            log.add_health(1, 10, 100)
+            log.render(str)
+        log.add_health(1, 100, 100)
+        log.add_utterance(utt(1, 1.0))
+        self.assertIn("audio 100%", log.log_line() or "")  # past it: the old gaps are gone

@@ -7,7 +7,7 @@ import { Allowlist } from "../src/consent.js";
 import { Logger } from "../src/log.js";
 import type { EarsMessage } from "../src/protocol.js";
 import { TableSession, UNKNOWN_RETRY_MS, type BotLookup } from "../src/voice.js";
-import { noteVoiceMembers } from "../src/voiceMembers.js";
+import { applyConsentList } from "../src/voiceMembers.js";
 
 const GUILD = "111";
 const CHANNEL = "222";
@@ -273,20 +273,14 @@ test("someone who opts in mid-session is looked up then, and captured from their
   const h = harness();
   const inVoice = [{ id: BOB, channelId: CHANNEL, member: null }]; // not in discord.js's cache
   const background: string[] = [];
-  const noteMembers = (): void =>
-    noteVoiceMembers(
-      h.session,
-      inVoice,
-      (userId) => h.allowlist.isAllowed(GUILD, userId, false),
-      (userId) => {
-        background.push(userId);
-        return Promise.resolve(false);
-      },
-    );
-  noteMembers(); // at join: not opted in, so not looked up
+  const consentList = (userIds: string[]): string[] =>
+    applyConsentList(h.allowlist, GUILD, userIds, h.session, inVoice, (userId) => {
+      background.push(userId);
+      return Promise.resolve(false);
+    });
+  consentList([ALICE, CAROL]); // BOB hasn't opted in: not looked up
   assert.deepEqual(background, []);
-  h.allowlist.set(GUILD, [ALICE, BOB, CAROL]); // core sends the new consent list
-  noteMembers();
+  consentList([ALICE, BOB, CAROL]); // core sends the new list
   await nextFrame();
   assert.deepEqual(background, [BOB]);
   await speak(h, BOB, 5);
