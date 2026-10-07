@@ -42,51 +42,43 @@ CI runs all of the above on every pull request. Never merge red CI.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
 
 ## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-07)
-DMbot runs on the cloud test server (VPS), not on the owner's PC: the PC no longer hosts
-Postgres, core or ears. The Claude sessions that work on this repo, and the issue label
-each one uses:
-- **Server session** (`session: server`, Claude Code on the test server): **the only
-  session that touches the running bot.** Every test that needs the running server:
-  live tests in Discord, performance and timing, resource use, reading logs live
-  (`docker compose logs`). It alone deploys `development` to the server, runs
-  `docker compose`, changes `.env` (through `scripts/set-key` and
-  `scripts/update-env`), and maintains the testing logs (below).
-- **Dev sessions** (`session: dev2`, `session: dev3`, …; Claude Code on the same
-  server): each works one issue at a time in **its own git worktree**
-  (`git worktree add ../dmbot-dev2 -b <branch> development`), never in the server
-  session's checkout, and runs unit tests, lint and type checks there. **They may look
-  at the running system but never change it** (owner decision, 2026-10-07): reading
-  logs (`docker compose logs`, `docker compose ps`, `journalctl`), read-only database
-  queries through the read-only role `dmbot_ro`, checking that an API endpoint
-  answers, reading firewall rules and resource use. They never deploy, never run
-  `docker compose up/down/restart/build`, never run migrations, never touch `.env`
-  (`scripts/set-key`, `scripts/update-env` are the server session's), never restart
-  a service, and never start DMbot against Discord. Nothing read from the live
-  database (players' data, secret names) goes into an issue, a PR or a log file.
-  Their `.claude/settings.local.json` denies those commands so the rule is enforced,
-  not promised.
-- **Handover to a deploy:** when a dev session's PR is merged and needs to go live, it
-  adds one line under "Ready to deploy" in `docs/testing-status.log` (what to deploy,
-  what to check) or comments on the PR. The server session deploys, checks, and
+DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude
+sessions work on this repo. **Each one has a name, and its name is its issue label:**
+`session: dev1`, `session: dev2`, `session: dev3`, `session: clouddev`, `session: web`
+(and `session: pycharm` when the owner's PC is used). **Assignments come from the issue
+list:** an open issue labelled with your name is yours; take them lowest number first
+unless an issue says otherwise. Say which session you are in every issue and PR. More
+developers can be added by adding a label.
+- **dev1** (Claude Code on the deployment server, in the main checkout): **the only
+  session that builds, deploys or restarts containers**, runs `docker compose`
+  up/down/restart/build, runs migrations, changes `.env` (`scripts/set-key`,
+  `scripts/update-env`) or restarts a service. It runs every test that needs the running
+  server (live tests in Discord, timing, resource use) and maintains the testing logs
+  (below).
+- **dev2, dev3, …** (Claude Code on the same server): each works in **its own git
+  worktree** (`git worktree add ../dmbot-dev2 -b <branch> origin/development`), never in
+  dev1's checkout, and runs unit tests, lint and type checks there. **They may look at
+  the running system but never change it:** `docker compose logs` and `ps`,
+  `journalctl`, read-only database queries through the read-only role `dmbot_ro`,
+  checking that an endpoint answers, reading firewall rules and resource use. Nothing
+  read from the live database (players' data, secret names) goes into an issue, a PR or
+  a log file. Their `.claude/settings.local.json` denies the deploy commands, so the
+  rule is enforced, not promised.
+- **clouddev** (Claude Code in the cloud, its own clone): builds queued issues that need
+  no live server. Cloud limits: no server access at all, GitHub only through `gh api`
+  (REST; GraphQL is blocked), no deleting branches, and CI is its test runner
+  (discord.py, psycopg and pytest aren't installed locally).
+- **web** (the coordinating session, cloud): planning, design decisions, `docs/PLAN.md`
+  and this file, issue hygiene, reviewing every PR before the owner merges, and the code
+  that needs design judgement. Scope questions from any session go in the issue; web
+  answers there.
+- **Handover to a deploy:** when a session's PR is merged and needs to go live, it adds
+  one line under "Ready to deploy" in `docs/testing-status.log` (what to deploy, what to
+  check) or comments on the PR, then takes its next issue. dev1 deploys, checks, and
   records it in `docs/testing-history.log`. The log is the queue; nobody waits in chat.
-- **PyCharm session** (`session: pycharm`, on the owner's PC, when used): the same as a
-  dev session, plus offline quality checks on saved test sets (EntityBot resolution,
-  Transcript Cleaner accuracy).
-- **Web session** (`session: web`, cloud): the coordinating session. Planning, design
-  decisions, `docs/PLAN.md` and this file, issue hygiene, reviewing every PR before the
-  owner merges, and the code that needs design judgement. Scope questions from any
-  session go in the issue; the web session answers there.
-- **CloudDev** (`session: clouddev`, Claude Code in the cloud, its own clone): builds
-  queued, fully written issues that need no live server; when its PR is open it takes
-  the next one without waiting for the merge. Cloud limits: no server access at all,
-  GitHub only through `gh api` (REST; GraphQL is blocked), no deleting branches, and
-  CI is its test runner (discord.py, psycopg and pytest aren't installed locally).
 
 Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
-On the server that copy is the one in Docker Compose, run by the server session.
-
-Sessions don't share a checkout, a branch or an issue: before starting, read the open
-issues and take one nobody holds; say which session you are in the issue and the PR.
+On the server that copy is the one in Docker Compose, run by dev1.
 
 ## Issue log: shared memory between Claude sessions
 The sessions don't share memory, so **GitHub Issues are the shared log.**
@@ -94,7 +86,7 @@ The sessions don't share memory, so **GitHub Issues are the shared log.**
   touching the area you're about to change:
   `gh api "repos/smv620/Discord-DMbot/issues?state=all&per_page=30"`
 - **Every bug you find gets an issue**, opened before or while you fix it. Labels:
-  `bug` plus `session: web`, `session: server` or `session: pycharm`. Use the template in
+  `bug` plus your session label (`session: dev1`, `session: web`, …). Use the template in
   `.github/ISSUE_TEMPLATE/bug.md`: Background (what you were doing), Symptom (exact
   error), Root cause, Fix, Watch for.
 - **Bugs found and fixed within the same piece of work** still get an issue: label it
@@ -115,7 +107,7 @@ terminal output or Discord screenshots copied to it.
   finished items to the history and trimming them here.
 - **`docs/testing-history.log`:** the complete record of every test run, append-only and
   oldest first. Fix mistakes with a new dated entry, never by rewriting.
-- **Maintainer:** the server session updates both after every live test and whenever
+- **Maintainer:** dev1 updates both after every live test and whenever
   testing plans change, from the server logs and what the owner pastes from Discord. The
   PyCharm session adds its offline test results the same way. Other sessions read them
   before planning test-related work.
