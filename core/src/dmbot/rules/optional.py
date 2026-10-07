@@ -6,6 +6,8 @@ A campaign's choice for each rule is stored in `campaign_optional_rules`
 (`CampaignStore.set_optional_rule`); a rule with no stored choice follows the
 campaign's `optional_rules_default`. A rule applies only to the rulesets it doesn't
 clash with: one the newer books already include or change is listed for 2014 only.
+Xanathar's and Tasha's are not legacy books as a whole (docs/PLAN.md): whatever the
+2024 books don't reprint or replace stays listed for 2024, without a legacy tag.
 """
 
 from __future__ import annotations
