@@ -11,7 +11,7 @@ import logging
 
 import discord
 
-from dmbot.campaigns import Campaign, CampaignError
+from dmbot.campaigns import RULESETS, Campaign, CampaignError
 from dmbot.rules import optional
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -31,6 +31,11 @@ log = logging.getLogger(__name__)
 
 TEXT_MAX = 1900  # under Discord's 2,000 characters
 GONE = "That campaign isn't here any more. Use `/dmbot optionalrules` to see the list again."
+NO_SCREEN_NOTE = "Couldn't write to your DM screen; check `/dmbot start`."
+COVERED_2024 = (
+    "Rules the 2024 books already cover (knots, tools, falling, Tasha's origins and class "
+    "features) aren't listed: your main rules handle those."
+)
 
 
 async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
@@ -48,19 +53,25 @@ async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> C
     return campaign
 
 
+def _main_rules(target: str) -> str:
+    """ "2024 rules": the label without its "(newest)", which reads oddly mid-sentence."""
+    return f"{target} rules" if target in RULESETS else logic.ruleset_label(target)
+
+
 def rules_text(campaign: Campaign, overrides: dict[str, bool]) -> str:
-    """The list, grouped by book: ✅ on, ⬜ off, and what each rule does."""
-    main = logic.ruleset_label(campaign.target_ruleset)
+    """The list, grouped by book: ✅ on, ⬜ off, and what each rule does. The catalog
+    lists each book's rules together, so each book gets one heading."""
+    main = _main_rules(campaign.target_ruleset)
     rules = optional.applying(campaign.target_ruleset)
-    lines = [
-        f"📚 **Optional rules: {campaign.name}**",
-        f"Rules from Xanathar's and Tasha's that fill gaps in the main rules: {main}. "
-        "✅ on · ⬜ off. Pick a rule in the menu to switch it. Your house rules always win.",
-        "DMbot only uses this list to remind you of rules: you make every call at the table. "
-        "(DMbot doesn't check rules yet. Your choices are saved for when it does.)",
-    ]
+    lines = [f"📚 **Optional rules: {campaign.name}**"]
     if not rules:
-        lines.append(f"DMbot doesn't know any optional rules for the {main} yet.")
+        lines.append(f"DMbot has no optional rules to offer for the {main} yet.")
+    else:
+        lines.append(
+            f"Rules from Xanathar's and Tasha's that add to your main rules ({main}). "
+            "✅ on · ⬜ off. Pick a rule in the menu below to switch it. "
+            "Your house rules always win."
+        )
     book = ""
     for r in rules:
         if r.source != book:
@@ -68,10 +79,17 @@ def rules_text(campaign: Campaign, overrides: dict[str, bool]) -> str:
             lines.append(f"**{book}**")
         on = optional.is_on(r.id, overrides, campaign.optional_rules_default)
         lines.append(f"{'✅' if on else '⬜'} **{r.name}**: {r.summary}")
+    tail = [
+        "DMbot doesn't check rules yet. When it does, it will only remind you of the rules "
+        "you keep on here. You make every call at the table."
+    ]
+    if campaign.target_ruleset == "2024":
+        tail.insert(0, COVERED_2024)
     text = "\n".join(lines)
-    if len(text) > TEXT_MAX:  # never cut a line in half; the menu still lists them all
-        text = text[: text.rfind("\n", 0, TEXT_MAX - 2)] + "\n…"
-    return text
+    room = TEXT_MAX - sum(len(t) + 1 for t in tail)
+    if len(text) > room:  # never cut a line in half; the menu still lists them all
+        text = text[: text.rfind("\n", 0, room - 2)] + "\n…"
+    return "\n".join([text, *tail])
 
 
 class OptionalRulesMenu(_Menu):
@@ -90,7 +108,9 @@ class OptionalRulesMenu(_Menu):
                 discord.SelectOption(
                     label=r.name,
                     value=f"{r.id}:{'off' if on else 'on'}",
-                    description="On now · pick to turn off" if on else "Off now · pick to turn on",
+                    description="✅ On now · pick to turn off"
+                    if on
+                    else "⬜ Off now · pick to turn on",
                 )
             )
         self.pick = _Select(self._switch, placeholder="Switch a rule on or off…", options=options)
@@ -118,15 +138,24 @@ class OptionalRulesMenu(_Menu):
             await _tell(interaction, GONE)
             return
         self.stop()
-        await _replace(
-            interaction, rules_text(campaign, overrides), OptionalRulesMenu(campaign, overrides)
-        )
-        if campaign.dm_screen_channel_id is not None:  # the DM screen keeps a record
-            await _bot(interaction).post(
+        # The DM screen keeps a record. Noted before the reply, so a failed reply can't
+        # leave a saved change unrecorded.
+        noted = True
+        if campaign.dm_screen_channel_id is not None:
+            noted = await _bot(interaction).post(
                 campaign.dm_screen_channel_id,
-                f"{chosen.name}: turned {'on' if turn_on else 'off'} by "
-                f"{interaction.user.mention} (optional rule).",
+                f"{'✅' if turn_on else '⬜'} Optional rule turned {'on' if turn_on else 'off'}: "
+                f"**{chosen.name}** (by {interaction.user.mention})",
             )
+        text = rules_text(campaign, overrides)
+        if not noted:
+            text += "\n" + NO_SCREEN_NOTE
+        try:
+            await _replace(interaction, text, OptionalRulesMenu(campaign, overrides))
+        except discord.HTTPException:  # the menu message is gone: say what was saved
+            log.warning("Couldn't update the optional rules menu", exc_info=True)
+            saved = f"Saved: **{chosen.name}** is now {'on' if turn_on else 'off'}."
+            await _tell(interaction, saved if noted else f"{saved} {NO_SCREEN_NOTE}")
 
 
 async def show_rules(interaction: discord.Interaction, campaign: Campaign) -> None:
@@ -168,7 +197,7 @@ class CampaignChoice(_Menu):
 
 
 @dmbot_group.command(
-    name="optionalrules", description="Optional rules (Xanathar's, Tasha's): turn each on or off"
+    name="optionalrules", description="Turn optional rules (Xanathar's, Tasha's) on or off"
 )
 async def dmbot_optional_rules(interaction: discord.Interaction) -> None:
     guild = interaction.guild

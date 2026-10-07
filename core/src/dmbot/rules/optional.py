@@ -36,8 +36,8 @@ CATALOG: tuple[OptionalRule, ...] = (
     ),
     OptionalRule(
         "xge-sleep",
-        "Sleeping in armour",
-        "Sleeping in medium or heavy armour: you get back fewer Hit Dice, and Exhaustion "
+        "Sleeping in armor",
+        "Sleeping in medium or heavy armor: you get back fewer Hit Dice, and Exhaustion "
         "doesn't go down.",
         XANATHAR,
     ),
@@ -58,7 +58,7 @@ CATALOG: tuple[OptionalRule, ...] = (
     OptionalRule(
         "xge-identify-spell",
         "Spotting a spell",
-        "Use your reaction and an Arcana check to recognise a spell as it's cast.",
+        "Use your reaction and an Arcana check to recognize a spell as it's cast.",
         XANATHAR,
         ("2014",),  # the 2024 rules treat studying a spell differently; check before widening
     ),
@@ -71,7 +71,7 @@ CATALOG: tuple[OptionalRule, ...] = (
     ),
     OptionalRule(
         "tce-custom-origin",
-        "Customising your origin",
+        "Customizing your origin",
         "Move your race's ability score bonuses and swap some of its proficiencies.",
         TASHA,
         ("2014",),  # the 2024 rules tie ability scores to backgrounds instead

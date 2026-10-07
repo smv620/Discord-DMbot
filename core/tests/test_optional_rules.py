@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import unittest.mock
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -37,6 +38,12 @@ class Catalog(unittest.TestCase):
                 self.assertTrue(r.applies_to)
                 self.assertTrue(set(r.applies_to) <= set(RULESETS))
         self.assertLessEqual(len(optional.CATALOG), SELECT_OPTIONS_MAX)  # one menu
+
+    def test_each_books_rules_are_listed_together(self) -> None:
+        # rules_text gives each book one heading, so a book's rules must sit together.
+        books = [r.source for r in optional.CATALOG]
+        runs = [b for i, b in enumerate(books) if i == 0 or books[i - 1] != b]
+        self.assertEqual(len(runs), len(set(books)))
 
     def test_which_rules_apply_to_a_ruleset(self) -> None:
         newer = {r.id for r in optional.applying("2024")}
@@ -104,12 +111,14 @@ class Command(DatabaseTest):
         self.assertTrue(kw["ephemeral"])
         self.assertIn("Optional rules: Frostmaiden", text)
         self.assertIn("**Xanathar's Guide to Everything**\n✅ **Going without a long rest**", text)
-        self.assertIn("you make every call at the table", text)
         self.assertIn("doesn't check rules yet", text)
-        self.assertNotIn("Customising your origin", text)  # not for the 2024 rules
+        self.assertIn("add to your main rules (2024 rules).", text)  # no "(newest)" here
+        self.assertNotIn("Customizing your origin", text)  # not for the 2024 rules
+        self.assertTrue(text.endswith("You make every call at the table."))  # below the list
+        self.assertIn(ui.COVERED_2024, text)
         self.assertNotIn("supplement", text.lower())  # plain words
         labels = [o.label for o in kw["view"].pick.options]
-        self.assertNotIn("Customising your origin", labels)
+        self.assertNotIn("Customizing your origin", labels)
 
     async def test_a_player_cannot(self) -> None:
         it = await self.open_list(PLAYER)
@@ -122,12 +131,15 @@ class Command(DatabaseTest):
         overrides = await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id)
         self.assertEqual(overrides, {"xge-sleep": False})
         text, view = it.response.edited[0]
-        self.assertIn("⬜ **Sleeping in armour**", text)
+        self.assertIn("⬜ **Sleeping in armor**", text)
+        self.assertNotIn(ui.NO_SCREEN_NOTE, text)
         (note,) = self.posted.await_args_list
         self.assertEqual(note.args[0], SCREEN)
-        self.assertIn("Sleeping in armour: turned off by", note.args[1])
+        self.assertTrue(
+            note.args[1].startswith("⬜ Optional rule turned off: **Sleeping in armor** (by ")
+        )
         (option,) = [o for o in view.pick.options if o.value.startswith("xge-sleep:")]
-        self.assertEqual(option.description, "Off now · pick to turn on")
+        self.assertEqual(option.description, "⬜ Off now · pick to turn on")
         await self.switch(view, "xge-sleep", MANAGER)  # and back on
         overrides = await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id)
         self.assertEqual(overrides, {"xge-sleep": True})
@@ -167,6 +179,37 @@ class Command(DatabaseTest):
         )
         self.posted.assert_not_awaited()
 
+    async def test_a_dm_screen_that_cannot_be_written_to_is_mentioned(self) -> None:
+        self.posted.return_value = False  # the channel was deleted
+        menu = (await self.open_list()).response.sent[0][1]["view"]
+        it = await self.switch(menu, "tce-parley")
+        text, _ = it.response.edited[0]
+        self.assertTrue(text.endswith(ui.NO_SCREEN_NOTE))
+        self.assertLess(len(text), 2000)
+
+    async def test_a_menu_that_cannot_be_updated_still_says_what_was_saved(self) -> None:
+        menu = (await self.open_list()).response.sent[0][1]["view"]
+        (value,) = [o.value for o in menu.pick.options if o.value.startswith("tce-parley:")]
+        menu.pick._values = [value]
+        it = self.it()
+        it.response.edit_message = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(status=404, reason="gone"), "gone")
+        )
+        await menu._switch(it)
+        self.assertEqual(
+            await self.campaigns.optional_rule_overrides(GUILD, self.campaign.id),
+            {"tce-parley": False},
+        )
+        self.posted.assert_awaited_once()  # the DM screen was told first
+        self.assertEqual(it.response.sent[0][0], "Saved: **Talking with monsters** is now off.")
+
+    async def test_a_ruleset_with_no_optional_rules_says_so_plainly(self) -> None:
+        campaign = await self.campaigns.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        with unittest.mock.patch.object(optional, "applying", return_value=[]):
+            text = ui.rules_text(campaign, {})
+        self.assertIn("DMbot has no optional rules to offer for the 2024 rules yet.", text)
+
     async def test_several_campaigns_ask_which_one_first(self) -> None:
         await self.campaigns.create(GUILD, "Strahd", DM)
         it = await self.open_list()
@@ -189,7 +232,9 @@ class Command(DatabaseTest):
         )
         text = ui.rules_text(long, {})
         self.assertLessEqual(len(text), 2000)
-        self.assertTrue(text.endswith(optional.applying("2014")[-1].summary))  # nothing cut
+        last = optional.applying("2014")[-1]
+        self.assertIn(f"**{last.name}**: {last.summary}\n", text)  # nothing cut
+        self.assertTrue(text.endswith("You make every call at the table."))
 
     async def test_a_campaign_with_rules_off_by_default_shows_them_off(self) -> None:
         await self.campaigns.set_optional_rules_default(GUILD, self.campaign.id, False)
