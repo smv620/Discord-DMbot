@@ -68,6 +68,73 @@ instantly. (Without it, commands register globally, which can take up to an hour
 If you use `TRANSCRIBER=deepgram`, `cloud` or `none`, also add `CORE_EXTRAS=dev` to
 `.env` for a much smaller image.
 
+### Claude Code on the server
+
+The server's Claude Code session runs in auto mode and keeps its approved commands in
+`.claude/settings.local.json` (not in git). If prompts return after a fresh clone,
+recreate it from this list.
+
+```json
+{
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": [
+      "Bash(docker compose *)",
+      "Bash(docker *)",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(scripts/*)",
+      "Bash(./scripts/*)",
+      "Bash(bash scripts/*)",
+      "Bash(python3 *)",
+      "Bash(python *)",
+      "Bash(pytest *)",
+      "Bash(ruff *)",
+      "Bash(mypy *)",
+      "Bash(npm *)",
+      "Bash(node *)",
+      "Bash(sleep *)",
+      "Bash(curl *)",
+      "Bash(psql *)",
+      "Bash(pg_dump *)",
+      "Bash(systemctl *)",
+      "Bash(journalctl *)",
+      "Bash(df *)",
+      "Bash(free *)",
+      "Bash(ps *)",
+      "Bash(top *)",
+      "Bash(ss *)",
+      "Bash(chmod *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(tar *)",
+      "Bash(sed *)",
+      "Bash(awk *)",
+      "Bash(sort *)",
+      "Bash(uniq *)",
+      "Bash(xargs *)",
+      "Bash(tee *)",
+      "WebFetch(domain:docs.claude.com)",
+      "WebFetch(domain:code.claude.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./**/.env)",
+      "Bash(cat .env*)",
+      "Bash(cat */.env*)",
+      "Bash(docker compose config *)",
+      "Bash(rm -rf /*)",
+      "Bash(git push * main)",
+      "Bash(git push * beta)",
+      "Bash(git push * development)"
+    ]
+  }
+}
+```
+
 ## 4. Start it
 
 ```bash
