@@ -483,3 +483,16 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     tables); no session was live. Core and ears rebuilt; ears "connected to core" and
     core "ears connected" at 08:08:21; no warnings or errors. Postgres unchanged.
   Not yet live-tested: all of the above. Run 8's checklist covers them.
+
+==============================================================================
+2026-10-07  Server: deploy ee1bb03 (dev1, no test run)
+==============================================================================
+  - 08:36 UTC  development @ ee1bb03 (= f317d6d plus log changes): #293 (saved session
+    saves and removals logged with their reason, #147), #302 (/transcript menu fits a
+    phone), #304 (npm/Node pins; npm@10.9.8 exists, checked for #318), #306 (someone
+    who opts in mid-session is looked up before they speak), #314 (/dmbot
+    optionalrules). No migrations, no .env changes. Database backed up first (08:34
+    UTC, outside the repo; pg_restore -l reads 19 tables); no session was live. Core
+    and ears rebuilt; "ears connected" at 08:36:31 after ~3 s of the usual "core link
+    down; retrying" while core started; no other warnings or errors.
+  Not yet live-tested: all of the above. Run 8's checklist and the #147 repro cover them.
