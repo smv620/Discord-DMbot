@@ -66,8 +66,10 @@ from dmbot.dm_screen import (
 )
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen.name_questions import (
+    FixUndoButton,
     NameAnswerUndoButton,
     NameQuestionButton,
+    fix_notes_view,
     question_view,
 )
 from dmbot.dm_screen.transcript_channel import (
@@ -96,6 +98,7 @@ from dmbot.memory.scene import PLAYER_CHARACTER, HintParts, SceneTracker, mentio
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SavedSession, SessionStore
+from dmbot.transcript import fix_notes
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import Cleaned, Vocabulary, clean
@@ -218,6 +221,10 @@ class Table:
     # "Did they mean…?" for the DM (#296): one open at a time, each word once a session.
     questions: name_questions.QuestionBook = field(default_factory=name_questions.QuestionBook)
     question_message: discord.Message | None = None
+    # Fixes from names DMbot only suggested, each with Undo, in one DM-screen message.
+    fix_notes: fix_notes.FixNotes = field(default_factory=fix_notes.FixNotes)
+    fix_message: discord.Message | None = None
+    fix_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     people: tuple[str, ...] = ()
     # The whole session's numbers, for the summary when it ends (#109).
     totals: SessionTotals = field(default_factory=SessionTotals)
@@ -306,6 +313,7 @@ class DMBot(commands.AutoShardedBot):
         self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None
         self._hints_failed_at = -HINTS_FAIL_LOG_S
         self._clean_failed_at = -HINTS_FAIL_LOG_S
+        self._last_transcript_message: discord.Message | None = None
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
         self.tables: dict[int, Table] = {}
@@ -362,7 +370,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(UndoButton, UndoListButton)
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
-        self.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton)
+        self.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton, FixUndoButton)
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -481,6 +489,8 @@ class DMBot(commands.AutoShardedBot):
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
+            if table.fix_notes.drop_speaker(user_id):  # their fixes leave the DM screen
+                self._track(self._show_fix_notes(table), "fix-notes")
             if table.questions.drop_speaker(user_id, time.monotonic()) is not None:
                 self._track(self._close_question(table), "name-question")
             for key in [k for k in table.heard_counts if k[1] == user_id]:
@@ -700,6 +710,8 @@ class DMBot(commands.AutoShardedBot):
             ended = table.questions.close(name_questions.ENDED, time.monotonic())
             if ended is not None:
                 self._track(self._close_question(table, self._not_answered(table, ended)), "q")
+        if table.fix_message is not None:  # the fixes stay listed; their Undo buttons go
+            self._track(self._show_fix_notes(table, ended=True), "fix-notes")
         for utterance in table.segmenter.flush_all():
             self.pipeline.enqueue(utterance)
         # In the background: /dmbot stop must answer within Discord's 3 seconds. Kept
@@ -1476,6 +1488,8 @@ class DMBot(commands.AutoShardedBot):
             result = self._clean(table, text)
             cleaned = result.text
             self._offer_question(table, utterance.user_id, result)
+            if table.fix_notes.add(utterance.user_id, utterance.start_ms, text, result.fixes):
+                self._track(self._show_fix_notes(table), "fix-notes")
             named = mentions(table.name_lookup, cleaned)  # once per name per line
             table.scene.note(named, utterance.user_id, time.monotonic())
             table.heard_counts.update((entity_id, utterance.user_id) for entity_id in named)
@@ -1593,6 +1607,77 @@ class DMBot(commands.AutoShardedBot):
         if message is not None:
             with contextlib.suppress(discord.HTTPException):
                 await message.edit(content=text, view=None)
+
+    async def _show_fix_notes(self, table: Table, *, ended: bool = False) -> None:
+        """Post or update the "✏️ Name fixes this scene" message (#296): only in the DM
+        screen, never the transcript channel. `ended`: the session is over, so the
+        Undo buttons go."""
+        async with table.fix_lock:
+            notes = table.fix_notes.shown()
+            if not notes and table.fix_message is None:
+                return
+            names = {}
+            for note in notes:
+                name = self.name_of(table.guild_id, note.speaker)
+                names[note.speaker] = (
+                    "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
+                )
+            text = fix_notes.message_text(notes, names, discord.utils.escape_markdown)
+            if not notes:
+                text = f"{fix_notes.HEADER}\n_None now._"
+            view = None if ended else fix_notes_view(table.guild_id, notes)
+            if table.fix_message is None:
+                table.fix_message = await self.post_message(table.screen_channel_id, text, view)
+                return
+            with contextlib.suppress(discord.HTTPException):
+                await table.fix_message.edit(content=text, view=view, allowed_mentions=NO_PINGS)
+
+    async def undo_fix(self, guild_id: int, note_id: str, user_id: int) -> str:
+        """The DM pressed Undo on a name fix (#296): the heard words go back in that line
+        (saved, waiting, or posted in the last ~30 s), and a "keep as heard" rule is
+        saved so they aren't fixed again. What to tell them."""
+        table = next(
+            (
+                t
+                for t in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]
+                if t is not None and t.fix_notes.find(note_id) is not None
+            ),
+            None,
+        )
+        if table is None or table.campaign_id is None or self.memory is None:
+            return fix_notes.EXPIRED
+        if not table.is_dm(user_id):
+            return fix_notes.ONLY_DM
+        note = table.fix_notes.undo(note_id)  # before any await: undone once
+        if note is None:
+            return fix_notes.EXPIRED
+        if not self.consent.has_consent(guild_id, note.speaker):
+            return fix_notes.STOPPED
+        try:
+            await self.memory.add_correction(
+                guild_id, table.campaign_id, note.fix.heard, action=KEEP, source=DM
+            )
+        except Exception:
+            note.undone = False  # not saved: can be pressed again
+            raise
+        if self.lookup is not None:
+            self.lookup.mark_stale(guild_id, table.campaign_id)
+        text = table.fix_notes.line_text(note)
+        # After the await: their words go back only while they're still recorded.
+        if self.consent.has_consent(guild_id, note.speaker):
+            waiting = table.unsaved.relabel(note.speaker, note.started_ms, text)
+            session_id = table.transcript_session_id
+            if not waiting and self.transcripts is not None and session_id is not None:
+                await self.transcripts.relabel_line(
+                    guild_id, session_id, note.speaker, note.started_ms, text
+                )
+            edit = table.transcript.relabel(note.speaker, note.started_ms, text, time.monotonic())
+            if edit is not None and self.consent.has_consent(guild_id, note.speaker):
+                message, content = edit
+                with contextlib.suppress(discord.HTTPException):
+                    await message.edit(content=content, allowed_mentions=NO_PINGS)  # type: ignore[attr-defined]
+        self._track(self._show_fix_notes(table), "fix-notes")
+        return fix_notes.DONE
 
     def _session_table(self, guild_id: int, question_id: str) -> Table | None:
         """The table, running or still finishing, whose question this is."""
@@ -1876,7 +1961,8 @@ class DMBot(commands.AutoShardedBot):
                 text, count = ready
                 result = await self._post_transcript(table.transcript_channel_id, text)
                 if result == "posted":
-                    table.transcript.posted(count)
+                    sent, self._last_transcript_message = self._last_transcript_message, None
+                    table.transcript.posted(count, sent, time.monotonic())
                 elif result == "retry":
                     return
                 else:
@@ -1896,7 +1982,9 @@ class DMBot(commands.AutoShardedBot):
         if not isinstance(channel, discord.abc.Messageable):
             return "gone"
         try:
-            await asyncio.wait_for(
+            # Kept for a late fix (an Undo edits it within ~30 s, #296); read straight
+            # after this returns, with no await between.
+            self._last_transcript_message = await asyncio.wait_for(
                 # silent: no pop-up or phone notification for every line (Discord's
                 # @silent). The channel still shows as unread.
                 channel.send(text, allowed_mentions=NO_PINGS, suppress_embeds=True, silent=True),

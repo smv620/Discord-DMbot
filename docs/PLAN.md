@@ -1158,7 +1158,7 @@ consent check just made still holds:
 - **Next:** Undo notes for medium fixes (proposed names), re-checking earlier lines
   after a correction, then off-topic hiding (#52).
 
-**Transcript Cleaner step 2, in progress (2026-10-07, #296).**
+**Transcript Cleaner step 2: built (2026-10-07, #296).**
 - **"Did they mean…?":**
   - **When:** a word that sounds like two or three confirmed names stays as heard, and
     the DM screen asks: "❓ **DMbot heard Mia say "Marin".** Did they mean… Not sure?
@@ -1199,7 +1199,23 @@ consent check just made still holds:
     **🎙 As heard** under it.
   - **The files:** each says which version it is and how to get the other. Files are
     built off the event loop. "Both" must fit Discord's limit together.
-- **Undo notes for medium fixes:** waiting for a decision on where they go (#296).
+- **Fixes with Undo (decided 2026-10-07 on #296):**
+  - **Which fixes:** a misheard word that sounds like a name DMbot only *suggested*
+    (spelled at least 0.9 alike, never secret, not next to a secret name) is fixed,
+    but never silently.
+  - **Where they show:** only in the DM screen, in one "✏️ Name fixes this scene"
+    message edited in place, one numbered line and one **↩️ Undo** each (the newest
+    10). Nothing about these guesses ever goes in the transcript channel.
+  - **Undo** (DM-only) puts the heard words back in that line: the stored line, a line
+    waiting to be saved or posted, and the channel message if it was posted in the last
+    ~30 s. It saves a "keep as heard" rule so the same words aren't fixed again.
+  - **Consent:** if the speaker stops being recorded, their lines leave the message.
+    Undo only touches their words while they're still recorded.
+  - **When it closes:** at the session's end the list stays but the Undo buttons go.
+    After a restart, a press says it can't be undone any more.
+- **Later:** unanswered "Did they mean…?" questions (they expire quietly at the
+  session's end, the line staying as heard) go to the after-session report once it
+  exists.
 
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled

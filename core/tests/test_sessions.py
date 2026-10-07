@@ -1121,6 +1121,76 @@ class SaveAndResume(SessionTests):
         self.assertTrue(done)
         self.assertIsNone(undo)
 
+    async def fixed_from_a_suggestion(self) -> tuple[Any, Any, Any]:
+        """A line where "Hrothgarr" is fixed to the suggested (not confirmed) Hrothgar."""
+        from dmbot.memory.lookup import CampaignLookup, LookupData
+        from dmbot.memory.models import PROPOSED, Alias, Entity
+        from dmbot.transcript.models import TranscriptBuffer
+
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        eid = "d" * 32
+        table.name_lookup = CampaignLookup.build(
+            LookupData(
+                1,
+                (Entity(eid, "concept", "Hrothgar", "", PROPOSED, None, "scan", 0),),
+                (
+                    Alias(
+                        eid,
+                        eid,
+                        "Hrothgar",
+                        "hrothgar",
+                        "full",
+                        None,
+                        False,
+                        PROPOSED,
+                        (),
+                        "scan",
+                        0,
+                    ),
+                ),
+                (),
+                (),
+            )
+        )
+        table.unsaved = TranscriptBuffer()
+        self.bot.transcripts = object()  # type: ignore[assignment]  # only checked for None
+        message = MagicMock(edit=AsyncMock())
+        self.bot.post_message = AsyncMock(return_value=message)  # type: ignore[method-assign]
+        memory: Any = MagicMock(add_correction=AsyncMock(return_value=MagicMock(batch=3)))
+        self.addCleanup(setattr, self.bot, "memory", self.bot.memory)
+        self.bot.memory = memory
+        self.said(table, "then Hrothgarr roars")
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return table, message, memory
+
+    async def test_a_fix_from_a_suggestion_is_shown_with_undo(self) -> None:
+        table, _, _ = await self.fixed_from_a_suggestion()
+        channel, text, view = self.bot.post_message.await_args.args  # type: ignore[attr-defined]
+        self.assertEqual(channel, SCREEN)  # the DM screen, never the transcript channel
+        self.assertIn("1. **Hrothgarr** → **Hrothgar**", text)
+        self.assertEqual([b.item.label for b in view.children], ["Undo 1"])
+        (line,) = list(table.unsaved._waiting)
+        self.assertEqual(line.text, "then Hrothgar roars")  # fixed, with Undo
+
+    async def test_undo_puts_the_heard_words_back_and_keeps_them(self) -> None:
+        table, message, memory = await self.fixed_from_a_suggestion()
+        (note,) = table.fix_notes.notes
+        answer = await self.bot.undo_fix(GUILD, note.id, PLAYER)
+        self.assertIn("Only the DM", answer)
+        answer = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("Undone", answer)
+        self.assertEqual(memory.add_correction.await_args.kwargs["action"], "keep")
+        self.assertEqual(memory.add_correction.await_args.args[2], "Hrothgarr")
+        (line,) = list(table.unsaved._waiting)
+        self.assertEqual(line.text, "then Hrothgarr roars")  # as heard again
+        for _ in range(3):
+            await asyncio.sleep(0)
+        self.assertIn("kept as heard", message.edit.await_args.kwargs["content"])
+        again = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("can't be undone", again)
+
     async def test_lower_case_words_count_even_without_the_names(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table, _ = await self.joined_with_transcript()
