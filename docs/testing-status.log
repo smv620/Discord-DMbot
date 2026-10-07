@@ -8,7 +8,8 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued)
+  - #337 (827ce6f, dev2): ears image installs with npm ci (#318). Check: the ears image
+    builds and starts, and connects to core.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
