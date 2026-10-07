@@ -445,3 +445,28 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     Undo, Connect to...), #215 (docs: live-test results go in these logs, not issue
     #40). Migration 0010_memory_heard. Database backed up first; core rebuilt;
     "ears connected" at 18:24:45; no errors. Ears and postgres unchanged.
+
+==============================================================================
+2026-10-07  Server: deploys 1 and 2 done as one (server session, no test run)
+==============================================================================
+  - 03:29 UTC  development @ ef07603, straight from 81a617a. That covers both planned
+    deploys at once: #246 (.env warning), #256 (scripts/set-key, scripts/update-env),
+    #241 (backup is DM-only), #244 (names step 3), #249 (names from documents, adds
+    pypdf), #262 (Deepgram keyterm fallback, #209). No migrations. Core rebuilt;
+    "ears connected" at 03:29:33; no errors. Ears and postgres unchanged.
+  - Mistake (server session): the planned order (75a91e0 first, then development) and
+    the database backup before the rebuild were skipped. No schema change between
+    81a617a and ef07603, so no data was at risk. Backup taken at 04:22 UTC (kept on
+    the server, outside the repo; pg_restore -l reads 19 tables). Not rolled back to
+    replay deploy 1: deploy 2 is a superset of it.
+  - #246 seen working: start-up log named the 6 missing settings and kept defaults.
+    scripts/update-env --check listed 6 to add, 24 kept.
+  - Owner ran scripts/update-env and scripts/set-key (ANTHROPIC_API_KEY); core
+    restarted 05:25 UTC. Start-up log: "ears connected", no .env warning, no warnings
+    or errors. Key accepted by Anthropic (status 200 on a model list, no cost; the key
+    was never printed). CLOUD_STT_API_KEY stays empty: only used with TRANSCRIBER=cloud.
+  - First live look at #244 (03:36 UTC, owner): a Google Docs link pasted into
+    Add many -> Paste a list was added as one name with no kind. Links only work in
+    the link: box, and nothing says so. Issue #264, widened by the owner to: read
+    names from any list, notes, file or link (any host) with the AI, shown before
+    adding. Not fixed yet (web session owns ui/name_lists.py).
