@@ -9,6 +9,11 @@ Never put tokens, .env contents or players' personal data here (public repo).
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
 (nothing queued; twin runs done 2026-10-07: hints 54/55 names, none 20/55, see history)
+  - #402 (0cc620e, dev3, #395): the twin now scores the after-session name scan.
+    Nothing to deploy; one run for dev1, the same way as the earlier twin runs:
+      scripts/replay docs/test-scripts/stt-bakeoff.m4a --script docs/test-scripts/stt-bakeoff.md --transcriber deepgram --names docs/test-scripts/bakeoff-story-names-setup.md --log
+    Check: the "cleaned, without the limit" line against the "script text" line (at most
+    9 of 15 on this script); known names suggested again; rules words suggested.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
