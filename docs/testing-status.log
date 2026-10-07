@@ -15,6 +15,16 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
       scripts/replay docs/test-scripts/stt-bakeoff.m4a --script docs/test-scripts/stt-bakeoff.md --transcriber deepgram --log
     Check: dm-only within a few points of run 7 (part 1: 0 of 33, part 2: 10 of 12); the
     bake-off record's names line, and once more with --no-hints. About 4 min of audio in all.
+In development @ 0cc620e (040254f is live; core only, rebuild core). Check:
+  - #342 (CloudDev, #164 part 1): merges and undo are set-based. On the test campaign:
+    🔗 Same as… two names, then Undo; both answer at once (#372: "🔗 Joining A into
+    B…" then the card). Log: no statement storms, merge under a second.
+  - #408 (dev1, #392): Add many links. A link to a gzip-compressed page works; a
+    Google Drive share of a big file says to download it and use 📎 Upload a file.
+  - #402 (dev3, #395): twin part 3, nothing to deploy. Run (host venv, not live):
+      scripts/replay docs/test-scripts/stt-bakeoff.m4a --script docs/test-scripts/stt-bakeoff.md \
+        --names docs/test-scripts/bakeoff-story-names-setup.md --transcriber deepgram --log
+    Record the scan's found/false counts in #299.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
