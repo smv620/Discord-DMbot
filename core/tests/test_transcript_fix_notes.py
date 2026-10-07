@@ -1,6 +1,7 @@
 """Name fixes the DM can undo (#296), without Discord or a database."""
 
 import unittest
+from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.dm_screen.name_questions import FixUndoButton, fix_notes_view
 from dmbot.transcript.cleaner import SOUND, Fix
@@ -50,11 +51,12 @@ class FixNotesTest(unittest.TestCase):
         book = FixNotes()
         _, second = book.add(MIA, 1000, HEARD, fixes())
         book.undo(second.id)
-        text = message_text(book.shown(), {MIA: "Mia"})
+        text, shown = message_text(book.shown(), {MIA: "Mia"})
+        self.assertEqual(len(shown), 2)
         self.assertIn("1. **Hrothgarr** → **Hrothgar** (Mia)", text)
         self.assertIn("2. ~~Beleros → Belleros~~ (Mia): ↩️ undone", text)
         self.assertTrue(text.startswith("✏️ **Name fixes to check**"))
-        self.assertIn("Nothing to check right now", message_text([], {}))
+        self.assertIn("Nothing to check right now", message_text([], {})[0])
 
     def test_numbers_never_change_meaning(self) -> None:
         book = FixNotes()
@@ -77,8 +79,13 @@ class FixNotesTest(unittest.TestCase):
         long = "_" * 200
         for i in range(SHOWN):
             book.add(MIA, i, long, (Fix(0, 200, long, long, "a" * 32, SOUND, sure=False),))
-        text = message_text(book.shown(), {MIA: "Mia"}, lambda t: t.replace("_", "\\_"))
+        text, shown = message_text(book.shown(), {MIA: "Mia"}, lambda t: t.replace("_", "\\_"))
         self.assertLessEqual(len(text), 2000)
+        # whole lines only: the oldest went, and each kept line is complete
+        self.assertLess(len(shown), SHOWN)
+        self.assertEqual([n.number for n in shown], [n.number for n in book.shown()][-len(shown) :])
+        for line in text.splitlines()[1:]:
+            self.assertEqual(line.count("**"), 4)
 
     def test_a_speaker_who_stops_loses_their_notes(self) -> None:
         book = FixNotes()
@@ -109,7 +116,7 @@ class RelabelTest(unittest.TestCase):
         stream.add(DEE, "Dee", "second line", 2000)
         text, count = stream.next_message(lambda _: True) or ("", 0)
         stream.add(MIA, "Mia", "first line", 1000)  # arrives while the message is sent
-        stream.posted(count, object(), now=1.0)
+        stream.posted(count, MagicMock(edit=AsyncMock()), now=1.0)
         self.assertIn("second line", text)
         waiting, _ = stream.next_message(lambda _: True) or ("", 0)
         self.assertIn("first line", waiting)  # not lost
@@ -128,7 +135,7 @@ class RelabelTest(unittest.TestCase):
         stream.add(MIA, "Mia", "I saw Belleros", 1000)
         stream.add(DEE, "Dee", "Me too", 2000)
         _, count = stream.next_message(lambda _: True) or ("", 0)
-        message = object()
+        message = MagicMock(edit=AsyncMock())
         stream.posted(count, message, now=100.0)
         edit = stream.relabel(MIA, 1000, "I saw Beleros", 100.0 + EDIT_WINDOW_S - 1)
         assert edit is not None
@@ -140,7 +147,7 @@ class RelabelTest(unittest.TestCase):
         stream = TranscriptStream()
         stream.add(MIA, "Mia", "I saw Belleros", 1000)
         stream.next_message(lambda _: True)
-        stream.posted(1, object(), now=100.0)
+        stream.posted(1, MagicMock(edit=AsyncMock()), now=100.0)
         self.assertIsNone(stream.relabel(MIA, 1000, "I saw Beleros", 100.0 + EDIT_WINDOW_S + 1))
 
     def test_a_waiting_line_in_the_save_buffer(self) -> None:

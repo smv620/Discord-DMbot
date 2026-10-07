@@ -837,10 +837,10 @@ class SaveAndResume(SessionTests):
         await self.bot._on_status(table, Status("joined", guild_id=GUILD))
         sent: list[str] = []
 
-        async def fake_post(channel_id: int, text: str) -> str:
+        async def fake_post(channel_id: int, text: str) -> tuple[str, Any]:
             self.assertEqual(channel_id, TRANSCRIPT)
             sent.append(text)
-            return "posted"
+            return "posted", None
 
         self.bot._post_transcript = fake_post  # type: ignore[method-assign]
         return table, sent
@@ -1291,11 +1291,11 @@ class SaveAndResume(SessionTests):
         table, sent = await self.joined_with_transcript()
         results = iter(["retry", "posted", "posted"])
 
-        async def flaky(channel_id: int, text: str) -> str:
+        async def flaky(channel_id: int, text: str) -> tuple[str, Any]:
             result = next(results)
             if result == "posted":
                 sent.append(text)
-            return result
+            return result, None
 
         self.bot._post_transcript = flaky  # type: ignore[method-assign]
         self.said(table, "hello")
@@ -1309,7 +1309,7 @@ class SaveAndResume(SessionTests):
         channel.send = AsyncMock()
         self.bot.get_channel = MagicMock(return_value=channel)  # type: ignore[method-assign]
         result = await self.bot._post_transcript(5, "**Mia:** hi")
-        self.assertEqual(result[0], "posted")  # with the message, kept for a late fix
+        self.assertEqual(result, ("posted", channel.send.return_value))  # kept for a late fix
         call = channel.send.await_args
         assert call is not None
         self.assertTrue(call.kwargs["silent"])
@@ -1318,7 +1318,7 @@ class SaveAndResume(SessionTests):
     async def test_a_lost_channel_stops_the_transcript_and_tells_the_dm_once(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table, _ = await self.joined_with_transcript()
-        gone = AsyncMock(return_value="gone")
+        gone = AsyncMock(return_value=("gone", None))
         self.bot._post_transcript = gone  # type: ignore[method-assign]
         posted = AsyncMock(return_value=True)
         self.bot.post = posted  # type: ignore[method-assign]

@@ -1111,7 +1111,7 @@ reads the campaign memory and never changes it.
     channel. The question leads with what was heard: "❓ **Mia said "Bell or us"**: did
     they mean… [Belleros] [Bellamy] [Type it…] [Keep as heard]". At most 3 options.
     **Keep as heard** saves a "don't change this" rule, like Undo.
-  - **Not flooding the DM screen:** medium fixes go into one "✏️ Name fixes this scene"
+  - **Not flooding the DM screen:** medium fixes go into one "✏️ Name fixes to check"
     message that is edited in place, one line and one Undo each. At most one question is
     open at a time, with a cooldown, and only for names that come up again or matter to
     the scene. Unanswered questions expire quietly (the line stays as heard) and move to
@@ -1240,7 +1240,7 @@ consent check just made still holds:
   - **Where they show:** only in the DM screen, in one "✏️ Name fixes to check" message
     edited in place: "DMbot changed these words in the transcript but isn't sure.
     Wrong? Press its Undo to put back what was heard." One numbered line and one
-    **↩️ Undo N** each (the newest 10). A fix keeps its number for the whole session,
+    **↩️ Undo N** each (the newest 10, fewer if the names are very long). A fix keeps its number for the whole session,
     so a number never changes meaning while the DM aims at it. A burst of fixes is one
     edit, and if the message is deleted a new one is posted. Nothing about these
     guesses ever goes in the transcript channel.
