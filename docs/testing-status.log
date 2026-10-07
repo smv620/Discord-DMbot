@@ -1,10 +1,31 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-06 by the server session (server on 81a617a; run 8a discarded,
-bad Wi-Fi; next: run 8, which also checks what's been deployed since run 7)
+Last updated: 2026-10-07 by the web session (handover: two deploys before run 8; the
+server is still on 81a617a)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
+
+------------------------------------------------------------------------------
+FIRST: TWO DEPLOYS (server session, owner decision 2026-10-07)
+------------------------------------------------------------------------------
+Deploy 1: 75a91e0 (#246 .env warning, #256 scripts/set-key and scripts/update-env)
+  [ ] Back up the database (DEPLOY.md, "Data and backups")
+  [ ] git fetch && git checkout 75a91e0 (development has moved on; deploy this commit)
+  [ ] docker compose up -d --build core (#246 needs the .env.example mount)
+  [ ] Check: "ears connected"; the start-up log shows "Your .env is missing ..." or
+      nothing. scripts/update-env --check lists what a rebuilt .env would change
+  [ ] Record the deploy in docs/testing-history.log
+Deploy 2: 55a9815 = development (adds #241 backup DM-only, #244 names step 3, #249
+names from documents)
+  [ ] Back up the database again
+  [ ] git checkout development && git pull; docker compose up -d --build core
+      (new dependency: pypdf)
+  [ ] Owner: scripts/update-env (adds the new AI lines), then scripts/set-key to add
+      ANTHROPIC_API_KEY (#249). Never ask for the
+      value in chat, never print it. Without it, documents are refused; the rest works
+  [ ] Check the start-up log and the .env warning again; record the deploy
+Then run 8 below. Also worth a first live look: #241, #244, #249.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -17,7 +38,8 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1. Deployed: 81a617a (18:24 UTC), the tip of development.
+DMBOT_DEBUG_AUDIO=1. Deployed: 81a617a (18:24 UTC). Development is now 55a9815: deploy
+first (above).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
