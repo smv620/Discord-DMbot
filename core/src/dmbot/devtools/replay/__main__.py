@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from dmbot.devtools.replay import audio
+from dmbot.devtools.replay import names as name_scan
 from dmbot.devtools.replay.bakeoff import (
     Bakeoff,
     is_bakeoff,
@@ -106,6 +107,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--transcriber", choices=ENGINES, help="overrides TRANSCRIBER")
     parser.add_argument("--hint", action="append", default=[], help="a name hint (repeat)")
     parser.add_argument(
+        "--names",
+        type=Path,
+        help="a names list (Add many format, or a setup note): the names the campaign "
+        "already knows, for the name scan and as hints",
+    )
+    parser.add_argument(
         "--no-hints",
         action="store_true",
         help="the bake-off script sends its names as hints unless this is given",
@@ -174,10 +181,18 @@ async def main_async(args: argparse.Namespace) -> int:
         f"{len(pieces)} pieces before core's 15 s cut, {left_out_s / 1000:.0f} s of quiet "
         "inside them left out"
     )
+    try:
+        known = name_scan.load_known(args.names) if args.names else name_scan.Known.none()
+    except (OSError, ValueError) as exc:
+        print(f"replay: {exc}", file=sys.stderr)
+        return 2
     hints = list(args.hint)
-    if isinstance(script, Bakeoff) and not args.no_hints and not hints:
-        # As the live bot sends the campaign's names: every name and rules word.
-        hints = [t.name for t in (*script.names, script.nickname, *script.rules)]
+    if not args.no_hints and not hints:
+        if args.names:
+            hints = known.hints()  # what the live bot sends for these names
+        elif isinstance(script, Bakeoff):
+            # No campaign given: every name and rules word, as if the campaign had them.
+            hints = [t.name for t in (*script.names, script.nickname, *script.rules)]
     sent_s = sum(len(piece.frames) for piece in pieces) * audio.FRAME_MS / 1000
     cost = cost_line(settings, sent_s)
     if cost:
@@ -220,9 +235,34 @@ async def main_async(args: argparse.Namespace) -> int:
         )
     if cost:
         lines.insert(2, cost)
+    scan_story = isinstance(script, Bakeoff) or args.script.stem == "bakeoff-story"
+    if args.names and not scan_story:
+        details.append("name scan: scored only for stt-bakeoff.md and bakeoff-story.md")
+    elif args.names:
+        # Only with a campaign's names: the live bot never hints names it doesn't know,
+        # so hinting every story name and then counting them found would flatter it.
+        timed = [(h.end_ms / 1000, h.text) for h in result.heard if h.text]
+        story = name_scan.story_names()
+        perfect = (
+            [script.lines[n] for n in sorted(script.lines)]
+            if isinstance(script, Bakeoff)
+            else [" ".join(w.text for w in script.words)]
+        )
+        cleaned_lines = name_scan.clean_lines(known, timed)
+        unlimited = name_scan.score_scan(cleaned_lines, known, story, limit=False)
+        lines += name_scan.scan_record(
+            script=name_scan.score_scan(perfect, known, story),
+            as_heard=name_scan.score_scan([t for _, t in timed], known, story),
+            cleaned=name_scan.score_scan(cleaned_lines, known, story),
+            unlimited=unlimited,
+            script_unlimited=name_scan.score_scan(perfect, known, story, limit=False),
+            known=known.count,
+        )
+        details += ["name scan, cleaned, without the limit:"]
+        details += [f"  {line}" for line in name_scan.scan_details(unlimited)]
     print("\n".join(lines))
     if details:
-        print("\nmisheard (on screen only):")
+        print("\non screen only, never logged:")
         print("\n".join(f"  {line}" for line in details))
     print("\nheard:")
     print("\n".join(f"  {line}" for line in heard_lines(result)))
