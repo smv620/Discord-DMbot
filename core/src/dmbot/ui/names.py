@@ -78,6 +78,11 @@ NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
 )
 GONE = "That name was just changed or removed. Run `/dmbot names` to try again."
+# Editing and removing live on each name's card; say how to get there (#353).
+EDIT_HINT = (
+    "To fix a spelling, change what a name is, or remove it, pick it below or press 🔍 Find a name."
+)
+MISTAKE_HINT = "Made a mistake? Fix or remove it with the buttons below."
 
 
 def _memory(interaction: discord.Interaction) -> MemoryStore | None:
@@ -209,6 +214,8 @@ def home_text(
     ids = {e.id for e in confirmed}
     section("👂 **Heard last session:**", [h.entity_id for h in heard if h.entity_id in ids])
     section("🆕 **Added lately:**", [e.id for e in sorted(confirmed, key=lambda e: -e.created_at)])
+    if shown:  # the menu below lists them
+        lines.append(EDIT_HINT)
     text = "\n".join(lines)
     return (text if len(text) <= PANEL_MAX else text[: PANEL_MAX - 1] + "…"), shown
 
@@ -246,7 +253,7 @@ class NamesHome(_Menu):
         if shown:
             self.open = _Select(
                 self._open,
-                placeholder="Open a name…",
+                placeholder="✏️ Edit or remove a name…",
                 options=[
                     discord.SelectOption(
                         label=logic.shorten(name, logic.OPTION_LABEL_MAX), value=e, description=kind
@@ -525,7 +532,12 @@ class KindPicker(_Menu):
             await _replace(interaction, f"Couldn't save that: {exc}", None)
             return
         changed(interaction, campaign)
-        await _replace(interaction, saved_text(entity, self.others, self.secret), None)
+        # Its card, so fixing or removing it is one press away (#353).
+        from dmbot.ui.name_card import show_card
+
+        # The hint first: the card's note is cut to fit, from the end (#353 review).
+        note = f"{MISTAKE_HINT}\n{saved_text(entity, self.others, self.secret)}"
+        await show_card(interaction, campaign.id, entity.id, replace=True, note=note)
 
 
 async def save_name(

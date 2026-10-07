@@ -124,6 +124,9 @@ class Panel(NamesTest):
         self.assertIn("🆕 **Added lately:**", text)
         self.assertNotIn("hooded", text)  # secrets are on the card, for DMs only
         self.assertEqual(len(shown), 3)  # for the Open a name… menu
+        self.assertTrue(text.endswith(ui.EDIT_HINT))  # how to edit or remove (#353)
+        view = ui.NamesHome(self.campaign.id, 0, shown)
+        self.assertEqual(view.open.placeholder, "✏️ Edit or remove a name…")
 
     async def test_names_heard_last_session_come_first(self) -> None:
         from dmbot.memory.models import Heard
@@ -215,6 +218,21 @@ class NameCards(NamesTest):
         await form.on_submit(it)
         aliases = await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)
         self.assertNotIn("the grey knight", {a.text for a in aliases})
+
+    async def test_remove_sits_with_the_edits_and_still_asks_first(self) -> None:
+        from dmbot.ui import name_card
+
+        card = name_card.NameCard(self.campaign.id, self.bell.id, others=True)
+        first_row = [getattr(c, "label", "") for c in card.children if c.row in (None, 0)]
+        # The three edits the panel names, in its words (#353).
+        self.assertEqual(first_row, ["✏️ Fix spelling", "Change what it is", "🗑 Remove this name"])
+        self.assertTrue(all(len(getattr(c, "label", "")) <= 25 for c in card.children))
+        (remove,) = [c for c in card.children if getattr(c, "label", "") == "🗑 Remove this name"]
+        it = self.it()
+        await remove.callback(it)
+        text, view = it.response.edited[0]
+        self.assertIsInstance(view, name_card.ConfirmRemove)  # asks first
+        self.assertIn("Belleros", text)
 
     async def test_remove_asks_first_and_can_be_undone(self) -> None:
         from dmbot.ui import name_card
@@ -462,6 +480,7 @@ class Lists(NamesTest):
         await name_lists.import_list(it, self.campaign.id, text)
         summary = it.followup.send.call_args.args[0]
         self.assertIn("Added 3 names", summary)
+        self.assertIn("Only one name wrong? Run `/dmbot names` and use 🔍 Find a name", summary)
         self.assertIn("2 names need you to check them", summary)  # no kind; sounds like Belleros
         self.assertIn("1 name DMbot already knows", summary)
         self.assertIn("Bryn Shander", await self.names())
@@ -694,7 +713,12 @@ class Adding(NamesTest):
         view.pick = SimpleNamespace(values=["place"])  # type: ignore[assignment]
         it = self.it()
         await view._picked(it)
-        self.assertIn("DMbot will remember **Thornewick** (place)", it.response.edited[0][0])
+        text, card = it.response.edited[0]
+        self.assertIn("DMbot will remember **Thornewick** (place)", text)
+        self.assertIn(ui.MISTAKE_HINT, text)  # #353: its card, to fix or remove it
+        self.assertIn("🪪 **Thornewick**", text)
+        labels = {getattr(c, "label", None) for c in card.children}
+        self.assertLessEqual({"✏️ Fix spelling", "🗑 Remove this name", "➕ Also called…"}, labels)
         self.assertIn("Thornewick", await self.names())
 
     async def test_a_players_character_knows_its_player(self) -> None:

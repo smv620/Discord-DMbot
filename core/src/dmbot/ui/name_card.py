@@ -2,11 +2,12 @@
 
 🔍 Find a name (a one-field form, or `/dmbot names find:` with Discord's type-ahead)
 opens a **name card**: what it is, when it was last heard, its other names, its secret
-names (the campaign's DMs only) and its connections, with ✏️ Fix spelling, Add another
-name, Edit other names (⭐ main name, 🤫 secret, ✖ not this name), 🔗 Same as…, 🧭 Connect
-to…, Change what it is, Show all, and Remove (asks first; Undo). Everything answers from
-the in-memory copy of the names, refreshed right after DMbot's own changes. Only the
-campaign's DMs and server managers, privately; every press checks again.
+names (the campaign's DMs only) and its connections, with ✏️ Fix spelling, Change what it
+is and 🗑 Remove this name (asks first; Undo) first, then Also called…, Edit other
+names (⭐ main name, 🤫 secret, ✖ not this name), 🔗 Same as…, 🧭 Connect to… and Show
+all. Everything answers from the in-memory copy of the names, refreshed right after
+DMbot's own changes. Only the campaign's DMs and server managers, privately; every press
+checks again.
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ from dmbot.ui.names import (
 )
 
 log = logging.getLogger(__name__)
+ALSO_CALLED = "➕ Also called…"  # adds another name for this one
 
 CARD_MAX = 1900  # under Discord's 2,000 characters
 SHOWN = 3  # per section, then "… and N more"
@@ -291,16 +293,20 @@ class NameCard(_Menu):
         self.campaign_id = campaign_id
         self.entity_id = entity_id
         grey = discord.ButtonStyle.secondary
+        # First row: the three edits the names panel names, in its words (#353). Remove
+        # says what it does and still asks first.
         self.add_item(_Button(self._fix, label="✏️ Fix spelling", style=discord.ButtonStyle.primary))
-        self.add_item(_Button(self._add, label="Add another name", style=grey))
+        self.add_item(_Button(self._change_kind, label="Change what it is", style=grey))
+        self.add_item(_Button(self._remove, label="🗑 Remove this name", style=grey))
+        # "Also called", as the card says: right after Add a name, "Add another name"
+        # read like "add the next name" (#353 review).
+        self.add_item(_Button(self._add, label=ALSO_CALLED, style=grey, row=1))
         if others:
-            self.add_item(_Button(self._edit_others, label="Edit other names", style=grey))
+            self.add_item(_Button(self._edit_others, label="Edit other names", style=grey, row=1))
         self.add_item(_Button(self._same, label="🔗 Same as…", style=grey, row=1))
         self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=1))
-        self.add_item(_Button(self._change_kind, label="Change what it is", style=grey, row=1))
         if longer:
             self.add_item(_Button(self._all, label="Show all", style=grey, row=2))
-        self.add_item(_Button(self._remove, label="Remove", style=grey, row=2))
 
     async def _all(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -315,7 +321,7 @@ class NameCard(_Menu):
         if not listed:
             await _tell(
                 interaction,
-                f"**{_md(name)}** has no other names yet. Add some with Add another name.",
+                f"**{_md(name)}** has no other names yet. Add some with ➕ Also called….",
             )
             return
         self.stop()
@@ -844,7 +850,7 @@ class OneName(_Menu):
         self.stop()
         note = (
             f"✖ DMbot stops listening for **{_md(alias.text)}** as **{_md(name)}**. Wrong? "
-            "Add it back with Add another name."
+            "Add it back with ➕ Also called…."
         )
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
@@ -953,7 +959,7 @@ class PickOther(_Menu):
                 f"Make **{_md(name)}** and **{_md(other_name)}** one? Their other names and "
                 "connections go together. Which name should it keep?\n"
                 "Is one of them a disguise? Press **No**, then add it to the real one with "
-                "Add another name, as a secret name.",
+                "➕ Also called…, as a secret name.",
                 SameConfirm(
                     self.campaign_id,
                     self.entity_id,
@@ -1209,7 +1215,9 @@ class Matches(_Menu):
         self.campaign_id = campaign_id
         self.typed = typed
         if options:
-            self.pick = _Select(self._picked, placeholder="Open a name…", options=options)
+            self.pick = _Select(
+                self._picked, placeholder="✏️ Edit or remove a name…", options=options
+            )
             self.add_item(self.pick)
         primary, secondary = discord.ButtonStyle.primary, discord.ButtonStyle.secondary
         self.add_item(
