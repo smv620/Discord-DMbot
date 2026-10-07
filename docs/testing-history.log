@@ -578,3 +578,16 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Takeaway: campaign names as hints are what makes Deepgram get invented names right
   (20 → 54 of 55), at no cost to everyday speech or rules words. Run 8 should add
   Auril and Caer-Dineval as names first, as its checklist says.
+
+==============================================================================
+2026-10-07  Server: deploy f292c48 (dev1, no test run)
+==============================================================================
+  - 18:34 UTC  development @ f292c48: #408 (links in Add many: gzip unpacked a piece
+    at a time within the 10 MB cap, bytes off the network capped too, 6to4/Teredo
+    refused, one link at a time per server on every path, plainer wording, #392), #402
+    (session twin scores the after-session name scan: dev tool only, #395). No
+    migrations, no .env changes (pyproject declares yarl, already installed). Database
+    backed up first (outside the repo; pg_restore -l reads 19 tables); no session was
+    live. Core rebuilt; "ears connected" at 18:34:34; no warnings or errors.
+  Not yet live-tested: #408. Run 8's #389 checks cover it (a Google Doc is served
+  gzipped, so it goes through the new unpacking).
