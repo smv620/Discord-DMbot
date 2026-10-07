@@ -189,7 +189,7 @@ async def main_async(args: argparse.Namespace) -> int:
     hints = list(args.hint)
     if not args.no_hints and not hints:
         if args.names:
-            hints = list(known.names)  # what the live bot sends: the campaign's names
+            hints = known.hints()  # what the live bot sends for these names
         elif isinstance(script, Bakeoff):
             # No campaign given: every name and rules word, as if the campaign had them.
             hints = [t.name for t in (*script.names, script.nickname, *script.rules)]
@@ -235,14 +235,29 @@ async def main_async(args: argparse.Namespace) -> int:
         )
     if cost:
         lines.insert(2, cost)
-    if args.names or isinstance(script, Bakeoff) or args.script.stem == "bakeoff-story":
+    scan_story = isinstance(script, Bakeoff) or args.script.stem == "bakeoff-story"
+    if args.names and not scan_story:
+        details.append("name scan: scored only for stt-bakeoff.md and bakeoff-story.md")
+    elif args.names:
+        # Only with a campaign's names: the live bot never hints names it doesn't know,
+        # so hinting every story name and then counting them found would flatter it.
         timed = [(h.end_ms / 1000, h.text) for h in result.heard if h.text]
         story = name_scan.story_names()
-        as_heard = name_scan.score_scan([t for _, t in timed], known, story)
+        perfect = (
+            [script.lines[n] for n in sorted(script.lines)]
+            if isinstance(script, Bakeoff)
+            else [" ".join(w.text for w in script.words)]
+        )
         cleaned_lines = name_scan.clean_lines(known, timed)
-        cleaned = name_scan.score_scan(cleaned_lines, known, story)
         unlimited = name_scan.score_scan(cleaned_lines, known, story, limit=False)
-        lines += name_scan.scan_record(as_heard, cleaned, unlimited, len(known.names))
+        lines += name_scan.scan_record(
+            script=name_scan.score_scan(perfect, known, story),
+            as_heard=name_scan.score_scan([t for _, t in timed], known, story),
+            cleaned=name_scan.score_scan(cleaned_lines, known, story),
+            unlimited=unlimited,
+            script_unlimited=name_scan.score_scan(perfect, known, story, limit=False),
+            known=known.count,
+        )
         details += ["name scan, cleaned, without the limit:"]
         details += [f"  {line}" for line in name_scan.scan_details(unlimited)]
     print("\n".join(lines))

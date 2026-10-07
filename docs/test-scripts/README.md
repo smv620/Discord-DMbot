@@ -127,12 +127,14 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
 ```
 
 - **The name scan (#395):** with `--names FILE` (a names list, or a setup note such as
-  `bakeoff-story-names-setup.md`), the campaign knows those names: they go as hints, the real
-  Cleaner fixes them when misheard, and after the replay the bot's after-session name scan
-  runs on the text as heard (what it scans today) and on the cleaned text (#394). The record
-  counts the story names it suggests, the known names it suggests again and the suggestions
-  that aren't names. The scan also runs for `stt-bakeoff.md` and `bakeoff-story.md` without
-  `--names`, with no names known.
+  `bakeoff-story-names-setup.md`) and `stt-bakeoff.md` or `bakeoff-story.md`, the campaign
+  knows those names: they go as the bot's own hints, and the real Cleaner fixes them when
+  misheard. After the replay, the bot's after-session name scan runs on the text as heard
+  (what it scans today), on the cleaned text (#394), and on the script's own text (the most
+  it could find). The record counts the new story names found, known names suggested again,
+  rules words suggested and anything else, with the bot's 10-suggestion limit (what the DM
+  sees) and without it (the real recall). Without `--names` there's no scan score: the live
+  bot never hints names it doesn't know.
 - Recordings other than 16 kHz mono WAV need `pip install -e ".[twin]"` in `core/`.
 - The engine's settings come from the environment, as for the bot.
 - `--realtime` sends the audio as it was spoken, to time the delay a table would see.
