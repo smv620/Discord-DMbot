@@ -3,7 +3,9 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { getContainerRenderer } from "@astrojs/preact/container-renderer";
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
+import { loadRenderers } from "astro:container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -40,7 +42,10 @@ it("has a smoke test for every page", () => {
 let container: AstroContainer;
 
 beforeAll(async () => {
-  container = await AstroContainer.create();
+  // /account has a Preact island, so the container needs Preact's renderer.
+  container = await AstroContainer.create({
+    renderers: await loadRenderers([getContainerRenderer()]),
+  });
 });
 
 afterEach(() => {

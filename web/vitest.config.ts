@@ -3,6 +3,6 @@ import { getViteConfig } from "astro/config";
 
 export default getViteConfig({
   test: {
-    include: ["test/**/*.test.ts"],
+    include: ["test/**/*.test.{ts,tsx}"],
   },
 });
