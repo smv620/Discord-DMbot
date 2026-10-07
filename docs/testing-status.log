@@ -12,6 +12,8 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   and the fix hint; ➕ Add a name replies with the new name's card ("Made a mistake?…");
   card row 1 is ✏️ Fix spelling | Change what it is | 🗑 Remove this name, row 2 starts
   with ➕ Also called…; 📥 Add many ends with the "Only one name wrong?" line.
+- #378 (#164 part 4, CloudDev): core only, no visible change. Check: a campaign backup
+  downloads and restores as before, and other commands stay quick while it runs.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
