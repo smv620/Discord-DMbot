@@ -445,6 +445,7 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
     # Anyone in the server may download a complete copy, secrets included, so a campaign
     # is never lost if its DM disappears (owner decision, 2026-10-06; CLAUDE.md).
     dm = interaction.user.id in campaign.dm_user_ids
+    name = discord.utils.escape_markdown(campaign.name)
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True, thinking=True)
     data = await bot.campaigns.export(guild.id, campaign.id)
@@ -456,13 +457,13 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         log.warning("Backup of campaign %s is too big to make", campaign.id)
         await _tell(
             interaction,
-            f"**{campaign.name}** is too big to download as one file. Nothing was lost: the "
-            "campaign is still here. DMbot can't make a copy of a campaign this big yet.",
+            f"💾 **{name}** is too big for DMbot to copy yet. Nothing was lost: the campaign "
+            "is still here. Tell whoever runs DMbot so they can save a copy for you.",
         )
         return
     file = discord.File(io.BytesIO(raw), filename=logic.backup_filename(campaign.name, _now()))
     await interaction.followup.send(
-        f"💾 Here's a complete copy of **{campaign.name}**. Keep it somewhere safe, and don't "
+        f"💾 Here's a complete copy of **{name}**. Keep it somewhere safe, and don't "
         "share it publicly: it holds the DM's secret names and notes."
         + (
             ""
@@ -471,7 +472,8 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
             "is ever gone."
         )
         + "\nUse `/dmbot restore` to bring it back, here or in another server. Whoever "
-        "restores it becomes its DM.",
+        "restores it becomes its DM. It's packed small and won't open in a text app; that's "
+        "normal. Upload it as is to restore.",
         file=file,
         ephemeral=True,
         allowed_mentions=NO_PINGS,

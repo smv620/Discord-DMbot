@@ -43,7 +43,8 @@ from dmbot.logs import log_context
 log = logging.getLogger(__name__)
 
 EXPORT_FORMAT = "dmbot-campaign"
-# 2: the file is gzip-compressed (#164); version 1 files (plain JSON) still restore.
+# 2: written compressed since #164; contents unchanged from 1. Plain files of either
+# version still restore: the file's first bytes, not its version, say if it's packed.
 EXPORT_VERSION = 2
 
 RULE_ID_MAX = 64
@@ -56,9 +57,15 @@ GZIP_MAGIC = b"\x1f\x8b"
 
 NOT_HERE = "That campaign doesn't exist in this server."
 NAME_TAKEN = "This server already has a campaign with that name."
-DAMAGED = "This backup file is damaged or isn't a DMbot campaign backup."
-TOO_BIG = "That file is too big to be a DMbot backup. Pick the file you got from /dmbot backup."
-NOT_A_BACKUP = "That file isn't a DMbot campaign backup. Pick the file you got from /dmbot backup."
+DAMAGED = (
+    "This backup file is damaged or isn't a DMbot campaign backup. "
+    "Pick the file you got from `/dmbot backup`."
+)
+TOO_BIG = "That file is too big to be a DMbot backup. Pick the file you got from `/dmbot backup`."
+NOT_A_BACKUP = (
+    "That file isn't a DMbot campaign backup. Pick the file you got from `/dmbot backup`."
+)
+CAMPAIGN_TOO_BIG = "This campaign is too big for DMbot to copy yet. Nothing was lost."
 
 
 class BackupTooBig(CampaignError):
@@ -652,7 +659,7 @@ def encode_backup(backup: dict[str, Any]) -> bytes:
     a restore would refuse. Run off the event loop for big ones."""
     text = json.dumps(backup, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if len(text) > MAX_BACKUP_BYTES:
-        raise BackupTooBig(TOO_BIG)
+        raise BackupTooBig(CAMPAIGN_TOO_BIG)
     return gzip.compress(text, compresslevel=6, mtime=0)
 
 
@@ -664,8 +671,12 @@ def decode_backup(raw: bytes) -> object:
     if raw.startswith(GZIP_MAGIC):
         raw = _unpack(raw)
     try:
-        return json.loads(raw)  # bytes: no second copy of a big text
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        # From bytes, json finds the encoding itself (UTF-8, or UTF-16/32 with a BOM);
+        # it decodes to a str internally, so memory is the same as decoding here.
+        return json.loads(raw)
+    # ValueError also covers bad UTF-8, bad JSON, and a number too long for Python's
+    # int limit (4,300 digits), which isn't a JSONDecodeError.
+    except (ValueError, RecursionError) as exc:
         raise CampaignError(NOT_A_BACKUP) from exc
 
 

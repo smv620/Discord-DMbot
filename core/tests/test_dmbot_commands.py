@@ -141,7 +141,7 @@ class CommandTests(DatabaseTest):
         self.assertIsInstance(it.followup.send.call_args.kwargs["view"], cmds.RestoreChoice)
 
     async def test_a_backup_too_big_to_send_says_so(self) -> None:
-        await self.campaigns.create(GUILD, "Huge", DM)
+        await self.campaigns.create(GUILD, "Huge_*one*", DM)
         limits = (
             patch("dmbot.ui.logic.FILE_MAX", 10),  # bigger than Discord sends
             patch("dmbot.campaigns.store.MAX_BACKUP_BYTES", 10),  # than a restore takes
@@ -151,8 +151,9 @@ class CommandTests(DatabaseTest):
                 it = fake_interaction(self.bot)
                 await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
                 message = it.followup.send.call_args.args[0]
-                self.assertIn("too big to download", message)
+                self.assertIn("**Huge\\_\\*one\\*** is too big for DMbot to copy yet", message)
                 self.assertIn("Nothing was lost", message)
+                self.assertIn("Tell whoever runs DMbot", message)  # what to do next
                 self.assertNotIn("file", it.followup.send.call_args.kwargs)
 
 

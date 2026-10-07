@@ -224,7 +224,18 @@ class ExportImport(StoreTest):
         plain = json.dumps(backup, indent=1).encode()
         restored = await self.store.import_backup(GUILD_B, decode_backup(plain), DM)
         again = await self.store.export(GUILD_B, restored.id)
-        self.assertEqual(again["sections"], {**backup["sections"]})
+        self.assertEqual(again["sections"], backup["sections"])
+
+    async def test_a_plain_version_2_file_restores_too(self) -> None:
+        from dmbot.campaigns.store import decode_backup
+
+        original = await self.make_full()
+        backup = await self.store.export(GUILD_A, original.id)  # version 2, never packed
+        restored = await self.store.import_backup(
+            GUILD_B, decode_backup(json.dumps(backup).encode()), DM
+        )
+        again = await self.store.export(GUILD_B, restored.id)
+        self.assertEqual(again["sections"], backup["sections"])
 
     async def test_replace_existing(self) -> None:
         original = await self.make_full()
@@ -385,15 +396,25 @@ class BackupFiles(unittest.TestCase):
         from dmbot.campaigns import store as store_mod
 
         too_big = {"format": EXPORT_FORMAT, "notes": "x" * store_mod.MAX_BACKUP_BYTES}
-        with self.assertRaises(store_mod.BackupTooBig):  # it would compress to almost nothing
-            store_mod.encode_backup(too_big)
+        with self.assertRaisesRegex(store_mod.BackupTooBig, "too big for DMbot to copy"):
+            store_mod.encode_backup(too_big)  # it would compress to almost nothing
+
+    def test_a_file_exactly_at_the_limit_is_taken(self) -> None:
+        from dmbot.campaigns import store as store_mod
+
+        data = {"n": "a" * (store_mod.MAX_BACKUP_BYTES - len('{"n":""}'))}
+        text = json.dumps(data, separators=(",", ":")).encode()
+        self.assertEqual(len(text), store_mod.MAX_BACKUP_BYTES)  # exactly the cap
+        self.assertEqual(store_mod.decode_backup(text), data)  # plain
+        self.assertEqual(store_mod.decode_backup(store_mod.encode_backup(data)), data)  # packed
 
     def test_rejects_oversized_and_garbage(self) -> None:
         from dmbot.campaigns import store as store_mod
 
         with self.assertRaisesRegex(CampaignError, "too big"):
             store_mod.decode_backup(b" " * (store_mod.MAX_BACKUP_BYTES + 1))
-        for raw in (b"\xff\xfe", b"{not json", b"[" * 100_000):
+        # The last: a number too long for Python's int limit raises a plain ValueError.
+        for raw in (b"\xff\xfe", b"{not json", b"[" * 100_000, b"1" * 5000):
             with self.assertRaisesRegex(CampaignError, "isn't a DMbot campaign backup"):
                 store_mod.decode_backup(raw)
 
