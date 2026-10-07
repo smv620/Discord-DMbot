@@ -186,7 +186,7 @@ class Browse(_Menu):
             if self.shown:
                 self.open = _Select(
                     self._open,
-                    placeholder="Open a name…",
+                    placeholder="✏️ Edit or remove a name…",
                     options=[
                         discord.SelectOption(
                             label=logic.shorten(names.entities[e].name, logic.OPTION_LABEL_MAX),
@@ -899,6 +899,11 @@ def summary_text(
         lines.append(
             "Wrong list? **Undo** takes the whole list back, until you check or change any of "
             "those names."
+        )
+        # After Undo, since fixing one name ends Undo for the list (#353 review).
+        lines.append(
+            "Only one name wrong? Run `/dmbot names` and use 🔍 Find a name to fix or remove "
+            "it. (After that, Undo can't take the list back.)"
         )
     return "\n".join(lines)
 
