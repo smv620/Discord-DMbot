@@ -30,20 +30,23 @@ CATALOG: tuple[OptionalRule, ...] = (
     OptionalRule(
         "xge-no-long-rest",
         "Going without a long rest",
-        "After 24 hours without a long rest, make a Constitution save or gain exhaustion.",
+        "After 24 hours without a long rest, make a Constitution save or gain 1 level of "
+        "Exhaustion.",
         XANATHAR,
     ),
     OptionalRule(
         "xge-sleep",
         "Sleeping in armour",
-        "Sleeping in medium or heavy armour makes a long rest less restful.",
+        "Sleeping in medium or heavy armour: you get back fewer Hit Dice, and Exhaustion "
+        "doesn't go down.",
         XANATHAR,
     ),
     OptionalRule(
         "xge-knots",
         "Tying knots",
-        "A check decides how well a knot holds, and how hard it is to slip.",
+        "The check you make to tie a knot sets how hard it is to escape.",
         XANATHAR,
+        ("2014",),  # the 2024 rules' rope already covers knots
     ),
     OptionalRule(
         "xge-tools",
@@ -57,14 +60,14 @@ CATALOG: tuple[OptionalRule, ...] = (
         "Spotting a spell",
         "Use your reaction and an Arcana check to recognise a spell as it's cast.",
         XANATHAR,
-        ("2014",),
+        ("2014",),  # the 2024 rules treat studying a spell differently; check before widening
     ),
     OptionalRule(
         "xge-falling-rate",
         "How fast you fall",
         "A long fall takes time: you drop up to 500 feet each round.",
         XANATHAR,
-        ("2014",),
+        ("2014",),  # the 2024 falling rule already includes it
     ),
     OptionalRule(
         "tce-custom-origin",
@@ -75,7 +78,7 @@ CATALOG: tuple[OptionalRule, ...] = (
     ),
     OptionalRule(
         "tce-class-features",
-        "Optional class features",
+        "Extra class features",
         "Extra or replacement features for each class, chosen as you level up.",
         TASHA,
         ("2014",),  # the 2024 classes were rewritten
@@ -89,7 +92,7 @@ CATALOG: tuple[OptionalRule, ...] = (
     OptionalRule(
         "tce-parley",
         "Talking with monsters",
-        "Monsters can be talked to instead of fought: what they want and what they'd trade.",
+        "What each kind of monster wants, so the party can talk or trade instead of fight.",
         TASHA,
     ),
 )

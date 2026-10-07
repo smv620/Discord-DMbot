@@ -1,4 +1,4 @@
-"""`/dmbot optionalrules`: turn rules from other books on or off for a campaign (#49).
+"""`/dmbot optionalrules`: turn optional rules from other books on or off (#49).
 
 The campaign's DMs and server managers only, in a private reply. Each change is saved
 at once (`CampaignStore.set_optional_rule`) and noted in the DM screen. DMbot's rules
@@ -11,7 +11,7 @@ import logging
 
 import discord
 
-from dmbot.campaigns import Campaign
+from dmbot.campaigns import Campaign, CampaignError
 from dmbot.rules import optional
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -19,6 +19,7 @@ from dmbot.ui.dmbot_commands import (
     _bot,
     _is_manager,
     _Menu,
+    _now,
     _replace,
     _Select,
     _send,
@@ -29,6 +30,7 @@ from dmbot.ui.dmbot_commands import (
 log = logging.getLogger(__name__)
 
 TEXT_MAX = 1900  # under Discord's 2,000 characters
+GONE = "That campaign isn't here any more. Use `/dmbot optionalrules` to see the list again."
 
 
 async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
@@ -47,19 +49,29 @@ async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> C
 
 
 def rules_text(campaign: Campaign, overrides: dict[str, bool]) -> str:
-    """The list: ✅ on, ⬜ off, each with what it does and where it's from."""
+    """The list, grouped by book: ✅ on, ⬜ off, and what each rule does."""
     main = logic.ruleset_label(campaign.target_ruleset)
+    rules = optional.applying(campaign.target_ruleset)
     lines = [
-        f"📚 **Rules from other books: {campaign.name}**",
-        f"These add to the main rules ({main}) where they don't already cover something. "
-        "Your own house rules always win. Pick one below to turn it on or off.",
+        f"📚 **Optional rules: {campaign.name}**",
+        f"Rules from Xanathar's and Tasha's that fill gaps in the main rules: {main}. "
+        "✅ on · ⬜ off. Pick a rule in the menu to switch it. Your house rules always win.",
+        "DMbot only uses this list to remind you of rules: you make every call at the table. "
+        "(DMbot doesn't check rules yet. Your choices are saved for when it does.)",
     ]
-    for r in optional.applying(campaign.target_ruleset):
+    if not rules:
+        lines.append(f"DMbot doesn't know any optional rules for the {main} yet.")
+    book = ""
+    for r in rules:
+        if r.source != book:
+            book = r.source
+            lines.append(f"**{book}**")
         on = optional.is_on(r.id, overrides, campaign.optional_rules_default)
-        lines.append(f"{'✅' if on else '⬜'} **{r.name}**: {r.summary} _({r.source})_")
-    if len(lines) == 2:
-        lines.append("None of the rules DMbot knows add to these main rules.")
-    return "\n".join(lines)[:TEXT_MAX]
+        lines.append(f"{'✅' if on else '⬜'} **{r.name}**: {r.summary}")
+    text = "\n".join(lines)
+    if len(text) > TEXT_MAX:  # never cut a line in half; the menu still lists them all
+        text = text[: text.rfind("\n", 0, TEXT_MAX - 2)] + "\n…"
+    return text
 
 
 class OptionalRulesMenu(_Menu):
@@ -69,49 +81,62 @@ class OptionalRulesMenu(_Menu):
         rules = optional.applying(campaign.target_ruleset)[: logic.SELECT_OPTIONS_MAX]
         if not rules:
             return
-        self.pick = _Select(
-            self._toggle,
-            placeholder="Turn a rule on or off…",
-            options=[
+        options = []
+        for r in rules:
+            on = optional.is_on(r.id, overrides, campaign.optional_rules_default)
+            # The value says what this choice does, so an old or shared menu never flips a
+            # rule the other way, and picking it twice changes nothing.
+            options.append(
                 discord.SelectOption(
                     label=r.name,
-                    value=r.id,
-                    description="On: tap to turn off"
-                    if optional.is_on(r.id, overrides, campaign.optional_rules_default)
-                    else "Off: tap to turn on",
+                    value=f"{r.id}:{'off' if on else 'on'}",
+                    description="On now · pick to turn off" if on else "Off now · pick to turn on",
                 )
-                for r in rules
-            ],
-        )
+            )
+        self.pick = _Select(self._switch, placeholder="Switch a rule on or off…", options=options)
         self.add_item(self.pick)
 
-    async def _toggle(self, interaction: discord.Interaction) -> None:
+    async def _switch(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
             return
-        chosen = optional.rule(self.pick.values[0])
-        if chosen is None:
-            await _tell(interaction, "DMbot doesn't know that rule any more. Open the list again.")
+        rule_id, _, wanted = self.pick.values[0].rpartition(":")
+        chosen = optional.rule(rule_id)
+        if chosen is None or chosen not in optional.applying(campaign.target_ruleset):
+            await _tell(
+                interaction,
+                "That rule isn't in this campaign's list any more. Use `/dmbot optionalrules` "
+                "to see the list again.",
+            )
             return
+        turn_on = wanted == "on"
         store = _bot(interaction).campaigns
-        overrides = await store.optional_rule_overrides(campaign.guild_id, campaign.id)
-        turn_on = not optional.is_on(chosen.id, overrides, campaign.optional_rules_default)
-        await store.set_optional_rule(campaign.guild_id, campaign.id, chosen.id, turn_on)
-        overrides[chosen.id] = turn_on
+        try:
+            await store.set_optional_rule(campaign.guild_id, campaign.id, chosen.id, turn_on)
+            overrides = await store.optional_rule_overrides(campaign.guild_id, campaign.id)
+        except CampaignError:
+            await _tell(interaction, GONE)
+            return
         self.stop()
-        view = OptionalRulesMenu(campaign, overrides)
-        await _replace(interaction, rules_text(campaign, overrides), view)
+        await _replace(
+            interaction, rules_text(campaign, overrides), OptionalRulesMenu(campaign, overrides)
+        )
         if campaign.dm_screen_channel_id is not None:  # the DM screen keeps a record
             await _bot(interaction).post(
                 campaign.dm_screen_channel_id,
-                f"Optional rule {'on' if turn_on else 'off'}: {chosen.name}.",
+                f"{chosen.name}: turned {'on' if turn_on else 'off'} by "
+                f"{interaction.user.mention} (optional rule).",
             )
 
 
 async def show_rules(interaction: discord.Interaction, campaign: Campaign) -> None:
-    overrides = await _bot(interaction).campaigns.optional_rule_overrides(
-        campaign.guild_id, campaign.id
-    )
+    try:
+        overrides = await _bot(interaction).campaigns.optional_rule_overrides(
+            campaign.guild_id, campaign.id
+        )
+    except CampaignError:
+        await _tell(interaction, GONE)
+        return
     await _send(
         interaction, rules_text(campaign, overrides), OptionalRulesMenu(campaign, overrides)
     )
@@ -120,7 +145,7 @@ async def show_rules(interaction: discord.Interaction, campaign: Campaign) -> No
 class CampaignChoice(_Menu):
     def __init__(self, campaigns: list[Campaign]) -> None:
         super().__init__()
-        now = int(discord.utils.utcnow().timestamp())
+        now = _now()
         self.pick = _Select(
             self._picked,
             placeholder="Which campaign?",
@@ -143,7 +168,7 @@ class CampaignChoice(_Menu):
 
 
 @dmbot_group.command(
-    name="optionalrules", description="Turn rules from other books on or off for a campaign"
+    name="optionalrules", description="Optional rules (Xanathar's, Tasha's): turn each on or off"
 )
 async def dmbot_optional_rules(interaction: discord.Interaction) -> None:
     guild = interaction.guild
@@ -165,4 +190,4 @@ async def dmbot_optional_rules(interaction: discord.Interaction) -> None:
             interaction, "You're not the DM of any campaign here. Use `/dmbot start` to set one up."
         )
     else:
-        await _send(interaction, "**Which campaign's rules?**", CampaignChoice(mine))
+        await _send(interaction, "**Which campaign's optional rules?**", CampaignChoice(mine))
