@@ -12,6 +12,11 @@ READY TO DEPLOY (merged into development, not on the server yet)
   - #284 (b4a1ab8, CloudDev): /dmbot start > New campaign settings are buttons that
     fit a phone. Check on a phone: every label readable, one tap changes a setting,
     Create keeps the choices; with 2+ campaigns, "Continue last campaign" fits.
+  - #270 (831b0cb, dev3, #121): ears keeps the first word of each piece of speech.
+    Check: read-aloud script, first-word errors after each dramatic pause vs run 7;
+    someone joins mid-session and speaks at once: ears `audio` received == expected.
+  - #276 (33470f4, dev3, #120): capture checks keep audio counts until the speech
+    arrives. Check: every `Capture check:` log line for a speech line shows an audio %.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
