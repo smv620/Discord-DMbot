@@ -1,3 +1,4 @@
+import type { Allowlist } from "./consent.js";
 import type { BotLookup } from "./voice.js";
 
 /** The parts of a discord.js VoiceState needed to tell a bot from a person. */
@@ -13,6 +14,9 @@ export interface MemberNotes {
   noteMember(userId: string, isBot: boolean): void;
   knows(userId: string): boolean;
 }
+
+/** Lookups still running, per session, so a second note doesn't ask Discord again. */
+const inFlight = new WeakMap<MemberNotes, Set<string>>();
 
 /**
  * Note whether each person in the session's channel is a bot, before they speak, so
@@ -35,11 +39,45 @@ export function noteVoiceMembers(
     }
     const userId = state.id;
     if (session.knows(userId) || !optedIn(userId)) continue;
-    void lookUpBot(userId).then(
-      (isBot) => {
-        if (isBot !== undefined) session.noteMember(userId, isBot);
-      },
-      () => undefined, // stays unknown: looked up again when they speak
-    );
+    let running = inFlight.get(session);
+    if (!running) inFlight.set(session, (running = new Set()));
+    if (running.has(userId)) continue;
+    running.add(userId);
+    void lookUpBot(userId)
+      .then(
+        (isBot) => {
+          if (isBot !== undefined) session.noteMember(userId, isBot);
+        },
+        () => undefined, // stays unknown: looked up again when they speak
+      )
+      .finally(() => running.delete(userId));
   }
+}
+
+/** A table session as the consent list sees it. */
+export interface ConsentTarget extends MemberNotes {
+  dropSpeakers(userIds: readonly string[]): void;
+}
+
+/**
+ * Core sent a server's new consent list: replace it, stop capturing anyone removed at
+ * once, then look up anyone in the channel who just opted in and isn't known, so their
+ * first words are kept. `voiceStates` is undefined if ears doesn't have the server
+ * cached. Returns who was removed.
+ */
+export function applyConsentList(
+  allowlist: Allowlist,
+  guildId: string,
+  userIds: readonly string[],
+  session: ConsentTarget | undefined,
+  voiceStates: Iterable<VoiceMember> | undefined,
+  lookUpBot: BotLookup,
+): string[] {
+  const removed = allowlist.set(guildId, userIds);
+  if (!session) return removed;
+  session.dropSpeakers(removed);
+  if (voiceStates) {
+    noteVoiceMembers(session, voiceStates, (userId) => allowlist.isAllowed(guildId, userId, false), lookUpBot);
+  }
+  return removed;
 }

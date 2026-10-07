@@ -7,6 +7,7 @@ import { Allowlist } from "../src/consent.js";
 import { Logger } from "../src/log.js";
 import type { EarsMessage } from "../src/protocol.js";
 import { TableSession, UNKNOWN_RETRY_MS, type BotLookup } from "../src/voice.js";
+import { applyConsentList } from "../src/voiceMembers.js";
 
 const GUILD = "111";
 const CHANNEL = "222";
@@ -268,8 +269,31 @@ test("nothing is noted or captured after the session ends", async () => {
   assert.deepEqual(h.receiver.subscribed, []);
 });
 
+test("someone who opts in mid-session is looked up then, and captured from their first packet", async () => {
+  const h = harness();
+  const inVoice = [{ id: BOB, channelId: CHANNEL, member: null }]; // not in discord.js's cache
+  const background: string[] = [];
+  const consentList = (userIds: string[]): string[] =>
+    applyConsentList(h.allowlist, GUILD, userIds, h.session, inVoice, (userId) => {
+      background.push(userId);
+      return Promise.resolve(false);
+    });
+  consentList([ALICE, CAROL]); // BOB hasn't opted in: not looked up
+  assert.deepEqual(background, []);
+  consentList([ALICE, BOB, CAROL]); // core sends the new list
+  await nextFrame();
+  assert.deepEqual(background, [BOB]);
+  await speak(h, BOB, 5);
+  await stop(h, BOB);
+  assert.deepEqual(health(h.sent), [{ framesReceived: 5, framesExpected: 5 }]);
+  assert.deepEqual(h.lookups, []); // nothing to ask when they spoke
+});
+
 test("the real receiver announces a new speaker before routing their packet", () => {
-  // TableSession relies on this order to keep the first packet; guard it across upgrades.
+  // Pins @discordjs/voice's VoiceReceiver.onUdpMessage order: speaking.onPacket()
+  // emits "start", then the packet goes to subscriptions.get(userId). TableSession
+  // relies on it to keep the first packet. Written against @discordjs/voice 0.19.2; if
+  // an upgrade fails this, onSpeakingStart's synchronous subscribe no longer works.
   const receiver = new VoiceReceiver({} as unknown as VoiceConnection); // only stored
   receiver.ssrcMap.update({ audioSSRC: 42, userId: ALICE });
   const seen: string[] = [];

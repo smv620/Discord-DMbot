@@ -6,7 +6,7 @@ import { CoreLink } from "./coreLink.js";
 import { Logger } from "./log.js";
 import type { CoreCommand } from "./protocol.js";
 import { READY_TIMEOUT_MS, TableSession } from "./voice.js";
-import { noteVoiceMembers } from "./voiceMembers.js";
+import { applyConsentList, noteVoiceMembers, type VoiceMember } from "./voiceMembers.js";
 
 /**
  * ears entry point. Logs in with the shared bot token using only the voice-state
@@ -42,13 +42,30 @@ async function lookUpBot(guildId: string, userId: string): Promise<boolean | und
   return member?.user.bot;
 }
 
+/** Note who's a bot before they speak, so capture starts on their first packet. */
+function noteMembers(guildId: string, session: TableSession, states: Iterable<VoiceMember>): void {
+  noteVoiceMembers(
+    session,
+    states,
+    (userId) => allowlist.isAllowed(guildId, userId, false),
+    (userId) => lookUpBot(guildId, userId),
+  );
+}
+
 async function handleCommand(command: CoreCommand): Promise<void> {
   audit.confirm(command.guildId);
   switch (command.type) {
     case "allowlist": {
-      const removed = allowlist.set(command.guildId, command.userIds);
-      log.info(`consent list: ${command.userIds.length} opted in`, { guildId: command.guildId });
-      sessions.get(command.guildId)?.dropSpeakers(removed);
+      const guildId = command.guildId;
+      applyConsentList(
+        allowlist,
+        guildId,
+        command.userIds,
+        sessions.get(guildId),
+        client.guilds.cache.get(guildId)?.voiceStates.cache.values(),
+        (userId) => lookUpBot(guildId, userId),
+      );
+      log.info(`consent list: ${command.userIds.length} opted in`, { guildId });
       return;
     }
     case "leave": {
@@ -94,13 +111,7 @@ async function handleCommand(command: CoreCommand): Promise<void> {
         },
       });
       sessions.set(command.guildId, session);
-      // Know who's a bot before anyone speaks, so capture starts on the first packet.
-      noteVoiceMembers(
-        session,
-        guild.voiceStates.cache.values(),
-        (userId) => allowlist.isAllowed(command.guildId, userId, false),
-        (userId) => lookUpBot(command.guildId, userId),
-      );
+      noteMembers(command.guildId, session, guild.voiceStates.cache.values());
       try {
         await session.ready();
         // ready() includes the DAVE (end-to-end encryption) handshake.
@@ -159,14 +170,7 @@ link.on("connected", () => {
 // Someone joins the table channel: note whether they're a bot before they speak.
 client.on(Events.VoiceStateUpdate, (_oldState, newState) => {
   const session = sessions.get(newState.guild.id);
-  if (!session) return;
-  const guildId = newState.guild.id;
-  noteVoiceMembers(
-    session,
-    [newState],
-    (userId) => allowlist.isAllowed(guildId, userId, false),
-    (userId) => lookUpBot(guildId, userId),
-  );
+  if (session) noteMembers(newState.guild.id, session, [newState]);
 });
 
 link.on("disconnected", () => {
