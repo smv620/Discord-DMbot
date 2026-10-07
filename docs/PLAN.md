@@ -1240,7 +1240,7 @@ consent check just made still holds:
   - **Where they show:** only in the DM screen, in one "✏️ Name fixes to check" message
     edited in place: "DMbot changed these words in the transcript but isn't sure.
     Wrong? Press its Undo to put back what was heard." One numbered line and one
-    **↩️ Undo N** each (the newest 10). A fix keeps its number for the whole session,
+    **↩️ Undo N** each (the newest 10, fewer if the names are very long). A fix keeps its number for the whole session,
     so a number never changes meaning while the DM aims at it. A burst of fixes is one
     edit, and if the message is deleted a new one is posted. Nothing about these
     guesses ever goes in the transcript channel.

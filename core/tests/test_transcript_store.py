@@ -88,6 +88,9 @@ class StoreTests(DatabaseTest):
             row = await cur.fetchone()
         assert row is not None
         self.assertIsNone(row["text"])  # the same as heard again: stored as NULL
+        await self.store.relabel_line(GUILD, sid, PLAYER, fixed.started_ms, "I saw Belleros!")
+        (back,) = await self.store.lines(GUILD, sid)
+        self.assertEqual((back.heard, back.text), ("I saw Beleros", "I saw Belleros!"))
         self.assertEqual(
             await self.store.relabel_line(GUILD, sid, PLAYER, 1, "x"), 0
         )  # no such line

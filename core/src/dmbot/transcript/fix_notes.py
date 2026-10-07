@@ -106,6 +106,8 @@ class FixNotes:
         return self.notes[-SHOWN:]
 
     def find(self, note_id: str) -> Note | None:
+        # Among all shown notes, even one a very long message left out: harmless, since
+        # every redraw replaces the buttons, so a left-out note has none to press.
         return next((n for n in self.shown() if n.id == note_id), None)
 
     def undo(self, note_id: str) -> list[Note]:
@@ -164,4 +166,6 @@ def message_text(
     while kept > 1 and len(HEADER) + sum(len(x) + 1 for x in lines[-kept:]) > MESSAGE_MAX:
         kept -= 1
     shown = notes[-kept:]
+    # The cut below is only a safety net: one line is at most ~350 characters (names
+    # are cut to NAME_MAX first), so whole lines always fit.
     return "\n".join([HEADER, *lines[-kept:]])[:MESSAGE_MAX], shown
