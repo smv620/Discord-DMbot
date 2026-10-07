@@ -320,25 +320,38 @@ def create_app(
             raise HTTPException(status_code=409, detail=result)
         return Response(status_code=204)
 
-    @app.post("/account/delete")
-    async def delete_account(signed: Signed, request: Request) -> Response:
-        """Two steps: the first answers a confirmation token, the second (with it) deletes."""
-        session, cookie_token = signed
-        fresh(session, DELETE_SIGN_IN_SECONDS)
+    def delete_binding(session: Session, cookie_token: str) -> str:
         # The confirmation belongs to this one session: a copy can't delete an account
         # made later, or be used from another browser.
-        bound = f"{session.user_id}-{sessions.hash_token(cookie_token)[:32]}"
+        return f"{session.user_id}-{sessions.hash_token(cookie_token)[:32]}"
+
+    @app.post("/account/delete/request")
+    async def delete_request(signed: Signed) -> dict[str, str]:
+        """Step 1 of deleting the account: a 10-minute confirmation for step 2."""
+        session, cookie_token = signed
+        fresh(session, DELETE_SIGN_IN_SECONDS)
+        confirm = tokens.make(
+            settings.secret_key,
+            "delete",
+            delete_binding(session, cookie_token),
+            now=clock(),
+            seconds=STATE_SECONDS,
+        )
+        return {"confirm_token": confirm}
+
+    @app.post("/account/delete/confirm")
+    async def delete_confirm(signed: Signed, request: Request) -> Response:
+        """Step 2: with step 1's confirmation, stop payments, then delete the account."""
+        session, cookie_token = signed
+        fresh(session, DELETE_SIGN_IN_SECONDS)
         try:
             body = await request.json()
         except ValueError:
             body = None
         given = body.get("confirm_token") if isinstance(body, dict) else None
-        if not isinstance(given, str):
-            confirm = tokens.make(
-                settings.secret_key, "delete", bound, now=clock(), seconds=STATE_SECONDS
-            )
-            return JSONResponse({"confirm_token": confirm})
-        if tokens.read(settings.secret_key, "delete", given, now=clock()) != bound:
+        if not isinstance(given, str) or tokens.read(
+            settings.secret_key, "delete", given, now=clock()
+        ) != delete_binding(session, cookie_token):
             raise HTTPException(status_code=403, detail="confirm_again")
         # Stop the payments first: a deleted account must never be charged again.
         subscription = await active_subscription(db, session.user_id)

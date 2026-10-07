@@ -1350,7 +1350,9 @@ names, later story memory and rules lookups), plus backup, restore and transcrip
 download (paid campaigns only; restoring needs a subscriber with a free slot, who becomes
 the owner). Warnings on the DM screen at 80% and 90% of the hours; at the cap DMbot
 finishes the session (up to 2 hours of grace, once a month), then refuses to start until
-renewal or a top-up. On a downgrade or lapse the first N campaigns started afterwards
+renewal or a top-up. A paid plan keeps working up to 3 days past its period end while the
+payment company's renewal arrives (a technical guard, not a plan rule; Try It ends
+exactly at its 30 days). On a downgrade or lapse the first N campaigns started afterwards
 are active (N = new cap), the rest are paused with their data kept. Retention: 60 days
 after the last session on Try It, 6 months on Table, 1 year on the other plans, and 120
 days after a plan stops paying; the DM is warned at 14 and 3 days; deletion on request is

@@ -218,8 +218,11 @@ class Accounts(DatabaseTest):
     # Delete the account
 
     async def delete(self, token: str | None = None) -> httpx.Response:
-        body = {} if token is None else {"confirm_token": token}
-        return await self.client.post("/account/delete", headers=HEADERS, json=body)
+        if token is None:
+            return await self.client.post("/account/delete/request", headers=HEADERS)
+        return await self.client.post(
+            "/account/delete/confirm", headers=HEADERS, json={"confirm_token": token}
+        )
 
     async def test_delete_takes_two_steps(self) -> None:
         first = await self.delete()
@@ -312,11 +315,33 @@ class Accounts(DatabaseTest):
         response = await self.delete(token)
         self.assertEqual((response.status_code, response.json()), (403, {"error": "confirm_again"}))
 
-    async def test_delete_with_a_body_that_isnt_json_asks_for_confirmation(self) -> None:
+    async def test_confirming_with_a_broken_body_deletes_nothing(self) -> None:
         response = await self.client.post(
-            "/account/delete", headers={**HEADERS, "content-type": "application/json"}, content=b"{"
+            "/account/delete/confirm",
+            headers={**HEADERS, "content-type": "application/json"},
+            content=b"{",
         )
-        self.assertIn("confirm_token", response.json())
+        self.assertEqual((response.status_code, response.json()), (403, {"error": "confirm_again"}))
+        self.assertEqual((await self.client.get("/me")).status_code, 200)
+
+    async def test_the_old_single_delete_path_is_gone(self) -> None:
+        response = await self.client.post("/account/delete", headers=HEADERS)
+        self.assertIn(response.status_code, (404, 405))
+
+    async def test_a_server_dmbot_left_is_offered_again(self) -> None:
+        await self.joined_by_link(QUILLON.id)
+        async with self.db.guild(QUILLON.id) as conn:  # the bot leaving (contract, 0013)
+            await conn.execute("UPDATE installs SET left_at = 1 WHERE guild_id = %s", (QUILLON.id,))
+        server = next(s for s in (await self.me())["servers"] if s["id"] == str(QUILLON.id))
+        self.assertFalse(server["hasDmbot"])
+        await self.install(QUILLON.id)  # back through the website
+        async with self.db.guild(QUILLON.id) as conn:
+            cur = await conn.execute("SELECT installed_by_user_id, via, left_at FROM installs")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(
+            (row["installed_by_user_id"], row["via"], row["left_at"]), (ALICE.id, "site", None)
+        )
 
     async def test_delete_needs_a_sign_in_from_the_last_15_minutes(self) -> None:
         self.now += 16 * 60

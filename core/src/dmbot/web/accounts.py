@@ -42,12 +42,12 @@ async def record_install(db: Database, user_id: int, guild_id: int, *, now: int)
         cur = await conn.execute(
             "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
             " VALUES (%s, %s, %s, 'site') ON CONFLICT (guild_id) DO NOTHING RETURNING guild_id",
-            (guild_id, user_id, now),
+            (guild_id, user_id, now),  # the write contract: schema.py, migration 0013
         )
         if await cur.fetchone() is not None:
             return "recorded"
         cur = await conn.execute(
-            "UPDATE installs SET installed_by_user_id = %s, via = 'site'"
+            "UPDATE installs SET installed_by_user_id = %s, via = 'site', left_at = NULL"
             " WHERE guild_id = %s AND (installed_by_user_id IS NULL OR installed_by_user_id = %s)",
             (user_id, guild_id, user_id),
         )

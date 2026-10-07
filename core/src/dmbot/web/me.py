@@ -56,8 +56,8 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                 here = None
                 if guild.manage:
                     here = await conn.execute(
-                        "SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s)"
-                        "   AS installed,"
+                        "SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s"
+                        "   AND left_at IS NULL) AS installed,"
                         " (SELECT installed_by_user_id FROM installs WHERE guild_id = %(g)s)"
                         "   AS installer,"
                         " EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %(g)s) AS played",
@@ -68,7 +68,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             for row in await mine.fetchall():
                 campaigns.append(
                     {
-                        "id": row["id"],
+                        "id": str(row["id"]),
                         "name": row["name"],
                         "serverName": names.get(guild.id, ""),
                         "lastPlayedAt": _iso_time(row["last_played_at"]),

@@ -319,6 +319,15 @@ class WebAccounts(DatabaseTest):
             cur = await conn.execute("DELETE FROM installs")
             self.assertEqual(cur.rowcount, 0)
 
+    async def test_a_plan_can_be_read_inside_a_server_transaction(self) -> None:
+        await self.add_user(ALICE)
+        await self.add_plan(ALICE)
+        async with self.db.guild(GUILD_A) as conn:  # like /dmbot start (#437)
+            got = await entitlements.read(conn, ALICE)
+            assert got is not None
+            self.assertEqual(got.plan, "table")
+            self.assertIsNone(await entitlements.read(conn, BOB))
+
     async def test_settings_do_not_leak_to_the_next_transaction(self) -> None:
         await self.add_user(ALICE)
         async with self.db.plan_writer(ALICE):

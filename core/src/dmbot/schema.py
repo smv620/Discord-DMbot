@@ -8,7 +8,12 @@ Rules:
 - Discord IDs are BIGINT. Timestamps are Unix seconds (BIGINT), matching the app.
 - Tables holding a *person's* data (the website's accounts, #435) have a `user_id` and
   the `user_isolation` policy (see `_isolate_user`) instead; list them in
-  USER_ISOLATED_TABLES.
+  USER_ISOLATED_TABLES. `installs` is listed there too, though it is keyed by server:
+  it's visible to its server and to the person who installed DMbot (see its policies).
+- The `dmbot.*` settings that open these doors (server, person, install server, plan
+  writer, cleanup) are set only by dmbot.db.Database. The database enforces each door's
+  limits, but which code may open which door is a Python boundary: only dmbot.web opens
+  Database.plan_writer() (tests/test_entitlements_writer.py checks).
 - Exception: a *routing* table may skip row-level security if it holds nothing but
   Discord server IDs (no names, settings, or campaign data), because a process has to
   find its servers before it can open a per-server transaction. List it in
@@ -675,6 +680,29 @@ WEB_SESSION_NAME = """
     ALTER TABLE web_sessions ADD COLUMN display_name TEXT NOT NULL DEFAULT '';
     """
 
+INSTALLS_LEFT = """
+    -- When DMbot left the server (kicked or the server deleted); NULL while it's there.
+    -- Rows are never deleted on leave, so who added DMbot is kept if it comes back (#469).
+    --
+    -- How each side writes a row (the contract, #469):
+    -- - The bot, when it joins a server (Database.guild):
+    --     INSERT ... VALUES (guild, NULL, now, 'link') ON CONFLICT (guild_id)
+    --       DO UPDATE SET left_at = NULL
+    --   and when it leaves: UPDATE installs SET left_at = now WHERE guild_id = guild.
+    -- - The website, after Discord confirms an install (Database.user(install_guild=...)):
+    --     INSERT ... VALUES (guild, me, now, 'site') ON CONFLICT (guild_id) DO NOTHING
+    --   then, if a row was already there,
+    --     UPDATE installs SET installed_by_user_id = me, via = 'site', left_at = NULL
+    --       WHERE guild_id = guild AND (installed_by_user_id IS NULL
+    --                                   OR installed_by_user_id = me)
+    --   (two statements, because INSERT ... ON CONFLICT DO UPDATE would check the update
+    --   policy against someone else's row and fail instead of leaving it alone).
+    ALTER TABLE installs ADD COLUMN left_at BIGINT;
+    COMMENT ON TABLE installs IS
+        'Who added DMbot to which server. Never deleted on leave: left_at is set. '
+        'Write contract: see migration 0013 in core/src/dmbot/schema.py.';
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -688,6 +716,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0010_memory_heard", MEMORY_HEARD),
     ("0011_web_accounts", WEB_ACCOUNTS),
     ("0012_web_session_name", WEB_SESSION_NAME),
+    ("0013_installs_left_at", INSTALLS_LEFT),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
