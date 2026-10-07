@@ -8,7 +8,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued)
+In development @ 1b68f6b (a3d12ef is live; core only). Check:
+  - #338 (CloudDev, #320): /dmbot optionalrules lists Spotting a spell and How fast
+    you fall for a 2024 campaign too; switching a rule edits the menu in place and
+    notes it in the DM screen. New-campaign settings say "pick which ones later".
+  - #345 (CloudDev, #164 part 2): /dmbot backup gives a .dmbot.json.gz file;
+    /dmbot restore takes it back, and an older .dmbot.json still restores.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
