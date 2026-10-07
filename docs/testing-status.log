@@ -8,7 +8,19 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-In development @ 1b68f6b (a3d12ef is live; core only). Check:
+In development @ 697d61b (a3d12ef is live; core only). Check:
+  - #321 + #334 (dev2, #295, #296): Transcript Cleaner step 2. A DM spelling rule
+    can never write a secret name (say a secret alias with a misheard word next to
+    it); someone in voice who never agreed keeps their display name; "Did they
+    mean…?" questions reach the DM screen only for words heard twice or names in
+    the scene, at most one open, 2.5 min between them; Undo works and is DM-only;
+    /transcript offers Cleaned, As heard and Both and says which it sent.
+  - #327 (dev3, #299): session twin. On the host venv, not in a container, not during
+    a live session: `scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script
+    docs/test-scripts/dm-only.md` (whisper-local). With `--transcriber deepgram` it
+    must first print "sends N s of audio to Deepgram (about $X …)"; without the flag
+    and TRANSCRIBER=deepgram in the environment it must refuse. Record the score in
+    #299. Then the same on stt-bakeoff.m4a (#354) with stt-bakeoff.md.
   - #338 (CloudDev, #320): /dmbot optionalrules lists Spotting a spell and How fast
     you fall for a 2024 campaign too; switching a rule edits the menu in place and
     notes it in the DM screen. New-campaign settings say "pick which ones later".
