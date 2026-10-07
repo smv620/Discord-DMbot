@@ -680,6 +680,7 @@ class DMBot(commands.AutoShardedBot):
         If the consent list can't be loaded, nothing is left half-started.
         """
         self.tables[table.guild_id] = table
+        self.pipeline.session_started(table.guild_id)  # told of an outage afresh (#470)
         try:
             await self.push_allowlist(table.guild_id)
         except BaseException:

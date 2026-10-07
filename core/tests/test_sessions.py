@@ -229,6 +229,18 @@ class SessionTests(DatabaseTest):
         for jargon in ("backlog", "frame", "pipeline", "ears", "service"):
             self.assertNotIn(jargon, busy.lower())
 
+    async def test_status_shows_this_servers_own_backlog(self) -> None:
+        from dmbot.audio.segmenter import Utterance
+        from dmbot.ui.logic import WRITING_BEHIND_BACKLOG
+
+        await self.start()
+        other = GUILD + 1  # another server falling behind (#173, #470)
+        for at in range(WRITING_BEHIND_BACKLOG + 1):
+            self.bot.pipeline.enqueue(Utterance(other, PLAYER, at, at + 1000, bytes(3200), 0))
+        mine = "\n".join(await self.bot.status_lines(GUILD))
+        self.assertIn("Writing things down: keeping up", mine)  # not "falling behind"
+        self.assertEqual(self.bot.pipeline.backlog_of(other), WRITING_BEHIND_BACKLOG + 1)
+
     async def test_status_says_writing_is_off_without_transcription(self) -> None:
         # #39: TRANSCRIBER=none must not read as "keeping up".
         self.bot.settings = dataclasses.replace(
