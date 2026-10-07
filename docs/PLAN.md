@@ -600,7 +600,7 @@ session ends, and it works after a restart. The help card says how to stop too.
 building:
 - Each session has a row (kept after a restart: same campaign and start time) and each
   piece of speech from someone who agreed is a line, with `heard` (never changed) and
-  `text` (cleaned; NULL while it's the same, which is always until the Cleaner). Lines
+  `text` (cleaned; NULL while it's the same, that is when no name was fixed). Lines
   are saved in batches every 5 seconds, and the session's row keeps its line count and
   speakers, so listing sessions never reads lines. Consent is checked when a batch is
   taken and again after it's saved (lines of someone who pressed Stop mid-save are
@@ -615,8 +615,9 @@ building:
   person's own time (a Discord timestamp).
 - `/transcript` (anyone in the server): pick the campaign, then a session (newest 25
   with something said), and get a private `.txt` file
-  (`frostmaiden-session-7-as-heard.txt`): a short header, then `0:42:10 Mia: …` per
-  line. The file says it's what DMbot wrote down, with no fixes, and that some words
+  (`frostmaiden-session-7-as-heard.txt`): a short header, then
+  `[0:42:10] (Mia) {Cerric}: …` per line (#53; no `{…}` for someone who plays no
+  character, such as the DM, until speaker tagging). The file says it's what DMbot wrote down, with no fixes, and that some words
   may be misheard. While DMbot is still recording that session it warns first
   ([Download anyway] [Cancel]), in different words for the DM and players. Replies
   are deferred first, since building a file can take more than Discord's 3 seconds.
@@ -626,7 +627,7 @@ building:
 - Until the Cleaner, there's only the "as heard" version. If saving fails at the start,
   the DM screen says there'll be no download for this session.
 - Still to come: "Delete my past transcripts", retention, cleaned and both downloads
-  (Phase 2b), and the `{entity}` labels (#53).
+  (Phase 2b), and `{entity}` labels for the DM's lines (narrating, which NPC; #53).
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
 participants are stored. Each line is kept in two versions: **as heard** (exactly what
@@ -1064,6 +1065,35 @@ reads the campaign memory and never changes it.
 - **Measured** on a test set of mishearings ("Sara" → Cerric, "Bell or us" → Belleros)
   and traps (real words, nicknames, secret aliases, the serrated-blade sentence), plus
   live timing (speech end → line shown).
+
+**Transcript Cleaner step 1: built (2026-10-07, #127, #53).** Pure logic in
+`dmbot.transcript.cleaner`, run on every written-down line with no wait, so the
+consent check just made still holds:
+- **Silent fixes only, of three kinds:** the same letters spelled another way
+  ("Kazeth" → "Ka'zeth"; a word in lower case keeps its capitals, so "the bell" never
+  becomes "Bell"); a spelling the DM fixed ("Sara" → Cerric); and an unknown
+  capitalized word, or up to 3 of them in a row ("Ka Zeth"), that sounds like exactly
+  one confirmed name (`lookup.by_sound`) and is spelled much like it (at least 0.7
+  alike). Matching reuses `scene.find_mentions` and the lookup's sound codes.
+- **Unknown word:** capitalized, not a common word or game term (the after-session
+  scan's lists), not a known name, "keep as heard" word or the name of someone at the
+  table, and not said in lower case this session. A word starting a sentence counts
+  only once it was also written with a capital mid-sentence (in that line or earlier),
+  so "Thorn bushes…" is never "Thorin". Without a dictionary this misses a name the
+  first time it starts a sentence; a wrong fix is worse than a missed one.
+- **Never:** a fix from a name DMbot only suggested (no Undo note yet, so it does
+  nothing); a change inside a secret name; a word that also sounds like a secret name
+  or like two entries.
+- A fix writes the name the way it was said (the matched other name, not the main
+  name); a DM's fixed spelling writes the main name.
+- **Stored:** `heard` as before, `text` cleaned. The live transcript channel shows the
+  cleaned line; downloads are still "as heard", now labelled
+  `[0:42:10] (Mia) {Cerric}: …` with each player's confirmed character. The
+  after-session scan still reads what was heard; scene hints and heard counts read the
+  cleaned line.
+- **Next:** Undo notes for medium fixes (proposed names), "Did they mean…?", re-checking
+  earlier lines after a correction, cleaned and both downloads, then off-topic hiding
+  (#52).
 
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled

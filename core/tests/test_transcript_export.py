@@ -31,14 +31,32 @@ class Render(unittest.TestCase):
         self.assertIn("Started 2023-11-14 22:13 UTC, ran 2 h 14 min", head)
         self.assertIn("with no fixes. Some words and names may be misheard", head)
         self.assertIn("Only people who agreed were recorded", head)
-        self.assertEqual(body.splitlines(), ["0:00:05 Mia: I cast Shield.", "0:42:10 Dee: Run!"])
+        self.assertEqual(
+            body.splitlines(), ["[0:00:05] (Mia): I cast Shield.", "[0:42:10] (Dee): Run!"]
+        )
+
+    def test_each_player_has_their_character(self) -> None:
+        text = export.render(
+            "X",
+            session(),
+            [line(5, MIA, "I cast Shield."), line(6, DEE, "Roll for it.")],
+            {MIA: "Mia", DEE: "Dee"},
+            characters={MIA: "Cerric"},
+        )
+        self.assertIn("[0:00:05] (Mia) {Cerric}: I cast Shield.\n", text)
+        self.assertIn("[0:00:06] (Dee): Roll for it.\n", text)  # the DM plays no one
+
+    def test_the_as_heard_file_has_what_was_heard(self) -> None:
+        fixed = Line(START * 1000, MIA, "I saw Beleros", "I saw Belleros")
+        text = export.render("X", session(), [fixed], {MIA: "Mia"})
+        self.assertIn("(Mia): I saw Beleros\n", text)
 
     def test_unknown_and_tricky_names_are_safe(self) -> None:
         text = export.render(
             "X", session(), [line(1, MIA, "hi"), line(2, DEE, "yo")], {DEE: "Dee‮\nevil"}
         )
-        self.assertIn("0:00:01 Someone: hi", text)
-        self.assertIn("0:00:02 Dee evil: yo", text)
+        self.assertIn("[0:00:01] (Someone): hi", text)
+        self.assertIn("[0:00:02] (Dee evil): yo", text)
 
     def test_a_running_session_says_where_it_ends(self) -> None:
         text = export.render("X", session(None), [line(65, MIA, "hi")], {MIA: "Mia"}, running=True)
@@ -47,7 +65,7 @@ class Render(unittest.TestCase):
 
     def test_speech_before_the_start_never_shows_a_negative_time(self) -> None:
         self.assertIn(
-            "0:00:00 Mia: early",
+            "[0:00:00] (Mia): early",
             export.render("X", session(), [line(-3, MIA, "early")], {MIA: "Mia"}),
         )
 

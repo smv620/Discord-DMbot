@@ -862,6 +862,51 @@ class SaveAndResume(SessionTests):
         await self.bot.flush_transcript(table)
         self.assertNotIn("from the last session", "\n".join(sent))
 
+    async def test_misheard_names_are_fixed_and_what_was_heard_is_kept(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup, LookupData
+        from dmbot.memory.models import CONFIRMED, Alias, Entity
+        from dmbot.transcript.models import TranscriptBuffer
+
+        await self.consent.grant(GUILD, PLAYER)
+        table, sent = await self.joined_with_transcript()
+        eid = "b" * 32
+        table.name_lookup = CampaignLookup.build(
+            LookupData(
+                1,
+                (Entity(eid, "npc", "Belleros", "", CONFIRMED, None, "dm", 0),),
+                (
+                    Alias(
+                        "a" * 32,
+                        eid,
+                        "Belleros",
+                        "belleros",
+                        "full",
+                        None,
+                        False,
+                        CONFIRMED,
+                        (),
+                        "dm",
+                        0,
+                    ),
+                ),
+                (),
+                (),
+            )
+        )
+        table.unsaved = TranscriptBuffer()
+        self.bot.transcripts = object()  # type: ignore[assignment]  # only checked for None
+        self.said(table, "I think Beleros has it")
+        await self.bot.flush_transcript(table)
+        self.assertIn("I think Belleros has it", "\n".join(sent))
+        (saved,) = table.unsaved.take(lambda _: True)
+        self.assertEqual((saved.heard, saved.text), ("I think Beleros has it",
+                                                     "I think Belleros has it"))  # fmt: skip
+        self.assertEqual(table.heard[-1], (PLAYER, "I think Beleros has it"))  # for the scan
+        self.assertEqual(table.heard_counts[(eid, PLAYER)], 1)
+        self.assertTrue(table.vocabulary.is_name("beleros"))
+        self.bot.stop_recording(GUILD, PLAYER)
+        self.assertFalse(table.vocabulary.is_name("beleros"))  # forgotten with them
+
     async def test_a_failed_post_is_tried_again(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table, sent = await self.joined_with_transcript()

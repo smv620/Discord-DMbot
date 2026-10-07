@@ -92,6 +92,7 @@ from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcript import stream as transcript_lines
+from dmbot.transcript.cleaner import Vocabulary, clean
 from dmbot.transcript.models import Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
@@ -204,6 +205,10 @@ class Table:
     scene: SceneTracker = field(default_factory=SceneTracker)
     name_lookup: CampaignLookup | None = None
     hint_parts: HintParts | None = None
+    # For the Transcript Cleaner (#127): what this session's lines say about words, and
+    # the display names of people who agreed (never "fixed" into a name).
+    vocabulary: Vocabulary = field(default_factory=Vocabulary)
+    people: tuple[str, ...] = ()
     # The whole session's numbers, for the summary when it ends (#109).
     totals: SessionTotals = field(default_factory=SessionTotals)
     listening: bool = False
@@ -290,6 +295,7 @@ class DMBot(commands.AutoShardedBot):
         # AI text calls (a document into a names list); None when no key is set.
         self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None
         self._hints_failed_at = -HINTS_FAIL_LOG_S
+        self._clean_failed_at = -HINTS_FAIL_LOG_S
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
         self.tables: dict[int, Table] = {}
@@ -463,6 +469,7 @@ class DMBot(commands.AutoShardedBot):
             table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
+            table.vocabulary.forget_speaker(user_id)  # or the name fixes
             for key in [k for k in table.heard_counts if k[1] == user_id]:
                 del table.heard_counts[key]
 
@@ -1439,12 +1446,14 @@ class DMBot(commands.AutoShardedBot):
             return
         table.capture_log.add_utterance(utterance)
         table.totals.add_utterance(utterance)
+        cleaned = text
         if text and table.name_lookup is not None:
-            named = mentions(table.name_lookup, text)  # once per name per line
+            cleaned = self._clean(table, utterance.user_id, text)
+            named = mentions(table.name_lookup, cleaned)  # once per name per line
             table.scene.note(named, utterance.user_id, time.monotonic())
             table.heard_counts.update((entity_id, utterance.user_id) for entity_id in named)
         if text and self.transcripts is not None:
-            table.unsaved.add(Line(utterance.start_ms, utterance.user_id, text, text))
+            table.unsaved.add(Line(utterance.start_ms, utterance.user_id, text, cleaned or text))
         if text and len(table.heard) < HEARD_MAX:
             table.heard.append((utterance.user_id, text))
             if len(table.heard) == HEARD_MAX:
@@ -1454,8 +1463,32 @@ class DMBot(commands.AutoShardedBot):
             member = guild.get_member(utterance.user_id) if guild else None
             name = member.display_name if member else None
             table.transcript.add(
-                utterance.user_id, transcript_lines.speaker_name(name), text, utterance.start_ms
+                utterance.user_id,
+                transcript_lines.speaker_name(name),
+                cleaned or text,
+                utterance.start_ms,
             )
+
+    def _clean(self, table: Table, user_id: int, heard: str) -> str:
+        """The line with misheard names fixed (#127), from the campaign's names as last
+        loaded; as heard if cleaning fails. No await: the consent check just made still
+        holds."""
+        assert table.name_lookup is not None
+        try:
+            result = clean(
+                table.name_lookup, heard, vocabulary=table.vocabulary, people=table.people
+            )
+        except Exception:
+            now = time.monotonic()
+            if now - self._clean_failed_at > HINTS_FAIL_LOG_S:
+                self._clean_failed_at = now
+                log.exception("Couldn't fix names in a line; kept it as heard")
+            return heard
+        finally:
+            table.vocabulary.note(user_id, heard)
+        if result.fixes:
+            log.debug("Fixed %d misheard name(s) in a line", len(result.fixes))
+        return result.text
 
     async def _alert_dm(self, guild_id: int, message: str) -> None:
         table = self.tables.get(guild_id)
@@ -1489,6 +1522,7 @@ class DMBot(commands.AutoShardedBot):
                 log.exception("Couldn't load the campaign's names for hints")
             return people
         table.name_lookup = lookup  # for matching written-down lines to the scene
+        table.people = tuple(people)  # for the name fixes, never changed into a name
         return scene_hints(lookup, table.hint_parts, table.scene, time.monotonic(), people=people)
 
     async def keep_heard_names(self, table: Table) -> None:

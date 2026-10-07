@@ -49,7 +49,7 @@ LONG_UNSAID_S = 180 * 86400  # names unsaid for about six months drop out of hin
 MAX_HINTS = 50  # Deepgram's limit (deepgram.MAX_KEYTERMS); local Whisper cuts by length
 PLAYER_CHARACTER = "player_character"
 
-_WORD = re.compile(r"[^\W_](?:[^\W_]|['’-](?=[^\W_]))*")
+WORD = re.compile(r"[^\W_](?:[^\W_]|['’-](?=[^\W_]))*")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +64,7 @@ def find_mentions(lookup: CampaignLookup, text: str) -> list[Found]:
     other names, or a spelling the DM said means them. A secret name (and any shorter
     name inside it), a name DMbot only suggested, and words the DM said to keep as heard
     don't count. One find per entry per place."""
-    words = list(_WORD.finditer(text))
+    words = list(WORD.finditer(text))
     keys = [name_key(w.group()) for w in words]  # once per word, not per group
     n = len(keys)
     groups = [

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.transcript import export
+from dmbot.transcript import cleaner, export
 from dmbot.transcript.models import TranscriptSession
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -95,6 +95,18 @@ async def display_names(guild: discord.Guild | None, user_ids: tuple[int, ...]) 
     return {user_id: name for user_id, name in found if name is not None}
 
 
+async def player_characters(bot: DMBot, guild_id: int, campaign_id: str) -> dict[int, str]:
+    """Who plays which character in this campaign, for the download's labels; none if
+    the campaign's names can't be read (the file still works without them)."""
+    if bot.lookup is None:
+        return {}
+    try:
+        return cleaner.characters(await bot.lookup.get(guild_id, campaign_id))
+    except Exception:
+        log.exception("Couldn't read the players' characters for a transcript download")
+        return {}
+
+
 def _running(bot: DMBot, session: TranscriptSession) -> bool:
     table = bot.tables.get(session.guild_id)
     return table is not None and table.transcript_session_id == session.id
@@ -118,7 +130,8 @@ async def make_file(
             await bot.save_transcript(table)
     lines = await store.lines(guild_id, session.id)
     names = await display_names(guild, tuple(sorted({line.user_id for line in lines})))
-    text = export.render(campaign.name, session, lines, names, running=running)
+    playing = await player_characters(bot, guild_id, campaign.id)
+    text = export.render(campaign.name, session, lines, names, characters=playing, running=running)
     data = text.encode("utf-8")
     if len(data) > FILE_LIMIT:
         return TOO_BIG
