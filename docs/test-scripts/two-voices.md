@@ -20,9 +20,8 @@ table (#534). Each recording takes about a minute and a half.
   (Player). If it's your voice, read the line; if it isn't, **stay quiet for about ten
   seconds**. Count slowly in your head, "one-and, two-and…", up to ten. Don't rush it: that
   quiet is how DMbot tells one of your turns from the next, so never skip it between two
-  of your lines. Any gap of
-  five seconds or more inside your own line counts as the other person's turn, so don't
-  pause that long while reading.
+  of your lines. Any gap of five seconds or more inside your own line counts as the other
+  person's turn, so don't pause that long while reading.
 - **Starting:** press record, then begin at Cue 1. The Player recording starts with ten
   seconds of quiet, because Cue 1 is the DM's.
 - **Finishing:** after your last line (Cue 7 for the DM, Cue 8 for the Player), stay quiet
