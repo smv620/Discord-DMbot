@@ -1608,6 +1608,42 @@ class SaveAndResume(SessionTests):
         await self.bot.undo_fix(GUILD, note.id, DM)
         self.assertIn("then Hrothgarr roars", posted.edit.await_args.kwargs["content"])
 
+    async def test_someone_who_stops_while_undo_waits_isnt_described(self) -> None:
+        # #588: Stop recording me while Undo waits for the save lock: no word about
+        # their line (it isn't "still" anything; it's being dropped).
+        table, _, _ = await self.fixed_from_a_suggestion()
+        (note,) = table.fix_notes.notes
+        await table.save_lock.acquire()  # a batch being saved
+        undo = asyncio.create_task(self.bot.undo_fix(GUILD, note.id, DM))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        await self.consent.revoke(GUILD, PLAYER)
+        table.save_lock.release()
+        answer, _ = await undo
+        self.assertNotIn("still says", answer)
+        self.assertIn("stopped being recorded", answer)
+
+    async def test_undo_says_when_the_line_couldnt_be_put_back(self) -> None:
+        table, _, _ = await self.fixed_from_a_suggestion()
+        posted = MagicMock(edit=AsyncMock())
+
+        async def post(channel_id: int, text: str) -> Any:
+            return "posted", posted
+
+        self.bot._post_transcript = post  # type: ignore[method-assign]
+        await self.bot.flush_transcript(table)
+        table.unsaved.take(lambda _: True)  # already saved
+        table.transcript_session_id = "s5"
+        self.bot.transcripts = MagicMock(
+            relabel_line=AsyncMock(side_effect=RuntimeError("database down"))
+        )
+        (note,) = table.fix_notes.notes
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            answer, allow = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("couldn't be put back, so it still says **Hrothgar**", answer)
+        posted.edit.assert_not_awaited()  # all or nothing (#567)
+        self.assertEqual(allow, (table.campaign_id, 3))
+
     async def test_someone_who_stops_during_the_undo_isnt_put_back(self) -> None:
         table, _, memory = await self.fixed_from_a_suggestion()
         (note,) = table.fix_notes.notes

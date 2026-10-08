@@ -1775,6 +1775,8 @@ class DMBot(commands.AutoShardedBot):
         changed = await self._rewrite_line(
             table, note.speaker, note.started_ms, table.fix_notes.line_text(note)
         )
+        if not self.consent.has_consent(guild_id, note.speaker):
+            return fix_notes.STOPPED, allow  # stopped meanwhile: nothing about their line
         md = discord.utils.escape_markdown
         text = fix_notes.done_text(md(note.fix.heard), md(note.fix.written), line_kept=not changed)
         return text, allow
