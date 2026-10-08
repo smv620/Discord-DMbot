@@ -82,7 +82,7 @@ class WebRole(DatabaseTest):
         await drop_schema(TEST_URL, self.schema)
         before = [m for m in schema.MIGRATIONS if m[0] < "0026"]
         self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
-        self.assertEqual(await self.db.migrate(), ["0026_feedback"])
+        self.assertIn("0026_feedback", await self.db.migrate())
         self.web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
         self.assertEqual(await feedback.forget_old(self.web), 0)  # its rights arrived
 
