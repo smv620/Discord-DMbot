@@ -14,7 +14,7 @@ from unittest import mock
 import discord
 
 from dmbot.campaigns import Campaign, offer_notify
-from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
+from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer, HandoverStatus
 from dmbot.dm_screen import handover, site_offers
 from dmbot.dm_screen.handover import TOLD_EXPIRED, TOLD_EXPIRED_UNSENT, deliver_offer
 from dmbot.dm_screen.site_offers import NOT_SENT, SiteOffers
@@ -56,6 +56,7 @@ class FakeStore:
         self.withdraw_result = "withdrawn"
         self.message_ids: dict[tuple[int, int], int | None] = {}
         self.to_end: list[HandoverOffer] = []
+        self.offers: dict[tuple[int, int], HandoverOffer] = {}
         self.told: set[int] = set()
         self.campaign: Any = type("C", (), {"id": "c1", "name": "Frost*maiden"})()
         self.fail_reads: set[int] = set()
@@ -76,6 +77,9 @@ class FakeStore:
         self.claimed.discard((guild_id, o.id))
         self.sent.add((guild_id, o.id))
         self.message_ids[(guild_id, o.id)] = message_id
+
+    async def get_offer(self, guild_id: int, offer_id: int, now: int) -> HandoverOffer | None:
+        return self.offers.get((guild_id, offer_id))
 
     async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]:
         return [o for o in self.to_end if o.id not in self.told]
@@ -429,6 +433,92 @@ class Expiring(Harness):
         self.store.to_end = [self.ended()]
         await self.offers.end_expired(OTHER_GUILD)
         self.assertEqual(self.store.told, set())
+
+
+class Decisions(Harness):
+    """An offer answered or taken back on the website (#737): the other person hears."""
+
+    def decided(self, status: HandoverStatus, message_id: int | None = 4242) -> None:
+        self.store.offers[(GUILD, 1)] = replace(
+            offer(),
+            status=status,
+            message_id=message_id,
+            decided_at=NOW,
+        )
+
+    async def test_accepted_tells_the_owner_and_updates_the_persons_message(self) -> None:
+        self.decided("accepted")
+        await self.offers.decided(GUILD, 1)
+        guild = self.guilds[GUILD]
+        self.assertEqual(
+            guild.owner.sent,
+            [handover.TOLD_ACCEPTED.format(name="Bea\\_\\*", campaign="Frost\\*maiden")],
+        )
+        ((message_id, changes),) = guild.buyer.edits
+        self.assertEqual(message_id, 4242)
+        self.assertIsNone(changes["view"])  # the buttons go
+        self.assertEqual(
+            changes["content"],
+            handover.ACCEPTED.format(campaign="Frost\\*maiden", server="The Table", owner="Oskar"),
+        )
+        self.assertEqual(guild.buyer.sent, [])
+
+    async def test_declined_tells_the_owner(self) -> None:
+        self.decided("declined")
+        await self.offers.decided(GUILD, 1)
+        guild = self.guilds[GUILD]
+        self.assertEqual(
+            guild.owner.sent,
+            [handover.TOLD_DECLINED.format(name="Bea\\_\\*", campaign="Frost\\*maiden")],
+        )
+        self.assertEqual(
+            guild.buyer.edits[0][1]["content"], handover.DECLINED.format(owner="Oskar")
+        )
+
+    async def test_taken_back_tells_the_person_only(self) -> None:
+        self.decided("withdrawn")
+        await self.offers.decided(GUILD, 1)
+        guild = self.guilds[GUILD]
+        told = handover.TOLD_WITHDRAWN.format(owner="Oskar", campaign="Frost\\*maiden")
+        self.assertEqual(guild.owner.sent, [])
+        self.assertEqual(guild.buyer.edits[0][1]["content"], told)
+
+    async def test_taken_back_with_no_kept_message_is_still_told(self) -> None:
+        self.decided("withdrawn", message_id=None)
+        await self.offers.decided(GUILD, 1)
+        guild = self.guilds[GUILD]
+        self.assertEqual(
+            guild.buyer.sent,
+            [handover.TOLD_WITHDRAWN.format(owner="Oskar", campaign="Frost\\*maiden")],
+        )
+
+    async def test_an_open_or_unknown_offer_tells_nobody(self) -> None:
+        self.decided("open")
+        await self.offers.decided(GUILD, 1)
+        await self.offers.decided(GUILD, 2)  # not there
+        await self.offers.decided(OTHER_GUILD, 1)  # another process's server
+        guild = self.guilds[GUILD]
+        self.assertEqual((guild.owner.sent, guild.buyer.sent, guild.buyer.edits), ([], [], []))
+
+    async def test_the_listener_hands_on_our_servers_answers(self) -> None:
+        self.decided("declined")
+        announced: asyncio.Queue[str] = asyncio.Queue()
+
+        async def listen(channel: str, on_listening: Callable[[], None]) -> AsyncGenerator[str]:
+            self.assertEqual(channel, offer_notify.DECIDED)
+            on_listening()
+            while True:
+                yield await announced.get()
+
+        follow = asyncio.ensure_future(self.offers.follow_decided(listen))
+        announced.put_nowait(offer_notify.payload(OTHER_GUILD, 1))
+        announced.put_nowait(offer_notify.payload(GUILD, 1))
+        await self.settle()
+        self.assertEqual(len(self.guilds[GUILD].owner.sent), 1)
+        self.assertEqual(self.delivered, [])  # no sweep, no sending offers
+        follow.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await follow
 
 
 class Following(Harness):
