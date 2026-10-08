@@ -159,6 +159,7 @@ in a volume, so restarts are fast.
 | Update `.env` after an update changes `.env.example` | `scripts/update-env` (add `--check` to only look) |
 | Add or change a key | `scripts/set-key` |
 | Set the admin page's password (#772) | `scripts/set-admin-password` |
+| Put the admin API online (#836) | see "Put the admin API online" below |
 
 Updates never change your `.env`. When one brings a new `.env.example`, run
 `scripts/update-env`. It rebuilds `.env` in the new layout, keeps every value you had, and
@@ -181,6 +182,88 @@ DMbot won't rejoin, and says why in the DM screen, if the voice channel is gone 
 longer allowed in, if the session started more than 16 hours ago, or if it restarted five
 times in a row (to stop a crash loop). `/dmbot stop` always ends a session for good, even
 while DMbot is restarting.
+
+### Put the admin API online
+
+When you sign in to the admin page with Google, Google sends you back to the website's API
+(#836), so that API must be reachable at `https://api.getdmbot.com`. A Cloudflare Tunnel
+does that safely: the server only calls out to Cloudflare, so no new door is opened on it,
+and Cloudflare looks after the secure padlock (HTTPS). Only the admin pages go through.
+The pages customers will use stay closed until #498.
+
+**You (the owner), in Cloudflare:**
+1. Go to https://one.dash.cloudflare.com, then Networks, then Tunnels (newer screens:
+   Networks, then Connectors, then Cloudflare Tunnels), then Create a tunnel. Pick
+   "Cloudflared", name it `dmbot-api`, and save.
+2. Cloudflare then shows a long command with the token inside it. Do not run that
+   command. Copy only the token: the very long text that starts with `eyJ`, after
+   `install` or after `--token`. On the server (log in with ssh, then `cd Discord-DMbot`),
+   type this and press Enter:
+
+       scripts/set-key CLOUDFLARE_TUNNEL_TOKEN
+
+   When it asks for the value, paste the token and press Enter. You won't see it as you
+   type. When it asks "Restart DMbot now?", press Enter without typing anything (that
+   means no) and skip any docker compose line it shows: dev1 starts the tunnel. Never
+   paste the token anywhere else: not in a chat, an issue, or the Claude Code window. If
+   you pasted the wrong thing, run the same command again and paste the right token.
+3. In Cloudflare, on the tunnel's "Published application routes" tab (older screens call
+   it "Public Hostname"), press Add and fill in:
+   - Subdomain: `api`
+   - Domain: `getdmbot.com`
+   - Path: `^/admin(/|$)`
+   - Service type: HTTP (Cloudflare may ask for this first)
+   - URL: `web-api:8080` (if Cloudflare insists on a full address, use
+     `http://web-api:8080`)
+
+   Save. The Path is what keeps everything except the admin pages closed. Cloudflare adds
+   the DNS record itself.
+4. Tell dev1, in the Claude Code window where dev1 runs (not GitHub): "tunnel ready"
+   (just those words, never the token).
+
+If any step shows an error, or Cloudflare says something you don't understand, stop and
+tell dev1 what the screen says (never the token). Nothing is broken by stopping: the
+tunnel stays off until dev1 starts it.
+
+**dev1:**
+1. Make the website API ready to start, or the tunnel connects but answers 502:
+   - Check the settings (this prints no secrets):
+     `grep -E '^(COMPOSE_PROFILES|WEB_CLIENT_IP_HEADER|WEB_API_URL|WEB_SITE_URL|WEB_API_PORT)=' .env`.
+     `COMPOSE_PROFILES` must include `web`, `WEB_CLIENT_IP_HEADER` must be `CF-Connecting-IP`,
+     `WEB_API_URL` must be `https://api.getdmbot.com` and `WEB_SITE_URL` the website's address
+     (`https://dev.getdmbot.com`, #833). `WEB_API_PORT` must be empty or 8080, the port the
+     owner's route points at. Fix them with `nano .env` (set-key only takes keys).
+   - The API also won't start without its database role (`DMBOT_WEB_DB_PASSWORD`), the Discord
+     sign-in (`DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`) and `WEB_SECRET_KEY`.
+   - Run `docker compose up -d web-api`, then `docker compose logs --tail 20 web-api`. An
+     error names the setting to fix: fix it and run both again.
+   - Check `scripts/set-key` lists `CLOUDFLARE_TUNNEL_TOKEN` as "set" (press Enter to cancel):
+     with the `web` profile on and no token, the tunnel keeps restarting.
+2. Run `docker compose up -d cloudflared`, then `docker compose logs --tail 20 cloudflared`.
+   Look for "Registered tunnel connection".
+3. Check from any computer (each prints a number):
+   - `curl -s -o /dev/null -w '%{http_code}\n' https://api.getdmbot.com/health` must print
+     404. web-api itself always answers 200 here, so a 404 proves Cloudflare is keeping
+     the other paths closed. If it prints 200, the limit is off: run
+     `docker compose stop cloudflared` at once and tell the Supervisor.
+   - `curl -s -o /dev/null -w '%{http_code}\n' https://api.getdmbot.com/admin/auth/ways`
+     must be an answer from DMbot itself: 404 while `ADMIN_EMAILS` is empty (the admin page
+     isn't on yet), 200 after "Turn on the admin page". A Cloudflare error page (502 or 530)
+     means the route or web-api is wrong.
+   - Optional second check: `https://api.getdmbot.com/me` must print 404 as well. A 401
+     also means the limit is off.
+4. If it fails:
+   - No "Registered tunnel connection": the token is missing or wrong. Ask the owner to run
+     set-key again, then `docker compose up -d --force-recreate cloudflared`.
+   - A 502 or 530: check `docker compose logs --tail 20 web-api`, then the route
+     (subdomain, domain, URL) with the owner.
+   - `/health` or `/me` answers as web-api would: stop the tunnel (see above) and fix the
+     Path with the owner.
+5. When it works, record the result in the testing log.
+
+To turn it off, dev1 runs `docker compose stop cloudflared`. The admin page then can't be
+reached from outside until it is started again. To remove the token as well, empty the
+`CLOUDFLARE_TUNNEL_TOKEN=` line with `nano .env` (set-key can't empty a value).
 
 ### Turn on the admin page
 
