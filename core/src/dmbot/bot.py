@@ -2061,9 +2061,10 @@ class DMBot(commands.AutoShardedBot):
     async def answer_undone(self, guild_id: int, campaign_id: str, batch: int) -> bool | None:
         """The DM undid an answer to "Did they mean…?" (the saved change is already taken
         back): put its line back, if this session still has it (#503). True if it was put
-        back, False if it couldn't be (#589), None if there's nothing to say: no line this
-        session knows (too old, or after a restart), or its speaker stopped being
-        recorded (checked again after the wait)."""
+        back; False if it couldn't be (#589: the save failed, or no copy of it was left to
+        change); None if there's nothing to say: no line this session knows (too old, or
+        after a restart), or its speaker stopped being recorded (checked again after the
+        wait, on every path)."""
         for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
             if table is None or table.campaign_id != campaign_id:
                 continue
@@ -2073,7 +2074,11 @@ class DMBot(commands.AutoShardedBot):
             text = table.fix_notes.words_now(
                 answer.speaker, answer.started_ms, answer.heard, answer.fixes
             )
-            changed = await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
+            try:
+                changed = await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
+            except Exception:
+                log.exception("Couldn't put a line back after undoing an answer")
+                changed = False
             if not self.consent.has_consent(guild_id, answer.speaker):
                 return None  # nothing about their line
             return changed

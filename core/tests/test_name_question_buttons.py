@@ -178,6 +178,16 @@ class UndoTest(unittest.IsolatedAsyncioTestCase):
                 if said:  # names what the line still says, from the answer message
                     self.assertIn("still says **Maren**", content)
 
+    async def test_an_error_putting_the_line_back_says_so(self) -> None:
+        bot = self.bot()
+        bot.answer_undone = AsyncMock(side_effect=RuntimeError("bug"))
+        it = self.press(bot, DM_ID)
+        with self.assertLogs("dmbot.dm_screen.name_questions", "ERROR"):
+            await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
+        self.assertIn(
+            "couldn't be put back", it.edit_original_response.await_args.kwargs["content"]
+        )
+
     async def test_undo_takes_back_that_change(self) -> None:
         bot = self.bot()
         it = self.press(bot, DM_ID)
