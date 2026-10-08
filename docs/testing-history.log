@@ -797,3 +797,21 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   - Database backed up first ("pre0020", outside the repo; 26 tables); no session was
     live; .env already matched. Core rebuilt: "Database updated: 0020_campaign_owner",
     "Connected to 1 server(s)", "ears connected", no warnings or errors.
+
+==============================================================================
+2026-10-08  Test A: DMbot writes down what one person says (owner, alone): FAIL
+==============================================================================
+  - 05:43-05:45 UTC on fba4f77, Deepgram, from docs/next-test-step.md. The owner was on
+    a phone (5G). Steps 1-7 done: /dmbot start (campaign "Test subject"), session
+    started, the sentence said once, waited ~15 s, /dmbot stop.
+  - Result: the transcript channel shows "Session started" and "Session ended" with no
+    line between. Start, consent and stop worked.
+  - Server: ears "capturing user" at 05:44:17.825, then 160 ms later "receive error ...
+    Failed to decrypt: DecryptionFailed(UnencryptedWhenPassthroughDisabled)"; health
+    received=1 expected=1. core: "Capture check: 1 x speech, 0.0 s, audio 100%",
+    "Listened 2.0 min, sent 0.0 min of speech (0%)". Nothing reached Deepgram.
+  - Cause so far: the DM's client sent audio that wasn't end-to-end encrypted while the
+    bot's DAVE session expected it; after 36 failed packets the voice library ends the
+    subscription and ears waits for the next pause to subscribe again. The audio %
+    didn't show the loss. Bug #631. First such error in 30 h of ears logs.
+  - Next: Test A again to see if it repeats; ears to log the DAVE handshake (#631).

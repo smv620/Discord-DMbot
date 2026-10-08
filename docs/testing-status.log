@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (deployed fba4f77; web-api not started; ready for run 8)
+Last updated: 2026-10-08 by dev1 (deployed fba4f77; Test A failed, #631)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,7 +9,13 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+Core only, no migration. Check:
+  - #617 (dev2, #554): ⏹ Stop listening asks first ("Stop listening and end the
+    session for …?" [Yes, stop] [Cancel], private, 60 s); Cancel keeps listening; a
+    player is refused at once; "Yes, stop" shows "Stopping…"; /dmbot stop stops at once.
+  - #622 (dev2, #88): /dmbot stop and Restore answer before waiting (no "This
+    interaction failed" when a start is setting up the DM screen); a restore always
+    ends with its outcome, never a stuck "Restoring…".
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -163,14 +169,16 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     put back
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
+LATEST RESULT: Test A (2026-10-08 05:43), DM alone on a phone, Deepgram: FAIL (#631)
 ------------------------------------------------------------------------------
-  Audio 1784/1784 (100%) · Part 1 0 errors of 33 · Part 2 10/12 (missed Auril,
-  Caer-Dineval; local Whisper got 7 in run 6) · whisper part · consent asked again
-  under the new wording, nothing captured before the yes · commands hung inside the
-  transcript channel (#188: fixed and deployed, not yet re-tested).
+  /dmbot start, consent and /dmbot stop worked; no transcript line. ears dropped the
+  DM's audio on its first packets: "Failed to decrypt: DecryptionFailed(
+  UnencryptedWhenPassthroughDisabled)" (DAVE), 0 s sent to Deepgram, yet the capture
+  check said audio 100%. Next: Test A again (docs/next-test-step.md) to see if it
+  repeats. Previous result: run 7 (2026-10-06), PASS, audio 100%.
 
 Open issues from testing
+  #631 DAVE decrypt error drops all of a speaker's audio (Test A)
   #43 DAVE loss after a pause   #45 uncounted losses   #112 menus run off phone screens
   #120 capture check drops audio counts   #121 start of speech may be cut
   #264 a link pasted into Add many becomes a name
