@@ -19,7 +19,7 @@ from typing import Any
 import aiohttp
 
 from dmbot.audio.segmenter import Utterance
-from dmbot.transcription.base import TranscriptionProblem, clean_text, to_wav
+from dmbot.transcription.base import Transcript, TranscriptionProblem, clean_text, to_wav
 from dmbot.transcription.config import TranscriptionSettings
 
 log = logging.getLogger(__name__)
@@ -138,12 +138,32 @@ def request_params(settings: TranscriptionSettings, terms: list[str]) -> list[tu
 
 
 def transcript(payload: Any) -> str | None:
-    """The text from Deepgram's reply, or None if it has none."""
+    """The text from Deepgram's reply, or None if it has none, with its confidence: the
+    words' average, or the whole reply's if no words came back (#699)."""
     try:
-        text = payload["results"]["channels"][0]["alternatives"][0]["transcript"]
+        best = payload["results"]["channels"][0]["alternatives"][0]
+        text = best["transcript"]
     except (KeyError, IndexError, TypeError):
         return None
-    return clean_text(text) if isinstance(text, str) else None
+    cleaned = clean_text(text) if isinstance(text, str) else None
+    if cleaned is None:
+        return None
+    return Transcript(cleaned, _confidence(best))
+
+
+def _confidence(best: Any) -> float | None:
+    words = best.get("words") if isinstance(best, dict) else None
+    scores: list[float] = [
+        float(w["confidence"])
+        for w in (words if isinstance(words, list) else [])
+        if isinstance(w, dict) and isinstance(w.get("confidence"), int | float)
+    ]
+    if not scores:
+        whole = best.get("confidence") if isinstance(best, dict) else None
+        scores = [float(whole)] if isinstance(whole, int | float) else []
+    if not scores:
+        return None
+    return max(0.0, min(1.0, sum(scores) / len(scores)))
 
 
 class DeepgramTranscriber:

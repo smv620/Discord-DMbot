@@ -56,6 +56,20 @@ never needs `'unsafe-inline'` for scripts, and adds the API's address to `connec
 when `PUBLIC_API_BASE` is a full address. `npm run check:csp` (in CI) checks the result.
 A `mock` build can't be deployed to the live site (branch `main`).
 
+### The "Say hello" page
+
+`/hello` (#665) has two small forms, feedback and questions, in a Preact island
+(`src/hello/`). They post to the web API's `POST /feedback`, which turns each message into
+a GitHub Discussion (message and date only) and keeps the "how to reach you" box with the
+team. Set Cloudflare Turnstile's site key when building to turn on its "are you a person?"
+check; the build then allows its script and frame in the CSP:
+
+```bash
+PUBLIC_TURNSTILE_SITE_KEY=0x4AAA... npm run build   # empty: no check (local testing)
+```
+
+With `PUBLIC_API_BASE=mock` every message pretends to send.
+
 ## Layout
 
 - `src/layouts/Base.astro`: the one layout (head tags, menu, footer with legal links).

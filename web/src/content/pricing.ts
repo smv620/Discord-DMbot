@@ -147,6 +147,8 @@ export const labels = {
   plansRegion: "Plans. Scroll sideways to see them all.",
   morePlansHeading: "Bigger tables and extra hours",
   faqHeading: "Questions and answers",
+  askUs: "Didn't find your answer?",
+  askUsLink: "Ask us.",
   swipeHint: "Swipe to see every plan.",
   everyPlanHas: features,
   tryItHeading: "New here? Try it free.",

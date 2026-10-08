@@ -1,4 +1,4 @@
-"""Handing a campaign over to another subscriber (#437 part 1b): only the owner offers,
+"""Handing a campaign over to another member of the server (#437 part 1b): only the owner offers,
 the person offered accepts within 7 days if they still have room, and every write is
 in CampaignStore so the bot and the website follow the same rules."""
 
@@ -14,7 +14,6 @@ from dmbot.campaigns.models import HANDOVER_SECONDS, HandoverOffer
 from dmbot.campaigns.store import (
     CLAIM_SECONDS,
     NO_OWNER_YET,
-    NOT_A_SUBSCRIBER,
     NOT_THE_OWNER,
     OFFER_TO_SELF,
     OFFER_WAITING,
@@ -77,12 +76,11 @@ class Offering(HandoverTest):
         self.assertEqual((done.status, done.decided_at), ("accepted", NOW))
         self.assertIsNone(await self.store.open_offer(GUILD, self.campaign.id, NOW))
 
-    async def test_only_the_owner_offers_and_only_to_a_subscriber(self) -> None:
+    async def test_only_the_owner_offers(self) -> None:
         await self.store.add_dm(GUILD, self.campaign.id, CO_DM)
         cases = [
             (CO_DM, BUYER, NOT_THE_OWNER),  # a co-DM isn't the owner
             (OWNER, OWNER, OFFER_TO_SELF),
-            (OWNER, NO_PLAN, NOT_A_SUBSCRIBER),
         ]
         for by, to, words in cases:
             with (
@@ -91,10 +89,20 @@ class Offering(HandoverTest):
             ):
                 await self.make_offer(GUILD, self.campaign.id, by, to, NOW)
 
-    async def test_a_lapsed_plan_is_not_a_subscriber(self) -> None:
-        await self.give_plan(NO_PLAN, status="lapsed", lapsed_at=500)
-        with self.assertRaisesRegex(CampaignError, re.escape(NOT_A_SUBSCRIBER)):
-            await self.offer(to=NO_PLAN)
+    async def test_an_offer_never_says_whether_someone_pays(self) -> None:
+        # The owner can offer to anyone (#713): no plan, or a lapsed one, is found out
+        # only by the person offered, when they press Accept.
+        offer = await self.offer(to=NO_PLAN)
+        self.assertEqual(
+            await self.store.accept_handover(GUILD, offer, NO_PLAN, NOW), "no_free_slot"
+        )
+        await self.store.withdraw_handover(GUILD, offer, OWNER, NOW)
+        lapsed = 11
+        await self.give_plan(lapsed, status="lapsed", lapsed_at=500)
+        offer = await self.offer(to=lapsed)
+        self.assertEqual(
+            await self.store.accept_handover(GUILD, offer, lapsed, NOW), "no_free_slot"
+        )
 
     async def test_one_open_offer_at_a_time_until_it_expires(self) -> None:
         first = await self.offer()
@@ -198,6 +206,7 @@ class Backfill(DatabaseTest):
         async with self.db.unscoped() as conn:  # the opening is gone again
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
+                " AND tablename = 'campaign_handover_offers'"
             )
             self.assertEqual((await cur.fetchone() or {})["n"], 0)
 

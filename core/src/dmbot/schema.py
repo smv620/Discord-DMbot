@@ -620,6 +620,30 @@ TRANSCRIPT_TOPICS = """
         ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0);
     """
 
+FEEDBACK = """
+    -- Messages sent from the website's "Say hello" page (#665). The message is also posted
+    -- as a GitHub Discussion (with its date, nothing else); how to reach the sender stays
+    -- here, with the team. No Discord id, no IP address: the form needs no sign-in.
+    CREATE TABLE feedback (
+        id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        kind          TEXT NOT NULL CHECK (kind IN ('feedback', 'question')),
+        message       TEXT NOT NULL CHECK (char_length(message) BETWEEN 1 AND 2000),
+        contact       TEXT CHECK (char_length(contact) BETWEEN 1 AND 200),
+        discussion    INTEGER NOT NULL,  -- the GitHub Discussion's number
+        created_at    BIGINT NOT NULL
+    );
+    -- Add-only: no policy lets anyone read or change a row (FORCE holds the table's
+    -- owner, the bot's role, too; the bot never queries it, and the website's role may
+    -- only INSERT and DELETE). The team reads contacts as the database's administrator.
+    -- Contacts are kept for a year (privacy page, #665): the website's hourly sweep
+    -- deletes older rows with a plain DELETE, which needs no right to read them.
+    ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE feedback FORCE ROW LEVEL SECURITY;
+    CREATE POLICY add_only ON feedback FOR INSERT WITH CHECK (true);
+    CREATE POLICY forget_after_a_year ON feedback FOR DELETE
+        USING (dmbot_cleanup() = 'old-feedback' AND created_at <= dmbot_now() - 365 * 86400);
+    """
+
 WEB_ACCOUNTS = (
     _setting("dmbot_current_user", "dmbot.user_id", "BIGINT")
     + _setting("dmbot_current_session", "dmbot.session", "TEXT")
@@ -636,7 +660,8 @@ WEB_ACCOUNTS = (
     --                       never the server's campaigns
     --   dmbot.plan_writer   set only by Database.plan_writer(): the payment webhook and
     --                       Try It, the only code allowed to change `entitlements`
-    --   dmbot.cleanup       set only by Database.cleanup(): the expired-session sweep
+    --   dmbot.cleanup       set only by Database.cleanup(): the website's hourly sweep
+    --                       ('expired-sessions', and 'old-feedback' since 0026, #665)
 
     CREATE FUNCTION dmbot_now() RETURNS BIGINT
         LANGUAGE sql STABLE
@@ -938,6 +963,7 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("schema_migrations", "campaigns", "campaign_dms")),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
+    ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
 )
 
@@ -966,6 +992,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0022_handover_offer_names", HANDOVER_NAMES),
     ("0024_transcript_topics", TRANSCRIPT_TOPICS),
     ("0025_handover_delivered", HANDOVER_DELIVERED),
+    ("0026_feedback", FEEDBACK),
     ("0027_handover_expiry", HANDOVER_EXPIRY),
 )
 
@@ -995,6 +1022,9 @@ USER_ISOLATED_TABLES = (
     "web_sessions",
     "installs",
 )
+# Add-only: no policy allows reading a row; the team reads them as the database's
+# administrator (#665).
+WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
 ROUTING_TABLES = ("live_session_guilds",)
 UNSCOPED_TABLES = ("schema_migrations", *ROUTING_TABLES)
