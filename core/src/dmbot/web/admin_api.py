@@ -10,6 +10,7 @@ admin POSTs after sign-in also need the session's CSRF token.
 # router() as real objects, or it reads them as query parameters.
 
 import asyncio
+import contextlib
 import json
 import logging
 import secrets
@@ -34,6 +35,7 @@ from dmbot.web.admin import (
     pkce_challenge,
     verified_email,
 )
+from dmbot.web.feedback import rate_key
 from dmbot.web.settings import WebSettings
 
 log = logging.getLogger(__name__)
@@ -42,6 +44,8 @@ SIGN_IN_SECONDS = 600
 MAX_BODY = 4 * 1024
 # The same answer for a wrong email, a wrong password and a locked try (#772).
 WRONG = "wrong_sign_in"
+# Password tries waiting for the one before them; more than this is a flood.
+MAX_WAITING = 8
 
 
 def router(
@@ -55,6 +59,7 @@ def router(
 ) -> APIRouter:
     api = APIRouter(prefix="/admin")
     checking = asyncio.Semaphore(1)
+    waiting = [0]  # tries queued for `checking`
     prefix = "__Host-" if settings.secure_cookies else ""
     admin_cookie = f"{prefix}dmbot_admin"
     signin_cookie = f"{prefix}dmbot_admin_signin"
@@ -112,6 +117,9 @@ def router(
     @api.post("/auth/password", status_code=204)
     async def password(request: Request) -> Response:
         require_on()
+        with contextlib.suppress(ValueError):
+            if int(request.headers.get("content-length", "0")) > MAX_BODY:
+                raise HTTPException(status_code=413, detail="too_long")
         body = b""
         async for chunk in request.stream():
             body += chunk
@@ -127,10 +135,20 @@ def router(
             raise HTTPException(status_code=400, detail="bad_request")
         email_key = "email:" + email.strip().lower()[:320]
         address = client_address(request)
-        addr_key = "addr:" + address
+        addr_key = "addr:" + rate_key(address)
         # One check at a time, so tries racing each other can't all pass the lock before
-        # any failure counts, and a flood waits its turn instead of using every core.
-        async with checking:
+        # any failure counts, and a flood waits its turn instead of using every core. A
+        # long queue means a flood: refuse at once, so the admin's own try isn't stuck
+        # behind it until the page gives up.
+        if waiting[0] >= MAX_WAITING:
+            log.warning("Admin sign-in refused from %s: too many at once", address)
+            raise HTTPException(status_code=401, detail=WRONG)
+        waiting[0] += 1
+        try:
+            await checking.acquire()
+        finally:
+            waiting[0] -= 1
+        try:
             # A locked try skips the hash: whether a key is locked is no secret (the page
             # says so), and hashing for it would let one client keep the API busy.
             if tries.locked(email_key) or tries.locked(addr_key):
@@ -146,6 +164,8 @@ def router(
                 raise HTTPException(status_code=401, detail=WRONG)
             tries.clear(email_key)
             tries.clear(addr_key)
+        finally:
+            checking.release()
         log.info("Admin signed in with the password from %s", address)
         response = Response(status_code=204)
         admin_sessions.end(request.cookies.get(admin_cookie))  # one session per browser
@@ -204,10 +224,11 @@ def router(
         state = request.query_params.get("state", "")
         code = request.query_params.get("code", "")
         address = client_address(request)
+        addr_key = "addr:" + rate_key(address)
         if (
             len(parts) != 3
             or not code
-            or tries.locked("addr:" + address)
+            or tries.locked(addr_key)
             or not secrets.compare_digest(parts[0].encode(), state.encode())
         ):
             log.warning("Admin Google sign-in refused from %s: bad or expired check", address)
@@ -218,6 +239,9 @@ def router(
                 code=code, verifier=verifier, redirect_uri=settings.admin_google_redirect_uri
             )
         except AdminError as exc:
+            # Counts as a wrong try: made-up codes would otherwise cost a call to Google
+            # each, without end.
+            tries.fail(addr_key)
             log.warning("Admin Google sign-in failed: %s", exc)
             return failed
         email = verified_email(
@@ -228,13 +252,13 @@ def router(
             allowed=settings.admin_emails,
         )
         if email is None:
-            tries.fail("addr:" + address)
+            tries.fail(addr_key)
             log.warning("Admin Google sign-in refused from %s: not an admin", address)
             return failed
         log.info("Admin signed in with Google from %s", address)
         done = RedirectResponse(admin_page, status_code=302)
         done.delete_cookie(signin_cookie, path="/", secure=settings.secure_cookies)
-        tries.clear("addr:" + address)
+        tries.clear(addr_key)
         admin_sessions.end(request.cookies.get(admin_cookie))  # one session per browser
         set_admin_cookie(done, admin_sessions.start(email))
         return done

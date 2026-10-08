@@ -292,8 +292,12 @@ class HttpGoogle:
         return f"{GOOGLE_AUTHORIZE}?{query}"
 
     async def claims(self, *, code: str, verifier: str, redirect_uri: str) -> dict[str, Any]:
-        if self._http is None:
-            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
+        if self._http is None:  # no await before the assignment, so made only once
+            # Its own few connections, so a flood of made-up codes can't hold the real one up.
+            self._http = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10, sock_connect=5),
+                connector=aiohttp.TCPConnector(limit=4),
+            )
         try:
             async with self._http.post(
                 self._token_url,

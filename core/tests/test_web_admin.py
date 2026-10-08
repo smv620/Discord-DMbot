@@ -4,10 +4,12 @@ No database: the admin routes never touch it."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import subprocess
 import sys
+import time
 import unittest
 import unittest.mock
 from typing import Any, ClassVar, cast
@@ -201,6 +203,131 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.status_code, 204)
         self.assertIn("__host-dmbot_admin=", out.headers["set-cookie"].lower())
 
+    async def test_the_api_keeps_answering_while_a_password_is_checked(self) -> None:
+        def slow(_hash: str, _password: str) -> bool:
+            time.sleep(0.5)
+            return False
+
+        with unittest.mock.patch("dmbot.web.admin_api.password_matches", slow):
+            trying = asyncio.create_task(self.password())
+            await asyncio.sleep(0.05)
+            started = time.monotonic()
+            self.assertEqual((await self.client.get("/health")).status_code, 200)
+            self.assertLess(time.monotonic() - started, 0.3)
+            await trying
+
+    async def test_checks_run_one_at_a_time_and_a_flood_is_refused_at_once(self) -> None:
+        running = [0, 0]  # now, most at once
+
+        def slow(_hash: str, _password: str) -> bool:
+            running[0] += 1
+            running[1] = max(running)
+            time.sleep(0.05)
+            running[0] -= 1
+            return False
+
+        with unittest.mock.patch("dmbot.web.admin_api.password_matches", slow):
+            answers = await asyncio.gather(
+                *(self.password(ip=f"2001:db8:{n}::1") for n in range(12))
+            )
+        self.assertEqual(running[1], 1)
+        self.assertTrue(all(a.status_code == 401 for a in answers))
+
+    async def test_old_failures_fall_out_and_a_lock_isnt_stretched(self) -> None:
+        for _ in range(4):
+            await self.password(password="wrong wrong wrong wrong")
+        self.ticks += 15 * 60
+        await self.password(password="wrong wrong wrong wrong")
+        self.assertEqual((await self.password()).status_code, 204)  # 1 recent, not 5
+        await self.client.post("/admin/auth/logout", headers=HEADERS)
+        self.client.cookies.clear()
+        for _ in range(5):
+            await self.password(password="wrong wrong wrong wrong")
+        for _ in range(3):
+            self.ticks += 4 * 60
+            await self.password()  # trying while locked doesn't extend it
+        self.ticks += 3 * 60 + 1
+        self.assertEqual((await self.password()).status_code, 204)
+
+    async def test_one_ipv6_network_is_one_connection(self) -> None:
+        for n in range(5):
+            await self.password(email=f"guess{n}@example.com", ip=f"2001:db8:1:2::{n + 1}")
+        self.assertEqual((await self.password(ip="2001:db8:1:2::ff")).status_code, 401)
+        self.assertEqual((await self.password(ip="2001:db8:1:3::1")).status_code, 204)
+
+    async def test_bad_sign_in_bodies_are_bad_requests(self) -> None:
+        for content in (b"not json", b"[]", b'{"password": "x"}', b'{"email": "a@b.c"}'):
+            answer = await self.client.post(
+                "/admin/auth/password",
+                content=content,
+                headers={**HEADERS, "Content-Type": "application/json"},
+            )
+            self.assertEqual(answer.status_code, 400, content)
+        long = await self.password(password="x" * 1025)
+        self.assertEqual(long.status_code, 400)
+        huge = await self.client.post(
+            "/admin/auth/password",
+            content=b"x" * 5000,
+            headers={**HEADERS, "Content-Type": "application/json"},
+        )
+        self.assertEqual(huge.status_code, 413)
+
+    async def test_with_no_password_set_only_google_works(self) -> None:
+        app = create_app(
+            settings(admin_emails=(ADMIN,), client_ip_header="CF-Connecting-IP"),
+            cast(Database, None),
+            FakeDiscord(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API
+        ) as client:
+            answer = await client.post(
+                "/admin/auth/password",
+                json={"email": ADMIN, "password": PASSWORD},
+                headers=HEADERS,
+            )
+        self.assertEqual((answer.status_code, answer.json()), (401, {"error": "wrong_sign_in"}))
+
+    async def test_google_refuses_an_old_sign_in_or_no_code_without_asking_google(self) -> None:
+        start = await self.client.get("/admin/auth/google/start")
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        no_code = await self.client.get("/admin/auth/google/callback", params={"state": state})
+        self.assertEqual(no_code.headers["location"], f"{SITE}/admin?signin=failed")
+        start = await self.client.get("/admin/auth/google/start")
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        self.now += 601
+        old = await self.client.get(
+            "/admin/auth/google/callback", params={"state": state, "code": "g-code"}
+        )
+        self.assertEqual(old.headers["location"], f"{SITE}/admin?signin=failed")
+        self.assertEqual(self.google.asked, [])
+
+    async def test_google_failing_counts_as_a_wrong_try(self) -> None:
+        self.google.fail = True
+        for _ in range(5):
+            await self.google_sign_in()
+        self.assertEqual(len(self.google.asked), 5)
+        await self.google_sign_in()
+        self.assertEqual(len(self.google.asked), 5)  # locked: Google isn't asked
+
+    async def test_a_strange_cookie_is_signed_out_not_an_error(self) -> None:
+        response = await self.client.get(
+            "/admin/me", headers=[(b"Cookie", b"__Host-dmbot_admin=caf\xe9")]
+        )
+        self.assertEqual(response.status_code, 401)
+
+    async def test_sign_out_deletes_the_cookie_the_browser_way(self) -> None:
+        await self.password()
+        csrf = (await self.me()).json()["csrf"]
+        out = await self.client.post(
+            "/admin/auth/logout", headers={**HEADERS, "X-Admin-CSRF": csrf}
+        )
+        cookie = out.headers["set-cookie"].lower()
+        self.assertIn("max-age=0", cookie)
+        for part in ("secure", "path=/"):
+            self.assertIn(part, cookie)
+        self.assertNotIn("domain=", cookie)
+
     async def test_five_wrong_tries_lock_the_connection_too(self) -> None:
         for n in range(5):
             await self.password(email=f"guess{n}@example.com")
@@ -335,6 +462,15 @@ class Locks(unittest.TestCase):
         for n in range(10):
             tries.fail(f"email:{n}")
         self.assertLessEqual(len(tries._fails), 3)
+
+
+class SessionCap(unittest.TestCase):
+    def test_the_oldest_session_goes_when_there_are_too_many(self) -> None:
+        sessions = AdminSessions(clock=lambda: 0.0)
+        first = sessions.start(ADMIN)
+        for _ in range(20):
+            sessions.start(ADMIN)
+        self.assertIsNone(sessions.find(first))
 
 
 class Passwords(unittest.TestCase):
