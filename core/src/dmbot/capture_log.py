@@ -9,16 +9,34 @@ the notes that need the DM (#134).
 
 from __future__ import annotations
 
+import math
+import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from dmbot.audio.segmenter import Utterance
+from dmbot.transcription.base import MIN_UTTERANCE_S
 
 # Below this percentage of expected frames, audio is flagged (logs, test scoring).
 HEALTH_WARN_PERCENT = 95
-# The DM screen is only told below this (90-94% rarely costs real words), once per
-# person, and again only if it gets clearly worse or after a while: a phone on bad
-# Wi-Fi mustn't bury the notes that need the DM.
+# The DM screen's ⚠️ means "DMbot is missing what people say" (#671), so it counts only
+# speech worth writing down, over enough of it to matter: per person, over the last
+# DM_WINDOW_S, under HEALTH_WARN_PERCENT got through AND at least DM_WARN_LOST_S lost. A
+# piece that brought less audio than gets transcribed and lost little (a TV across the
+# room, a cough) counts in neither column; one that lost a lot always counts. The window
+# is timed from when health arrives: if transcription falls a minute behind, older gaps
+# leave it before their speech is checked. Then once per person, and again only if it gets clearly
+# worse or after a while: a phone on bad Wi-Fi mustn't bury the notes that need the DM.
+# (A speaker whose audio is lost entirely, #631, is warned at once by ears' own path.)
+DM_WINDOW_S = 60.0
+DM_WARN_LOST_S = 2.0
+FRAMES_PER_S = 50  # ears' health counts 20 ms frames (ears/src/health.ts FRAME_MS)
+DM_WARN_LOST_FRAMES = int(DM_WARN_LOST_S * FRAMES_PER_S)
+COUNTS_IF_LOST_FRAMES = FRAMES_PER_S  # a piece that lost a second always counts
+MIN_FRAMES = math.ceil(MIN_UTTERANCE_S * FRAMES_PER_S)  # enough audio to be written down
+# The session summary says someone's voice "kept cutting out" below this, over the pieces
+# that count, and only if at least DM_WARN_LOST_S was lost (90-94% rarely costs real words).
 DM_WARN_PERCENT = 90
 WARN_AGAIN_DROP = 10
 WARN_AGAIN_AFTER_S = 600.0
@@ -58,10 +76,18 @@ class _SpeakerStats:
         return self.utterances > 0
 
 
+def counts_for_dm(received: int, expected: int) -> bool:
+    """Whether a piece's health counts towards the DM screen's warning (#671): it brought
+    enough audio to be written down, or lost a lot (nearly all lost is the worst case)."""
+    return received >= MIN_FRAMES or expected - received >= COUNTS_IF_LOST_FRAMES
+
+
 class CaptureLog:
     def __init__(self) -> None:
         self._stats: dict[int, _SpeakerStats] = {}
         self._warned: dict[int, tuple[int, float]] = {}  # user → (percent, when)
+        # Per person, the pieces that count for the DM: (when, received, expected).
+        self._window: dict[int, deque[tuple[float, int, int]]] = {}
 
     def _get(self, user_id: int) -> _SpeakerStats:
         return self._stats.setdefault(user_id, _SpeakerStats())
@@ -71,12 +97,39 @@ class CaptureLog:
         stats.utterances += 1
         stats.seconds += utterance.duration_s
 
-    def add_health(self, user_id: int, received: int, expected: int) -> None:
+    def add_health(
+        self, user_id: int, received: int, expected: int, now: float | None = None
+    ) -> None:
+        """One piece's audio health. `now`: a monotonic time in seconds (default: now)."""
         stats = self._get(user_id)
         # Cap each report, so one over-counted clip can't hide a gap in another.
-        stats.frames_received += max(0, min(received, expected))
+        received = max(0, min(received, expected))
+        stats.frames_received += received
         stats.frames_expected += max(0, expected)
         stats.checks_waited = 0  # the wait for speech counts from the latest report
+        at = time.monotonic() if now is None else now
+        if counts_for_dm(received, expected):
+            self._window.setdefault(user_id, deque()).append((at, received, expected))
+        self._prune(user_id, at)
+
+    def _prune(self, user_id: int, now: float) -> None:
+        window = self._window.get(user_id)
+        while window and window[0][0] < now - DM_WINDOW_S:
+            window.popleft()
+        if not window:
+            self._window.pop(user_id, None)
+
+    def _dm_health(self, user_id: int, now: float) -> tuple[int, int] | None:
+        """(percent got through, frames lost) over the last DM_WINDOW_S of the pieces
+        that count, or None if there are none."""
+        self._prune(user_id, now)
+        window = self._window.get(user_id)
+        if not window:
+            return None
+        received = sum(r for _, r, _ in window)
+        expected = sum(e for _, _, e in window)
+        percent, _ = audio_health(received, expected)
+        return percent, expected - received
 
     def log_line(self) -> str | None:
         """One line for the terminal log: user IDs and numbers only, never names or
@@ -95,7 +148,7 @@ class CaptureLog:
             return None
         return f"Capture check: {len(parts)} speaker(s); " + "; ".join(parts)
 
-    def render(self, name_of: Callable[[int], str], now: float = 0.0) -> str | None:
+    def render(self, name_of: Callable[[int], str], now: float | None = None) -> str | None:
         """A warning for the DM screen if someone's voice is cutting out, then reset the
         speakers this check covered. None (and still reset) otherwise. `now` is a
         monotonic time in seconds.
@@ -105,7 +158,9 @@ class CaptureLog:
         (#120): HEALTH_WAIT_CHECKS checks after their latest report, and no more than
         HEALTH_WAIT_MAX_CHECKS after their first. Health and speech are paired per
         speaker, not per piece of speech, so a check's % can include a piece that is
-        still being transcribed; every count is still reported exactly once."""
+        still being transcribed; every count is still reported exactly once. The DM is
+        told by the rule at the top of this file, over the last DM_WINDOW_S."""
+        now = time.monotonic() if now is None else now
         gaps: list[tuple[str, int]] = []
         # sorted() copies, so entries can be deleted inside the loop.
         for user_id, s in sorted(self._stats.items(), key=lambda kv: -kv[1].seconds):
@@ -117,12 +172,14 @@ class CaptureLog:
                     or s.checks_since_first > HEALTH_WAIT_MAX_CHECKS
                 ):
                     del self._stats[user_id]
+                    self._window.pop(user_id, None)  # that speech isn't coming either
                 continue
             del self._stats[user_id]
-            if s.frames_expected == 0:
+            health = self._dm_health(user_id, now)
+            if health is None:
                 continue
-            percent, _ = audio_health(s.frames_received, s.frames_expected)
-            if percent >= DM_WARN_PERCENT:
+            percent, lost = health
+            if percent >= HEALTH_WARN_PERCENT or lost < DM_WARN_LOST_FRAMES:
                 continue
             last = self._warned.get(user_id)
             if (
@@ -149,15 +206,21 @@ class CaptureLog:
 @dataclass(slots=True)
 class SpeakerTotal:
     seconds: float = 0.0
-    frames_received: int = 0
-    frames_expected: int = 0
+    counted_received: int = 0  # pieces that count for the DM (#671)
+    counted_expected: int = 0
 
     @property
     def percent(self) -> int | None:
-        """How much of their audio got through, or None if nothing was measured."""
-        if self.frames_expected == 0:
+        """How much of their speech got through, over the pieces that count for the DM,
+        or None if nothing was measured."""
+        if self.counted_expected == 0:
             return None
-        return audio_health(self.frames_received, self.frames_expected)[0]
+        return audio_health(self.counted_received, self.counted_expected)[0]
+
+    @property
+    def lost_s(self) -> float:
+        """Seconds of their speech lost, over the pieces that count."""
+        return (self.counted_expected - self.counted_received) / FRAMES_PER_S
 
 
 class SessionTotals:
@@ -173,5 +236,7 @@ class SessionTotals:
 
     def add_health(self, user_id: int, received: int, expected: int) -> None:
         total = self.speakers.setdefault(user_id, SpeakerTotal())
-        total.frames_received += max(0, min(received, expected))
-        total.frames_expected += max(0, expected)
+        received = max(0, min(received, expected))
+        if counts_for_dm(received, expected):
+            total.counted_received += received
+            total.counted_expected += max(0, expected)
