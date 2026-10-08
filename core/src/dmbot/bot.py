@@ -14,7 +14,7 @@ import logging
 import signal
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, cast
@@ -397,7 +397,7 @@ class DMBot(commands.AutoShardedBot):
             await self.tree.sync()
         await self.ears.start()
         self._background = [
-            asyncio.create_task(self.pipeline.run(), name="transcribe"),
+            self._watched(self.pipeline.run(), "transcribe"),
             asyncio.create_task(self._idle_sweeper(), name="idle-sweep"),
             asyncio.create_task(self._summary_poster(), name="summaries"),
             *(
@@ -528,6 +528,21 @@ class DMBot(commands.AutoShardedBot):
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
+
+    @staticmethod
+    def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
+        """A background task that must run as long as DMbot does: if it ever ends
+        without being cancelled, that's logged at ERROR (#499)."""
+        task = asyncio.create_task(work, name=name)
+
+        def ended(done: asyncio.Task[None]) -> None:
+            if done.cancelled():
+                return
+            problem = done.exception()
+            log.error("The %s task stopped: %r", name, problem or "it returned")
+
+        task.add_done_callback(ended)
+        return task
 
     def _track(self, work: Awaitable[Any], name: str) -> None:
         """Run `work` in the background; close() cancels it. Failures are logged."""
@@ -718,6 +733,7 @@ class DMBot(commands.AutoShardedBot):
             return None
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
+        self._hint_people_cache.pop(guild_id, None)  # nothing kept past the session
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.

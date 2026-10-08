@@ -741,6 +741,63 @@ class WorkerPool(unittest.IsolatedAsyncioTestCase):
         await self.stop(task)
         self.assertNotIn(2, [g for g, _ in engine.order])  # never sent to be written
 
+    async def test_a_stalled_alert_post_never_holds_up_other_tables(self) -> None:
+        class FailsForOne(FakeTranscriber):
+            async def transcribe(self, utterance: Utterance, hints: list[str]) -> str | None:
+                if utterance.guild_id == 1:
+                    raise RuntimeError("engine down for this one")
+                return "I cast Shield"
+
+        p = self.make(FailsForOne(), workers=2)
+        never = asyncio.Event()
+
+        async def stalled(guild_id: int, message: str) -> None:
+            await never.wait()  # Discord hangs on this post
+
+        p._alert = stalled
+        for at in range(FAILURES_BEFORE_ALERT):
+            p.enqueue(self.clip(1, at * 1000))
+        task = asyncio.create_task(p.run())
+        with (
+            mock.patch("dmbot.transcription.pipeline.ALERT_POST_TIMEOUT_S", 0.2),
+            self.assertLogs("dmbot.transcription.pipeline", "WARNING") as logs,
+        ):
+            await self.wait_for(lambda: p.consecutive_failures >= FAILURES_BEFORE_ALERT)
+            p.enqueue(self.clip(2, 0))  # another table goes on meanwhile
+            await self.wait_for(lambda: (2, "I cast Shield") in self.delivered)
+            await self.wait_for(lambda: not p._alerts_lock.locked())  # given up on
+        await self.stop(task)
+        self.assertIn("took too long", "\n".join(logs.output))
+
+    async def test_a_turn_for_a_server_with_no_queue_is_a_warning(self) -> None:
+        p = self.make(FakeTranscriber(), workers=1)
+        p._turns.put_nowait(9)  # no queue for server 9
+        p.enqueue(self.clip(1, 0))
+        task = asyncio.create_task(p.run())
+        with self.assertLogs("dmbot.transcription.pipeline", "WARNING") as logs:
+            await self.wait_for(lambda: len(self.delivered) == 1)  # the worker carries on
+        await self.stop(task)
+        self.assertIn("empty turn", "\n".join(logs.output))
+        self.assertNotIn("Traceback", "\n".join(logs.output))
+
+    async def test_two_tables_one_told_and_one_starting_mid_outage(self) -> None:
+        engine = FakeTranscriber()
+        engine.fail = True
+        p = self.make(engine, workers=1)
+        told: list[int] = []
+
+        async def alert(guild_id: int, message: str) -> None:
+            told.append(guild_id)
+
+        p._alert = alert
+        for _ in range(FAILURES_BEFORE_ALERT):
+            await p.process(self.clip(1, 0))
+        self.assertEqual(told, [1])
+        p.session_started(2)  # a new table, mid-outage
+        await p.process(self.clip(2, 0))
+        await p.process(self.clip(1, 0))  # the first table fails again
+        self.assertEqual(told, [1, 2])  # the new one is told; the first not twice
+
     async def test_the_backlog_warning_is_per_server(self) -> None:
         alerts: list[int] = []
 

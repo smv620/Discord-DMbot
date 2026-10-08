@@ -1673,6 +1673,15 @@ class Hints(NamesTest):
         self.bot._hint_people_cache[GUILD] = (cached[0] - 60, *cached[1:])  # time passes
         hints = await self.bot._name_hints(clip(table))
         self.assertEqual(sorted(hints[:2]), sorted([f"user{PLAYER}", f"user{DM}"]))
+        # Someone in the voice channel who never agreed is never sent as a hint.
+        voice.members.append(SimpleNamespace(id=9999, bot=False, display_name="x"))
+        self.bot._hint_people_cache.clear()
+        self.assertNotIn("user9999", await self.bot._name_hints(clip(table)))
+        # Another server's names are kept apart, and nothing is kept past a session.
+        await self.consent.grant(GUILD + 1, 4242)
+        self.assertEqual(await self.bot._hint_people(GUILD + 1, None), ((), ("user4242",)))
+        self.assertNotIn("user4242", await self.bot._name_hints(clip(table)))
+        self.assertEqual(set(self.bot._hint_people_cache), {GUILD, GUILD + 1})
         # A quick "stop recording me" (before the database write) counts at once too.
         self.bot.stop_recording(GUILD, PLAYER)
         self.assertNotIn(f"user{PLAYER}", await self.bot._name_hints(clip(table)))

@@ -1,6 +1,7 @@
 """Starting and stopping campaign sessions (`/dmbot start` · `stop` · Status)."""
 
 import asyncio
+import contextlib
 import dataclasses
 import json
 import logging
@@ -228,6 +229,32 @@ class SessionTests(DatabaseTest):
         self.assertIn("Writing things down: keeping up", busy)
         for jargon in ("backlog", "frame", "pipeline", "ears", "service"):
             self.assertNotIn(jargon, busy.lower())
+
+    async def test_a_task_that_must_keep_running_is_logged_if_it_stops(self) -> None:
+        async def returns() -> None:
+            return None
+
+        with self.assertLogs("dmbot.bot", "ERROR") as logs:
+            await self.bot._watched(returns(), "transcribe")
+            await asyncio.sleep(0)  # the callback runs
+        self.assertIn("The transcribe task stopped", logs.output[0])
+
+        async def runs() -> None:
+            await asyncio.Event().wait()
+
+        forever = self.bot._watched(runs(), "transcribe")
+        await asyncio.sleep(0)
+        forever.cancel()  # shutting down: nothing logged
+        with self.assertNoLogs("dmbot.bot", "ERROR"):
+            with contextlib.suppress(asyncio.CancelledError):
+                await forever
+            await asyncio.sleep(0)
+
+    async def test_stopping_drops_the_servers_hint_cache(self) -> None:
+        await self.start()
+        self.bot._hint_people_cache[GUILD] = (0.0, frozenset(), None, ((), ()))
+        await self.bot.stop_session(GUILD, DM, False)
+        self.assertNotIn(GUILD, self.bot._hint_people_cache)
 
     async def test_status_shows_this_servers_own_backlog(self) -> None:
         from dmbot.audio.segmenter import Utterance
