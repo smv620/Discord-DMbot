@@ -446,8 +446,8 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   "🔁 Asked again: …" so the DM knows why. After a restart, people in voice whose yes no
   longer counts are asked (nobody else is). Version 2 is the "anyone in this server can
   read it" wording; version 3 (#52) adds that DMbot's helper has an AI company (Anthropic)
-  read the text to give the DM notes, not used to train their AI (said once for every
-  helper); every yes saved before versions were recorded is treated as version 1
+  read the text, with who said it, to give the DM notes, not used to train their AI (said
+  once for every helper); every yes saved before versions were recorded is treated as version 1
   (we can't tell which wording each person saw). A test pins the request's wording to
   the version number.
 - The public "DMbot is listening" notice in the voice channel's chat still posts once per
