@@ -115,6 +115,24 @@ class TranscriptStore:
             )
             return cur.rowcount
 
+    async def set_topics(
+        self,
+        guild_id: int,
+        session_id: str,
+        user_id: int,
+        started: Collection[int],
+        topic: str,
+    ) -> int:
+        """Several of one person's saved lines get a topic, in one statement (#677: Put
+        it back). What was heard never changes. How many lines changed."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE transcript_lines SET topic = %s"
+                " WHERE session_id = %s AND user_id = %s AND started_ms = ANY(%s)",
+                (topic, session_id, user_id, sorted(started)),
+            )
+            return cur.rowcount
+
     async def remove_lines(self, guild_id: int, session_id: str, ids: Collection[int]) -> None:
         """Take saved lines back out (someone pressed Stop while they were being saved),
         and count the session again."""

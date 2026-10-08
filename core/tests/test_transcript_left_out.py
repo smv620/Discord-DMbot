@@ -86,7 +86,7 @@ class MessageTest(unittest.TestCase):
         notes.add([w(DEE, 1, "**bold** @everyone " + "word " * 30), w(DEE, 2)])
         text, _ = left_out.message_text(notes.runs, {}, when, escape)
         line = text.splitlines()[1]
-        self.assertIn("Someone: \\*\\*bold\\*\\*", line)  # no name: "Someone"
+        self.assertIn("Someone (2 lines): \\*\\*bold\\*\\*", line)  # no name: "Someone"
         self.assertNotIn("@everyone", line)
         self.assertTrue(line.endswith("…"))
         self.assertLess(len(line), left_out.WORDS_MAX + 40)
@@ -95,7 +95,7 @@ class MessageTest(unittest.TestCase):
         notes = left_out.LeftOut()
         notes.add([w(DEE, 1, "short"), w(DEE, 2)])
         text, _ = left_out.message_text(notes.runs, {DEE: "Dee"}, when)
-        self.assertIn("Dee: short…", text)
+        self.assertIn("Dee (2 lines): short…", text)
 
     def test_nothing_left(self) -> None:
         text, shown = left_out.message_text([], {}, when)
@@ -127,8 +127,44 @@ class MessageTest(unittest.TestCase):
         self.assertIsNone(left_out_view(5, notes.runs))
 
     def test_what_a_press_says(self) -> None:
-        self.assertNotIn("channel", left_out.done_text(in_channel=True))
-        self.assertIn("still shows them as skipped", left_out.done_text(in_channel=False))
+        done = left_out.done_text(3, "Mia", in_channel=True)
+        self.assertTrue(done.startswith("↩️ Put back 3 (Mia): "))
+        self.assertIn("and the live channel.", done)
+        self.assertTrue(left_out.done_text(3, "Mia", in_channel=None).endswith("transcript."))
+        late = left_out.done_text(3, "Mia", in_channel=False)
+        self.assertIn('still says "skipped" there. That\'s expected.', late)
+
+    def test_once_the_session_ended_it_says_so(self) -> None:
+        notes = left_out.LeftOut()
+        notes.add([w(DEE, 1)])
+        text, shown = left_out.message_text(notes.runs, {}, when, ended=True)
+        self.assertTrue(text.endswith(left_out.ENDED))
+        self.assertEqual(shown, notes.runs)
+        self.assertTrue(left_out.message_text([], {}, when, ended=True)[0].endswith(left_out.ENDED))
+
+
+class ButtonTest(unittest.IsolatedAsyncioTestCase):
+    def test_its_id_matches_what_a_press_is_read_back_with(self) -> None:
+        from dmbot.dm_screen.left_out import PutBackButton
+
+        (run,) = left_out.LeftOut().add([w(DEE, 1)])
+        button = PutBackButton(5, run.id)
+        template = PutBackButton.__discord_ui_compiled_template__
+        match = template.fullmatch(button.item.custom_id or "")
+        assert match is not None
+        self.assertEqual((match["guild"], match["run"]), ("5", run.id))
+
+    async def test_a_press_from_another_server_is_closed(self) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from dmbot.dm_screen.left_out import PutBackButton
+
+        bot = MagicMock(put_back=AsyncMock())
+        interaction = MagicMock(guild_id=6, client=bot)
+        interaction.response.send_message = AsyncMock()
+        await PutBackButton(5, "0123abcd").callback(interaction)
+        bot.put_back.assert_not_awaited()
+        interaction.response.send_message.assert_awaited_once_with(left_out.EXPIRED, ephemeral=True)
 
 
 class CanChangeTest(unittest.TestCase):

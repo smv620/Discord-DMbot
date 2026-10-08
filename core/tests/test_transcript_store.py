@@ -128,6 +128,20 @@ class StoreTests(DatabaseTest):
             await self.store.set_topic(OTHER_GUILD, sid, PLAYER, said.started_ms, "game"), 0
         )  # never another server's
 
+    async def test_put_it_back_changes_one_persons_lines_at_once(self) -> None:
+        # #677: one statement for a run; another person's line and server are untouched.
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        lines = [line(1, PLAYER, "a"), line(2, PLAYER, "b"), line(3, DM, "c")]
+        await self.store.add_lines(GUILD, sid, lines)
+        for said in lines:
+            await self.store.set_topic(GUILD, sid, said.user_id, said.started_ms, "off_topic")
+        run = [lines[0].started_ms, lines[1].started_ms]
+        self.assertEqual(await self.store.set_topics(OTHER_GUILD, sid, PLAYER, run, "game"), 0)
+        self.assertEqual(await self.store.set_topics(GUILD, sid, DM, run, "game"), 0)
+        self.assertEqual(await self.store.set_topics(GUILD, sid, PLAYER, run, "game"), 2)
+        topics = [back.topic for back in await self.store.lines(GUILD, sid)]
+        self.assertEqual(topics, ["game", "game", "off_topic"])
+
     async def test_removing_lines_counts_again(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
         ids = await self.store.add_lines(GUILD, sid, [line(1, DM, "a"), line(2, PLAYER, "b")])

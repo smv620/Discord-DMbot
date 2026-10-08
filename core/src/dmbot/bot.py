@@ -162,6 +162,7 @@ TOPIC_CALL_TIMEOUT_S = 8.0
 TOPIC_FAILURES_BEFORE_REST = 3
 TOPIC_REST_S = 300.0
 EDIT_TIMEOUT_S = 5.0  # a transcript message edit, at most (it holds the post lock)
+PUT_BACK_TIMEOUT_S = 5.0  # saving a Put it back, at most (it holds the save lock; #677)
 HINT_PEOPLE_S = 5.0  # who's in the voice channel, for name hints: looked at this often
 HintPeople = tuple[tuple[str, ...], tuple[str, ...]]  # (at the table, agreed but not there)
 TRANSCRIPT_POST_TIMEOUT_S = 10.0  # one stuck post can't hold the others up for long
@@ -1985,7 +1986,9 @@ class DMBot(commands.AutoShardedBot):
                 if not self.consent.has_consent(table.guild_id, waiting.speaker):
                     continue
                 hidden.append(waiting)
-                table.hidden.add((waiting.speaker, waiting.started_ms))
+                key = (waiting.speaker, waiting.started_ms)
+                if table.transcript.can_change(*key, time.monotonic()):
+                    table.hidden.add(key)  # a marker in the channel (too late: its words)
                 edit = table.transcript.relabel(
                     waiting.speaker,
                     waiting.started_ms,
@@ -1996,7 +1999,8 @@ class DMBot(commands.AutoShardedBot):
                     edits[id(edit[0])] = edit  # the latest content has every change
             # Before any await: a Stop now finds them listed, and takes them down.
             running = self.tables.get(table.guild_id) is table and not table.fix_ended
-            if hidden and running and table.left_out.add(hidden, checked or lines):
+            stored = self.transcripts is not None  # else there's no cleaned transcript
+            if hidden and running and stored and table.left_out.add(hidden, checked or lines):
                 self._redraw_left_out(table)
             for message, content in edits.values():
                 with contextlib.suppress(discord.HTTPException, TimeoutError):
@@ -2300,7 +2304,9 @@ class DMBot(commands.AutoShardedBot):
             def when(started_ms: int) -> str:
                 return clock((started_ms - start_ms) / 1000)
 
-            text, shown = left_out.message_text(runs, names, when, transcript_lines.escape)
+            text, shown = left_out.message_text(
+                runs, names, when, transcript_lines.escape, ended=table.fix_ended
+            )
             view = None if table.fix_ended else left_out_view(table.guild_id, shown)
             if table.left_out_message is not None:
                 try:
@@ -2340,55 +2346,84 @@ class DMBot(commands.AutoShardedBot):
         self._redraw_left_out(table)
         if not self.consent.has_consent(guild_id, run.speaker):
             return left_out.STOPPED  # stopped meanwhile: nothing about their lines
+        name = self.name_of(guild_id, run.speaker)
+        who = "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
+        if self.tables.get(guild_id) is not table or table.fix_ended:
+            # Stopped meanwhile: the saved lines are right; the channel and the names
+            # scan are being wound down.
+            return left_out.done_text(run.number, who, in_channel=None)
         in_channel = await self._show_lines_again(table, run.lines)
         if not self.consent.has_consent(guild_id, run.speaker):
             return left_out.STOPPED
         for line in run.lines:  # what the names scan would have had (#52)
             if len(table.heard) < HEARD_MAX:
                 table.heard.append((line.speaker, self._words_now(table, line)))
-        return left_out.done_text(in_channel=in_channel)
+        return left_out.done_text(run.number, who, in_channel=in_channel)
 
     async def _restore_topics(self, table: Table, lines: list[Waiting]) -> bool:
-        """Lines left out become game talk again, waiting or saved. False if saving
-        failed (logged); a line in neither place has nothing to change."""
-        guild_id, session_id = table.guild_id, table.transcript_session_id
+        """One person's lines left out become game talk again, waiting or saved (one
+        statement, bounded: it holds the save lock). False if saving failed or was too
+        slow (logged); if some were saved first, pressing again is harmless. A speaker
+        who stopped meanwhile: nothing is changed, and True (`put_back` says why)."""
+        guild_id, speaker = table.guild_id, lines[0].speaker
         async with table.save_lock:
-            for line in lines:
-                if not self.consent.has_consent(guild_id, line.speaker):
-                    return True  # stopped: their lines are being dropped, not changed
-                if table.unsaved.set_topic(line.speaker, line.started_ms, GAME):
-                    continue
-                if self.transcripts is None or session_id is None:
-                    continue
-                try:
-                    await self.transcripts.set_topic(
-                        guild_id, session_id, line.speaker, line.started_ms, GAME
-                    )
-                except Exception:
-                    log.exception("Couldn't put a line left out as off-topic back")
-                    return False
+            if not self.consent.has_consent(guild_id, speaker):
+                return True
+            saved = [
+                line.started_ms
+                for line in lines
+                if not table.unsaved.set_topic(speaker, line.started_ms, GAME)
+            ]
+            session_id = table.transcript_session_id  # under the lock: a save may set it
+            if not saved or self.transcripts is None or session_id is None:
+                return True
+            try:
+                changed = await asyncio.wait_for(
+                    self.transcripts.set_topics(guild_id, session_id, speaker, saved, GAME),
+                    PUT_BACK_TIMEOUT_S,
+                )
+            except Exception:
+                log.exception("Couldn't put lines left out as off-topic back")
+                return False
+            if changed < len(saved):
+                log.warning("Put it back found %d of %d saved lines", changed, len(saved))
         return True
 
-    async def _show_lines_again(self, table: Table, lines: list[Waiting]) -> bool:
-        """The live channel shows these lines' words again instead of their markers,
-        each message edited once. True if every line could be changed there (it can
-        only be, about 30 s after it's posted)."""
+    async def _show_lines_again(self, table: Table, lines: list[Waiting]) -> bool | None:
+        """The live channel shows one person's lines again instead of their markers,
+        each message edited once. True if every marker could be changed (only possible
+        about 30 s after a line is posted); None if none of them was a marker there (too
+        late when hidden, or no channel). Consent is checked before every edit: a Stop
+        meanwhile leaves the rest as markers."""
+        speaker = lines[0].speaker
+        markers = [x for x in lines if (x.speaker, x.started_ms) in table.hidden]
+        if not markers:
+            return None
         changed = True
         async with table.transcript_lock:
-            edits: dict[int, tuple[transcript_lines.Editable, str]] = {}
+            if not self.consent.has_consent(table.guild_id, speaker):
+                return False
             now = time.monotonic()
-            for line in lines:
+            edits: dict[int, tuple[transcript_lines.Editable, str, list[Waiting]]] = {}
+            for line in markers:
                 table.hidden.discard((line.speaker, line.started_ms))
-                if not self.consent.has_consent(table.guild_id, line.speaker):
-                    return False
                 if not table.transcript.can_change(line.speaker, line.started_ms, now):
                     changed = False
                     continue
                 words = self._words_now(table, line)
                 edit = table.transcript.relabel(line.speaker, line.started_ms, words, now)
-                if edit is not None:
-                    edits[id(edit[0])] = edit  # the latest content has every change
-            for message, content in edits.values():
+                if edit is not None:  # None: still waiting, it goes out with its words
+                    its = edits.get(id(edit[0]), (edit[0], "", []))[2]
+                    edits[id(edit[0])] = (edit[0], edit[1], [*its, line])
+            pending = list(edits.values())
+            for i, (message, content, _) in enumerate(pending):
+                if not self.consent.has_consent(table.guild_id, speaker):
+                    for _, _, rest in pending[i:]:  # never shown again: markers they stay
+                        for line in rest:
+                            table.transcript.relabel(
+                                line.speaker, line.started_ms, topic_marker(line.seconds), now
+                            )
+                    return False
                 try:
                     await asyncio.wait_for(
                         message.edit(content=content, allowed_mentions=NO_PINGS),

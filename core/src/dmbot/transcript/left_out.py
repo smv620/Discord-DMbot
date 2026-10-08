@@ -31,21 +31,32 @@ NOTHING = "_Nothing left out right now._"
 PUT_BACK = "Put it back"
 ONLY_DM = "Only this campaign's DM can put these lines back."
 EXPIRED = (
-    "That's closed (the session ended, DMbot restarted, or it's too old). Those lines "
-    "stay left out of the cleaned transcript."
+    "Too late to put these back: the session ended, DMbot restarted, or they're too old. "
+    "They stay skipped "
+    "in the cleaned transcript, but every word is still in 🎙 As heard (type /transcript)."
 )
 ALREADY = "Those lines are already back."
-STOPPED = "That person stopped being recorded, so this is closed."
+STOPPED = "That person stopped being recorded, so their lines can't be put back."
 NOT_SAVED = "Couldn't put those lines back just now. Try again in a moment."
+ENDED = (
+    "_Session over: these stay skipped in the cleaned transcript (every word is in 🎙 As heard)._"
+)
 
 
-def done_text(*, in_channel: bool) -> str:
-    """After a press. `in_channel`: the live transcript channel shows the words again
-    (it can only be changed for about 30 s after a line is posted)."""
-    text = "↩️ Put back: those lines are in the cleaned transcript again."
-    if not in_channel:
-        text += " The live transcript channel still shows them as skipped."
-    return text
+def done_text(number: int, who: str, *, in_channel: bool | None) -> str:
+    """After a press on run `number`, said by `who` (already safe to show). `in_channel`:
+    True, the live transcript channel shows the words again; False, it still shows the
+    marker (it can only be changed for about 30 s after a line is posted); None, there
+    was nothing to change there (no marker, or no channel)."""
+    text = f"↩️ Put back {number} ({who}): those lines are back in the cleaned transcript"
+    if in_channel is None:
+        return text + "."
+    if in_channel:
+        return text + " and the live channel."
+    return (
+        text + ". It's too late to change the live channel, so it still says "
+        '"skipped" there. That\'s expected.'
+    )
 
 
 @dataclass(slots=True)
@@ -123,19 +134,26 @@ def message_text(
     names: dict[int, str],
     when: Callable[[int], str],
     escape: Callable[[str], str] = str,
+    *,
+    ended: bool = False,
 ) -> tuple[str, list[Run]]:
     """The DM screen's message, and the runs it shows. `names`: speaker → display name
     (already safe to show); `when`: a line's start → its time in the session
-    ("0:12:04"); `escape` makes the words safe (Discord markdown). Too long for
-    Discord: the oldest whole lines go, and with them their buttons."""
+    ("0:12:04"); `escape` makes the words safe (Discord markdown); `ended`: the session
+    is over, and the buttons have gone. Too long for Discord: the oldest whole lines go,
+    and with them their buttons."""
+    footer = [ENDED] if ended else []
     if not runs:
-        return f"{HEADER}\n{NOTHING}", []
+        return "\n".join([HEADER, NOTHING, *footer]), []
     lines = []
     for run in runs:
-        said = f"[{when(run.started_ms)}] {names.get(run.speaker, 'Someone')}: "
+        count = f" ({len(run.lines)} lines)" if len(run.lines) > 1 else ""
+        said = f"[{when(run.started_ms)}] {names.get(run.speaker, 'Someone')}{count}: "
         said += escape(_first_words(run))
         lines.append(f"{run.number}. Put back: {said}" if run.put_back else f"{run.number}. {said}")
+    lines += footer
     kept = len(lines)
     while kept > 1 and len(HEADER) + sum(len(x) + 1 for x in lines[-kept:]) > MESSAGE_MAX:
         kept -= 1
-    return "\n".join([HEADER, *lines[-kept:]])[:MESSAGE_MAX], runs[-kept:]
+    shown = runs[-(kept - len(footer)) :] if kept > len(footer) else []
+    return "\n".join([HEADER, *lines[-kept:]])[:MESSAGE_MAX], shown
