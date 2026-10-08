@@ -87,6 +87,12 @@ function useAction() {
   return { busy, notice, run };
 }
 
+/** For actions about the account, not a campaign: "not allowed" there isn't the
+ * campaign-DM sentence, just "that didn't work". */
+function notCampaignRelated(error: ApiError): string | null {
+  return error.kind === "not-allowed" ? text.actionFailed : null;
+}
+
 function Notice({ message }: { message: string | null }) {
   const ref = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -128,6 +134,10 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
       const params = new URLSearchParams(search);
       if (me && params.get("install") === "sign_in_again") {
         setState({ kind: "signed-out", notice: text.signInAgain });
+        return;
+      }
+      if (!me && params.get("install") === "signed_out") {
+        setState({ kind: "signed-out", notice: text.installSignedOut });
         return;
       }
       const failed = params.get("signin") === "failed";
@@ -334,7 +344,8 @@ function PlanSection({ me }: { me: Me }) {
   const { api, go, refresh } = useShared();
   const { busy, notice, run } = useAction();
   const plan = me.plan;
-  const portal = (): void => void run(async () => go(await api.billingPortalUrl()));
+  const portal = (): void =>
+    void run(async () => go(await api.billingPortalUrl()), notCampaignRelated);
   const choices = (title: string) => (
     <>
       <p>{title}</p>
@@ -645,7 +656,7 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
                 void run(async () => {
                   setToken(await api.requestDelete());
                   setStep(2);
-                })
+                }, notCampaignRelated)
               }
             >
               {text.deleteNext}
@@ -679,7 +690,7 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
                     throw error;
                   }
                   onDeleted();
-                })
+                }, notCampaignRelated)
               }
             >
               {text.deleteConfirm}

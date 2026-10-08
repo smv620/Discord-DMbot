@@ -168,6 +168,15 @@ describe("actions", () => {
     await waitFor(() => expect(window.location.search).toBe(""));
   });
 
+  it("says when the install came back signed out, or approved by someone else", async () => {
+    show("signed-out", "?install=signed_out");
+    expect((await screen.findByRole("alert")).textContent).toBe(text.installSignedOut);
+    expect(screen.getByRole("link", { name: text.signIn })).toBeTruthy();
+    cleanup();
+    show("table", "?install=other_account");
+    expect(await screen.findByText(text.install["other_account"] ?? "")).toBeTruthy();
+  });
+
   it("asks for a fresh sign-in when the API wants one", async () => {
     show("table", "?install=sign_in_again");
     expect((await screen.findByRole("alert")).textContent).toBe(text.signInAgain);
@@ -254,10 +263,37 @@ describe("actions", () => {
 
   it("says plainly when only the campaign's DM can do something", async () => {
     const api = mockApi("table");
+    api.handoverCandidates = () => Promise.reject(new ApiError("not-allowed"));
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click((await screen.findAllByRole("button", { name: text.handOver }))[0]!);
+    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["not-allowed"]);
+  });
+
+  it("doesn't blame the campaign's DM for account actions", async () => {
+    const api = mockApi("table");
     api.billingPortalUrl = () => Promise.reject(new ApiError("not-allowed"));
     render(<Account api={api} go={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: text.changePlan }));
-    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["not-allowed"]);
+    expect((await screen.findByRole("alert")).textContent).toBe(text.actionFailed);
+  });
+
+  it("says when there's no paid plan to change", async () => {
+    const api = mockApi("table");
+    api.billingPortalUrl = () => Promise.reject(new ApiError("no-paid-plan"));
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.changePlan }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["no-paid-plan"]);
+  });
+
+  it("says to start again when the delete confirmation ran out", async () => {
+    const api = mockApi("table");
+    api.confirmDelete = () => Promise.reject(new ApiError("confirm-again"));
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.deleteStart }));
+    fireEvent.click(screen.getByRole("button", { name: text.deleteNext }));
+    fireEvent.click(await screen.findByRole("button", { name: text.deleteConfirm }));
+    expect(await screen.findByText(text.errors["confirm-again"] ?? "")).toBeTruthy();
+    expect(screen.getByRole("button", { name: text.deleteStart })).toBeTruthy();
   });
 
   it("can back out of deleting", async () => {
@@ -458,6 +494,10 @@ describe("the HTTP client", () => {
   it("maps error codes to plain kinds", async () => {
     const api = httpApi("https://api.example", fakeFetch(409, { error: "no_free_slot" }).fetcher);
     await expect(api.handover("c1", "u1")).rejects.toMatchObject({ kind: "no-free-slot" });
+    const expired = httpApi("https://api.example", fakeFetch(403, { error: "confirm_again" }).fetcher);
+    await expect(expired.confirmDelete("t")).rejects.toMatchObject({ kind: "confirm-again" });
+    const noPlan = httpApi("https://api.example", fakeFetch(409, { error: "no_paid_plan" }).fetcher);
+    await expect(noPlan.billingPortalUrl()).rejects.toMatchObject({ kind: "no-paid-plan" });
     const down = httpApi("https://api.example", (() =>
       Promise.reject(new TypeError("offline"))) as unknown as typeof fetch);
     await expect(down.me()).rejects.toMatchObject({ kind: "network" });

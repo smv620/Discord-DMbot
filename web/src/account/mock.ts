@@ -82,22 +82,13 @@ const servers = [
   },
 ];
 
-const installs = [
-  {
-    serverId: "200000000000000001",
-    serverName: "Thursday Table",
-    installedAt: "2026-09-20T18:00:00Z",
-    via: "site" as const,
-  },
-];
-
 export const candidates: Person[] = [
   { id: "100000000000000002", name: "Oskar Vane" },
   { id: "100000000000000003", name: "Mirelle" },
 ];
 
 export function scenarioMe(scenario: Scenario): Me | null {
-  const base = { user, campaigns, servers, installs };
+  const base = { user, campaigns, servers };
   switch (scenario) {
     case "signed-out":
     case "down":

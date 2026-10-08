@@ -1,6 +1,6 @@
 // Shared by csp-hashes.mjs (writes dist/_headers) and check-csp.mjs (checks it).
 import { createHash } from "node:crypto";
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export function htmlFiles(dir) {
@@ -20,6 +20,19 @@ export function inlineScriptHashes(html) {
     hashes.push(`'sha256-${createHash("sha256").update(body, "utf8").digest("base64")}'`);
   }
   return hashes;
+}
+
+/** Marks the pretend API (src/account/mock.ts, MOCK_MARKER); a test keeps the two equal. */
+export const MOCK_MARKER = "dmbot-pretend-api-7f3c";
+
+/** Problems if a build's scripts contain the pretend API: its chunk or its marker. */
+export function mockLeaks(dist) {
+  const assets = join(dist, "_astro");
+  return (existsSync(assets) ? readdirSync(assets) : [])
+    .filter(
+      (name) => /^mock\./.test(name) || readFileSync(join(assets, name), "utf8").includes(MOCK_MARKER),
+    )
+    .map((name) => `_astro/${name} contains the pretend API; build without PUBLIC_API_BASE=mock`);
 }
 
 /** The API's origin if PUBLIC_API_BASE is a full address, else null (same site). */

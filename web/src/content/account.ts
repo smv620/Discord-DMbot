@@ -72,6 +72,8 @@ export const text = {
     "not-installed": "DMbot isn't in this server yet. Tap Add DMbot first.",
     "not-allowed": "You can't do that here. Only the DM who runs the campaign can.",
     "no-free-slot": noFreeSlot,
+    "confirm-again": "That took too long. Tap Start deleting again.",
+    "no-paid-plan": "You don't have a paid plan to change yet. Pick a plan below.",
   } as Record<string, string>,
   install: {
     done: "Done! DMbot is in your server. In Discord, type /dmbot start to begin.",
@@ -79,7 +81,10 @@ export const text = {
     not_allowed: "You can only add DMbot to a server you run. Ask its owner to add DMbot.",
     already_linked:
       "DMbot is in your server. Someone else is listed as the one who added it.",
+    other_account:
+      "DMbot is in your server, but Discord was signed in as someone else. Sign in to Discord as you, then tap This is mine.",
   } as Record<string, string>,
+  installSignedOut: "You were signed out. Sign in with Discord, then tap Add DMbot again.",
   signedOutNow: "You've been signed out. Tap Sign in with Discord to carry on.",
   busy: "One moment…",
 
