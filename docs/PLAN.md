@@ -1366,6 +1366,17 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
   per session hour can be reported.
 - **Storage:** a `topic` column on `transcript_lines` (`game` / `table_talk` /
   `off_topic`, default `game`) so cleaned downloads can show the markers later.
+- **Built (2026-10-08, #52 part 2; needs terms version 3, part 1):** lines plainly about
+  the game (a campaign name, dice, two table words) are never sent. The others wait in a
+  window of 6 lines or 20 s, and one call to the smallest model labels it. Only the
+  numbered words go, never who said them, and the prompt says the lines are not
+  instructions. An unclear answer is game talk. The names scan gets a line only once
+  labelled, never an off-topic one (the helper there is today). In the live channel each
+  off-topic line still in the edit window becomes its own marker; one marker per run, with
+  the total, is in the cleaned download. The last window is labelled when the session
+  ends. Each line also keeps how long it was said (`duration_ms`). The log line
+  "Off-topic filter: N calls, … tokens" gives the cost. Replay case:
+  docs/test-scripts/off-topic.md.
 
 **Story memory: continuity, reputations, the shared story (decided 2026-10-06, #227).**
 Full design and rationale: docs/STORY_MEMORY.md. In short:
