@@ -33,6 +33,11 @@ class WebSettings:
     # This API's public address, e.g. https://api.dmbot.example or https://dmbot.example/api.
     # Must be on the same site as the website: the sign-in cookie is SameSite=Lax.
     api_url: str = "http://localhost:8080"
+    # The payment company: "" (none yet: buying answers payments_off), or "fake" for local
+    # testing only. Paddle or Lemon Squeezy are added once the owner chooses (#435).
+    payment_provider: str = ""
+    # Checks that payment events really come from the payment company.
+    payment_webhook_secret: bytes = field(default=b"", repr=False)
     host: str = "0.0.0.0"  # inside its container; nothing is published to the internet
     port: int = 8080
     session_days: int = 30
@@ -83,6 +88,19 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError("WEB_API_PORT must be between 1 and 65535.")
     if not 1 <= session_days <= 90:
         raise ConfigError("WEB_SESSION_DAYS must be between 1 and 90.")
+    provider = get("PAYMENT_PROVIDER").lower()
+    webhook_secret = get("PAYMENT_WEBHOOK_SECRET")
+    if provider not in ("", "fake"):
+        raise ConfigError(
+            f"PAYMENT_PROVIDER={provider} isn't built yet. Leave it empty for now (see #435)."
+        )
+    if provider == "fake" and urlsplit(get("WEB_API_URL")).hostname not in (
+        "localhost",
+        "127.0.0.1",
+    ):
+        raise ConfigError("PAYMENT_PROVIDER=fake is only for testing on localhost.")
+    if provider and len(webhook_secret) < 16:
+        raise ConfigError("PAYMENT_WEBHOOK_SECRET must be set (16 characters or more).")
     return WebSettings(
         database_url=get("DATABASE_URL"),
         discord_client_id=get("DISCORD_CLIENT_ID"),
@@ -93,4 +111,6 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         host=get("WEB_API_HOST") or "0.0.0.0",
         port=port,
         session_days=session_days,
+        payment_provider=provider,
+        payment_webhook_secret=webhook_secret.encode("utf-8"),
     )

@@ -36,6 +36,7 @@ services:
       DMBOT_DB_PASSWORD: ""
       DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
       WEB_SECRET_KEY: ""
+      PAYMENT_WEBHOOK_SECRET: ""
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,6 +61,7 @@ services:
       DEEPGRAM_API_KEY: ""
       DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
       WEB_SECRET_KEY: ""
+      PAYMENT_WEBHOOK_SECRET: ""
     depends_on:
       - core
     restart: unless-stopped
@@ -87,6 +89,8 @@ services:
       WEB_API_URL: ${WEB_API_URL:-}
       WEB_API_PORT: ${WEB_API_PORT:-8080}
       WEB_SESSION_DAYS: ${WEB_SESSION_DAYS:-30}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-}
+      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     expose:

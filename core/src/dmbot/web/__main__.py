@@ -19,6 +19,7 @@ from dmbot.sharding import ShardSettings
 from dmbot.web import sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
+from dmbot.web.payments import FakeProvider
 from dmbot.web.settings import WebSettings, load_web_settings
 
 log = logging.getLogger("dmbot.web")
@@ -44,7 +45,12 @@ async def serve(settings: WebSettings) -> None:
         max_size=4,
     )
     discord = HttpDiscord(settings.discord_client_id, settings.discord_client_secret)
-    app = create_app(settings, db, discord)
+    payments = (
+        FakeProvider(settings.payment_webhook_secret, settings.site_url)
+        if settings.payment_provider == "fake"
+        else None
+    )
+    app = create_app(settings, db, discord, payments=payments)
     sweeper = asyncio.create_task(_sweep_expired_sessions(db))
     config = uvicorn.Config(
         app,

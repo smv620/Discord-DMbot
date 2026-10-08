@@ -19,16 +19,20 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from dmbot import entitlements, plans
 from dmbot.db import Database
-from dmbot.web import sessions
+from dmbot.web import entitlements_writer, sessions
+from dmbot.web.accounts import account_email, customer_id, first_paid_month_after_trial
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.me import build_me
+from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 
 log = logging.getLogger(__name__)
 
 REQUEST_HEADER = "X-DMbot-Request"
+MAX_WEBHOOK_BYTES = 64 * 1024
 Clock = Callable[[], int]
 
 
@@ -41,8 +45,10 @@ def create_app(
     db: Database,
     discord: DiscordOAuth,
     *,
+    payments: PaymentProvider | None = None,
     clock: Clock = _system_clock,
 ) -> FastAPI:
+    """`payments` None: no payment company is set up yet; buying answers payments_off."""
     app = FastAPI(
         title="DMbot web API",
         docs_url=None,  # no public API browser
@@ -61,7 +67,10 @@ def create_app(
     async def guard(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if request.method not in ("GET", "HEAD", "OPTIONS"):
+        # The payment company's webhook is checked by its signature instead (it can't send
+        # our header or come from the website).
+        webhook = request.url.path.startswith("/webhooks/")
+        if request.method not in ("GET", "HEAD", "OPTIONS") and not webhook:
             origin = request.headers.get("origin")
             if request.headers.get(REQUEST_HEADER) != "1" or (
                 origin is not None and origin != settings.site_origin
@@ -191,5 +200,104 @@ def create_app(
     async def me(signed: Signed) -> dict[str, Any]:
         session, _token = signed
         return await build_me(db, session, now=clock())
+
+    # Plans and payments
+
+    @app.post("/plan/try-it", status_code=204)
+    async def try_it(signed: Signed) -> Response:
+        session, _token = signed
+        result = await entitlements_writer.start_try_it(db, session.user_id, now=clock())
+        if not result.started:
+            # "try_it_used": only once per Discord user; "has_plan": a plan already works.
+            raise HTTPException(status_code=409, detail=f"try_it_{result.reason}")
+        log.info("Try It started: user %s", session.user_id)
+        return Response(status_code=204)
+
+    def require_payments() -> PaymentProvider:
+        if payments is None:
+            raise HTTPException(status_code=503, detail="payments_off")
+        return payments
+
+    @app.post("/billing/checkout")
+    async def checkout(signed: Signed, request: Request) -> dict[str, str]:
+        provider = require_payments()
+        session, _token = signed
+        try:
+            body = await request.json()
+            plan_id = str(body["plan"]) if isinstance(body, dict) else ""
+        except (ValueError, KeyError):
+            plan_id = ""
+        # The price comes from plans.json by id, never from the request.
+        if plan_id not in paid_plan_ids():
+            raise HTTPException(status_code=400, detail="unknown_plan")
+        plan = plans.load().by_id[plan_id]
+        current = await entitlements.get(db, session.user_id)
+        if current is not None and current.plan != "try-it" and current.status != "lapsed":
+            # A paid plan is working: change it on the billing page, never a second
+            # subscription (or a second first-month offer).
+            raise HTTPException(status_code=409, detail="has_paid_plan")
+        first_month: int | None = None
+        if plan.first_month_after_trial_cents is not None and await first_paid_month_after_trial(
+            db, session.user_id
+        ):
+            first_month = plan.first_month_after_trial_cents
+        email = await account_email(db, session.user_id)
+        try:
+            url = await provider.checkout_url(
+                user_id=session.user_id,
+                email=email,
+                plan=plan,
+                first_month_cents=first_month,
+                return_url=account_page,
+            )
+        except PaymentError as exc:
+            log.warning("Checkout failed: %s", exc)
+            raise HTTPException(status_code=502, detail="payments_unavailable") from exc
+        return {"url": url}
+
+    @app.post("/billing/portal")
+    async def billing_portal(signed: Signed) -> dict[str, str]:
+        provider = require_payments()
+        session, _token = signed
+        plan = await entitlements.get(db, session.user_id)
+        customer = await customer_id(db, session.user_id)
+        if plan is None or customer is None:
+            raise HTTPException(status_code=409, detail="no_paid_plan")
+        try:
+            url = await provider.billing_url(customer_id=customer, return_url=account_page)
+        except PaymentError as exc:
+            log.warning("Billing page failed: %s", exc)
+            raise HTTPException(status_code=502, detail="payments_unavailable") from exc
+        return {"url": url}
+
+    @app.post("/webhooks/{provider_name}")
+    async def webhook(provider_name: str, request: Request) -> Response:
+        """The payment company's events: signature checked, each applied once."""
+        if payments is None or provider_name != payments.name:
+            raise HTTPException(status_code=404, detail="not_found")
+        # Read at most 64 KB, whatever Content-Length says (or doesn't).
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_WEBHOOK_BYTES:
+                raise HTTPException(status_code=413, detail="too_large")
+        if not payments.verify(body, request.headers):
+            log.warning("Payment webhook with a bad signature refused")
+            raise HTTPException(status_code=400, detail="bad_signature")
+        try:
+            event = payments.parse(body)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            log.error("A signed payment event couldn't be read: needs a person to look at it")
+            raise HTTPException(status_code=400, detail="bad_event") from None
+        if event is None:
+            return Response(status_code=200)  # an event DMbot doesn't use
+        outcome = await entitlements_writer.apply_event(db, event, now=clock())
+        log.info("Payment event %s for user %s: %s", event.event_id, event.user_id, outcome)
+        if outcome == "retry":
+            # Too early (its "started" hasn't arrived): the company delivers it again later.
+            raise HTTPException(status_code=503, detail="retry_later")
+        if outcome == "rejected":
+            raise HTTPException(status_code=422, detail="bad_event")
+        return Response(status_code=200)
 
     return app
