@@ -918,12 +918,21 @@ class SaveAndResume(SessionTests):
         self.assertEqual(args[0], "Stop listening and end the session for **Frostmaiden**?")
         self.assertTrue(kwargs["ephemeral"])
         self.assertEqual([b.label for b in kwargs["view"].children], ["Yes, stop", "Cancel"])
-        # The question is private: a player sees one only by pressing Stop themselves.
+        # A player is told at once, with no question to answer.
         theirs = await self.ask_to_stop(member(PLAYER))
-        player = await self.answer(theirs, "Yes, stop", member(PLAYER))
-        self.assertIn("Only the DM can stop", self.became(player))
+        self.assertEqual(theirs.response.send_message.await_args.args[0], m.ONLY_DM_STOPS)
+        self.assertIsNone(theirs.response.send_message.await_args.kwargs.get("view"))
+        # …and checked again at "Yes, stop" (say a DM lost the role meanwhile).
+        from dmbot.dm_screen.buttons import StopConfirm
+
+        session, _ = self.bot.active_session(GUILD) or (0, "")
+        late = self.press_stop(member(PLAYER))
+        yes = next(b for b in StopConfirm(self.campaign.id, session).children)
+        await yes.callback(late)
+        self.assertEqual(self.became(late), m.ONLY_DM_STOPS)
         self.assertIn(GUILD, self.bot.tables)  # still listening
         dm = await self.answer(question, "Yes, stop", member(DM))
+        dm.response.edit_message.assert_awaited_once_with(content=m.STOPPING, view=None)
         self.assertIn("Stopped listening", self.became(dm))
         self.assertNotIn(GUILD, self.bot.tables)
         again = await self.ask_to_stop(member(DM))  # an old message, pressed later
@@ -949,6 +958,9 @@ class SaveAndResume(SessionTests):
         stale = await self.answer(question, "Yes, stop", member(DM))
         self.assertEqual(stale.edit_original_response.await_args.kwargs["content"], m.STOP_STALE)
         self.assertIn(GUILD, self.bot.tables)  # the new session keeps going
+        await self.bot.stop_session(GUILD, DM, False)
+        after = await self.answer(question, "Yes, stop", member(DM))  # nothing running now
+        self.assertEqual(self.became(after), m.NOT_LISTENING_NOW)
 
     async def test_an_expired_question_says_so(self) -> None:
         from dmbot.dm_screen import messages as m

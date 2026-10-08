@@ -60,14 +60,21 @@ STOP_CANCEL_LABEL = "Cancel"
 STOP_KEPT = "Still listening."
 STOP_EXPIRED = "That's expired. Press ⏹ **Stop listening** again."
 STOP_STALE = (
-    "That question was for an earlier session, so nothing was stopped. To stop now, press "
+    "Nothing was stopped: that question was for an earlier session. To stop now, press "
     "⏹ **Stop listening** again."
+)
+STOPPING = "Stopping…"
+ONLY_DM_STOPS = (
+    "Only the DM can stop the session. To stop recording *you*, press **Stop recording me** "
+    "in DMbot's private message, or use `/consent revoke`."
 )
 STOP_CONFIRM_S = 60.0
 
 
 def stop_question(campaign_name: str) -> str:
-    """The Stop button's question (the name already escaped)."""
+    """The Stop button's question (the name already escaped; it may be empty)."""
+    if not campaign_name:
+        return "Stop listening and end this session?"
     return f"Stop listening and end the session for **{campaign_name}**?"
 
 

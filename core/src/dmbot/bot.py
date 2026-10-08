@@ -862,6 +862,13 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.get(guild_id)
         return table.campaign_id if table else None
 
+    def may_stop(self, guild_id: int, user_id: int, is_server_manager: bool) -> bool:
+        """Whether this person may stop the session running here: its campaign's DMs or
+        a server manager. Asked before the Stop button's question (#554); `stop_session`
+        checks again when it's answered."""
+        table = self.tables.get(guild_id)
+        return table is not None and (table.is_dm(user_id) or is_server_manager)
+
     def active_session(self, guild_id: int) -> tuple[int, str] | None:
         """The running session here (its id and campaign name), for the Stop button's
         question (#554): its "Yes, stop" stops only that session, never a later one."""
@@ -1053,11 +1060,7 @@ class DMBot(commands.AutoShardedBot):
                 # restarting): stopping must still end it, or it would come back.
                 return await self._stop_saved(guild_id, user_id, is_server_manager)
             if not (table.is_dm(user_id) or is_server_manager):
-                return (
-                    "Only the DM can stop the session. To stop recording *you*, press "
-                    "**Stop recording me** in DMbot's private message, or use "
-                    "`/consent revoke`."
-                )
+                return screen_messages.ONLY_DM_STOPS
             # Forget the saved session first: if that fails, keep listening rather than
             # stop now and come back by surprise after the next restart.
             try:
@@ -1143,11 +1146,7 @@ class DMBot(commands.AutoShardedBot):
             campaign = await self.campaigns.get(guild_id, saved.campaign_id)
             dms = campaign.dm_user_ids if campaign else frozenset()
             if not (user_id == saved.started_by or user_id in dms or is_server_manager):
-                return (
-                    "Only the DM can stop the session. To stop recording *you*, press "
-                    "**Stop recording me** in DMbot's private message, or use "
-                    "`/consent revoke`."
-                )
+                return screen_messages.ONLY_DM_STOPS
             await self.sessions.clear(guild_id, f"/dmbot stop by user {user_id} before it resumed")
         except Exception:
             log.exception("Couldn't stop a saved session")

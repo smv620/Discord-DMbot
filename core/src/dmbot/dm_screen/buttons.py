@@ -405,6 +405,11 @@ class StopListeningButton(
         if running is None:  # stopped meanwhile
             await interaction.response.send_message(messages.NOT_LISTENING_NOW, ephemeral=True)
             return
+        member = interaction.user
+        manager = isinstance(member, discord.Member) and member.guild_permissions.manage_guild
+        if not bot.may_stop(guild.id, member.id, manager):  # asked again at "Yes, stop"
+            await interaction.response.send_message(messages.ONLY_DM_STOPS, ephemeral=True)
+            return
         # Ask first (#554): a tap next to ⚙️ Settings mustn't end the session by accident.
         session, name = running
         confirm = StopConfirm(self.campaign_id, session)
@@ -442,11 +447,16 @@ class StopConfirm(discord.ui.View):
         guild, member = interaction.guild, interaction.user
         bot: Any = interaction.client
         self.stop()
-        await interaction.response.defer()  # the question becomes the answer
+        if guild is None:
+            await interaction.response.edit_message(content=messages.CAMPAIGN_GONE, view=None)
+            return
+        # Stopping can take a while (the last words are written down first): say so, and
+        # take the buttons away so nothing looks pressable meanwhile.
+        await interaction.response.edit_message(content=messages.STOPPING, view=None)
         manager = isinstance(member, discord.Member) and member.guild_permissions.manage_guild
         try:
             reply: str = await bot.stop_session(
-                guild.id if guild else 0,
+                guild.id,
                 member.id,
                 manager,
                 campaign_id=self.campaign_id,
