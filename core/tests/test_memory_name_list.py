@@ -11,6 +11,7 @@ from dmbot.memory.name_list import (
     TOO_MANY_OTHERS,
     TOO_MANY_SECRETS,
     OutName,
+    header,
     parse,
     render,
 )
@@ -37,6 +38,11 @@ class Template(unittest.TestCase):
         self.assertEqual(names["Auril"].kind, "deity")
         self.assertIsNone(names["Ulfgar"].kind)  # no kind: DMbot asks later
         self.assertTrue(all(ord(c) < 0x2000 for c in TEMPLATE))  # no emoji in a text file
+
+    def test_the_total_says_what_it_counts(self) -> None:
+        # The same words as the "too many" message (#598): secret names count too.
+        self.assertIn("5,000 new other and secret names in all.", header(secrets=True))
+        self.assertIn("5,000 new other names in all.", header(secrets=False))
 
 
 class Reading(unittest.TestCase):
