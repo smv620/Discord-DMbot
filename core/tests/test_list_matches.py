@@ -4,9 +4,9 @@ import unittest
 
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import CONFIRMED, PROPOSED, Alias, Entity, MoreNames, name_key
-from dmbot.memory.name_list import parse
+from dmbot.memory.name_list import lines_for, parse
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui.list_matches import KindDiffers, Plan, plan
+from dmbot.ui.list_matches import KindDiffers, Plan, plan, too_many
 
 BELL, AURIL, TOWN, ULF = (c * 32 for c in "abcd")
 
@@ -201,6 +201,65 @@ def list_matches_budget() -> int:
     from dmbot.ui.list_matches import BUDGET
 
     return BUDGET
+
+
+def listed(name: str, count: int, *, secret: bool = False, tag: str = "o") -> str:
+    """`name` with `count` other (or secret) names, written 20 to a line."""
+    given = [f"{name}{tag}{i}" for i in range(count)]
+    return "\n".join(lines_for(name, "npc", [] if secret else given, given if secret else []))
+
+
+class Caps(unittest.TestCase):
+    """At most 50 other and 50 secret names per name, 5,000 per list (#598 item 4)."""
+
+    def test_fifty_other_names_across_lines_is_fine_fifty_one_is_not(self) -> None:
+        self.assertIsNone(too_many(run(listed("Kesh", 50)), NAMES))
+        self.assertEqual(
+            too_many(run(listed("Kesh", 51)), NAMES),
+            "Kesh has more than 50 other names in this list. Keep the ones people say most.",
+        )
+
+    def test_secret_names_have_their_own_fifty(self) -> None:
+        self.assertIsNone(too_many(run(listed("Kesh", 50, secret=True)), NAMES))
+        self.assertIn(
+            "Kesh has more than 50 secret names",
+            too_many(run(listed("Kesh", 51, secret=True)), NAMES) or "",
+        )
+
+    def test_a_known_name_counts_only_what_the_list_adds(self) -> None:
+        # Belleros has Bell already: 50 new ones and Bell again are fine.
+        text = listed("Belleros", 50) + "\nBelleros | npc | Bell"
+        self.assertIsNone(too_many(run(text), NAMES))
+        self.assertIn(
+            "Belleros has more than 50", too_many(run(listed("Belleros", 51)), NAMES) or ""
+        )
+
+    def test_five_thousand_in_one_list_is_fine_five_thousand_and_one_is_not(self) -> None:
+        names = [f"Kesh{chr(97 + i // 26)}{chr(97 + i % 26)}" for i in range(101)]
+        lines = [listed(n, 50) for n in names[:100]]
+        self.assertIsNone(too_many(run("\n".join(lines)), NAMES))
+        lines.append(f"{names[100]} | npc | one more")
+        self.assertEqual(
+            too_many(run("\n".join(lines)), NAMES),
+            "This list has more than 5,000 other names. Split it into two uploads.",
+        )
+
+    def test_a_download_of_a_name_over_the_cap_uploads_again(self) -> None:
+        # A campaign can already hold more (none today): its own file is never refused.
+        others = [f"Bell{i}" for i in range(60)]
+        big = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(BELL, "Belleros", "npc"),),
+                (alias(BELL, "Belleros"), *(alias(BELL, o) for o in others)),
+                (),
+                (),
+            )
+        )
+        text = "\n".join(lines_for("Belleros", "npc", others, []))
+        p = plan(parse(text, secrets=True).lines, big, secrets=True)
+        self.assertEqual((p.new, p.more), ([], []))
+        self.assertIsNone(too_many(p, big))
 
 
 if __name__ == "__main__":
