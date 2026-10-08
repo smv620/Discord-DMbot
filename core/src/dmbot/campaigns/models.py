@@ -61,6 +61,10 @@ HANDOVER_DAYS = 7
 HANDOVER_SECONDS = HANDOVER_DAYS * 24 * 3600
 
 
+HandoverStatus = Literal["open", "accepted", "declined", "withdrawn", "expired"]
+NAME_ON_OFFER_MAX = 100  # a display name kept on an offer (Discord's are 32 at most)
+
+
 @dataclass(frozen=True, slots=True)
 class HandoverOffer:
     """An offer to hand a campaign over to another subscriber (#437 part 1b)."""
@@ -70,8 +74,10 @@ class HandoverOffer:
     campaign_id: str
     from_user_id: int
     to_user_id: int
+    from_name: str  # display names when the offer was made, for the account page
+    to_name: str
     created_at: int
-    status: Literal["open", "accepted", "declined", "withdrawn", "expired"]
+    status: HandoverStatus
     decided_at: int | None
 
     @property
