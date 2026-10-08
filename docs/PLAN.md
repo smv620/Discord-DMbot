@@ -1487,6 +1487,28 @@ messages use the same ones.
 | Pro | 217 ("about 50 hours a week"); needs the bigger server | 20 | coming soon |
 | Extra hours | +10 this month | — | $4.99 |
 
+**Free access and the admin page (owner decision, 2026-10-08).** The owner's own Discord
+account never needs a plan: it is listed in the server's settings (`DMBOT_FREE_USERS`, Discord
+ids, never in the repository) and counts as having every feature with no hours or campaign
+cap. The owner can also give other Discord users free access by hand from an admin page on
+the website: a *grant* names the Discord id, a level ("like Guild": 87 hours and 5 campaigns,
+the default, or "no limits"), an optional end date and a short note. Reason for the default:
+every hour spends AI and speech-to-text money, so unlimited access for others is a choice the
+admin makes, not the default. Grants live in their own table, never in `entitlements`, which
+stays the payment company's truth; wherever DMbot asks "does this person's plan work, and
+with what caps", a grant or the free list counts, and the better of a grant and a paid plan
+wins. A grant ends on its end date or when revoked, and the person falls back to whatever
+they pay for. Grants and revocations are logged (who, what, when, ids only). Nobody sees a
+price or a payment button while a grant covers them; the bot and the account page say "Free
+access". Deleting an account deletes its grant.
+**Admin sign-in:** only addresses in `ADMIN_EMAILS` (server settings) may sign in, either with
+Google ("Sign in with Google", verified email only) or with that email and an admin password
+whose hash (argon2id) is in the server settings, never in the database or the repository; a
+helper script sets it. Five wrong tries in 15 minutes lock that address and that connection
+for 15 minutes. The admin session is its own cookie (HttpOnly, Secure, SameSite=Strict), ends
+after an hour idle and 12 hours at most, and every admin form carries a CSRF token. The
+admin page is never linked from the site and tells search engines not to index it.
+
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
 names, later story memory and rules lookups), plus backup, restore and transcript
