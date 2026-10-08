@@ -108,6 +108,9 @@ from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import PLAYER_CHARACTER, HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
+from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
+from dmbot.memory.sheet_refresh import refresh as refresh_sheets
+from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcript import fix_notes
@@ -249,6 +252,8 @@ class Table:
     scene: SceneTracker = field(default_factory=SceneTracker)
     name_lookup: CampaignLookup | None = None
     hint_parts: HintParts | None = None
+    # Spell, feature and item names from the players' D&D Beyond sheets (#723).
+    sheet_hints: tuple[str, ...] = ()
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
     vocabulary: Vocabulary = field(default_factory=Vocabulary)
@@ -355,6 +360,7 @@ class DMBot(commands.AutoShardedBot):
         transcriber: Transcriber | None = None,
         memory: MemoryStore | None = None,
         transcripts: TranscriptStore | None = None,
+        sheets: SheetStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -378,6 +384,8 @@ class DMBot(commands.AutoShardedBot):
         # an in-memory copy of each campaign's names, kept up to date by notifications.
         self.memory = memory
         self.lookup = LookupCache(memory) if memory is not None else None
+        # Players' D&D Beyond sheets, per campaign (#723).
+        self.sheets = sheets
         # AI text calls (a document into a names list); None when no key is set.
         self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None
         # The off-topic filter (#52) always uses the smallest model, whatever AI_MODEL is.
@@ -809,7 +817,36 @@ class DMBot(commands.AutoShardedBot):
                 table.voice_channel_id,
                 table.screen_channel_id,
             )
+        # In the background, never delaying the start: read the players' sheets again
+        # (once a session; not again after a restart) and use their names as hints.
+        self._track(self._sheet_hints(table, refresh=not table.resumed), "sheets")
         return sent
+
+    async def _sheet_hints(self, table: Table, *, refresh: bool) -> None:
+        """Hints from the campaign's sheets: the kept ones at once, then, if `refresh`,
+        again once each linked sheet has been read (#723)."""
+        if self.sheets is None or table.campaign_id is None:
+            return
+        guild_id, campaign_id = table.guild_id, table.campaign_id
+        with log_context(guild_id=guild_id, campaign_id=campaign_id):
+            try:
+                table.sheet_hints = tuple(
+                    sheet_hint_names(await self.sheets.sheets(guild_id, campaign_id))
+                )
+                if refresh:
+                    found = await refresh_sheets(
+                        self.sheets, guild_id, campaign_id, int(time.time())
+                    )
+                    table.sheet_hints = tuple(sheet_hint_names(found))
+                    linked = sum(s.url is not None for s in found)
+                    if found:
+                        log.info(
+                            "Character sheets: %d linked, %d names in the hints",
+                            linked,
+                            len(table.sheet_hints),
+                        )
+            except Exception:
+                log.exception("Couldn't load the campaign's character sheets")
 
     async def stop_table(self, guild_id: int, reason: str) -> Table | None:
         """End a running session. `reason` goes in the log (IDs only, no names)."""
@@ -2392,7 +2429,13 @@ class DMBot(commands.AutoShardedBot):
         # Never "fixed" into a name, whether at the table or not.
         table.people = self._everyone_at_table(table, [*people, *absent])
         return scene_hints(
-            lookup, table.hint_parts, table.scene, time.monotonic(), people=people, absent=absent
+            lookup,
+            table.hint_parts,
+            table.scene,
+            time.monotonic(),
+            people=people,
+            absent=absent,
+            sheet=table.sheet_hints,
         )
 
     async def _hint_people(self, guild_id: int, table: Table | None) -> HintPeople:
@@ -2916,6 +2959,7 @@ async def run(settings: Settings) -> None:
             transcriber,
             MemoryStore(db, keep_days=settings.memory_keep_days),
             TranscriptStore(db),
+            SheetStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

@@ -11,6 +11,9 @@ from typing import Any
 from unittest import mock
 
 from dmbot.memory import sheets
+from dmbot.memory.sheet_refresh import SHEET_HINTS_MAX
+from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
+from dmbot.memory.sheet_store import CharacterSheet
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dndbeyond_character.json"
 
@@ -159,6 +162,24 @@ class Cleaning(unittest.TestCase):
         self.assertEqual(snapshot["source"], "typed")
         self.assertEqual(sheets.who(snapshot), "Test Species · Test Class 4")
         self.assertEqual(len(snapshot["features"]), sheets.TYPED_NAMES_MAX)
+
+
+class Hints(unittest.TestCase):
+    def sheet(self, *names: str) -> CharacterSheet:
+        snapshot = sheets.clean({"v": 1, "source": "typed", "name": "X", "spells": list(names)})
+        return CharacterSheet("0" * 32, "X", 1, None, snapshot, 1)
+
+    def test_characters_take_turns_within_the_cap(self) -> None:
+        wizard = self.sheet(*(f"Wizard Spell {i}" for i in range(40)))
+        fighter = self.sheet("Second Wind", "Action Surge")
+        names = sheet_hint_names(
+            [wizard, fighter, CharacterSheet("1" * 32, "Y", 2, "u", None, None)]
+        )
+        self.assertEqual(
+            names[:4], ["Wizard Spell 0", "Second Wind", "Wizard Spell 1", "Action Surge"]
+        )
+        self.assertEqual(len(names), SHEET_HINTS_MAX)
+        self.assertEqual(sheet_hint_names([self.sheet("Shield"), self.sheet("shield")]), ["Shield"])
 
 
 class FakeResponse:

@@ -14,10 +14,11 @@ from typing import Any
 
 from psycopg import errors as pg_errors
 from psycopg import sql
+from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory import notify
+from dmbot.memory import notify, sheets
 from dmbot.memory._changes import (
     ALIASES,
     CORRECTIONS,
@@ -25,6 +26,7 @@ from dmbot.memory._changes import (
     FLAGS,
     PREDICATES,
     RELATIONS,
+    SHEETS,
     TYPES,
     Table,
     row_of,
@@ -68,6 +70,7 @@ _TAGS: dict[str, Table] = {
     "relation": RELATIONS,
     "correction": CORRECTIONS,
     "flag": FLAGS,
+    "sheet": SHEETS,
 }
 
 _TEXT_LIMITS = {
@@ -177,7 +180,7 @@ class MemorySection:
                     await cur.executemany(
                         query,
                         [
-                            (guild_id, campaign_id, *(r[c] for c in table.columns))
+                            (guild_id, campaign_id, *(_db_value(c, r[c]) for c in table.columns))
                             for r in by_tag[tag]
                         ],
                     )
@@ -221,15 +224,42 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         table = _TAGS[raw["table"]]
         if set(raw) != {"table", *table.columns}:
             raise CampaignError(DAMAGED)
-        if not all(_valid(c, raw[c]) for c in table.columns):
-            raise CampaignError(DAMAGED)
         if table is RELATIONS and raw["mention_ids"]:
+            raise CampaignError(DAMAGED)
+        if table is SHEETS:
+            raw = _checked_sheet(raw)
+        elif not all(_valid(c, raw[c]) for c in table.columns):
             raise CampaignError(DAMAGED)
         if table is ALIASES:  # worked out again, not taken from the file
             raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
         by_tag[raw["table"]].append(raw)
     _check_terms(by_tag)
     return by_tag
+
+
+def _checked_sheet(raw: dict[str, Any]) -> dict[str, Any]:
+    """A sheet row from a backup: the link must be a character link, and the snapshot
+    goes through the same allow list as one read from D&D Beyond, so a hand-edited file
+    can't store anything else (CLAUDE.md, IP rule)."""
+    url, snapshot, source, fetched = raw["url"], raw["sheet"], raw["source"], raw["fetched_at"]
+    if not is_id(raw["entity_id"]):
+        raise CampaignError(DAMAGED)
+    if url is not None and (
+        not isinstance(url, str) or sheets.sheet_url(sheets.character_id(url) or 0) != url
+    ):
+        raise CampaignError(DAMAGED)
+    cleaned = None if snapshot is None else sheets.clean(snapshot)
+    if (snapshot is None) != (cleaned is None) or (url is None and cleaned is None):
+        raise CampaignError(DAMAGED)
+    if cleaned is not None and (source != cleaned["source"] or not _valid("created_at", fetched)):
+        raise CampaignError(DAMAGED)
+    if cleaned is None and (source is not None or fetched is not None):
+        raise CampaignError(DAMAGED)
+    return {**raw, "sheet": cleaned}
+
+
+def _db_value(column: str, value: Any) -> Any:
+    return Jsonb(value) if column == "sheet" and value is not None else value
 
 
 def _type_term(r: dict[str, Any]) -> TypeTerm:

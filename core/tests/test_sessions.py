@@ -20,6 +20,8 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.consent_dm import ALREADY_RECORDED
 from dmbot.dm_screen import DMScreenError
+from dmbot.memory import sheets
+from dmbot.memory.sheet_store import CharacterSheet
 from dmbot.sessions import SessionStore
 from dmbot.transcript import questions as name_questions
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
@@ -364,6 +366,33 @@ class SaveAndResume(SessionTests):
             await self.bot.stop_session(GUILD, DM, False)
         self.assertIsNone(await self.sessions.get(GUILD))
         self.assertIn(f"Saved session removed: /dmbot stop by user {DM}", logs.output[-1])
+
+    async def test_reading_sheets_never_delays_the_start(self) -> None:
+        # #723: the kept sheets' names at once; the slow read of each link afterwards.
+        kept = sheets.clean({"v": 1, "source": "typed", "name": "Testa", "spells": ["Old Spell"]})
+        fresh = sheets.clean({"v": 1, "source": "typed", "name": "Testa", "spells": ["New Spell"]})
+        sheet = CharacterSheet("0" * 32, "Testa", PLAYER, "u", kept, 1)
+        store = MagicMock(sheets=AsyncMock(return_value=[sheet]))
+        self.bot.sheets = store
+        reading, done = asyncio.Event(), asyncio.Event()
+        refreshed: list[bool] = []
+
+        async def slow_refresh(*_: Any, **__: Any) -> list[CharacterSheet]:
+            reading.set()
+            await done.wait()  # D&D Beyond is slow today
+            refreshed.append(True)
+            return [dataclasses.replace(sheet, sheet=fresh)]
+
+        with patch("dmbot.bot.refresh_sheets", slow_refresh):
+            ok, _ = await asyncio.wait_for(self.start(), 2)
+            self.assertTrue(ok)  # started without waiting for the sheets
+            await asyncio.wait_for(reading.wait(), 2)
+            table = self.bot.tables[GUILD]
+            self.assertEqual(table.sheet_hints, ("Old Spell",))
+            done.set()
+            for _ in range(20):
+                await asyncio.sleep(0)
+        self.assertEqual((refreshed, table.sheet_hints), ([True], ("New Spell",)))
 
     async def test_stopping_a_session_that_wasnt_saved_is_a_warning(self) -> None:
         await self.start()

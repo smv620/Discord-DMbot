@@ -1,0 +1,192 @@
+"""Character sheets in the database (#723): one per character per campaign, never
+shared, deleted with the character or the campaign, and carried in backups."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from psycopg import errors as pg_errors
+
+from dmbot.campaigns import CampaignError
+from dmbot.campaigns.store import decode_backup, encode_backup
+from dmbot.memory import sheets
+from dmbot.memory.sheet_refresh import refresh
+from dmbot.memory.sheet_store import SheetError, SheetStore
+from tests.test_memory_store import DM, GUILD_A, GUILD_B, MemoryTest
+from tests.test_sheets import answer
+
+PLAYER = 9
+CHARACTER = 12345678
+
+
+class SheetTest(MemoryTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.sheets = SheetStore(self.db)
+        self.pc = await self.add("Testa", type="player_character", played_by=PLAYER)
+        self.sheet_data = sheets.parse(answer())
+
+    async def linked(self, campaign: str | None = None) -> None:
+        await self.sheets.link(GUILD_A, campaign or self.c, self.pc, CHARACTER)
+
+
+class Linking(SheetTest):
+    async def test_link_then_a_snapshot(self) -> None:
+        await self.linked()
+        (sheet,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertEqual((sheet.name, sheet.played_by), ("Testa", PLAYER))
+        self.assertEqual(
+            (sheet.url, sheet.character, sheet.sheet),
+            (sheets.sheet_url(CHARACTER), CHARACTER, None),
+        )
+        url = sheets.sheet_url(CHARACTER)
+        self.assertTrue(
+            await self.sheets.save(GUILD_A, self.c, self.pc, self.sheet_data, 5, url=url)
+        )
+        (sheet,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertEqual((sheet.sheet, sheet.fetched_at), (self.sheet_data, 5))
+
+    async def test_a_snapshot_for_a_link_that_changed_meanwhile_is_dropped(self) -> None:
+        await self.linked()
+        old = sheets.sheet_url(CHARACTER)
+        await self.sheets.link(GUILD_A, self.c, self.pc, 999)  # relinked while reading
+        self.assertFalse(
+            await self.sheets.save(GUILD_A, self.c, self.pc, self.sheet_data, 5, url=old)
+        )
+        (sheet,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertIsNone(sheet.sheet)
+
+    async def test_relinking_another_character_drops_the_old_snapshot(self) -> None:
+        await self.linked()
+        url = sheets.sheet_url(CHARACTER)
+        await self.sheets.save(GUILD_A, self.c, self.pc, self.sheet_data, 5, url=url)
+        await self.linked()  # the same link again: kept
+        (sheet,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertIsNotNone(sheet.sheet)
+        await self.sheets.link(GUILD_A, self.c, self.pc, 999)
+        (sheet,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertEqual((sheet.character, sheet.sheet, sheet.fetched_at), (999, None, None))
+
+    async def test_the_typed_fallback_replaces_a_link(self) -> None:
+        await self.linked()
+        typed = sheets.typed("Testa", species="Elf", class_name="Bard", level=2, names=["Song"])
+        assert typed is not None
+        self.assertTrue(await self.sheets.save(GUILD_A, self.c, self.pc, typed, 6))
+        (sheet,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertEqual((sheet.url, sheet.sheet), (None, typed))
+
+    async def test_unlinking(self) -> None:
+        await self.linked()
+        self.assertTrue(await self.sheets.unlink(GUILD_A, self.c, self.pc))
+        self.assertFalse(await self.sheets.unlink(GUILD_A, self.c, self.pc))
+        self.assertEqual(await self.sheets.sheets(GUILD_A, self.c), [])
+
+    async def test_only_a_player_character_with_a_player(self) -> None:
+        npc = await self.add("Belleros")
+        with self.assertRaises(SheetError):
+            await self.sheets.link(GUILD_A, self.c, npc, CHARACTER)
+        with self.assertRaises(SheetError):
+            await self.sheets.link(GUILD_A, self.c, "0" * 32, CHARACTER)
+
+    async def test_the_database_refuses_anything_but_a_character_link(self) -> None:
+        with self.assertRaises(pg_errors.CheckViolation):
+            async with self.db.guild(GUILD_A) as conn:
+                await conn.execute(
+                    "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url)"
+                    " VALUES (%s, %s, %s, 'https://evil.example/characters/1')",
+                    (GUILD_A, self.c, self.pc),
+                )
+
+
+class Isolation(SheetTest):
+    async def test_the_same_link_in_two_campaigns_is_two_sheets(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Other", DM)).id
+        pc2 = await self.add("Testa", campaign=other, type="player_character", played_by=PLAYER)
+        await self.linked()
+        await self.sheets.link(GUILD_A, other, pc2, CHARACTER)
+        url = sheets.sheet_url(CHARACTER)
+        await self.sheets.save(GUILD_A, self.c, self.pc, self.sheet_data, 5, url=url)
+        (here,), (there,) = (
+            await self.sheets.sheets(GUILD_A, self.c),
+            await self.sheets.sheets(GUILD_A, other),
+        )
+        self.assertIsNotNone(here.sheet)
+        self.assertIsNone(there.sheet)  # never copied across
+        await self.sheets.unlink(GUILD_A, other, pc2)
+        self.assertEqual(len(await self.sheets.sheets(GUILD_A, self.c)), 1)
+
+    async def test_another_server_sees_nothing(self) -> None:
+        await self.linked()
+        self.assertEqual(await self.sheets.sheets(GUILD_B, self.c), [])
+        self.assertFalse(await self.sheets.unlink(GUILD_B, self.c, self.pc))
+        with self.assertRaises(SheetError):
+            await self.sheets.link(GUILD_B, self.c, self.pc, CHARACTER)
+
+    async def test_deleted_with_the_campaign(self) -> None:
+        await self.linked()
+        await self.campaigns.delete(GUILD_A, self.c)
+        self.assertEqual(await self.count("character_sheets"), 0)
+
+
+class Refreshing(SheetTest):
+    async def test_a_refresh_keeps_the_old_snapshot_when_reading_fails(self) -> None:
+        await self.linked()
+        calls: list[int] = []
+
+        async def ok(character: int) -> dict[str, Any]:
+            calls.append(character)
+            return self.sheet_data
+
+        found = await refresh(self.sheets, GUILD_A, self.c, 5, fetch=ok)
+        self.assertEqual((calls, found[0].sheet), ([CHARACTER], self.sheet_data))
+
+        async def refused(character: int) -> dict[str, Any]:
+            raise sheets.SheetError(sheets.NOT_PUBLIC, public=False)
+
+        with self.assertLogs("dmbot.memory.sheet_refresh", "INFO") as logs:
+            found = await refresh(self.sheets, GUILD_A, self.c, 6, fetch=refused)
+        self.assertEqual((found[0].sheet, found[0].fetched_at), (self.sheet_data, 5))
+        self.assertIn(self.pc, logs.output[0])
+        self.assertNotIn(str(CHARACTER), logs.output[0])  # ids of entries only
+
+
+class Backups(SheetTest):
+    async def test_the_link_and_snapshot_survive_backup_and_restore(self) -> None:
+        await self.linked()
+        url = sheets.sheet_url(CHARACTER)
+        await self.sheets.save(GUILD_A, self.c, self.pc, self.sheet_data, 5, url=url)
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
+        (copy,) = await self.sheets.sheets(GUILD_B, restored.id)
+        self.assertEqual((copy.url, copy.sheet, copy.fetched_at), (url, self.sheet_data, 5))
+
+    async def edited(self, change: dict[str, Any]) -> dict[str, Any]:
+        await self.linked()
+        url = sheets.sheet_url(CHARACTER)
+        await self.sheets.save(GUILD_A, self.c, self.pc, self.sheet_data, 5, url=url)
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        memory = backup["sections"]["memory"]
+        (row,) = [r for r in memory if r["table"] == "sheet"]
+        row.update(change)
+        return backup
+
+    async def test_smuggled_text_in_a_snapshot_is_dropped(self) -> None:
+        snapshot = json.loads(json.dumps(self.sheet_data))
+        snapshot["notes"] = "LEAK: rules text"
+        snapshot["spells"].append("LEAK " * 40)
+        backup = await self.edited({"sheet": snapshot})
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        (copy,) = await self.sheets.sheets(GUILD_B, restored.id)
+        self.assertNotIn("LEAK", json.dumps(copy.sheet))
+
+    async def test_a_bad_link_in_a_backup_is_refused(self) -> None:
+        for change in (
+            {"url": "https://evil.example/characters/1"},
+            {"sheet": {"v": 1, "name": "x"}},
+            {"source": "typed"},
+        ):
+            backup = await self.edited(change)
+            with self.assertRaises(CampaignError):
+                await self.campaigns.import_backup(GUILD_B, backup, DM)
+            await self.sheets.unlink(GUILD_A, self.c, self.pc)
