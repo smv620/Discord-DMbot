@@ -62,6 +62,7 @@ OFFER_SENT = (
     "Offer sent to **{name}**. Nothing changes until they accept (they have {days} days). "
     "To take it back: ⚙️ Settings, then **Take back offer**."
 )
+# Keep in step with site_offers.NOT_SENT (the same, for an offer made on the website).
 UNREACHABLE = (
     "DMbot couldn't send **{name}** a private message (they may have left the server, or "
     "they don't accept messages from server members). The offer was taken back. Ask them to "
@@ -139,7 +140,7 @@ def _at(seconds: int) -> datetime:
     return datetime.fromtimestamp(seconds, UTC)
 
 
-def _md(text: str) -> str:
+def md(text: str) -> str:
     return discord.utils.escape_markdown(text)
 
 
@@ -170,7 +171,7 @@ def owner_line(campaign: Campaign, offer: HandoverOffer | None) -> str:
         line = f"• **Owner:** <@{campaign.owner_user_id}>. This campaign uses their plan's hours."
     if offer is not None:
         until = discord.utils.format_dt(_at(offer.expires_at), "f")
-        line += f" Offered to **{_md(offer.to_name)}**; waiting for an answer until {until}."
+        line += f" Offered to **{md(offer.to_name)}**; waiting for an answer until {until}."
     return line
 
 
@@ -226,7 +227,7 @@ class HandoverButton(
             await _say(interaction, NOT_THE_OWNER)
         else:
             await interaction.followup.send(
-                PICK.format(campaign=_md(campaign.name)),
+                PICK.format(campaign=md(campaign.name)),
                 view=PickNewOwner(campaign),
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
@@ -282,7 +283,7 @@ class PickNewOwner(discord.ui.View):
         self.stop()
         message = await deliver_offer(guild, self.campaign, offer)
         if message is not None:
-            text = OFFER_SENT.format(name=_md(name), days=HANDOVER_DAYS)
+            text = OFFER_SENT.format(name=md(name), days=HANDOVER_DAYS)
             try:  # so its buttons can be taken off when the offer's days are up
                 await store.set_offer_message(guild.id, offer.id, message.id)
             except Exception:
@@ -290,10 +291,10 @@ class PickNewOwner(discord.ui.View):
         else:
             try:
                 await store.withdraw_handover(guild.id, offer.id, interaction.user.id, _now())
-                text = UNREACHABLE.format(name=_md(name))
+                text = UNREACHABLE.format(name=md(name))
             except Exception:
                 log.exception("Couldn't take back an offer that couldn't be delivered")
-                text = UNREACHABLE_STUCK.format(name=_md(name))
+                text = UNREACHABLE_STUCK.format(name=md(name))
         await interaction.edit_original_response(content=text, view=None, allowed_mentions=NO_PINGS)
 
 
@@ -319,9 +320,9 @@ async def deliver_offer(
         member = guild.get_member(offer.to_user_id) or await guild.fetch_member(offer.to_user_id)
         return await member.send(
             OFFER_TEXT.format(
-                owner=_md(offer.from_name),
-                campaign=_md(campaign.name),
-                server=_md(guild.name),
+                owner=md(offer.from_name),
+                campaign=md(campaign.name),
+                server=md(guild.name),
                 deadline=discord.utils.format_dt(_at(offer.expires_at), "f"),
             ),
             view=offer_view(guild.id, offer.id),
@@ -413,7 +414,7 @@ class AcceptOfferButton(
         if offer is None or campaign is None or offer.to_user_id != me:
             await _end_message(interaction, ENDED.format(days=HANDOVER_DAYS))
             return
-        accepted = ACCEPTED.format(campaign=_md(campaign.name), server=_md(guild.name))
+        accepted = ACCEPTED.format(campaign=md(campaign.name), server=md(guild.name))
         if offer.status == "accepted":  # pressed again: say it again
             await _end_message(interaction, accepted)
             return
@@ -434,7 +435,7 @@ class AcceptOfferButton(
             await _tell_person(
                 guild,
                 offer.from_user_id,
-                TOLD_ACCEPTED.format(name=_md(offer.to_name), campaign=_md(campaign.name)),
+                TOLD_ACCEPTED.format(name=md(offer.to_name), campaign=md(campaign.name)),
             )
 
 
@@ -477,7 +478,7 @@ class DeclineOfferButton(
         if offer is None or offer.to_user_id != me:
             await _end_message(interaction, ENDED.format(days=HANDOVER_DAYS))
             return
-        declined = DECLINED.format(owner=_md(offer.from_name))
+        declined = DECLINED.format(owner=md(offer.from_name))
         if offer.status == "declined":  # pressed again: say it again
             await _end_message(interaction, declined)
             return
@@ -489,7 +490,7 @@ class DeclineOfferButton(
             await _tell_person(
                 guild,
                 offer.from_user_id,
-                TOLD_DECLINED.format(name=_md(offer.to_name), campaign=_md(campaign.name)),
+                TOLD_DECLINED.format(name=md(offer.to_name), campaign=md(campaign.name)),
             )
 
 
@@ -537,7 +538,7 @@ class WithdrawOfferButton(
             await _say(interaction, ENDED.format(days=HANDOVER_DAYS))
             return
         if offer.from_user_id != interaction.user.id:
-            await _say(interaction, NOT_YOUR_OFFER.format(owner=_md(offer.from_name)))
+            await _say(interaction, NOT_YOUR_OFFER.format(owner=md(offer.from_name)))
             return
         if (
             await store.withdraw_handover(self.guild_id, self.offer_id, offer.from_user_id, now)
@@ -552,11 +553,11 @@ class WithdrawOfferButton(
                 content=settings_text(campaign), view=settings_view(campaign),
                 allowed_mentions=NO_PINGS,
             )  # fmt: skip
-        await _say(interaction, WITHDRAWN.format(campaign=_md(campaign.name)))
+        await _say(interaction, WITHDRAWN.format(campaign=md(campaign.name)))
         await _tell_person(
             guild,
             offer.to_user_id,
-            TOLD_WITHDRAWN.format(owner=_md(offer.from_name), campaign=_md(campaign.name)),
+            TOLD_WITHDRAWN.format(owner=md(offer.from_name), campaign=md(campaign.name)),
         )
 
 
@@ -589,7 +590,7 @@ async def ask_to_take_on(interaction: discord.Interaction, campaign_id: str) -> 
         return
     with contextlib.suppress(discord.HTTPException):
         await interaction.followup.send(
-            TAKE_ON_ASK.format(campaign=_md(campaign.name)),
+            TAKE_ON_ASK.format(campaign=md(campaign.name)),
             view=take_on_view(campaign.id),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
@@ -639,7 +640,7 @@ class TakeOnButton(
         elif result == "gone":
             await _end_message(interaction, TAKE_GONE)
         else:
-            await _end_message(interaction, TAKEN.format(campaign=_md(campaign.name)))
+            await _end_message(interaction, TAKEN.format(campaign=md(campaign.name)))
 
 
 class NotNowButton(

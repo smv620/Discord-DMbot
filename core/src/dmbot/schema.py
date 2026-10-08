@@ -519,7 +519,13 @@ HANDOVER_DELIVERED = """
     ALTER TABLE campaign_handover_offers
         ADD COLUMN delivered_at BIGINT,
         ADD COLUMN claimed_at   BIGINT;
+    -- Migrations run with no server set, so row-level security hides every row: open
+    -- the table to this one UPDATE (which also reads rows, hence FOR ALL), dropped again
+    -- inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON campaign_handover_offers
+        FOR ALL USING (true) WITH CHECK (true);
     UPDATE campaign_handover_offers SET delivered_at = created_at;
+    DROP POLICY migrate_backfill ON campaign_handover_offers;
     -- The bot's sweep when it starts listening: open offers not sent yet.
     CREATE INDEX campaign_handover_offers_undelivered
         ON campaign_handover_offers (guild_id)
@@ -535,9 +541,14 @@ HANDOVER_EXPIRY = """
     ALTER TABLE campaign_handover_offers
         ADD COLUMN message_id  BIGINT,
         ADD COLUMN end_told_at BIGINT;
+    -- Migrations run with no server set, so row-level security hides every row: open
+    -- the table to this one UPDATE, dropped again inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON campaign_handover_offers
+        FOR ALL USING (true) WITH CHECK (true);
     UPDATE campaign_handover_offers SET end_told_at = COALESCE(decided_at, created_at)
         WHERE status <> 'open'
            OR created_at + 604800 <= extract(epoch FROM now())::BIGINT;
+    DROP POLICY migrate_backfill ON campaign_handover_offers;
     -- The sweep's "ended, nobody told yet" (stays nearly empty).
     CREATE INDEX campaign_handover_offers_untold
         ON campaign_handover_offers (guild_id)
