@@ -191,6 +191,7 @@ class LookupSource(Protocol):
 # once it's listening (see Database.listen).
 Listen = Callable[[str, Callable[[], None]], AsyncGenerator[str, None]]
 Sleep = Callable[[float], Awaitable[None]]
+_LOADS_PER_ASK = 3
 
 
 @dataclass(slots=True)
@@ -199,10 +200,10 @@ class _Slot:
     stale: bool = True
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    def ready(self) -> bool:
-        """A current copy, with no reload under way: while one is, the old copy may hold a
-        name the DM has just made secret, so readers wait for the new one."""
-        return self.lookup is not None and not self.stale and not self.lock.locked()
+    def current(self) -> CampaignLookup | None:
+        """The copy if it's current, with no reload under way: while one is, the old copy
+        may hold a name the DM has just made secret, so readers wait for the new one."""
+        return None if self.stale or self.lock.locked() else self.lookup
 
 
 class LookupCache:
@@ -222,11 +223,16 @@ class LookupCache:
     async def get(self, guild_id: int, campaign_id: str) -> CampaignLookup:
         """The campaign's lookup, loading it first if it's missing or out of date."""
         slot = self._slots.setdefault((guild_id, campaign_id), _Slot())
-        if slot.lookup is not None and slot.ready():
-            return slot.lookup
+        if (ready := slot.current()) is not None:
+            return ready
         asked = time.perf_counter()
         async with slot.lock:  # one load at a time per campaign
-            if slot.lookup is None or slot.stale:
+            # A change during a load (the DM made a name secret) means load again: the
+            # copy just built may be from before it. A few times at most; if changes
+            # still keep coming, the copy stays marked and the next reader loads again.
+            for _ in range(_LOADS_PER_ASK):
+                if slot.lookup is not None and not slot.stale:
+                    break
                 slot.stale = False  # a change arriving during the load marks it again
                 started = time.perf_counter()
                 try:
@@ -251,18 +257,20 @@ class LookupCache:
                     (built - loaded) * 1000,
                     len(slot.lookup.entities),
                 )
+            assert slot.lookup is not None  # loaded above, or it raised
             return slot.lookup
 
     async def get_within(
         self, guild_id: int, campaign_id: str, seconds: float
     ) -> CampaignLookup | None:
-        """The campaign's lookup if it's ready within `seconds`, else None. The load
-        carries on either way, so the next ask finds it ready: for type-ahead, which
-        must answer Discord within 3 seconds and can't say "loading" (#581)."""
-        slot = self._slots.get((guild_id, campaign_id))
-        if slot is not None and slot.lookup is not None and slot.ready():
-            return slot.lookup
+        """The campaign's lookup if it's ready within `seconds`, else None (also if the
+        load failed: that's logged once, here). The load carries on either way, so the
+        next ask finds it ready: for type-ahead, which must answer Discord within 3
+        seconds and can't say "loading" (#581)."""
         key = (guild_id, campaign_id)
+        slot = self._slots.get(key)
+        if slot is not None and (ready := slot.current()) is not None:
+            return ready
         task = self._loading.get(key)
         if task is None:
             task = asyncio.create_task(self.get(guild_id, campaign_id), name="names copy")
@@ -272,12 +280,14 @@ class LookupCache:
             return await asyncio.wait_for(asyncio.shield(task), seconds)
         except TimeoutError:
             return None
+        except Exception:  # logged by _loaded, once for everyone who waited
+            return None
 
     def _loaded(self, key: tuple[int, str], task: asyncio.Task[CampaignLookup]) -> None:
         if self._loading.get(key) is task:
             del self._loading[key]
         if not task.cancelled() and (error := task.exception()) is not None:
-            # Nobody may be waiting any more: say it here (the next ask tries again).
+            # Said here, once, whoever was waiting (the next ask tries again).
             log.warning("Couldn't load names for campaign %s: %r", key[1], error)
 
     def changed(self, event: notify.MemoryChanged) -> None:
@@ -308,6 +318,8 @@ class LookupCache:
         gone = set(campaign_ids)
         for key in [k for k in self._slots if k[1] in gone]:
             del self._slots[key]
+        for key in [k for k in self._loading if k[1] in gone]:
+            self._loading.pop(key).cancel()  # a deleted campaign's names: not wanted
 
     async def follow(self, listen: Listen) -> None:
         """Apply change notifications until cancelled. Every time the listener is

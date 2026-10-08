@@ -249,6 +249,10 @@ class Cache(unittest.IsolatedAsyncioTestCase):
         self.source.version = 2
         self.assertEqual((await self.cache.get(1, "camp")).version, 2)  # not the old copy
 
+    async def loads_done(self) -> None:
+        """Let loads nobody waits for any more finish."""
+        await asyncio.gather(*self.cache._loading.values(), return_exceptions=True)
+
     async def test_type_ahead_waits_a_little_and_the_load_carries_on(self) -> None:
         # #581: a copy ready in time is used; one that isn't gives None at once, and the
         # load goes on so the next keystroke finds it ready.
@@ -260,28 +264,54 @@ class Cache(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.cache.get_within(1, "camp", 0.01))  # never the old one
         self.assertIsNone(await self.cache.get_within(1, "camp", 0.01))  # same load
         self.source.gate.set()
-        for _ in range(5):
-            await asyncio.sleep(0)
+        await self.loads_done()
         ready = await self.cache.get_within(1, "camp", 0)
         self.assertEqual((ready and ready.version, self.source.calls), (2, 2))
 
-    async def test_a_load_nobody_waits_for_says_why_it_failed(self) -> None:
-        self.source.fail = True
+    async def test_a_change_during_a_load_is_loaded_too(self) -> None:
+        # The load read the names, then the DM made one secret: whoever gets the copy,
+        # by get or by joining the type-ahead's load, gets one from after the change.
+        read: list[int] = []
+
+        async def lookup_data(guild_id: int, campaign_id: str) -> LookupData:
+            read.append(self.source.version)  # what the database said, before the wait
+            if self.source.gate is not None:
+                await self.source.gate.wait()
+            return data(read[-1])
+
+        self.source.lookup_data = lookup_data  # type: ignore[method-assign]
         self.source.gate = asyncio.Event()
-        with self.assertRaises(ConnectionError):  # whoever waits hears it
-            await self.cache.get_within(1, "camp", 1.0)
-        self.source.fail = False
+        self.assertIsNone(await self.cache.get_within(1, "camp", 0))
+        await asyncio.sleep(0)
         self.source.version = 2
+        self.cache.mark_stale(1, "camp")
+        joined = asyncio.create_task(self.cache.get_within(1, "camp", 5.0))
+        plain = asyncio.create_task(self.cache.get(1, "camp"))
+        self.source.gate.set()
+        got = [await joined, await plain]
+        self.assertEqual([g and g.version for g in got], [2, 2])
+        self.assertEqual(read, [1, 2])
+
+    async def test_a_failed_load_is_logged_once_and_tried_again(self) -> None:
+        self.source.fail = True
         with self.assertLogs("dmbot.memory.lookup", "WARNING") as logs:
-            self.source.fail = True
-            self.assertIsNone(await self.cache.get_within(1, "camp", 0))
-            for _ in range(5):
-                await asyncio.sleep(0)
-        self.assertIn("Couldn't load names for campaign camp", logs.output[-1])
+            self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))  # waited
+            self.assertIsNone(await self.cache.get_within(1, "camp", 0))  # didn't
+            await self.loads_done()
+        self.assertEqual(len(logs.output), 2)  # once per load, waited for or not
+        self.assertIn("Couldn't load names for campaign camp", logs.output[0])
         self.source.fail = False
-        self.source.gate = None
         again = await self.cache.get_within(1, "camp", 1.0)
-        self.assertEqual(again and again.version, 2)
+        self.assertEqual(again and again.version, 1)
+
+    async def test_dropping_a_campaign_stops_its_load(self) -> None:
+        self.source.gate = asyncio.Event()
+        self.assertIsNone(await self.cache.get_within(1, "camp", 0))
+        (task,) = self.cache._loading.values()
+        self.cache.drop(["camp"])
+        await asyncio.gather(task, return_exceptions=True)
+        self.assertTrue(task.cancelled())
+        self.assertEqual(self.cache._loading, {})
 
     async def test_drop_frees_copies(self) -> None:
         await self.cache.get(1, "camp")

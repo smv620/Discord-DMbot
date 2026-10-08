@@ -593,6 +593,8 @@ class NameCards(NamesTest):
             for _ in range(50):  # the load carries on without anyone waiting
                 if await cache.get_within(self.campaign.guild_id, self.campaign.id, 0.05):
                     break
+            else:
+                self.fail("the names never finished loading")
             choices = await name_card.find_typeahead(self.it(), "bell")
         self.assertEqual([c.value for c in choices], [self.bell.id])
 
