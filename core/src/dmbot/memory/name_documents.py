@@ -23,6 +23,7 @@ from html.parser import HTMLParser
 from pathlib import PurePath
 
 from dmbot.memory.models import name_key
+from dmbot.memory.name_list import MAX_PER_LINE, lines_for
 
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 MAX_DOCUMENT_CHARS = 200_000  # about a 100-page document
@@ -287,7 +288,7 @@ def instructions(*, secrets: bool) -> str:
         "name that isn't in the document.\n"
         "- kind: exactly one of NPC, place, group, creature, item, god, spell, event, other.\n"
         "- other names: nicknames, titles or short forms the document uses for the same "
-        "one, separated by ;. Leave it empty if there are none.\n"
+        f"one, separated by ;, at most {MAX_PER_LINE}. Leave it empty if there are none.\n"
         f"{secret_rule}"
         "- No descriptions, notes, numbering, headings or blank lines. Never use the | "
         "character inside a name.\n"
@@ -303,7 +304,8 @@ def request_text(chunk: str) -> str:
 
 def merge_lists(lists: list[str]) -> str:
     """The AI's lists for each piece of a document as one list: each name once, its
-    other names and secret names from every piece together."""
+    other names and secret names from every piece together, over more lines when they
+    don't fit on one (#598)."""
     order: list[str] = []
     merged: dict[str, list[str]] = {}  # key → [name, kind, others, secrets]
     for text in lists:
@@ -323,13 +325,15 @@ def merge_lists(lists: list[str]) -> str:
                 new = [x.strip() for x in re.split(r"[;,]", cells[at]) if x.strip()]
                 extra = [x for x in new if name_key(x) not in seen]
                 row[at] = "; ".join(p for p in [row[at], *extra] if p)
-    out = []
+    out: list[str] = []
     for key in order:
-        cells = merged[key]
-        while len(cells) > 1 and not cells[-1]:
-            cells = cells[:-1]
-        out.append(" | ".join(cells))
+        name, kind, others, secrets = merged[key]
+        out += lines_for(name, kind, _parts(others), _parts(secrets))
     return "\n".join(out)
+
+
+def _parts(cell: str) -> list[str]:
+    return [x.strip() for x in re.split(r"[;,]", cell) if x.strip()]
 
 
 def clean_reply(reply: str) -> str:
