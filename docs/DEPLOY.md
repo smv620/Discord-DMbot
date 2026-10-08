@@ -191,17 +191,32 @@ does that safely: the server only calls out to Cloudflare, so no new door is ope
 and Cloudflare looks after the secure padlock (HTTPS). Only the admin pages go through.
 The pages customers will use stay closed until #498.
 
-**You (the owner), for Discord sign-in (once, only if dev1 says the website's Discord
-sign-in isn't set; the API won't start without it):**
-- Open https://discord.com/developers/applications, then your app, then OAuth2, then Client
-  information. Tell dev1 the **Client ID** (it is not secret). Press **Reset Secret**, copy
-  the new secret, and on the server type `scripts/set-key DISCORD_CLIENT_SECRET` and paste it
-  (press Enter, meaning No, if it asks to restart).
-- **Never press Bot, then Reset Token.** That is the bot's own token: resetting it logs the
-  bot out of Discord until it is changed on the server. If you are unsure which page you
-  are on, stop and ask dev1.
+First one Discord step (step A), because the API will not start without it, then the
+Cloudflare steps (1 to 5).
 
-**You (the owner), in Cloudflare:**
+**Step A, you (the owner), for Discord sign-in (once; do it only if dev1 says the website's
+Discord sign-in isn't set, because the API won't start without it):**
+- Open https://discord.com/developers/applications, then your app (the DMbot one), then
+  **OAuth2**. You will see two different things there:
+  - The **Client ID** is a long number that is always shown. It is not secret: type it to dev1
+    in the Claude Code window where dev1 runs (not GitHub).
+  - The **Client Secret** is hidden. Press **Reset Secret** (Discord may ask for your
+    password or a code). A long mix of letters and digits appears **once**. Copy it at once
+    and, on the server, type `scripts/set-key DISCORD_CLIENT_SECRET` and paste it there,
+    never into a chat. If it asks "Restart DMbot now?", press Enter (that means no) and
+    ignore the docker compose line it shows. If you lose the secret, press Reset Secret again
+    and set it again.
+  - **Redirects** (same page): leave it empty for now. Customer sign-in stays closed until
+    #498, and the admin page signs in with Google, not Discord. When it is time, dev1 gives
+    you the exact address to paste.
+- **If dev1 says the Discord secret is already set, do not press Reset Secret:** it would
+  stop the secret that is in use.
+- **Only the OAuth2 page is safe.** The page called **Bot** has a **Reset Token** button: do
+  not press it. That is the bot's own key (`DISCORD_TOKEN`); resetting it logs the bot out
+  of Discord until the new one is set on the server. If you are unsure which page you are
+  on, stop and ask dev1.
+
+**You (the owner), in Cloudflare (after step A):**
 1. Go to https://one.dash.cloudflare.com, then Networks, then Tunnels (newer screens:
    Networks, then Connectors, then Cloudflare Tunnels), then Create a tunnel. Pick
    "Cloudflared" and name it `dmbot-api`. Cloudflare then shows an "Install and Run" page
@@ -265,6 +280,9 @@ tunnel stays off until dev1 starts it.
    `CLOUDFLARE_TUNNEL_TOKEN` (press Enter to cancel). Only then tell the owner: "The update
    is in. Do step 4."
 1. Make the website API ready to start, or the tunnel connects but answers 502:
+   - When the owner sends the Discord Client ID, set `DISCORD_CLIENT_ID` with `nano .env` (it
+     isn't secret; set-key only takes keys), then confirm `scripts/set-key` lists
+     `DISCORD_CLIENT_SECRET` as "set" (press Enter to cancel).
    - Check the settings (this prints no secrets):
      `grep -E '^(COMPOSE_PROFILES|WEB_CLIENT_IP_HEADER|WEB_API_URL|WEB_SITE_URL|WEB_API_PORT)=' .env`.
      `COMPOSE_PROFILES` must include `web`, `WEB_CLIENT_IP_HEADER` must be `CF-Connecting-IP`,
