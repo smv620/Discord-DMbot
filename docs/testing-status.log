@@ -9,7 +9,9 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- dev3, #641 (#631): ears AND core (new "warning" status, both sides). No migration or
+  setting. Check: Test A with DMBOT_DEBUG_AUDIO=1 shows `dave: ...` lines around the first
+  packet; on a decrypt failure, "listening again (n of 5)" and the DM screen's audio % drops.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
