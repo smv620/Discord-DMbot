@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (deployed 70ac757; Test A again passed; #651 to deploy)
+Last updated: 2026-10-08 by dev1 (live 70ac757; Test A passed on a computer; Test B next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -20,10 +20,31 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
   names answer as before; the `Built names for campaign` log line shows a small database
   time.
+- CloudDev, PR #689 (#598 item 3): Add many takes at most 20 other and 20 secret names
+  on a line; a list with one name on many lines reads in under 2 s (was about 50 s, on
+  the event loop). No migration. Deploy: rebuild core. Check: Add many with a line of 21
+  other names says "line N: more than 20 other names. Put the rest on a new line...";
+  Download all, then upload that file again: nothing is refused.
+- dev2, PR #670 (#52 part 1): the consent request and the per-session reminder say an
+  AI (Anthropic) reads the text to give the DM notes; terms version 2 -> 3. No migration.
+  Deploy with or before #678: rebuild core. Tell the table first: after the deploy,
+  everyone who said yes before is asked again and isn't recorded until they say yes.
+  Check: a player who agreed before gets the new request with a "What's new" note;
+  after they say yes, recording works as before.
+- dev2, PR #678 (#52 part 2): the off-topic filter. Clearly off-topic chat becomes
+  "[1m 22s of off-topic chat skipped]" in the cleaned transcript and the live channel;
+  As heard keeps every word. Migration 0024 adds topic and duration columns to
+  transcript_lines (defaults, quick). Needs #670 (terms version 3) live first or in the
+  same deploy. Deploy: rebuild core. Check: `docker compose logs core` shows 0024 applied;
+  at the end of a session "Off-topic filter: N calls, ... tokens"; replay
+  docs/test-scripts/off-topic.md.
 - CloudDev, PR #659 (#636): /dmbot start says "I haven't started: I can't hear voice
   channels right now…" instead of developer steps when ears is down, and logs it. No
   migration. Deploy: rebuild core. Check: with ears stopped, /dmbot start gives the new
   words and `docker compose logs core` shows "Can't start in server …".
+- CloudDev, PR #668 (#652, #437): hand-over offers keep both people's names. Migration
+  0022 adds two columns to the (still empty) offers table: quick. Deploy: rebuild core.
+  Check: `docker compose logs core` shows 0022 applied, no new errors.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -186,14 +207,16 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     of it can be heard"; the DM screen shows a warning and its audio % drops
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test A again (2026-10-08 07:01), DM alone, Deepgram: PASS
+LATEST RESULT: Test A on a computer (2026-10-08 07:27), DM alone: PASS
 ------------------------------------------------------------------------------
-  On 70ac757 (#641 live). Audio 145/145, 3.0 s sent, no Discord-side problems. ears:
-  one failed packet at the start, then decryption recovered by itself (DAVE commit at
-  transition 0 came 12 s before the DM spoke). The 05:43 failure (#631) didn't repeat.
-  Previous: Test A (05:43) FAIL, nothing written down (#631).
+  On 70ac757. Everything the DM said near the computer was written down; DAVE ready
+  2 s after joining, before the DM spoke. A TV in the room set off the DM screen's ⚠️
+  (pieces at 155/169 and 4/23 packets, audio 82%): a false alarm, owner wants it less
+  sensitive (#671). Test A series done: 05:43 FAIL (#631), 07:01 PASS, 07:27 PASS.
+  Next: Test B (docs/next-test-step.md), the Stop listening button asks first.
 
 Open issues from testing
+  #671 the audio warning fires on background noise (owner)
   #631 DAVE decrypt error drops all of a speaker's audio (Test A)
   #43 DAVE loss after a pause   #45 uncounted losses   #112 menus run off phone screens
   #120 capture check drops audio counts   #121 start of speech may be cut

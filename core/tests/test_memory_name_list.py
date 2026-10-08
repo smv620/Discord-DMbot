@@ -1,9 +1,19 @@
 """The plain-text names list: the template, reading a list, and a download (pure)."""
 
+import time
 import unittest
 from pathlib import Path
 
-from dmbot.memory.name_list import HEADER, TEMPLATE, OutName, parse, render
+from dmbot.memory.name_list import (
+    HEADER,
+    MAX_PER_LINE,
+    TEMPLATE,
+    TOO_MANY_OTHERS,
+    TOO_MANY_SECRETS,
+    OutName,
+    parse,
+    render,
+)
 from dmbot.memory.sounds import sound_codes
 from dmbot.transcript.cleaner import likeness
 
@@ -90,6 +100,45 @@ class Reading(unittest.TestCase):
         ).lines
         self.assertEqual((line.others, line.secrets), (("Bell",), ("the stranger",)))
 
+    def test_up_to_20_other_and_secret_names_on_a_line(self) -> None:
+        many = "; ".join(f"Bell {i}" for i in range(MAX_PER_LINE))
+        hoods = many.replace("Bell", "Hood")
+        (line,) = parse(f"Belleros | npc | {many} | {hoods}", secrets=True).lines
+        self.assertEqual((len(line.others), len(line.secrets)), (20, 20))
+        text = f"Belleros | npc | {many}; Bell 20\nAuril | god | | {many}; Bell 20"
+        parsed = parse(text, secrets=True)
+        self.assertEqual(parsed.lines, [])
+        self.assertEqual(
+            parsed.refused,
+            [
+                (1, TOO_MANY_OTHERS),
+                (2, TOO_MANY_SECRETS),
+            ],
+        )
+        self.assertIn("starts with the name again", TOO_MANY_OTHERS)
+        split = parse(  # done as the refusals say: all kept
+            f"Belleros | npc | {many}\nBelleros | | Bell 20\nBelleros | | | {hoods}\n"
+            "Belleros | | | Hood 20",
+            secrets=True,
+        )
+        self.assertEqual((len(split.lines[0].others), len(split.lines[0].secrets)), (21, 21))
+
+    def test_a_name_on_many_lines_is_quick(self) -> None:
+        # #598 perf-qa: each repeated line used to copy every name before it.
+        many = "; ".join(f"Bell {i}" for i in range(MAX_PER_LINE))
+        text = "".join(
+            f"Belleros | | {many.replace('Bell', f'B{n}')} | {many.replace('Bell', f'H{n}')}\n"
+            for n in range(1000)
+        )
+        started = time.monotonic()
+        (line,) = parse(text, secrets=True).lines
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual((len(line.others), len(line.secrets)), (20_000, 20_000))
+
+    def test_the_same_name_written_again_is_not_more(self) -> None:
+        (line,) = parse("Belleros | npc | " + "; ".join(["Bell"] * 30), secrets=True).lines
+        self.assertEqual(line.others, ("Bell",))
+
 
 class Download(unittest.TestCase):
     def test_a_download_reads_back_the_same(self) -> None:
@@ -104,6 +153,20 @@ class Download(unittest.TestCase):
         self.assertEqual([line.name for line in lines], ["Belleros", "Bryn Shander", "Ulfgar"])
         self.assertEqual(lines[0].secrets, ("the hooded stranger",))
         self.assertNotIn("hooded", render(names, campaign="Frostmaiden", secrets=False))
+
+    def test_a_name_with_many_other_names_still_reads_back(self) -> None:
+        others = tuple(f"Bell {i}" for i in range(45))
+        hidden = tuple(f"Hood {i}" for i in range(5))
+        names = [OutName("Belleros", "npc", others, hidden)]
+        text = render(names, campaign="Frostmaiden", secrets=True)
+        self.assertEqual(text.count("\nBelleros | NPC"), 3)  # 20, 20 and 5
+        parsed = parse(text, secrets=True)
+        self.assertEqual(parsed.refused, [])
+        (line,) = parsed.lines
+        self.assertEqual((line.others, line.secrets), (others, hidden))
+        players = render(names, campaign="Frostmaiden", secrets=False)
+        self.assertNotIn("Hood", players)
+        self.assertEqual(parse(players, secrets=False).lines[0].others, others)
 
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "docs" / "test-scripts"

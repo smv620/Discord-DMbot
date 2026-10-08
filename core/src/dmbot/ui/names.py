@@ -30,6 +30,7 @@ from dmbot.ui.dmbot_commands import (
     _answer_first,
     _bot,
     _Button,
+    _failed,
     _is_manager,
     _Menu,
     _replace,
@@ -468,6 +469,11 @@ class AddNameForm(discord.ui.Modal, title="Add a name"):
         if not secrets:  # only the campaign's DMs deal in secret names
             self.remove_item(self.secret)
 
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
     async def on_submit(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
@@ -638,6 +644,11 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
         self.campaign_id = campaign_id
         self.player_id = player_id
         self.player_name = player_name
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)

@@ -864,3 +864,20 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   - Also seen: consent withdrawn at 07:01:56 and given again at 07:02:03 (ears stopped
     and restarted capture at once), not part of this test.
   - The 05:43 failure (#631) did not repeat. Evidence posted on #631.
+
+==============================================================================
+2026-10-08  Test A on a computer (owner, alone): PASS
+==============================================================================
+  - 07:27-07:28 UTC on 70ac757 (#641 live, #651 not; images for 3194f5f built but
+    not started), Deepgram, docs/next-test-step.md. Owner: the transcript picked up
+    everything said close to the computer.
+  - ears: DAVE "Session initialized for protocol version 1", "MLS commit processed
+    (transition id: 0)" within 80 ms of joining; "capturing user" 2 s later. Pieces:
+    52/52, 53/53 (the DM), then 155/169 and 4/23 (a TV in the room). One "dave: Failed
+    to decrypt a packet (1 consecutive fails)", recovered. No receive error, no
+    re-listen. core: "audio 82% (audio gaps)" on the TV pieces, "Listened 1.2 min,
+    sent 0.1 min of speech (7%)", "After-session scan: 1 line(s)".
+  - The DM screen's ⚠️ showed, set off by the TV: a false alarm. Owner asks for a less
+    sensitive warning in a noisy room: #671 (OWNER, for Supervisor).
+  - Test A series: 05:43 phone FAIL (#631), 07:01 PASS, 07:27 computer PASS. The 05:43
+    failure didn't repeat on either device.
