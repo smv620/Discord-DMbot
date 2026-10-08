@@ -1126,11 +1126,89 @@ class SaveAndResume(SessionTests):
         self.bot._post_transcript = fake_post  # type: ignore[method-assign]
         return table, sent
 
-    def said(self, table: Any, text: str, user: int = PLAYER) -> None:
+    def said(self, table: Any, text: str, user: int = PLAYER, at_ms: int = 0) -> None:
         from dmbot.audio.segmenter import Utterance
 
-        utterance = Utterance(GUILD, user, 0, 0, bytes(32000), table.segmenter.session)
+        utterance = Utterance(GUILD, user, at_ms, at_ms, bytes(32000), table.segmenter.session)
         self.bot._deliver_transcript(utterance, text)
+
+    async def filtered(self, answer: str | Exception) -> Any:
+        """A session with the off-topic filter on (#52): an AI stand-in, and windows of
+        two lines. The table, with the stand-in on `self.ai_calls`."""
+        from dmbot.ai import Reply
+        from dmbot.transcript.models import TranscriptBuffer
+
+        calls: list[str] = []
+
+        async def complete(system: str, text: str, *, max_tokens: int = 0) -> Reply:
+            calls.append(text)
+            if isinstance(answer, Exception):
+                raise answer
+            return Reply(answer, cut=False, input_tokens=50, output_tokens=6)
+
+        self.ai_calls = calls
+        self.addCleanup(setattr, self.bot, "ai", self.bot.ai)
+        self.bot.ai = SimpleNamespace(complete=complete)  # type: ignore[assignment]
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        table.unsaved = TranscriptBuffer()
+        self.addCleanup(setattr, self.bot, "transcripts", self.bot.transcripts)
+        self.bot.transcripts = object()  # type: ignore[assignment]  # only checked for None
+        table.topics.window_lines = 2
+        return table
+
+    async def settle(self) -> None:
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+    async def test_off_topic_lines_never_reach_the_names_scan(self) -> None:
+        table = await self.filtered("1 other\n2 game")
+        self.said(table, "my boss called again")
+        self.assertEqual(table.heard, [])  # held until its window is labelled
+        self.said(table, "we sneak past the guards", at_ms=5_000)
+        await self.settle()
+        self.assertEqual(len(self.ai_calls), 1)  # one call for the window
+        self.assertNotIn("PLAYER", self.ai_calls[0])  # only the words, numbered
+        self.assertEqual([t for _, t in table.heard], ["we sneak past the guards"])
+        topics = {line.text: line.topic for line in table.unsaved._waiting}
+        self.assertEqual(topics["my boss called again"], "off_topic")
+        self.assertEqual(topics["we sneak past the guards"], "game")
+        self.assertEqual((table.topic_calls, table.topic_tokens), (1, [50, 6]))
+
+    async def test_plainly_game_talk_isnt_asked_about(self) -> None:
+        table = await self.filtered("1 other")
+        self.said(table, "I roll a d20 for initiative")
+        await self.settle()
+        self.assertEqual(self.ai_calls, [])
+        self.assertEqual([t for _, t in table.heard], ["I roll a d20 for initiative"])
+
+    async def test_if_the_filter_fails_every_line_is_kept(self) -> None:
+        from dmbot.ai import AIError
+
+        table = await self.filtered(AIError("busy"))
+        self.said(table, "my boss called again")
+        self.said(table, "pass the chips", at_ms=5_000)
+        await self.settle()
+        self.assertEqual(len(table.heard), 2)  # when unsure, keep it
+        self.assertTrue(all(line.topic == "game" for line in table.unsaved._waiting))
+
+    async def test_someone_who_stops_is_never_labelled_or_scanned(self) -> None:
+        table = await self.filtered("1 other\n2 other")
+        self.said(table, "my boss called again")
+        self.bot.stop_recording(GUILD, PLAYER)
+        self.said(table, "pass the chips", user=DM, at_ms=5_000)
+        await self.settle()
+        self.assertTrue(all(text != "my boss called again" for _, text in table.heard))
+        self.assertTrue(all("boss" not in call for call in self.ai_calls))
+
+    async def test_the_last_window_is_labelled_when_the_session_ends(self) -> None:
+        table = await self.filtered("1 other")
+        table.topics.window_lines = 6  # it won't fill
+        self.said(table, "my boss called again")
+        await self.bot.stop_table(GUILD, "test")
+        await asyncio.gather(*self.bot._finishing)
+        self.assertEqual(len(self.ai_calls), 1)
+        self.assertEqual(table.heard, [])
 
     async def test_what_is_said_goes_to_the_transcript_channel_not_the_dm_screen(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
