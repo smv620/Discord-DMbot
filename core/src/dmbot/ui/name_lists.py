@@ -23,6 +23,7 @@ from dmbot import fetch
 from dmbot.ai import AIError, AnthropicClient, Reply
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
+from dmbot.memory.document_reader import read_document
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
     CONFIRMED,
@@ -45,7 +46,6 @@ from dmbot.memory.name_documents import (
     kind_of_file,
     merge_lists,
     request_text,
-    text_of,
 )
 from dmbot.memory.name_list import (
     MAX_FILE_BYTES,
@@ -498,7 +498,7 @@ _PARSING = asyncio.Semaphore(2)  # documents read at once, across all servers
 async def _document(filename: str, raw: bytes, label: str) -> tuple[Upload | None, str | None]:
     async with _PARSING:
         try:
-            return Upload(await asyncio.to_thread(text_of, filename, raw), label, True), None
+            return Upload(await read_document(filename, raw), label, True), None
         except DocumentError as exc:
             return None, str(exc)
 
