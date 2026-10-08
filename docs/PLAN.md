@@ -443,8 +443,8 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   "🔁 Asked again: …" so the DM knows why. After a restart, people in voice whose yes no
   longer counts are asked (nobody else is). Version 2 is the "anyone in this server can
   read it" wording; version 3 (#52) adds that DMbot's helper has an AI company (Anthropic)
-  read the text to give the DM notes, not used to train their AI (said once for every
-  helper); every yes saved before versions were recorded is treated as version 1
+  read the text, with who said it, to give the DM notes, not used to train their AI (said
+  once for every helper); every yes saved before versions were recorded is treated as version 1
   (we can't tell which wording each person saw). A test pins the request's wording to
   the version number.
 - The public "DMbot is listening" notice in the voice channel's chat still posts once per
@@ -1346,9 +1346,10 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
 "Transcript format"); table talk and anything unsure stay.
 *Decided 2026-10-08 (Supervisor, #52, dev2's questions):*
 - **Consent says the words go to an AI company, once for the whole product.** The consent
-  request and the per-session reminder gain: "DMbot's helper reads that text to give your
-  DM notes. For that, the text goes to an AI company (Anthropic). It isn't used to train
-  their AI." That bumps `TERMS_VERSION` (to 3), so everyone who said yes is asked again,
+  request and the per-session reminder gain: "DMbot's helper reads that text, with who
+  said it, to give your DM notes. For that, the text goes to an AI company (Anthropic).
+  It isn't used to train their AI." ("with who said it" was added the same day, before
+  version 3 went live, so it stays version 3: the AI gets each line with who said it.) That bumps `TERMS_VERSION` (to 3), so everyone who said yes is asked again,
   and nobody is recorded until they agree to the new wording; the filter never needs a
   per-person check of its own. Reason: every helper that reads the transcript (rules
   advisor, names, this filter, story memory) sends text to the AI, so the consent covers
