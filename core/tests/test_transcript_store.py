@@ -112,6 +112,22 @@ class StoreTests(DatabaseTest):
             await self.store.relabel_line(OTHER_GUILD, sid, PLAYER, fixed.started_ms, "x"), 0
         )  # never another server's
 
+    async def test_a_lines_topic_and_length_are_kept(self) -> None:
+        # #52: the filter's topic is saved later; the length comes with the line.
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        said = Line(START * 1000 + 1000, PLAYER, "my boss called", "my boss called", 4_200)
+        await self.store.add_lines(GUILD, sid, [said])
+        (back,) = await self.store.lines(GUILD, sid)
+        self.assertEqual((back.duration_ms, back.topic), (4_200, "game"))  # until told
+        changed = await self.store.set_topic(GUILD, sid, PLAYER, said.started_ms, "off_topic")
+        self.assertEqual(changed, 1)
+        (back,) = await self.store.lines(GUILD, sid)
+        self.assertEqual(back.topic, "off_topic")
+        self.assertEqual(await self.store.set_topic(GUILD, sid, PLAYER, 1, "off_topic"), 0)
+        self.assertEqual(
+            await self.store.set_topic(OTHER_GUILD, sid, PLAYER, said.started_ms, "game"), 0
+        )  # never another server's
+
     async def test_removing_lines_counts_again(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
         ids = await self.store.add_lines(GUILD, sid, [line(1, DM, "a"), line(2, PLAYER, "b")])

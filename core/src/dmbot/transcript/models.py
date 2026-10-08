@@ -4,7 +4,7 @@ Discord, no database."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 MAX_UNSAVED = 5_000  # lines kept while saving keeps failing; the oldest go first
 
@@ -28,6 +28,10 @@ class Line:
     user_id: int
     heard: str  # exactly what speech-to-text wrote
     text: str  # cleaned: misheard names fixed (dmbot.transcript.cleaner)
+    duration_ms: int = 0  # how long the speech lasted (for "[1m 22s … skipped]")
+    # game, table_talk or off_topic (#52; dmbot.transcript.topics): only off_topic is
+    # hidden, in the cleaned transcript. Until the filter says, a line is game talk.
+    topic: str = "game"
 
 
 @dataclass(slots=True)
@@ -64,7 +68,15 @@ class TranscriptBuffer:
         True if it was here."""
         for i, waiting in enumerate(self._waiting):
             if (waiting.user_id, waiting.started_ms) == (user_id, started_ms):
-                self._waiting[i] = Line(waiting.started_ms, waiting.user_id, waiting.heard, text)
+                self._waiting[i] = replace(waiting, text=text)
+                return True
+        return False
+
+    def set_topic(self, user_id: int, started_ms: int, topic: str) -> bool:
+        """A waiting line's topic, from the off-topic filter (#52); True if it was here."""
+        for i, waiting in enumerate(self._waiting):
+            if (waiting.user_id, waiting.started_ms) == (user_id, started_ms):
+                self._waiting[i] = replace(waiting, topic=topic)
                 return True
         return False
 

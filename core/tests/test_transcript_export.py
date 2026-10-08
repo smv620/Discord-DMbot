@@ -63,6 +63,29 @@ class Render(unittest.TestCase):
             export.file_name("X", session(), export.CLEANED), "x-session-7-cleaned.txt"
         )
 
+    def test_the_cleaned_file_skips_off_topic_runs_and_says_how_long(self) -> None:
+        # #52: one marker per run, with the total; the as-heard file keeps everything.
+        lines = [
+            line(1, MIA, "I search the chest"),
+            dataclasses.replace(
+                line(5, DEE, "my boss called"), duration_ms=40_000, topic="off_topic"
+            ),
+            dataclasses.replace(
+                line(50, DEE, "he wants me Monday"), duration_ms=42_000, topic="off_topic"
+            ),
+            dataclasses.replace(line(95, MIA, "is it my turn?"), topic="table_talk"),
+        ]
+        names = {MIA: "Mia", DEE: "Dee"}
+        cleaned = export.render("X", session(), lines, names, version=export.CLEANED)
+        self.assertIn("[0:00:05] (Dee) [1m 22s of off-topic chat skipped]\n", cleaned)
+        self.assertNotIn("boss", cleaned)
+        self.assertIn("(Mia): is it my turn?", cleaned)  # table talk stays
+        self.assertIn("Chat clearly not about the game is left out", cleaned)
+        heard = export.render("X", session(), lines, names)
+        self.assertIn("my boss called", heard)
+        self.assertIn("he wants me Monday", heard)
+        self.assertNotIn("skipped]", heard)
+
     def test_the_header_says_which_speech_to_text_wrote_it_in_plain_words(self) -> None:
         engines = ("deepgram nova-3 api.deepgram.com",)
         text = export.render("X", dataclasses.replace(session(), engines=engines), [], {})
