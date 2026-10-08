@@ -13,6 +13,7 @@ and plug into backups by registering an `ExportSection`.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import gzip
 import json
 import logging
@@ -20,12 +21,13 @@ import re
 import time
 import uuid
 import zlib
-from collections.abc import Callable
-from typing import Any, LiteralString, Protocol
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal, LiteralString, Protocol, cast
 
 from psycopg import errors as pg_errors
 from psycopg import sql
 
+from dmbot import entitlements
 from dmbot.campaigns.models import (
     CONFIRMATION_PURPOSES,
     DEFAULT_DM_SCREEN_LEVEL,
@@ -34,9 +36,11 @@ from dmbot.campaigns.models import (
     DEFAULT_TARGET,
     DM_SCREEN_LEVELS,
     DM_SCREEN_VISIBILITY,
+    HANDOVER_SECONDS,
     NAME_MAX,
     Campaign,
     CampaignError,
+    HandoverOffer,
     check_dm_screen_level,
     check_dm_screen_visibility,
     check_rulesets,
@@ -275,10 +279,45 @@ _SETTABLE = frozenset(
 )
 
 
+# Hand-over (#437 part 1b): plain words for the person who tried.
+NOT_THE_OWNER = "Only the campaign's owner can hand it over. Ask them to do it."
+OFFER_TO_SELF = "This campaign is already yours. Pick someone else."
+NOT_A_SUBSCRIBER = (
+    "They need a DMbot plan first. Ask them to sign in on the DMbot website and start one "
+    "(Try It is free). Then try again."
+)
+OFFER_WAITING = (
+    "You already offered this campaign to someone. Withdraw that offer first, or wait: it "
+    "ends after 7 days."
+)
+OWNER_STAYS = (
+    "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
+)
+
+AcceptResult = Literal["accepted", "no_free_slot", "gone"]
+TakeResult = Literal["taken", "no_free_slot", "gone"]
+# Whether a person may own one more campaign (conn, user id, now). Until the campaign
+# count comes in (#437 part 3), having a plan that works is enough.
+SlotCheck = Callable[[Conn, int, int], Awaitable[bool]]
+
+
+async def plan_works(conn: Conn, user_id: int, now: int) -> bool:
+    """A subscriber: their plan works now (#435)."""
+    plan = await entitlements.read(conn, user_id)
+    return plan is not None and plan.usable(now)
+
+
 class CampaignStore:
-    def __init__(self, db: Database, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        db: Database,
+        *,
+        clock: Callable[[], float] = time.time,
+        has_free_slot: SlotCheck = plan_works,
+    ) -> None:
         self._db = db
         self._clock = clock
+        self._has_free_slot = has_free_slot
         self._sections: dict[str, ExportSection] = {}
         self.register_section(_DMSection())
         self.register_section(_OptionalRulesSection())
@@ -463,6 +502,8 @@ class CampaignStore:
                 (guild_id, campaign_id),
             )
             campaign = await self._require(conn, guild_id, campaign_id)
+            if user_id == campaign.owner_user_id:  # whose plan it uses (#437)
+                raise CampaignError(OWNER_STAYS)
             if user_id in campaign.dm_user_ids and len(campaign.dm_user_ids) == 1:
                 raise CampaignError("A campaign needs at least one DM. Add the new DM first.")
             await conn.execute(
@@ -562,6 +603,201 @@ class CampaignStore:
         if had_session:
             with log_context(guild_id=guild_id, campaign_id=campaign_id):
                 log.info("Saved session removed: its campaign was deleted")
+
+    # ---- hand-over (#437 part 1b) --------------------------------------------
+    # One place for every hand-over write, used by the bot's buttons and the website's
+    # account page alike, so their rules can't drift apart. The campaign row is locked
+    # first in each, like every other campaign write, so two can't cross.
+
+    async def offer_handover(
+        self, guild_id: int, campaign_id: str, from_user_id: int, to_user_id: int, now: int
+    ) -> HandoverOffer:
+        """The owner offers the campaign to another subscriber, who accepts or not within
+        7 days. The caller checks the person offered is a member of this server, so
+        DMbot can message them. Raises CampaignError in plain words."""
+        if to_user_id == from_user_id:
+            raise CampaignError(OFFER_TO_SELF)
+        async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, guild_id, campaign_id)
+            campaign = await self._require(conn, guild_id, campaign_id)
+            if campaign.owner_user_id != from_user_id:
+                raise CampaignError(NOT_THE_OWNER)
+            if not await plan_works(conn, to_user_id, now):
+                raise CampaignError(NOT_A_SUBSCRIBER)
+            # An open offer past its 7 days no longer counts: mark it, so the new one can
+            # be the campaign's one open offer.
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET status = 'expired',"
+                " decided_at = created_at + %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND status = 'open'"
+                " AND created_at + %s <= %s",
+                (HANDOVER_SECONDS, guild_id, campaign_id, HANDOVER_SECONDS, now),
+            )
+            if await self._open_offer(conn, guild_id, campaign_id) is not None:
+                raise CampaignError(OFFER_WAITING)
+            try:  # the index is the last word, should a writer ever skip the lock
+                cur = await conn.execute(
+                    "INSERT INTO campaign_handover_offers"
+                    " (guild_id, campaign_id, from_user_id, to_user_id, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s) RETURNING *",
+                    (guild_id, campaign_id, from_user_id, to_user_id, now),
+                )
+            except pg_errors.UniqueViolation as exc:
+                raise CampaignError(OFFER_WAITING) from exc
+            row = await cur.fetchone()
+            assert row is not None
+            return _to_offer(row)
+
+    async def accept_handover(
+        self, guild_id: int, offer_id: int, user_id: int, now: int
+    ) -> AcceptResult:
+        """The person offered takes the campaign: it uses their plan from now, and they
+        become one of its DMs (the old owner stays one). "gone" if the offer isn't
+        theirs, was answered or withdrawn, expired, or the campaign changed owner since;
+        "no_free_slot" if their plan has no room now (checked now, not when offered)."""
+        async with self._db.guild(guild_id) as conn:
+            offer = await self._offer(conn, guild_id, offer_id)
+            if offer is None or offer.to_user_id != user_id:
+                return "gone"
+            await self._lock(conn, guild_id, offer.campaign_id)
+            offer = await self._offer(conn, guild_id, offer_id, lock=True)
+            campaign = await self._get(conn, guild_id, offer.campaign_id) if offer else None
+            if offer is not None:
+                await self._expire(conn, offer, now)
+            if (
+                offer is None
+                or not offer.is_open(now)
+                or campaign is None
+                or campaign.owner_user_id != offer.from_user_id
+            ):
+                return "gone"
+            if not await self._has_free_slot(conn, user_id, now):
+                return "no_free_slot"
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = %s WHERE guild_id = %s AND id = %s",
+                (user_id, guild_id, campaign.id),
+            )
+            await conn.execute(
+                "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)"
+                " ON CONFLICT DO NOTHING",
+                (campaign.id, guild_id, user_id),
+            )
+            await self._decide(conn, guild_id, offer_id, "accepted", now)
+            return "accepted"
+
+    async def decline_handover(
+        self, guild_id: int, offer_id: int, user_id: int, now: int
+    ) -> Literal["declined", "gone"]:
+        """The person offered says no thanks."""
+        closed = await self._close_offer(guild_id, offer_id, user_id, now, "declined")
+        return "declined" if closed else "gone"
+
+    async def withdraw_handover(
+        self, guild_id: int, offer_id: int, user_id: int, now: int
+    ) -> Literal["withdrawn", "gone"]:
+        """The owner takes the offer back before it's answered."""
+        closed = await self._close_offer(guild_id, offer_id, user_id, now, "withdrawn")
+        return "withdrawn" if closed else "gone"
+
+    async def get_offer(self, guild_id: int, offer_id: int, now: int) -> HandoverOffer | None:
+        """The offer as it stands now: one past its 7 days reads as expired, never open."""
+        async with self._db.guild(guild_id) as conn:
+            offer = await self._offer(conn, guild_id, offer_id)
+        if offer is not None and offer.status == "open" and not offer.is_open(now):
+            return dataclasses.replace(offer, status="expired", decided_at=offer.expires_at)
+        return offer
+
+    async def open_offer(self, guild_id: int, campaign_id: str, now: int) -> HandoverOffer | None:
+        """The campaign's offer waiting for an answer, if any (not one past its 7 days)."""
+        async with self._db.guild(guild_id) as conn:
+            offer = await self._open_offer(conn, guild_id, campaign_id)
+        return offer if offer is not None and offer.is_open(now) else None
+
+    async def take_ownership(
+        self, guild_id: int, campaign_id: str, user_id: int, now: int
+    ) -> TakeResult:
+        """A DM takes on a campaign that has no owner yet (from before owners were
+        recorded and with several DMs, #437): it uses their plan from now. "gone" if it
+        has an owner by now or they aren't one of its DMs."""
+        async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, guild_id, campaign_id)
+            campaign = await self._get(conn, guild_id, campaign_id)
+            if (
+                campaign is None
+                or campaign.owner_user_id is not None
+                or user_id not in campaign.dm_user_ids
+            ):
+                return "gone"
+            if not await self._has_free_slot(conn, user_id, now):
+                return "no_free_slot"
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = %s WHERE guild_id = %s AND id = %s",
+                (user_id, guild_id, campaign_id),
+            )
+            return "taken"
+
+    async def _close_offer(
+        self,
+        guild_id: int,
+        offer_id: int,
+        user_id: int,
+        now: int,
+        status: Literal["declined", "withdrawn"],
+    ) -> bool:
+        """Decline (the person offered) or withdraw (the owner who offered). False if
+        it isn't theirs to close or isn't open any more."""
+        async with self._db.guild(guild_id) as conn:
+            offer = await self._offer(conn, guild_id, offer_id, lock=True)
+            if offer is None:
+                return False
+            await self._expire(conn, offer, now)
+            who = offer.to_user_id if status == "declined" else offer.from_user_id
+            if who != user_id or not offer.is_open(now):
+                return False
+            await self._decide(conn, guild_id, offer_id, status, now)
+            return True
+
+    async def _offer(
+        self, conn: Conn, guild_id: int, offer_id: int, *, lock: bool = False
+    ) -> HandoverOffer | None:
+        cur = await conn.execute(
+            "SELECT * FROM campaign_handover_offers WHERE guild_id = %s AND id = %s"
+            + (" FOR UPDATE" if lock else ""),
+            (guild_id, offer_id),
+        )
+        row = await cur.fetchone()
+        return None if row is None else _to_offer(row)
+
+    async def _open_offer(
+        self, conn: Conn, guild_id: int, campaign_id: str
+    ) -> HandoverOffer | None:
+        cur = await conn.execute(
+            "SELECT * FROM campaign_handover_offers"
+            " WHERE guild_id = %s AND campaign_id = %s AND status = 'open'",
+            (guild_id, campaign_id),
+        )
+        row = await cur.fetchone()
+        return None if row is None else _to_offer(row)
+
+    async def _expire(self, conn: Conn, offer: HandoverOffer, now: int) -> None:
+        """An open offer found past its 7 days is marked so, for the website's lists."""
+        if offer.status == "open" and not offer.is_open(now):
+            await self._decide(conn, offer.guild_id, offer.id, "expired", offer.expires_at)
+
+    async def _decide(
+        self, conn: Conn, guild_id: int, offer_id: int, status: str, now: int
+    ) -> None:
+        await conn.execute(
+            "UPDATE campaign_handover_offers SET status = %s, decided_at = %s"
+            " WHERE guild_id = %s AND id = %s",
+            (status, now, guild_id, offer_id),
+        )
+
+    async def _lock(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
+        await conn.execute(
+            "SELECT 1 FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
+            (guild_id, campaign_id),
+        )
 
     # ---- backups -------------------------------------------------------------
 
@@ -687,10 +923,14 @@ class CampaignStore:
                     raise
                 except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
                     raise CampaignError(DAMAGED) from exc
+            # The importer, and the owner when replacing (who stays the owner, #609), are
+            # DMs whatever the copy's DM list says: the owner must stay one (#437).
             await conn.execute(
-                "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)"
-                " ON CONFLICT DO NOTHING",
-                (campaign_id, guild_id, importer_id),
+                "INSERT INTO campaign_dms (campaign_id, guild_id, user_id)"
+                " SELECT %s, %s, u FROM unnest(ARRAY[%s, (SELECT owner_user_id FROM campaigns"
+                "   WHERE guild_id = %s AND id = %s)]::BIGINT[]) AS u"
+                " WHERE u IS NOT NULL ON CONFLICT DO NOTHING",
+                (campaign_id, guild_id, importer_id, guild_id, campaign_id),
             )
             return await self._require(conn, guild_id, campaign_id)
 
@@ -813,6 +1053,19 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         transcript_channel_id=row_int(row, "transcript_channel_id"),
         dm_screen_level=row["dm_screen_level"],
         owner_user_id=row_int(row, "owner_user_id"),
+    )
+
+
+def _to_offer(row: dict[str, Any]) -> HandoverOffer:
+    return HandoverOffer(
+        id=int(row["id"]),
+        guild_id=int(row["guild_id"]),
+        campaign_id=row["campaign_id"],
+        from_user_id=int(row["from_user_id"]),
+        to_user_id=int(row["to_user_id"]),
+        created_at=int(row["created_at"]),
+        status=cast(Any, row["status"]),
+        decided_at=row_int(row, "decided_at"),
     )
 
 
