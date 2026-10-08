@@ -148,7 +148,7 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
   the script's order as two made-up people. Each turn starts 800 ms after the last one ends
   (`--answer-ms`; a negative number talks over the end). The record adds each speaker's own
   score.
-  - `--stop 1002@0:25`: that person presses Stop recording me at 0:25 of the replay. What
+  - `--stop 1002@0:25`: that person stops being recorded (⚙️ Menu, Stop recording me, Yes) at 0:25 of the replay. What
     they say after it must never be written down, and the record checks this.
   - `--agree 1002@0:25`: they say yes only then (the first-time question), so nothing
     before it is heard. The times are the replay's, as printed under "heard:".
@@ -240,7 +240,7 @@ During play
   #270)
 - [ ] Someone agrees part-way through, then says one sentence at once: their first word is
   kept (#306)
-- [ ] A player presses Stop recording me: their lines stop at once (#306)
+- [ ] A player presses ⚙️ Menu, Stop recording me, Yes: their lines stop at once (#306)
 - [ ] /consent revoke from the DM screen stops someone (#190)
 - [ ] Use DMbot on a phone too (#284, #288, #302)
 

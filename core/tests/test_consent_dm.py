@@ -1,6 +1,7 @@
 """Consent by private message: who is asked, what they see, and what the buttons do."""
 
 import asyncio
+import gc
 import json
 import re
 from types import SimpleNamespace
@@ -24,6 +25,18 @@ GUILD, VOICE, SCREEN, ELSEWHERE = 1, 2, 3, 12345
 DM, PLAYER, LATECOMER, OTHER_BOT = 7, 8, 9, 10
 FORBIDDEN = discord.Forbidden(MagicMock(status=403), "Cannot send messages to this user")
 TOO_FAST = discord.HTTPException(MagicMock(status=400), "Opening DMs too fast")
+
+
+async def cancel_late_lookups(bot: Any) -> None:
+    """Stop recorded()'s lookups left running, even ones slow to take the cancel."""
+    tasks = list(bot._lookups.values())
+    for _ in range(2):  # the second lands in the slow cleanup
+        for task in tasks:
+            task.cancel()
+        await asyncio.sleep(0)
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.sleep(0)  # the done-callbacks run on the next turn
+    assert not bot._lookups
 
 
 class FakeEars:
@@ -70,6 +83,24 @@ def test_reminder_is_short_and_shows_the_date() -> None:
     outside = c.reminder_text("Dragon Club", None, 1_760_000_000, cloud=True, company="Deepgram")
     assert "Your voice and Discord name go to Deepgram" in outside
     assert outside.count("\n") == 0 and "in **Dragon Club**" in outside  # no voice: still reads
+
+
+def test_the_warning_comes_off_whatever_the_server_is_called_now() -> None:
+    # #834: renamed between Stop and Keep, or the server isn't served here any more.
+    text = "🎙️ DMbot is recording you."
+    assert c.without_warning(c.with_warning("Old *name*", text)) == text
+    assert c.without_warning(text) == text  # no warning: as it is
+    edited = "Stop recording you? Not the warning.\n\n" + text
+    assert c.without_warning(edited) == edited
+    later = "Before.\n\n" + c.with_warning("X", text)  # only a warning at the very start
+    assert c.without_warning(later) == later
+    tricky = "A **? DMbot won't write down** @everyone"  # escaped, so it can't end the name
+    assert c.without_warning(c.with_warning(tricky, text)) == text
+
+
+def test_an_old_reminder_gets_the_menus_words_back() -> None:
+    old = f"🎙️ DMbot is recording you. {c.OLD_STOP_HINT} {c.OLD_SHEET_NOTE}"
+    assert c.without_warning(old) == f"🎙️ DMbot is recording you. {c.MENU_HINT} {c.SHEET_NOTE}"
 
 
 def test_the_sheet_note_only_when_sheets_are_on() -> None:
@@ -263,6 +294,7 @@ class ConsentDMTests(DatabaseTest):
         await self.consent.grant(GUILD, PLAYER)
         await self.joined()
         assert "you said yes on <t:" in self.sent_text(self.player)
+        assert c.SHEET_NOTE not in self.sent_text(self.player)  # sheets off here (#834)
         (menu,) = custom_ids(self.player.send.await_args.kwargs["view"])
         assert re.fullmatch(r"dmbot:consent:menu:1:([0-9a-f]{32}|-)", menu)  # this campaign
 
@@ -564,7 +596,12 @@ class ConsentDMTests(DatabaseTest):
         assert str(PLAYER) in self.allowlists()[-1]
         edit = press.edit_original_response.await_args.kwargs
         assert "You said yes on <t:" in edit["content"]
+        assert c.SHEET_NOTE not in edit["content"]  # sheets off here: no 📜 to point at
         assert custom_ids(edit["view"]) == ["dmbot:consent:menu:1:-"]
+        self.bot.sheets = MagicMock()
+        press = self.button_press(PLAYER)
+        await c.ConsentButton(GUILD).callback(press)
+        assert c.SHEET_NOTE in press.edit_original_response.await_args.kwargs["content"]
 
     async def test_consent_sticks_for_the_next_session(self) -> None:
         await c.ConsentButton(GUILD).callback(self.button_press(PLAYER))
@@ -693,6 +730,15 @@ class ConsentDMTests(DatabaseTest):
         close.delete_original_response.assert_not_called()  # never deletes the reminder
         assert self.consent.has_consent(GUILD, PLAYER)
 
+    async def test_keep_and_close_for_a_server_not_served_here_still_drop_the_warning(
+        self,
+    ) -> None:
+        warned = c.with_warning("Old name", self.REMINDER)
+        for button in (c.KeepButton(ELSEWHERE), c.CloseButton(ELSEWHERE)):
+            press = self.lasting(self.button_press(PLAYER), warned)
+            await button.callback(press)
+            assert press.response.edit_message.await_args.kwargs["content"] == self.REMINDER
+
     async def test_on_the_reminder_a_stale_keep_corrects_its_text(self) -> None:
         press = self.lasting(self.button_press(PLAYER))  # they stopped another way
         await c.KeepButton(GUILD).callback(press)
@@ -746,9 +792,145 @@ class ConsentDMTests(DatabaseTest):
         self.consent.stop_now(GUILD, PLAYER)  # as if a fresh process: not in the cache
         with patch("dmbot.bot.RECORDED_CHECK_S", 0.05), self.assertLogs("dmbot.bot", "WARNING"):
             assert await asyncio.wait_for(self.bot.recorded(GUILD, PLAYER), 1)  # unsure: yes
+        await cancel_late_lookups(self.bot)
         self.consent.status = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
         with self.assertLogs("dmbot.bot", "WARNING"):
             assert await self.bot.recorded(GUILD, PLAYER)
+
+    def stalled(self) -> None:
+        """An empty cache (a fresh process) and a database that stalls, and even ignores
+        being cancelled for a while, as psycopg's cleanup does (#834)."""
+
+        async def stall(*_: Any, **__: Any) -> Any:
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                await asyncio.sleep(5)  # cleaning up, slowly
+                raise
+
+        self.bot.consent = ConsentStore(self.db)  # nothing loaded for this server
+        self.bot.consent.status = AsyncMock(side_effect=stall)  # type: ignore[method-assign]
+
+    async def test_a_stalled_database_still_answers_menu_and_keep_in_time(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.stalled()
+        with patch("dmbot.bot.RECORDED_CHECK_S", 0.05), self.assertLogs("dmbot.bot", "WARNING"):
+            menu = self.button_press(PLAYER)
+            await asyncio.wait_for(c.MenuButton(GUILD).callback(menu), 1)
+            keep = self.lasting(self.button_press(PLAYER))
+            await asyncio.wait_for(c.KeepButton(GUILD).callback(keep), 1)
+        assert "dmbot:consent:stop:1:-" in custom_ids(  # unsure: Stop is offered
+            menu.response.send_message.await_args.kwargs["view"]
+        )
+        assert keep.response.edit_message.await_args.kwargs["content"] == self.REMINDER
+        assert self.bot._lookups.values()  # left to finish alone, not awaited
+        await cancel_late_lookups(self.bot)
+
+    async def test_one_lookup_per_person_and_a_late_failure_is_tidied(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.consent = ConsentStore(self.db)  # nothing loaded for this server
+        release = asyncio.Event()
+
+        async def late_failure(*_: Any, **__: Any) -> Any:
+            try:
+                await release.wait()
+            except asyncio.CancelledError:  # slow to take the cancel, then fails
+                await release.wait()
+            raise RuntimeError("db down, late")
+
+        self.bot.consent.status = AsyncMock(side_effect=late_failure)  # type: ignore[method-assign]
+        with patch("dmbot.bot.RECORDED_CHECK_S", 0.01), self.assertLogs("dmbot.bot", "WARNING"):
+            assert await self.bot.recorded(GUILD, PLAYER)
+            assert await self.bot.recorded(GUILD, PLAYER)  # waits on the same lookup
+        self.bot.consent.status.assert_awaited_once()
+        (lookup,) = self.bot._lookups.values()
+        release.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert lookup.done() and not self.bot._lookups  # gone
+        del lookup
+        with self.assertNoLogs("asyncio", "ERROR"):  # its failure was read: no "never retrieved"
+            gc.collect()
+
+    async def test_a_timed_out_lookup_is_cancelled_and_let_go(self) -> None:
+        # So a stalled connection is given back, not held for minutes (#843).
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.consent = ConsentStore(self.db)
+        cleaned = asyncio.Event()
+
+        async def stall(*_: Any, **__: Any) -> Any:
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                await asyncio.sleep(0.05)  # psycopg's cleanup, quickly here
+                cleaned.set()
+                raise
+
+        self.bot.consent.status = AsyncMock(side_effect=stall)  # type: ignore[method-assign]
+        with patch("dmbot.bot.RECORDED_CHECK_S", 0.01), self.assertLogs("dmbot.bot", "WARNING"):
+            assert await self.bot.recorded(GUILD, PLAYER)
+            (lookup,) = self.bot._lookups.values()
+            assert lookup.cancelling() == 1  # asked to stop, not waited for
+            assert await self.bot.recorded(GUILD, PLAYER)  # a press meanwhile joins it...
+        assert lookup.cancelling() == 1  # ...and doesn't cancel its cleanup again
+        await asyncio.wait_for(cleaned.wait(), 1)
+        await asyncio.sleep(0)
+        assert lookup.cancelled() and not self.bot._lookups
+
+    async def test_a_press_waiting_on_a_cancelled_lookup_gets_stop(self) -> None:
+        # close() cancels lookups a press may be waiting on: Stop, not an error.
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.consent = ConsentStore(self.db)
+
+        async def stall(*_: Any, **__: Any) -> Any:
+            await asyncio.sleep(60)
+
+        self.bot.consent.status = AsyncMock(side_effect=stall)  # type: ignore[method-assign]
+        press = asyncio.create_task(self.bot.recorded(GUILD, PLAYER))
+        await asyncio.sleep(0.01)
+        (lookup,) = self.bot._lookups.values()
+        lookup.cancel()
+        assert await asyncio.wait_for(press, 1)
+
+    async def test_close_cancels_the_lookups(self) -> None:
+        self.bot.consent = ConsentStore(self.db)
+
+        async def stall(*_: Any, **__: Any) -> Any:
+            await asyncio.sleep(60)
+
+        self.bot.consent.status = AsyncMock(side_effect=stall)  # type: ignore[method-assign]
+        press = asyncio.create_task(self.bot.recorded(GUILD, PLAYER))
+        await asyncio.sleep(0.01)
+        (lookup,) = self.bot._lookups.values()
+        self.bot.pipeline.transcriber.close = AsyncMock()  # type: ignore[method-assign]
+        self.bot.ears.stop = AsyncMock()  # type: ignore[method-assign]
+        with (
+            patch("dmbot.bot.document_reader.shutdown"),  # global: other tests read files
+            patch.object(discord.AutoShardedClient, "close", AsyncMock()),
+        ):
+            await asyncio.wait_for(self.bot.close(), 5)
+        assert lookup.cancelled()
+        assert await press  # the press still got an answer: Stop
+
+    async def test_keep_with_a_failing_database_never_says_not_recorded(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.consent = ConsentStore(self.db)
+        self.bot.consent.status = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
+        keep = self.lasting(self.button_press(PLAYER), c.with_warning("Dragon Club", self.REMINDER))
+        with self.assertLogs("dmbot.bot", "WARNING"):
+            await c.KeepButton(GUILD).callback(keep)
+        assert keep.response.edit_message.await_args.kwargs["content"] == self.REMINDER
+
+    async def test_a_failing_database_still_offers_stop(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.consent = ConsentStore(self.db)
+        self.bot.consent.status = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
+        menu = self.button_press(PLAYER)
+        with self.assertLogs("dmbot.bot", "WARNING"):
+            await c.MenuButton(GUILD).callback(menu)
+        assert "dmbot:consent:stop:1:-" in custom_ids(
+            menu.response.send_message.await_args.kwargs["view"]
+        )
 
     async def test_setup_registers_the_consent_buttons(self) -> None:
         # So old 🛑 ids, and every menu button, keep working after a restart.

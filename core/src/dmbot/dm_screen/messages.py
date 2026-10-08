@@ -72,7 +72,8 @@ STOP_STALE = (
 STOPPING = "Stopping…"
 ONLY_DM_STOPS = (
     "Only the DM can stop the session. To stop recording *you*, press **⚙️ Menu** in "
-    "DMbot's private message, then **Stop recording me**, or type `/consent revoke`."
+    "DMbot's private message, then **Stop recording me**, then **Yes**, or type "
+    "`/consent revoke`."
 )
 STOP_CONFIRM_S = 60.0
 
@@ -246,6 +247,7 @@ def transcript_card(campaign_name: str) -> str:
             'off-topic chat skipped]"; every word is still saved in the "As heard" transcript.',
             "**Who is recorded:** only people who said yes in DMbot's private message. "
             "Changed your mind? Press **⚙️ Menu** in that message, then **Stop recording me**, "
+            "then **Yes**, "
             "or type `/consent revoke` here or in any channel. Only you see the answer. "
             "What's already here stays.",
             "DMbot's notes for the DM never appear here.",
