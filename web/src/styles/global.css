@@ -47,16 +47,20 @@
   --content-width: 64rem;
   --text-width: 40rem;
   --radius: 0.75rem;
+  --shadow: 0 1px 2px rgb(20 30 26 / 0.06), 0 8px 24px rgb(20 30 26 / 0.08);
+  /* The page background (#559): a soft glow of the brand colour at the top, not a flat fill. */
+  --page: radial-gradient(70rem 32rem at 50% -8rem, #d9ebe4 0%, transparent 70%),
+    linear-gradient(180deg, #f7f5ef 0%, var(--bg) 40rem);
   --tap: 3rem; /* smallest button or link height a thumb can hit */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #151716;
-    --surface: #1e2120;
+    --bg: #101614;
+    --surface: #18211e;
     --text: #ecebe6;
-    --text-muted: #a9aea9;
-    --border: #353a38;
+    --text-muted: #a9b3ae;
+    --border: #2d3a35;
     --accent: #7fc4ad;
     --accent-text: #0f1a16;
     --accent-soft: #23332d;
@@ -64,6 +68,9 @@
     --warn: #d4a72c;
     --warn-soft: #3a2f12;
     --danger: #f97066;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.35);
+    --page: radial-gradient(70rem 32rem at 50% -8rem, #1d3a31 0%, transparent 70%),
+      linear-gradient(180deg, #13201c 0%, var(--bg) 40rem);
   }
 }
 
@@ -84,7 +91,8 @@ body {
   min-height: 100dvh; /* phones: the visible height, without the address bar */
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: var(--page), var(--bg);
+  background-repeat: no-repeat;
   color: var(--text);
   font-family: var(--font-body);
   font-size: var(--text-base);
@@ -161,6 +169,14 @@ a {
 
 .button:hover {
   filter: brightness(1.08);
+}
+
+/* A raised surface: cards and panels stand out from the page (#559). */
+.surface {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 
 @media (min-width: 48rem) {

@@ -36,6 +36,8 @@ class AIError(Exception):
 class Reply:
     text: str
     cut: bool  # stopped at the length limit: the end is missing
+    input_tokens: int = 0  # as the AI service counted them (what it charges for)
+    output_tokens: int = 0
 
 
 class AnthropicClient:
@@ -97,7 +99,9 @@ class AnthropicClient:
         if not isinstance(data, dict) or not isinstance(data.get("content", []), list):
             log.error("AI answer wasn't in the expected shape")
             raise AIError(FAILED)
-        usage = data.get("usage", {})
+        usage = data.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
         log.info(
             "AI request done: model=%s in=%s out=%s stop=%s",
             self.model,
@@ -107,4 +111,14 @@ class AnthropicClient:
         )
         blocks = [b for b in data.get("content", []) if isinstance(b, dict)]
         text = "".join(str(b.get("text", "")) for b in blocks if b.get("type") == "text")
-        return Reply(text, cut=data.get("stop_reason") == "max_tokens")
+
+        def count(name: str) -> int:
+            value = usage.get(name)
+            return value if isinstance(value, int) else 0
+
+        return Reply(
+            text,
+            cut=data.get("stop_reason") == "max_tokens",
+            input_tokens=count("input_tokens"),
+            output_tokens=count("output_tokens"),
+        )
