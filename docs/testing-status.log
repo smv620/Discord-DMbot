@@ -9,6 +9,16 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev2, PR #804 (#771 part 1): free access. Migration 0030 adds access_grants and
+  access_log (new, empty tables). Deploy: rebuild core and web-api. **Leave
+  DMBOT_FREE_USERS empty until #806 (the account page for covered people) is live.** A
+  bot-only check is fine meanwhile: set the owner's id, restart core only (not web-api),
+  and accepting a hand-over without a plan works. Check: 0030 applied; core logs "Free
+  access list: 0 ids" (or 1 with the bot-only check), never the id itself.
+- dev2, PR #817 (#797): website answers told in Discord, follow-ups (an answer while the
+  bot starts isn't lost; one made while the offer's message goes out changes it; a
+  website accept notes #dm-screen). No migration. Deploy: rebuild core. Check: no new
+  errors; "Lost notifications on dmbot_handover_decided" only if the database drops.
 - dev2, PR #781 (#723 part A, second half): players link their D&D Beyond sheet with
   📜 My character sheet (next to 🛑 on the consent confirmation and each reminder), or
   type their character in; the DM sees it on the character's card and can Refresh
