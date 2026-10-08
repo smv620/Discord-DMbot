@@ -28,7 +28,7 @@ import logging
 import re
 import time
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import discord
 
@@ -63,13 +63,17 @@ OFFER_SENT = (
     "To take it back: ⚙️ Settings, then **Take back offer**."
 )
 UNREACHABLE = (
-    "DMbot couldn't send **{name}** a private message (they may have left the server, or "
-    "they don't accept messages from server members). The offer was taken back. Ask them to "
-    "allow messages from this server, then try again."
+    "DMbot couldn't send **{name}** a private message, so the offer was taken back. Check "
+    "they're still in this server and that they allow messages from its members (in this "
+    "server's privacy settings), then try again."
 )
 UNREACHABLE_STUCK = (
     "DMbot couldn't send **{name}** a private message, and couldn't take the offer back "
     "either. Take it back yourself: ⚙️ Settings, then **Take back offer**."
+)
+UNREACHABLE_ANSWERED = (
+    "DMbot couldn't send **{name}** a private message, but the offer has already been "
+    "answered or taken back. Check ⚙️ Settings to see where it stands."
 )
 OFFER_TEXT = (
     "🤝 **{owner}** is asking you to pay for the campaign **{campaign}** on **{server}** with "
@@ -95,8 +99,8 @@ ENDED = "This offer has ended: it was answered, taken back, or its {days} days a
 WITHDRAWN = "Offer taken back. **{campaign}** stays yours."
 TOLD_WITHDRAWN = "**{owner}** took back the offer of **{campaign}**. Nothing changed for you."
 NOT_YOUR_OFFER = "Only **{owner}**, who made this offer, can take it back."
-NOT_HERE = "DMbot can't reach that server right now. Try again in a minute."
-SERVER_GONE = "DMbot isn't in that server any more, so this offer can't be answered."
+NOT_HERE = "DMbot can't reach the server right now. Try again in a minute."
+SERVER_GONE = "DMbot isn't in that server any more, so this offer has ended. Nothing changed."
 NOT_A_MEMBER = "You're not in that server any more, so you can't take over its campaign."
 FAILED = "Something broke on DMbot's side, so that didn't work. Try once more."
 TAKE_ON_ASK = (
@@ -268,7 +272,7 @@ class PickNewOwner(discord.ui.View):
         if await deliver_offer(guild, self.campaign, offer):
             text = OFFER_SENT.format(name=_md(name), days=HANDOVER_DAYS)
         else:
-            back: str
+            back: Literal["withdrawn", "gone", "failed"]
             try:
                 back = await store.withdraw_handover(
                     guild.id, offer.id, interaction.user.id, _now()
@@ -278,7 +282,11 @@ class PickNewOwner(discord.ui.View):
                 back = "failed"
             # "gone": answered (on the website) or taken back in the meantime; not ours to
             # call taken back.
-            template = UNREACHABLE if back == "withdrawn" else UNREACHABLE_STUCK
+            template = {
+                "withdrawn": UNREACHABLE,
+                "gone": UNREACHABLE_ANSWERED,
+                "failed": UNREACHABLE_STUCK,
+            }[back]
             text = template.format(name=_md(name))
         await _end_message(interaction, text)
 

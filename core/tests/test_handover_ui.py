@@ -205,7 +205,7 @@ class Offering(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             it.client.campaigns.withdraw_handover.await_args.args[:3], (GUILD, OFFER_ID, OWNER)
         )
-        self.assertIn("The offer was taken back", shown(it))
+        self.assertIn("so the offer was taken back", shown(it))
 
     async def test_an_offer_that_cant_be_taken_back_says_how(self) -> None:
         it = interaction(OWNER)
@@ -239,8 +239,7 @@ class Offering(unittest.IsolatedAsyncioTestCase):
         it.member.send.side_effect = discord.Forbidden(MagicMock(status=403), "closed")
         with self.assertLogs("dmbot.dm_screen.handover", "INFO"):
             await self.picker(self.person(BUYER))._picked(it)
-        self.assertNotIn("The offer was taken back", shown(it))
-        self.assertIn("Take it back yourself: ⚙️ Settings", shown(it))
+        self.assertEqual(shown(it), handover.UNREACHABLE_ANSWERED.format(name="Mirelle"))
 
     async def test_a_message_that_cant_be_edited_is_said_anew(self) -> None:
         it = interaction(OWNER)
