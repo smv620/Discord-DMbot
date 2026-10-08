@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-07 by dev1 (deployed 84f1790: migration 0011, 3 workers; ready for run 8)
+Last updated: 2026-10-07 by dev1 (deployed 6895de8: migration 0012; ready for run 8)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -8,9 +8,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- PR #487 (#476): memory facts touching an entry now load in a fixed order, so flags are
-  made in the same order every time. Deploy: rebuild core. Check: after a session, the
-  DM screen's flags look as before (no live change expected; the fix is for a test).
+(nothing queued)
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -24,12 +22,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 84f1790 (2026-10-07 21:11 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 6895de8 (2026-10-07 23:57 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since 84f1790, ask it to redeploy first. Use a steady connection (run 8a
+      moved since 6895de8, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -125,6 +123,14 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     backlog; watch the log for "working again" churn
   - #436, #410: after /dmbot stop, record the first real N of "Closed N memory flag(s)"
     and "Deleted N change-log row(s)"
+  Deployed 2026-10-07 23:57 (6895de8)
+  - #482 (#173): name hints put people in the voice channel first (nothing visible;
+    the log shows no change)
+  - #492 (#173): after the session, /transcript download: the header says "Speech to
+    text: Deepgram, an online service (model nova-3)"
+  - #495 (#470): if Deepgram flaps, the DM screen shows at most one "No transcript"
+    and one "working again"
+  - #477 (#471), #487 (#476): no visible change; flags after a session look as before
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS

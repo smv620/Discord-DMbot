@@ -664,3 +664,16 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     longest piece      7.3 s               7.4 s
   100 ms of lead-in saved one first word and the whole whisper; one pause stopped
   splitting the speech. Results also on #299.
+
+==============================================================================
+2026-10-07  Server: deploy 6895de8 (dev1, no test run)
+==============================================================================
+  - 23:57 UTC  development @ 6895de8: #482 (name hints: people in the table's voice
+    channel first, those not there last, #173), #492 (transcripts record which
+    speech-to-text wrote each session; download header, #173), #495 (transcription
+    concurrency follow-ups, #470), #477 (Cleaner part 1 follow-ups, #471), #478 (twin
+    option checks, #472), #487 (memory facts read in id order, #476).
+  - Database backed up first (23:55 UTC, "pre0012", outside the repo; pg_restore -l reads
+    25 tables); no session was live. .env already matched .env.example. Core rebuilt:
+    "Database updated: 0012_transcript_engines" (transcript_sessions.engines TEXT[]
+    default '{}'), "Connected to 1 server(s)", "ears connected", no warnings or errors.
