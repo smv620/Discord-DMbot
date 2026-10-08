@@ -38,6 +38,7 @@ class FakeDiscord:
         self.installed_guild: int | None = None  # what Discord says DMbot was added to
 
     def authorize_url(self, state: str, redirect_uri: str) -> str:
+        self.used_codes.clear()  # each sign-in Discord starts hands out a fresh code
         return f"https://discord.com/oauth2/authorize?state={state}&redirect_uri={redirect_uri}"
 
     async def exchange(self, code: str, redirect_uri: str) -> str:
@@ -96,7 +97,6 @@ class WebApi(DatabaseTest):
         await super().asyncTearDown()
 
     async def sign_in(self) -> httpx.Response:
-        self.discord.used_codes.clear()  # each real sign-in gets a fresh code from Discord
         start = await self.client.get("/auth/discord/start")
         state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
         return await self.client.get(
