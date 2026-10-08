@@ -23,6 +23,7 @@ from dmbot import fetch
 from dmbot.ai import AIError, AnthropicClient, Reply
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
+from dmbot.memory.document_reader import read_document
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
     CONFIRMED,
@@ -45,7 +46,6 @@ from dmbot.memory.name_documents import (
     kind_of_file,
     merge_lists,
     request_text,
-    text_of,
 )
 from dmbot.memory.name_list import (
     MAX_FILE_BYTES,
@@ -71,7 +71,7 @@ from dmbot.ui.dmbot_commands import (
     _send,
     _tell,
 )
-from dmbot.ui.list_matches import UNKNOWN_KIND, KindDiffers, Near, plan
+from dmbot.ui.list_matches import UNKNOWN_KIND, KindDiffers, Near, plan, too_many
 from dmbot.ui.names import (
     KIND_SHORT,
     KINDS,
@@ -498,7 +498,7 @@ _PARSING = asyncio.Semaphore(2)  # documents read at once, across all servers
 async def _document(filename: str, raw: bytes, label: str) -> tuple[Upload | None, str | None]:
     async with _PARSING:
         try:
-            return Upload(await asyncio.to_thread(text_of, filename, raw), label, True), None
+            return Upload(await read_document(filename, raw), label, True), None
         except DocumentError as exc:
             return None, str(exc)
 
@@ -827,6 +827,9 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
     # exists.
     # Pure CPU, bounded but up to a second or so on a big list: off the event loop.
     p = await asyncio.to_thread(plan, parsed.lines, names, secrets=secrets_ok)
+    if why := too_many(p, names, _md):
+        await _tell(interaction, f"Nothing was added. {why}")
+        return
     new = p.new
     room = MAX_NAMES - len(names.entities)
     if len(new) > room:

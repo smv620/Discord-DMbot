@@ -14,13 +14,14 @@ from psycopg.conninfo import make_conninfo
 from dmbot import schema
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database, DatabaseError
-from dmbot.web import accounts, sessions
+from dmbot.web import accounts, feedback, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild, DiscordUser
 from dmbot.web.me import build_me
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, TEST_URL, DatabaseTest
 from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_feedback import FakeDiscussions
 
 WEB_PASSWORD = "dmbot_web"
 OUTSIDER = DiscordGuild(id=555, name="Not In Alice's List", manage=True)
@@ -247,6 +248,33 @@ class WebRole(DatabaseTest):
                 " VALUES (%s, NULL, 0, 'link')",
                 (guild_id,),
             )
+
+    async def test_it_can_add_feedback_but_not_read_it(self) -> None:
+        discussions = FakeDiscussions()
+        app = create_app(settings(), self.web, FakeDiscord(), discussions=discussions)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API
+        ) as client:
+            sent = await client.post(
+                "/feedback",
+                json={"kind": "question", "message": "Hi", "contact": "bel#1"},
+                headers={"X-DMbot-Request": "1"},
+            )
+        self.assertEqual(sent.status_code, 200)
+        # Its yearly sweep runs, and leaves this new row alone.
+        self.assertEqual(await feedback.forget_old(self.web), 0)
+        # It may add a row (above), never read one: it has no right to.
+        with self.assertRaises(errors.InsufficientPrivilege):
+            async with self.web.unscoped() as conn:
+                await conn.execute("SELECT count(*) FROM feedback")
+        # The row is there all the same, for the database's administrator.
+        admin = await AsyncConnection.connect(SUPERUSER_URL, autocommit=True)
+        try:
+            await admin.execute(f"SET search_path TO {self.schema}")
+            found = await admin.execute("SELECT contact FROM feedback")
+            self.assertEqual(await found.fetchall(), [("bel#1",)])
+        finally:
+            await admin.close()
 
     async def test_the_whole_api_works_as_the_websites_role(self) -> None:
         provider = FakeProvider(b"h" * 32, SITE)

@@ -31,6 +31,12 @@ TOO_MANY_SECRETS = (
     f"more than {MAX_PER_LINE} secret names. Put the rest on a new line: the name, then "
     "| | |, then the rest"
 )
+# The most other names, and the most secret names, one list may give one name (#598),
+# counted with all its lines joined.
+MAX_PER_NAME = 50
+# The most other and secret names one list may add in all (#598). For both caps only the
+# names a list adds count, so a Download all file always uploads again.
+MAX_ADDED = 5_000
 PC = "player_character"
 
 # Kinds in plain words → the memory rules' kinds. Anything else "needs a look".
@@ -96,12 +102,13 @@ def header(*, secrets: bool) -> str:
         "### - other names: nicknames, titles or short forms people say.",
         "###   Put a , or ; between them: Bell, the old knight.",
         "###   Up to 20 other names on a line. For more, write the name again on a new",
-        "###   line with the rest.",
+        "###   line with the rest. One name can get up to 50 new other names per list.",
     ]
     if secrets:
         lines += [
             "### - secret names: disguises or secret identities (who it really is), with a ,",
-            "###   or ; between them. Up to 20 on a line; for more, do as for other names.",
+            "###   or ; between them. Up to 20 on a line and 50 for one name, as for other",
+            "###   names.",
             "###   Only the campaign's DM can add them. Players never see them.",
         ]
     lines += [
@@ -111,7 +118,8 @@ def header(*, secrets: bool) -> str:
         "### - A name DMbot already knows gets any new other names from its line.",
         "###   Spelled almost like a known name? DMbot asks if they're the same.",
         "###   A different kind than DMbot has? DMbot keeps its kind and asks you.",
-        "###   DMbot never joins or changes names on its own. Up to 2,000 lines.",
+        "###   DMbot never joins or changes names on its own. Up to 2,000 lines and",
+        f"###   {MAX_ADDED:,} new {'other and secret' if secrets else 'other'} names in all.",
         "### - If a line doesn't fit, DMbot tells you, and lets you add the rest or have its",
         "###   AI tidy the list.",
         "###",

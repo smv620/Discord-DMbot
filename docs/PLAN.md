@@ -603,7 +603,12 @@ so the docs always show names the way Discord does. For the campaign
   nothing heard) and under 50% received with at least 10 s lost in a minute warn at
   once. Until stage 2 lands, stage 1 warns directly at the DM screen's existing 90%
   (90–94% rarely costs words), not 95%. The end-of-session line keeps the raw numbers
-  for the logs; the summary's "kept cutting out" follows the same rule.
+  for the logs; the summary's "kept cutting out" follows the same rule. *Two more
+  decisions (2026-10-08, #699):* when no check is possible (no AI key, or an engine
+  without confidence and a middling read) the stage-1 rule warns on its own, with the
+  skipped check logged; and a rule that fires while the minute holds no transcript
+  line at all for that person counts as garbled once past the 2 s floor (an empty
+  transcript while someone is clearly talking is the clearest sign there is).
 - **Organized mode:** each campaign gets a category, `📋 Rime of the Frostmaiden`
   (categories keep capitals and emoji), holding its `dmb-` channels. Each channel has a
   pinned "What's this channel?" card saying what it's for and who can see it. This
@@ -1466,7 +1471,8 @@ for this call" seam stays, pointing at the operator's keys.
 
 **Plans and pricing (owner decisions, 2026-10-07).** The plan belongs to one Discord user
 (the DM); every campaign has one owner whose hours and campaign count it uses; co-DMs
-need no plan; "Hand over this campaign" moves ownership to another subscriber. Hours are
+need no plan; "Hand over this campaign" offers ownership to another member of the
+server, who needs a working plan only to accept. Hours are
 DMbot's listening time, start to stop, rounded up to the minute, pooled per month, no
 roll-over. Every plan has every feature; only hours and campaigns differ, except that
 Try It has no backups or downloads. The site keeps the words in one place; the bot's
@@ -1510,7 +1516,8 @@ before this get their only DM as owner; one with several DMs
 has no owner until the first `/dmbot start` asks the DM who started it to take it on
 ("Take it on / Not now"; never guessed, since ownership spends someone's hours; once the
 plan checks are live, no owner means no start). A hand-over is an offer, never immediate:
-the new owner (any subscriber who is a member of that Discord server) gets a private
+the new owner (any member of that Discord server; their plan is checked only when they
+accept, and never shown to the owner) gets a private
 message with Accept / No thanks, also shown on their account page; ownership moves only
 on acceptance, and only if they still have a free campaign slot at that moment; the offer
 expires after 7 days and the old owner can withdraw it. On accepting they become a DM of
@@ -1544,6 +1551,33 @@ pricing on roughly 36–60 speech-minutes per hour, Claude Haiku for the AI feat
 hosting); to be measured with the twin and run 8 before the promotion to `main`.
 Discord servers cost nothing and are not counted.
 
+**D&D Beyond character sheets (plan, 2026-10-08; phase 7 part A can start now).**
+Each player links their own sheet, privately: the consent message gains a "Link my
+character" button that opens a form for the link, and the DM's "Add a player's
+character" form gets the same optional field. Only `dndbeyond.com/characters/<number>`
+links are accepted and the sheet must be set to Public on D&D Beyond (if it isn't, DMbot
+tells the player how, in three plain steps). The link hangs off the player character
+DMbot already stores (the entity with "played by"); a player can unlink it with a
+button; the campaign's DMs see which characters have a sheet. DMbot keeps a small
+snapshot per character per campaign: name, species, classes and levels, ability scores,
+hit points, armour class, speed, saves, skills, senses, languages, and the *names* of
+spells, features and items; never descriptions or rules text (IP rule), enforced by an
+explicit list of allowed fields in the parser. The snapshot refreshes once at `/dmbot
+start` and on a DM's "Refresh sheets" button (one request per character per session);
+it is deleted with the campaign, goes into backups, and is never shared between
+campaigns even when two campaigns link the same sheet. Uses, in order of value: spell,
+item and feature names into the speech-to-text hints; the rules advisor (phase 3)
+citing the sheet in alerts (DM screen only); a who's-who card per character on the DM
+screen and facts for the story memory. Risk, stated: D&D Beyond has no official API;
+public sheets are read through an unofficial address that may change or close, so DMbot
+never scrapes pages, reads only sheets players made public, fetches rarely, and keeps a
+manual fallback ("Tell DMbot about your character": class, level, key features) so
+nothing else breaks if the feed does. Campaign-level access needs the DM's own login
+and stays a later browser extension in the DM's own session; never a password or cookie
+on our side. Order: part A (link, snapshot, hints, unlink, fallback form; one developer,
+no table work), part B with phase 3 (the rules advisor reads the snapshot), part C later
+(the extension).
+
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
 email guilds`); payments through a merchant-of-record hosted checkout (Paddle or Lemon
@@ -1559,7 +1593,13 @@ environment) so the owner can subscribe; no email sending yet. The public post h
 the message and date only; an optional "how to reach you" stays in the database with
 the message, never in the post, and the form says so. One post per IP per 10 minutes,
 2,000 characters, Turnstile. The page links to the repository and invites developers
-to open issues.
+to open issues. The page says, before Send, that the message is posted on GitHub where
+anyone can read and search it; the privacy page lists GitHub and says the "how to reach
+you" detail is kept with the message for a year, seen only by the team, and that a post
+is taken down on request through the same page (decided 2026-10-08 on #710). The
+`feedback` table is add-only (the website's role inserts, never reads; the team reads it
+as the database's administrator), and the website's hourly sweep deletes rows after 12
+months.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's

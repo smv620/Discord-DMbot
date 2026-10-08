@@ -31,6 +31,7 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/legal/terms", "legal/terms.astro", "Terms of use · DMbot", false],
   ["/legal/privacy", "legal/privacy.astro", "Privacy · DMbot", false],
   ["/legal/refunds", "legal/refunds.astro", "Refunds · DMbot", false],
+  ["/hello", "hello.astro", "Say hello · DMbot", false],
   ["/404", "404.astro", "Page not found · DMbot", true],
 ];
 

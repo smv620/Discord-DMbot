@@ -20,7 +20,7 @@ import logging
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from psycopg import AsyncConnection, sql
 from psycopg import errors as pg_errors
@@ -200,9 +200,12 @@ class Database:
             yield conn
 
     @asynccontextmanager
-    async def cleanup(self) -> AsyncIterator[Conn]:
-        """A transaction that can see and delete expired website sessions, nothing else."""
-        async with self._with(cleanup="expired-sessions") as conn:
+    async def cleanup(
+        self, what: Literal["expired-sessions", "old-feedback"] = "expired-sessions"
+    ) -> AsyncIterator[Conn]:
+        """A transaction that can see and delete expired website sessions, or delete
+        "Say hello" messages older than a year (#665), nothing else."""
+        async with self._with(cleanup=what) as conn:
             yield conn
 
     @asynccontextmanager
