@@ -881,3 +881,17 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     sensitive warning in a noisy room: #671 (OWNER, for Supervisor).
   - Test A series: 05:43 phone FAIL (#631), 07:01 PASS, 07:27 computer PASS. The 05:43
     failure didn't repeat on either device.
+
+==============================================================================
+2026-10-08  Test B: the Stop listening button asks before it stops (owner, alone): PASS
+==============================================================================
+  - 16:14-16:15 UTC on 70ac757 (development's newer images built, not started),
+    docs/next-test-step.md. Owner: Cancel worked; background noise, little speech.
+  - core: session started 16:14:28, ended by /dmbot stop 16:15:39; "Listened 1.2 min,
+    sent 0.1 min of speech (7%)"; "After-session scan: 2 line(s)".
+  - The #631 error again: ears "dave: MLS welcome processed (transition id: 0)", then
+    0.5 s after "capturing user": "receive error ... UnencryptedWhenPassthroughDisabled;
+    listening again (1 of 5 this minute)" and "(2 of 5)". Health 87/140, then 18/18 and
+    143/143; core "audio 66% (audio gaps)", then 100%. Before #641 the whole sentence
+    would have been lost. In the two clean runs DAVE logged "commit", not "welcome":
+    posted on #631 as a clue for the upstream report.
