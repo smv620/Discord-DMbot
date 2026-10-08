@@ -37,10 +37,12 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
     servers: list[dict[str, Any]] = []
     names = {g.id: g.name for g in session.guilds}  # for the installs list below
 
-    async with db.unscoped() as conn:
+    async with db.user(session.user_id, session=session.id_hash) as conn:
         # One batch (a pipeline), not hundreds of round trips. Each server's statements
         # switch the transaction to that server first, so row-level security shows only
-        # its rows, exactly as Database.guild() would.
+        # its rows, exactly as Database.guild() would. The person and their session are
+        # set throughout: the website's role sees a server only if it's in this
+        # session's own server list (#498).
         pending = []
         async with conn.pipeline():
             for guild in session.guilds[:MAX_GUILDS]:
@@ -103,9 +105,6 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
         # The last server's setting is cleared first, so only the installer rule applies:
         # otherwise that server's installs row would be visible here too.
         await conn.execute("SELECT set_config('dmbot.guild_id', '', true)")
-        await conn.execute(
-            "SELECT set_config('dmbot.user_id', %s, true)", (str(int(session.user_id)),)
-        )
         cur = await conn.execute(
             "SELECT guild_id, installed_at, via FROM installs"
             " WHERE installed_by_user_id = %s AND left_at IS NULL ORDER BY installed_at",

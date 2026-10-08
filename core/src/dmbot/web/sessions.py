@@ -50,6 +50,7 @@ def state_ok(secret: bytes, state: str, cookie: str | None, now: int) -> bool:
 
 @dataclass(frozen=True)
 class Session:
+    id_hash: str  # the cookie's hash: the database holds the website's role to this one
     user_id: int
     display_name: str
     guilds: tuple[DiscordGuild, ...]
@@ -108,6 +109,7 @@ async def find(db: Database, token: str, *, now: int) -> Session | None:
         for g in row["guilds"]
     )
     return Session(
+        id_hash=id_hash,
         user_id=row["user_id"],
         display_name=row["display_name"],
         guilds=guilds,

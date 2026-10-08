@@ -137,6 +137,16 @@ again before starting core. Stop it with `pg_ctl -D "%USERPROFILE%\dmbot-pg" sto
 **With Docker Compose:** nothing to install. Set `POSTGRES_ADMIN_PASSWORD` and
 `DMBOT_DB_PASSWORD` in `.env`; Compose starts Postgres and creates the `dmbot` user.
 
+**The website's API** connects as its own user, `dmbot_web`, which the database holds to
+the signed-in person's own servers and the website's tables (#498). On a new database,
+Compose creates it when `DMBOT_WEB_DB_PASSWORD` is set. On a database that already exists,
+create it once with the same script, then restart core (it gives the role its rights):
+```bash
+docker compose up -d postgres   # picks up DMBOT_WEB_DB_PASSWORD from .env
+docker compose exec postgres bash /docker-entrypoint-initdb.d/02-dmbot-web.sh
+docker compose restart core
+```
+
 ## Running on a server
 
 See [`docs/DEPLOY.md`](docs/DEPLOY.md): one `docker compose up -d --build` starts both

@@ -719,6 +719,52 @@ INSTALLS_LEFT = """
         'Write contract: see migration 0014 in core/src/dmbot/schema.py.';
     """
 
+# The website API's own database role (#498). The policies below only ever narrow what it
+# sees; they never change what the bot (role `dmbot`) sees. The role itself is made by
+# whoever runs Postgres (deploy/postgres-init/02-dmbot-web.sh, or the README for an
+# existing server), because DMbot's own role can't create roles.
+WEB_ROLE = "dmbot_web"
+
+WEB_ROLE_LIMITS = """
+    -- For the website's role only: a server's rows are visible (or writable) only if that
+    -- server is in the Discord server list of the signed-in session on this request, and
+    -- the session belongs to the signed-in person (#498). So even code that sets
+    -- dmbot.guild_id to some other server sees nothing there. For every other role
+    -- (the bot), this is always true.
+    CREATE FUNCTION dmbot_web_guild_ok(g BIGINT) RETURNS BOOLEAN
+        LANGUAGE sql STABLE
+        AS $fn$
+            SELECT current_user <> 'dmbot_web' OR EXISTS (
+                SELECT 1 FROM web_sessions s, jsonb_array_elements(s.guilds) AS e
+                WHERE s.id_hash = dmbot_current_session()
+                  AND s.user_id = dmbot_current_user()
+                  AND s.expires_at > dmbot_now()
+                  AND (e->>'id')::BIGINT = g)
+        $fn$;
+
+    -- RESTRICTIVE: ANDed with the server policy each table already has.
+    CREATE POLICY web_session_servers ON campaigns AS RESTRICTIVE
+        USING (dmbot_web_guild_ok(guild_id)) WITH CHECK (dmbot_web_guild_ok(guild_id));
+    CREATE POLICY web_session_servers ON campaign_dms AS RESTRICTIVE
+        USING (dmbot_web_guild_ok(guild_id)) WITH CHECK (dmbot_web_guild_ok(guild_id));
+    -- A person's own installs stay visible (the account page lists them) even for a
+    -- server no longer in their list; writing still needs the server in the list.
+    CREATE POLICY web_session_servers ON installs AS RESTRICTIVE
+        USING (dmbot_web_guild_ok(guild_id) OR installed_by_user_id = dmbot_current_user())
+        WITH CHECK (dmbot_web_guild_ok(guild_id));
+    """
+
+# What the website's role may touch at all: its own tables, and only reads of the two
+# server tables /me needs. Everything else (consent, transcripts, memory...) is refused
+# outright. Applied by Database.migrate whenever the role exists, so a new table is never
+# opened to it by accident: it has to be added here.
+WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("SELECT", ("schema_migrations", "campaigns", "campaign_dms")),
+    ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
+    ("SELECT, INSERT", ("payment_events", "try_it_used")),
+    ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -734,6 +780,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0012_transcript_engines", TRANSCRIPT_ENGINES),
     ("0013_web_session_name", WEB_SESSION_NAME),
     ("0014_installs_left_at", INSTALLS_LEFT),
+    ("0015_web_role_limits", WEB_ROLE_LIMITS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

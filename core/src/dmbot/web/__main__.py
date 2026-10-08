@@ -10,7 +10,6 @@ import sys
 import time
 
 import uvicorn
-from psycopg.conninfo import make_conninfo
 
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
@@ -39,10 +38,13 @@ async def _sweep_expired_sessions(db: Database) -> None:
 
 async def serve(settings: WebSettings) -> None:
     # A small pool of its own, and no query may run longer than 5 seconds: a busy website
-    # can never hold many of the database's connections for long.
+    # can never hold many of the database's connections for long. It never changes the
+    # schema (its role, dmbot_web, can't): the bot does, so it only checks it's current.
     db = await Database.open(
-        make_conninfo(settings.database_url, options="-c statement_timeout=5000"),
+        settings.database_url,
+        options="-c statement_timeout=5000",
         max_size=4,
+        migrate=False,
     )
     discord = HttpDiscord(settings.discord_client_id, settings.discord_client_secret)
     payments = (

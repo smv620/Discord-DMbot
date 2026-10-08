@@ -27,7 +27,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from dmbot.schema import MIGRATIONS, Migration
+from dmbot.schema import MIGRATIONS, WEB_ROLE, WEB_ROLE_GRANTS, Migration
 
 log = logging.getLogger(__name__)
 
@@ -57,17 +57,25 @@ class Database:
         max_size: int = 10,
         open_timeout: float = 15,
         migrations: Sequence[Migration] = MIGRATIONS,
+        migrate: bool = True,
+        options: str = "",
     ) -> Database:
         """Connect, check the role is safe, and bring the schema up to date.
 
         `schema` puts everything in a separate Postgres schema (used by tests).
+        `migrate=False` only checks the schema is up to date: for the website's role,
+        which may not change it (the bot updates it). `options` are extra server
+        settings, e.g. "-c statement_timeout=5000".
         """
         conninfo = url
         if schema is not None:
             if not _SCHEMA_NAME.match(schema):
                 raise ValueError(f"Invalid schema name: {schema!r}")
-            await _create_schema(url, schema)
-            conninfo = make_conninfo(url, options=f"-c search_path={schema}")
+            if migrate:
+                await _create_schema(url, schema)
+            options = f"{options} -c search_path={schema}".strip()
+        if options:
+            conninfo = make_conninfo(url, options=options)
         pool: AsyncConnectionPool[Conn] = AsyncConnectionPool(
             conninfo,
             connection_class=AsyncConnection[DictRow],
@@ -91,7 +99,10 @@ class Database:
         db = cls(pool, conninfo)
         try:
             await db._check_role()
-            await db.migrate(migrations)
+            if migrate:
+                await db.migrate(migrations)
+            else:
+                await db._check_up_to_date(migrations)
         except BaseException:
             await db.close()
             raise
@@ -127,16 +138,21 @@ class Database:
             yield conn
 
     @asynccontextmanager
-    async def user(self, user_id: int, *, install_guild: int | None = None) -> AsyncIterator[Conn]:
+    async def user(
+        self, user_id: int, *, install_guild: int | None = None, session: str | None = None
+    ) -> AsyncIterator[Conn]:
         """A transaction that can only see one person's website rows (#435): their
         account, plan (read only), sessions and installs. Never any server's campaigns.
 
         `install_guild` lets it record or link DMbot's install on that one server, and
         nothing else of that server's. The caller must first have checked, with Discord,
-        that the person manages that server."""
+        that the person manages that server. `session` (the cookie's hash) is the
+        signed-in session whose server list the website's role is held to (#498)."""
         settings = {"user_id": str(int(user_id))}
         if install_guild is not None:
             settings["install_guild"] = str(int(install_guild))
+        if session is not None:
+            settings["session"] = session
         async with self._with(**settings) as conn:
             yield conn
 
@@ -227,6 +243,22 @@ class Database:
                 "contain any character). See README, 'Database'."
             )
 
+    async def _check_up_to_date(self, migrations: Sequence[Migration]) -> None:
+        try:
+            async with self.unscoped() as conn:
+                cur = await conn.execute("SELECT name FROM schema_migrations")
+                done = {r["name"] for r in await cur.fetchall()}
+        except pg_errors.Error as exc:
+            raise DatabaseError(
+                "The database isn't set up yet. Start the bot first (it updates the "
+                "database), then this."
+            ) from exc
+        if any(name not in done for name, _ in migrations):
+            raise DatabaseError(
+                "The database is older than this code. Start the updated bot first (it "
+                "updates the database), then this."
+            )
+
     async def migrate(self, migrations: Sequence[Migration] = MIGRATIONS) -> list[str]:
         """Apply migrations not yet recorded, all in one transaction.
 
@@ -248,9 +280,33 @@ class Database:
                 await conn.execute(statements)  # no parameters: several statements are fine
                 await conn.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (name,))
                 applied.append(name)
+            await _grant_web_role(conn)
         if applied:
             log.info("Database updated: %s", ", ".join(applied))
         return applied
+
+
+async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
+    """Give the website's role (#498) exactly WEB_ROLE_GRANTS in this schema, if the role
+    exists (it's made outside DMbot). Run on every start, so it's never behind."""
+    cur = await conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (WEB_ROLE,))
+    if await cur.fetchone() is None:
+        return
+    role = sql.Identifier(WEB_ROLE)
+    cur = await conn.execute("SELECT current_schema() AS s")
+    row = await cur.fetchone()
+    assert row is not None
+    await conn.execute(
+        sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(sql.Identifier(row["s"]), role)
+    )
+    for privileges, tables in WEB_ROLE_GRANTS:
+        await conn.execute(
+            sql.SQL("GRANT {} ON {} TO {}").format(
+                sql.SQL(privileges),  # constants from schema.py, never input
+                sql.SQL(", ").join(sql.Identifier(t) for t in tables),
+                role,
+            )
+        )
 
 
 async def _take_migration_lock(conn: AsyncConnection[Any]) -> None:

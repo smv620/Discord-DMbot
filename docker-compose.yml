@@ -9,6 +9,7 @@ services:
       # connects as the ordinary "dmbot" role created by deploy/postgres-init.
       POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
       DMBOT_DB_PASSWORD: ${DMBOT_DB_PASSWORD:?set DMBOT_DB_PASSWORD in .env}
+      DMBOT_WEB_DB_PASSWORD: ${DMBOT_WEB_DB_PASSWORD:-}   # the website's role (#498), if set
       POSTGRES_INITDB_ARGS: --encoding=UTF8
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -37,6 +38,7 @@ services:
       DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
       WEB_SECRET_KEY: ""
       PAYMENT_WEBHOOK_SECRET: ""
+      DMBOT_WEB_DB_PASSWORD: ""
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,6 +64,7 @@ services:
       DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
       WEB_SECRET_KEY: ""
       PAYMENT_WEBHOOK_SECRET: ""
+      DMBOT_WEB_DB_PASSWORD: ""
     depends_on:
       - core
     restart: unless-stopped
@@ -81,7 +84,8 @@ services:
     # Only the settings the API needs, listed by name (no env_file): a secret added to
     # .env later never reaches it by accident. No bot token, voice secret, AI or speech keys.
     environment:
-      DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
+      # Its own role, held by the database to the signed-in person's servers (#498).
+      DATABASE_URL: postgresql://dmbot_web:${DMBOT_WEB_DB_PASSWORD:-}@postgres:5432/dmbot
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       WEB_SECRET_KEY: ${WEB_SECRET_KEY:-}
