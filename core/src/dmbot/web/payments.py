@@ -19,6 +19,9 @@ What every real adapter must do (#497):
   it orders late deliveries and becomes the plan's change time.
 - The person's email goes to the company server-side (its API call), never in the
   checkout address the browser is sent to.
+- `cancel` (account deletion) cancels at the end of the period already paid for, never
+  immediately and with no refund or new charge: "Your plan stops at the end of the month
+  you've paid for. You won't be charged again." (web's decision on #435).
 """
 
 from __future__ import annotations
@@ -83,8 +86,9 @@ class PaymentProvider(Protocol):
     async def billing_url(self, *, customer_id: str, return_url: str) -> str: ...
 
     async def cancel(self, *, subscription_id: str) -> None:
-        """Stop the subscription now (the person is deleting their account). Cancelling a
-        subscription that is already cancelled must succeed, so a retried deletion works."""
+        """Stop the subscription at the end of the period already paid for: the person is
+        deleting their account and must never be charged again. Cancelling a subscription
+        that is already cancelled must succeed, so a retried deletion works."""
         ...
 
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:

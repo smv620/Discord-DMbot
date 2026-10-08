@@ -259,7 +259,7 @@ class WebAccounts(DatabaseTest):
 
     async def test_try_it_once_even_after_deleting_the_account(self) -> None:
         await self.add_user(ALICE)
-        add = "INSERT INTO try_it_used (user_id, used_at) VALUES (%s, 0)"
+        add = "INSERT INTO try_it_used (user_id) VALUES (%s)"
         with self.assertRaises(pg_errors.InsufficientPrivilege):
             async with self.db.user(ALICE) as conn:  # only the plan writer marks it
                 await conn.execute(add, (ALICE,))
@@ -268,10 +268,21 @@ class WebAccounts(DatabaseTest):
         async with self.db.user(ALICE) as conn:
             cur = await conn.execute("DELETE FROM try_it_used")
             self.assertEqual(cur.rowcount, 0)
-            cur = await conn.execute("UPDATE try_it_used SET used_at = 5")
+            cur = await conn.execute("UPDATE try_it_used SET user_id = user_id")
             self.assertEqual(cur.rowcount, 0)
             await conn.execute("DELETE FROM web_users WHERE user_id = %s", (ALICE,))
         self.assertEqual(await self.count("try_it_used", self.db.user(ALICE)), 1)
+
+    async def test_try_it_keeps_only_the_discord_id(self) -> None:
+        # Kept after a deletion, so it holds nothing but the id (privacy page, #435).
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT column_name FROM information_schema.columns"
+                " WHERE table_schema = current_schema() AND table_name = 'try_it_used'"
+                " ORDER BY ordinal_position"
+            )
+            columns = [row["column_name"] for row in await cur.fetchall()]
+        self.assertEqual(columns, ["user_id"])
 
     async def test_a_person_cannot_forge_or_forget_payment_events(self) -> None:
         await self.add_user(ALICE)
