@@ -93,7 +93,7 @@ def _date(timestamp: int) -> str:
 # It explains rather than adds terms, so it isn't part of the pinned wording.
 RENEWED = (
     "**What's new:** DMbot's helper now sends the text of what you say to an AI company "
-    "(Anthropic) to give your DM notes. It isn't used to train their AI. You said yes before "
+    "(Anthropic) to give your DM notes. It isn't used to train their AI. You agreed before "
     "this change, so DMbot is asking you again. It won't record you until you say yes."
 )
 # The AI that reads the text, said once for every helper (#52; TERMS_VERSION 3).
