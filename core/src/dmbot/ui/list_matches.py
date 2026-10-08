@@ -142,7 +142,7 @@ def too_many(p: Plan, names: CampaignLookup, quote: Callable[[str], str] = str) 
     """Why a list adds too many other or secret names to save, in plain words; None if
     it's fine (#598). Counts only what the list adds: a name's lines are already joined
     here, and names a known name has already are left out."""
-    total = 0
+    total = hidden = 0
     for name, others, secrets in (
         *((n.name, n.others, n.secrets) for n in p.new),
         *((names.entities[m.entity_id].name, m.others, m.secrets) for m in p.more),
@@ -154,8 +154,10 @@ def too_many(p: Plan, names: CampaignLookup, quote: Callable[[str], str] = str) 
                     "Keep the ones people say most."
                 )
         total += len(others) + len(secrets)
+        hidden += len(secrets)
     if total > MAX_ADDED:
-        return f"This list has more than {MAX_ADDED:,} other names. Split it into two uploads."
+        what = "other and secret names" if hidden else "other names"
+        return f"This list has more than {MAX_ADDED:,} {what}. Split it into two uploads."
     return None
 
 

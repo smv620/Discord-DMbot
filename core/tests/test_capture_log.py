@@ -299,7 +299,6 @@ class NoiseIsNoAlarm(unittest.TestCase):
         log.add_utterance(utt(1, 2.3))
         for at, received, expected in ((7, 52, 52), (21, 53, 53), (60, 155, 169), (61, 4, 23)):
             log.add_health(1, received, expected, at)
-        self.assertEqual(len(log._window[1]), 4)  # all four count
         self.assertIn("(audio gaps)", log.log_line() or "")  # the log keeps the raw numbers
         self.assertIsNone(log.render(str, 62))
 
@@ -308,10 +307,13 @@ class NoiseIsNoAlarm(unittest.TestCase):
         text = self.warning(pieces, 60)
         self.assertIn("**P1's voice is cutting out for DMbot** (85% got through)", text or "")
 
-    def test_a_steady_92_percent_stays_quiet(self) -> None:
-        # A phone at 92% for 30 s loses 2.4 s, but 90-94% rarely costs real words.
-        pieces = [(at, 276, 300) for at in (0, 10, 20, 29, 30)]
-        self.assertIsNone(self.warning(pieces, 30))
+    def test_a_steady_92_percent_is_checked_and_quiet_when_lines_read_fine(self) -> None:
+        # #699: 92% for 30 s (2.4 s lost) starts a check of their lines; fine lines: quiet.
+        log = CaptureLog()
+        log.add_utterance(utt(1, 1.0))
+        for at in (0, 10, 20, 29, 30):
+            log.add_health(1, 276, 300, at)
+        self.assertIsNone(log.render(str, 30, confirm=lambda due: False))
 
     def test_ten_tv_bursts_in_a_minute_warn_at_stage_1(self) -> None:
         # Documents stage 1: ten 4/23 bursts lose 3.8 s, so this warns. #699 (stage 2)

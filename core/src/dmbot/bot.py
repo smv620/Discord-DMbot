@@ -27,9 +27,10 @@ from discord.ext import commands
 from dmbot import install
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
+from dmbot.audio_check import AudioChecker, Verdict
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL
-from dmbot.capture_log import CaptureLog, SessionTotals
+from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
 from dmbot.channel_access import (
     SAME_CHANNEL,
     STARTING_UP,
@@ -83,6 +84,7 @@ from dmbot.dm_screen.name_questions import (
     question_view,
 )
 from dmbot.dm_screen.settings import LevelButton, SettingsButton, SettingsVisibilityButton
+from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -127,7 +129,7 @@ from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.topic_ai import classify
 from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obviously_game
 from dmbot.transcript.topics import marker as topic_marker
-from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
+from dmbot.transcription.base import PlaceholderTranscriber, Transcriber, confidence_of
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, speech_sent_line
 from dmbot.ui import logic as ui_logic
@@ -245,6 +247,7 @@ class Table:
     dm_user_id: int
     segmenter: Segmenter
     capture_log: CaptureLog = field(default_factory=CaptureLog)
+    audio_checker: AudioChecker = field(default_factory=AudioChecker)  # #699
     # Names said lately, for hints that follow the scene (#126, #127), and the campaign's
     # names as last loaded (matching a line needs them without waiting).
     scene: SceneTracker = field(default_factory=SceneTracker)
@@ -298,6 +301,8 @@ class Table:
     listening_message: discord.Message | None = None  # carries the Stop button (#108)
     dropped_logged: bool = False
     save_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # One capture check at a time (#699: its audio check awaits the AI).
+    check_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # The off-topic filter (#52): lines waiting to be labelled, and the names-scan text
     # each holds back until then (hidden lines never reach the helpers); calls and
     # tokens, for the session's stats line.
@@ -336,6 +341,8 @@ class DMBotTree(app_commands.CommandTree["DMBot"]):
         if isinstance(error, app_commands.CommandNotFound | app_commands.CommandSignatureMismatch):
             # Their Discord still has the commands from before an update.
             log.warning("/%s isn't up to date for this person: %s", command, error)
+        # No command has a check today. One that adds a check gives a refused check
+        # (app_commands.CheckFailure) its own plain words, not "something broke" (#698).
         cause = error.original if isinstance(error, app_commands.CommandInvokeError) else error
         await _failed(interaction, cause, f"/{command}")
 
@@ -422,6 +429,14 @@ class DMBot(commands.AutoShardedBot):
         self._closing = False
         # Servers whose saved session is waiting for Discord to make the server available.
         self._resume_when_available: set[int] = set()
+        # Offers made on the website: this process sends those of its own servers (#690).
+        self.site_offers = SiteOffers(
+            campaigns,
+            get_guild=self.get_guild,
+            guild_ids=lambda: [g.id for g in self.guilds],
+            wait_until_ready=self.wait_until_ready,
+            spawn=self._track,
+        )
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -477,6 +492,8 @@ class DMBot(commands.AutoShardedBot):
             ),
             asyncio.create_task(self._transcript_poster(), name="transcripts"),
             asyncio.create_task(self._transcript_saver(), name="transcript-saves"),
+            self._watched(self.site_offers.follow(self.campaigns.listen), "site-offers"),
+            self._watched(self.site_offers.every_hour(), "site-offer-sweeps"),
         ]
 
     async def close(self) -> None:
@@ -573,6 +590,7 @@ class DMBot(commands.AutoShardedBot):
             if table is None:
                 continue
             table.segmenter.drop(user_id)
+            table.capture_log.forget(user_id)  # their lines and counts go now (#699)
             table.transcript.drop_speaker(user_id)  # words not posted yet are discarded
             table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
             table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
@@ -867,6 +885,9 @@ class DMBot(commands.AutoShardedBot):
                         *table.topic_tokens,
                     )
                 await self._after_session(table, ended_at, caught_up)
+                # After it: the end-of-session capture check runs the last audio checks.
+                if checks := table.audio_checker.log_line():  # cost of #699's checks
+                    log.info(checks)
             finally:
                 ending = self._ending.get(gid, [])
                 if table in ending:
@@ -919,7 +940,10 @@ class DMBot(commands.AutoShardedBot):
         gid = table.guild_id
         spoke = [
             screen_messages.Spoke(
-                self.name_of(gid, user_id), total.seconds, total.percent, total.lost_s
+                self.name_of(gid, user_id),
+                total.seconds,
+                total.percent,
+                user_id in table.totals.flagged,
             )
             for user_id, total in table.totals.speakers.items()
             if total.seconds > 0
@@ -1306,9 +1330,13 @@ class DMBot(commands.AutoShardedBot):
         """DMbot was just added to a server: say hello, or say what it still needs."""
         with log_context(guild_id=guild.id):
             log.info("Joined a server; %s", await install.post_welcome(guild))
+        # A hand-over offer made on the website may be waiting for this server (#690).
+        self._track(self.site_offers.sweep_server(guild.id), "offer-sweep")
 
     async def on_guild_available(self, guild: discord.Guild) -> None:
         """Discord made a server available again: resume its session if one was waiting."""
+        if self.is_ready():  # offers made on the website while it was out (#690)
+            self._track(self.site_offers.sweep_server(guild.id), "offer-sweep")
         if guild.id not in self._resume_when_available:
             return
         self._resume_when_available.discard(guild.id)
@@ -1684,6 +1712,11 @@ class DMBot(commands.AutoShardedBot):
             table.heard.append((utterance.user_id, cleaned or text))
             if len(table.heard) == HEARD_MAX:
                 log.info("Name scan: kept the first %d lines of this session", HEARD_MAX)
+        if text:
+            # What the audio check reads if their audio rule fires (#699): the line as the
+            # transcript has it (before the off-topic filter, which may hide it later),
+            # with the engine's confidence; kept as plain text.
+            table.capture_log.add_line(utterance.user_id, str(cleaned or text), confidence_of(text))
         if text and table.transcript_channel_id is not None:
             guild = self.get_guild(utterance.guild_id)
             member = guild.get_member(utterance.user_id) if guild else None
@@ -2570,8 +2603,16 @@ class DMBot(commands.AutoShardedBot):
     async def _summary_poster(self) -> None:
         while True:
             await asyncio.sleep(SUMMARY_INTERVAL_S)
-            for table in list(self.tables.values()):
-                await self.post_summary(table)
+            # Together: a table's audio check can wait on the AI (#699), bounded.
+            await asyncio.gather(*(self._summary_one(t) for t in list(self.tables.values())))
+
+    async def _summary_one(self, table: Table) -> None:
+        """One table's capture check; its failure never stops the others' (or later ones)."""
+        try:
+            await self.post_summary(table)
+        except Exception:
+            with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                log.exception("Capture check failed")
 
     async def _transcript_poster(self) -> None:
         limit = asyncio.Semaphore(TRANSCRIPT_PARALLEL)
@@ -2807,14 +2848,55 @@ class DMBot(commands.AutoShardedBot):
 
     async def post_summary(self, table: Table) -> None:
         """Log one capture-check line (IDs and numbers); warn the DM screen only if audio
-        went missing."""
-        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
-            line = table.capture_log.log_line()  # IDs and numbers only; before render
-            if line:
-                log.info(line)
-            text = table.capture_log.render(partial(self.name_of, table.guild_id), time.monotonic())
-            if text:
-                await self.post(table.screen_channel_id, text)
+        went missing and their lines read garbled (#699), or the loss was large."""
+        async with table.check_lock:  # the periodic check and the end-of-session one
+            with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                line = table.capture_log.log_line()  # IDs and numbers only; before due()
+                if line:
+                    log.info(line)
+                await self._audio_checks(table)
+
+    async def _audio_checks(self, table: Table) -> None:
+        gid = table.guild_id
+        dues = [
+            due
+            for due in table.capture_log.due(time.monotonic())
+            if self.consent.has_consent(gid, due.user_id)  # stopped: never read or named
+        ]
+        if not dues:
+            return
+
+        async def confirmed(due: Due) -> bool:
+            # Consent again: a stop can land between scheduling and this task's turn, and
+            # their lines must not reach the AI then (CLAUDE.md, after every async step).
+            if not self.consent.has_consent(gid, due.user_id):
+                return False
+            if due.large:
+                verdict = Verdict(True, "large loss")
+            else:
+                verdict = await table.audio_checker.check(due, self.topic_ai, time.monotonic())
+            log.info(
+                "Audio check for user %s: %s (%s; %d%% got through, %.1f s lost)",
+                due.user_id,
+                "warn" if verdict.garbled else "reads fine",
+                verdict.how,
+                due.percent,
+                due.lost / FRAMES_PER_S,
+            )
+            return verdict.garbled
+
+        # Together: one slow AI answer mustn't hold up the others (each is bounded).
+        results = await asyncio.gather(*(confirmed(due) for due in dues))
+        # Consent again after the wait, for everyone, before naming anyone (CLAUDE.md).
+        warn = [
+            due
+            for due, ok in zip(dues, results, strict=True)
+            if ok and self.consent.has_consent(gid, due.user_id)
+        ]
+        text = table.capture_log.warn(partial(self.name_of, gid), warn, time.monotonic())
+        table.totals.flagged.update(due.user_id for due in warn)
+        if text:
+            await self.post(table.screen_channel_id, text)
 
 
 # ---- slash commands ----------------------------------------------------------
