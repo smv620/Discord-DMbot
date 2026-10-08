@@ -153,6 +153,10 @@ The sessions don't share memory, so **GitHub Issues are the shared log.**
 - **Fix PRs say `Fixes #N`** so the issue closes when the PR merges.
 - **The repo is public:** never put tokens, `.env` contents, or players' personal data
   in issues.
+  **Made-up test values are fine** (decided 2026-10-08, #516): emails at `example.com`,
+  `example.org` or `example.net` (reserved for this), invented Discord-shaped numbers and
+  fake names. Never a real domain (gmail.com included), a number copied from Discord, or
+  anything read from the live database.
 - In cloud sessions `gh issue …` and `gh pr …` may fail (GraphQL is blocked). Use the
   REST API through `gh api repos/smv620/Discord-DMbot/...` instead.
 
