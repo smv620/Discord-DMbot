@@ -458,6 +458,14 @@ MEMORY_HEARD = f"""
     """ + _isolate("memory_heard")
 
 
+CAMPAIGN_OWNER = """
+    -- The campaign's owner (#437): the subscriber whose plan's hours and campaign count
+    -- it uses. Set to the creating DM, and to whoever restores a backup as a new
+    -- campaign; replacing a campaign keeps its owner. NULL for campaigns from before
+    -- this (no creator was recorded; #437 decides how they get one).
+    ALTER TABLE campaigns ADD COLUMN owner_user_id BIGINT;
+    """
+
 SHARED_CONFIRMATIONS = f"""
     -- Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule:
     -- "Record who confirmed and when"; #252): one row per confirmation, what it was for
@@ -854,6 +862,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0017_try_it_bare_id", TRY_IT_BARE_ID),
     ("0018_payment_event_subscription", PAYMENT_EVENT_SUBSCRIPTION),
     ("0019_shared_confirmations", SHARED_CONFIRMATIONS),
+    ("0020_campaign_owner", CAMPAIGN_OWNER),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

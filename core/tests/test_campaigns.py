@@ -305,6 +305,67 @@ class ExportImport(StoreTest):
         )
 
 
+class CampaignOwner(StoreTest):
+    """Whose plan a campaign uses (#437): its creator, then whoever restores it."""
+
+    async def test_the_creator_owns_it_and_a_co_dm_does_not(self) -> None:
+        c = await self.make("Frostmaiden")
+        self.assertEqual(c.owner_user_id, DM)
+        c = await self.store.add_dm(GUILD_A, c.id, DM2)
+        self.assertEqual(c.owner_user_id, DM)
+
+    async def test_a_backup_has_no_owner_and_the_restorer_owns_the_copy(self) -> None:
+        c = await self.make("Frostmaiden")
+        backup = await self.store.export(GUILD_A, c.id)
+        # A plan is a person's: no owner in the file, under any name.
+        self.assertNotIn("owner_user_id", backup["campaign"])
+        self.assertNotIn(DM, backup["campaign"].values())
+        restored = await self.store.import_backup(GUILD_B, backup, 555)
+        self.assertEqual(restored.owner_user_id, 555)
+
+    async def test_a_backup_cannot_choose_its_owner(self) -> None:
+        c = await self.make("Frostmaiden")
+        backup = await self.store.export(GUILD_A, c.id)
+        backup["campaign"]["owner_user_id"] = 999
+        restored = await self.store.import_backup(GUILD_B, backup, 555)
+        self.assertEqual(restored.owner_user_id, 555)
+
+    async def test_replacing_a_campaign_keeps_its_owner(self) -> None:
+        # A co-DM restoring over it doesn't take it onto their plan: that's a hand-over.
+        c = await self.make("Frostmaiden")
+        await self.store.add_dm(GUILD_A, c.id, DM2)
+        backup = await self.store.export(GUILD_A, c.id)
+        replaced = await self.store.import_backup(GUILD_A, backup, DM2, replace_campaign_id=c.id)
+        self.assertEqual(replaced.owner_user_id, DM)
+        with self.assertRaises(CampaignError):  # not a DM: refused, nothing changes
+            await self.store.import_backup(GUILD_A, backup, 555, replace_campaign_id=c.id)
+        unchanged = await self.store.get(GUILD_A, c.id)
+        assert unchanged is not None
+        self.assertEqual(unchanged.owner_user_id, DM)
+
+    async def test_removing_the_owner_as_a_dm_keeps_them_owner_for_now(self) -> None:
+        # What should happen is open in #437; this pins today's behaviour.
+        c = await self.make("Frostmaiden")
+        await self.store.add_dm(GUILD_A, c.id, DM2)
+        c = await self.store.remove_dm(GUILD_A, c.id, DM)
+        self.assertEqual((c.dm_user_ids, c.owner_user_id), (frozenset({DM2}), DM))
+
+    async def test_a_campaign_from_before_owners_has_none(self) -> None:
+        c = await self.make("Frostmaiden")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = NULL WHERE guild_id = %s AND id = %s",
+                (GUILD_A, c.id),
+            )
+        old = await self.store.get(GUILD_A, c.id)
+        assert old is not None
+        self.assertIsNone(old.owner_user_id)
+        self.assertEqual(old.dm_user_ids, frozenset({DM}))
+        backup = await self.store.export(GUILD_A, c.id)  # replacing it gives it one
+        replaced = await self.store.import_backup(GUILD_A, backup, DM, replace_campaign_id=c.id)
+        self.assertEqual(replaced.owner_user_id, DM)
+
+
 class ReviewHardening(StoreTest):
     """Cases from the reviewer and perf-qa agents' review of the first version."""
 

@@ -390,6 +390,7 @@ class CampaignStore:
                     None,
                     dm_screen_visibility,
                     dm_screen_level,
+                    dm_user_id,
                 )
                 await conn.execute(
                     "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)",
@@ -616,7 +617,9 @@ class CampaignStore:
     ) -> Campaign:
         """Restore a backup into this server, as a new campaign or replacing one.
 
-        The importer always becomes a DM of the restored campaign. When replacing, the
+        The importer always becomes a DM of the restored campaign, and its owner (#437)
+        when it's a new campaign: the owner isn't in a backup, as it is a person's plan.
+        Replacing a campaign keeps its owner (handing it over is its own step), and the
         importer must already be a DM of the campaign being replaced. Channel settings
         are not restored, because channels belong to the server the backup came from.
         `data` is untrusted: it's fully validated before anything is written, and the
@@ -641,7 +644,8 @@ class CampaignStore:
                 await conn.execute(
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
-                    " dm_screen_visibility = %s, dm_screen_level = %s"
+                    " dm_screen_visibility = %s, dm_screen_level = %s,"
+                    " owner_user_id = COALESCE(owner_user_id, %s)"
                     " WHERE guild_id = %s AND id = %s",
                     (
                         info["target_ruleset"],
@@ -650,6 +654,7 @@ class CampaignStore:
                         info["last_played_at"],
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
+                        importer_id,
                         guild_id,
                         campaign_id,
                     ),
@@ -668,6 +673,7 @@ class CampaignStore:
                         info["last_played_at"],
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
+                        importer_id,
                     )
                 except pg_errors.UniqueViolation as exc:
                     # Another restore took the same name a moment ago.
@@ -750,12 +756,14 @@ class CampaignStore:
         last_played_at: int | None,
         visibility: str,
         level: str,
+        owner_user_id: int,
     ) -> str:
         campaign_id = uuid.uuid4().hex
         await conn.execute(
             "INSERT INTO campaigns (id, guild_id, name, name_key, created_at, last_played_at,"
             " target_ruleset, fallback_ruleset, optional_rules_default, dm_screen_visibility,"
-            " dm_screen_level) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " dm_screen_level, owner_user_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 campaign_id,
                 guild_id,
@@ -768,6 +776,7 @@ class CampaignStore:
                 optional_default,
                 visibility,
                 level,
+                owner_user_id,
             ),
         )
         return campaign_id
@@ -803,6 +812,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         channel_number=row_int(row, "channel_number"),
         transcript_channel_id=row_int(row, "transcript_channel_id"),
         dm_screen_level=row["dm_screen_level"],
+        owner_user_id=row_int(row, "owner_user_id"),
     )
 
 
