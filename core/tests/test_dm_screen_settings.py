@@ -71,7 +71,11 @@ class SettingsCardTest(unittest.TestCase):
         self.assertIn("• **Who can see the DM screen:** The DM. Players can choose", text)
         self.assertIn("`/transcript`", text)
         quiet = settings_text(campaign("quiet"))
-        self.assertIn("Quiet. Only what you ask for, so fewer misheard names get fixed.", quiet)
+        self.assertIn(
+            "Quiet. Only what you ask for, warnings, and lines it left out as off-topic; "
+            "fewer misheard names get fixed.",
+            quiet,
+        )
         self.assertNotIn("recommended", quiet)
 
     def test_buttons_fit_a_phone_and_survive_a_restart(self) -> None:
