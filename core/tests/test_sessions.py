@@ -5,6 +5,7 @@ import contextlib
 import dataclasses
 import json
 import logging
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
@@ -664,6 +665,23 @@ class SaveAndResume(SessionTests):
         with self.assertLogs("dmbot.bot", level="WARNING") as logs:
             await self.bot._on_ears_message(Status("joined", guild_id=GUILD))
         self.assertIn("Recording notice NOT posted", "\n".join(logs.output))
+
+    async def test_after_a_restart_the_speech_line_says_so(self) -> None:
+        # #523: the minutes count from the restart, and `resumed` resets on the join.
+        from dmbot.ears.protocol import Status
+
+        await self.start()
+        bot = await self.restart()
+        await bot.resume_sessions()
+        table = bot.tables[GUILD]
+        await bot._on_status(table, Status("joined", guild_id=GUILD))
+        self.assertFalse(table.resumed)
+        with self.assertLogs("dmbot.bot", "INFO") as logs:
+            await bot.stop_table(GUILD, "test")
+            await asyncio.gather(*bot._finishing)
+        self.assertTrue(
+            any("of speech (0%) since the restart" in m for m in logs.output), logs.output
+        )
 
     async def test_resume_and_saved_stop_are_logged(self) -> None:
         await self.start()
@@ -1647,6 +1665,22 @@ class SaveAndResume(SessionTests):
         self.assertIn("under a minute", summaries[0])
         self.assertIn("Everything DMbot heard was written down", summaries[0])
         self.assertEqual(self.bot._ending, {})
+
+    async def test_the_log_says_how_much_speech_was_sent(self) -> None:
+        # #523: listening time against speech sent, for the prices; numbers only.
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        release = await self.slow_worker("Words that must stay off the log.")
+        self.queue_speech(table)
+        release.set()
+        table.listening_from = int(time.time()) - 120  # two minutes of listening
+        with self.assertLogs("dmbot.bot", "INFO") as logs:
+            await self.bot.stop_table(GUILD, "test")
+            await asyncio.gather(*self.bot._finishing)
+        line = "Listened 2.0 min, sent 0.0 min of speech (1%)"  # one second of speech
+        self.assertTrue(any(line in m for m in logs.output), logs.output)
+        self.assertNotIn("Words that must", "\n".join(logs.output))
+        self.assertNotIn(table.segmenter.session, self.bot.pipeline.sent_s_in)
 
     async def slow_worker(self, text: str) -> asyncio.Event:
         """A running transcription worker that holds each clip until released."""
