@@ -136,7 +136,7 @@ export const text = {
   // Hand over
   handOverQuestion: (campaign: string): string => `Who should take over ${campaign}?`,
   handOverNote:
-    "They become the DM if they accept. They have 7 days. After that, it uses their hours, not yours.",
+    "Nothing changes until they say yes. They have 7 days. If they do, they become the DM and it uses their hours, not yours.",
   handOverNobody:
     "Nobody can take it yet. Ask the person to sign in here and start a plan (Try It is free). Then tap Hand over again.",
   handOverConfirm: "Offer it",

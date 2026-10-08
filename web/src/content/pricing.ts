@@ -195,7 +195,7 @@ export const questions: readonly Question[] = [
   {
     question: "Can I give a campaign to someone else?",
     answer:
-      "Yes. In My Account, tap Hand over next to the campaign and pick someone whose plan has room for it. From then on it uses their hours.",
+      "Yes. In My Account, tap Hand over next to the campaign and pick someone whose plan has room for it. They have 7 days to say yes. Nothing changes until they do; then it uses their hours, not yours.",
   },
   {
     question: "Can I delete everything?",
