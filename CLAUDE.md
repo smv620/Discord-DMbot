@@ -194,7 +194,9 @@ terminal output or Discord screenshots copied to it.
   not opted in. Bots are never captured. This is enforced in ears (allowlist) and
   re-checked in core, including after every async step. Consent is given with a DM
   button (slash command as fallback), carries over per server, and every join triggers
-  a reminder with the consent date and a stop button. See docs/PLAN.md.
+  a reminder with the consent date and a **⚙️ Menu** button whose menu holds **Stop
+  recording me** (owner decision, 2026-10-08). Stopping shows one short, factual warning
+  and one confirmation, never more. See docs/PLAN.md.
 - **One voice channel:** the bot listens only to the configured table channel.
 - **DM authority:** the bot never posts rulings to players or public channels. Advice
   goes only to `#dm-screen` / the DM. PlotBot and NPCBot record only DM-confirmed facts.
