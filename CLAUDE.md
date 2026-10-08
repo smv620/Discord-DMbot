@@ -267,6 +267,11 @@ terminal output or Discord screenshots copied to it.
   pass" in a PR, or run them locally with Postgres (lesson from #544, 2026-10-08).
 - User-facing text (slash command descriptions, alerts, errors) is short, plain, and
   tells the user what to do next.
+- **Steps the owner follows give full clickable links** (owner, 2026-10-08): every site the
+  owner must open is a full address in the step itself, the first time it's named (for
+  example https://discord.com/developers/applications), then the menu path. Name the exact
+  button, and warn about a look-alike that does harm (OAuth2's Reset Secret, never the
+  bot's Reset Token).
 
 ## ears ↔ core protocol
 Defined in `ears/src/protocol.ts` and `core/src/dmbot/ears/protocol.py`. Keep the two
