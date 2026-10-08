@@ -55,6 +55,14 @@ MAX_FEEDBACK_BYTES = 32 * 1024
 Clock = Callable[[], int]
 
 
+class _Refused(Exception):
+    """An answer to give that keeps the turn used (see send_feedback)."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
 def _system_clock() -> int:
     return int(time.time())
 
@@ -73,7 +81,8 @@ def create_app(
     """`payments` None: no payment company is set up yet; buying answers payments_off.
     `discussions` None: the "Say hello" forms answer feedback_off. `human_check` None:
     no Turnstile check (settings allow that only on localhost)."""
-    feedback_limit = feedback_limit or RateLimit()
+    if feedback_limit is None:
+        feedback_limit = RateLimit()
     app = FastAPI(
         title="DMbot web API",
         docs_url=None,  # no public API browser
@@ -510,6 +519,9 @@ def create_app(
     async def send_feedback(request: Request) -> Response:
         if discussions is None:
             raise HTTPException(status_code=503, detail="feedback_off")
+        with contextlib.suppress(ValueError):
+            if int(request.headers.get("content-length", "0")) > MAX_FEEDBACK_BYTES:
+                raise HTTPException(status_code=413, detail="too_long")
         body = b""
         async for chunk in request.stream():
             body += chunk
@@ -528,11 +540,17 @@ def create_app(
             raise HTTPException(status_code=429, detail="slow_down")
         try:
             if human_check is not None:
-                token = raw.get("turnstile") if isinstance(raw, dict) else None
-                if not await human_check.verify(str(token or ""), address):
+                token = str((raw.get("turnstile") if isinstance(raw, dict) else None) or "")
+                if not await human_check.verify(token, address):
+                    if token:
+                        # A wrong answer uses the turn: otherwise one address could make
+                        # us ask Cloudflare without end. No answer at all costs nothing.
+                        raise _Refused("not_human")
                     raise HTTPException(status_code=400, detail="not_human")
             # Once GitHub has the post, the turn is used, whatever happens next.
             number = await feedback.post(db, discussions, message, now=clock())
+        except _Refused as refused:
+            raise HTTPException(status_code=400, detail=refused.code) from None
         except FeedbackError as exc:
             feedback_limit.give_back(turn)
             log.warning("Feedback couldn't be posted: %s", exc)

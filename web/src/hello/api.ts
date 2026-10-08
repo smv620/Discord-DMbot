@@ -44,6 +44,8 @@ export function httpSend(base: string, fetcher: typeof fetch = fetch): Send {
         method: "POST",
         // Nothing to sign in to: no cookie is needed or sent.
         credentials: "omit",
+        // Never leave "Sending…" up for good if the API hangs.
+        signal: AbortSignal.timeout(30_000),
         headers: {
           "X-DMbot-Request": "1",
           Accept: "application/json",

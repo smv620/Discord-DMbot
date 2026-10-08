@@ -41,6 +41,8 @@ TITLES: dict[Kind, str] = {
 MAX_MESSAGE = 2000
 MAX_CONTACT = 200
 WAIT_SECONDS = 10 * 60
+# More addresses than this waiting at once is a flood, not people: everyone waits.
+MAX_WAITING = 20_000
 GITHUB_GRAPHQL = "https://api.github.com/graphql"
 TURNSTILE_VERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
@@ -103,7 +105,8 @@ class GitHubDiscussions:
 
     async def _query(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         if self._http is None:
-            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
+            # Short: the person is waiting on the button.
+            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8, connect=3))
         try:
             async with self._http.post(
                 self._url, json={"query": query, "variables": variables}, headers=self._auth
@@ -172,7 +175,7 @@ class Turnstile:
         if not token:
             return False
         if self._http is None:
-            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
+            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5, connect=3))
         try:
             async with self._http.post(
                 self._url,
@@ -195,17 +198,30 @@ class RateLimit:
     and a restart forgetting the last 10 minutes does no harm. Addresses are never
     stored in the database or logged."""
 
-    def __init__(self, seconds: int = WAIT_SECONDS, clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self,
+        seconds: int = WAIT_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+        most: int = MAX_WAITING,
+    ):
         self._seconds = seconds
         self._clock = clock
-        self._last: dict[str, float] = {}
+        self._most = most
+        self._last: dict[str, float] = {}  # oldest first: entries are added in time order
+
+    def __len__(self) -> int:
+        return len(self._last)
 
     def take(self, address: str) -> bool:
         """Claim this address's turn; False if it posted (or is posting) too recently."""
         now = self._clock()
-        # Forget addresses whose wait is over, so the table can't grow without end.
-        self._last = {a: t for a, t in self._last.items() if now - t < self._seconds}
-        if address in self._last:
+        # Forget addresses whose wait is over, from the oldest, so each call is cheap.
+        while self._last:
+            oldest = next(iter(self._last))
+            if now - self._last[oldest] < self._seconds:
+                break
+            del self._last[oldest]
+        if address in self._last or len(self._last) >= self._most:
             return False
         self._last[address] = now
         return True

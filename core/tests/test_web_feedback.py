@@ -156,13 +156,32 @@ class FeedbackRoute(DatabaseTest):
             ({"kind": "rant"}, "bad_request"),
             ({"message": 5}, "bad_request"),
             ({"contact": "x" * 201}, "contact_too_long"),
-            ({"turnstile": "robot"}, "not_human"),
+            ({"turnstile": None}, "not_human"),  # no answer: nothing asked, turn kept
         ):
             response = await self.send(**fields)
             self.assertEqual((response.status_code, response.json()), (400, {"error": error}))
         self.assertEqual(self.github.posts, [])
         self.assertEqual((await self.send()).status_code, 204)
         self.assertEqual(self.human.seen[-1], ("person", "203.0.113.5"))
+
+    async def test_a_wrong_person_check_uses_the_turn(self) -> None:
+        # Otherwise one address could make the API ask Cloudflare without end.
+        wrong = await self.send(turnstile="robot")
+        self.assertEqual((wrong.status_code, wrong.json()), (400, {"error": "not_human"}))
+        self.assertEqual((await self.send()).status_code, 429)
+        self.assertEqual(self.github.posts, [])
+
+    async def test_the_person_check_failing_says_try_later_and_gives_the_turn_back(
+        self,
+    ) -> None:
+        async def broken(token: str, address: str) -> bool:
+            raise FeedbackError("Turnstile answered 500")
+
+        self.human.verify = broken  # type: ignore[method-assign]
+        failed = await self.send()
+        self.assertEqual(failed.json(), {"error": "feedback_unavailable"})
+        self.human.verify = FakeHumanCheck().verify  # type: ignore[method-assign]
+        self.assertEqual((await self.send()).status_code, 204)
 
     async def test_control_and_reordering_characters_are_removed(self) -> None:
         sent = await self.send(message="Hi\x00 there\r\nbye\u202e!", contact="bel\n#1\x07")
@@ -221,6 +240,13 @@ class FeedbackRoute(DatabaseTest):
         )
         self.assertEqual(response.status_code, 413)
 
+    async def test_bodies_that_arent_a_form_are_bad_requests(self) -> None:
+        for content in (b"not json", b"[]", b'"x"'):
+            response = await self.client.post(
+                "/feedback", content=content, headers={**HEADERS, "Content-Type": "text/plain"}
+            )
+            self.assertEqual(response.json(), {"error": "bad_request"})
+
     async def test_github_failing_stores_nothing_and_lets_them_try_again(self) -> None:
         self.github.fail = True
         failed = await self.send()
@@ -245,6 +271,28 @@ class FeedbackRoute(DatabaseTest):
     async def test_it_needs_the_websites_header(self) -> None:
         response = await self.client.post("/feedback", json={"kind": "feedback", "message": "hi"})
         self.assertEqual(response.status_code, 403)
+
+
+class Limits(unittest.TestCase):
+    def setUp(self) -> None:
+        self.time = 0.0
+        self.limit = RateLimit(seconds=600, clock=lambda: self.time, most=3)
+
+    def test_forgets_addresses_whose_wait_is_over(self) -> None:
+        for n in range(3):
+            self.assertTrue(self.limit.take(f"a{n}"))
+            self.time += 100
+        self.time = 650  # a0's wait (from 0) is over; a1 (100) and a2 (200) still wait
+        self.assertTrue(self.limit.take("a0"))
+        self.assertEqual(len(self.limit), 3)
+        self.assertFalse(self.limit.take("a1"))
+
+    def test_a_flood_of_addresses_waits_for_everyone(self) -> None:
+        for n in range(3):
+            self.assertTrue(self.limit.take(f"a{n}"))
+        self.assertFalse(self.limit.take("someone-new"))
+        self.limit.give_back("a0")
+        self.assertTrue(self.limit.take("someone-new"))
 
 
 class Body(unittest.TestCase):

@@ -24,6 +24,8 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
   const [token, setToken] = useState("");
   const [round, setRound] = useState(0);
   const [busy, setBusy] = useState(false);
+  // The person check starts when someone begins to use this form, not for every reader.
+  const [started, setStarted] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
   const id = `hello-${kind}`;
 
@@ -68,7 +70,7 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
   return (
     <section class="panel" aria-labelledby={`${id}-heading`}>
       <h2 id={`${id}-heading`}>{words.heading}</h2>
-      <form onSubmit={submit} noValidate>
+      <form onSubmit={submit} onFocusIn={() => setStarted(true)} noValidate>
         <label for={`${id}-message`}>{words.label}</label>
         <textarea
           id={`${id}-message`}
@@ -100,7 +102,7 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
         <p id={`${id}-hint`} class="small muted">
           {words.contactHint}
         </p>
-        {siteKey && <Turnstile siteKey={siteKey} onToken={setToken} round={round} />}
+        {siteKey && started && <Turnstile siteKey={siteKey} onToken={setToken} round={round} />}
         {result && (
           <p class="warn" role="alert">
             {text.errors[result]}

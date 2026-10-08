@@ -134,3 +134,30 @@ describe("the page's privacy line", () => {
     expect(text.sent).toBe("Thanks, we read every message.");
   });
 });
+
+describe("sending twice", () => {
+  it("a second press while sending doesn't send again", async () => {
+    let finish: (r: SendResult) => void = () => undefined;
+    const send = vi.fn<(note: Note) => Promise<SendResult>>(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    render(<HelloForm kind="feedback" send={send} siteKey="" />);
+    type(text.feedback.label, "Hello");
+    const button = screen.getByRole("button", { name: text.feedback.send });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    finish("sent");
+    await screen.findByRole("status");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the person check", () => {
+  it("only loads once someone starts using a form", () => {
+    render(<HelloForm kind="feedback" send={vi.fn()} siteKey="key" />);
+    const script = () => document.head.querySelector('script[src*="challenges.cloudflare.com"]');
+    expect(script()).toBeNull();
+    fireEvent.focusIn(screen.getByLabelText(text.feedback.label));
+    expect(script()).not.toBeNull();
+  });
+});
