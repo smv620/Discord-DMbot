@@ -23,7 +23,10 @@ export type AdminProblem =
   | "bad-date"
   | "past-date"
   | "long-note"
-  | "no-grant";
+  | "bad-note"
+  | "already-free"
+  | "no-grant"
+  | "stale"; // refused for a reason a reload fixes (an old CSRF token, a bad body)
 
 export type GrantLevel = "guild" | "unlimited";
 
@@ -93,7 +96,13 @@ const grantProblems: Record<string, AdminProblem> = {
   bad_date: "bad-date",
   past_date: "past-date",
   long_note: "long-note",
+  bad_note: "bad-note",
+  already_free: "already-free",
   no_grant: "no-grant",
+  // The page can't send these unless it's out of date (another tab, an old token).
+  bad_request: "stale",
+  not_allowed: "stale",
+  too_long: "stale",
 };
 
 /** A refused free access call as a problem the page can word. */

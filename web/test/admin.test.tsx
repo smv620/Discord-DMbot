@@ -307,7 +307,7 @@ describe("free access (#773)", () => {
     expect(row.textContent).toContain("Like Guild");
     expect(row.textContent).toContain(text.until("Jan 31, 2027"));
     expect(row.textContent).toContain("playtester");
-    expect(row.textContent).toContain(text.addedBy("owner@example.com", "Jan 15, 2027"));
+    expect(row.textContent).toContain(text.setBy("owner@example.com", "Jan 15, 2027"));
     expect(
       screen.getByText(text.logLine("Jan 15, 2027", "owner@example.com", "grant", FRIEND)),
     ).toBeTruthy();
@@ -371,6 +371,53 @@ describe("free access (#773)", () => {
     expect(await screen.findByLabelText(text.password)).toBeTruthy();
   });
 
+  it("an ended grant says Ended and comes after the live ones", async () => {
+    const past: GrantsView = {
+      ...view(),
+      grants: [
+        { ...view().grants[0]!, discordId: "223456789012345678", endsAt: 1_000_000_000 },
+        ...view().grants,
+      ],
+    };
+    signedIn({ grants: vi.fn(async () => past) });
+    await screen.findByText(FRIEND);
+    const rows = [...document.querySelectorAll("[data-grant]")].map((r) =>
+      r.getAttribute("data-grant"),
+    );
+    expect(rows).toEqual([FRIEND, "223456789012345678"]);
+    const old = document.querySelector('[data-grant="223456789012345678"]') as HTMLElement;
+    expect(old.textContent).toContain(text.ended("Sep 9, 2001"));
+  });
+
+  it("a revoke that finds nothing says so and reloads the list", async () => {
+    const revoke = vi.fn(async () => Promise.reject(new AdminApiError("no-grant")));
+    const api = signedIn({ revoke });
+    const row = (await screen.findByText(FRIEND)).closest("li") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: text.revoke }));
+    fireEvent.click(within(row).getByRole("button", { name: text.yesRevoke }));
+    expect(await screen.findByText(text.grantErrors["no-grant"] ?? "")).toBeTruthy();
+    await waitFor(() => expect(api.grants).toHaveBeenCalledTimes(2));
+  });
+
+  it("Change fills the form with that person's grant", async () => {
+    signedIn();
+    const row = (await screen.findByText(FRIEND)).closest("li") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: text.change }));
+    expect((screen.getByLabelText(text.idLabel) as HTMLInputElement).value).toBe(FRIEND);
+    expect((screen.getByLabelText(text.endLabel) as HTMLInputElement).value).toBe("2027-01-31");
+    expect((screen.getByLabelText(text.noteLabel) as HTMLInputElement).value).toBe("playtester");
+  });
+
+  it("an empty id is caught on the page, with the words next to the form", async () => {
+    const api = signedIn();
+    await screen.findByLabelText(text.idLabel);
+    fireEvent.click(screen.getByRole("button", { name: text.add }));
+    expect(await screen.findByText(text.grantErrors["no-id"] ?? "")).toBeTruthy();
+    expect(api.give).not.toHaveBeenCalled();
+    const form = screen.getByRole("button", { name: text.add }).closest("form") as HTMLElement;
+    expect(form.textContent).toContain(text.grantErrors["no-id"]);
+  });
+
   it("maps the API's refusals to plain problems", async () => {
     const answer = (status: number, body?: unknown) =>
       vi.fn<typeof fetch>(
@@ -396,6 +443,15 @@ describe("free access (#773)", () => {
     await expect(httpAdminApi("/api", answer(401)).grants()).rejects.toMatchObject({
       kind: "signed-out",
     });
+    for (const [status, code] of [
+      [400, "bad_request"],
+      [403, "not_allowed"],
+      [400, "already_free"],
+    ] as const) {
+      await expect(
+        httpAdminApi("/api", answer(status, { error: code })).give("c", request),
+      ).rejects.toMatchObject({ kind: code === "already_free" ? "already-free" : "stale" });
+    }
     const fetcher = answer(200, { action: "change" });
     expect(await httpAdminApi("/api", fetcher).give("csrf-9", request)).toBe("change");
     expect(fetcher.mock.calls[0]?.[1]?.headers).toMatchObject({ "X-Admin-CSRF": "csrf-9" });

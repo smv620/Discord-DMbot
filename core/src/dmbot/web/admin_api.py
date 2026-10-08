@@ -18,7 +18,7 @@ import logging
 import re
 import secrets
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Annotated, Any, TypeGuard
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
@@ -347,11 +347,16 @@ def router(
         discord_id, level = raw.get("discordId"), raw.get("level")
         ends_on, note = raw.get("endsOn"), raw.get("note", "")
         # Each refusal names what to fix; the site words it (web/src/content/admin.ts).
-        if not isinstance(discord_id, str) or not DISCORD_ID.fullmatch(discord_id):
+        if not _is_discord_id(discord_id):
             raise HTTPException(status_code=400, detail="bad_id")
+        if int(discord_id) in settings.free_users:
+            # Already covered by the server's list: a grant would only show them twice.
+            raise HTTPException(status_code=400, detail="already_free")
         if level not in GRANT_LEVELS:
             raise HTTPException(status_code=400, detail="bad_level")
-        if not isinstance(note, str) or len(" ".join(note.split())) > grants.NOTE_MAX:
+        if not isinstance(note, str) or not _storable(note):
+            raise HTTPException(status_code=400, detail="bad_note")
+        if len(" ".join(note.split())) > grants.NOTE_MAX:
             raise HTTPException(status_code=400, detail="long_note")
         ends_at = None
         if ends_on is not None:
@@ -372,7 +377,7 @@ def router(
 
     @api.post("/grants/{discord_id}/revoke", status_code=204)
     async def revoke(discord_id: str, session: AdminWrite) -> Response:
-        if not DISCORD_ID.fullmatch(discord_id):
+        if not _is_discord_id(discord_id):
             raise HTTPException(status_code=400, detail="bad_id")
         if not await grants.revoke(db, session.email, int(discord_id), now=clock()):
             # Never had one, already revoked, or on the server's free list (not a grant).
@@ -383,6 +388,27 @@ def router(
     return api
 
 
+def _is_discord_id(value: object) -> TypeGuard[str]:
+    """17 to 20 digits that fit the database's BIGINT (Discord ids are 64-bit)."""
+    return (
+        isinstance(value, str)
+        and DISCORD_ID.fullmatch(value) is not None
+        and 0 < int(value) < 2**63
+    )
+
+
+def _storable(note: str) -> bool:
+    """Postgres text holds no NUL, and a lone surrogate (JSON can carry one) can't be
+    encoded: either would be a 500 instead of words."""
+    if "\x00" in note:
+        return False
+    try:
+        note.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _end_of_day(value: object) -> int | None:
     """An end date ("2026-12-31") as the moment access stops: the end of that day in UTC,
     so the person keeps it all that day. None if it isn't a date."""
@@ -390,6 +416,6 @@ def _end_of_day(value: object) -> int | None:
         return None
     try:
         day = datetime.date.fromisoformat(value)
-    except ValueError:
+        return calendar.timegm((day + datetime.timedelta(days=1)).timetuple())
+    except (ValueError, OverflowError):  # 9999-12-31 has no next day
         return None
-    return calendar.timegm((day + datetime.timedelta(days=1)).timetuple())

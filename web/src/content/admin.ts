@@ -35,7 +35,6 @@ export const text = {
   down: "Can't reach DMbot right now. Try again in a minute. If it keeps happening, tell dev1.",
   tryAgain: "Try again",
   signedInAs: (email: string): string => `Signed in as ${email}.`,
-
   signOut: "Sign out",
   signOutFailed:
     "You're still signed in. Can't reach DMbot right now. Try \"Sign out\" again in a minute.",
@@ -54,7 +53,10 @@ export const text = {
   levels: { guild: "Like Guild", unlimited: "No limits" } as Record<string, string>,
   noEnd: "No end date",
   until: (date: string): string => `Until ${date}`,
-  addedBy: (by: string, date: string): string => `Added by ${by} on ${date}`,
+  // granted_by and granted_at are rewritten by a change, so "set", not "added".
+  setBy: (by: string, date: string): string => `Set by ${by} on ${date}`,
+  ended: (date: string): string => `Ended ${date}`,
+  change: "Change",
   nobody: "Nobody has free access from this page yet. Add someone below.",
   revoke: "Revoke",
   confirmRevoke: (id: string): string => `Revoke free access for ${id}?`,
@@ -62,15 +64,18 @@ export const text = {
   cancel: "Cancel",
   revoked: (id: string): string => `Done. ${id} no longer has free access.`,
   addHeading: "Add someone",
-  addLead: "Adding someone who already has free access changes it.",
+  addLead: "To change someone's free access, add them again with the new details, or tap Change.",
   idLabel: "Discord user id",
   idHint:
     "In Discord: Settings, then Advanced, then turn on Developer Mode. Then right-click the person and pick Copy User ID.",
-  levelLabel: "How much",
-  endLabel: "Ends on (optional)",
-  endHint: "Leave it empty so it never ends.",
+  levelLabel: "What they get",
+  levelHint: "Like Guild: the same as paying for Guild. No limits: no caps at all.",
+  endLabel: "Last day (optional)",
+  // Whole days in UTC, as the API stores them.
+  endHint:
+    "Free access works through this day (UTC time). Leave it empty so it never ends.",
   noteLabel: "Note (optional)",
-  noteHint: "Only admins see this. 200 letters at most.",
+  noteHint: "Who this is, or why. Only admins see this. 200 letters at most.",
   add: "Add",
   adding: "Adding…",
   added: (id: string): string => `Done. ${id} has free access.`,
@@ -89,9 +94,14 @@ export const text = {
     "bad-id":
       "That isn't a Discord user id: it's 17 to 20 digits. Copy it again in Discord and paste it here.",
     "bad-level": "Pick Like Guild or No limits.",
-    "bad-date": "Pick the end date again, or leave it empty.",
+    "no-id": "Paste the person's Discord user id first.",
+    "bad-date": "That end date didn't work. Pick it from the calendar, or leave it empty.",
     "past-date": "Pick an end date after today, or leave it empty so it never ends.",
     "long-note": "Keep the note to 200 letters or fewer.",
+    "bad-note": "The note has a character DMbot can't keep. Type it again with plain letters.",
+    "already-free":
+      "That person is always free (set on the server), so there's nothing to add here.",
+    stale: "That didn't work. Reload this page and try again.",
     "no-grant": "That person has no free access to revoke. We've updated the list.",
   } as Record<string, string>,
 } as const;

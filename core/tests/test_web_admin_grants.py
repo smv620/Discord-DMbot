@@ -5,6 +5,7 @@ revoked here."""
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, cast
 
@@ -115,6 +116,12 @@ class AdminGrants(DatabaseTest):
             ({"discordId": "12345"}, "bad_id"),
             ({"discordId": "12345678901234567x"}, "bad_id"),
             ({"discordId": 123456789012345678}, "bad_id"),
+            ({"discordId": "99999999999999999999"}, "bad_id"),  # past the 64-bit range
+            ({"discordId": "00000000000000000"}, "bad_id"),
+            ({"discordId": str(ALWAYS)}, "already_free"),
+            ({"note": "a\u0000b"}, "bad_note"),
+            ({"note": "a\ud800b"}, "bad_note"),
+            ({"endsOn": "9999-12-31"}, "bad_date"),
             ({"level": "everything"}, "bad_level"),
             ({"note": "x" * 201}, "long_note"),
             ({"endsOn": "31/01/2027"}, "bad_date"),
@@ -122,9 +129,34 @@ class AdminGrants(DatabaseTest):
             ({"endsOn": "2027-01-14"}, "past_date"),
         ]
         for body, code in cases:
-            answer = await self.give(csrf, **body)
+            answer = await self.client.post(
+                "/admin/grants",
+                content=json.dumps({"discordId": FRIEND, "level": "guild", **body}).encode(),
+                headers={**HEADERS, "X-Admin-CSRF": csrf, "Content-Type": "application/json"},
+            )
             self.assertEqual((answer.status_code, answer.json()), (400, {"error": code}), body)
+        not_json = await self.client.post(
+            "/admin/grants",
+            content=b"[]",
+            headers={**HEADERS, "X-Admin-CSRF": csrf, "Content-Type": "application/json"},
+        )
+        self.assertEqual(not_json.status_code, 400)
         self.assertEqual(await grants.grants(self.db), [])
+
+    async def test_edges_that_are_fine(self) -> None:
+        csrf = await self.sign_in()
+        self.assertEqual((await self.client.get("/admin/grants")).status_code, 200)  # no CSRF
+        # 200 letters once spaces are squeezed; and today (UTC) as the last day.
+        self.assertEqual((await self.give(csrf, note="x" * 200 + "    ")).status_code, 200)
+        self.assertEqual((await self.give(csrf, endsOn="2027-01-15")).status_code, 200)
+
+    async def test_an_ended_grant_still_lists_until_revoked(self) -> None:
+        csrf = await self.sign_in()
+        await self.give(csrf, endsOn="2027-01-15")
+        self.now += 2 * 86400
+        (row,) = (await self.client.get("/admin/grants")).json()["grants"]
+        self.assertLess(row["endsAt"], self.now)  # the page marks it "Ended"
+        self.assertEqual((await self.revoke(csrf, FRIEND)).status_code, 204)
 
     async def test_the_free_list_shows_but_cant_be_revoked(self) -> None:
         csrf = await self.sign_in()
