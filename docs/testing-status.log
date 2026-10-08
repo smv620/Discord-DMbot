@@ -9,7 +9,9 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- CloudDev, PR #599 (#253): Add many saves a long list in a few statements instead of
+  one per name. Deploy: rebuild core (no migration). Check: 📥 Add many with a long
+  list saves as before and one Undo takes it all back.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
