@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (deployed e299bfc; Test D, TV on, next)
+Last updated: 2026-10-08 by dev1 (core 45c0bcc live; web-api still off; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,12 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- dev2, PR #804 (#771 part 1): free access. Migration 0030 adds access_grants and
-  access_log (new, empty tables). Deploy: rebuild core and web-api. **Leave
+- dev2, PR #804 (#771 part 1): free access. **Core and migration 0030 are live (core
+  45c0bcc, 22:02); only web-api waits (it stays off).** **Leave
   DMBOT_FREE_USERS empty until #806 (the account page for covered people) is live.** A
   bot-only check is fine meanwhile: set the owner's id, restart core only (not web-api),
-  and accepting a hand-over without a plan works. Check: 0030 applied; core logs "Free
-  access list: 0 ids" (or 1 with the bot-only check), never the id itself.
+  and accepting a hand-over without a plan works. Checked: 0030 applied; core logs "Free
+  access list: 0 ids".
 - WebDev, PR #825 (#806): the account page for people with free access. Website only
   (Cloudflare Pages deploys it): no migration, no API change. It shows "Free access" (or
   "...until <date>") instead of plans and prices, a "Stop paying" button while a paid
@@ -33,18 +33,6 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   ADMIN_EMAILS set and no password hash or Google settings, or a Client secret without
   an ID: `docker compose logs --tail 20 web-api` names the setting. Check: the logs show
   no error; /admin on the site shows the sign-in; record the result with no email.
-- dev2, PR #817 (#797): website answers told in Discord, follow-ups (an answer while the
-  bot starts isn't lost; one made while the offer's message goes out changes it; a
-  website accept notes #dm-screen). No migration. Deploy: rebuild core. Check: no new
-  errors; "Lost notifications on dmbot_handover_decided" only if the database drops.
-- dev2, PR #781 (#723 part A, second half): players link their D&D Beyond sheet with
-  📜 My character sheet (next to 🛑 on the consent confirmation and each reminder), or
-  type their character in; the DM sees it on the character's card and can Refresh
-  sheets. Migration 0029 adds who linked each sheet (quick; 0028's table has no rows
-  yet). Deploy: rebuild core. Check: `docker compose logs core` shows 0029 applied; a
-  player with a public sheet links it (docs/test-scripts/sheets.md) and the next
-  /dmbot start logs "Character sheets: 1 linked, N names in the hints; from D&D Beyond:
-  ...".
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram

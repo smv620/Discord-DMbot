@@ -1068,3 +1068,29 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     logs core` shows 0023; an offer made in Discord shows on the person's /account with
     Accept and No thanks; Accept makes them the owner; the owner's row shows "Waiting for
     ... to say yes" with Take back offer, and never says anything about anyone's plan.
+
+==============================================================================
+2026-10-08  Server: deploy 45c0bcc, core only (dev1, owner's go, no test run)
+==============================================================================
+  - 22:02 UTC  development @ 45c0bcc, core (ears not touched, still up from 18:18):
+    #781 (D&D Beyond sheets, second half: players' 📜 My character sheet button, the
+    DM's controls), #804 (free access, part 1), #817 and #826/#823 (website answers
+    told in Discord), plus web/, docs and tests. #786 (admin sign-in) and #825 (the
+    free-access account page, a website page) are in the build but belong to the web-api
+    and the site, which stay off.
+  - Migrations 0029_sheet_player (the sheets table had 0 rows) and 0030_access_grants
+    (two new, empty tables). Read before deploying.
+  - Database backed up first ("pre0029-0030", outside the repo; 29 tables); no session
+    was live. scripts/update-env added the new empty settings (DMBOT_FREE_USERS and the
+    admin sign-in names), kept the rest. Image built ahead; `up -d core` as its own
+    step. Logs: "Database updated: 0029_sheet_player, 0030_access_grants", "Connected
+    to 1 server(s)", "ears connected"; "Free access list: 0 ids"; "Character sheets: 0
+    linked, 0 names in the hints; from D&D Beyond: none"; two ears "core link" warnings
+    in the first seconds while core started, then "connected to core"; nothing else.
+  - DMBOT_FREE_USERS left empty on purpose (it waits for #825's account page to be live).
+  - Checks still to do, kept here from the status log's queue lines (one small test each
+    in docs/next-test-step.md): #781: a player with a public D&D Beyond sheet links it with
+    📜 My character sheet (docs/test-scripts/sheets.md), then the next /dmbot start logs
+    "Character sheets: 1 linked, N names in the hints; from D&D Beyond: ..."; #817: an
+    answer to a hand-over offer made on the website is told in Discord, and no new errors
+    ("Lost notifications on dmbot_handover_decided" only if the database drops).
