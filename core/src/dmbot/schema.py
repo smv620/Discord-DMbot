@@ -509,6 +509,15 @@ HANDOVER_NAMES = """
         ALTER COLUMN to_name DROP DEFAULT;
     """
 
+HANDOVER_OFFER_INDEXES = """
+    -- The account page reads a person's open offers on every visit (#614): by who they
+    -- were offered to, and by who offered them.
+    CREATE INDEX campaign_handover_offers_open_to
+        ON campaign_handover_offers (to_user_id) WHERE status = 'open';
+    CREATE INDEX campaign_handover_offers_open_from
+        ON campaign_handover_offers (from_user_id) WHERE status = 'open';
+"""
+
 HANDOVER_DELIVERED = """
     -- When DMbot sent the private message about an offer (#690). An offer made on the
     -- website is saved with neither and announced on dmbot_handover_offers. The bot
@@ -975,6 +984,33 @@ WEB_ROLE_POLICIES = """
         WITH CHECK (guild_id = dmbot_install_guild()
                     AND guild_id = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])
                     AND installed_by_user_id = dmbot_current_user());
+    -- Accepting a hand-over (#614, #437 decision 7): the website may make the signed-in
+    -- person a campaign's owner, and add them as one of its DMs, only while that campaign
+    -- has an open offer to them that is under 7 days old. Checked here, not just in code.
+    -- (The store's campaign lock, SELECT ... FOR UPDATE, passes this UPDATE rule too.)
+    DROP POLICY IF EXISTS web_accept_handover ON campaigns;
+    CREATE POLICY web_accept_handover ON campaigns AS RESTRICTIVE FOR UPDATE TO dmbot_web
+        USING (EXISTS (SELECT 1 FROM campaign_handover_offers o
+                       WHERE o.guild_id = campaigns.guild_id AND o.campaign_id = campaigns.id
+                         AND o.to_user_id = dmbot_current_user() AND o.status = 'open'
+                         AND o.created_at + 7 * 86400 > dmbot_now()))
+        WITH CHECK (owner_user_id = dmbot_current_user());
+    DROP POLICY IF EXISTS web_accept_handover ON campaign_dms;
+    CREATE POLICY web_accept_handover ON campaign_dms AS RESTRICTIVE FOR INSERT TO dmbot_web
+        WITH CHECK (user_id = dmbot_current_user()
+                    AND EXISTS (SELECT 1 FROM campaign_handover_offers o
+                                WHERE o.guild_id = campaign_dms.guild_id
+                                  AND o.campaign_id = campaign_dms.campaign_id
+                                  AND o.to_user_id = dmbot_current_user() AND o.status = 'open'
+                                  AND o.created_at + 7 * 86400 > dmbot_now()));
+    -- Hand-over offers (#614): only ones the signed-in person sent or was sent, in the
+    -- session's servers. The store's own checks (owner, recipient, 7 days) come on top.
+    DROP POLICY IF EXISTS web_session_servers ON campaign_handover_offers;
+    CREATE POLICY web_session_servers ON campaign_handover_offers AS RESTRICTIVE TO dmbot_web
+        USING (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[])
+               AND dmbot_current_user() IN (from_user_id, to_user_id))
+        WITH CHECK (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[])
+                    AND dmbot_current_user() IN (from_user_id, to_user_id));
     """
 
 # What the website's role may touch at all: its own tables, and only reads of the two
@@ -982,7 +1018,13 @@ WEB_ROLE_POLICIES = """
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
 # opened to it by accident: it has to be added here.
 WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("SELECT", ("schema_migrations", "campaigns", "campaign_dms")),
+    ("SELECT", ("schema_migrations",)),
+    # Accepting a hand-over (#614) makes the person the owner and one of the DMs; the
+    # store locks the campaign row first (FOR UPDATE needs an UPDATE right), and answering
+    # changes only an offer's status.
+    ("SELECT, UPDATE (owner_user_id)", ("campaigns",)),
+    ("SELECT, INSERT", ("campaign_dms",)),
+    ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
     ("INSERT, DELETE", ("feedback",)),
@@ -1012,6 +1054,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0020_campaign_owner", CAMPAIGN_OWNER),
     ("0021_campaign_handover_offers", HANDOVER_OFFERS),
     ("0022_handover_offer_names", HANDOVER_NAMES),
+    ("0023_handover_offer_indexes", HANDOVER_OFFER_INDEXES),
     ("0024_transcript_topics", TRANSCRIPT_TOPICS),
     ("0025_handover_delivered", HANDOVER_DELIVERED),
     ("0026_feedback", FEEDBACK),

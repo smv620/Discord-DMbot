@@ -7,7 +7,14 @@ import { useCallback, useContext, useEffect, useRef, useState } from "preact/hoo
 
 import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
-import { ApiError, type AccountApi, type Campaign, type Me, type Person } from "./api";
+import {
+  ApiError,
+  type AccountApi,
+  type Campaign,
+  type Me,
+  type Offer,
+  type Person,
+} from "./api";
 import { isSafeRedirect } from "./redirect";
 
 type State =
@@ -290,6 +297,8 @@ function SignedIn({
 }) {
   const { api } = useShared();
   const { busy, notice, run } = useAction();
+  // Kept here, not in the offers section: answering the last offer removes that section.
+  const [offerNews, setOfferNews] = useState<{ text: string; ok: boolean } | null>(null);
   return (
     <div class="stack">
       <div class="hello">
@@ -314,6 +323,14 @@ function SignedIn({
         <p class={installMessage === text.install["done"] ? "ok" : "warn"} role="status">
           {installMessage}
         </p>
+      )}
+      {offerNews && (
+        <p class={offerNews.ok ? "ok" : "warn"} role="status">
+          {offerNews.text}
+        </p>
+      )}
+      {me.offers.incoming.length > 0 && (
+        <OffersSection offers={me.offers.incoming} onNews={setOfferNews} />
       )}
       <PlanSection me={me} />
       <CampaignsSection me={me} />
@@ -377,7 +394,7 @@ function PlanSection({ me }: { me: Me }) {
   );
 
   return (
-    <section aria-labelledby="plan-heading" class="panel">
+    <section aria-labelledby="plan-heading" class="panel" id="plan">
       <h2 id="plan-heading">{text.planHeading}</h2>
       <Notice message={notice} />
       {plan === null ? (
@@ -441,6 +458,82 @@ function PlanSection({ me }: { me: Me }) {
   );
 }
 
+/** Campaigns someone wants to hand you (#614). Accept re-checks your free slot on the server. */
+function OffersSection({
+  offers,
+  onNews,
+}: {
+  offers: Offer[];
+  onNews: (news: { text: string; ok: boolean }) => void;
+}) {
+  return (
+    <section aria-labelledby="offers-heading" class="panel" id="offers">
+      <h2 id="offers-heading">{text.offersHeading}</h2>
+      <ul class="campaigns">
+        {offers.map((o) => (
+          <OfferRow key={o.id} offer={o} onNews={onNews} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function OfferRow({
+  offer,
+  onNews,
+}: {
+  offer: Offer;
+  onNews: (news: { text: string; ok: boolean }) => void;
+}) {
+  const { api, refresh } = useShared();
+  const { busy, notice, run } = useAction();
+  const [noSlot, setNoSlot] = useState(false);
+  const answer = (action: () => Promise<void>, message: string): void =>
+    void run(
+      async () => {
+        setNoSlot(false);
+        await action();
+        onNews({ text: message, ok: true });
+        await refresh();
+      },
+      (error) => {
+        if (error.kind === "no-free-slot") {
+          setNoSlot(true);
+          return text.acceptNoSlot;
+        }
+        if (error.kind === "offer-gone") {
+          // The row goes with the refresh, so the news is shown above the sections.
+          onNews({ text: text.errors["offer-gone"] ?? text.actionFailed, ok: false });
+          void refresh();
+        }
+        return null;
+      },
+    );
+  return (
+    <li data-offer={offer.id}>
+      <p>{text.offerIncoming(offer.personName, offer.campaignName, offer.serverName)}</p>
+      <p class="muted small">{text.offerExpires(offer.expiresAt)}</p>
+      <Notice message={notice} />
+      {noSlot && <a href="#plan">{text.seeMyPlan}</a>}
+      <div class="row">
+        <ActionButton
+          busy={busy}
+          onClick={() => answer(() => api.acceptOffer(offer.id), text.accepted(offer.campaignName))}
+        >
+          {text.accept}
+        </ActionButton>
+        <ActionButton
+          busy={busy}
+          kind="secondary"
+          onClick={() => answer(() => api.declineOffer(offer.id), text.declined)}
+        >
+          {text.decline}
+        </ActionButton>
+      </div>
+    </li>
+  );
+}
+
 function CampaignsSection({ me }: { me: Me }) {
   const { refresh } = useShared();
   const [done, setDone] = useState<string | null>(null);
@@ -460,8 +553,13 @@ function CampaignsSection({ me }: { me: Me }) {
             <CampaignRow
               key={c.id}
               campaign={c}
+              offer={me.offers.outgoing.find((o) => o.campaignId === c.id) ?? null}
+              onWithdrawn={async () => {
+                setDone(text.withdrawn);
+                await refresh();
+              }}
               onHandedOver={async (person) => {
-                setDone(text.handOverDone(c.name, person.name));
+                setDone(text.handOverDone(person.name));
                 await refresh();
               }}
             />
@@ -474,12 +572,17 @@ function CampaignsSection({ me }: { me: Me }) {
 
 function CampaignRow({
   campaign,
+  offer,
+  onWithdrawn,
   onHandedOver,
 }: {
   campaign: Campaign;
+  /** A hand-over of this campaign you offered and nobody has answered yet. */
+  offer: Offer | null;
+  onWithdrawn: () => Promise<void>;
   onHandedOver: (person: Person) => Promise<void>;
 }) {
-  const { api } = useShared();
+  const { api, refresh } = useShared();
   const { busy, notice, run } = useAction();
   const [people, setPeople] = useState<Person[] | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -499,13 +602,39 @@ function CampaignRow({
         <span class="tag">{campaign.role === "owner" ? text.youRunIt : text.youHelp}</span>
       </p>
       <Notice message={notice} />
-      {campaign.role === "owner" && people === null && (
+      {offer && (
+        <>
+          <p class="small">{text.offerOutgoing(offer.personName, offer.expiresAt)}</p>
+          <div class="row">
+            <ActionButton
+              busy={busy}
+              kind="secondary"
+              onClick={() =>
+                void run(
+                  async () => {
+                    await api.withdrawOffer(offer.id);
+                    await onWithdrawn();
+                  },
+                  (error) => {
+                    if (error.kind !== "offer-gone") return campaignRefusal(error);
+                    void refresh(); // it was answered or ended: show what's true now
+                    return null;
+                  },
+                )
+              }
+            >
+              {text.withdraw}
+            </ActionButton>
+          </div>
+        </>
+      )}
+      {api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
         <ActionButton
           busy={busy}
           kind="secondary"
           onClick={() =>
             void run(async () => {
-              setPeople(await api.handoverCandidates(campaign.id));
+              setPeople((await api.handoverCandidates?.(campaign.id)) ?? []);
             }, campaignRefusal)
           }
         >
@@ -522,11 +651,16 @@ function CampaignRow({
             if (!person) return;
             void run(
               async () => {
-                await api.handover(campaign.id, person.id);
+                await api.handover?.(campaign.id, person.id);
                 setPeople(null);
                 await onHandedOver(person);
               },
-              (error) => (error.kind === "no-free-slot" ? text.noFreeSlot : campaignRefusal(error)),
+              // Never a plan message: the owner must not learn whether someone pays (#437).
+              // The API no longer refuses an offer for that; an old one gets the plain line.
+              (error) =>
+                error.kind === "no-free-slot"
+                  ? (text.errors["not-allowed"] ?? null)
+                  : campaignRefusal(error),
             );
           }}
         >

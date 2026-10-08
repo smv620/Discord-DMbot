@@ -191,6 +191,14 @@ class LookupSource(Protocol):
 # once it's listening (see Database.listen).
 Listen = Callable[[str, Callable[[], None]], AsyncGenerator[str, None]]
 Sleep = Callable[[float], Awaitable[None]]
+# A bound, so a DM editing names in a burst can't keep a reader loading forever.
+_LOADS_PER_ASK = 3
+_clock = time.monotonic  # tests move it on
+FAIL_LOG_S = 60.0  # a load that keeps failing (database away) is logged once a minute
+
+
+class NamesKeepChanging(RuntimeError):
+    """The names changed during every load: no copy known to be current."""
 
 
 @dataclass(slots=True)
@@ -198,6 +206,11 @@ class _Slot:
     lookup: CampaignLookup | None = None
     stale: bool = True
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def current(self) -> CampaignLookup | None:
+        """The copy if it's current, with no reload under way: while one is, the old copy
+        may hold a name the DM has just made secret, so readers wait for the new one."""
+        return None if self.stale or self.lock.locked() else self.lookup
 
 
 class LookupCache:
@@ -211,15 +224,24 @@ class LookupCache:
         self._source = source
         self._sleep = sleep
         self._slots: dict[tuple[int, str], _Slot] = {}
+        # Loads that carry on after whoever asked stopped waiting (`get_within`).
+        self._loading: dict[tuple[int, str], asyncio.Task[CampaignLookup]] = {}
+        self._failed_at: dict[tuple[int, str], float] = {}
 
     async def get(self, guild_id: int, campaign_id: str) -> CampaignLookup:
         """The campaign's lookup, loading it first if it's missing or out of date."""
         slot = self._slots.setdefault((guild_id, campaign_id), _Slot())
-        if slot.lookup is not None and not slot.stale:
-            return slot.lookup
+        if (ready := slot.current()) is not None:
+            return ready
         asked = time.perf_counter()
         async with slot.lock:  # one load at a time per campaign
-            if slot.lookup is None or slot.stale:
+            # A change during a load (the DM made a name secret) means load again: the
+            # copy just built may be from before it. A few times at most; if changes
+            # still keep coming, no copy is given at all (callers treat it as a failed
+            # load) and the next reader loads again.
+            for _ in range(_LOADS_PER_ASK):
+                if slot.lookup is not None and not slot.stale:
+                    break
                 slot.stale = False  # a change arriving during the load marks it again
                 started = time.perf_counter()
                 try:
@@ -244,7 +266,52 @@ class LookupCache:
                     (built - loaded) * 1000,
                     len(slot.lookup.entities),
                 )
+            if slot.lookup is None or slot.stale:
+                raise NamesKeepChanging(f"names changed during {_LOADS_PER_ASK} loads")
             return slot.lookup
+
+    async def get_within(
+        self, guild_id: int, campaign_id: str, seconds: float
+    ) -> CampaignLookup | None:
+        """The campaign's lookup if it's ready within `seconds`, else None (also if the
+        load failed: that's logged once, here). The load carries on either way, so the
+        next ask finds it ready: for type-ahead, which must answer Discord within 3
+        seconds and can't say "loading" (#581)."""
+        key = (guild_id, campaign_id)
+        slot = self._slots.get(key)
+        if slot is not None and (ready := slot.current()) is not None:
+            return ready
+        task = self._loading.get(key)
+        if task is None:
+            task = asyncio.create_task(self.get(guild_id, campaign_id), name="names copy")
+            self._loading[key] = task
+            task.add_done_callback(lambda done: self._loaded(key, done))
+        try:
+            await asyncio.wait_for(asyncio.shield(task), seconds)
+        except TimeoutError:
+            return None
+        except Exception:  # logged by _loaded, for everyone who waited
+            return None
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if not task.cancelled() or (current is not None and current.cancelling()):
+                raise  # this caller was cancelled
+            return None  # only the load was (drop(): the campaign isn't wanted any more)
+        # From the slot, not the load's result: a change may have landed between the load
+        # finishing and this waiter resuming (a name the DM just made secret).
+        slot = self._slots.get(key)
+        return slot.current() if slot is not None else None
+
+    def _loaded(self, key: tuple[int, str], task: asyncio.Task[CampaignLookup]) -> None:
+        if self._loading.get(key) is task:
+            del self._loading[key]
+        if not task.cancelled() and (error := task.exception()) is not None:
+            # Said here, whoever was waiting (the next ask tries again); at most once a
+            # minute per campaign, as every clip of a session asks.
+            now = _clock()
+            if now - self._failed_at.get(key, -FAIL_LOG_S) >= FAIL_LOG_S:
+                self._failed_at[key] = now
+                log.warning("Couldn't load names for campaign %s: %r", key[1], error)
 
     def changed(self, event: notify.MemoryChanged) -> None:
         """A campaign's memory changed: reload its copy before next use, if names did."""
@@ -274,6 +341,9 @@ class LookupCache:
         gone = set(campaign_ids)
         for key in [k for k in self._slots if k[1] in gone]:
             del self._slots[key]
+            self._failed_at.pop(key, None)  # a campaign restored with this id starts afresh
+        for key in [k for k in self._loading if k[1] in gone]:
+            self._loading.pop(key).cancel()  # a deleted campaign's names: not wanted
 
     async def follow(self, listen: Listen) -> None:
         """Apply change notifications until cancelled. Every time the listener is

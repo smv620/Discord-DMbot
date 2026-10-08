@@ -13,7 +13,7 @@ from psycopg.conninfo import make_conninfo
 
 from dmbot import schema
 from dmbot.campaigns.store import CampaignStore
-from dmbot.db import Database, DatabaseError
+from dmbot.db import Database, DatabaseError, drop_schema
 from dmbot.web import accounts, feedback, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild, DiscordUser
@@ -73,6 +73,18 @@ class WebRole(DatabaseTest):
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(guild_id),))
             cur = await conn.execute("SELECT name FROM campaigns")
             return [r["name"] for r in await cur.fetchall()]
+
+    async def test_an_older_schema_grants_only_the_tables_it_has(self) -> None:
+        # A database brought up to an older migration (as a backfill test does) mustn't
+        # fail on rights for tables a later migration makes; they come with that one.
+        await self.web.close()
+        await self.db.close()
+        await drop_schema(TEST_URL, self.schema)
+        before = [m for m in schema.MIGRATIONS if m[0] < "0026"]
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        self.assertIn("0026_feedback", await self.db.migrate())
+        self.web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
+        self.assertEqual(await feedback.forget_old(self.web), 0)  # its rights arrived
 
     async def test_it_sees_only_servers_in_the_sessions_own_list(self) -> None:
         session = await self.alice()
@@ -150,7 +162,10 @@ class WebRole(DatabaseTest):
             rows = await cur.fetchall()
             self.assertEqual(
                 [(r["tablename"], list(r["roles"])) for r in rows],
-                [(t, [schema.WEB_ROLE]) for t in ("campaign_dms", "campaigns", "installs")],
+                [
+                    (t, [schema.WEB_ROLE])
+                    for t in ("campaign_dms", "campaign_handover_offers", "campaigns", "installs")
+                ],
             )
             # The bot's plans never call the web role's functions (no cost on the live path).
             async with self.db.guild(THURSDAY.id) as bot:
