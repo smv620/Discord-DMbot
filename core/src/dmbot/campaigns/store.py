@@ -21,13 +21,14 @@ import re
 import time
 import uuid
 import zlib
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, Literal, LiteralString, Protocol, cast
 
 from psycopg import errors as pg_errors
 from psycopg import sql
 
 from dmbot import entitlements
+from dmbot.campaigns import offer_notify
 from dmbot.campaigns.models import (
     CONFIRMATION_PURPOSES,
     DEFAULT_DM_SCREEN_LEVEL,
@@ -615,6 +616,7 @@ class CampaignStore:
         *,
         from_name: str,
         to_name: str,
+        delivered: bool = True,
     ) -> HandoverOffer:
         """The owner offers the campaign to another member, who accepts or not within 7
         days. Never refused for the other person's plan: the owner mustn't learn whether
@@ -622,7 +624,11 @@ class CampaignStore:
         are the two people's display names now, kept on the offer for the account page.
         The bot checks the person offered is in this server when it delivers the offer,
         and withdraws it if they can't be reached (#437). Raises CampaignError in plain
-        words."""
+        words.
+
+        `delivered`: the caller sends the private message itself, now (the Discord
+        button). The website passes False: the offer is saved as not sent yet and the bot
+        is told, when this commits, to send it (#690)."""
         names = _offer_name(from_name), _offer_name(to_name)
         async with self._db.guild(guild_id) as conn:
             # The campaign lock is what keeps an old owner from offering again while an
@@ -650,17 +656,76 @@ class CampaignStore:
             try:  # the index is the last word, should a writer ever skip the lock
                 cur = await conn.execute(
                     "INSERT INTO campaign_handover_offers (guild_id, campaign_id,"
-                    " from_user_id, to_user_id, from_name, to_name, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                    " from_user_id, to_user_id, from_name, to_name, created_at, delivered_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
                     (
                         guild_id, campaign_id, from_user_id, to_user_id, *names, now,
+                        now if delivered else None,
                     ),
                 )  # fmt: skip
             except pg_errors.UniqueViolation as exc:
                 raise CampaignError(OFFER_WAITING) from exc
             row = await cur.fetchone()
             assert row is not None
-            return _to_offer(row)
+            offer = _to_offer(row)
+            if not delivered:
+                await offer_notify.send(conn, guild_id, offer.id)
+            return offer
+
+    async def claim_delivery(self, guild_id: int, offer_id: int, now: int) -> HandoverOffer | None:
+        """Claim an offer made on the website for a few minutes, just before the bot sends
+        its private message (#690). None if it's sent, or claimed by someone else (another
+        process, or the sweep and a notification together), or isn't open any more: then
+        nothing is sent. After sending, `confirm_delivery`; if the send failed,
+        `release_delivery`."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaign_handover_offers SET claimed_at = %s"
+                " WHERE guild_id = %s AND id = %s AND " + _UNSENT + " RETURNING *",
+                (now, guild_id, offer_id, now - CLAIM_SECONDS, HANDOVER_SECONDS, now),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _to_offer(row)
+
+    async def confirm_delivery(self, guild_id: int, offer: HandoverOffer, now: int) -> None:
+        """The private message went out: the offer is sent. Only while this claim (the
+        one in `offer`) still holds: a send that took longer than CLAIM_SECONDS may
+        already have been claimed and sent again by someone else, so it can be sent
+        twice (the second Accept just says it's settled)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET delivered_at = %s"
+                " WHERE guild_id = %s AND id = %s AND delivered_at IS NULL AND claimed_at = %s",
+                (now, guild_id, offer.id, offer.claimed_at),
+            )
+
+    async def release_delivery(self, guild_id: int, offer: HandoverOffer) -> None:
+        """The send failed: let this claim go so a later sweep tries again (unless
+        someone claimed it since, once this claim had lapsed)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET claimed_at = NULL"
+                " WHERE guild_id = %s AND id = %s AND claimed_at = %s"
+                " AND delivered_at IS NULL",
+                (guild_id, offer.id, offer.claimed_at),
+            )
+
+    async def undelivered_offers(self, guild_id: int, now: int) -> list[int]:
+        """Open offers in this server waiting for their private message and not claimed
+        (or whose claim lapsed), oldest first: the bot's sweeps (#690)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM campaign_handover_offers"
+                " WHERE guild_id = %s AND " + _UNSENT + " ORDER BY id",
+                (guild_id, now - CLAIM_SECONDS, HANDOVER_SECONDS, now),
+            )
+            return [int(row["id"]) for row in await cur.fetchall()]
+
+    def listen(
+        self, channel: str, on_listening: Callable[[], None] | None = None
+    ) -> AsyncGenerator[str, None]:
+        """Offer notifications (for `SiteOffers.follow`): see `Database.listen`."""
+        return self._db.listen(channel, on_listening)
 
     async def accept_handover(
         self, guild_id: int, offer_id: int, user_id: int, now: int
@@ -1078,6 +1143,16 @@ def _offer_name(name: str) -> str:
     return clean
 
 
+# An offer waiting for the bot to send it (#690). Parameters: lapsed-claim cutoff
+# (now - CLAIM_SECONDS), HANDOVER_SECONDS, now.
+_UNSENT: LiteralString = (
+    "status = 'open' AND delivered_at IS NULL"
+    " AND (claimed_at IS NULL OR claimed_at <= %s) AND created_at + %s > %s"
+)
+# How long a bot process's claim on sending an offer lasts (#690).
+CLAIM_SECONDS = 10 * 60
+
+
 def _to_offer(row: dict[str, Any]) -> HandoverOffer:
     return HandoverOffer(
         id=int(row["id"]),
@@ -1090,6 +1165,8 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         to_name=row["to_name"],
         status=cast(HandoverStatus, row["status"]),
         decided_at=row_int(row, "decided_at"),
+        delivered_at=row_int(row, "delivered_at"),
+        claimed_at=row_int(row, "claimed_at"),
     )
 
 
