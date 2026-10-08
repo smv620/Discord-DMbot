@@ -152,17 +152,18 @@ export const text = {
   offerExpires: (iso: string): string => `Answer by ${shortDateTime(iso)}.`,
   accept: "Accept",
   decline: "No thanks",
-  // Also "your plan stopped" until part 3 splits the two (#437 decision 5).
+  // Shown only to the person offered: the plan check happens at Accept, never when the
+  // offer is made, so the owner never learns whether someone pays (#437, PLAN).
   acceptNoSlot:
-    "You have no free campaign slot, or your plan has stopped. Free one, or pick a plan, then accept.",
+    "To take this campaign you need a DMbot plan with a free campaign slot. Pick a plan or free a slot, then press Accept again. The offer stays open until the date above.",
   seeMyPlan: "See my plan",
   accepted: (campaign: string): string =>
     `${campaign} is yours now. You're a DM of it in Discord too.`,
   declined: (person: string): string => `Done. We'll tell ${person} in Discord.`,
   offerOutgoing: (person: string, iso: string): string =>
     `Hand-over offered to ${person}, expires ${shortDateTime(iso)}.`,
-  withdraw: "Withdraw",
-  withdrawn: "Done. The offer is withdrawn.",
+  withdraw: "Take back offer",
+  withdrawn: "Done. You took the offer back.",
 
   // Servers
   serversHeading: "Add DMbot to a server",
