@@ -81,7 +81,7 @@ describe("states", () => {
     expect(varrow?.querySelector("button")).toBeNull();
 
     expect(document.querySelector('[data-server="200000000000000001"]')?.textContent).toContain(
-      text.alreadyThere,
+      text.youAddedIt,
     );
   });
 
@@ -109,15 +109,77 @@ describe("states", () => {
 });
 
 describe("actions", () => {
-  it("adds DMbot to a server through Discord's page", async () => {
-    const { go } = show("table");
+  it("adds DMbot through a plain link to the API, which sends on to Discord", async () => {
+    show("table");
     const row = await waitFor(() => {
       const found = document.querySelector('[data-server="200000000000000002"]');
       if (!found) throw new Error("not yet");
       return found;
     });
-    fireEvent.click(row.querySelector("button") as HTMLButtonElement);
-    await waitFor(() => expect(go).toHaveBeenCalledWith("#demo-install-200000000000000002"));
+    expect(row.querySelector("a")?.getAttribute("href")).toBe("#demo-install-200000000000000002");
+  });
+
+  it("lets the person say they added DMbot to a server it joined by link", async () => {
+    const { api } = show("table");
+    const row = await waitFor(() => {
+      const found = document.querySelector('[data-server="200000000000000003"]');
+      if (!found) throw new Error("not yet");
+      return found;
+    });
+    expect(row.textContent).toContain(text.linkNote);
+    fireEvent.click(screen.getByRole("button", { name: text.linkServer }));
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-server="200000000000000003"]')?.textContent,
+      ).toContain(text.youAddedIt),
+    );
+    expect(api.calls).toContain("link:200000000000000003");
+  });
+
+  it("says what happened after coming back from adding DMbot", async () => {
+    show("table", "?install=done");
+    expect(await screen.findByText(text.install["done"] ?? "")).toBeTruthy();
+    cleanup();
+    show("table", "?install=whatever");
+    expect(await screen.findByText(text.install["failed"] ?? "")).toBeTruthy();
+  });
+
+  it("keeps other servers' buttons free while one is busy", async () => {
+    const api = mockApi("table");
+    let release: () => void = () => {};
+    api.linkServer = () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.linkServer }));
+    await screen.findByRole("button", { name: text.busy });
+    // Quillon's Corner's Add DMbot link is still there and usable.
+    expect(
+      document.querySelector('[data-server="200000000000000002"] a')?.getAttribute("href"),
+    ).toBe("#demo-install-200000000000000002");
+    release();
+  });
+
+  it("shows the install result once, then takes it out of the address", async () => {
+    window.history.replaceState(null, "", "/account?install=done");
+    show("table", "?install=done");
+    expect(await screen.findByText(text.install["done"] ?? "")).toBeTruthy();
+    await waitFor(() => expect(window.location.search).toBe(""));
+  });
+
+  it("asks for a fresh sign-in when the API wants one", async () => {
+    show("table", "?install=sign_in_again");
+    expect((await screen.findByRole("alert")).textContent).toBe(text.signInAgain);
+    expect(screen.getByRole("link", { name: text.signIn })).toBeTruthy();
+  });
+
+  it("explains the API's refusals in plain words", async () => {
+    const api = mockApi("no-plan");
+    api.startTryIt = () => Promise.reject(new ApiError("try-it-used"));
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.startTryIt }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["try-it-used"]);
   });
 
   it("hands a campaign over to a chosen person", async () => {
@@ -244,10 +306,10 @@ describe("safety", () => {
 
   it("shows a failure inside the section that failed", async () => {
     const api = mockApi("table");
-    api.installUrl = () => Promise.reject(new ApiError("server"));
+    api.linkServer = () => Promise.reject(new ApiError("server"));
     render(<Account api={api} go={vi.fn()} />);
     const row = await waitFor(() => {
-      const found = document.querySelector('[data-server="200000000000000002"]');
+      const found = document.querySelector('[data-server="200000000000000003"]');
       if (!found) throw new Error("not yet");
       return found;
     });

@@ -55,8 +55,36 @@ const campaigns: Campaign[] = [
 ];
 
 const servers = [
-  { id: "200000000000000001", name: "Thursday Table", hasDmbot: true },
-  { id: "200000000000000002", name: "Quillon's Corner", hasDmbot: false },
+  {
+    id: "200000000000000001",
+    name: "Thursday Table",
+    hasDmbot: true,
+    canLink: false,
+    installedByYou: true,
+  },
+  {
+    id: "200000000000000002",
+    name: "Quillon's Corner",
+    hasDmbot: false,
+    canLink: false,
+    installedByYou: false,
+  },
+  {
+    id: "200000000000000003",
+    name: "Brynwater Players",
+    hasDmbot: true,
+    canLink: true,
+    installedByYou: false,
+  },
+];
+
+const installs = [
+  {
+    serverId: "200000000000000001",
+    serverName: "Thursday Table",
+    installedAt: "2026-09-20T18:00:00Z",
+    via: "site" as const,
+  },
 ];
 
 export const candidates: Person[] = [
@@ -65,7 +93,7 @@ export const candidates: Person[] = [
 ];
 
 export function scenarioMe(scenario: Scenario): Me | null {
-  const base = { user, campaigns, servers };
+  const base = { user, campaigns, servers, installs };
   switch (scenario) {
     case "signed-out":
     case "down":
@@ -171,9 +199,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("portal");
       return "#demo-billing";
     },
-    async installUrl(serverId: string) {
-      calls.push(`install:${serverId}`);
-      return `#demo-install-${serverId}`;
+    installUrl: (serverId: string) => `#demo-install-${serverId}`,
+    async linkServer(serverId: string) {
+      calls.push(`link:${serverId}`);
+      const now = signedIn();
+      me = {
+        ...now,
+        servers: now.servers.map((s) =>
+          s.id === serverId ? { ...s, canLink: false, installedByYou: true } : s,
+        ),
+      };
     },
     async handoverCandidates(campaignId: string) {
       calls.push(`candidates:${campaignId}`);

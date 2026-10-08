@@ -156,6 +156,13 @@ import Base from "../layouts/Base.astro";
     border-bottom: 1px solid var(--border);
   }
 
+  /* A server's note or message sits on its own line under the name and button. */
+  .account :global(.servers li > .row-note),
+  .account :global(.servers li > .warn) {
+    flex-basis: 100%;
+    margin: 0;
+  }
+
   .account :global(.campaigns li) {
     display: flex;
     flex-direction: column;
