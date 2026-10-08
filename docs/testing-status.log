@@ -130,6 +130,11 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   core. Check: right after a restart, type in /dmbot names find: (suggestions appear by
   the second keystroke); make a name secret during a session: it isn't suggested or
   used as a hint after that; no "Couldn't load names" warnings in the log.
+- CloudDev, PR #765 (#714): hand-over follow-ups. **Deploy with or after #705 and #724.**
+  No migration or setting. Deploy: rebuild core. Check: ⚙️ Settings on a campaign with no
+  owner shows its DMs 🤝 Take it on; the owner sees Hand over and other DMs see nothing;
+  an accepted offer is noted in #dm-screen, a "no thanks" is not (only the owner hears
+  it); Accept on an offer that was taken back says it has ended.
 - WebDev, PR #625 (#614): the account page answers hand-over offers (Accept, No thanks,
   Take back offer) and lists them both ways; the database checks every accept. Migration
   0023 adds two indexes for open offers (quick). The bot migrates first (the website's
