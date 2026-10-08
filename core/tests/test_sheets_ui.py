@@ -148,6 +148,7 @@ class Button(unittest.IsolatedAsyncioTestCase):
             await panel._forget(press)
         it.client.sheets.unlink.assert_awaited_once_with(GUILD, CAMPAIGN, ENTITY, player=PLAYER)
         bot.return_value.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)
+        redrawn.assert_awaited_once()  # one redraw, with the note
         assert redrawn.await_args is not None
         return str(redrawn.await_args.kwargs["note"])
 
