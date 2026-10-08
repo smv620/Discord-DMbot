@@ -84,6 +84,7 @@ from dmbot.dm_screen.name_questions import (
     question_view,
 )
 from dmbot.dm_screen.settings import LevelButton, SettingsButton, SettingsVisibilityButton
+from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -425,6 +426,14 @@ class DMBot(commands.AutoShardedBot):
         self._closing = False
         # Servers whose saved session is waiting for Discord to make the server available.
         self._resume_when_available: set[int] = set()
+        # Offers made on the website: this process sends those of its own servers (#690).
+        self.site_offers = SiteOffers(
+            campaigns,
+            get_guild=self.get_guild,
+            guild_ids=lambda: [g.id for g in self.guilds],
+            wait_until_ready=self.wait_until_ready,
+            spawn=self._track,
+        )
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -480,6 +489,8 @@ class DMBot(commands.AutoShardedBot):
             ),
             asyncio.create_task(self._transcript_poster(), name="transcripts"),
             asyncio.create_task(self._transcript_saver(), name="transcript-saves"),
+            self._watched(self.site_offers.follow(self.campaigns.listen), "site-offers"),
+            self._watched(self.site_offers.every_hour(), "site-offer-sweeps"),
         ]
 
     async def close(self) -> None:
@@ -1316,9 +1327,13 @@ class DMBot(commands.AutoShardedBot):
         """DMbot was just added to a server: say hello, or say what it still needs."""
         with log_context(guild_id=guild.id):
             log.info("Joined a server; %s", await install.post_welcome(guild))
+        # A hand-over offer made on the website may be waiting for this server (#690).
+        self._track(self.site_offers.sweep_server(guild.id), "offer-sweep")
 
     async def on_guild_available(self, guild: discord.Guild) -> None:
         """Discord made a server available again: resume its session if one was waiting."""
+        if self.is_ready():  # offers made on the website while it was out (#690)
+            self._track(self.site_offers.sweep_server(guild.id), "offer-sweep")
         if guild.id not in self._resume_when_available:
             return
         self._resume_when_available.discard(guild.id)
