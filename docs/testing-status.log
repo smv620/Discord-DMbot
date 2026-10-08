@@ -25,6 +25,13 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   the event loop). No migration. Deploy: rebuild core. Check: Add many with a line of 21
   other names says "line N: more than 20 other names. Put the rest on a new line...";
   Download all, then upload that file again: nothing is refused.
+- dev2, PR #678 (#52 part 2): the off-topic filter. Clearly off-topic chat becomes
+  "[1m 22s of off-topic chat skipped]" in the cleaned transcript and the live channel;
+  As heard keeps every word. Migration 0024 adds topic and duration columns to
+  transcript_lines (defaults, quick). Needs #670 (terms version 3) live first or in the
+  same deploy. Deploy: rebuild core. Check: `docker compose logs core` shows 0024 applied;
+  at the end of a session "Off-topic filter: N calls, ... tokens"; replay
+  docs/test-scripts/off-topic.md.
 - CloudDev, PR #659 (#636): /dmbot start says "I haven't started: I can't hear voice
   channels right now…" instead of developer steps when ears is down, and logs it. No
   migration. Deploy: rebuild core. Check: with ears stopped, /dmbot start gives the new
