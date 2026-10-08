@@ -1,4 +1,4 @@
-"""Handing a campaign over to another subscriber (#437 part 1b): only the owner offers,
+"""Handing a campaign over to another member of the server (#437 part 1b): only the owner offers,
 the person offered accepts within 7 days if they still have room, and every write is
 in CampaignStore so the bot and the website follow the same rules."""
 

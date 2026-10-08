@@ -229,7 +229,9 @@ class Offering(unittest.IsolatedAsyncioTestCase):
         it.member.send.assert_not_awaited()
 
     def test_a_waiting_offer_names_the_button_that_takes_it_back(self) -> None:
-        self.assertIn(f"**{handover.WITHDRAW_LABEL}**", OFFER_WAITING)
+        for text in (OFFER_WAITING, handover.OFFER_SENT, handover.UNREACHABLE_STUCK):
+            self.assertIn(f"**{handover.WITHDRAW_LABEL}**", text)
+        self.assertIn(handover.HANDOVER_LABEL, handover.UNREACHABLE)  # try again with it
 
     async def test_an_offer_answered_meanwhile_is_not_called_taken_back(self) -> None:
         # Answered on the website in the gap (#690): "gone", so not "taken back".
@@ -293,7 +295,7 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         )
         done = it.edit_original_response.await_args.kwargs
         self.assertIn("Done: **Frost\\*maiden** uses your plan now", done["content"])
-        self.assertIn("Oskar keeps running it", done["content"])
+        self.assertIn("**Oskar** is still one of its DMs", done["content"])
         self.assertIsNone(done["view"])  # the buttons go
         self.assertIn("**Mirelle** accepted", it.member.send.await_args.args[0])
 
@@ -358,6 +360,12 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
         self.assertEqual(said(it), handover.SERVER_GONE)
         it.client.campaigns.accept_handover.assert_not_awaited()
+        it = interaction(BUYER, guild=False)  # No thanks the same
+        it.client.get_guild.return_value = None
+        it.client.fetch_guild.side_effect = discord.Forbidden(MagicMock(status=403), "no access")
+        await DeclineOfferButton(GUILD, OFFER_ID).callback(it)
+        self.assertEqual(said(it), handover.SERVER_GONE)
+        it.client.campaigns.decline_handover.assert_not_awaited()
 
     async def test_an_accept_that_cant_edit_its_message_still_says_done(self) -> None:
         it = interaction(BUYER, guild=False)

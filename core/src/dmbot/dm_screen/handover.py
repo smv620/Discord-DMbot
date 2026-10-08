@@ -1,5 +1,5 @@
 """🤝 Hand over a campaign (#437 part 1b, decided on #437 2026-10-08): the campaign's
-owner offers it to another subscriber, and the person offered answers in a private
+owner offers it to another member of the server, and the person offered answers in a private
 message. Ownership moves only when they accept, within 7 days, and only if their plan
 has room for it then. The rules are all in `CampaignStore`; this is the Discord side.
 
@@ -64,28 +64,29 @@ OFFER_SENT = (
 )
 UNREACHABLE = (
     "DMbot couldn't send **{name}** a private message, so the offer was taken back. Check "
-    "they're still in this server and that they allow messages from its members (in this "
-    "server's privacy settings), then try again."
+    "they're still in this server, and ask them to allow direct messages from this server's "
+    "members (their privacy settings for this server). Then press 🤝 Hand over again."
 )
 UNREACHABLE_STUCK = (
     "DMbot couldn't send **{name}** a private message, and couldn't take the offer back "
     "either. Take it back yourself: ⚙️ Settings, then **Take back offer**."
 )
 UNREACHABLE_ANSWERED = (
-    "DMbot couldn't send **{name}** a private message, but the offer has already been "
-    "answered or taken back. Check ⚙️ Settings to see where it stands."
+    "DMbot couldn't send **{name}** a private message, but the offer was already answered "
+    "(on the DMbot website) or taken back meanwhile. ⚙️ Settings shows where it stands."
 )
 OFFER_TEXT = (
     "🤝 **{owner}** is asking you to pay for the campaign **{campaign}** on **{server}** with "
-    "your DMbot plan. Nothing changes unless you tap **Accept**. If you do: every session of "
-    "it uses your plan's hours (whoever runs it), it counts as one of your campaigns, and "
-    "you're added as one of its DMs, so you can see behind the DM screen (spoilers, if you "
-    "play in it). {owner} keeps running the game as before. If you don't answer by "
-    "{deadline}, the offer just ends."
+    "your DMbot plan.\n\n"
+    "Nothing changes unless you tap **Accept**. If you do: every session of it uses your "
+    "plan's hours (whoever runs it), it counts as one of your campaigns, and you're added as "
+    "one of its DMs, so you can see behind the DM screen (spoilers, if you play in it). "
+    "**{owner}** is still one of its DMs.\n\n"
+    "If you don't answer by {deadline}, the offer just ends."
 )
 ACCEPTED = (
     "✅ Done: **{campaign}** uses your plan now, and you're one of its DMs on **{server}**. "
-    "{owner} keeps running it as before. DMbot has let {owner} know."
+    "**{owner}** is still one of its DMs. DMbot will let **{owner}** know."
 )
 TOLD_ACCEPTED = "✅ **{name}** accepted: **{campaign}** uses their plan now. You're still a DM."
 NO_FREE_SLOT = (
@@ -100,7 +101,9 @@ WITHDRAWN = "Offer taken back. **{campaign}** stays yours."
 TOLD_WITHDRAWN = "**{owner}** took back the offer of **{campaign}**. Nothing changed for you."
 NOT_YOUR_OFFER = "Only **{owner}**, who made this offer, can take it back."
 NOT_HERE = "DMbot can't reach the server right now. Try again in a minute."
-SERVER_GONE = "DMbot isn't in that server any more, so this offer has ended. Nothing changed."
+SERVER_GONE = (
+    "DMbot isn't in that server any more, so this offer can't be answered. Nothing changed."
+)
 NOT_A_MEMBER = "You're not in that server any more, so you can't take over its campaign."
 FAILED = "Something broke on DMbot's side, so that didn't work. Try once more."
 TAKE_ON_ASK = (
@@ -110,9 +113,10 @@ TAKE_ON_ASK = (
 )
 TAKEN = "✅ You own **{campaign}** now, so it uses your plan. To hand it over later: ⚙️ Settings."
 TAKE_NO_ROOM = (
-    "Your DMbot plan has no room for another campaign, or you don't have one yet. Pick a plan "
-    "on the DMbot website (Try It is free), or let one of the campaign's other DMs take it "
-    "on. You can still play today: DMbot will ask again next time."
+    "You can still play today: DMbot will ask again next time. To take this campaign on you "
+    "need a DMbot plan with room for one more campaign, and you don't have one right now. "
+    "Pick a plan on the DMbot website (Try It is free) and tap **Take it on** again, or let "
+    "one of the campaign's other DMs take it on (DMbot asks them when they start a session)."
 )
 TAKE_GONE = "Someone already took this campaign on, so nothing changed."
 NOT_NOW = "OK. DMbot will ask again next time you start this campaign."
