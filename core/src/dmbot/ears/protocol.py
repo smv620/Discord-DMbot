@@ -43,10 +43,15 @@ class Hello:
 
 @dataclass(frozen=True, slots=True)
 class Status:
-    state: Literal["ready", "joined", "left", "error"]
+    """ears' state. "warning": one speaker's audio kept failing (ears gave up re-listening
+    until they next speak, or they keep sending but none of it can be heard; #631, #645);
+    `user_id` says whose. The session goes on."""
+
+    state: Literal["ready", "joined", "left", "error", "warning"]
     guild_id: int | None = None
     channel_id: int | None = None
     detail: str | None = None
+    user_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,14 +131,18 @@ def parse_ears_message(raw: str) -> EarsMessage | None:
 
     if kind == "status":
         state = data.get("state")
-        if state not in ("ready", "joined", "left", "error"):
+        if state not in ("ready", "joined", "left", "error", "warning"):
             return None
         detail = data.get("detail")
+        user_id = _snowflake(data.get("userId"))
+        if state == "warning" and user_id is None:
+            return None  # a warning is always about someone
         return Status(
             state=state,
             guild_id=_snowflake(data.get("guildId")),
             channel_id=_snowflake(data.get("channelId")),
             detail=detail if isinstance(detail, str) else None,
+            user_id=user_id if state == "warning" else None,
         )
 
     if kind == "speaking":

@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (deployed fba4f77; Test A failed, #631)
+Last updated: 2026-10-08 by dev1 (deployed 70ac757; Test A again passed; #651 to deploy)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,13 +9,17 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-Core only, no migration. Check:
-  - #617 (dev2, #554): ⏹ Stop listening asks first ("Stop listening and end the
-    session for …?" [Yes, stop] [Cancel], private, 60 s); Cancel keeps listening; a
-    player is refused at once; "Yes, stop" shows "Stopping…"; /dmbot stop stops at once.
-  - #622 (dev2, #88): /dmbot stop and Restore answer before waiting (no "This
-    interaction failed" when a start is setting up the DM screen); a restore always
-    ends with its outcome, never a stuck "Restoring…".
+- dev3, #651 (#645): ears AND core (the DM's "voice cut out" line). No migration or
+  setting. #641 (#631) is already live in 70ac757; this finishes it: a stream the voice
+  library ends while the speaker still sends now counts as lost and is listened to again.
+  Check in the next Test A (DMBOT_DEBUG_AUDIO=1): `dave: ...` lines around the first
+  packet; on a failure "listening again (n of 5 this minute)" or "is sending audio but
+  none of it can be heard", and the DM screen's audio % drops.
+- CloudDev, PR #657 (#598): names reads never join names to entries (a freshly filled
+  campaign's cold names load 1.4 s -> 0.08 s; Check new names' "sounds like" 2.6 s -> 8 ms).
+  No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
+  names answer as before; the `Built names for campaign` log line shows a small database
+  time.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -29,12 +33,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: fba4f77 (2026-10-08 05:37 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 70ac757 (2026-10-08 06:44 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since fba4f77, ask it to redeploy first. Use a steady connection (run 8a
+      moved since 70ac757, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -167,15 +171,23 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
   Deployed 2026-10-08 05:37 (fba4f77)
   - #604 (#589): Undo of an answer to a name question says so if its line couldn't be
     put back
+  Deployed 2026-10-08 06:18 (1a7bf0d)
+  - #617 (#554): ⏹ Stop listening asks first ([Yes, stop] [Cancel], private, 60 s);
+    Cancel keeps listening; a player is refused; /dmbot stop still stops at once
+  - #622 (#88): /dmbot stop and Restore answer at once; a restore always ends with
+    its outcome, never a stuck "Restoring…"
+  Deployed 2026-10-08 06:44 (70ac757, ears and core)
+  - #641 (#631): Test A again, phone then computer. ears logs "dave: …" lines; after a
+    receive error "listening again (n of 5 this minute)"; "is sending audio but none
+    of it can be heard"; the DM screen shows a warning and its audio % drops
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test A (2026-10-08 05:43), DM alone on a phone, Deepgram: FAIL (#631)
+LATEST RESULT: Test A again (2026-10-08 07:01), DM alone, Deepgram: PASS
 ------------------------------------------------------------------------------
-  /dmbot start, consent and /dmbot stop worked; no transcript line. ears dropped the
-  DM's audio on its first packets: "Failed to decrypt: DecryptionFailed(
-  UnencryptedWhenPassthroughDisabled)" (DAVE), 0 s sent to Deepgram, yet the capture
-  check said audio 100%. Next: Test A again (docs/next-test-step.md) to see if it
-  repeats. Previous result: run 7 (2026-10-06), PASS, audio 100%.
+  On 70ac757 (#641 live). Audio 145/145, 3.0 s sent, no Discord-side problems. ears:
+  one failed packet at the start, then decryption recovered by itself (DAVE commit at
+  transition 0 came 12 s before the DM spoke). The 05:43 failure (#631) didn't repeat.
+  Previous: Test A (05:43) FAIL, nothing written down (#631).
 
 Open issues from testing
   #631 DAVE decrypt error drops all of a speaker's audio (Test A)

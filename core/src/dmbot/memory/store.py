@@ -88,10 +88,32 @@ from dmbot.memory.sounds import sound_codes
 
 NOT_HERE = "That campaign doesn't exist in this server."
 INT64_MAX = 2**63 - 1
+# For a lookup of a few rows (one key). Reads of a whole campaign's names or facts use
+# _live_ids instead: joined to a campaign with no table statistics yet (one just given
+# a long list), Postgres compared every name with every entry, 1.4 s for 2,000 (#598).
 _LIVE_ENTITY_IDS = (
     " (SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
     " AND status IN ('proposed', 'confirmed'))"
 )
+
+
+async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[str]:
+    """The campaign's live entries (proposed or confirmed), or those of `among`, to filter
+    its names and facts by in Python: plain reads, never a join that can go quadratic
+    (#598). Read in the same snapshot as the rows they filter."""
+    if among is not None:
+        cur = await scope.conn.execute(
+            "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+            " AND status IN ('proposed', 'confirmed') AND id = ANY(%s)",
+            (*scope.ids, sorted(among)),
+        )
+    else:
+        cur = await scope.conn.execute(
+            "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+            " AND status IN ('proposed', 'confirmed')",
+            scope.ids,
+        )
+    return {str(r["id"]) for r in await cur.fetchall()}
 
 
 # ---- conversions ---------------------------------------------------------------------
@@ -252,8 +274,10 @@ class MemoryStore:
                 await notify.send(conn, campaign_id, changes.version, names_changed)
 
     @asynccontextmanager
-    async def _read(self, guild_id: int, campaign_id: str) -> AsyncIterator[Scope]:
-        async with self._db.guild(guild_id) as conn:
+    async def _read(
+        self, guild_id: int, campaign_id: str, *, snapshot: bool = False
+    ) -> AsyncIterator[Scope]:
+        async with self._db.guild(guild_id, snapshot=snapshot) as conn:
             cur = await conn.execute(
                 "SELECT memory_version FROM campaigns WHERE guild_id = %s AND id = %s",
                 (guild_id, campaign_id),
@@ -303,14 +327,15 @@ class MemoryStore:
     ) -> list[Alias]:
         """Aliases of live entries, not rejected. Secret ones (DM-only identities) only
         when asked for."""
-        async with self._read(guild_id, campaign_id) as scope:
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             rows = await scope.select(
                 ALIASES,
                 " AND status <> 'rejected' AND (%s::text IS NULL OR entity_id = %s)"
-                " AND (%s OR NOT secret) AND entity_id IN" + _LIVE_ENTITY_IDS + " ORDER BY key, id",
-                [entity_id, entity_id, include_secret, *scope.ids],
+                " AND (%s OR NOT secret) ORDER BY key, id",
+                [entity_id, entity_id, include_secret],
             )
-            return [_alias(r) for r in rows]
+            live = await _live_ids(scope, None if entity_id is None else [entity_id])
+            return [_alias(r) for r in rows if r["entity_id"] in live]
 
     async def sound_alikes(
         self, guild_id: int, campaign_id: str, codes: Sequence[str], *, limit: int = 500
@@ -320,17 +345,28 @@ class MemoryStore:
         for matching a suggested name without loading the whole campaign (#394)."""
         if not codes:
             return []
-        async with self._read(guild_id, campaign_id) as scope:
+        # Two plain reads, in one snapshot: joined, a campaign with no table statistics
+        # yet got a plan comparing every name with every entry, 2.6 s (#598).
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             cur = await scope.conn.execute(
-                "SELECT a.entity_id, a.text, e.name FROM memory_aliases a"
-                " JOIN memory_entities e ON e.id = a.entity_id"
-                " AND e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
-                " WHERE a.guild_id = %s AND a.campaign_id = %s AND a.status = 'confirmed'"
-                " AND NOT a.secret AND e.status = 'confirmed' AND a.sound_codes && %s::text[]"
-                " ORDER BY a.entity_id, a.id LIMIT %s",
-                (*scope.ids, list(codes), limit),
+                "SELECT entity_id, text FROM memory_aliases"
+                " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
+                " AND NOT secret AND sound_codes && %s::text[] ORDER BY entity_id, id",
+                (*scope.ids, list(codes)),
             )
-            return [(r["entity_id"], r["text"], r["name"]) for r in await cur.fetchall()]
+            found = await cur.fetchall()
+            cur = await scope.conn.execute(
+                "SELECT id, name FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'confirmed' AND id = ANY(%s)",
+                (*scope.ids, sorted({r["entity_id"] for r in found})),
+            )
+            names = {str(r["id"]): str(r["name"]) for r in await cur.fetchall()}
+        out = [
+            (r["entity_id"], r["text"], names[r["entity_id"]])
+            for r in found
+            if r["entity_id"] in names
+        ]
+        return out[:limit]
 
     async def relations(
         self,
@@ -344,18 +380,18 @@ class MemoryStore:
         """Facts not rejected, between live entries. Helpers that record story (NPC
         tracker, PlotBot) pass `confirmed_only=True`; secret facts only when asked for."""
         statuses = [CONFIRMED] if confirmed_only else list(LIVE)
-        async with self._read(guild_id, campaign_id) as scope:
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             rows = await scope.select(
                 RELATIONS,
                 " AND status = ANY(%s) AND (%s::text IS NULL OR %s IN (subject_id, object_id))"
-                " AND (%s OR NOT secret) AND subject_id IN"
-                + _LIVE_ENTITY_IDS
-                + " AND object_id IN"
-                + _LIVE_ENTITY_IDS
-                + " ORDER BY created_at, id",
-                [statuses, entity_id, entity_id, include_secret, *scope.ids, *scope.ids],
+                " AND (%s OR NOT secret) ORDER BY created_at, id",
+                [statuses, entity_id, entity_id, include_secret],
             )
-            return [_relation(r) for r in rows]
+            ends = {r[end] for r in rows for end in ("subject_id", "object_id")}
+            live = await _live_ids(scope, None if entity_id is None else ends)
+            return [
+                _relation(r) for r in rows if r["subject_id"] in live and r["object_id"] in live
+            ]
 
     async def lookup_data(self, guild_id: int, campaign_id: str) -> LookupData:
         """Everything the in-memory lookup needs, read at one moment (so a write landing
@@ -372,21 +408,23 @@ class MemoryStore:
             entities = await scope.select(
                 ENTITIES, " AND status IN ('proposed', 'confirmed') ORDER BY id"
             )
-            aliases = await scope.select(
-                ALIASES,
-                " AND status <> 'rejected' AND entity_id IN" + _LIVE_ENTITY_IDS + " ORDER BY id",
-                scope.ids,
-            )
+            # Names and facts of live entries, filtered here against the entries just
+            # read (same snapshot): plain reads, never a join that can go quadratic (#598).
+            live = {str(r["id"]) for r in entities}
+            aliases = [
+                r
+                for r in await scope.select(ALIASES, " AND status <> 'rejected' ORDER BY id")
+                if r["entity_id"] in live
+            ]
             corrections = await scope.select(CORRECTIONS, " ORDER BY id")
-            relations = await scope.select(
-                RELATIONS,
-                " AND status IN ('proposed', 'confirmed') AND NOT secret AND subject_id IN"
-                + _LIVE_ENTITY_IDS
-                + " AND object_id IN"
-                + _LIVE_ENTITY_IDS
-                + " ORDER BY id",
-                [*scope.ids, *scope.ids],
-            )
+            relations = [
+                r
+                for r in await scope.select(
+                    RELATIONS,
+                    " AND status IN ('proposed', 'confirmed') AND NOT secret ORDER BY id",
+                )
+                if r["subject_id"] in live and r["object_id"] in live
+            ]
             # Counts follow merges (a merged-away name counts for the one it became).
             cur = await conn.execute(
                 "SELECT coalesce(e.merged_into, h.entity_id) AS entity_id,"
@@ -515,6 +553,11 @@ class MemoryStore:
             raise MemoryRuleError("Only the DM can add a list of names.")
         for n in names:
             _check_choice(n.status, LIVE, "entity status")
+        # Each name's spelling, key and sound codes, before the campaign's write lock and
+        # off the event loop (about 100 ms for a 2,000-line list, #598).
+        raw = [t for n in names for t in (n.name, *n.others, *n.secrets)]
+        raw += [t for m in more for t in (*m.others, *m.secrets)]
+        prep = await asyncio.to_thread(_Prepared, raw)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             # Names in use, in two plain reads joined here: as one query, a campaign just
@@ -551,15 +594,18 @@ class MemoryStore:
                     continue
                 status = live[m.entity_id]
                 has = has_keys.setdefault(m.entity_id, set())
-                extra = [(clean_text(t), "nickname", False) for t in m.others]
-                extra += [(clean_text(t), "title", True) for t in m.secrets]
+                extra = [(t, "nickname", False) for t in m.others]
+                extra += [(t, "title", True) for t in m.secrets]
                 added = False
-                for text, kind, secret in extra:
-                    if (key := lookup_key(text)) in used or key in has:
+                for t, kind, secret in extra:
+                    text, key, codes = prep[t]
+                    if key in used or key in has:
                         continue
                     used.add(key)
                     has.add(key)
-                    aliases.append(_new_alias(w, m.entity_id, text, kind, status, secret, None))
+                    aliases.append(
+                        _new_alias(w, m.entity_id, text, kind, status, secret, None, codes)
+                    )
                     added = True
                 folded.append(m.entity_id if added else None)
             ids: list[str | None] = []
@@ -568,8 +614,8 @@ class MemoryStore:
                 onto.active_type(n.type)
                 if onto_is_pc(onto, n.type):
                     raise MemoryRuleError("A player's character needs its player.")
-                name = clean_text(n.name)
-                if lookup_key(name) in used:
+                name, name_key_, _ = prep[n.name]
+                if name_key_ in used:
                     ids.append(None)
                     continue
                 entity_id = new_id()
@@ -580,16 +626,18 @@ class MemoryStore:
                         "created_at": w.now, "played_by": None,
                     }
                 )  # fmt: skip
-                seen = {lookup_key(name)}
-                texts = [(name, "full", False)]
-                texts += [(clean_text(t), "nickname", False) for t in n.others]
-                texts += [(clean_text(t), "title", True) for t in n.secrets]
-                for text, kind, secret in texts:
-                    key = lookup_key(text)
+                seen = {name_key_}
+                texts = [(n.name, "full", False)]
+                texts += [(t, "nickname", False) for t in n.others]
+                texts += [(t, "title", True) for t in n.secrets]
+                for t, kind, secret in texts:
+                    text, key, codes = prep[t]
                     if (key in seen or key in used) and kind != "full":
                         continue
                     seen.add(key)
-                    aliases.append(_new_alias(w, entity_id, text, kind, n.status, secret, None))
+                    aliases.append(
+                        _new_alias(w, entity_id, text, kind, n.status, secret, None, codes)
+                    )
                 used |= seen
                 ids.append(entity_id)
             # Two statements however long the list (#253): the entries, then all their
@@ -1434,6 +1482,28 @@ def onto_is_pc(onto: Ontology, type_key: str) -> bool:
     return onto.is_a(type_key, "player_character")
 
 
+class _Prepared:
+    """Each typed name's clean spelling, lookup key and sound codes, worked out ahead
+    (pure CPU work). A name that can't be used raises only where it's used, as before."""
+
+    def __init__(self, raw: Sequence[str]) -> None:
+        self._done: dict[str, tuple[str, str, tuple[str, ...]] | MemoryRuleError] = {}
+        for t in raw:
+            if t not in self._done:
+                try:
+                    text = clean_text(t)
+                    self._done[t] = (text, lookup_key(text), tuple(sound_codes(text)))
+                except MemoryRuleError as exc:
+                    self._done[t] = exc
+
+    def __getitem__(self, t: str) -> tuple[str, str, list[str]]:
+        found = self._done[t]
+        if isinstance(found, MemoryRuleError):
+            raise found
+        text, key, codes = found
+        return text, key, list(codes)
+
+
 def _new_alias(
     w: Changes,
     entity_id: str,
@@ -1442,6 +1512,7 @@ def _new_alias(
     status: str,
     secret: bool,
     used_by: str | None,
+    codes: list[str] | None = None,  # worked out already (_Prepared)
 ) -> dict[str, Any]:
     return {
         "id": new_id(),
@@ -1452,7 +1523,7 @@ def _new_alias(
         "used_by": used_by,
         "secret": secret,
         "status": status,
-        "sound_codes": list(sound_codes(text)),
+        "sound_codes": list(sound_codes(text)) if codes is None else codes,
         "source": w.source,
         "created_at": w.now,
     }

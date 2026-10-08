@@ -815,3 +815,52 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     subscription and ears waits for the next pause to subscribe again. The audio %
     didn't show the loss. Bug #631. First such error in 30 h of ears logs.
   - Next: Test A again to see if it repeats; ears to log the DAVE handshake (#631).
+
+==============================================================================
+2026-10-08  Server: deploy 1a7bf0d (dev1, no test run)
+==============================================================================
+  - 06:18 UTC  development @ 1a7bf0d: #617 (⏹ Stop listening asks first, #554), #622
+    (/dmbot stop and Restore answer before waiting for the session lock, #88), #620 and
+    #629 (dev tool: claims measurement, #234), #633 (next-test-step: Test A again). No
+    migrations, no .env changes. ears not rebuilt (unchanged; #631's fix is with dev3).
+  - Database backed up first (outside the repo; 26 tables); no session was live. Core
+    rebuilt: "Connected to 1 server(s)", "ears connected", no warnings or errors.
+
+==============================================================================
+2026-10-08  Server: deploy 70ac757 (dev1, no test run)
+==============================================================================
+  - 06:44 UTC  development @ 70ac757: #641 (ears never loses a speaker's audio silently
+    on a receive error, #631: listens again, counts the loss, warns core and the DM
+    screen, logs DAVE debug lines with DMBOT_DEBUG_AUDIO=1; protocol change in both
+    services), #644 (campaign hand-over offers in the store, #437 part 1b).
+  - Migration 0021_campaign_handover_offers: a new table. Read before deploying.
+  - Database backed up first ("pre0021", outside the repo; 26 tables); no session was
+    live; .env already matched. ears and core rebuilt together: "Database updated:
+    0021_campaign_handover_offers", "Connected to 1 server(s)", "ears connected". Two
+    ears warnings "core link error: connect ECONNREFUSED" in the first second while core
+    started, then "connected to core"; nothing else.
+
+==============================================================================
+2026-10-08  Server: interrupted deploy, core down 06:58-07:00 (dev1)
+==============================================================================
+  - 06:57 UTC  dev1 started deploying #651 (be3a81d): backup done (26 tables; no
+    session live), pull and build done, old core stopped. The owner stopped the command
+    because Test A was about to start, so the new core never started. DMbot didn't
+    answer /dmbot start for ~2 minutes. dev1 put the checkout back on 70ac757 (ears was
+    still running it) and rebuilt core only: up 07:00:18, ears reconnected 07:00:23.
+    Logged in #660. #651 is not live yet.
+
+==============================================================================
+2026-10-08  Test A again: DMbot writes down what one person says (owner, alone): PASS
+==============================================================================
+  - 07:01-07:02 UTC on 70ac757 (#641 live, #651 not), Deepgram, from
+    docs/next-test-step.md. Owner: "no problems on the Discord side this time".
+    Device: asked.
+  - ears: "dave: Session initialized for protocol version 1" at join, "MLS commit
+    processed (transition id: 0)" 5 s later; "capturing user" 12 s after that; one
+    "dave: Failed to decrypt a packet (1 consecutive fails)", then recovered; health
+    received=145 expected=145. core: "Capture check: 1 x speech, 3.0 s, audio 100%",
+    "Listened 0.9 min, sent 0.1 min of speech (5%)", download offered to 1 of 1.
+  - Also seen: consent withdrawn at 07:01:56 and given again at 07:02:03 (ears stopped
+    and restarted capture at once), not part of this test.
+  - The 05:43 failure (#631) did not repeat. Evidence posted on #631.
