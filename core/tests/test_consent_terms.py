@@ -4,7 +4,7 @@ import hashlib
 import unittest
 
 from dmbot.consent import TERMS_VERSION
-from dmbot.consent_dm import request_text
+from dmbot.consent_dm import reminder_text, request_text
 
 # The request as people see it, under TERMS_VERSION. If this test fails you changed the
 # wording: if the change alters what people agree to (who can read it, what's recorded,
@@ -35,8 +35,6 @@ class TermsVersion(unittest.TestCase):
 
     def test_the_request_and_reminder_say_an_ai_reads_the_text(self) -> None:
         # #52: said once for every helper, in the request and in each session's reminder.
-        from dmbot.consent_dm import reminder_text
-
         request = request_text("Server", voice=None, dm=None, cloud=False)
         self.assertIn(
             "DMbot's helper reads that text to give your DM notes. For that, the text goes "
@@ -44,7 +42,7 @@ class TermsVersion(unittest.TestCase):
             request,
         )
         reminder = reminder_text("Server", "Table", 1_700_000_000)
-        self.assertIn("An AI (Anthropic) reads it to give your DM notes", reminder)
+        self.assertIn("Anthropic's AI reads the text to give your DM notes", reminder)
         self.assertIn("isn't used to train their AI", reminder)
 
     def test_the_request_says_who_can_read_it(self) -> None:

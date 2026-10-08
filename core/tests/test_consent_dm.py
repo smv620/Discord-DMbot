@@ -613,6 +613,20 @@ class ConsentDMTests(DatabaseTest):
         assert c.CLOUD_NOTE not in edit["content"]  # local Whisper: no outside note
         assert custom_ids(edit["view"])[0] == "dmbot:consent:yes:1:v3"
 
+    async def test_a_button_from_the_last_version_asks_again_and_saves_nothing(self) -> None:
+        # #52: an "I consent" sent under the previous wording (before the AI note).
+        old_id = f"dmbot:consent:yes:1:v{TERMS_VERSION - 1}"
+        match = c.ConsentButton.__discord_ui_compiled_template__.fullmatch(old_id)
+        assert match is not None
+        old = await c.ConsentButton.from_custom_id(MagicMock(), MagicMock(), match)
+        press = self.button_press(PLAYER)
+        await old.callback(press)
+        assert await self.consent.granted_at(GUILD, PLAYER) is None  # nothing saved
+        edit = press.edit_original_response.await_args.kwargs
+        assert edit["content"].startswith(c.STALE_INTRO)
+        assert c.AI_NOTE in edit["content"]  # the current wording, with the AI note
+        assert custom_ids(edit["view"])[0] == f"dmbot:consent:yes:1:v{TERMS_VERSION}"
+
     async def test_a_marked_button_id_is_parsed_back_with_its_engine(self) -> None:
         custom_id = str(c.ConsentButton(123, outside="deepgram").custom_id)
         match = c.ConsentButton.__discord_ui_compiled_template__.fullmatch(custom_id)
