@@ -391,7 +391,6 @@ class StopListeningButton(
     async def callback(self, interaction: discord.Interaction) -> Any:
         guild = interaction.guild
         bot: Any = interaction.client
-        member = interaction.user
         if guild is None or not hasattr(bot, "stop_session"):
             await interaction.response.send_message(messages.CAMPAIGN_GONE, ephemeral=True)
             return
@@ -402,16 +401,73 @@ class StopListeningButton(
                 if interaction.message is not None:
                     await interaction.message.edit(view=None)
             return
+        running = bot.active_session(guild.id)
+        if running is None:  # stopped meanwhile
+            await interaction.response.send_message(messages.NOT_LISTENING_NOW, ephemeral=True)
+            return
+        # Ask first (#554): a tap next to ⚙️ Settings mustn't end the session by accident.
+        session, name = running
+        confirm = StopConfirm(self.campaign_id, session)
+        await interaction.response.send_message(
+            messages.stop_question(discord.utils.escape_markdown(name)),
+            view=confirm,
+            ephemeral=True,
+            allowed_mentions=NO_PINGS,
+        )
+        confirm.asked = interaction
+
+
+class StopConfirm(discord.ui.View):
+    """The Stop button's private question (#554): "Yes, stop" or "Cancel". A one-off
+    with a short timeout, never a persistent button, and tied to the session it asked
+    about, so a stale "Yes" can't stop a later session. "Yes" checks again who may stop
+    (this campaign's DMs or a server manager), as the button always did."""
+
+    def __init__(self, campaign_id: str, session: int) -> None:
+        super().__init__(timeout=messages.STOP_CONFIRM_S)
+        self.campaign_id, self.session = campaign_id, session
+        self.asked: discord.Interaction | None = None  # the press that asked
+        yes: discord.ui.Button[StopConfirm] = discord.ui.Button(
+            label=messages.STOP_YES_LABEL, emoji="⏹", style=discord.ButtonStyle.danger
+        )
+        cancel: discord.ui.Button[StopConfirm] = discord.ui.Button(
+            label=messages.STOP_CANCEL_LABEL, style=discord.ButtonStyle.secondary
+        )
+        yes.callback = self._yes  # type: ignore[method-assign]
+        cancel.callback = self._cancel  # type: ignore[method-assign]
+        self.add_item(yes)
+        self.add_item(cancel)
+
+    async def _yes(self, interaction: discord.Interaction) -> None:
+        guild, member = interaction.guild, interaction.user
+        bot: Any = interaction.client
+        self.stop()
+        await interaction.response.defer()  # the question becomes the answer
         manager = isinstance(member, discord.Member) and member.guild_permissions.manage_guild
-        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             reply: str = await bot.stop_session(
-                guild.id, member.id, manager, campaign_id=self.campaign_id
+                guild.id if guild else 0,
+                member.id,
+                manager,
+                campaign_id=self.campaign_id,
+                session=self.session,
             )
         except Exception:
             log.exception("Stop listening failed")
             reply = messages.STOP_FAILED
-        await interaction.followup.send(reply, ephemeral=True, allowed_mentions=NO_PINGS)
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=reply, view=None, allowed_mentions=NO_PINGS
+            )
+
+    async def _cancel(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await interaction.response.edit_message(content=messages.STOP_KEPT, view=None)
+
+    async def on_timeout(self) -> None:
+        if self.asked is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await self.asked.edit_original_response(content=messages.STOP_EXPIRED, view=None)
 
 
 def stop_listening_view(campaign_id: str) -> discord.ui.View:

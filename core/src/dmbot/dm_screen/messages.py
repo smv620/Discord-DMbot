@@ -54,6 +54,23 @@ NOT_LISTENING_NOW = (
     "DMbot isn't listening to this campaign right now. To start, run `/dmbot start`."
 )
 STOP_FAILED = "Something went wrong stopping DMbot. Try `/dmbot stop`."
+# The Stop button asks first (#554): a thumb slip next to ⚙️ Settings mustn't end it.
+STOP_YES_LABEL = "Yes, stop"
+STOP_CANCEL_LABEL = "Cancel"
+STOP_KEPT = "Still listening."
+STOP_EXPIRED = "That's expired. Press ⏹ **Stop listening** again."
+STOP_STALE = (
+    "That question was for an earlier session, so nothing was stopped. To stop now, press "
+    "⏹ **Stop listening** again."
+)
+STOP_CONFIRM_S = 60.0
+
+
+def stop_question(campaign_name: str) -> str:
+    """The Stop button's question (the name already escaped)."""
+    return f"Stop listening and end the session for **{campaign_name}**?"
+
+
 NOT_THE_DM = "Only this campaign's DM (or a server manager) can change who can see the DM screen."
 SOMETHING_WENT_WRONG = "Sorry, something went wrong changing the DM screen. Please try again."
 

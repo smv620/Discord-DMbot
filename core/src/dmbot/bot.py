@@ -862,6 +862,12 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.get(guild_id)
         return table.campaign_id if table else None
 
+    def active_session(self, guild_id: int) -> tuple[int, str] | None:
+        """The running session here (its id and campaign name), for the Stop button's
+        question (#554): its "Yes, stop" stops only that session, never a later one."""
+        table = self.tables.get(guild_id)
+        return (table.segmenter.session, table.campaign_name) if table else None
+
     async def is_campaign_playing(self, guild_id: int, campaign_id: str) -> bool:
         """Running here, or saved and about to be resumed after a restart."""
         if self.active_campaign_id(guild_id) == campaign_id:
@@ -1031,13 +1037,17 @@ class DMBot(commands.AutoShardedBot):
         is_server_manager: bool,
         *,
         campaign_id: str | None = None,
+        session: int | None = None,
     ) -> str:
         """`campaign_id`: only stop if this campaign is the one being listened to (a Stop
-        button on an older message must never end a newer session)."""
+        button on an older message must never end a newer session). `session`: only stop
+        that very session (the Stop button's question, #554)."""
         async with self.session_lock(guild_id):
             table = self.tables.get(guild_id)
             if campaign_id is not None and (table is None or table.campaign_id != campaign_id):
                 return screen_messages.NOT_LISTENING_NOW
+            if session is not None and (table is None or table.segmenter.session != session):
+                return screen_messages.STOP_STALE
             if table is None:
                 # Maybe a saved session that hasn't been picked up again yet (DMbot is
                 # restarting): stopping must still end it, or it would come back.

@@ -632,7 +632,10 @@ true picture of who is recorded. Only people at the table get these lines. The
 message carries a **⏹ Stop listening** button (the same as `/dmbot stop`: this
 campaign's DMs or a server manager; anyone else is told how to stop recording
 themselves). Only the newest listening message has the button, it comes off when the
-session ends, and it works after a restart. The help card says how to stop too.
+session ends, and it works after a restart. The help card says how to stop too. The
+button asks first, privately ("Stop listening and end the session for **…**? [⏹ Yes,
+stop] [Cancel]", for 60 seconds, tied to that session); the typed `/dmbot stop` stops at
+once (#554).
 
 **Writing speech down for several tables: built (2026-10-07, #173).** Each Discord
 server has its own queue of speech (64 pieces; 256 across all servers bound memory when
