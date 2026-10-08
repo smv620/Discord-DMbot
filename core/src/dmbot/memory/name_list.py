@@ -31,9 +31,9 @@ TOO_MANY_SECRETS = (
     f"more than {MAX_PER_LINE} secret names. Put the rest on a new line: the name, then "
     "| | |, then the rest"
 )
-# Other names, and secret names, one list gives one name (all its lines joined), and in
-# all (#598): one name can't gather thousands across lines. Only what the list adds
-# counts, so a Download all file always uploads again.
+# The most other names, and the most secret names, one list may give a single name (its
+# lines joined first), and the most it may give in all (#598). Only names the list adds
+# count, so a Download all file always uploads again.
 MAX_PER_NAME = 50
 MAX_ADDED = 5_000
 PC = "player_character"
@@ -118,7 +118,7 @@ def header(*, secrets: bool) -> str:
         "###   Spelled almost like a known name? DMbot asks if they're the same.",
         "###   A different kind than DMbot has? DMbot keeps its kind and asks you.",
         "###   DMbot never joins or changes names on its own. Up to 2,000 lines and",
-        "###   5,000 new other names in all.",
+        f"###   5,000 new {'other and secret' if secrets else 'other'} names in all.",
         "### - If a line doesn't fit, DMbot tells you, and lets you add the rest or have its",
         "###   AI tidy the list.",
         "###",
