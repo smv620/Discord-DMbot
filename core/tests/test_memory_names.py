@@ -93,13 +93,16 @@ class NamesTest(DatabaseTest):
         async def edit_original_response(*, content: str = "", view: Any = None, **_: Any) -> None:
             response.edited.append((content, view))  # after a defer: the same message
 
+        async def follow_up(text: str = "", **kw: Any) -> None:
+            response.sent.append((text, kw))  # after a defer: the private reply (#537)
+
         return SimpleNamespace(
             client=self.bot,
             guild=SimpleNamespace(id=GUILD),
             guild_id=GUILD,
             user=user,
             response=response,
-            followup=SimpleNamespace(send=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock(side_effect=follow_up)),
             edit_original_response=AsyncMock(side_effect=edit_original_response),
         )
 
@@ -835,7 +838,9 @@ class Lists(NamesTest):
             SimpleNamespace(values=["npc"], ids=select.ids, word=select.word),
             it,
         )
-        self.assertIn("Every **wizard**: 4 names set to", it.response.edited[0][0])
+        saving, saved = it.response.edited  # menus away while saving, then the answer (#537)
+        self.assertEqual((saving[0].endswith(name_lists.SAVING), saving[1]), (True, None))
+        self.assertIn("Every **wizard**: 4 names set to", saved[0])
         self.assertEqual(
             {f"Mage {n}" for n in range(3)} | {"Tarn"},
             set(await self.names()) - {"Belleros"},
