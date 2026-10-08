@@ -7,6 +7,7 @@ import contextlib
 import logging
 import os
 import sys
+import time
 
 import uvicorn
 from psycopg.conninfo import make_conninfo
@@ -27,7 +28,7 @@ CLEANUP_SECONDS = 3600
 async def _sweep_expired_sessions(db: Database) -> None:
     while True:
         try:
-            removed = await sessions.delete_expired(db)
+            removed = await sessions.delete_expired(db, now=int(time.time()))
             if removed:
                 log.info("Removed %d expired sign-in sessions", removed)
         except Exception:

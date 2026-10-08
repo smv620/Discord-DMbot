@@ -114,8 +114,9 @@ async def sign_out(db: Database, user_id: int, token: str) -> None:
         await conn.execute("DELETE FROM web_sessions WHERE id_hash = %s", (hash_token(token),))
 
 
-async def delete_expired(db: Database) -> int:
-    """Remove expired sessions. Returns how many."""
+async def delete_expired(db: Database, *, now: int) -> int:
+    """Remove expired sessions. Returns how many. Expired by the API's clock here, and the
+    database's row-level security only lets the sweep see rows expired by its own clock."""
     async with db.cleanup() as conn:
-        cur = await conn.execute("DELETE FROM web_sessions")
+        cur = await conn.execute("DELETE FROM web_sessions WHERE expires_at <= %s", (now,))
         return cur.rowcount

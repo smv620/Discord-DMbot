@@ -79,6 +79,8 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         session_days = int(get("WEB_SESSION_DAYS") or "30")
     except ValueError as exc:
         raise ConfigError("WEB_API_PORT and WEB_SESSION_DAYS must be whole numbers.") from exc
+    if not 1 <= port <= 65535:
+        raise ConfigError("WEB_API_PORT must be between 1 and 65535.")
     if not 1 <= session_days <= 90:
         raise ConfigError("WEB_SESSION_DAYS must be between 1 and 90.")
     return WebSettings(
