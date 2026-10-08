@@ -19,7 +19,9 @@ words as heard otherwise (a wrong fix is worse than a missed one):
   and brands sound like campaign names too ("Mary" and Mara, 0.75). Words in lower
   case are never changed this way ("Bell or us" waits for the DM's answer, later).
 
-Only confirmed, non-secret names make a fix; a name DMbot only suggested never does.
+Only confirmed, non-secret names make a silent fix. A name DMbot only suggested makes at
+most an unsure one (`Fix.sure` False, spelled at least 0.9 alike), which the DM always
+sees with Undo (#296).
 Nothing is changed inside a secret name, a known name, a "keep as heard" word or the
 name of someone at the table, and no fix goes where the words, with the words around
 them, sound like a secret name ("Silas Vain" for the secret "Silas Vane"). The line is
@@ -55,6 +57,8 @@ ENTRIES_PER_NAME = 8  # of one entry's names sounding alike, the most weighed pe
 # One word alone, by sound: real first names sound like campaign names ("Mary" for the
 # NPC or character Mara, 0.75), so one word must be spelled closer than a joined name.
 MIN_LIKENESS_ONE_WORD = 0.8
+# From a name DMbot only suggested: spelled very alike, and always shown with Undo.
+MIN_LIKENESS_UNSURE = 0.9
 # Runs of words checked against secret names, per line. Enough for any real campaign
 # (a few dozen); past it, the line's remaining fixes are dropped: no fix is the safe way.
 SECRET_CHECKS_PER_LINE = 400
@@ -73,6 +77,8 @@ class Fix:
     written: str
     entity_id: str
     how: str  # SPELLING, DM_FIX or SOUND
+    # False: from a name DMbot only suggested, so the DM screen shows it with Undo (#296)
+    sure: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,7 +422,8 @@ def _by_sound(
                 # The DM is asked (no scene needed), unless fewer words make a sure fix.
                 asking = asking or (found, size)
                 continue
-            if found is not None and size == 1 and not _one_word_ok(found, scene):
+            # A fix with Undo needs no scene: it's always shown to the DM.
+            if found is not None and size == 1 and found.sure and not _one_word_ok(found, scene):
                 found = None
             if found is not None:
                 fixes.append(found)
@@ -458,13 +465,19 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | Questio
     if not by_entity:
         return None
     if len(by_entity) == 1:
-        usable = [e for entries in by_entity.values() for e in entries.values() if e.confirmed]
-        if not usable:
-            return None  # only a name DMbot suggested: never a silent fix
-        best = max(usable, key=lambda e: (likeness(said, e.text), e.text))
-        if likeness(said, best.text) < MIN_LIKENESS or best.text == said:
+        names = [e for entries in by_entity.values() for e in entries.values()]
+        usable = [e for e in names if e.confirmed]
+        if usable:
+            best = max(usable, key=lambda e: (likeness(said, e.text), e.text))
+            if likeness(said, best.text) < MIN_LIKENESS or best.text == said:
+                return None
+            return Fix(start, start + len(said), said, best.text, best.entity_id, SOUND)
+        # Only a name DMbot suggested: never a silent fix. Spelled very alike, it's fixed
+        # with Undo in the DM screen (#296).
+        best = max(names, key=lambda e: (likeness(said, e.text), e.text))
+        if likeness(said, best.text) < MIN_LIKENESS_UNSURE or best.text == said:
             return None
-        return Fix(start, start + len(said), said, best.text, best.entity_id, SOUND)
+        return Fix(start, start + len(said), said, best.text, best.entity_id, SOUND, sure=False)
     if any(not any(e.confirmed for e in entries.values()) for entries in by_entity.values()):
         return None  # one of them is only a suggestion: too unsure to ask
     options = []

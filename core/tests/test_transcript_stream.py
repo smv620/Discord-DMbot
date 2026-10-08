@@ -25,7 +25,7 @@ def drain(stream: TranscriptStream) -> list[str]:
     while (ready := stream.next_message(everyone)) is not None:
         text, count = ready
         out.append(text)
-        stream.posted(count)
+        stream.posted(count, now=0.0)
     return out
 
 
@@ -114,7 +114,7 @@ class Batching(unittest.TestCase):
             stream.add(1 + i % 2, "Mia" if i % 2 == 0 else "Dee", f"line {i} " * 10, i)
         text, count = stream.next_message(everyone) or ("", 0)
         self.assertIn("Dee", text)
-        stream.posted(count)
+        stream.posted(count, now=0.0)
         rest = stream.next_message(lambda uid: uid != 2)
         assert rest is not None
         self.assertNotIn("Dee", rest[0])

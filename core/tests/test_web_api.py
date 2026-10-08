@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 import unittest
+import unittest.mock
 from typing import ClassVar
 from urllib.parse import parse_qs, urlsplit
 
@@ -32,14 +33,17 @@ class FakeDiscord:
         self.user_info = ALICE
         self.guild_list = [THURSDAY, QUILLON, GORRAK]
         self.revoked: list[str] = []
+        self.used_codes: set[str] = set()
         self.fail = False
 
     def authorize_url(self, state: str, redirect_uri: str) -> str:
         return f"https://discord.com/oauth2/authorize?state={state}&redirect_uri={redirect_uri}"
 
     async def exchange(self, code: str, redirect_uri: str) -> str:
-        if self.fail or code != "good-code":
+        # Like Discord, a code works once.
+        if self.fail or code != "good-code" or code in self.used_codes:
             raise DiscordError("refused")
+        self.used_codes.add(code)
         return "discord-access-token"
 
     async def user(self, token: str) -> DiscordUser:
@@ -80,6 +84,7 @@ class WebApi(DatabaseTest):
         await super().asyncTearDown()
 
     async def sign_in(self) -> httpx.Response:
+        self.discord.used_codes.clear()  # each real sign-in gets a fresh code from Discord
         start = await self.client.get("/auth/discord/start")
         state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
         return await self.client.get(
@@ -119,6 +124,26 @@ class WebApi(DatabaseTest):
         )
         self.assertEqual(done.headers["location"], f"{SITE}/account?signin=failed")
         self.assertEqual((await self.client.get("/me")).status_code, 401)
+
+    async def test_a_replayed_callback_is_refused(self) -> None:
+        start = await self.client.get("/auth/discord/start")
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        params = {"state": state, "code": "good-code"}
+        first = await self.client.get("/auth/discord/callback", params=params)
+        self.assertEqual(first.headers["location"], f"{SITE}/account")
+        # The callback clears the sign-in cookie; a replay that brings it back anyway still
+        # fails, because the code was spent, and starts no second session.
+        self.assertIsNone(first.cookies.get("__Host-dmbot_signin"))
+        self.client.cookies.clear()
+        self.client.cookies.set("__Host-dmbot_signin", state, domain="api.dmbot.example")
+        again = await self.client.get("/auth/discord/callback", params=params)
+        self.assertEqual(again.headers["location"], f"{SITE}/account?signin=failed")
+        self.assertIsNone(again.cookies.get("__Host-dmbot_session"))
+        async with self.db.user(ALICE.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM web_sessions")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 1)
 
     async def test_a_forged_or_expired_state_is_refused(self) -> None:
         forged = sessions.new_state(b"x" * 40, self.now)
@@ -199,6 +224,34 @@ class WebApi(DatabaseTest):
             ],
         )
 
+    async def test_two_people_each_see_only_their_own_campaigns_and_plan(self) -> None:
+        bob = DiscordUser(id=2002, name="Quillon", email="quillon@example.com")
+        store = CampaignStore(self.db, clock=lambda: self.now)
+        await store.create(THURSDAY.id, "Alice's Game", ALICE.id)
+        await store.create(THURSDAY.id, "Bob's Game", bob.id)
+        await self.sign_in()
+        alice_cookies = dict(self.client.cookies)
+        self.client.cookies.clear()
+        self.discord.user_info = bob
+        await self.sign_in()
+        async with self.db.plan_writer(bob.id) as conn:
+            await conn.execute(
+                "INSERT INTO entitlements (user_id, plan, status, hours_cap, extra_hours,"
+                " campaign_cap, period_start, period_end, plan_changed_at, provider,"
+                " last_event_at, updated_at) VALUES (%s, 'guild', 'active', 87, 0, 5,"
+                " %s, %s, 0, 'fake', 0, 0)",
+                (bob.id, self.now - 100, self.now + 86400),
+            )
+        bob_me = (await self.client.get("/me")).json()
+        self.client.cookies.clear()
+        for name, value in alice_cookies.items():
+            self.client.cookies.set(name, value, domain="api.dmbot.example")
+        alice_me = (await self.client.get("/me")).json()
+        self.assertEqual([c["name"] for c in alice_me["campaigns"]], ["Alice's Game"])
+        self.assertIsNone(alice_me["plan"])
+        self.assertEqual([c["name"] for c in bob_me["campaigns"]], ["Bob's Game"])
+        self.assertEqual(bob_me["plan"]["id"], "guild")
+
     async def test_me_shows_the_plan(self) -> None:
         await self.sign_in()
         async with self.db.plan_writer(ALICE.id) as conn:
@@ -226,8 +279,14 @@ class WebApi(DatabaseTest):
         self.now = int(time.time()) - 31 * 86400
         await self.sign_in()
         self.assertEqual((await self.client.get("/me")).status_code, 401)
-        self.assertEqual(await sessions.delete_expired(self.db), 1)
-        self.assertEqual(await sessions.delete_expired(self.db), 0)
+        self.assertEqual(await sessions.delete_expired(self.db, now=int(time.time())), 1)
+        self.assertEqual(await sessions.delete_expired(self.db, now=int(time.time())), 0)
+
+    async def test_the_sweep_keeps_sessions_the_apis_clock_says_are_live(self) -> None:
+        self.now = int(time.time()) - 31 * 86400
+        await self.sign_in()
+        # The database thinks it expired; the API's clock (a day earlier) doesn't yet.
+        self.assertEqual(await sessions.delete_expired(self.db, now=self.now + 29 * 86400), 0)
 
     async def test_signing_out_one_browser_leaves_the_others(self) -> None:
         await self.sign_in()
@@ -304,6 +363,20 @@ class WebApi(DatabaseTest):
         theirs = await self.client.get("/health", headers={"Origin": "https://evil.example"})
         self.assertIsNone(theirs.headers.get("access-control-allow-origin"))
 
+    async def test_a_crash_is_still_json_the_website_can_read(self) -> None:
+        async def broken(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("database fell over")
+
+        await self.sign_in()
+        with (
+            unittest.mock.patch("dmbot.web.app.build_me", broken),
+            self.assertLogs("dmbot.web.app", "ERROR"),
+        ):
+            response = await self.client.get("/me", headers={"Origin": SITE})
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json(), {"error": "server"})
+        self.assertEqual(response.headers["access-control-allow-origin"], SITE)
+
     async def test_responses_are_never_cached(self) -> None:
         response = await self.client.get("/health")
         self.assertEqual(response.headers["cache-control"], "no-store")
@@ -347,6 +420,11 @@ class Settings(unittest.TestCase):
             load_web_settings({**self.ENV, "WEB_API_URL": "http://api.dmbot.example"})
         local = load_web_settings({**self.ENV, "WEB_API_URL": "http://localhost:8080"})
         self.assertFalse(local.secure_cookies)
+
+    def test_refuses_a_port_out_of_range(self) -> None:
+        for port in ("0", "70000"):
+            with self.assertRaisesRegex(ConfigError, "between 1 and 65535"):
+                load_web_settings({**self.ENV, "WEB_API_PORT": port})
 
     def test_refuses_a_short_secret(self) -> None:
         with self.assertRaisesRegex(ConfigError, "at least 32"):

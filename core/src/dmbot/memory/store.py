@@ -14,9 +14,10 @@ Only the DM's word confirms anything (`source="dm"`); other sources propose.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -63,6 +64,7 @@ from dmbot.memory.models import (
     Heard,
     HeardCount,
     MemoryRuleError,
+    MoreNames,
     NewName,
     Relation,
     TooLateToUndo,
@@ -200,6 +202,7 @@ def _stronger(status_a: str, status_b: str) -> str:
 
 
 DAY = 24 * 60 * 60
+YIELD_AFTER_S = 0.015  # the flag check gives the event loop a turn this often
 
 
 class MemoryStore:
@@ -211,6 +214,10 @@ class MemoryStore:
         self._db = db
         self._clock = clock
         self.keep_days = keep_days  # how long Undo works: older change-log rows are pruned
+        # The memory version each campaign's flags were last checked at (#347): nothing
+        # changed since, nothing to check. Only in this process; a restart checks again.
+        # A deleted campaign's entry stays: a few bytes, and never matched again.
+        self._flags_checked: dict[tuple[int, str], int] = {}
 
     @asynccontextmanager
     async def _write(
@@ -304,6 +311,26 @@ class MemoryStore:
                 [entity_id, entity_id, include_secret, *scope.ids],
             )
             return [_alias(r) for r in rows]
+
+    async def sound_alikes(
+        self, guild_id: int, campaign_id: str, codes: Sequence[str], *, limit: int = 500
+    ) -> list[tuple[str, str, str]]:
+        """Confirmed, non-secret names of confirmed entries that share a sound code with
+        `codes`, as (entity ID, name as written, the entry's own name): one small query,
+        for matching a suggested name without loading the whole campaign (#394)."""
+        if not codes:
+            return []
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT a.entity_id, a.text, e.name FROM memory_aliases a"
+                " JOIN memory_entities e ON e.id = a.entity_id"
+                " AND e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
+                " WHERE a.guild_id = %s AND a.campaign_id = %s AND a.status = 'confirmed'"
+                " AND NOT a.secret AND e.status = 'confirmed' AND a.sound_codes && %s::text[]"
+                " ORDER BY a.entity_id, a.id LIMIT %s",
+                (*scope.ids, list(codes), limit),
+            )
+            return [(r["entity_id"], r["text"], r["name"]) for r in await cur.fetchall()]
 
     async def relations(
         self,
@@ -470,6 +497,7 @@ class MemoryStore:
         *,
         source: str,
         secret_clashes: bool = True,
+        more: Sequence[MoreNames] = (),
     ) -> Written[list[str | None]]:
         """Many names at once (📥 Add many), each with its other and secret names, in one
         change: one Undo (`undo_names`) takes the whole list back, and live transcription
@@ -478,7 +506,11 @@ class MemoryStore:
         once: memory writes for a campaign happen one at a time, so this check is exact).
         Other names already used elsewhere are left out the same way. `secret_clashes`:
         whether a secret name counts as used (False for anyone but the campaign's DMs, who
-        must never learn one exists)."""
+        must never learn one exists). `more`: other names for names DMbot already knows
+        (#369), in the same change, so the same Undo takes them back; one whose entry has
+        gone, or whose name is used by now or that entry already has (even as a secret or
+        a name the DM said isn't it), is left out quietly. The returned IDs then go on with
+        one per `more` entry: its entry's ID if any name was added, else None."""
         if source != DM:
             raise MemoryRuleError("Only the DM can add a list of names.")
         for n in names:
@@ -492,6 +524,38 @@ class MemoryStore:
                 (*w.ids, secret_clashes, *w.ids),
             )
             used = {str(r["key"]) for r in await cur.fetchall()}
+            folded: list[str | None] = []
+            wanted = sorted({m.entity_id for m in more})
+            live = {
+                str(r["id"]): str(r["status"])
+                for r in await w.select(ENTITIES, " AND id = ANY(%s)", [wanted])
+                if r["status"] in LIVE
+            }
+            # Every name they have, secret or turned down too: never a second copy, and
+            # never an error that would tell a player a secret name exists.
+            has_keys: dict[str, set[str]] = {}
+            for r in await w.select(ALIASES, " AND entity_id = ANY(%s)", [sorted(live)]):
+                has_keys.setdefault(str(r["entity_id"]), set()).add(str(r["key"]))
+            for m in more:
+                if m.entity_id not in live:
+                    folded.append(None)  # forgotten or joined to another since
+                    continue
+                status = live[m.entity_id]
+                has = has_keys.setdefault(m.entity_id, set())
+                extra = [(clean_text(t), "nickname", False) for t in m.others]
+                extra += [(clean_text(t), "title", True) for t in m.secrets]
+                added = False
+                for text, kind, secret in extra:
+                    if (key := lookup_key(text)) in used or key in has:
+                        continue
+                    used.add(key)
+                    has.add(key)
+                    await w.insert(
+                        ALIASES,
+                        _new_alias(w, m.entity_id, text, kind, status, secret, None),
+                    )
+                    added = True
+                folded.append(m.entity_id if added else None)
             ids: list[str | None] = []
             for n in names:
                 onto.active_type(n.type)
@@ -523,7 +587,7 @@ class MemoryStore:
                     )
                 used |= seen
                 ids.append(row["id"])
-            return Written(ids, w.batch)
+            return Written(ids + folded, w.batch)
 
     async def undo_names(self, guild_id: int, campaign_id: str, batch: int) -> Written[None]:
         """Take back a whole list from `add_names`. Refused unless that batch only added
@@ -806,13 +870,15 @@ class MemoryStore:
         *,
         source: str,
         dm_said_same: bool = False,
+        confirm_keys: Collection[str] = (),
     ) -> Written[Entity]:
         """Two entries are the same person or thing: move everything onto `keep_id`.
 
         Two proposed entries of the same kind may merge on strong evidence. If either is
         confirmed, or their kinds differ, only the DM can say they're the same. Facts
         moved over are checked again (duplicates folded, problems flagged). Undo splits
-        them again.
+        them again. `confirm_keys`: names the DM just said mean `keep_id` (from a
+        suggestion), confirmed in the same change, so one undo takes it all back.
         """
         if keep_id == gone_id:
             raise MemoryRuleError("That's the same entry.")
@@ -832,7 +898,9 @@ class MemoryStore:
                 await w.update(
                     ENTITIES, keep_id, {"type": gone["type"], "played_by": gone["played_by"]}
                 )
-            await _move_aliases(w, keep_id, gone_id)
+            if confirm_keys and source != DM:
+                raise ValueError("Only the DM confirms names")
+            await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
             own = await w.select(
                 ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
             )
@@ -976,56 +1044,21 @@ class MemoryStore:
         or a rejected fact can end a clash without touching the flag. Each flagged fact
         is checked again exactly as when it was flagged; a flag whose problem is still
         found stays open. Logged like any change (as EntityBot's upkeep), so it can be
-        undone. A few statements however many flags are open."""
+        undone. A few statements however many flags are open. Skipped when the memory
+        hasn't changed since the last check (#347); the same flag found twice (a fact
+        moved by a merge is checked again) is closed but for the oldest. The closed flags
+        come back in id order."""
+        checked = (guild_id, campaign_id)
         async with self._read(guild_id, campaign_id) as scope:  # no lock if nothing's open
+            if self._flags_checked.get(checked) == scope.version:
+                return Written([], None)
             if not await scope.select(FLAGS, " AND status = 'open' LIMIT 1"):
+                self._flags_checked[checked] = scope.version
                 return Written([], None)
         async with self._write(guild_id, campaign_id, "entitybot") as w:
-            by_fact: dict[str, list[dict[str, Any]]] = {}
-            for flag in await w.select(FLAGS, " AND status = 'open' ORDER BY created_at, id"):
-                by_fact.setdefault(flag["relation_id"], []).append(flag)
-            if not by_fact:
-                return Written([], None)
-            onto = await _load_ontology(w)
-            facts = [
-                _relation(r)
-                for r in await w.select(RELATIONS, " AND id = ANY(%s)", [sorted(by_fact)])
-            ]
-            ends = sorted({e for f in facts for e in (f.subject_id, f.object_id)})
-            types = {
-                e["id"]: e["type"] for e in await w.select(ENTITIES, " AND id = ANY(%s)", [ends])
-            }
-            touching: dict[str, list[Relation]] = {}
-            for r in await _relations_touching(w, *ends):
-                for e in {r.subject_id, r.object_id}:
-                    touching.setdefault(e, []).append(r)
-            stale: list[str] = []
-            for fact in facts:
-                if fact.predicate not in onto.predicates:
-                    continue  # a term DMbot can't check any more: leave it to the DM
-                still: set[tuple[str, str | None]] = set()
-                if fact.status != REJECTED:  # a rejected fact clashes with nothing
-                    others = {
-                        r.id: r
-                        for e in (fact.subject_id, fact.object_id)
-                        for r in touching.get(e, [])
-                        if r.id != fact.id
-                    }
-                    problems = check_relation(
-                        onto,
-                        fact,
-                        types[fact.subject_id],
-                        types[fact.object_id],
-                        list(others.values()),
-                    )
-                    still = {(p.kind, p.other_id) for p in problems}
-                stale += [
-                    f["id"] for f in by_fact[fact.id] if (f["kind"], f["other_id"]) not in still
-                ]
-            closed = [
-                _flag(await w.update(FLAGS, flag_id, {"status": "resolved"})) for flag_id in stale
-            ]
-            return Written(closed, w.batch)
+            closed = await _close_stale_flags(w)
+        self._flags_checked[checked] = w.version  # after its own closes, if any
+        return Written(closed, w.batch)
 
     # ---- mentions and corrections -------------------------------------------------------
 
@@ -1273,6 +1306,66 @@ class MemoryStore:
         )
 
 
+async def _close_stale_flags(w: Changes) -> list[Flag]:
+    """The cleanup's work, inside its write: see MemoryStore.resolve_stale_flags."""
+    by_fact: dict[str, list[dict[str, Any]]] = {}
+    for flag in await w.select(FLAGS, " AND status = 'open' ORDER BY created_at, id"):
+        by_fact.setdefault(flag["relation_id"], []).append(flag)
+    if not by_fact:
+        return []
+    onto = await _load_ontology(w)
+    facts = [
+        _relation(r) for r in await w.select(RELATIONS, " AND id = ANY(%s)", [sorted(by_fact)])
+    ]
+    ends = sorted({e for f in facts for e in (f.subject_id, f.object_id)})
+    types = {e["id"]: e["type"] for e in await w.select(ENTITIES, " AND id = ANY(%s)", [ends])}
+    # Only the facts a check can use (#347 perf-qa): the same pair (contradictions) and,
+    # for a "how many" rule, the same end with the same term. Not every fact on both
+    # ends, which made a busy name cost flags times facts.
+    by_end: dict[tuple[str, str], list[Relation]] = {}
+    by_pair: dict[frozenset[str], list[Relation]] = {}
+    for r in await _relations_touching(w, *ends):
+        for e in {r.subject_id, r.object_id}:
+            by_end.setdefault((e, r.predicate), []).append(r)
+        by_pair.setdefault(frozenset((r.subject_id, r.object_id)), []).append(r)
+    stale: list[str] = []
+    mark = time.perf_counter()
+    for fact in facts:
+        if time.perf_counter() - mark > YIELD_AFTER_S:
+            await asyncio.sleep(0)  # a long check lets voice and other servers in
+            mark = time.perf_counter()
+        still: set[tuple[str, str | None]] = set()
+        if fact.predicate not in onto.predicates:  # a term DMbot can't check any more:
+            still = {(f["kind"], f["other_id"]) for f in by_fact[fact.id]}  # the DM's call
+        elif fact.status != REJECTED:  # a rejected fact clashes with nothing
+            term = onto.predicates[fact.predicate]
+            others = {
+                r.id: r for r in by_pair.get(frozenset((fact.subject_id, fact.object_id)), [])
+            }
+            if term.max_per_subject is not None:
+                for end in (
+                    (fact.subject_id, fact.object_id) if term.symmetric else (fact.subject_id,)
+                ):
+                    others.update((r.id, r) for r in by_end.get((end, term.key), []))
+            others.pop(fact.id, None)
+            problems = check_relation(
+                onto,
+                fact,
+                types[fact.subject_id],
+                types[fact.object_id],
+                list(others.values()),
+            )
+            still = {(p.kind, p.other_id) for p in problems}
+        seen: set[tuple[str, str | None]] = set()
+        for f in by_fact[fact.id]:  # oldest first
+            problem = (f["kind"], f["other_id"])
+            if problem not in still or problem in seen:  # gone, or found twice
+                stale.append(f["id"])
+            seen.add(problem)
+    rows = await w.update_rows(FLAGS, {flag_id: {"status": "resolved"} for flag_id in stale})
+    return [_flag(r) for r in rows]
+
+
 # ---- helpers (inside a write) ----------------------------------------------------------
 
 
@@ -1333,9 +1426,13 @@ async def _load_ontology(scope: Scope) -> Ontology:
 
 
 async def _relations_touching(w: Scope, *entity_ids: str) -> list[Relation]:
+    # In id order: the facts a check finds become flags in this order, so the same memory
+    # always gets the same flags, whatever order the rows sit in on disk (#476).
     rows = await w.select(
         RELATIONS,
-        " AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+        # Byte order (ids are lowercase hex): the same everywhere, and cheaper than the
+        # database's locale-aware sort.
+        ' AND (subject_id = ANY(%s) OR object_id = ANY(%s)) ORDER BY id COLLATE "C"',
         [list(entity_ids), list(entity_ids)],
     )
     return [_relation(r) for r in rows]
@@ -1374,22 +1471,33 @@ async def _delete_relation(w: Changes, relation_id: str) -> None:
     await w.delete(RELATIONS, relation_id)
 
 
-async def _move_aliases(w: Changes, keep_id: str, gone_id: str) -> None:
+async def _move_aliases(
+    w: Changes, keep_id: str, gone_id: str, confirm: frozenset[str] = frozenset()
+) -> None:
     """The other entry's names move over in one statement (#164); a name both have is
-    kept once, with the stronger status and any secret mark."""
+    kept once, with the stronger status and any secret mark. Names whose key is in
+    `confirm` (the DM just said they mean `keep_id`) are confirmed as they move, in the
+    same row change, so one undo puts them back exactly."""
     keep_aliases = {a["key"]: a for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
-    moving = []
+    moving: list[str] = []
+    confirming: list[str] = []
     for alias in await w.select(ALIASES, " AND entity_id = %s", [gone_id]):
+        said = alias["key"] in confirm
         twin = keep_aliases.get(alias["key"])
         if twin is None:
-            moving.append(alias["id"])
+            (confirming if said and alias["status"] != CONFIRMED else moving).append(alias["id"])
             continue
-        upgrade = _upgrade(twin, alias["status"], alias["secret"], DM)
+        status = CONFIRMED if said else alias["status"]
+        upgrade = _upgrade(twin, status, alias["secret"], DM)
         await w.delete(ALIASES, alias["id"])
         if upgrade:
             await w.update(ALIASES, twin["id"], upgrade)
     if moving:
         await w.update_where(ALIASES, {"entity_id": keep_id}, " AND id = ANY(%s)", [moving])
+    if confirming:
+        await w.update_where(
+            ALIASES, {"entity_id": keep_id, "status": CONFIRMED}, " AND id = ANY(%s)", [confirming]
+        )
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
 
 

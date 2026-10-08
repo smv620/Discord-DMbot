@@ -1,0 +1,629 @@
+/** @jsxImportSource preact */
+// The signed-in area (#434): one island on /account. All data comes from the web API in
+// core (#435); this file only shows it and sends the user's choices back.
+import type { ComponentChildren, JSX } from "preact";
+import { createContext } from "preact";
+import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
+
+import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
+import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
+import { ApiError, type AccountApi, type Campaign, type Me, type Person } from "./api";
+import { isSafeRedirect } from "./redirect";
+
+type State =
+  | { kind: "loading" }
+  | { kind: "down" }
+  | { kind: "signed-out"; notice: string | null }
+  | { kind: "signed-in"; me: Me }
+  | { kind: "deleted" };
+
+interface Props {
+  api: AccountApi;
+  /** Where to send the browser (checkout, billing, Discord). Swappable for tests. */
+  go?: (url: string) => void;
+  /** The page's query string, for the sign-in result (?signin=failed). */
+  search?: string;
+}
+
+const defaultGo = (url: string): void => {
+  window.location.assign(url);
+};
+
+interface Shared {
+  api: AccountApi;
+  /** Send the browser to Discord or the payment company; anything else is refused. */
+  go: (url: string) => void;
+  /** Fetch the account again after a change. A failure keeps what's on screen. */
+  refresh: () => Promise<void>;
+  /** The session ended: back to sign-in. */
+  signedOut: () => void;
+}
+
+const SharedContext = createContext<Shared | null>(null);
+
+function useShared(): Shared {
+  const shared = useContext(SharedContext);
+  if (!shared) throw new Error("Account sections need the Account component around them");
+  return shared;
+}
+
+/**
+ * One action at a time per section: the button shows "One moment…" while it runs, a second
+ * tap does nothing, and a failure shows its message inside that section, where the user is.
+ */
+function useAction() {
+  const { signedOut } = useShared();
+  const running = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const run = useCallback(
+    async (action: () => Promise<void>, explain?: (error: ApiError) => string | null) => {
+      if (running.current) return;
+      running.current = true;
+      setBusy(true);
+      setNotice(null);
+      try {
+        await action();
+      } catch (error) {
+        const apiError = error instanceof ApiError ? error : new ApiError("server");
+        if (apiError.kind === "signed-out") {
+          signedOut();
+          return;
+        }
+        setNotice(explain?.(apiError) ?? text.actionFailed);
+      } finally {
+        running.current = false;
+        setBusy(false);
+      }
+    },
+    [signedOut],
+  );
+
+  return { busy, notice, run };
+}
+
+function Notice({ message }: { message: string | null }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (message) ref.current?.scrollIntoView?.({ block: "nearest" });
+  }, [message]);
+  if (!message) return null;
+  return (
+    <p ref={ref} class="warn" role="alert">
+      {message}
+    </p>
+  );
+}
+
+function ActionButton({
+  busy,
+  onClick,
+  kind = "primary",
+  children,
+}: {
+  busy: boolean;
+  onClick: () => void;
+  kind?: "primary" | "secondary" | "danger";
+  children: ComponentChildren;
+}) {
+  const classes = kind === "primary" ? "button" : `button ${kind}`;
+  return (
+    <button type="button" class={classes} disabled={busy} aria-busy={busy} onClick={onClick}>
+      {busy ? text.busy : children}
+    </button>
+  );
+}
+
+export default function Account({ api, go = defaultGo, search = "" }: Props) {
+  const [state, setState] = useState<State>({ kind: "loading" });
+
+  const load = useCallback(async () => {
+    try {
+      const me = await api.me();
+      const failed = new URLSearchParams(search).get("signin") === "failed";
+      setState(
+        me
+          ? { kind: "signed-in", me }
+          : { kind: "signed-out", notice: failed ? text.signInFailed : null },
+      );
+    } catch {
+      setState({ kind: "down" });
+    }
+  }, [api, search]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const refresh = useCallback(async () => {
+    try {
+      const me = await api.me();
+      setState(me ? { kind: "signed-in", me } : { kind: "signed-out", notice: null });
+    } catch {
+      // The change worked; only the refresh failed. Keep showing what we have.
+    }
+  }, [api]);
+
+  const signedOut = useCallback(() => {
+    setState({ kind: "signed-out", notice: text.signedOutNow });
+  }, []);
+
+  const safeGo = useCallback(
+    (url: string) => {
+      if (!isSafeRedirect(url)) throw new ApiError("server");
+      go(url);
+    },
+    [go],
+  );
+
+  const shared: Shared = { api, go: safeGo, refresh, signedOut };
+
+  let body: JSX.Element;
+  switch (state.kind) {
+    case "loading":
+      body = (
+        <p class="muted" role="status">
+          {text.loading}
+        </p>
+      );
+      break;
+    case "down":
+      body = (
+        <div class="panel" role="alert">
+          <p>{text.down}</p>
+          <button type="button" class="button" onClick={() => void load()}>
+            {text.tryAgain}
+          </button>
+        </div>
+      );
+      break;
+    case "signed-out":
+      body = <SignedOut notice={state.notice} />;
+      break;
+    case "deleted":
+      body = (
+        <p class="panel" role="status">
+          {text.deleted}
+        </p>
+      );
+      break;
+    case "signed-in":
+      body = (
+        <SignedIn
+          me={state.me}
+          onDeleted={() => setState({ kind: "deleted" })}
+          onSignedOutByChoice={() => setState({ kind: "signed-out", notice: null })}
+        />
+      );
+      break;
+  }
+  return <SharedContext.Provider value={shared}>{body}</SharedContext.Provider>;
+}
+
+function SignedOut({ notice }: { notice: string | null }) {
+  const { api } = useShared();
+  const signIn = api.signInUrl();
+  return (
+    <div class="stack">
+      {notice && (
+        <p class="warn" role="alert">
+          {notice}
+        </p>
+      )}
+      <p class="lead">{text.signInLead}</p>
+      <div class="panel">
+        <a class="button" href={signIn}>
+          {text.startTryItFree}
+        </a>
+        <p class="muted small">{text.startTryItSignIn}</p>
+        <PlanList
+          choose={(id) => (
+            <a class="button secondary" href={signIn}>
+              {text.choose(id)}
+            </a>
+          )}
+        />
+      </div>
+      <div class="panel">
+        <p>{text.haveAccount}</p>
+        <a class="button secondary" href={signIn}>
+          {text.signIn}
+        </a>
+        <p class="muted small">{text.signInNote}</p>
+      </div>
+    </div>
+  );
+}
+
+function SignedIn({
+  me,
+  onDeleted,
+  onSignedOutByChoice,
+}: {
+  me: Me;
+  onDeleted: () => void;
+  onSignedOutByChoice: () => void;
+}) {
+  const { api } = useShared();
+  const { busy, notice, run } = useAction();
+  return (
+    <div class="stack">
+      <div class="hello">
+        <p class="lead">{text.greeting(me.user.name)}</p>
+        <button
+          type="button"
+          class="link"
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              await api.signOut();
+              onSignedOutByChoice();
+            })
+          }
+        >
+          {text.signOut}
+        </button>
+      </div>
+      <Notice message={notice} />
+      <PlanSection me={me} />
+      <CampaignsSection me={me} />
+      <ServersSection me={me} />
+      <DeleteSection onDeleted={onDeleted} />
+    </div>
+  );
+}
+
+function PlanList({ choose }: { choose: (id: PlanId) => JSX.Element }) {
+  return (
+    <div class="choices">
+      <ul>
+        {paidPlans.map((p) => (
+          <li key={p.id}>
+            <span>
+              <strong>{p.name}</strong> · {formatPrice(p.priceCents ?? 0)} a month ·{" "}
+              {p.hoursLine}
+            </span>
+            {choose(p.id)}
+          </li>
+        ))}
+      </ul>
+      <a href="/pricing">{text.seePrices}</a>
+    </div>
+  );
+}
+
+function PlanSection({ me }: { me: Me }) {
+  const { api, go, refresh } = useShared();
+  const { busy, notice, run } = useAction();
+  const plan = me.plan;
+  const portal = (): void => void run(async () => go(await api.billingPortalUrl()));
+  const choices = (title: string) => (
+    <>
+      <p>{title}</p>
+      <PlanList
+        choose={(id) => (
+          <ActionButton
+            busy={busy}
+            kind="secondary"
+            onClick={() => void run(async () => go(await api.checkoutUrl(id)))}
+          >
+            {text.choose(id)}
+          </ActionButton>
+        )}
+      />
+    </>
+  );
+
+  return (
+    <section aria-labelledby="plan-heading" class="panel">
+      <h2 id="plan-heading">{text.planHeading}</h2>
+      <Notice message={notice} />
+      {plan === null ? (
+        <>
+          <p>{text.noPlan}</p>
+          <ActionButton
+            busy={busy}
+            onClick={() =>
+              void run(async () => {
+                await api.startTryIt();
+                await refresh();
+              })
+            }
+          >
+            {text.startTryIt}
+          </ActionButton>
+          <p class="muted small">{text.startTryItNote}</p>
+          {choices(text.orPick)}
+        </>
+      ) : (
+        <>
+          <p class="plan-name">{planName(plan.id)}</p>
+          {plan.status === "grace" && (
+            <div class="warn-box" role="alert">
+              <p>{text.grace(plan.graceEndsOn)}</p>
+              <ActionButton busy={busy} onClick={portal}>
+                {text.fixPayment}
+              </ActionButton>
+            </div>
+          )}
+          {plan.status === "lapsed" ? (
+            <>
+              <p role="alert">{text.lapsed}</p>
+              {choices(text.pickPlan)}
+            </>
+          ) : (
+            <>
+              <p class="hours-line">{hoursUsedLine(plan.hoursUsed, plan.hoursCap)}</p>
+              {plan.hoursCap > 0 && (
+                <progress
+                  max={plan.hoursCap}
+                  value={Math.min(Math.max(plan.hoursUsed, 0), plan.hoursCap)}
+                  aria-label={text.hoursBarLabel}
+                />
+              )}
+              <p class="muted small">
+                {hoursLeftLine(plan.hoursUsed, plan.hoursCap, plan.renewsOn, plan.id)}
+              </p>
+              {plan.id === "try-it" ? (
+                choices(text.pickPlan)
+              ) : (
+                <ActionButton busy={busy} kind="secondary" onClick={portal}>
+                  {text.changePlan}
+                </ActionButton>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function CampaignsSection({ me }: { me: Me }) {
+  const { refresh } = useShared();
+  const [done, setDone] = useState<string | null>(null);
+  return (
+    <section aria-labelledby="campaigns-heading" class="panel" id="campaigns">
+      <h2 id="campaigns-heading">{text.campaignsHeading}</h2>
+      {done && (
+        <p class="ok" role="status">
+          {done}
+        </p>
+      )}
+      {me.campaigns.length === 0 ? (
+        <p>{text.noCampaigns}</p>
+      ) : (
+        <ul class="campaigns">
+          {me.campaigns.map((c) => (
+            <CampaignRow
+              key={c.id}
+              campaign={c}
+              onHandedOver={async (person) => {
+                setDone(text.handOverDone(c.name, person.name));
+                await refresh();
+              }}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function CampaignRow({
+  campaign,
+  onHandedOver,
+}: {
+  campaign: Campaign;
+  onHandedOver: (person: Person) => Promise<void>;
+}) {
+  const { api } = useShared();
+  const { busy, notice, run } = useAction();
+  const [people, setPeople] = useState<Person[] | null>(null);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const formId = `handover-${campaign.id}`;
+
+  return (
+    <li data-campaign={campaign.id}>
+      <p class="campaign-name">{campaign.name}</p>
+      <p class="muted small">
+        {campaign.serverName} ·{" "}
+        {campaign.lastPlayedAt ? text.lastPlayed(campaign.lastPlayedAt) : text.notPlayed}
+      </p>
+      <p class="tags">
+        <span class={`tag ${campaign.status}`}>
+          {campaign.status === "active" ? text.active : text.paused}
+        </span>
+        <span class="tag">{campaign.role === "owner" ? text.youRunIt : text.youHelp}</span>
+      </p>
+      <Notice message={notice} />
+      {campaign.role === "owner" && people === null && (
+        <ActionButton
+          busy={busy}
+          kind="secondary"
+          onClick={() =>
+            void run(async () => {
+              setPeople(await api.handoverCandidates(campaign.id));
+            })
+          }
+        >
+          {text.handOver}
+        </ActionButton>
+      )}
+      {people !== null && (
+        <form
+          id={formId}
+          class="handover"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const person = people.find((p) => p.id === chosen);
+            if (!person) return;
+            void run(
+              async () => {
+                await api.handover(campaign.id, person.id);
+                setPeople(null);
+                await onHandedOver(person);
+              },
+              (error) => (error.kind === "no-free-slot" ? text.noFreeSlot : null),
+            );
+          }}
+        >
+          <fieldset disabled={busy}>
+            <legend>{text.handOverQuestion(campaign.name)}</legend>
+            {people.length === 0 ? (
+              <p>{text.handOverNobody}</p>
+            ) : (
+              <>
+                <p class="muted small">{text.handOverNote}</p>
+                {people.map((p) => (
+                  <label key={p.id} class="choice">
+                    <input
+                      type="radio"
+                      name={`${formId}-person`}
+                      value={p.id}
+                      checked={chosen === p.id}
+                      onChange={() => setChosen(p.id)}
+                    />
+                    {p.name}
+                  </label>
+                ))}
+              </>
+            )}
+          </fieldset>
+          <div class="row">
+            {people.length > 0 && (
+              <button
+                type="submit"
+                class="button"
+                disabled={chosen === null || busy}
+                aria-busy={busy}
+              >
+                {busy ? text.busy : text.handOverConfirm}
+              </button>
+            )}
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy}
+              onClick={() => {
+                setPeople(null);
+                setChosen(null);
+              }}
+            >
+              {text.cancel}
+            </button>
+          </div>
+        </form>
+      )}
+    </li>
+  );
+}
+
+function ServersSection({ me }: { me: Me }) {
+  const { api, go } = useShared();
+  const { busy, notice, run } = useAction();
+  return (
+    <section aria-labelledby="servers-heading" class="panel">
+      <h2 id="servers-heading">{text.serversHeading}</h2>
+      <Notice message={notice} />
+      {me.servers.length === 0 ? (
+        <p>{text.noServers}</p>
+      ) : (
+        <>
+          <p class="muted small">{text.serversNote}</p>
+          <ul class="servers">
+            {me.servers.map((s) => (
+              <li key={s.id} data-server={s.id}>
+                <span>{s.name}</span>
+                {s.hasDmbot ? (
+                  <span class="muted">{text.alreadyThere}</span>
+                ) : (
+                  <ActionButton
+                    busy={busy}
+                    kind="secondary"
+                    onClick={() => void run(async () => go(await api.installUrl(s.id)))}
+                  >
+                    {text.addTo}
+                  </ActionButton>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
+  const { api } = useShared();
+  const { busy, notice, run } = useAction();
+  const [step, setStep] = useState<0 | 1 | 2>(0);
+  const [token, setToken] = useState<string | null>(null);
+  const reset = (): void => {
+    setStep(0);
+    setToken(null);
+  };
+
+  return (
+    <section aria-labelledby="delete-heading" class="panel danger">
+      <h2 id="delete-heading">{text.deleteHeading}</h2>
+      <Notice message={notice} />
+      {step === 0 && (
+        <button type="button" class="button secondary" onClick={() => setStep(1)}>
+          {text.deleteStart}
+        </button>
+      )}
+      {step === 1 && (
+        <>
+          <p>{text.deleteWarning}</p>
+          <a href="#campaigns">{text.deleteHandOverLink}</a>
+          <div class="row">
+            <ActionButton
+              busy={busy}
+              kind="danger"
+              onClick={() =>
+                void run(async () => {
+                  setToken(await api.requestDelete());
+                  setStep(2);
+                })
+              }
+            >
+              {text.deleteNext}
+            </ActionButton>
+            <button type="button" class="button secondary" disabled={busy} onClick={reset}>
+              {text.keep}
+            </button>
+          </div>
+        </>
+      )}
+      {step === 2 && token !== null && (
+        <>
+          <p role="alert">
+            <strong>{text.deleteSure}</strong>
+          </p>
+          {/* "Keep" comes first, where step 1's red button was, so a quick double tap
+              can't delete the account. */}
+          <div class="row">
+            <button type="button" class="button secondary" disabled={busy} onClick={reset}>
+              {text.keep}
+            </button>
+            <ActionButton
+              busy={busy}
+              kind="danger"
+              onClick={() =>
+                void run(async () => {
+                  await api.confirmDelete(token);
+                  onDeleted();
+                })
+              }
+            >
+              {text.deleteConfirm}
+            </ActionButton>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}

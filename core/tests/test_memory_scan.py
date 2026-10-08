@@ -3,7 +3,17 @@
 import unittest
 
 from dmbot.devtools.stt_bakeoff.data import LINES, NAMES
-from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names
+from dmbot.memory.lookup import CampaignLookup, LookupData
+from dmbot.memory.models import CONFIRMED, PROPOSED, Alias, Entity, name_key
+from dmbot.memory.scan import (
+    MAX_SUGGESTIONS,
+    Match,
+    Suggestion,
+    find_new_names,
+    group_alike,
+    near_match_in,
+    sound_keys,
+)
 
 
 def names(found: list[Suggestion]) -> list[str]:
@@ -67,3 +77,100 @@ class Scan(unittest.TestCase):
         invented = {n.canonical for n in NAMES}
         self.assertTrue(found <= invented | {"Ashen Crown"}, found - invented)  # nothing else
         self.assertIn("Cerric", found)
+
+
+def near_match(lookup: CampaignLookup, name: str) -> Match | None:
+    """What the review does: candidates as `MemoryStore.sound_alikes` picks them
+    (confirmed, non-secret names of confirmed entries sharing a sound code)."""
+    codes = set(sound_keys(name))
+    candidates = [
+        (e.entity_id, e.text, lookup.entities[e.entity_id].name)
+        for e in lookup.names
+        if e.confirmed and not e.secret and codes & set(e.codes)
+    ]
+    return near_match_in(name, candidates)
+
+
+class NearMatchTest(unittest.TestCase):
+    """Names heard during play that sound like a known name (#394)."""
+
+    def lookup(self, *extra: tuple[str, str, str, bool, str]) -> CampaignLookup:
+        rows = (("a" * 32, "Hrothgar", "npc", False, CONFIRMED), *extra)
+        entities = tuple(
+            Entity(e, kind, n, "", status, None, "dm", 0) for e, n, kind, _, status in rows
+        )
+        aliases = tuple(
+            Alias(e[:16] + "0" * 16, e, n, name_key(n), "full", None, secret, status, (), "dm", 0)
+            for e, n, _, secret, status in rows
+        )
+        return CampaignLookup.build(LookupData(1, entities, aliases, (), ()))
+
+    def test_a_misheard_known_name_comes_with_its_match(self) -> None:
+        match = near_match(self.lookup(), "Rothgar")
+        assert match is not None
+        self.assertEqual((match.entity_id, match.name), ("a" * 32, "Hrothgar"))
+
+    def test_one_word_needs_to_be_spelled_very_alike(self) -> None:
+        names = self.lookup(("b" * 32, "Mara", "player_character", False, CONFIRMED))
+        self.assertIsNone(near_match(names, "Marra"))  # 0.89: offered as new
+
+    def test_two_words_need_a_little_less(self) -> None:
+        names = self.lookup(("b" * 32, "Oskar Vane", "npc", False, CONFIRMED))
+        match = near_match(names, "Oskar Vain")
+        self.assertEqual(match.name if match else None, "Oskar Vane")
+
+    def test_never_a_secret_or_a_suggested_name(self) -> None:
+        secret = self.lookup(("b" * 32, "Belleros", "npc", True, CONFIRMED))
+        self.assertIsNone(near_match(secret, "Bellerros"))
+        suggested = self.lookup(("b" * 32, "Belleros", "npc", False, PROPOSED))
+        self.assertIsNone(near_match(suggested, "Bellerros"))
+
+    def test_two_known_names_about_as_close_means_none(self) -> None:
+        names = self.lookup(
+            ("b" * 32, "Marenne", "npc", False, CONFIRMED),
+            ("c" * 32, "Marrene", "npc", False, CONFIRMED),
+        )
+        self.assertIsNone(near_match(names, "Marene"))
+
+    def test_a_long_name_is_matched_quickly_and_right(self) -> None:
+        names = self.lookup(("b" * 32, "Neverember", "npc", False, CONFIRMED))
+        self.assertEqual(getattr(near_match(names, "Nevermber"), "name", None), "Neverember")
+
+
+class GroupAlikeTest(unittest.TestCase):
+    def test_a_short_name_inside_a_longer_one_is_one_question(self) -> None:
+        (group,) = group_alike([Suggestion("Oskar Vane", 3), Suggestion("Vane", 2)])
+        self.assertEqual((group.name, group.also, group.times), ("Oskar Vane", ("Vane",), 5))
+
+    def test_two_spellings_that_sound_alike(self) -> None:
+        (group,) = group_alike([Suggestion("Ulfgarr", 2), Suggestion("Ulfgar", 4)])
+        self.assertEqual((group.name, group.also, group.times), ("Ulfgar", ("Ulfgarr",), 6))
+
+    def test_one_word_names_need_to_be_very_alike_to_fold(self) -> None:
+        names = {g.name for g in group_alike([Suggestion("Kael", 2), Suggestion("Kaela", 2)])}
+        self.assertEqual(names, {"Kael", "Kaela"})  # 0.89: two different people, maybe
+
+    def test_a_word_shared_by_two_names_stays_its_own_question(self) -> None:
+        found = [
+            Suggestion("Lord Neverember", 3),
+            Suggestion("Lord Dagult", 3),
+            Suggestion("Lord", 2),
+        ]
+        groups = {g.name: g.also for g in group_alike(found)}
+        self.assertEqual(groups, {"Lord Neverember": (), "Lord Dagult": (), "Lord": ()})
+
+    def test_all_found_before_the_cap(self) -> None:
+        lines = [f"We saw Name{chr(65 + i)}x twice. Again Name{chr(65 + i)}x." for i in range(12)]
+        self.assertEqual(len(find_new_names(lines, unlimited=True)), 12)
+        self.assertEqual(len(find_new_names(lines)), MAX_SUGGESTIONS)
+
+    def test_different_names_stay_apart(self) -> None:
+        names = {
+            g.name for g in group_alike([Suggestion("Oskar Vane", 3), Suggestion("Ulfgar", 2)])
+        }
+        self.assertEqual(names, {"Oskar Vane", "Ulfgar"})
+
+    def test_another_name_of_a_known_entry_is_never_suggested(self) -> None:
+        # "Frostmaiden" is another name of Auril: known_keys skips it already
+        lines = ["We pray to the Frostmaiden.", "The Frostmaiden answers."]
+        self.assertEqual(find_new_names(lines, ["auril", "frostmaiden"]), [])

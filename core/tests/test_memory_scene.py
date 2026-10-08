@@ -114,6 +114,19 @@ class Hints(unittest.TestCase):
         self.assertLess(hints.index("Bryn Shander"), hints.index("Hrothgar"))  # guesses last
         self.assertNotIn("the hooded stranger", hints)
 
+    def test_people_not_at_the_table_come_last(self) -> None:
+        names = lookup(link(CHIEF, TRIBE))
+        scene = SceneTracker()
+        hints = scene_hints(
+            names, prepare(names, NOW), scene, 1.0, people=["Mia"], absent=["Oskar", "Tamsin"]
+        )
+        self.assertEqual(hints[:2], ["Cerric", "Mia"])  # at the table: right after characters
+        self.assertEqual(hints[-2:], ["Oskar", "Tamsin"])  # agreed, but not here: last
+        # A big server's absent members never crowd out the campaign's names.
+        crowd = [f"Member {i}" for i in range(200)]
+        hints = scene_hints(names, prepare(names, NOW), scene, 1.0, absent=crowd, limit=6)
+        self.assertNotIn("Member 0", hints[:5])
+
     def test_only_links_the_dm_confirmed_pull_names_in(self) -> None:
         names = lookup(link(CHIEF, TRIBE, status=PROPOSED))
         scene = SceneTracker()

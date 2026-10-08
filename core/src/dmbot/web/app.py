@@ -76,7 +76,13 @@ def create_app(
                 origin is not None and origin != settings.site_origin
             ):
                 return JSONResponse({"error": "not_allowed"}, status_code=403)
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Any crash is still JSON the website can read, inside the CORS wrapper below
+            # (a FastAPI Exception handler runs outside it). The log has the path, no data.
+            log.exception("Request failed: %s %s", request.method, request.url.path)
+            response = JSONResponse({"error": "server"}, status_code=500)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
