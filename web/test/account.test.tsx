@@ -399,10 +399,25 @@ describe("hand-over offers (#614)", () => {
     const { api } = show("offers");
     await screen.findByText(text.offersHeading);
     fireEvent.click(within(offerRow(ember.id)).getByRole("button", { name: text.accept }));
-    expect(await screen.findByText(text.accepted(ember.campaignName))).toBeTruthy();
+    expect(await screen.findByText(text.accepted(ember.campaignName, ember.personName))).toBeTruthy();
     expect(api.calls).toContain(`accept:${ember.id}`);
     await waitFor(() => expect(offerRow(ember.id)).toBeNull());
     expect(document.querySelector(`[data-campaign="${ember.campaignId}"]`)).toBeTruthy();
+  });
+
+  it("each answer says the other person will be told in Discord; a refusal doesn't", async () => {
+    for (const line of [
+      text.accepted(ember.campaignName, ember.personName),
+      text.declined(ember.personName),
+      text.withdrawn(outgoingOffer.personName),
+    ]) {
+      expect(line).toMatch(/We'll tell .+ in Discord\.$/);
+    }
+    show("offers");
+    await screen.findByText(text.offersHeading);
+    fireEvent.click(within(offerRow(full.id)).getByRole("button", { name: text.accept }));
+    await within(offerRow(full.id)).findByRole("alert");
+    expect(screen.queryByText(/We'll tell/)).toBeNull();
   });
 
   it("Accept without a free slot says what to do, with a link to the plan", async () => {
@@ -421,7 +436,7 @@ describe("hand-over offers (#614)", () => {
     const { api } = show("offers");
     await screen.findByText(text.offersHeading);
     fireEvent.click(within(offerRow(ember.id)).getByRole("button", { name: text.decline }));
-    expect(await screen.findByText(text.declined)).toBeTruthy();
+    expect(await screen.findByText(text.declined(ember.personName))).toBeTruthy();
     expect(api.calls).toContain(`decline:${ember.id}`);
   });
 
@@ -429,11 +444,11 @@ describe("hand-over offers (#614)", () => {
     show("offers");
     await screen.findByText(text.offersHeading);
     fireEvent.click(within(offerRow(full.id)).getByRole("button", { name: text.decline }));
-    await screen.findByText(text.declined);
+    await screen.findByText(text.declined(full.personName));
     fireEvent.click(within(offerRow(ember.id)).getByRole("button", { name: text.accept }));
-    expect(await screen.findByText(text.accepted(ember.campaignName))).toBeTruthy();
+    expect(await screen.findByText(text.accepted(ember.campaignName, ember.personName))).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(text.offersHeading)).toBeNull());
-    expect(screen.getByText(text.accepted(ember.campaignName))).toBeTruthy();
+    expect(screen.getByText(text.accepted(ember.campaignName, ember.personName))).toBeTruthy();
   });
 
   it("Withdraw on an offer that already ended shows what's true now", async () => {
@@ -460,7 +475,7 @@ describe("hand-over offers (#614)", () => {
     );
     expect(within(row).queryByRole("button", { name: text.handOver })).toBeNull();
     fireEvent.click(within(row).getByRole("button", { name: text.withdraw }));
-    expect(await screen.findByText(text.withdrawn)).toBeTruthy();
+    expect(await screen.findByText(text.withdrawn(outgoingOffer.personName))).toBeTruthy();
     expect(api.calls).toContain(`withdraw:${outgoingOffer.id}`);
   });
 
