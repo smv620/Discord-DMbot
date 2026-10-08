@@ -33,7 +33,9 @@ READ_TIME_S = 30.0
 # are read in a thread (text decoding; web pages have their own time limit).
 IN_A_PROCESS = (".pdf", ".docx")
 # A child's memory: a damaged file can't take the whole server's (Linux only). A real
-# 10 MB, 500-page PDF peaks near 49 MB, and two can be read at once (#251 review).
+# 10 MB, 500-page PDF peaks near 60 MB, and two can be read at once (#251 review). One
+# page holding a huge vector drawing (about 20 bytes per unpacked byte) can pass this
+# and is refused as unreadable: rare in a names list.
 MEMORY_BYTES = 256 * 1024 * 1024
 # The longest answer read back: text_of stops at 200,000 characters (up to 4 bytes each).
 MAX_REPLY_BYTES = 1024 * 1024
