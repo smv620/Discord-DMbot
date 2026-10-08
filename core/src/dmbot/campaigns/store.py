@@ -16,6 +16,7 @@ import asyncio
 import gzip
 import json
 import logging
+import re
 import time
 import uuid
 import zlib
@@ -26,6 +27,7 @@ from psycopg import errors as pg_errors
 from psycopg import sql
 
 from dmbot.campaigns.models import (
+    CONFIRMATION_PURPOSES,
     DEFAULT_DM_SCREEN_LEVEL,
     DEFAULT_DM_SCREEN_VISIBILITY,
     DEFAULT_FALLBACK,
@@ -144,6 +146,82 @@ class _DMSection:
         )
 
 
+_FINGERPRINT = re.compile(r"[0-9a-f]{64}")
+
+
+class _ConfirmationsSection:
+    """Who confirmed the right to use shared material, and when (#252): part of the
+    campaign's history, so it travels with its backups. Rows read from a backup file are
+    marked `restored`: anyone in the server may restore one, so they say what the file
+    says, not what DMbot saw pressed. Rows are checked before the restore's transaction
+    opens (`check`, #164)."""
+
+    name = "confirmations"
+
+    async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
+        cur = await conn.execute(
+            "SELECT id, user_id, purpose, fingerprint, confirmed_at, restored"
+            " FROM shared_confirmations"
+            " WHERE guild_id = %s AND campaign_id = %s ORDER BY confirmed_at, id",
+            (guild_id, campaign_id),
+        )
+        return [
+            {
+                "id": r["id"],
+                "user": str(r["user_id"]),
+                "purpose": r["purpose"],
+                "fingerprint": r["fingerprint"],
+                "at": int(r["confirmed_at"]),
+                "restored": bool(r["restored"]),
+            }
+            for r in await cur.fetchall()
+        ]
+
+    def check(self, rows: list[Any]) -> list[tuple[str, int, str, str, int]]:
+        """Every field from the untrusted file, checked (in a worker thread). A backup is
+        complete, so two rows with one id mean it's damaged, never a row quietly lost."""
+        values: list[tuple[str, int, str, str, int]] = []
+        seen: set[str] = set()
+        for row in rows:
+            got = row if isinstance(row, dict) else {}
+            rid, user, purpose = got.get("id"), got.get("user"), got.get("purpose")
+            fp, at = got.get("fingerprint"), got.get("at")
+            if not (
+                isinstance(rid, str)
+                and 0 < len(rid) <= 64
+                and rid.isascii()
+                and rid.isalnum()
+                and _valid_user_id(user)
+                and purpose in CONFIRMATION_PURPOSES
+                and isinstance(fp, str)
+                and _FINGERPRINT.fullmatch(fp)
+                and isinstance(at, int)
+                and not isinstance(at, bool)
+                and 0 <= at <= INT64_MAX
+                and rid not in seen
+            ):
+                raise CampaignError("This backup file is damaged (bad confirmation).")
+            seen.add(rid)
+            assert isinstance(user, str) and isinstance(purpose, str)
+            values.append((rid, int(user), purpose, fp, at))
+        return values
+
+    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: list[Any]) -> None:
+        async with conn.cursor() as cur:
+            await cur.executemany(
+                "INSERT INTO shared_confirmations (campaign_id, guild_id, id, user_id, purpose,"
+                " fingerprint, confirmed_at, restored)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, true)",
+                [(campaign_id, guild_id, *row) for row in rows],
+            )
+
+    async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
+        await conn.execute(
+            "DELETE FROM shared_confirmations WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+
+
 class _OptionalRulesSection:
     name = "optional_rules"
 
@@ -204,6 +282,39 @@ class CampaignStore:
         self._sections: dict[str, ExportSection] = {}
         self.register_section(_DMSection())
         self.register_section(_OptionalRulesSection())
+        self.register_section(_ConfirmationsSection())
+
+    async def record_confirmation(
+        self, guild_id: int, campaign_id: str, user_id: int, purpose: str, fingerprint: str
+    ) -> None:
+        """Who confirmed the right to use shared material, when, and what for (CLAUDE.md,
+        IP rule: "Record who confirmed and when"; #252). Only a fingerprint of the text
+        (`models.fingerprint`) is kept, never the text or its file's name."""
+        if purpose not in CONFIRMATION_PURPOSES:
+            raise ValueError(f"Unknown purpose {purpose!r}")
+        if not _FINGERPRINT.fullmatch(fingerprint):
+            raise ValueError("A fingerprint is 64 hex characters (models.fingerprint)")
+        async with self._db.guild(guild_id) as conn:
+            await self._require(conn, guild_id, campaign_id)
+            await conn.execute(
+                "INSERT INTO shared_confirmations (campaign_id, guild_id, id, user_id, purpose,"
+                " fingerprint, confirmed_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (
+                    campaign_id,
+                    guild_id,
+                    uuid.uuid4().hex,
+                    user_id,
+                    purpose,
+                    fingerprint,
+                    int(self._clock()),
+                ),
+            )
+
+    async def confirmations(self, guild_id: int, campaign_id: str) -> list[dict[str, Any]]:
+        """This campaign's confirmations, oldest first (as in its backups)."""
+        async with self._db.guild(guild_id) as conn:
+            await self._require(conn, guild_id, campaign_id)
+            return await self._sections["confirmations"].dump(conn, guild_id, campaign_id)
 
     def register_section(self, section: ExportSection) -> None:
         """Include another feature's per-campaign data in backups and deletes."""

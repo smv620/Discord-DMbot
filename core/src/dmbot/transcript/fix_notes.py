@@ -101,7 +101,8 @@ def _short(text: str) -> str:
 
 def done_text(heard: str, written: str, *, line_kept: bool = False) -> str:
     """After an Undo (both already escaped): what it put back and what it learned.
-    `line_kept`: the line itself couldn't be put back (saving failed, or it's too old)."""
+    `line_kept`: the line itself couldn't be put back (the save failed, or no copy of it
+    is left to change)."""
     text = (
         f'↩️ Undone. "{heard}" stays as heard: DMbot won\'t change it to **{written}** '
         "again in this campaign."

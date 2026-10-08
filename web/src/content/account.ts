@@ -155,7 +155,9 @@ export const text = {
   ],
   /** Shown with the warning when a paid plan would otherwise renew (#435: cancelled at the
    * end of the paid period). */
-  deletePlanStops: "You won't be charged again.",
+  deletePlanStops:
+    "You won't be charged again. Money you've already paid isn't paid back. If you want to ask about that, do it before you delete (see the Refunds page).",
+  deleteRefundsLink: "Read the Refunds page",
   deleteHandOverLink: "Hand over a campaign first",
   deleteNext: "Delete everything",
   keep: "Keep my account",

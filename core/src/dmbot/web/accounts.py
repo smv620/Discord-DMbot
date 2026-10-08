@@ -93,7 +93,8 @@ async def active_subscription(db: Database, user_id: int) -> tuple[str, str] | N
 async def delete_person(db: Database, user_id: int) -> None:
     """Delete the account: the person, their plan and sessions go (the database cascades);
     installs keep the server but lose the person. What's kept: the Discord id in
-    try_it_used (one free trial per person) and payment event ids (so a replayed payment
-    can't apply twice): ids only (privacy page, #433)."""
+    try_it_used (one free trial per person) and payment events with the Discord id and the
+    subscription id (so a replayed payment can't apply twice, and a cancelled subscription's
+    last news isn't retried): ids only (privacy page, #433, #571)."""
     async with db.user(user_id) as conn:
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))

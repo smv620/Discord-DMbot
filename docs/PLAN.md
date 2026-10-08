@@ -1056,8 +1056,14 @@ names panel nor the speech-to-text hints can be a fixed list.
     AI requests at once across all servers, 10 minutes per document). Each server reads
     one document at a time and up to 20 a day (the operator pays until bring-your-own
     keys, #50). Whoever may add names (the campaign's DMs and server managers) may
-    confirm the right to use a document; the confirmation is logged with who, when and
-    a fingerprint of the text, not the file's name. An empty list, or a list whose only
+    confirm the right to use a document; the confirmation is saved with the campaign
+    (`shared_confirmations`, #252: who, when, what for, and a SHA-256 fingerprint of the
+    text, never the text or the file's name), before the AI reads anything: if it can't
+    be saved, nothing is read. It's deleted with the campaign and carried in its
+    backups; rows read from a backup are marked restored (anyone in the server may
+    restore one, so they say what the file says, not what DMbot saw pressed). The
+    Shared story switch (#238) and shared rulebooks (#49) record the same way
+    (`shared_story`, `rulebook`). An empty list, or a list whose only
     problem is a secret name from someone who may not add one, never goes to the AI;
   - **a kind DMbot doesn't know is asked once per word** (owner's decision): the summary
     shows a menu for each of up to 4 unknown words ("What is every “wizard” (50)?"), and

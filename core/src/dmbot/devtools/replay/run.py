@@ -145,12 +145,14 @@ async def replay(
     Each piece is its speaker's. `changes` stop or start a speaker's recording part-way,
     as ears and core do live: a speaker who hasn't agreed is never captured (ears'
     consent list), and a stop drops what's being heard (`bot.stop_recording`) while the
-    pipeline's own checks drop what's waiting to be written down."""
+    pipeline's own checks drop what's waiting to be written down. One change per speaker,
+    or ValueError."""
+    if len({c.speaker for c in changes}) != len(changes):
+        # One stop or yes per person: the record's consent check has no windows (#560).
+        raise ValueError("one consent change per speaker")
     result = Replay(realtime=realtime, hints=len(hints), changes=tuple(changes))
     segmenter = Segmenter(TWIN_GUILD)
-    first_change: dict[int, ConsentChange] = {}
-    for change in sorted(changes, key=lambda c: c.at_ms):
-        first_change.setdefault(change.speaker, change)
+    first_change = {c.speaker: c for c in changes}
     speakers = {p.speaker for p in pieces} | set(first_change)
     consent = TwinConsent(
         s for s in speakers if s not in first_change or not first_change[s].agrees

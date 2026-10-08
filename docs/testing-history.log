@@ -747,3 +747,17 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     migrations, no .env changes. Database backed up first (outside the repo; 25 tables);
     no session was live. Core rebuilt: "Connected to 1 server(s)", "ears connected", no
     warnings or errors.
+
+==============================================================================
+2026-10-08  Server: deploy 05aa6c1 (dev1, no test run)
+==============================================================================
+  - 04:53 UTC  development @ 05aa6c1: #552 (account deletion ends at the paid period's
+    end; Try It keeps only the id, #435), #568 (name changes to a line are all or
+    nothing, #525 follow-up), #556 (run 8 split: twin or live, #534), #561 and #564
+    (site wording and menu, web-api not running).
+  - Migrations: 0017_try_it_bare_id (try_it_used had 0 rows) and
+    0018_payment_event_subscription. Read before deploying.
+  - Database backed up first (outside the repo; 25 tables); no session was live; .env
+    already matched. Core rebuilt: both migrations applied, "Connected to 1 server(s)",
+    "ears connected", no warnings or errors. web-api and the dmbot_web role still wait
+    for go-live (#498).

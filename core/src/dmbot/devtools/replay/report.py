@@ -9,7 +9,8 @@ import statistics
 
 from dmbot.devtools.replay.bakeoff import BakeoffScore, bakeoff_record
 from dmbot.devtools.replay.run import Replay
-from dmbot.devtools.replay.score import Score, score
+from dmbot.devtools.replay.score import Score
+from dmbot.devtools.replay.score import score as score_script
 from dmbot.devtools.replay.script import Part, Script
 from dmbot.devtools.replay.voices import ROLES
 from dmbot.transcription.base import MIN_UTTERANCE_S
@@ -145,7 +146,7 @@ def speaker_lines(script: Script, result: Replay) -> list[str]:
         )
         line = f"{role} ({speaker}): {len(sent)} pieces, {sum(h.seconds for h in sent):.1f} s"
         if mine.words:
-            part = score(mine, [h.text or "" for h in own])
+            part = score_script(mine, [h.text or "" for h in own])
             line += (
                 f"; part 1: {part.part1.wrong} wrong, {part.part1.missing} missing, "
                 f"{part.part1.added} added (of {mine.count(Part.ONE)}); part 2: "
@@ -154,10 +155,11 @@ def speaker_lines(script: Script, result: Replay) -> list[str]:
         lines.append(line)
         for change in (c for c in result.changes if c.speaker == speaker):
             if change.agrees:
-                outside = [h for h in own if h.text and h.start_ms < change.at_ms]
+                # Any piece outside consent is captured audio, text or not.
+                outside = [h for h in own if h.start_ms < change.at_ms]
                 what = f"agreed at {clock(change.at_ms)}: written down before it"
             else:
-                outside = [h for h in own if h.text and h.end_ms > change.at_ms]
+                outside = [h for h in own if h.end_ms > change.at_ms]
                 what = f"stopped at {clock(change.at_ms)}: written down after it"
             lines.append(f"  {role} {what}: {len(outside)} pieces (should be 0)")
     return lines
