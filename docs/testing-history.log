@@ -815,3 +815,13 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     subscription and ears waits for the next pause to subscribe again. The audio %
     didn't show the loss. Bug #631. First such error in 30 h of ears logs.
   - Next: Test A again to see if it repeats; ears to log the DAVE handshake (#631).
+
+==============================================================================
+2026-10-08  Server: deploy 1a7bf0d (dev1, no test run)
+==============================================================================
+  - 06:18 UTC  development @ 1a7bf0d: #617 (⏹ Stop listening asks first, #554), #622
+    (/dmbot stop and Restore answer before waiting for the session lock, #88), #620 and
+    #629 (dev tool: claims measurement, #234), #633 (next-test-step: Test A again). No
+    migrations, no .env changes. ears not rebuilt (unchanged; #631's fix is with dev3).
+  - Database backed up first (outside the repo; 26 tables); no session was live. Core
+    rebuilt: "Connected to 1 server(s)", "ears connected", no warnings or errors.
