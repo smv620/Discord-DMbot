@@ -159,6 +159,7 @@ in a volume, so restarts are fast.
 | Update `.env` after an update changes `.env.example` | `scripts/update-env` (add `--check` to only look) |
 | Add or change a key | `scripts/set-key` |
 | Set the admin page's password (#772) | `scripts/set-admin-password` |
+| Put the admin API online (#836) | see "Put the admin API online" below |
 
 Updates never change your `.env`. When one brings a new `.env.example`, run
 `scripts/update-env`. It rebuilds `.env` in the new layout, keeps every value you had, and
@@ -184,39 +185,70 @@ while DMbot is restarting.
 
 ### Put the admin API online
 
-The admin sign-in needs the website's API reachable from the internet at
-`https://api.getdmbot.com`, because Google sends you back to it (#836). A Cloudflare
-Tunnel does this: the server only calls out to Cloudflare, so it opens no new door,
-and Cloudflare looks after the certificate. Only the admin paths go through. The paths
-customers will use stay closed until #498.
+When you sign in to the admin page with Google, Google sends you back to the website's API
+(#836), so that API must be reachable at `https://api.getdmbot.com`. A Cloudflare Tunnel
+does that safely: the server only calls out to Cloudflare, so no new door is opened on it,
+and Cloudflare looks after the secure padlock (HTTPS). Only the admin pages go through.
+The pages customers will use stay closed until #498.
 
 **You (the owner), in Cloudflare:**
-1. Open Cloudflare, then Zero Trust, then Networks, then Tunnels, then Create a tunnel.
-   Pick cloudflared and name it `dmbot-api`.
-2. Copy the token Cloudflare shows. On the server (log in with ssh, then
-   `cd Discord-DMbot`), type `scripts/set-key CLOUDFLARE_TUNNEL_TOKEN` and paste it. When
-   it asks "Restart DMbot now?", answer No: dev1 starts the tunnel.
-3. Back in Cloudflare, add a public hostname to the tunnel:
-   - Subdomain `api`, domain `getdmbot.com`.
-   - Path `^/admin(/|$)`. This is what keeps everything else closed.
-   - Service type HTTP, URL `http://web-api:8080`.
+1. Go to https://one.dash.cloudflare.com, then Networks, then Tunnels, then Create a
+   tunnel. Pick "Cloudflared", name it `dmbot-api`, and save.
+2. Cloudflare then shows a long command with the token inside it. Do not run that
+   command. Copy only the token (the very long text after `install`). On the server (log
+   in with ssh, then `cd Discord-DMbot`), type this and press Enter:
 
-   Cloudflare adds the DNS record itself.
-4. Tell dev1, in the Claude Code window where dev1 runs (not GitHub): "tunnel ready".
-   Never paste the token anywhere but the set-key prompt.
+       scripts/set-key CLOUDFLARE_TUNNEL_TOKEN
+
+   When it asks for the value, paste the token and press Enter. You won't see it as you
+   type. When it asks "Restart DMbot now?", press Enter without typing anything (that
+   means no) and skip any docker compose line it shows: dev1 starts the tunnel. Never
+   paste the token anywhere else: not in a chat, an issue, or the Claude Code window. If
+   you pasted the wrong thing, run the same command again and paste the right token.
+3. In Cloudflare, on the tunnel's "Published application routes" tab (older screens call
+   it "Public Hostname"), press Add and fill in:
+   - Subdomain: `api`
+   - Domain: `getdmbot.com`
+   - Path: `^/admin(/|$)`
+   - Service type: HTTP
+   - URL: `web-api:8080`, the port `WEB_API_PORT` sets (if Cloudflare insists on a full address, use
+     `http://web-api:8080`)
+
+   Save. The Path is what keeps everything except the admin pages closed. Cloudflare adds
+   the DNS record itself.
+4. Tell dev1, in the Claude Code window where dev1 runs (not GitHub): "tunnel ready"
+   (just those words, never the token).
+
+If any step shows an error, or Cloudflare says something you don't understand, stop and
+tell dev1 what the screen says (never the token). Nothing is broken by stopping: the
+tunnel stays off until dev1 starts it.
 
 **dev1:**
-1. Check that `web` is in `COMPOSE_PROFILES` in `.env` (add it if not), and that
-   `WEB_CLIENT_IP_HEADER` is `CF-Connecting-IP`.
+1. Check the two settings (this prints no secrets):
+   `grep -E '^(COMPOSE_PROFILES|WEB_CLIENT_IP_HEADER)=' .env`. `COMPOSE_PROFILES` must
+   include `web` and `WEB_CLIENT_IP_HEADER` must be `CF-Connecting-IP`. If not, fix them
+   with `nano .env` (set-key only takes keys). Also check `scripts/set-key` lists
+   `CLOUDFLARE_TUNNEL_TOKEN` as "set" (press Enter to cancel): with the `web` profile on
+   and no token, the tunnel keeps restarting.
 2. Run `docker compose up -d web-api cloudflared`, then
-   `docker compose logs --tail 20 cloudflared`. It should say it registered a connection.
+   `docker compose logs --tail 20 cloudflared`. Look for "Registered tunnel connection".
 3. Check from any computer:
-   - `https://api.getdmbot.com/admin/auth/ways` answers.
-   - `https://api.getdmbot.com/me` does not (Cloudflare turns it away).
-4. Record the result in the testing log.
+   - `curl -s -o /dev/null -w '%{http_code}\n' https://api.getdmbot.com/admin/auth/ways`
+     should print 200.
+   - `curl -s -o /dev/null -w '%{http_code}\n' https://api.getdmbot.com/me` must not
+     print 200 (Cloudflare turns it away, so a 403 or 404 is right).
+4. If it fails:
+   - No "Registered tunnel connection": the token is missing or wrong. Ask the owner to run
+     set-key again, then `docker compose up -d --force-recreate cloudflared`.
+   - `/admin/auth/ways` doesn't answer (a Cloudflare error page or a 404): check the route (subdomain, domain, URL) with the
+     owner.
+   - `/me` answers: run `docker compose stop cloudflared` at once and fix the Path with
+     the owner.
+5. When it works, record the result in the testing log.
 
-To turn it off, dev1 runs `docker compose stop cloudflared`. The admin page then can't
-be reached from outside until it is started again.
+To turn it off, dev1 runs `docker compose stop cloudflared`. The admin page then can't be
+reached from outside until it is started again. To remove the token as well, empty the
+`CLOUDFLARE_TUNNEL_TOKEN=` line with `nano .env` (set-key can't empty a value).
 
 ### Turn on the admin page
 

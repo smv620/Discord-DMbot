@@ -1,6 +1,8 @@
 # Runs DMbot on a server: `docker compose up -d --build`
-# Settings come from .env in this folder (copy .env.example). Nothing is exposed to the
-# internet: ears talks to core over a private Docker network.
+# Settings come from .env in this folder (copy .env.example). No port is published:
+# ears talks to core over a private Docker network, and the only way in from the internet
+# is the optional Cloudflare Tunnel (cloudflared, web profile), which carries the admin
+# paths only.
 services:
   postgres:
     image: postgres:16
@@ -39,6 +41,7 @@ services:
       WEB_SECRET_KEY: ""
       PAYMENT_WEBHOOK_SECRET: ""
       DMBOT_WEB_DB_PASSWORD: ""
+      CLOUDFLARE_TUNNEL_TOKEN: ""   # only the tunnel container holds it (#836)
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,6 +68,7 @@ services:
       WEB_SECRET_KEY: ""
       PAYMENT_WEBHOOK_SECRET: ""
       DMBOT_WEB_DB_PASSWORD: ""
+      CLOUDFLARE_TUNNEL_TOKEN: ""   # only the tunnel container holds it (#836)
     depends_on:
       - core
     restart: unless-stopped
@@ -125,8 +129,9 @@ services:
 
   # The way in to web-api from the internet (#836): a Cloudflare Tunnel. cloudflared only
   # makes an outbound connection to Cloudflare, so the server opens no inbound port and
-  # Cloudflare keeps the certificate. It is the only thing that reaches web-api, which is why
-  # WEB_CLIENT_IP_HEADER=CF-Connecting-IP can be trusted. Which paths go through is set in
+  # Cloudflare keeps the certificate. It is the only way in from outside to web-api, which is
+  # why WEB_CLIENT_IP_HEADER=CF-Connecting-IP can be trusted. (core and ears share the private
+  # network and are our own code, so they could reach web-api; nothing outside can.) Which paths go through is set in
   # Cloudflare (the public hostname's path), not here: see "Put the admin API online" in
   # docs/DEPLOY.md. Stop it with `docker compose stop cloudflared` to close the way in.
   cloudflared:

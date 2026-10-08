@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SETTINGS = ROOT / "core" / "src" / "dmbot" / "web" / "settings.py"
 COMPOSE = ROOT / "docker-compose.yml"
 ENV_EXAMPLE = ROOT / ".env.example"
-PORTS = re.compile(r"^    ports:", re.M)  # a published port, at a service's top level
+PORTS = re.compile(r"^\s+(ports|network_mode):", re.M)  # a published port, or the host's network
 # Read by the API but only for running it locally, never in the container.
 LOCAL_ONLY = {
     "WEB_DB_ANY_ROLE",  # any database user, for a developer's own machine
@@ -114,22 +114,35 @@ class CloudflareTunnel(unittest.TestCase):
         self.assertEqual(name, "cloudflare/cloudflared")
         self.assertRegex(tag, r"^\d+\.\d+\.\d+$", "pin a version, not latest")
 
-    def test_the_tunnel_starts_with_web_api_and_gets_only_its_token(self) -> None:
+    def test_the_tunnel_command_and_start_rules(self) -> None:
         service = service_block("cloudflared")
+        self.assertIn('command: ["tunnel", "--no-autoupdate", "run"]', service)
         self.assertIn('profiles: ["web"]', service)
         self.assertRegex(service, r"depends_on:\n\s+- web-api")
         self.assertRegex(service, r"restart: unless-stopped")
+
+    def test_the_tunnel_gets_only_its_token(self) -> None:
+        service = service_block("cloudflared")
         self.assertRegex(service, r"TUNNEL_TOKEN: \$\{CLOUDFLARE_TUNNEL_TOKEN:-\}")
         self.assertNotIn("env_file", service, "list the settings by name")
 
-    def test_the_client_address_header_is_still_passed_to_web_api(self) -> None:
-        # Only the tunnel reaches web-api, so CF-Connecting-IP can be trusted there.
-        self.assertIn("WEB_CLIENT_IP_HEADER", web_api_names())
+    def test_no_other_service_gets_the_token(self) -> None:
+        # core and ears read all of .env, so each blanks what it doesn't need.
+        for name in ("core", "ears"):
+            self.assertRegex(service_block(name), r'CLOUDFLARE_TUNNEL_TOKEN: ""', name)
+        for name in ("web-api", "postgres"):
+            self.assertNotIn("CLOUDFLARE_TUNNEL_TOKEN", service_block(name), name)
 
-    def test_the_token_is_in_the_env_example_and_set_key_accepts_it(self) -> None:
-        names = re.findall(r"^([A-Z][A-Z0-9_]*)=", ENV_EXAMPLE.read_text("utf-8"), re.M)
-        self.assertIn("CLOUDFLARE_TUNNEL_TOKEN", names)
-        self.assertTrue("CLOUDFLARE_TUNNEL_TOKEN".endswith("_TOKEN"))  # scripts/set-key's rule
+    def test_the_client_address_header_is_passed_through_to_web_api(self) -> None:
+        # Only the tunnel reaches it from outside, so CF-Connecting-IP can be trusted there.
+        self.assertIn("WEB_CLIENT_IP_HEADER: ${WEB_CLIENT_IP_HEADER:-}", service_block("web-api"))
+
+    def test_the_token_is_in_the_env_example_where_set_key_finds_it(self) -> None:
+        # scripts/set-key lists names ending in _KEY, _TOKEN or _SECRET, as this does.
+        text = ENV_EXAMPLE.read_text("utf-8")
+        self.assertRegex(text, r"(?m)^CLOUDFLARE_TUNNEL_TOKEN=$")
+        found = re.findall(r"(?m)^([A-Z][A-Z0-9_]*(?:_KEY|_TOKEN|_SECRET))=", text)
+        self.assertIn("CLOUDFLARE_TUNNEL_TOKEN", found)
 
 
 if __name__ == "__main__":
