@@ -447,6 +447,7 @@ class DMBot(commands.AutoShardedBot):
             guild_ids=lambda: [g.id for g in self.guilds],
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
+            post=self.post,  # the #dm-screen note on an accept made on the website
         )
 
     # ---- lifecycle ---------------------------------------------------------
