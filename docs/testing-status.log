@@ -8,7 +8,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued)
+- Website API stack (WebDev, #435/#469: PRs #467 #475 #485 #489, merged 2026-10-08):
+  redeploy core so migrations 0013_web_session_name and 0014_installs_left_at run. Check
+  the bot starts and `schema_migrations` lists both. Do NOT start the web-api service yet
+  (COMPOSE_PROFILES=web): it needs a domain, the Website API settings in .env and the
+  go-live items on #498 first. No bot behaviour changes; core/ears now get the web
+  secrets blanked in docker-compose.yml.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
