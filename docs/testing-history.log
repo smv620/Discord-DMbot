@@ -775,3 +775,12 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     live; .env already matched. Core rebuilt: "Database updated:
     0019_shared_confirmations", "Connected to 1 server(s)", "ears connected", no
     warnings or errors. #584's timing check needs someone to open the names menus.
+
+==============================================================================
+2026-10-08  Server: deploy b4ab397 (dev1, no test run)
+==============================================================================
+  - 05:24 UTC  development @ b4ab397: #599 (Add many saves a list in a few statements,
+    #253), #601 (⚙️ Settings follow-ups, #553), #603 (PLAN only). No migrations, no
+    .env changes. Database backed up first (outside the repo; 26 tables); no session
+    was live. Core rebuilt: "Connected to 1 server(s)", "ears connected", no warnings
+    or errors.

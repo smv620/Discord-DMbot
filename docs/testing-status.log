@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (deployed fa87a60; web-api not started; ready for run 8)
+Last updated: 2026-10-08 by dev1 (deployed b4ab397; web-api not started; ready for run 8)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -25,12 +25,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: fa87a60 (2026-10-08 05:10 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: b4ab397 (2026-10-08 05:24 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since fa87a60, ask it to redeploy first. Use a steady connection (run 8a
+      moved since b4ab397, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -157,6 +157,9 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     for campaign ... in N ms" timings into the history
   - #563 (#252): confirming the right to use a pasted names list is remembered (who,
     when; no text); a backup keeps it
+  Deployed 2026-10-08 05:24 (b4ab397)
+  - #599 (#253): Add many with a long list saves quickly; Undo takes it all back
+  - #601 (#553): ⚙️ Settings on the DM screen shows the level the DM picked
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
