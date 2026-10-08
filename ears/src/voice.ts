@@ -33,11 +33,15 @@ export const UNKNOWN_RETRY_MS = 30_000;
 export const RESUBSCRIBE_LIMIT = 5;
 export const RESUBSCRIBE_WINDOW_MS = 60_000;
 /**
- * The first try is at once; later ones wait this long. Once the library starts erroring it
- * errors on every failing packet until one decrypts, so tries 20 ms apart would all be
- * spent in a tenth of a second. The wait counts as lost.
+ * How long each try in a failure waits: the first at once, then longer. Once the library
+ * starts erroring it errors on every failing packet until one decrypts, so tries 20 ms
+ * apart would all be spent in a tenth of a second. But a failure can be a short burst: after
+ * an MLS welcome at transition 0 the first packets errored back to back (#761, Test B), so
+ * the second try comes soon. The five together cover about 4 s of failing, as before. A
+ * packet heard starts the steps over (the per-minute limit still counts every try). The
+ * wait counts as lost.
  */
-export const RESUBSCRIBE_DELAY_MS = 1_000;
+export const RESUBSCRIBE_DELAYS_MS: readonly number[] = [0, 100, 300, 1_500, 2_100];
 /** Packets arriving but none heard for this many watchdog periods: core is told too. */
 export const SILENT_PERIODS_BEFORE_WARNING = 3;
 
@@ -77,6 +81,7 @@ interface SpeakerPipeline {
   retry?: NodeJS.Timeout; // a delayed re-listen
   warnedSilent: boolean; // logged "sending but nothing heard" for this pipeline
   silentPeriods: number; // watchdog periods in a row with packets arriving, none heard
+  failedTries: number; // tries since a packet was last heard: the step in RESUBSCRIBE_DELAYS_MS
 }
 
 export interface TableSessionOptions {
@@ -271,6 +276,7 @@ export class TableSession {
       accounted: Date.now(),
       warnedSilent: false,
       silentPeriods: 0,
+      failedTries: 0,
     };
     this.speakers.set(userId, pipeline);
 
@@ -306,6 +312,7 @@ export class TableSession {
       const now = Date.now();
       pipeline.accounted = now;
       pipeline.silentPeriods = 0;
+      pipeline.failedTries = 0;
       pipeline.tracker.packet(now, isSilenceFrame(packet));
       this.arm(userId, pipeline);
     });
@@ -389,9 +396,10 @@ export class TableSession {
 
   /**
    * A speaker's stream failed: the voice library errored it because their packets
-   * wouldn't decrypt (#631), or ended it while they were still sending (#645). They are still sending, so listen again at
-   * once rather than wait for a pause and a new "start", and count the time since the
-   * last packet heard as lost. If it keeps happening, stop until they next start speaking
+   * wouldn't decrypt (#631), or ended it while they were still sending (#645). They are
+   * still sending, so listen again (at once, then after RESUBSCRIBE_DELAYS_MS) rather than
+   * wait for a pause and a new "start", and count the time since the last packet heard as
+   * lost. If it keeps happening, stop until they next start speaking
    * and tell core (once a minute), so the DM hears of it.
    */
   private onFailure(userId: string, pipeline: SpeakerPipeline, why: string): void {
@@ -408,12 +416,15 @@ export class TableSession {
       this.endSpeaker(userId, true);
       return;
     }
-    const delay = tries.length === 0 ? 0 : RESUBSCRIBE_DELAY_MS;
+    if (tries.length === 0) pipeline.failedTries = 0; // none in the last minute: a new failure
+    const step = Math.min(pipeline.failedTries, RESUBSCRIBE_DELAYS_MS.length - 1);
+    const delay = RESUBSCRIBE_DELAYS_MS[step] ?? 0;
+    pipeline.failedTries++;
     tries.push(now);
     this.retries.set(userId, tries);
     this.options.log.warn(
-      `user ${userId}: ${why}; listening again (${tries.length} of ${RESUBSCRIBE_LIMIT} ` +
-        "this minute)",
+      `user ${userId}: ${why}; listening again ${delay ? `in ${delay} ms` : "at once"} ` +
+        `(${tries.length} of ${RESUBSCRIBE_LIMIT} this minute)`,
       { guildId: this.guildId },
     );
     const old = pipeline.stream;

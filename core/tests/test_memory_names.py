@@ -581,6 +581,23 @@ class NameCards(NamesTest):
         plain = await name_card.find_typeahead(self.it(MANAGER), "bell")
         self.assertEqual([c.value for c in plain], [self.bell.id])  # the rest, yes
 
+    async def test_the_type_ahead_never_waits_past_discords_limit(self) -> None:
+        # #581: a copy still loading gives nothing this time, and the next keystroke has it.
+        from dmbot.ui import name_card
+
+        cache = self.bot.lookup
+        assert cache is not None
+        cache.mark_all_stale()
+        with patch.object(name_card, "TYPEAHEAD_WAIT_S", 0):
+            self.assertEqual(await name_card.find_typeahead(self.it(), "bell"), [])
+            for _ in range(50):  # the load carries on without anyone waiting
+                if await cache.get_within(self.campaign.guild_id, self.campaign.id, 0.05):
+                    break
+            else:
+                self.fail("the names never finished loading")
+            choices = await name_card.find_typeahead(self.it(), "bell")
+        self.assertEqual([c.value for c in choices], [self.bell.id])
+
 
 class Lists(NamesTest):
     async def asyncSetUp(self) -> None:
@@ -1733,6 +1750,38 @@ class Hints(NamesTest):
         self.assertLess(hints.index("Belleros"), hints.index("Hrothgar"))
         self.assertIn("Bell", hints)
         self.assertNotIn("the hooded stranger", hints)
+
+    async def test_a_clip_never_waits_long_for_names_or_gets_the_old_ones(self) -> None:
+        # Every clip of a session asks for hints: while the names reload (just after a
+        # change, maybe a name made secret) a clip goes with people only, and soon after
+        # the new names are there (#581 review).
+        from dmbot import bot as bot_module
+
+        await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+        table = make_table(self.campaign.id)
+        self.bot.tables[GUILD] = table
+        self.assertIn("Belleros", await self.bot._name_hints(clip(table)))
+        gate = asyncio.Event()
+        real = self.memory.lookup_data
+
+        async def slow(guild_id: int, campaign_id: str) -> Any:
+            await gate.wait()
+            return await real(guild_id, campaign_id)
+
+        cache = self.bot.lookup
+        assert cache is not None
+        cache.mark_stale(GUILD, self.campaign.id)
+        with (
+            patch.object(self.memory, "lookup_data", slow),
+            patch.object(bot_module, "HINTS_WAIT_S", 0.05),
+        ):
+            hints = await self.bot._name_hints(clip(table))
+            self.assertNotIn("Belleros", hints)  # not from the old copy
+            self.assertIsNone(table.name_lookup)
+            gate.set()
+            await asyncio.gather(*cache._loading.values())
+            self.assertIn("Belleros", await self.bot._name_hints(clip(table)))
+        self.assertIsNotNone(table.name_lookup)
 
     async def test_people_in_the_voice_channel_come_first_and_a_revoke_counts_at_once(
         self,

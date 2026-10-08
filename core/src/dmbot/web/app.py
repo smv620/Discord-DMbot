@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from dmbot import entitlements, install, plans
 from dmbot.db import Database
-from dmbot.web import admin_api, entitlements_writer, feedback, sessions, tokens
+from dmbot.web import admin_api, entitlements_writer, feedback, offers, sessions, tokens
 from dmbot.web.accounts import (
     account_email,
     active_subscription,
@@ -419,6 +419,31 @@ def create_app(
             raise HTTPException(status_code=409, detail=f"try_it_{result.reason}")
         log.info("Try It started: user %s", session.user_id)
         return Response(status_code=204)
+
+    # Hand-over offers (#614): answered with the same store code as the bot's buttons.
+
+    async def answer_offer(signed: tuple[Session, str], ref: str, what: offers.Answer) -> Response:
+        session, _token = signed
+        outcome = await offers.answer(db, session, ref, what, now=clock())
+        if outcome == "no_free_slot":
+            raise HTTPException(status_code=409, detail="no_free_slot")
+        if outcome == "gone":
+            # Answered, withdrawn, expired, or never this person's: the page reloads.
+            raise HTTPException(status_code=409, detail="offer_gone")
+        log.info("Hand-over offer %s %s by user %s", ref, outcome, session.user_id)
+        return Response(status_code=204)
+
+    @app.post("/offers/{ref}/accept", status_code=204)
+    async def accept_offer(ref: str, signed: Signed) -> Response:
+        return await answer_offer(signed, ref, "accept")
+
+    @app.post("/offers/{ref}/decline", status_code=204)
+    async def decline_offer(ref: str, signed: Signed) -> Response:
+        return await answer_offer(signed, ref, "decline")
+
+    @app.post("/offers/{ref}/withdraw", status_code=204)
+    async def withdraw_offer(ref: str, signed: Signed) -> Response:
+        return await answer_offer(signed, ref, "withdraw")
 
     def require_payments() -> PaymentProvider:
         if payments is None:

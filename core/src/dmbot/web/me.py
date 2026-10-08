@@ -12,7 +12,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from dmbot import entitlements
+from dmbot.campaigns.models import HANDOVER_SECONDS
 from dmbot.db import Database
+from dmbot.web.offers import offer_ref
 from dmbot.web.sessions import Session
 
 # A person in many servers: read at most this many (Discord's own list stops at 200).
@@ -35,6 +37,8 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
     plan = await entitlements.get(db, session.user_id)
     campaigns: list[dict[str, Any]] = []
     servers: list[dict[str, Any]] = []
+    incoming: list[dict[str, Any]] = []
+    outgoing: list[dict[str, Any]] = []
     names = {g.id: g.name for g in session.guilds}  # for the installs list below
 
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -50,10 +54,23 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                     "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild.id)),)
                 )
                 mine = await conn.execute(
-                    "SELECT c.id, c.name, c.last_played_at FROM campaigns c"
+                    "SELECT c.id, c.name, c.last_played_at, c.owner_user_id FROM campaigns c"
                     " JOIN campaign_dms d ON d.campaign_id = c.id AND d.guild_id = c.guild_id"
                     " WHERE c.guild_id = %s AND d.user_id = %s ORDER BY c.name",
                     (guild.id, session.user_id),
+                )
+                # Hand-over offers this person sent or was sent here (#614). Only open
+                # ones under 7 days old: an older one is marked expired by the store the
+                # next time anyone touches it, but has already ended.
+                offered = await conn.execute(
+                    "SELECT o.id, o.campaign_id, c.name, o.to_user_id, o.from_name,"
+                    " o.to_name, o.created_at FROM campaign_handover_offers o"
+                    " JOIN campaigns c ON c.id = o.campaign_id AND c.guild_id = o.guild_id"
+                    " WHERE o.guild_id = %(g)s AND o.status = 'open'"
+                    "   AND o.created_at + %(days)s > %(now)s"
+                    "   AND %(me)s IN (o.from_user_id, o.to_user_id)"
+                    " ORDER BY o.created_at",
+                    {"g": guild.id, "days": HANDOVER_SECONDS, "now": now, "me": session.user_id},
                 )
                 here = None
                 if guild.manage:
@@ -66,8 +83,8 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                         " EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %(g)s) AS played",
                         {"g": guild.id},
                     )
-                pending.append((guild, mine, here))
-        for guild, mine, here in pending:
+                pending.append((guild, mine, offered, here))
+        for guild, mine, offered, here in pending:
             for row in await mine.fetchall():
                 campaigns.append(
                     {
@@ -75,11 +92,26 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                         "name": row["name"],
                         "serverName": guild.name,
                         "lastPlayedAt": _iso_time(row["last_played_at"]),
-                        # Paused campaigns and the campaign owner arrive with #437; until
-                        # then every campaign is active and the person a DM, not owner, so
-                        # nothing can be handed over before ownership exists.
+                        # Paused campaigns arrive with #437 part 2; until then every one
+                        # is active. "owner": it uses this person's plan, and only they
+                        # can hand it over (#437); a campaign with no owner yet (from
+                        # before owners were recorded) is "co-dm" for everyone.
                         "status": "active",
-                        "role": "co-dm",
+                        "role": "owner" if row["owner_user_id"] == session.user_id else "co-dm",
+                    }
+                )
+            for row in await offered.fetchall():
+                to_me = row["to_user_id"] == session.user_id
+                (incoming if to_me else outgoing).append(
+                    {
+                        "id": offer_ref(guild.id, row["id"]),
+                        "campaignId": str(row["campaign_id"]),
+                        "campaignName": row["name"],
+                        "serverName": guild.name,
+                        # Incoming: who offers it. Outgoing: who it's offered to. The
+                        # names were copied when the offer was made (migration 0022).
+                        "personName": row["from_name"] if to_me else row["to_name"],
+                        "expiresAt": _iso_time(row["created_at"] + HANDOVER_SECONDS),
                     }
                 )
             if here is not None:
@@ -137,4 +169,5 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
         "campaigns": campaigns,
         "servers": servers,
         "installs": installs,
+        "offers": {"incoming": incoming, "outgoing": outgoing},
     }
