@@ -481,11 +481,19 @@ class SaveAndResume(SessionTests):
     async def test_a_session_still_finishing_follows_a_level_change(self) -> None:
         await self.start()
         table = self.bot.tables[GUILD]
-        await self.bot.stop_table(GUILD, "test")
-        self.assertIn(table, self.bot._ending.get(GUILD, []))
-        await self.bot.set_screen_level(GUILD, self.campaign.id, "quiet", was="normal")
-        self.assertEqual(table.screen_level, "quiet")
-        await asyncio.gather(*self.bot._finishing)
+        last_words = asyncio.Event()  # still writing down the last speech
+
+        async def drain(*_: Any) -> bool:
+            await last_words.wait()
+            return True
+
+        with patch.object(self.bot.pipeline, "drain", drain):
+            await self.bot.stop_table(GUILD, "test")
+            self.assertTrue(any(t is table for t in self.bot._ending.get(GUILD, [])))
+            await self.bot.set_screen_level(GUILD, self.campaign.id, "quiet", was="normal")
+            self.assertEqual(table.screen_level, "quiet")
+            last_words.set()
+            await asyncio.gather(*self.bot._finishing)
 
     async def test_listening_again_after_a_restart_has_settings_then_stop(self) -> None:
         from dmbot.ears.protocol import Status
@@ -504,7 +512,7 @@ class SaveAndResume(SessionTests):
 
         await self.start()
         each: list[list[tuple[str, list[str]]]] = []
-        for _ in range(2):
+        for _ in range(2):  # the first restart is announced, the second is quick
             bot = await self.restart()
             each.append(self.capture_views(bot))
             await bot.resume_sessions()
@@ -514,7 +522,7 @@ class SaveAndResume(SessionTests):
         # #553 (a decision): no new ⚙️ Settings message on a quiet resume either; the
         # help card is refreshed at the next /dmbot start. Don't "fix" this into a
         # card re-post on every restart.
-        posted = [ids for views in each for _, ids in views]  # from both restarts
+        posted = [ids for _, ids in each[-1]]  # the second, quick one (the first is announced)
         self.assertFalse(any(i.startswith("dmbot:settings:") for ids in posted for i in ids))
 
     async def test_a_crash_loop_gives_up(self) -> None:
