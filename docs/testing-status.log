@@ -12,6 +12,10 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 - CloudDev, PR #599 (#253): Add many saves a long list in a few statements instead of
   one per name. Deploy: rebuild core (no migration). Check: 📥 Add many with a long
   list saves as before and one Undo takes it all back.
+- CloudDev, PR #611 (#437 part 1a): records each campaign's owner. Migration 0020 adds
+  one nullable column, campaigns.owner_user_id (quick; avoid a long web-api transaction
+  on campaigns while it runs). Deploy: rebuild core. Check: `docker compose logs core`
+  shows 0020 applied, no new errors. Nothing a DM sees changes yet.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
