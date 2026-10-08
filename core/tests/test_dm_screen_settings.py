@@ -49,6 +49,7 @@ def campaign(level: str = "normal", name: str = "Frostmaiden", vis: str = "peek"
 def press(user: int, *, found: Campaign | None = None, manager: bool = False) -> Any:
     store = MagicMock(spec=CampaignStore)
     store.get = AsyncMock(return_value=found)
+    store.open_offer = AsyncMock(return_value=None)  # no hand-over offer waiting
     it = MagicMock()
     it.client = MagicMock(campaigns=store, set_screen_level=AsyncMock())
     it.guild = MagicMock(spec=discord.Guild, id=GUILD)
@@ -76,11 +77,11 @@ class SettingsCardTest(unittest.TestCase):
     def test_buttons_fit_a_phone_and_survive_a_restart(self) -> None:
         view = settings_view(campaign("quiet", vis="private"))
         items: list[Any] = list(view.children)
-        self.assertEqual([i.row for i in items], [0, 0, 1, 1, 1])
+        self.assertEqual([i.row for i in items], [0, 0, 1, 1, 1, 2])  # 🤝 Hand over (#437)
         labels = [i.item.label for i in items]
         self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
         self.assertEqual(labels[2], "✓ Only the DM")  # the current one, the same way
-        self.assertEqual([i.item.disabled for i in items], [True, False, True, False, False])
+        self.assertEqual([i.item.disabled for i in items], [True, False, True, False, False, False])
         for item in items:
             self.assertLessEqual(len(item.item.label), 25)
             template = type(item).__discord_ui_compiled_template__

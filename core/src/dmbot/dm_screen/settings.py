@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+import time
 from typing import Any
 
 import discord
@@ -29,8 +30,9 @@ from dmbot.campaigns.models import (
     DM_SCREEN_LEVELS,
     DM_SCREEN_LEVELS_OFFERED,
     CampaignError,
+    HandoverOffer,
 )
-from dmbot.dm_screen import messages
+from dmbot.dm_screen import handover, messages
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 
 log = logging.getLogger(__name__)
@@ -49,7 +51,7 @@ def _tick(label: str, current: bool) -> str:
     return f"✓ {label}" if current else label
 
 
-def settings_text(campaign: Campaign) -> str:
+def settings_text(campaign: Campaign, offer: HandoverOffer | None = None) -> str:
     """The settings card (only the person who opened it sees it)."""
     level = campaign.dm_screen_level
     recommended = " (recommended)" if level == DEFAULT_DM_SCREEN_LEVEL else ""
@@ -63,20 +65,38 @@ def settings_text(campaign: Campaign) -> str:
             f"• **Who can see the DM screen:** {who}",
             "• **Saved transcripts:** anyone in the server can read and download them with "
             "`/transcript`. (This can't be changed.)",
+            handover.owner_line(campaign, offer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
             "now on.",
         ]
     )
 
 
-def settings_view(campaign: Campaign) -> discord.ui.View:
+def settings_view(campaign: Campaign, offer: HandoverOffer | None = None) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     for level in DM_SCREEN_LEVELS_OFFERED:
         view.add_item(LevelButton(campaign.id, level, current=level == campaign.dm_screen_level))
     for visibility in messages.VISIBILITY_BUTTONS:
         current = visibility == campaign.dm_screen_visibility
         view.add_item(SettingsVisibilityButton(campaign.id, visibility, current=current))
+    for item in handover.owner_buttons(campaign, offer):
+        view.add_item(item)
     return view
+
+
+async def _open_offer(interaction: discord.Interaction, campaign: Campaign) -> HandoverOffer | None:
+    """A hand-over offer waiting for an answer, for the card (none if it can't be read)."""
+    store = getattr(interaction.client, "campaigns", None)
+    if store is None:
+        return None
+    try:
+        offer: HandoverOffer | None = await store.open_offer(
+            campaign.guild_id, campaign.id, int(time.time())
+        )
+    except Exception:
+        log.exception("Couldn't read a hand-over offer for the settings card")
+        return None
+    return offer
 
 
 async def _allowed(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
@@ -98,10 +118,11 @@ async def _may(
 async def _redraw(interaction: discord.Interaction, campaign: Campaign) -> None:
     """Show the card as saved now (the press was deferred as an update). If the card
     can't be redrawn (it's too old), the change still is saved: say so."""
+    offer = await _open_offer(interaction, campaign)
     try:
         await interaction.edit_original_response(
-            content=settings_text(campaign),
-            view=settings_view(campaign),
+            content=settings_text(campaign, offer),
+            view=settings_view(campaign, offer),
             allowed_mentions=NO_PINGS,
         )
     except discord.HTTPException:
@@ -137,9 +158,10 @@ class SettingsButton(
         campaign = await _allowed(interaction, self.campaign_id)
         if campaign is None:
             return
+        offer = await _open_offer(interaction, campaign)
         await interaction.response.send_message(
-            settings_text(campaign),
-            view=settings_view(campaign),
+            settings_text(campaign, offer),
+            view=settings_view(campaign, offer),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
