@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (deployed 1a7bf0d; Test A failed, #631)
+Last updated: 2026-10-08 by dev1 (deployed 70ac757 with #631's ears fix; Test A again next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -25,12 +25,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 1a7bf0d (2026-10-08 06:18 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 70ac757 (2026-10-08 06:44 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since 1a7bf0d, ask it to redeploy first. Use a steady connection (run 8a
+      moved since 70ac757, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -168,6 +168,10 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     Cancel keeps listening; a player is refused; /dmbot stop still stops at once
   - #622 (#88): /dmbot stop and Restore answer at once; a restore always ends with
     its outcome, never a stuck "Restoring…"
+  Deployed 2026-10-08 06:44 (70ac757, ears and core)
+  - #641 (#631): Test A again, phone then computer. ears logs "dave: …" lines; after a
+    receive error "listening again (n of 5 this minute)"; "is sending audio but none
+    of it can be heard"; the DM screen shows a warning and its audio % drops
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test A (2026-10-08 05:43), DM alone on a phone, Deepgram: FAIL (#631)
@@ -175,8 +179,8 @@ LATEST RESULT: Test A (2026-10-08 05:43), DM alone on a phone, Deepgram: FAIL (#
   /dmbot start, consent and /dmbot stop worked; no transcript line. ears dropped the
   DM's audio on its first packets: "Failed to decrypt: DecryptionFailed(
   UnencryptedWhenPassthroughDisabled)" (DAVE), 0 s sent to Deepgram, yet the capture
-  check said audio 100%. Next: Test A again (docs/next-test-step.md) to see if it
-  repeats. Previous result: run 7 (2026-10-06), PASS, audio 100%.
+  check said audio 100%. Fix #641 deployed 06:44. Next: Test A again
+  (docs/next-test-step.md), phone then computer. Previous result: run 7 (2026-10-06), PASS, audio 100%.
 
 Open issues from testing
   #631 DAVE decrypt error drops all of a speaker's audio (Test A)
