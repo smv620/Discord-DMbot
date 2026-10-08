@@ -114,6 +114,9 @@ from dmbot.transcript.cleaner import (
 from dmbot.transcript.models import Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
+from dmbot.transcript.topic_ai import classify
+from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obviously_game
+from dmbot.transcript.topics import marker as topic_marker
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, speech_sent_line
@@ -279,6 +282,13 @@ class Table:
     listening_message: discord.Message | None = None  # carries the Stop button (#108)
     dropped_logged: bool = False
     save_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # The off-topic filter (#52): lines waiting to be labelled, and the names-scan text
+    # each holds back until then (hidden lines never reach the helpers); calls and
+    # tokens, for the session's stats line.
+    topics: TopicWindow = field(default_factory=TopicWindow)
+    held: dict[tuple[int, int], str] = field(default_factory=dict)
+    topic_calls: int = 0
+    topic_tokens: list[int] = field(default_factory=lambda: [0, 0])  # in, out
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
@@ -513,6 +523,8 @@ class DMBot(commands.AutoShardedBot):
             table.segmenter.drop(user_id)
             table.transcript.drop_speaker(user_id)  # words not posted yet are discarded
             table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
+            table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
+            table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
@@ -791,6 +803,14 @@ class DMBot(commands.AutoShardedBot):
                     ),
                     " since the restart" if table.after_restart else "",
                 )
+                if table.topics.lines:  # the last window, before the transcript is saved
+                    await self._label_topics(table, table.topics.take())
+                if table.topic_calls:  # for cost per session hour (#52)
+                    log.info(
+                        "Off-topic filter: %d calls, %d tokens in, %d out",
+                        table.topic_calls,
+                        *table.topic_tokens,
+                    )
                 await self._after_session(table, ended_at, caught_up)
             finally:
                 ending = self._ending.get(gid, [])
@@ -1585,13 +1605,21 @@ class DMBot(commands.AutoShardedBot):
             named = mentions(table.name_lookup, cleaned)  # once per name per line
             table.scene.note(named, utterance.user_id, time.monotonic())
             table.heard_counts.update((entity_id, utterance.user_id) for entity_id in named)
+            names_said = len(named)
+        else:
+            names_said = 0
         if text:
             # After cleaning, so a line is never evidence about itself; even when the names
             # couldn't be loaded, a word said in lower case is a real word next time.
             table.vocabulary.note(utterance.user_id, text)
         if text and self.transcripts is not None:
-            table.unsaved.add(Line(utterance.start_ms, utterance.user_id, text, cleaned or text))
-        if text and len(table.heard) < HEARD_MAX:
+            duration_ms = int(utterance.duration_s * 1000)
+            table.unsaved.add(
+                Line(utterance.start_ms, utterance.user_id, text, cleaned or text, duration_ms)
+            )
+        if text and self._topic_pending(table, utterance, cleaned or text, names_said):
+            pass  # held for the off-topic filter: the names scan gets it once labelled
+        elif text and len(table.heard) < HEARD_MAX:
             # The cleaned line: a known name misheard and fixed live isn't new (#394).
             table.heard.append((utterance.user_id, cleaned or text))
             if len(table.heard) == HEARD_MAX:
@@ -1606,6 +1634,84 @@ class DMBot(commands.AutoShardedBot):
                 cleaned or text,
                 utterance.start_ms,
             )
+
+    def _topic_pending(self, table: Table, utterance: Utterance, text: str, named: int) -> bool:
+        """The off-topic filter (#52): a line not plainly about the game waits for the
+        AI, a window at a time; True if it's waiting. No AI key, or a session still
+        finishing: no filter, nothing is hidden."""
+        if self.ai is None or self.tables.get(table.guild_id) is not table:
+            return False
+        if obviously_game(text, named):
+            return False
+        key = (utterance.user_id, utterance.start_ms)
+        table.held[key] = text
+        first = not table.topics.lines
+        waiting = Waiting(utterance.user_id, utterance.start_ms, text, utterance.duration_s)
+        if table.topics.add(waiting, time.monotonic()):
+            self._track(self._label_topics(table, table.topics.take()), "topics")
+        elif first:
+            self._track(self._label_topics_later(table, table.topics.opened_at), "topics")
+        return True
+
+    async def _label_topics_later(self, table: Table, opened_at: float | None) -> None:
+        """A window that doesn't fill is asked about once its first line has waited."""
+        await asyncio.sleep(table.topics.window_s)
+        if table.topics.lines and table.topics.opened_at == opened_at:
+            await self._label_topics(table, table.topics.take())
+
+    async def _label_topics(self, table: Table, lines: list[Waiting]) -> None:
+        """Ask the AI about a window (one call) and act on its answer: the names scan
+        gets the lines that aren't off-topic, and lines that aren't game talk are saved
+        so, off-topic ones edited to their marker in the channel while it can be. If the
+        call fails, every line counts as game talk (when unsure, keep it). Consent is
+        checked again after every wait."""
+        if not lines or self.ai is None:
+            return
+        try:
+            topics, reply = await classify(self.ai, [w.text for w in lines])
+            table.topic_calls += 1
+            table.topic_tokens[0] += reply.input_tokens
+            table.topic_tokens[1] += reply.output_tokens
+        except Exception as exc:
+            log.warning("Off-topic filter: couldn't ask (%s); kept the lines", type(exc).__name__)
+            topics = [GAME] * len(lines)
+        for waiting, topic in zip(lines, topics, strict=True):
+            said = table.held.pop((waiting.speaker, waiting.started_ms), None)
+            if not self.consent.has_consent(table.guild_id, waiting.speaker):
+                continue  # stopped meanwhile: nothing about their words
+            if topic != OFF_TOPIC and said is not None and len(table.heard) < HEARD_MAX:
+                table.heard.append((waiting.speaker, said))
+            if topic != GAME:
+                await self._set_topic(table, waiting, topic)
+
+    async def _set_topic(self, table: Table, waiting: Waiting, topic: str) -> None:
+        """Save a line's topic (waiting or saved), and edit an off-topic line still in
+        the channel's edit window to its marker. Only while its speaker is recorded."""
+        guild_id, speaker, started = table.guild_id, waiting.speaker, waiting.started_ms
+        async with table.save_lock:
+            if self.consent.has_consent(guild_id, speaker):
+                found = table.unsaved.set_topic(speaker, started, topic)
+                session_id = table.transcript_session_id
+                if not found and self.transcripts is not None and session_id is not None:
+                    try:
+                        await self.transcripts.set_topic(
+                            guild_id, session_id, speaker, started, topic
+                        )
+                    except Exception:
+                        log.exception("Couldn't save a line's topic")
+        if topic != OFF_TOPIC:
+            return
+        async with table.transcript_lock:
+            if self.consent.has_consent(guild_id, speaker):
+                hidden = topic_marker(waiting.seconds)
+                edit = table.transcript.relabel(speaker, started, hidden, time.monotonic())
+                if edit is not None:
+                    message, content = edit
+                    with contextlib.suppress(discord.HTTPException, TimeoutError):
+                        await asyncio.wait_for(
+                            message.edit(content=content, allowed_mentions=NO_PINGS),
+                            EDIT_TIMEOUT_S,
+                        )
 
     def _clean(self, table: Table, heard: str, *, unsure: bool) -> Cleaned:
         """The line with misheard names fixed (#127), from the campaign's names as last

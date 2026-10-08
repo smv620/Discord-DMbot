@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dmbot.memory.scan import GAME_TERMS
 from dmbot.memory.scene import WORD
@@ -97,3 +97,54 @@ def collapse(lines: Iterable[Spoken]) -> Iterator[Shown]:
         yield from flush()
         yield Shown(line.speaker, line.started_ms, line.text)
     yield from flush()
+
+
+# The AI is asked about a window of lines at once: this many, or as many as come in
+# this long, whichever is first (#52: one call per window bounds the cost).
+WINDOW_LINES = 6
+WINDOW_S = 20.0
+
+
+@dataclass(frozen=True, slots=True)
+class Waiting:
+    """A line waiting for the filter: who, when (to find it again), and its words."""
+
+    speaker: int
+    started_ms: int
+    text: str
+    seconds: float = 0.0  # how long it was said (for the live marker)
+
+
+@dataclass(slots=True)
+class TopicWindow:
+    """Lines not obviously about the game, gathered until there are enough to ask about
+    (`WINDOW_LINES`) or the first has waited `WINDOW_S`. Pure: the caller asks the AI."""
+
+    lines: list[Waiting] = field(default_factory=list)
+    opened_at: float | None = None  # monotonic seconds, when the first line came in
+    window_lines: int = WINDOW_LINES
+    window_s: float = WINDOW_S
+
+    def add(self, line: Waiting, now: float) -> bool:
+        """Add a line; True if the window is now full or due (take it and ask)."""
+        if not self.lines:
+            self.opened_at = now
+        self.lines.append(line)
+        return len(self.lines) >= self.window_lines or self.due(now)
+
+    def due(self, now: float) -> bool:
+        return (
+            bool(self.lines)
+            and self.opened_at is not None
+            and (now - self.opened_at >= self.window_s)
+        )
+
+    def take(self) -> list[Waiting]:
+        lines, self.lines, self.opened_at = self.lines, [], None
+        return lines
+
+    def drop_speaker(self, speaker: int) -> None:
+        """They stopped being recorded: their lines are never sent to the AI."""
+        self.lines = [w for w in self.lines if w.speaker != speaker]
+        if not self.lines:
+            self.opened_at = None
