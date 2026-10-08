@@ -32,15 +32,24 @@ export interface HelloMessage {
   shardIds: number[];
 }
 
-export type EarsState = "ready" | "joined" | "left" | "error";
+/**
+ * "warning": a problem with one speaker's audio that the session survives: ears gave up
+ * re-listening after repeated failures (#631, #645), or they keep sending but none of it
+ * can be heard. Carries their userId. The others are about the connection.
+ */
+export type EarsState = "ready" | "joined" | "left" | "error" | "warning";
 
-export interface StatusMessage {
+interface StatusFields {
   type: "status";
-  state: EarsState;
   guildId?: string;
   channelId?: string;
   detail?: string;
 }
+
+/** A warning is always about someone; the other states never are (core checks both). */
+export type StatusMessage =
+  | (StatusFields & { state: "warning"; userId: string })
+  | (StatusFields & { state: Exclude<EarsState, "warning">; userId?: undefined });
 
 export interface SpeakingMessage {
   type: "speaking";

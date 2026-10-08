@@ -259,7 +259,8 @@ HELP_TEXT = (
     "\n"
     "**Recording:** DMbot only records people who say yes. When the DM starts a "
     "session, or when you join the voice channel, DMbot sends you a private message "
-    "with an **I consent** button. Anyone in this server can read what DMbot writes down.\n"
+    "with an **I consent** button. Anyone in this server can read what DMbot writes down, "
+    "and an AI company (Anthropic) reads it to give the DM notes.\n"
     "No message from DMbot? Check your Message Requests, or type `/consent give`. "
     "To stop, press **Stop recording me** or type `/consent revoke`."
 )

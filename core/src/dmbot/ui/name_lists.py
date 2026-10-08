@@ -560,7 +560,9 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
         return
     parsed = None
     if not upload.document:
-        parsed = parse(upload.text, secrets=sees_secrets(campaign, interaction.user.id))
+        # Pure CPU, up to a fraction of a second on a full file: off the event loop.
+        secrets_ok = sees_secrets(campaign, interaction.user.id)
+        parsed = await asyncio.to_thread(parse, upload.text, secrets=secrets_ok)
         if not parsed.lines and not parsed.refused:
             await _tell(
                 interaction,
@@ -819,7 +821,7 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
     if names is None:
         return
     secrets_ok = sees_secrets(campaign, interaction.user.id)
-    parsed = parse(text, secrets=secrets_ok)
+    parsed = await asyncio.to_thread(parse, text, secrets=secrets_ok)
     # Same names fold in, near names are asked about (#369). For anyone but the campaign's
     # DMs, a clash with a secret name looks exactly like no clash: they never learn one
     # exists.
@@ -981,7 +983,7 @@ def summary_text(
     if kinds:
         parts.append(f"{kinds:,} kinds differ" if kinds > 1 else "1 kind differs")
     if repeated:
-        parts.append(f"{repeated:,} listed twice")
+        parts.append(f"{repeated:,} on more than one line (joined)")
     below = " Questions below." if near or kinds else ""
     lines = [f"📥 **{head}** · " + " · ".join(parts) + "." + below if parts else f"📥 **{head}.**"]
     for other, main in swapped[:SHOWN_SWAPPED]:

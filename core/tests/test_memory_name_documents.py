@@ -18,6 +18,7 @@ from dmbot.memory.name_documents import (
     request_text,
     text_of,
 )
+from dmbot.memory.name_list import parse
 
 
 def docx(*paragraphs: str) -> bytes:
@@ -127,6 +128,16 @@ class Request(unittest.TestCase):
             merged.splitlines(),
             ["Belleros | NPC | Bell; the old knight | x", "Ulfgar | NPC"],
         )
+
+    def test_a_name_with_many_other_names_fits_on_list_lines(self) -> None:
+        pieces = [f"Belleros | NPC | {'; '.join(f'Bell {i}' for i in range(at, at + 15))}"
+                  for at in (0, 15, 30)]  # fmt: skip
+        merged = merge_lists(pieces)
+        self.assertEqual(merged.count("Belleros | NPC |"), 3)  # 20, 20 and 5
+        parsed = parse(merged, secrets=True)
+        self.assertEqual(parsed.refused, [])
+        self.assertEqual(len(parsed.lines[0].others), 45)
+        self.assertIn("at most 20", instructions(secrets=False))
 
     def test_only_list_lines_come_back(self) -> None:
         reply = "Here is the list:\n```\n- Belleros | NPC | Bell\nUlfgar | NPC\n```\nDone."

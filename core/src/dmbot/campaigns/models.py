@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import Literal
 
 # Rulesets a DM can pick, with the plain label shown in pickers.
 RULESETS: dict[str, str] = {
@@ -53,6 +54,38 @@ DEFAULT_TARGET = "2024"
 DEFAULT_FALLBACK = "2014"
 
 NAME_MAX = 80
+
+
+# A hand-over offer is open this long (#437).
+HANDOVER_DAYS = 7
+HANDOVER_SECONDS = HANDOVER_DAYS * 24 * 3600
+
+
+HandoverStatus = Literal["open", "accepted", "declined", "withdrawn", "expired"]
+NAME_ON_OFFER_MAX = 100  # a display name kept on an offer (Discord's are 32 at most)
+
+
+@dataclass(frozen=True, slots=True)
+class HandoverOffer:
+    """An offer to hand a campaign over to another subscriber (#437 part 1b)."""
+
+    id: int
+    guild_id: int
+    campaign_id: str
+    from_user_id: int
+    to_user_id: int
+    from_name: str  # display names when the offer was made, for the account page
+    to_name: str
+    created_at: int
+    status: HandoverStatus
+    decided_at: int | None
+
+    @property
+    def expires_at(self) -> int:
+        return self.created_at + HANDOVER_SECONDS
+
+    def is_open(self, now: int) -> bool:
+        return self.status == "open" and now < self.expires_at
 
 
 class CampaignError(ValueError):
