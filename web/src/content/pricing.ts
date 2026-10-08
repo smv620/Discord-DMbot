@@ -40,7 +40,7 @@ interface Facts {
   recommended: PlanId;
 }
 
-/** The plan file, checked against its shape when the site is built (and in the tests). */
+/** The plan file, checked against its shape when the site is built (and by test/pricing.test.ts). */
 export const data: Facts = facts as Facts;
 
 export interface Plan extends PlanFacts {

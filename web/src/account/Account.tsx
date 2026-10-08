@@ -84,7 +84,13 @@ function useAction() {
     [signedOut],
   );
 
-  return { busy, notice, run };
+  const clear = useCallback(() => setNotice(null), []);
+  return { busy, notice, run, clear };
+}
+
+/** For campaign actions: "not allowed" there means only the campaign's DM can. */
+function campaignRefusal(error: ApiError): string | null {
+  return error.kind === "not-allowed" ? text.notTheDm : null;
 }
 
 function Notice({ message }: { message: string | null }) {
@@ -128,6 +134,10 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
       const params = new URLSearchParams(search);
       if (me && params.get("install") === "sign_in_again") {
         setState({ kind: "signed-out", notice: text.signInAgain });
+        return;
+      }
+      if (!me && params.get("install") === "signed_out") {
+        setState({ kind: "signed-out", notice: text.installSignedOut });
         return;
       }
       const failed = params.get("signin") === "failed";
@@ -254,7 +264,9 @@ function ForgetInstallResult() {
 /** The message for coming back from adding DMbot (?install=done etc.), or null. */
 function installResult(search: string): string | null {
   const result = new URLSearchParams(search).get("install");
-  return result === null ? null : (text.install[result] ?? text.install["failed"] ?? null);
+  // Signed in again since (another tab, a reload): nothing true left to say about it.
+  if (result === null || result === "signed_out") return null;
+  return text.install[result] ?? text.install["failed"] ?? null;
 }
 
 /** Show the ?install= result once: take it out of the address so a reload doesn't repeat it. */
@@ -334,7 +346,16 @@ function PlanSection({ me }: { me: Me }) {
   const { api, go, refresh } = useShared();
   const { busy, notice, run } = useAction();
   const plan = me.plan;
-  const portal = (): void => void run(async () => go(await api.billingPortalUrl()));
+  const portal = (): void =>
+    void run(
+      async () => go(await api.billingPortalUrl()),
+      (error) => {
+        // The page is out of date (the plan stopped, or was never paid through the
+        // company): show what's true now, with the plans to pick from.
+        if (error.kind === "no-paid-plan") void refresh();
+        return null;
+      },
+    );
   const choices = (title: string) => (
     <>
       <p>{title}</p>
@@ -482,7 +503,7 @@ function CampaignRow({
           onClick={() =>
             void run(async () => {
               setPeople(await api.handoverCandidates(campaign.id));
-            })
+            }, campaignRefusal)
           }
         >
           {text.handOver}
@@ -502,7 +523,7 @@ function CampaignRow({
                 setPeople(null);
                 await onHandedOver(person);
               },
-              (error) => (error.kind === "no-free-slot" ? text.noFreeSlot : null),
+              (error) => (error.kind === "no-free-slot" ? text.noFreeSlot : campaignRefusal(error)),
             );
           }}
         >
@@ -614,7 +635,7 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
 
 function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
   const { api } = useShared();
-  const { busy, notice, run } = useAction();
+  const { busy, notice, run, clear } = useAction();
   const [step, setStep] = useState<0 | 1 | 2>(0);
   const [token, setToken] = useState<string | null>(null);
   const reset = (): void => {
@@ -627,7 +648,14 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
       <h2 id="delete-heading">{text.deleteHeading}</h2>
       <Notice message={notice} />
       {step === 0 && (
-        <button type="button" class="button secondary" onClick={() => setStep(1)}>
+        <button
+          type="button"
+          class="button secondary"
+          onClick={() => {
+            clear(); // a "took too long" from last time is about the old attempt
+            setStep(1);
+          }}
+        >
           {text.deleteStart}
         </button>
       )}

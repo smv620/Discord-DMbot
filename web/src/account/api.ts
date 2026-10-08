@@ -46,14 +46,6 @@ export interface Server {
   installedByYou: boolean;
 }
 
-/** A server this person added DMbot to (#435). */
-export interface Install {
-  serverId: string;
-  serverName: string;
-  installedAt: string | null;
-  via: "site" | "link";
-}
-
 export interface Person {
   id: string;
   name: string;
@@ -64,7 +56,8 @@ export interface Me {
   plan: MyPlan | null;
   campaigns: Campaign[];
   servers: Server[];
-  installs: Install[];
+  // The API also sends `installs` (servers this person added DMbot to); the servers list
+  // already says "You added DMbot here", so the page doesn't use it (#497).
 }
 
 /** Why a call failed, in a form the page can turn into plain words. */
@@ -79,6 +72,8 @@ export type ApiErrorKind =
   | "payments-off" // the payment company isn't set up yet
   | "already-linked" // someone else already said they added DMbot to this server
   | "not-installed" // DMbot isn't in that server yet
+  | "confirm-again" // the delete confirmation ran out (10 minutes) or belongs elsewhere
+  | "no-paid-plan" // the billing page needs a paid plan
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -123,6 +118,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   payments_off: "payments-off",
   already_linked: "already-linked",
   not_installed: "not-installed",
+  confirm_again: "confirm-again",
+  no_paid_plan: "no-paid-plan",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
@@ -184,6 +181,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
     },
+    // Hand-over paths are a guess until #437 ships the API: check them against it then.
     handoverCandidates: async (campaignId) =>
       (await call("GET", `/campaigns/${encodeURIComponent(campaignId)}/handover-candidates`)) as
         Person[],
