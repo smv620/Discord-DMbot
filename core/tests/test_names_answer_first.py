@@ -227,6 +227,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
                       "add_alias", "update_relation"):  # fmt: skip
             setattr(memory, write, self.slow())
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
+        memory.confirmed_name_for = AsyncMock(return_value=None)  # a new spelling: no clash
         memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
         memory.add_relation = self.slow(SimpleNamespace(value=(None, [])))
         knows = Relation("r" * 32, BELL, "knows", ULF, "", 1.0, CONFIRMED, "dm", (),
