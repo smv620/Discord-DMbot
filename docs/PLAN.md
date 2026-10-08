@@ -442,9 +442,9 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   - a 🛑 button on a message sent before this change shows the warning too;
   - **No thanks** on the first request stays one tap (nothing is recorded yet).
   Why: the owner wants a calmer message, and people who stop should know what it costs
-  the campaign. Stopping now takes three taps where saying yes takes one, which privacy
-  rules may frown on, so the warning stays short and one-time, and the menu button is on
-  every reminder.
+  the campaign. Stopping takes three taps (Menu, Stop, Yes) where saying yes takes one;
+  the owner's legal review found that acceptable (2026-10-08). The warning still stays
+  short and one-time, and the menu button is on every reminder.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
