@@ -1433,7 +1433,22 @@ again, and the rest of that period is not paid back unless they ask before delet
 refunds page says so, and so does the delete screen); after deletion DMbot keeps only
 the Discord account number, if that account used Try It (one trial per person), and the
 reference numbers of its payments with the account number (so no payment is counted
-twice). Cost basis for these prices: about $0.30 per table-hour (Deepgram Nova-3 clip
+twice). **Campaign ownership and hand-over (decided 2026-10-08, #437):** every campaign
+has one owner (`campaigns.owner_user_id`): the DM who created it, or whoever restored it
+from a backup. Campaigns from before this get their only DM as owner; one with several DMs
+has no owner until the first `/dmbot start` asks the DM who started it to take it on
+("Take it on / Not now"; never guessed, since ownership spends someone's hours; once the
+plan checks are live, no owner means no start). A hand-over is an offer, never immediate:
+the new owner (any subscriber who is a member of that Discord server) gets a private
+message with Accept / No thanks, also shown on their account page; ownership moves only
+on acceptance, and only if they still have a free campaign slot at that moment; the offer
+expires after 7 days and the old owner can withdraw it. On accepting they become a DM of
+the campaign; the old owner stays a co-DM. Only the owner can offer; removing the owner as
+a DM is refused ("Hand the campaign over first"); a campaign whose owner has vanished is
+saved by a restore. Campaigns are counted across servers through a `campaign_owners`
+table (campaign, server, owner, active or paused) readable by the owner's user id like
+`entitlements`, never through a function that sees every server: row-level security stays
+the one rule. Cost basis for these prices: about $0.30 per table-hour (Deepgram Nova-3 clip
 pricing on roughly 36–60 speech-minutes per hour, Claude Haiku for the AI features,
 hosting); to be measured with the twin and run 8 before the promotion to `main`.
 Discord servers cost nothing and are not counted.
