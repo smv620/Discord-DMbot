@@ -29,6 +29,8 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
   const [checkFailed, setCheckFailed] = useState(false);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
   const [posted, setPosted] = useState<string | null>(null);
+  // A question sent without a way to reach the sender is answered on GitHub.
+  const [noContact, setNoContact] = useState(false);
   const messageBox = useRef<HTMLTextAreaElement>(null);
   const contactBox = useRef<HTMLInputElement>(null);
   const thanks = useRef<HTMLParagraphElement>(null);
@@ -57,11 +59,18 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
       setRefusal(local);
       return;
     }
+    // No tick yet (or the check can't run): the API would only refuse it, so don't ask.
+    if (siteKey && !token) {
+      if (!checkFailed) setRefusal("not-human");
+      setStarted(true);
+      return;
+    }
     setBusy(true);
     setRefusal(null);
     const outcome = await send({ kind, message: clean, contact, turnstile: token });
     setBusy(false);
     if (outcome.sent) {
+      setNoContact(contact.trim() === "");
       setMessage("");
       setContact("");
       setPosted(outcome.url);
@@ -79,6 +88,7 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
         <p class="ok" role="status" tabIndex={-1} ref={thanks}>
           {text.sent}
         </p>
+        {kind === "question" && noContact && <p>{text.answerOnGitHub}</p>}
         <a href={posted}>{text.seePost}</a>
         <button type="button" class="link" onClick={() => setPosted(null)}>
           {text.sendAnother}

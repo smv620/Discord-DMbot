@@ -614,7 +614,8 @@ WEB_ACCOUNTS = (
     --                       never the server's campaigns
     --   dmbot.plan_writer   set only by Database.plan_writer(): the payment webhook and
     --                       Try It, the only code allowed to change `entitlements`
-    --   dmbot.cleanup       set only by Database.cleanup(): the expired-session sweep
+    --   dmbot.cleanup       set only by Database.cleanup(): the website's hourly sweep
+    --                       ('expired-sessions', and 'old-feedback' since 0026, #665)
 
     CREATE FUNCTION dmbot_now() RETURNS BIGINT
         LANGUAGE sql STABLE

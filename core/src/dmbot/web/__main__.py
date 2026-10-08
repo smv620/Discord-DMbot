@@ -28,7 +28,8 @@ log = logging.getLogger("dmbot.web")
 CLEANUP_SECONDS = 3600
 
 
-async def _sweep_expired_sessions(db: Database) -> None:
+async def _sweep(db: Database) -> None:
+    """Hourly: expired sign-in sessions, and "Say hello" messages over a year old."""
     while True:
         try:
             removed = await sessions.delete_expired(db, now=int(time.time()))
@@ -82,7 +83,7 @@ async def serve(settings: WebSettings) -> None:
         discussions=discussions,
         human_check=human_check,
     )
-    sweeper = asyncio.create_task(_sweep_expired_sessions(db))
+    sweeper = asyncio.create_task(_sweep(db))
     config = uvicorn.Config(
         app,
         host=settings.host,
