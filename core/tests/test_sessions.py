@@ -831,18 +831,18 @@ class SaveAndResume(SessionTests):
 
         await self.start()
         player = self.press_stop(member(PLAYER))
-        player.response.edit_message = AsyncMock()
         await LevelButton(self.campaign.id, "quiet").callback(player)
         self.assertIn("Only this campaign's DM", player.response.send_message.await_args.args[0])
         self.assertEqual(self.bot.tables[GUILD].screen_level, "normal")
         dm = self.press_stop(member(DM))
-        dm.response.edit_message = AsyncMock()
+        dm.edit_original_response = AsyncMock()
         await LevelButton(self.campaign.id, "quiet").callback(dm)
         self.assertEqual(self.bot.tables[GUILD].screen_level, "quiet")
         saved = await self.campaigns.get(GUILD, self.campaign.id)
         assert saved is not None
         self.assertEqual(saved.dm_screen_level, "quiet")
-        self.assertIn("**Quiet**", dm.response.edit_message.await_args.kwargs["content"])
+        content = dm.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("**How much DMbot says:** Quiet.", content)
         other = await self.campaigns.create(GUILD, "Strahd", DM)
         await self.bot.set_screen_level(GUILD, other.id, "normal")  # another campaign
         self.assertEqual(self.bot.tables[GUILD].screen_level, "quiet")  # untouched
