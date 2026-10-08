@@ -262,10 +262,11 @@ HELP_TEXT = (
     "with an **I consent** button. Anyone in this server can read what DMbot writes down. "
     "An AI company (Anthropic) also reads it, with who said it, to give the DM notes. "
     "It isn't used to train their AI.\n"
-    "Play on D&D Beyond? Press 📜 My character sheet in DMbot's private message so DMbot "
-    "spells your spell names better.\n"
+    "Play on D&D Beyond? Press **⚙️ Menu** in DMbot's private message, then 📜 My character "
+    "sheet, so DMbot spells your spell names better.\n"
     "No message from DMbot? Check your Message Requests, or type `/consent give`. "
-    "To stop, press **Stop recording me** or type `/consent revoke`."
+    "To stop, press **⚙️ Menu** in DMbot's private message, then **Stop recording me**, or "
+    "type `/consent revoke`."
 )
 
 
