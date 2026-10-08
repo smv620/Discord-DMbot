@@ -234,6 +234,13 @@ class Caps(unittest.TestCase):
             "Belleros has more than 50", too_many(run(listed("Belleros", 51)), NAMES) or ""
         )
 
+    def test_a_known_name_reached_by_another_of_its_names_is_named_by_its_own(self) -> None:
+        # "Frostmaiden" is Auril's: her new names count for Auril, and the message says
+        # Auril (never the name the list used, which could be one a player can't see).
+        others = [f"Frost{i}" for i in range(51)]
+        text = "\n".join(lines_for("Frostmaiden", "deity", others, []))
+        self.assertIn("Auril has more than 50 other names", too_many(run(text), NAMES) or "")
+
     def test_five_thousand_in_one_list_is_fine_five_thousand_and_one_is_not(self) -> None:
         names = [f"Kesh{chr(97 + i // 26)}{chr(97 + i % 26)}" for i in range(101)]
         lines = [listed(n, 50) for n in names[:100]]

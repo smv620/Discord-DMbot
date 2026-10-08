@@ -101,7 +101,7 @@ def header(*, secrets: bool) -> str:
         "### - other names: nicknames, titles or short forms people say.",
         "###   Put a , or ; between them: Bell, the old knight.",
         "###   Up to 20 other names on a line. For more, write the name again on a new",
-        "###   line with the rest. Up to 50 new other names for one name in a list.",
+        "###   line with the rest. One name can get up to 50 new other names per list.",
     ]
     if secrets:
         lines += [
@@ -117,7 +117,8 @@ def header(*, secrets: bool) -> str:
         "### - A name DMbot already knows gets any new other names from its line.",
         "###   Spelled almost like a known name? DMbot asks if they're the same.",
         "###   A different kind than DMbot has? DMbot keeps its kind and asks you.",
-        "###   DMbot never joins or changes names on its own. Up to 2,000 lines.",
+        "###   DMbot never joins or changes names on its own. Up to 2,000 lines and",
+        "###   5,000 new other names in all.",
         "### - If a line doesn't fit, DMbot tells you, and lets you add the rest or have its",
         "###   AI tidy the list.",
         "###",
