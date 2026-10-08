@@ -110,11 +110,12 @@ def _run(
         receive, send = _CONTEXT.Pipe(duplex=False)
     except Exception as exc:  # out of file descriptors: plain words
         return "failed", type(exc).__name__, ""
-    child = _CONTEXT.Process(
-        target=_child, args=(send, parse, filename, raw), name="dmbot-document", daemon=True
-    )
+    child = None
     try:
         try:
+            child = _CONTEXT.Process(
+                target=_child, args=(send, parse, filename, raw), name="dmbot-document", daemon=True
+            )
             child.start()  # sends the file to the new process
         except Exception as exc:  # no process (container limits): plain words
             return "failed", type(exc).__name__, ""
@@ -139,7 +140,7 @@ def _run(
     finally:
         receive.close()
         send.close()
-        if child.pid is not None:
+        if child is not None and child.pid is not None:
             # A child that dies while still importing can, rarely, stay unreaped until
             # the next one starts (a multiprocessing edge case): harmless.
             child.join(1)
@@ -172,7 +173,12 @@ async def read_document(
         kind, cause, text = await asyncio.shield(work)
     except asyncio.CancelledError:
         stop.set()
-        raise
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():  # the caller was cancelled
+            raise
+        # Only the read was: DMbot is closing and it never got its turn.
+        log.info("Stopped reading a %s file: DMbot is closing", suffix)
+        raise DocumentError(UNREADABLE) from None
     except Exception:  # anything else at all (DMbot closing, a bug): plain words
         log.exception("Couldn't read a %s file", suffix)
         raise DocumentError(UNREADABLE) from None

@@ -222,6 +222,60 @@ class ReadDocument(unittest.IsolatedAsyncioTestCase):
             with self.assertLogs(document_reader.log, "ERROR"), self.assertRaises(DocumentError):
                 await read_document("late.pdf", b"%PDF")  # after closing: plain words too
 
+    async def queued_behind(self, waiters: ThreadPoolExecutor) -> threading.Event:
+        """Keep the only waiter busy, so the next read waits its turn."""
+        release = threading.Event()
+        busy = threading.Event()
+
+        def block() -> None:
+            busy.set()
+            release.wait(10)
+
+        waiters.submit(block)
+        await asyncio.to_thread(busy.wait, 10)
+        return release
+
+    async def test_a_read_cancelled_while_queued_starts_no_reader(self) -> None:
+        results: list[tuple[str, str, str]] = []
+        real_run = document_reader._run
+
+        def run(*args: Any) -> Any:
+            results.append(real_run(*args))
+            return results[-1]
+
+        waiters = ThreadPoolExecutor(1)
+        context = SimpleNamespace(Pipe=multiprocessing.Pipe, Process=NoProcess)
+        with (
+            patch.object(document_reader, "_WAITERS", waiters),
+            patch.object(document_reader, "_run", run),
+            patch.object(document_reader, "_CONTEXT", context),  # a start would fail
+        ):
+            release = await self.queued_behind(waiters)
+            reading = asyncio.create_task(read_document("a.pdf", b"%PDF", parse=hangs))
+            await asyncio.sleep(0.1)
+            reading.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await reading
+            release.set()
+            await asyncio.to_thread(waiters.shutdown, True)
+        self.assertEqual(results, [("stopped", "", "")])  # no process, not "failed"
+
+    async def test_a_read_still_queued_when_dmbot_closes_is_plain_words(self) -> None:
+        waiters = ThreadPoolExecutor(1)
+        with (
+            patch.object(document_reader, "_WAITERS", waiters),
+            patch.object(document_reader, "_CLOSING", threading.Event()),
+        ):
+            release = await self.queued_behind(waiters)
+            reading = asyncio.create_task(read_document("a.pdf", b"%PDF", parse=hangs))
+            await asyncio.sleep(0.1)
+            with self.assertLogs(document_reader.log, "INFO"):
+                document_reader.shutdown()  # cancels the queued read
+                with self.assertRaises(DocumentError) as caught:  # not CancelledError
+                    await reading
+            release.set()
+        self.assertEqual(str(caught.exception), UNREADABLE)
+
     async def test_a_reader_that_cannot_open_a_pipe_is_plain_words(self) -> None:
         with (
             patch.object(document_reader, "_CONTEXT", NoPipe),
