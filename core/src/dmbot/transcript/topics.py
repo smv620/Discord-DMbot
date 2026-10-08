@@ -38,12 +38,15 @@ _DICE = re.compile(r"\b(?:\d*d(?:4|6|8|10|12|20|100)|nat(?:ural)? ?(?:1|20))\b",
 
 
 def obviously_game(text: str, named: int = 0) -> bool:
-    """Plainly about the game, so the AI needn't be asked: it names something from the
-    campaign (`named`: how many of its names the line mentions), has dice ("d20",
-    "2d6", "nat 20"), or two or more table words ("roll initiative")."""
+    """Plainly about the game, or too short to hide, so the AI needn't be asked: it names
+    something from the campaign (`named`: how many of its names the line mentions), has
+    dice ("d20", "2d6", "nat 20"), two or more table words ("roll initiative"), or is two
+    words or fewer ("yeah", "ok sure": kept anyway, when unsure, keep it)."""
     if named or _DICE.search(text):
         return True
     words = [w.group().casefold() for w in WORD.finditer(text)]
+    if len(words) <= 2:
+        return True
     return sum(w in _TABLE_WORDS or w in GAME_TERMS for w in words) >= 2
 
 

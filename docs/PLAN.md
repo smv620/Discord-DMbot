@@ -1374,7 +1374,11 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
   labelled, never an off-topic one (the helper there is today). In the live channel each
   off-topic line still in the edit window becomes its own marker; one marker per run, with
   the total, is in the cleaned download. The last window is labelled when the session
-  ends. Each line also keeps how long it was said (`duration_ms`). The log line
+  ends. Each line also keeps how long it was said (`duration_ms`). Every AI call has an
+  8 s limit (a slow answer keeps the window as game talk, and never holds up the end of a
+  session); after 3 failures in a row the filter rests 5 minutes. Consent is checked again
+  right before a window is sent. Lines of two words or fewer are never sent. Not yet held
+  back: the name fixer's word list (lower-case words from every line). The log line
   "Off-topic filter: N calls, … tokens" gives the cost. Replay case:
   docs/test-scripts/off-topic.md.
 

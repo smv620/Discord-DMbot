@@ -57,6 +57,9 @@ needed. About two minutes.
   but is the game: it must stay.
 - **When unsure, keep it:** if a chat line is kept, that's acceptable; a game line hidden is
   a failure.
-- **Cost:** the session's log line "Off-topic filter: N calls, … tokens" should show one or
-  two calls for the chat part. Lines 2, 3 and 12 ("draw my sword", "perception check",
-  "nock an arrow") may never be sent: plainly game talk isn't asked about.
+- **Cost:** the session's log line "Off-topic filter: N calls, … tokens" should show two or
+  three calls. Only lines plainly about the game (a campaign name, dice, two table words)
+  or of two words or fewer are never sent; most of these lines are asked about.
+- **The live channel:** a chat line is shortened there only if the answer comes back within
+  about 30 seconds of the line being posted. A chat line left in full in the channel is
+  not a failure; the cleaned download is what counts.
