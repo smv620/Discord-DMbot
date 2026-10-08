@@ -133,17 +133,32 @@ class Button(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(said(it), ui.PICK)
         self.assertIsInstance(sent_view(it), ui.CharacterChoice)
 
-    async def test_a_linked_one_can_be_unlinked(self) -> None:
-        it = interaction([TESTA], sheet())
+    async def forget(self, current: CharacterSheet) -> str:
+        """Press Forget on the panel for `current`; the note the panel is redrawn with."""
+        it = interaction([TESTA], current)
         await ui.MySheetButton(GUILD).callback(it)
         panel = sent_view(it)
         self.assertEqual(panel.children[-1].label, ui.FORGET_LABEL)
         press = interaction([TESTA])
         press.client = it.client
-        with patch.object(ui, "_bot", return_value=MagicMock(sheets=it.client.sheets)) as bot:
+        with (
+            patch.object(ui, "_bot", return_value=MagicMock(sheets=it.client.sheets)) as bot,
+            patch.object(ui, "show_panel", AsyncMock()) as redrawn,
+        ):
             await panel._forget(press)
         it.client.sheets.unlink.assert_awaited_once_with(GUILD, CAMPAIGN, ENTITY, player=PLAYER)
         bot.return_value.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)
+        assert redrawn.await_args is not None
+        return str(redrawn.await_args.kwargs["note"])
+
+    async def test_a_linked_one_can_be_unlinked(self) -> None:
+        note = await self.forget(sheet())
+        self.assertEqual(note, ui.FORGOTTEN.format(name="Testa"))
+
+    async def test_a_typed_one_says_its_own_forget_message(self) -> None:
+        # #841: what the player typed in goes, so the words say so, not "link".
+        note = await self.forget(sheet(url=None))
+        self.assertEqual(note, ui.FORGOTTEN_TYPED.format(name="Testa"))
 
 
 class Guards(unittest.IsolatedAsyncioTestCase):

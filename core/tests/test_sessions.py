@@ -473,7 +473,10 @@ class SaveAndResume(SessionTests):
             await done.wait()
             return [self.typed_sheet("0" * 32, "Read Before The Change")]
 
-        with patch("dmbot.bot.refresh_sheets", slow_refresh):
+        with (
+            patch("dmbot.bot.refresh_sheets", slow_refresh),
+            self.assertLogs("dmbot.bot", "INFO") as logs,
+        ):
             run = asyncio.ensure_future(self.bot._sheet_hints(table, refresh=True))
             await asyncio.wait_for(reading.wait(), 2)
             state["now"] = [self.typed_sheet("0" * 32, "After The Change")]
@@ -484,6 +487,8 @@ class SaveAndResume(SessionTests):
             for _ in range(20):
                 await asyncio.sleep(0)
         self.assertEqual(table.sheet_hints, ("After The Change",))
+        # #841: the overlap path still logs the start line, once.
+        self.assertEqual(sum("Character sheets:" in line for line in logs.output), 1)
         # Loaded at the start, by the change, and again after the refresh: three reads.
         self.assertGreaterEqual(self.bot.sheets.sheets.await_count, 3)
 

@@ -1710,12 +1710,11 @@ sheet (read at once; "set to Public" if refused), Type in my character (the type
 fallback), Forget my sheet. A sheet records who linked or typed it (migration 0029) and is
 shown and used only while that person plays the character, so a character given to
 someone else never shows the last player's sheet. The DM's "Add a player's character"
-form takes an optional
-link; a player character's card shows "📜 Sheet: linked to D&D Beyond, read …" (the
-address only to the campaign's DMs) with 📜 Forget sheet; the names panel's 📜 Refresh
-sheets reads them all again (at most once a minute per campaign). A merge moves the
-sheet to the kept character unless it has its own (then the merged one's is
-forgotten). The panel and forms act only while that person still plays the character
+form takes an optional link; a player character's card shows "📜 Sheet: linked to D&D
+Beyond, read …" (the address only to the campaign's DMs) with 📜 Forget sheet; the names
+panel's 📜 Refresh sheets reads them all again (at most once a minute per campaign). A
+merge moves the sheet to the kept character unless it has its own (then the merged one's
+is forgotten). The panel and forms act only while that person still plays the character
 and is still in the server. The log lists only names read from D&D Beyond, never typed
 ones.
 
