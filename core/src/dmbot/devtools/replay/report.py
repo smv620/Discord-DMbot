@@ -3,13 +3,15 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import statistics
 
 from dmbot.devtools.replay.bakeoff import BakeoffScore, bakeoff_record
 from dmbot.devtools.replay.run import Replay
-from dmbot.devtools.replay.score import Score
+from dmbot.devtools.replay.score import Score, score
 from dmbot.devtools.replay.script import Part, Script
+from dmbot.devtools.replay.voices import ROLES
 from dmbot.transcription.base import MIN_UTTERANCE_S
 
 
@@ -123,9 +125,50 @@ def record_bakeoff(
     return [*head, *bakeoff_record(score), *_footer(result, recording_s)]
 
 
+def clock(ms: int) -> str:
+    """0:25 for 25 000 ms: the time --stop and --agree take."""
+    seconds = ms // 1000
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def speaker_lines(script: Script, result: Replay) -> list[str]:
+    """With two voices or a consent change (#534): each speaker scored on their own
+    lines, and whether anything was written down outside their consent. Numbers and the
+    script's own words only."""
+    lines = []
+    for speaker in sorted({h.speaker for h in result.heard} | {c.speaker for c in result.changes}):
+        role = ROLES.get(speaker, str(speaker))
+        own = [h for h in result.heard if h.speaker == speaker]
+        sent = [h for h in own if h.written_down]
+        mine = dataclasses.replace(
+            script, words=tuple(w for w in script.words if w.speaker == role)
+        )
+        line = f"{role} ({speaker}): {len(sent)} pieces, {sum(h.seconds for h in sent):.1f} s"
+        if mine.words:
+            part = score(mine, [h.text or "" for h in own])
+            line += (
+                f"; part 1: {part.part1.wrong} wrong, {part.part1.missing} missing, "
+                f"{part.part1.added} added (of {mine.count(Part.ONE)}); part 2: "
+                f"{len(part.terms_right)} of {part.terms_total} right"
+            )
+        lines.append(line)
+        for change in (c for c in result.changes if c.speaker == speaker):
+            if change.agrees:
+                outside = [h for h in own if h.text and h.start_ms < change.at_ms]
+                what = f"agreed at {clock(change.at_ms)}: written down before it"
+            else:
+                outside = [h for h in own if h.text and h.end_ms > change.at_ms]
+                what = f"stopped at {clock(change.at_ms)}: written down after it"
+            lines.append(f"  {role} {what}: {len(outside)} pieces (should be 0)")
+    return lines
+
+
 def heard_lines(result: Replay) -> list[str]:
+    voices = len({h.speaker for h in result.heard}) > 1
     return [
-        f"{h.start_ms / 1000:6.1f}-{h.end_ms / 1000:5.1f} s  {h.text or '(no text)'}"
+        f"{h.start_ms / 1000:6.1f}-{h.end_ms / 1000:5.1f} s  "
+        + (f"{ROLES.get(h.speaker, h.speaker)}: " if voices else "")
+        + (h.text or "(no text)")
         for h in result.heard
     ]
 
