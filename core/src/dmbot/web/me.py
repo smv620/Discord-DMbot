@@ -166,10 +166,13 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             "renewsOn": _iso_date(plan.period_end),
             "graceEndsOn": _iso_date(plan.grace_ends_at),
         },
-        # Free access (#771): "free" (the owner's list), "grant" (given by the admin, maybe
-        # until a date), "paid" or "none". Covered people see no price or payment button.
-        "access": {"kind": access.kind}
-        | ({"until": access.until} if access.until is not None else {}),
+        # Free access (#771): "free" (the owner's list or the admin's grant: people see
+        # "Free access", never why), "paid" or "none". endsOn: a grant's end date.
+        # stillPaying: covered while a paid plan still works, so the page offers to stop
+        # paying. Covered people see no price or payment button.
+        "access": {"kind": "free" if access.kind in ("free", "grant") else access.kind}
+        | ({"endsOn": _iso_date(access.until)} if access.until is not None else {})
+        | ({"stillPaying": True, "paidPlan": access.still_paying} if access.still_paying else {}),
         "campaigns": campaigns,
         "servers": servers,
         "installs": installs,

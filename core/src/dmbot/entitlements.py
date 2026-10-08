@@ -79,7 +79,10 @@ def parse_free_users(raw: str) -> frozenset[int]:
     message: the setting is never shown)."""
     ids = [part.strip() for part in raw.split(",") if part.strip()]
     if not all(p.isascii() and p.isdigit() and 0 < int(p) < 2**63 for p in ids):
-        raise ValueError("DMBOT_FREE_USERS must be Discord ids (digits), separated by commas.")
+        raise ValueError(
+            "DMBOT_FREE_USERS must be Discord account numbers (digits only, up to 19), "
+            "separated by commas. Fix it in .env and start again."
+        )
     return frozenset(int(p) for p in ids)
 
 
@@ -116,6 +119,9 @@ class Access:
     campaign_cap: int | None
     backups: bool
     until: int | None = None  # a grant's end, if it has one
+    # Covered by free access while a paid plan still works too: its name, so the account
+    # page can offer to stop paying (#771).
+    still_paying: str | None = None
 
     @property
     def works(self) -> bool:
@@ -133,7 +139,11 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
     """The rule, pure: free list, then an active grant, then the paid plan; a grant and a
     paid plan together give the larger of each cap."""
     if user_id in _free_users:
-        return Access("free", FREE_ACCESS, None, None, True)
+        still = None
+        if plan is not None and plan.usable(now):
+            known = plans.load().get(plan.plan)
+            still = known.name if known else plan.plan
+        return Access("free", FREE_ACCESS, None, None, True, still_paying=still)
     paid = None
     if plan is not None and plan.usable(now):
         known = plans.load().get(plan.plan)
@@ -150,9 +160,13 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
         else:  # "guild": Guild's caps, from plans.json
             guild = plans.load().by_id["guild"]
             hours, campaigns = guild.hours_per_month, guild.campaigns
+        still = None
         if paid is not None:
             hours, campaigns = _larger(hours, paid.hours_cap), _larger(campaigns, paid.campaign_cap)
-        return Access("grant", FREE_ACCESS, hours, campaigns, True, until=grant.ends_at)
+            still = paid.plan_name
+        return Access(
+            "grant", FREE_ACCESS, hours, campaigns, True, until=grant.ends_at, still_paying=still
+        )
     return paid or NO_ACCESS
 
 
@@ -173,7 +187,7 @@ async def plan_and_access(
     """The paid plan and what the person may do, from one read (the account page)."""
     async with db.user(user_id) as conn:
         plan = await _read_plan(conn, user_id)
-        grant = None if user_id in _free_users else await _read_grant(conn, user_id)
+        grant = await _read_grant(conn, user_id)
     return plan, access_for(user_id, plan, grant, now)
 
 
@@ -196,7 +210,9 @@ async def read(conn: Conn, user_id: int) -> Entitlement | None:
 async def _as_person(conn: Conn, user_id: int) -> AsyncIterator[None]:
     """The person set for these reads only, then put back as it was."""
     if conn.info.transaction_status != pq.TransactionStatus.INTRANS:
-        raise RuntimeError("entitlements.read needs an open transaction (use Database.guild)")
+        raise RuntimeError(
+            "entitlements.read and effective need an open transaction (use Database.guild)"
+        )
     cur = await conn.execute("SELECT current_setting('dmbot.user_id', true) AS before")
     before = await cur.fetchone()
     await conn.execute("SELECT set_config('dmbot.user_id', %s, true)", (str(int(user_id)),))

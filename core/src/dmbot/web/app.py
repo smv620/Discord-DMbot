@@ -409,6 +409,10 @@ def create_app(
     @app.post("/plan/try-it", status_code=204)
     async def try_it(signed: Signed) -> Response:
         session, _token = signed
+        _plan, access = await entitlements.plan_and_access(db, session.user_id, clock())
+        if access.kind in ("free", "grant"):
+            # Free access covers them: their one trial isn't used up for nothing (#771).
+            raise HTTPException(status_code=409, detail="has_free_access")
         result = await entitlements_writer.start_try_it(db, session.user_id, now=clock())
         if not result.started:
             # "try_it_used": only once per Discord user; "has_plan": a plan already works.

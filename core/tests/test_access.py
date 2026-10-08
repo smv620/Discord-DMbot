@@ -96,11 +96,48 @@ class Grants(unittest.TestCase):
         self.assertEqual((big.hours_cap, big.campaign_cap), (500, 50))
         self.assertEqual(big.kind, "grant")  # still free access shown, with the bigger caps
 
+    def test_still_paying_under_free_access(self) -> None:
+        both = access_for(PAYER, paid(), Grant(PAYER, "guild", None, None), NOW)
+        self.assertEqual(both.still_paying, "Table")
+        self.assertIsNone(
+            access_for(PAYER, None, Grant(PAYER, "guild", None, None), NOW).still_paying
+        )
+        entitlements.configure_free_users({PAYER})
+        self.assertEqual(access_for(PAYER, paid(), None, NOW).still_paying, "Table")
+
     def test_a_paid_plan_alone(self) -> None:
         access = access_for(PAYER, paid(), None, NOW)
         self.assertEqual((access.kind, access.hours_cap, access.campaign_cap), ("paid", 18, 1))
         lapsed = paid()
         self.assertFalse(access_for(PAYER, lapsed, None, NOW + 10**9).works)
+
+
+class Settings(unittest.TestCase):
+    def test_both_loaders_read_the_free_list(self) -> None:
+        from dmbot.config import ConfigError, load_settings
+        from dmbot.web.settings import load_web_settings
+
+        bot_env = {"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s", "DATABASE_URL": "postgres://x"}
+        self.assertEqual(
+            load_settings({**bot_env, "DMBOT_FREE_USERS": "11,22"}).free_users, {11, 22}
+        )
+        with self.assertRaises(ConfigError) as caught:
+            load_settings({**bot_env, "DMBOT_FREE_USERS": "eleven"})
+        self.assertNotIn("eleven", str(caught.exception))
+        self.assertIn("Fix it in .env", str(caught.exception))
+        web_env = {
+            "DATABASE_URL": "postgresql://x",
+            "DISCORD_CLIENT_ID": "1",
+            "DISCORD_CLIENT_SECRET": "s",
+            "WEB_SECRET_KEY": "k" * 40,
+            "WEB_SITE_URL": "https://dmbot.example/",
+            "WEB_API_URL": "https://api.dmbot.example",
+        }
+        loaded = load_web_settings({**web_env, "DMBOT_FREE_USERS": "33"})
+        self.assertEqual(loaded.free_users, {33})
+        self.assertNotIn("33", repr(loaded))  # never shown with the settings
+        with self.assertRaises(ConfigError):
+            load_web_settings({**web_env, "DMBOT_FREE_USERS": "x"})
 
 
 class OnlyTheAdminApiWritesGrants(unittest.TestCase):

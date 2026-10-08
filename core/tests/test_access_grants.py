@@ -176,14 +176,22 @@ class AccountPage(AccessTest):
     async def test_access_for_each_kind(self) -> None:
         self.now = int(time.time())
         self.assertEqual((await self.me())["access"], {"kind": "none"})
-        until = self.now + 99
+        until = self.now + 3 * 86400
         await grants.give(self.db, ADMIN, ALICE.id, "guild", ends_at=until, note="", now=self.now)
-        self.assertEqual((await self.me())["access"], {"kind": "grant", "until": until})
-        await grants.revoke(self.db, ADMIN, ALICE.id, now=self.now)
+        ends_on = time.strftime("%Y-%m-%d", time.gmtime(until))  # a date, as renewsOn
+        # One kind for people: "Free access", never why (the list or a grant).
+        self.assertEqual((await self.me())["access"], {"kind": "free", "endsOn": ends_on})
         await self.give_plan(ALICE.id)
+        self.assertEqual(
+            (await self.me())["access"],
+            {"kind": "free", "endsOn": ends_on, "stillPaying": True, "paidPlan": "Table"},
+        )
+        await grants.revoke(self.db, ADMIN, ALICE.id, now=self.now)
         self.assertEqual((await self.me())["access"], {"kind": "paid"})
         entitlements.configure_free_users({ALICE.id})
-        self.assertEqual((await self.me())["access"], {"kind": "free"})
+        self.assertEqual(
+            (await self.me())["access"], {"kind": "free", "stillPaying": True, "paidPlan": "Table"}
+        )
 
 
 class WebRole(AccessTest):

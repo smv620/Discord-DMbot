@@ -556,6 +556,10 @@ class Payments(DatabaseTest):
         self.assertEqual(
             (response.status_code, response.json()), (409, {"error": "has_free_access"})
         )
+        # Nor uses up their one Try It (#771).
+        trial = await self.post("/plan/try-it")
+        self.assertEqual((trial.status_code, trial.json()), (409, {"error": "has_free_access"}))
+        self.assertIsNone(await entitlements.get(self.db, ALICE.id))
         await grants.revoke(self.db, "admin@example.invalid", ALICE.id, now=self.now)
         self.assertEqual((await self.post("/billing/checkout", {"plan": "table"})).status_code, 200)
 
