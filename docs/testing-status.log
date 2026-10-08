@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (deployed b4ab397; web-api not started; ready for run 8)
+Last updated: 2026-10-08 by dev1 (live 70ac757; Test A passed on a computer; Test B next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,13 +9,42 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- CloudDev, PR #599 (#253): Add many saves a long list in a few statements instead of
-  one per name. Deploy: rebuild core (no migration). Check: 📥 Add many with a long
-  list saves as before and one Undo takes it all back.
-- CloudDev, PR #611 (#437 part 1a): records each campaign's owner. Migration 0020 adds
-  one nullable column, campaigns.owner_user_id (quick; avoid a long web-api transaction
-  on campaigns while it runs). Deploy: rebuild core. Check: `docker compose logs core`
-  shows 0020 applied, no new errors. Nothing a DM sees changes yet.
+- dev3, #651 (#645): ears AND core (the DM's "voice cut out" line). No migration or
+  setting. #641 (#631) is already live in 70ac757; this finishes it: a stream the voice
+  library ends while the speaker still sends now counts as lost and is listened to again.
+  Check in the next Test A (DMBOT_DEBUG_AUDIO=1): `dave: ...` lines around the first
+  packet; on a failure "listening again (n of 5 this minute)" or "is sending audio but
+  none of it can be heard", and the DM screen's audio % drops.
+- CloudDev, PR #657 (#598): names reads never join names to entries (a freshly filled
+  campaign's cold names load 1.4 s -> 0.08 s; Check new names' "sounds like" 2.6 s -> 8 ms).
+  No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
+  names answer as before; the `Built names for campaign` log line shows a small database
+  time.
+- CloudDev, PR #689 (#598 item 3): Add many takes at most 20 other and 20 secret names
+  on a line; a list with one name on many lines reads in under 2 s (was about 50 s, on
+  the event loop). No migration. Deploy: rebuild core. Check: Add many with a line of 21
+  other names says "line N: more than 20 other names. Put the rest on a new line...";
+  Download all, then upload that file again: nothing is refused.
+- dev2, PR #670 (#52 part 1): the consent request and the per-session reminder say an
+  AI (Anthropic) reads the text to give the DM notes; terms version 2 -> 3. No migration.
+  Deploy with or before #678: rebuild core. Tell the table first: after the deploy,
+  everyone who said yes before is asked again and isn't recorded until they say yes.
+  Check: a player who agreed before gets the new request with a "What's new" note;
+  after they say yes, recording works as before.
+- dev2, PR #678 (#52 part 2): the off-topic filter. Clearly off-topic chat becomes
+  "[1m 22s of off-topic chat skipped]" in the cleaned transcript and the live channel;
+  As heard keeps every word. Migration 0024 adds topic and duration columns to
+  transcript_lines (defaults, quick). Needs #670 (terms version 3) live first or in the
+  same deploy. Deploy: rebuild core. Check: `docker compose logs core` shows 0024 applied;
+  at the end of a session "Off-topic filter: N calls, ... tokens"; replay
+  docs/test-scripts/off-topic.md.
+- CloudDev, PR #659 (#636): /dmbot start says "I haven't started: I can't hear voice
+  channels right now…" instead of developer steps when ears is down, and logs it. No
+  migration. Deploy: rebuild core. Check: with ears stopped, /dmbot start gives the new
+  words and `docker compose logs core` shows "Can't start in server …".
+- CloudDev, PR #668 (#652, #437): hand-over offers keep both people's names. Migration
+  0022 adds two columns to the (still empty) offers table: quick. Deploy: rebuild core.
+  Check: `docker compose logs core` shows 0022 applied, no new errors.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -29,12 +58,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: b4ab397 (2026-10-08 05:24 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 70ac757 (2026-10-08 06:44 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since b4ab397, ask it to redeploy first. Use a steady connection (run 8a
+      moved since 70ac757, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -164,16 +193,31 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
   Deployed 2026-10-08 05:24 (b4ab397)
   - #599 (#253): Add many with a long list saves quickly; Undo takes it all back
   - #601 (#553): ⚙️ Settings on the DM screen shows the level the DM picked
+  Deployed 2026-10-08 05:37 (fba4f77)
+  - #604 (#589): Undo of an answer to a name question says so if its line couldn't be
+    put back
+  Deployed 2026-10-08 06:18 (1a7bf0d)
+  - #617 (#554): ⏹ Stop listening asks first ([Yes, stop] [Cancel], private, 60 s);
+    Cancel keeps listening; a player is refused; /dmbot stop still stops at once
+  - #622 (#88): /dmbot stop and Restore answer at once; a restore always ends with
+    its outcome, never a stuck "Restoring…"
+  Deployed 2026-10-08 06:44 (70ac757, ears and core)
+  - #641 (#631): Test A again, phone then computer. ears logs "dave: …" lines; after a
+    receive error "listening again (n of 5 this minute)"; "is sending audio but none
+    of it can be heard"; the DM screen shows a warning and its audio % drops
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
+LATEST RESULT: Test A on a computer (2026-10-08 07:27), DM alone: PASS
 ------------------------------------------------------------------------------
-  Audio 1784/1784 (100%) · Part 1 0 errors of 33 · Part 2 10/12 (missed Auril,
-  Caer-Dineval; local Whisper got 7 in run 6) · whisper part · consent asked again
-  under the new wording, nothing captured before the yes · commands hung inside the
-  transcript channel (#188: fixed and deployed, not yet re-tested).
+  On 70ac757. Everything the DM said near the computer was written down; DAVE ready
+  2 s after joining, before the DM spoke. A TV in the room set off the DM screen's ⚠️
+  (pieces at 155/169 and 4/23 packets, audio 82%): a false alarm, owner wants it less
+  sensitive (#671). Test A series done: 05:43 FAIL (#631), 07:01 PASS, 07:27 PASS.
+  Next: Test B (docs/next-test-step.md), the Stop listening button asks first.
 
 Open issues from testing
+  #671 the audio warning fires on background noise (owner)
+  #631 DAVE decrypt error drops all of a speaker's audio (Test A)
   #43 DAVE loss after a pause   #45 uncounted losses   #112 menus run off phone screens
   #120 capture check drops audio counts   #121 start of speech may be cut
   #264 a link pasted into Add many becomes a name

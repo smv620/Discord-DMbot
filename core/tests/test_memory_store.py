@@ -34,6 +34,7 @@ from dmbot.memory.models import (
     Written,
 )
 from dmbot.memory.ontology import PredicateTerm, TypeTerm
+from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
 from dmbot.schema import ISOLATED_TABLES
 from tests.pg import DatabaseTest
@@ -1393,6 +1394,44 @@ class Lists(MemoryTest):
             seconds = time.perf_counter() - started
         return written, statements, seconds
 
+    async def test_a_list_stores_each_name_as_typed_with_its_sounds(self) -> None:
+        """Names are worked out before the write (#598): the same as one at a time."""
+        from dmbot.memory.models import NewName
+        from dmbot.memory.sounds import sound_codes
+
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [
+                NewName("  Belleros ", "npc", CONFIRMED, ("Bell", "Bell"), ("the  Stranger",)),
+                NewName("Kesh", "npc", CONFIRMED, ("Bell",)),  # Belleros's already
+            ],
+            source="dm",
+        )
+        bel, kesh = written.value
+        assert bel is not None and kesh is not None
+        got = await self.memory.aliases(GUILD_A, self.c, include_secret=True)
+        self.assertEqual(
+            sorted((x.text, x.entity_id == bel, x.secret) for x in got),
+            [("Bell", True, False), ("Belleros", True, False), ("Kesh", False, False),
+             ("the Stranger", True, True)],
+        )  # fmt: skip
+        for alias in got:
+            self.assertEqual(list(alias.sound_codes), list(sound_codes(alias.text)))
+
+    async def test_a_bad_name_for_a_forgotten_entry_doesnt_stop_the_list(self) -> None:
+        from dmbot.memory.models import MoreNames, NewName
+
+        gone = await self.add("Gone")
+        await self.memory.set_entity_status(GUILD_A, self.c, gone, REJECTED, source="dm")
+        written = await self.memory.add_names(
+            GUILD_A, self.c, [NewName("Kesh", "npc", CONFIRMED)], source="dm",
+            more=[MoreNames(gone, ("x" * 500,))],  # never looked at: its entry has gone
+        )  # fmt: skip
+        kesh, left_out = written.value
+        self.assertIsNotNone(kesh)
+        self.assertIsNone(left_out)
+
     async def test_a_long_list_saves_in_a_few_statements(self) -> None:
         """#253: the write lock is held for a fixed few statements, however long the list:
         one for the entries, one for their names, and one log statement each."""
@@ -1777,6 +1816,57 @@ class Renaming(MemoryTest):
 
 
 class LookupInPostgres(MemoryTest):
+    async def test_whole_campaign_reads_never_join_names_to_entries(self) -> None:
+        """#598: joined to a campaign with no table statistics yet (one just given a long
+        list), Postgres compared every name with every entry: 1.4 s for 2,000 names. These
+        reads filter by the live entries in Python instead."""
+        a, b = await self.add("Belleros", status=CONFIRMED), await self.add("Cerric")
+        await self.relate(a, "ally_of", b)
+        sent: list[str] = []
+        real = AsyncConnection.execute
+
+        async def recording(conn: Any, query: Any, *args: Any, **kw: Any) -> Any:
+            sent.append(query if isinstance(query, str) else query.as_string(conn))
+            return await real(conn, query, *args, **kw)
+
+        with patch.object(AsyncConnection, "execute", recording):
+            data = await self.memory.lookup_data(GUILD_A, self.c)
+            everyone = await self.memory.aliases(GUILD_A, self.c, include_secret=True)
+            facts = await self.memory.relations(GUILD_A, self.c)
+            one = await self.memory.aliases(GUILD_A, self.c, entity_id=a)
+            its = await self.memory.relations(GUILD_A, self.c, entity_id=b)
+            alike = await self.memory.sound_alikes(GUILD_A, self.c, sound_codes("Belleros"))
+        self.assertTrue(sent)
+        # No query reads names or facts together with entries (heard counts aside).
+        joined = [
+            q
+            for q in sent
+            if "memory_entities" in q
+            and ("memory_aliases" in q or "memory_relations" in q)
+            and "memory_heard" not in q
+        ]
+        self.assertEqual(joined, [])
+        self.assertEqual((len(data.aliases), len(everyone), len(facts)), (2, 2, 1))
+        self.assertEqual(([x.text for x in one], len(its)), (["Belleros"], 1))
+        self.assertEqual(alike, [(a, "Belleros", "Belleros")])
+
+    async def test_names_and_facts_of_a_rejected_entry_are_left_out(self) -> None:
+        a, b = await self.add("Belleros", status=CONFIRMED), await self.add("Cerric")
+        gone = await self.add("Bellamy", status=CONFIRMED)
+        await self.relate(a, "ally_of", b)
+        await self.relate(a, "enemy_of", gone)
+        await self.memory.set_entity_status(GUILD_A, self.c, gone, REJECTED, source="dm")
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertNotIn(gone, {x.entity_id for x in data.aliases})
+        names = await self.memory.aliases(GUILD_A, self.c)
+        self.assertNotIn(gone, {x.entity_id for x in names})
+        self.assertEqual(await self.memory.aliases(GUILD_A, self.c, entity_id=gone), [])
+        facts = await self.memory.relations(GUILD_A, self.c, entity_id=a)  # the other end's gone
+        self.assertEqual([{f.subject_id, f.object_id} for f in facts], [{a, b}])
+        self.assertEqual(
+            await self.memory.sound_alikes(GUILD_A, self.c, sound_codes("Bellamy")), []
+        )
+
     async def test_lookup_data_holds_what_matching_needs(self) -> None:
         a, b = await self.add("Belleros", status=CONFIRMED), await self.add("Cerric")
         gone = await self.add("Bellamy")

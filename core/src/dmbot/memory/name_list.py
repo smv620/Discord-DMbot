@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Iterable
-from dataclasses import dataclass, field, replace
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
 
 from dmbot.memory.models import NAME_MAX, name_key
 
@@ -20,6 +20,17 @@ MAX_FILE_BYTES = 256 * 1024
 MAX_LINES = 2000
 MAX_NAMES = 10_000  # a campaign holds up to about this many
 MAX_WORDS = 8  # more than this is a description, not a name
+# Other names, and secret names, on one line (#598): a worst-case file stays bounded.
+# More go on another line for the same name.
+MAX_PER_LINE = 20
+TOO_MANY_OTHERS = (
+    f"more than {MAX_PER_LINE} other names. Put the rest on a new line that starts with "
+    "the name again"
+)
+TOO_MANY_SECRETS = (
+    f"more than {MAX_PER_LINE} secret names. Put the rest on a new line: the name, then "
+    "| | |, then the rest"
+)
 PC = "player_character"
 
 # Kinds in plain words → the memory rules' kinds. Anything else "needs a look".
@@ -83,13 +94,15 @@ def header(*, secrets: bool) -> str:
         '###   you once what every "wizard" is. If there are many words, the rest wait in',
         "###   Check new names.",
         "### - other names: nicknames, titles or short forms people say.",
-        "###   Put a , or ; between them: Bell, the old knight",
+        "###   Put a , or ; between them: Bell, the old knight.",
+        "###   Up to 20 other names on a line. For more, write the name again on a new",
+        "###   line with the rest.",
     ]
     if secrets:
         lines += [
             "### - secret names: disguises or secret identities (who it really is), with a ,",
-            "###   or ; between them. Only the campaign's DM can add them. Players never",
-            "###   see them.",
+            "###   or ; between them. Up to 20 on a line; for more, do as for other names.",
+            "###   Only the campaign's DM can add them. Players never see them.",
         ]
     lines += [
         "### - Names only: no descriptions or notes. Each name is up to 100 characters.",
@@ -214,13 +227,33 @@ def kind_of(word: str) -> str | None:
     return None
 
 
+@dataclass(slots=True)
+class _Taking:
+    """One name while a list is read: its lines join here, so a name written on many
+    lines costs no more than its names (#598)."""
+
+    number: int
+    name: str
+    kind: str | None
+    kind_word: str
+    others: list[str]
+    secrets: list[str]
+    said: set[str]  # name keys already given for it: the name, other and secret names
+
+    def add(self, names: list[str], into: list[str]) -> None:
+        for n in names:
+            if (key := name_key(n)) not in self.said:
+                self.said.add(key)
+                into.append(n)
+
+
 def parse(text: str, *, secrets: bool) -> Parsed:
     """The names in a list. `secrets`: whether this person may add secret names (the
     campaign's DMs); otherwise a line with secret names is refused, never half-saved."""
     out = Parsed()
-    seen: dict[str, int] = {}  # name key → its line's place in out.lines
+    taking: dict[str, _Taking] = {}  # name key → the name, in the order first given
     for number, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip().lstrip("﻿")
+        line = raw.strip().lstrip("\ufeff")
         if not line or line.startswith("#"):
             continue
         cells = [c.strip() for c in line.split("|")]
@@ -235,8 +268,18 @@ def parse(text: str, *, secrets: bool) -> Parsed:
         if not name:
             out.refused.append((number, "no name before the first |"))
             continue
+        key = name_key(name)
         others, hidden = _names(cells[2]), _names(cells[3])
-        why = next((p for t in (name, *others, *hidden) if (p := _problem(t))), None)
+        # Counted as kept: without the name, or a secret name said already. Before the
+        # checks on each name, so a long line is refused without reading all of it.
+        others = _without(others, {key})
+        hidden = _without(hidden, {key, *map(name_key, others)})
+        if len(others) > MAX_PER_LINE:
+            why: str | None = TOO_MANY_OTHERS
+        elif len(hidden) > MAX_PER_LINE:
+            why = TOO_MANY_SECRETS
+        else:
+            why = next((p for t in (name, *others, *hidden) if (p := _problem(t))), None)
         if why:
             out.refused.append((number, why))
             continue
@@ -246,28 +289,22 @@ def parse(text: str, *, secrets: bool) -> Parsed:
                  "and add it again")
             )  # fmt: skip
             continue
-        key = name_key(name)
-        if key in seen:  # the same name again: keep the first line, with every other name
+        word = " ".join(cells[1].split())
+        first = taking.get(key)
+        if first is None:
+            taking[key] = first = _Taking(number, name, kind_of(word), word, [], [], {key})
+        else:  # the same name again: keep the first line, with every other name
             out.repeated += 1
-            first = out.lines[seen[key]]
-            said = {name_key(first.name), *map(name_key, first.others + first.secrets)}
-            more = _without(others, said)
-            said |= set(map(name_key, more))
-            word = " ".join(cells[1].split())
             later = kind_of(word)
             # A kind given later counts when the first line gave none (or "other").
             if first.kind in (None, "concept") and later not in (None, "concept"):
-                first = replace(first, kind=later, kind_word=word)
-            out.lines[seen[key]] = replace(
-                first,
-                others=first.others + tuple(more),
-                secrets=first.secrets + tuple(_without(hidden, said)),
-            )
-            continue
-        seen[key] = len(out.lines)
-        word = " ".join(cells[1].split())
-        others, hidden = _without(others, {key}), _without(hidden, {key, *map(name_key, others)})
-        out.lines.append(ListLine(number, name, kind_of(word), word, tuple(others), tuple(hidden)))
+                first.kind, first.kind_word = later, word
+        first.add(others, first.others)
+        first.add(hidden, first.secrets)
+    out.lines = [
+        ListLine(t.number, t.name, t.kind, t.kind_word, tuple(t.others), tuple(t.secrets))
+        for t in taking.values()
+    ]
     return out
 
 
@@ -279,9 +316,27 @@ class OutName:
     secrets: tuple[str, ...]
 
 
+def lines_for(name: str, kind: str, others: Sequence[str], secrets: Sequence[str]) -> list[str]:
+    """One name as list lines. More other or secret names than a line holds go on more
+    lines with the same name, as a person would write them (#598)."""
+    out = []
+    for at in range(0, max(len(others), len(secrets), 1), MAX_PER_LINE):
+        cells = [
+            name,
+            kind,
+            "; ".join(others[at : at + MAX_PER_LINE]),
+            "; ".join(secrets[at : at + MAX_PER_LINE]),
+        ]
+        while len(cells) > 1 and not cells[-1]:
+            cells.pop()
+        out.append(" | ".join(cells))
+    return out
+
+
 def render(names: Iterable[OutName], *, campaign: str, secrets: bool) -> str:
     """A download: the instructions, then one line per name, A to Z. Uploading it again
-    adds nothing that's already known."""
+    adds nothing that's already known. A name with more other or secret names than a
+    line holds goes on more lines, as a person would write it."""
     lines = [
         header(secrets=secrets).rstrip("\n"),
         "###",
@@ -290,10 +345,6 @@ def render(names: Iterable[OutName], *, campaign: str, secrets: bool) -> str:
     if secrets:
         lines.append("### This file includes secret names. Don't share it with players.")
     for n in sorted(names, key=lambda n: name_key(n.name)):
-        cells = [n.name, KIND_OUT.get(n.kind, "other"), "; ".join(n.others)]
-        if secrets and n.secrets:
-            cells.append("; ".join(n.secrets))
-        while cells and not cells[-1]:
-            cells.pop()
-        lines.append(" | ".join(cells))
+        hidden = n.secrets if secrets else ()
+        lines += lines_for(n.name, KIND_OUT.get(n.kind, "other"), n.others, hidden)
     return "\n".join(lines) + "\n"

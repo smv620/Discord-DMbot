@@ -442,7 +442,9 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   request starts with a "What's new" line naming the change, and the DM screen says
   "🔁 Asked again: …" so the DM knows why. After a restart, people in voice whose yes no
   longer counts are asked (nobody else is). Version 2 is the "anyone in this server can
-  read it" wording; every yes saved before versions were recorded is treated as version 1
+  read it" wording; version 3 (#52) adds that DMbot's helper has an AI company (Anthropic)
+  read the text to give the DM notes, not used to train their AI (said once for every
+  helper); every yes saved before versions were recorded is treated as version 1
   (we can't tell which wording each person saw). A test pins the request's wording to
   the version number.
 - The public "DMbot is listening" notice in the voice channel's chat still posts once per
@@ -1189,8 +1191,9 @@ reads the campaign memory and never changes it.
   line; re-listen and AI run in parallel within that, so with cloud speech-to-text a line
   shows about 1–2 s after the speaker stops. With local Whisper the extra time relaxes to
   about 2.5 s and re-listen is off. Whatever isn't back in time leaves the safe version
-  showing, and the line is updated when the answer arrives (or the off-topic marker
-  replaces it).
+  showing, and the line is updated when the answer arrives. The off-topic filter is
+  outside this budget: the line is posted at once and edited to the marker if its
+  window comes back off-topic (decided 2026-10-08, see "Off-topic filter").
 - **Re-listen audio:** kept in memory for about 60 s only, in the process that captured
   it (never queued, never in Redis, never logged, never stored). **Consent is re-checked
   right before every re-listen request**, and the audio is dropped at once on revoke.
@@ -1340,9 +1343,44 @@ consent check just made still holds:
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled
 `{non-game_content}` and not analyzed further, which saves cost. In the cleaned
 transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]` (see
-"Transcript format"); table talk and anything unsure stay. A live line waits for the
-filter within the Cleaner's time budget; if the filter is late, the line is posted and
-then edited to the marker.
+"Transcript format"); table talk and anything unsure stay.
+*Decided 2026-10-08 (Supervisor, #52, dev2's questions):*
+- **Consent says the words go to an AI company, once for the whole product.** The consent
+  request and the per-session reminder gain: "DMbot's helper reads that text to give your
+  DM notes. For that, the text goes to an AI company (Anthropic). It isn't used to train
+  their AI." That bumps `TERMS_VERSION` (to 3), so everyone who said yes is asked again,
+  and nobody is recorded until they agree to the new wording; the filter never needs a
+  per-person check of its own. Reason: every helper that reads the transcript (rules
+  advisor, names, this filter, story memory) sends text to the AI, so the consent covers
+  that once rather than per feature. If a provider or key ever trains on the data, the
+  wording changes and the version goes up again. The wording PR lands and deploys before
+  the filter PR.
+- **The live line is posted at once and edited later**, replacing the earlier "wait
+  within the 0.7 s budget": no line waits for an AI round trip. When a window comes back
+  off-topic, the line (or the run of lines) is edited to the marker inside the edit
+  window. Helpers get a line only after its window is labelled; a late or failed filter
+  counts as game talk (when unsure, keep). The raw transcript keeps everything.
+- **Key and cost:** the server's `ANTHROPIC_API_KEY` until #50; no key means the filter
+  is off and nothing is hidden. The smallest model, one call per window (a few
+  utterances or about 20 s), calls and tokens counted into the session's stats so cost
+  per session hour can be reported.
+- **Storage:** a `topic` column on `transcript_lines` (`game` / `table_talk` /
+  `off_topic`, default `game`) so cleaned downloads can show the markers later.
+- **Built (2026-10-08, #52 part 2; needs terms version 3, part 1):** lines plainly about
+  the game (a campaign name, dice, two table words) are never sent. The others wait in a
+  window of 6 lines or 20 s, and one call to the smallest model labels it. Only the
+  numbered words go, never who said them, and the prompt says the lines are not
+  instructions. An unclear answer is game talk. The names scan gets a line only once
+  labelled, never an off-topic one (the helper there is today). In the live channel each
+  off-topic line still in the edit window becomes its own marker; one marker per run, with
+  the total, is in the cleaned download. The last window is labelled when the session
+  ends. Each line also keeps how long it was said (`duration_ms`). Every AI call has an
+  8 s limit (a slow answer keeps the window as game talk, and never holds up the end of a
+  session); after 3 failures in a row the filter rests 5 minutes. Consent is checked again
+  right before a window is sent. Lines of two words or fewer are never sent. Not yet held
+  back: the name fixer's word list (lower-case words from every line). The log line
+  "Off-topic filter: N calls, … tokens" gives the cost. Replay case:
+  docs/test-scripts/off-topic.md.
 
 **Story memory: continuity, reputations, the shared story (decided 2026-10-06, #227).**
 Full design and rationale: docs/STORY_MEMORY.md. In short:
@@ -1457,7 +1495,22 @@ on acceptance, and only if they still have a free campaign slot at that moment; 
 expires after 7 days and the old owner can withdraw it. On accepting they become a DM of
 the campaign; the old owner stays a co-DM. Only the owner can offer; removing the owner as
 a DM is refused ("Hand the campaign over first"); a campaign whose owner has vanished is
-saved by a restore. Campaigns are counted across servers through a `campaign_owners`
+saved by a restore. *Details (decided 2026-10-08, #644, #614):* offers live in one table
+(`campaign_handover_offers`: server, campaign, from, to, both display names as they were
+when offered, created, status open / accepted / declined / withdrawn / expired) and every
+write goes through `CampaignStore` (`offer_handover`, `accept_handover`,
+`decline_handover`, `withdraw_handover`, `take_ownership`), used by the bot and the
+website alike so the rules can't drift; the website may offer only to the campaign's
+other DMs who have a working plan (never a cross-person read of who in a server pays);
+the bot checks membership when it delivers the private message and withdraws an offer it
+can't deliver, telling the owner; until the campaign count exists (part 3) "a free slot"
+means "a plan that works". A Try It plan may receive a hand-over if its one slot is free;
+the campaign then follows that plan (so, while on Try It, no backups or downloads). The
+website's database role gets only the narrow extra rights the account page needs, under
+restrictive policies (read and answer offers where the signed-in person is sender or
+recipient; move ownership and add the DM only for a campaign with an open offer to that
+person), never a wider grant; if that can't be written cleanly the API asks the bot over
+the internal link instead. Campaigns are counted across servers through a `campaign_owners`
 table (campaign, server, owner, active or paused) readable by the owner's user id like
 `entitlements`, never through a function that sees every server: row-level security stays
 the one rule. Cost basis for these prices: about $0.30 per table-hour (Deepgram Nova-3 clip
