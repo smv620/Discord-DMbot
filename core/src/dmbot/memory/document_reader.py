@@ -19,6 +19,8 @@ import asyncio
 import logging
 import multiprocessing
 import os
+import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.connection import Connection
@@ -31,8 +33,8 @@ READ_TIME_S = 30.0
 # are read in a thread (text decoding; web pages have their own time limit).
 IN_A_PROCESS = (".pdf", ".docx")
 # A child's memory: a damaged file can't take the whole server's (Linux only). A real
-# 10 MB, 500-page PDF peaks near 62 MB (#251 review).
-MEMORY_BYTES = 512 * 1024 * 1024
+# 10 MB, 500-page PDF peaks near 49 MB, and two can be read at once (#251 review).
+MEMORY_BYTES = 256 * 1024 * 1024
 # The longest answer read back: text_of stops at 200,000 characters (up to 4 bytes each).
 MAX_REPLY_BYTES = 1024 * 1024
 TOO_SLOW = (
@@ -43,6 +45,9 @@ log = logging.getLogger(__name__)
 # "spawn": a fresh interpreter. Forking the bot would copy its event loop and threads.
 _CONTEXT = multiprocessing.get_context("spawn")
 _SEP = b"\n"  # between the parts of an answer: kind, error kind, text
+# How often a waiting read checks whether nobody wants it any more: its caller was
+# cancelled, or DMbot is closing (shutdown() below).
+_POLL_S = 0.25
 
 Parse = Callable[[str, bytes], str]
 # Threads that wait on the children: their own, so files that hang can't take the
@@ -50,6 +55,15 @@ Parse = Callable[[str, bytes], str]
 # _PARSING), plus room for reads whose caller has gone and that are running out their
 # time limit.
 _WAITERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="dmbot-document")
+_CLOSING = threading.Event()
+
+
+def shutdown() -> None:
+    """DMbot is closing: end every read now, and start no more. Without this a read in
+    progress would hold up the interpreter's exit for up to READ_TIME_S, past
+    `docker stop`'s grace period."""
+    _CLOSING.set()
+    _WAITERS.shutdown(wait=False, cancel_futures=True)
 
 
 def _limit_memory() -> None:
@@ -63,12 +77,15 @@ def _limit_memory() -> None:
 
 def _child(conn: Connection, parse: Parse, filename: str, raw: bytes) -> None:
     """In the child process. Answers b"ok\\n\\n<text>", b"error\\n<cause>\\n<plain words>"
-    or b"failed\\n<error kind>\\n", as plain bytes (never a pickle)."""
+    or b"failed\\n<error kind>\\n", as plain bytes (never a pickle). A traceback from
+    the child itself (not from `parse`) goes to stderr as plain lines."""
+    os.nice(10)  # behind the bot's voice and replies on a small server
     os.environ.clear()  # the bot's keys and tokens: nothing here needs them
     logging.getLogger().addHandler(logging.NullHandler())  # the bot logs, not the child
     _limit_memory()
     try:
-        parts = (b"ok", b"", parse(filename, raw).encode())
+        # errors="replace": a broken PDF can give a lone surrogate; keep the rest
+        parts = (b"ok", b"", parse(filename, raw).encode(errors="replace"))
     except DocumentError as exc:
         cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else ""
         parts = (b"error", cause.encode(), str(exc).encode())
@@ -80,12 +97,19 @@ def _child(conn: Connection, parse: Parse, filename: str, raw: bytes) -> None:
         conn.close()
 
 
-def _run(parse: Parse, filename: str, raw: bytes, limit_s: float) -> tuple[str, str, str]:
+def _run(
+    parse: Parse, filename: str, raw: bytes, limit_s: float, stop: threading.Event
+) -> tuple[str, str, str]:
     """Start the child, wait for its answer up to `limit_s`, and always end and collect
     it. Blocking: runs in a thread, all of it, so a cancelled caller can't leave a child
-    running without its limit. Returns (kind, cause, text): kind is "ok", "error",
-    "failed", "slow" or "died"."""
-    receive, send = _CONTEXT.Pipe(duplex=False)
+    running without its limit. `stop` (or DMbot closing) ends it early. Returns (kind,
+    cause, text): kind is "ok", "error", "failed", "slow", "died" or "stopped"."""
+    if stop.is_set() or _CLOSING.is_set():  # nobody wants it any more: no child at all
+        return "stopped", "", ""
+    try:
+        receive, send = _CONTEXT.Pipe(duplex=False)
+    except Exception as exc:  # out of file descriptors: plain words
+        return "failed", type(exc).__name__, ""
     child = _CONTEXT.Process(
         target=_child, args=(send, parse, filename, raw), name="dmbot-document", daemon=True
     )
@@ -95,10 +119,18 @@ def _run(parse: Parse, filename: str, raw: bytes, limit_s: float) -> tuple[str, 
         except Exception as exc:  # no process (container limits): plain words
             return "failed", type(exc).__name__, ""
         send.close()  # the child's end: EOF here if it dies without answering
-        if not receive.poll(limit_s):
-            child.kill()  # known stuck: no grace
-            return "slow", "", ""
+        # The limit counts from here, once the new interpreter has started and has the file.
+        deadline = time.monotonic() + limit_s
+        while not receive.poll(max(0.0, min(_POLL_S, deadline - time.monotonic()))):
+            if stop.is_set() or _CLOSING.is_set():
+                child.kill()
+                return "stopped", "", ""
+            if time.monotonic() >= deadline:
+                child.kill()  # known stuck: no grace
+                return "slow", "", ""
         try:
+            # No deadline needed: the answer has started arriving, or the child has gone
+            # (only a child stopped mid-answer could hold this).
             answer = receive.recv_bytes(MAX_REPLY_BYTES)
         except (EOFError, OSError):  # it died (memory, killed) or answered too much
             return "died", "", ""
@@ -108,6 +140,8 @@ def _run(parse: Parse, filename: str, raw: bytes, limit_s: float) -> tuple[str, 
         receive.close()
         send.close()
         if child.pid is not None:
+            # A child that dies while still importing can, rarely, stay unreaped until
+            # the next one starts (a multiprocessing edge case): harmless.
             child.join(1)
             if child.is_alive():
                 child.kill()
@@ -127,12 +161,21 @@ async def read_document(
     suffix = PurePath(filename).suffix.casefold()
     if suffix not in IN_A_PROCESS:
         return await asyncio.to_thread(parse, filename, raw)
-    loop = asyncio.get_running_loop()
-    work = loop.run_in_executor(_WAITERS, _run, parse, filename, raw, limit_s)
-    # If the caller is cancelled, the work still finishes in its thread (within the
-    # limit) and ends its child; nobody waits for it, so its result is dropped quietly.
-    work.add_done_callback(lambda done: done.cancelled() or done.exception())
-    kind, cause, text = await asyncio.shield(work)
+    stop = threading.Event()
+    try:
+        work = asyncio.get_running_loop().run_in_executor(
+            _WAITERS, _run, parse, filename, raw, limit_s, stop
+        )
+        # If the caller is cancelled, the work ends its child in its thread (within
+        # _POLL_S); nobody waits for it, so its result is dropped quietly.
+        work.add_done_callback(lambda done: done.cancelled() or done.exception())
+        kind, cause, text = await asyncio.shield(work)
+    except asyncio.CancelledError:
+        stop.set()
+        raise
+    except Exception:  # anything else at all (DMbot closing, a bug): plain words
+        log.exception("Couldn't read a %s file", suffix)
+        raise DocumentError(UNREADABLE) from None
     if kind == "ok":
         return text
     if kind == "error":
@@ -144,6 +187,8 @@ async def read_document(
         raise DocumentError(TOO_SLOW)
     if kind == "died":
         log.warning("Reading a %s file ended its process", suffix)
+    elif kind == "stopped":
+        log.info("Stopped reading a %s file: DMbot is closing", suffix)
     else:
         log.warning("Couldn't read a %s file: %s", suffix, cause or kind)
     raise DocumentError(UNREADABLE)
