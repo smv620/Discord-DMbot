@@ -2069,19 +2069,20 @@ class DMBot(commands.AutoShardedBot):
             await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
             return
 
-    async def set_screen_level(self, guild_id: int, campaign_id: str, level: str) -> Campaign:
+    async def set_screen_level(
+        self, guild_id: int, campaign_id: str, level: str, *, was: str
+    ) -> Campaign:
         """How much DMbot says in this campaign's DM screen (#504, #515): saved, and a
-        running session (or one still finishing) follows it from its next line. Under
+        running session (or one still finishing) follows the change from now on. Under
         the session lock, so a session starting meanwhile can't miss it (#553). A change
-        is noted in the DM screen, so a co-DM knows why DMbot went quiet."""
-        before = await self.campaigns.get(guild_id, campaign_id)
+        from `was` (the level the DM saw) is noted in the DM screen, so a co-DM knows why
+        DMbot went quiet."""
         campaign = await self.campaigns.set_dm_screen_level(guild_id, campaign_id, level)
         async with self.session_lock(guild_id):
             for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
                 if table is not None and table.campaign_id == campaign_id:
                     table.screen_level = campaign.dm_screen_level
-        changed = before is None or before.dm_screen_level != campaign.dm_screen_level
-        if changed and campaign.dm_screen_channel_id is not None:
+        if was != campaign.dm_screen_level and campaign.dm_screen_channel_id is not None:
             # Always posted: a note about the level, not something the level governs.
             await self.post(
                 campaign.dm_screen_channel_id,

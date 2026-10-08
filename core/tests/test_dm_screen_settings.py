@@ -135,7 +135,12 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
             it.client.set_screen_level.return_value = campaign("quiet")
             await LevelButton(CAMPAIGN, "quiet").callback(it)
             it.response.defer.assert_awaited_once()  # saving may take a moment
-            it.client.set_screen_level.assert_awaited_once_with(GUILD, CAMPAIGN, "quiet")
+            it.client.set_screen_level.assert_awaited_once_with(
+                GUILD,
+                CAMPAIGN,
+                "quiet",
+                was="normal",  # the level the DM saw: noted if new
+            )
             content = it.edit_original_response.await_args.kwargs["content"]
             self.assertIn("**How much DMbot says:** Quiet.", content)
 
@@ -216,6 +221,10 @@ class SettingsWordsTest(unittest.IsolatedAsyncioTestCase):
         result = MagicMock(campaign=campaign(vis=to), warning=warning)
         result.channel.send = AsyncMock()
         it.client.after_screen_change = AsyncMock()
+        it.order = MagicMock()  # the calls, in order
+        it.order.attach_mock(it.response.defer, "defer")
+        it.order.attach_mock(it.followup.send, "send")
+        it.order.attach_mock(it.edit_original_response, "edit")
         with patch.object(buttons_module, "setup_dm_screen", AsyncMock(return_value=result)):
             await SettingsVisibilityButton(CAMPAIGN, to).callback(it)
         return it
@@ -229,6 +238,8 @@ class SettingsWordsTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_visibility_change_with_news_still_says_it(self) -> None:
         it = await self.visibility_tap("peek", "private", None)
         self.assertIn("Players who were peeking", it.followup.send.await_args.args[0])
+        # One tap, in this order: defer, the news, then the card redrawn.
+        self.assertEqual([c[0] for c in it.order.mock_calls], ["defer", "send", "edit"])
         it = await self.visibility_tap("private", "open", "⚠️ A player could already see it.")
         self.assertIn("⚠️ A player could already see it.", it.followup.send.await_args.args[0])
         it.edit_original_response.assert_awaited_once()

@@ -4,7 +4,7 @@ the "Listening" message. Only the campaign's DMs, or a server manager, may open 
 change anything.
 
 - **How much DMbot says** (Quiet / Normal, #504): saved for the campaign, and a running
-  session follows it from the next line (`DMBot.set_screen_level`).
+  session follows the change from now on (`DMBot.set_screen_level`).
 - **Who can see the DM screen:** saved the same way as the help card's buttons
   (`save_visibility`).
 - **Saved transcripts:** where to find them (there's nothing to change).
@@ -179,7 +179,9 @@ class LevelButton(
         try:
             if save is None:
                 raise RuntimeError("no running DMbot to save it")
-            saved: Campaign = await save(campaign.guild_id, campaign.id, self.level)
+            saved: Campaign = await save(
+                campaign.guild_id, campaign.id, self.level, was=campaign.dm_screen_level
+            )
         except CampaignError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
             return

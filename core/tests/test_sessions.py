@@ -438,30 +438,40 @@ class SaveAndResume(SessionTests):
         # #553: a co-DM sees why DMbot went quiet; the same level again says nothing.
         await self.start()
         self.posts.clear()
-        await self.bot.set_screen_level(GUILD, self.campaign.id, "quiet")
-        await self.bot.set_screen_level(GUILD, self.campaign.id, "quiet")
+        await self.bot.set_screen_level(GUILD, self.campaign.id, "quiet", was="normal")
+        await self.bot.set_screen_level(GUILD, self.campaign.id, "quiet", was="quiet")
         self.assertEqual(self.screen_posts(), ["🔇 How much DMbot says: Quiet."])
-        await self.bot.set_screen_level(GUILD, self.campaign.id, "normal")
+        await self.bot.set_screen_level(GUILD, self.campaign.id, "normal", was="quiet")
         self.assertEqual(self.screen_posts()[-1], "🔔 How much DMbot says: Normal.")
 
     async def test_a_level_change_while_starting_reaches_the_session(self) -> None:
         # #553: Quiet tapped while /dmbot start is still saving the session.
-        saving, release = asyncio.Event(), asyncio.Event()
-        save = self.sessions.save
+        saving, release, saved = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        save, set_level = self.sessions.save, self.campaigns.set_dm_screen_level
 
         async def slow_save(*args: Any, **kwargs: Any) -> Any:
             saving.set()
             await release.wait()
             return await save(*args, **kwargs)
 
-        with patch.object(self.sessions, "save", slow_save):
+        async def set_and_tell(*args: Any, **kwargs: Any) -> Any:
+            result = await set_level(*args, **kwargs)
+            saved.set()
+            return result
+
+        with (
+            patch.object(self.sessions, "save", slow_save),
+            patch.object(self.campaigns, "set_dm_screen_level", set_and_tell),
+        ):
             starting = asyncio.create_task(self.start())
-            await saving.wait()
+            await saving.wait()  # the start has read the campaign (still Normal)…
             changing = asyncio.create_task(
-                self.bot.set_screen_level(GUILD, self.campaign.id, "quiet")
+                self.bot.set_screen_level(GUILD, self.campaign.id, "quiet", was="normal")
             )
+            await saved.wait()  # …and Quiet is saved; the tap now waits for the lock
             for _ in range(5):
                 await asyncio.sleep(0)
+            self.assertFalse(changing.done())  # waiting behind the start, not finished
             release.set()
             ok, message = await starting
             await changing
@@ -473,7 +483,7 @@ class SaveAndResume(SessionTests):
         table = self.bot.tables[GUILD]
         await self.bot.stop_table(GUILD, "test")
         self.assertIn(table, self.bot._ending.get(GUILD, []))
-        await self.bot.set_screen_level(GUILD, self.campaign.id, "quiet")
+        await self.bot.set_screen_level(GUILD, self.campaign.id, "quiet", was="normal")
         self.assertEqual(table.screen_level, "quiet")
         await asyncio.gather(*self.bot._finishing)
 
@@ -493,9 +503,10 @@ class SaveAndResume(SessionTests):
         from dmbot.ears.protocol import Status
 
         await self.start()
+        each: list[list[tuple[str, list[str]]]] = []
         for _ in range(2):
             bot = await self.restart()
-            views = self.capture_views(bot)
+            each.append(self.capture_views(bot))
             await bot.resume_sessions()
             self.posts.clear()
             await bot._on_status(bot.tables[GUILD], Status("joined", guild_id=GUILD))
@@ -503,7 +514,8 @@ class SaveAndResume(SessionTests):
         # #553 (a decision): no new ⚙️ Settings message on a quiet resume either; the
         # help card is refreshed at the next /dmbot start. Don't "fix" this into a
         # card re-post on every restart.
-        self.assertFalse(any(i.startswith("dmbot:settings:") for _, ids in views for i in ids))
+        posted = [ids for views in each for _, ids in views]  # from both restarts
+        self.assertFalse(any(i.startswith("dmbot:settings:") for ids in posted for i in ids))
 
     async def test_a_crash_loop_gives_up(self) -> None:
         import dmbot.bot as bot_module
@@ -916,7 +928,7 @@ class SaveAndResume(SessionTests):
         content = dm.edit_original_response.await_args.kwargs["content"]
         self.assertIn("**How much DMbot says:** Quiet.", content)
         other = await self.campaigns.create(GUILD, "Strahd", DM)
-        await self.bot.set_screen_level(GUILD, other.id, "normal")  # another campaign
+        await self.bot.set_screen_level(GUILD, other.id, "normal", was="normal")  # another one
         self.assertEqual(self.bot.tables[GUILD].screen_level, "quiet")  # untouched
 
     async def test_people_joining_mid_session_are_shown(self) -> None:

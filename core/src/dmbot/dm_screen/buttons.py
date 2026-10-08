@@ -320,8 +320,7 @@ async def save_visibility(
         return None
     campaign = result.campaign
     reply = messages.visibility_changed(visibility, was=was)
-    peekers_lost = was == "peek" and visibility == "private"  # the reply says so
-    worth_saying = not quiet or peekers_lost
+    worth_saying = not quiet or messages.peekers_lose_access(visibility, was=was)
     if result.warning:
         reply += "\n" + result.warning
         worth_saying = True

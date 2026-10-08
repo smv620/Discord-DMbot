@@ -285,7 +285,10 @@ async def _update_help_card(
         len(old_cards) == 1
         and old_cards[0].content == text
         and _button_ids(old_cards[0]) == [getattr(i, "custom_id", None) for i in view.children]
-    ):  # the same words and buttons: keep it (a new button alone also re-posts it, #553)
+    ):  # the same words and buttons: keep it (a new button alone also re-posts it, #553).
+        # In order: the card's buttons have no explicit rows, so a message lists them as
+        # the view does. A button given a row= later must keep this order, or every
+        # /dmbot start re-posts the card.
         pinned = True if old_cards[0].pinned else await _pin(old_cards[0])
     else:
         for old in old_cards:
