@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import discord
 
 from dmbot import install
-from dmbot.capture_log import DM_WARN_LOST_S, DM_WARN_PERCENT
 from dmbot.dm_screen.rules import Exposure
 from dmbot.transcript.export import duration
 
@@ -285,7 +284,7 @@ class Spoke:
     name: str  # display name, or a <@id> mention if DMbot can't look it up
     seconds: float  # how long they spoke
     percent: int | None  # how much of their speech got through; None if not measured
-    lost_s: float  # seconds of their speech lost (#671: a little is no alarm)
+    flagged: bool  # warned about during the session (#699): only then "cut out at times"
 
 
 def _who(name: str) -> str:
@@ -321,15 +320,15 @@ def session_summary(
             "they speak."
         )
     for p in people:
-        if p.percent is not None and p.percent < DM_WARN_PERCENT and p.lost_s >= DM_WARN_LOST_S:
+        if p.flagged:
             lines.append(
-                f"⚠️ {_who(p.name)}'s voice kept cutting out ({p.percent}% got through), so "
-                "some of their words may be missing."
+                f"⚠️ {_who(p.name)}'s voice cut out at times, so some of their words may be "
+                "missing from the transcript."
             )
     lines.extend(f"⚠️ {problem}" for problem in problems)
     if problems:
         lines.append("If this happens often, tell whoever runs DMbot for your server.")
-    elif people:
+    elif people and not any(p.flagged for p in people):  # no all-clear under a ⚠️
         lines.append("✅ Everything DMbot heard was written down.")
     if downloads_sent:
         lines.append(

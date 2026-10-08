@@ -20,6 +20,26 @@ MAX_HINT_CHARS = 600
 MIN_UTTERANCE_S = 0.25
 
 
+class Transcript(str):
+    """Text from an engine, with how sure it was (0 to 1, the words' average) when it
+    says (Deepgram does; #699). It is a str, so everything that takes text takes it; the
+    confidence is lost as soon as the text is changed, which is fine: it's read on
+    delivery (`confidence_of`)."""
+
+    __slots__ = ("confidence",)  # no dict per line: sessions keep many (table.heard)
+    confidence: float | None
+
+    def __new__(cls, text: str, confidence: float | None = None) -> Transcript:
+        made = super().__new__(cls, text)
+        made.confidence = confidence
+        return made
+
+
+def confidence_of(text: str | None) -> float | None:
+    """How sure the engine was of this text, or None if it didn't say."""
+    return text.confidence if isinstance(text, Transcript) else None
+
+
 class TranscriberUnavailable(RuntimeError):
     """The configured engine cannot start (missing package, bad settings)."""
 
