@@ -54,6 +54,11 @@ class Session:
     display_name: str
     guilds: tuple[DiscordGuild, ...]
     expires_at: int
+    created_at: int
+
+    def managed(self, guild_id: int) -> DiscordGuild | None:
+        """This server, if the person could add bots to it when they signed in."""
+        return next((g for g in self.guilds if g.id == guild_id and g.manage), None)
 
 
 async def sign_in(
@@ -91,7 +96,8 @@ async def find(db: Database, token: str, *, now: int) -> Session | None:
     id_hash = hash_token(token)
     async with db.session(id_hash) as conn:
         cur = await conn.execute(
-            "SELECT user_id, display_name, guilds, expires_at FROM web_sessions WHERE id_hash = %s",
+            "SELECT user_id, display_name, guilds, expires_at, created_at FROM web_sessions"
+            " WHERE id_hash = %s",
             (id_hash,),
         )
         row = await cur.fetchone()
@@ -106,6 +112,7 @@ async def find(db: Database, token: str, *, now: int) -> Session | None:
         display_name=row["display_name"],
         guilds=guilds,
         expires_at=row["expires_at"],
+        created_at=row["created_at"],
     )
 
 

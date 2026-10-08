@@ -35,6 +35,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
     plan = await entitlements.get(db, session.user_id)
     campaigns: list[dict[str, Any]] = []
     servers: list[dict[str, Any]] = []
+    names = {g.id: g.name for g in session.guilds}  # for the installs list below
 
     async with db.unscoped() as conn:
         # One batch (a pipeline), not hundreds of round trips. Each server's statements
@@ -55,9 +56,12 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                 here = None
                 if guild.manage:
                     here = await conn.execute(
-                        "SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = %s)"
-                        " OR EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %s) AS here",
-                        (guild.id, guild.id),
+                        "SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s)"
+                        "   AS installed,"
+                        " (SELECT installed_by_user_id FROM installs WHERE guild_id = %(g)s)"
+                        "   AS installer,"
+                        " EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %(g)s) AS played",
+                        {"g": guild.id},
                     )
                 pending.append((guild, mine, here))
         for guild, mine, here in pending:
@@ -77,13 +81,37 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                 )
             if here is not None:
                 found = await here.fetchone()
+                installed = bool(found and found["installed"])
+                installer = found["installer"] if found else None
                 servers.append(
                     {
                         "id": str(guild.id),
                         "name": guild.name,
-                        "hasDmbot": bool(found and found["here"]),
+                        "hasDmbot": installed or bool(found and found["played"]),
+                        # Joined through a plain link and nobody has said who added it.
+                        "canLink": installed and installer is None,
+                        "installedByYou": installer == session.user_id,
                     }
                 )
+
+        # The person's own installs, in the same transaction (one connection per /me).
+        await conn.execute(
+            "SELECT set_config('dmbot.user_id', %s, true)", (str(int(session.user_id)),)
+        )
+        cur = await conn.execute(
+            "SELECT guild_id, installed_at, via FROM installs"
+            " WHERE installed_by_user_id = %s ORDER BY installed_at",
+            (session.user_id,),
+        )
+        installs = [
+            {
+                "serverId": str(row["guild_id"]),
+                "serverName": names.get(row["guild_id"], ""),
+                "installedAt": _iso_time(row["installed_at"]),
+                "via": row["via"],
+            }
+            for row in await cur.fetchall()
+        ]
 
     return {
         "user": {"id": str(session.user_id), "name": session.display_name},
@@ -101,4 +129,5 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
         },
         "campaigns": campaigns,
         "servers": servers,
+        "installs": installs,
     }

@@ -65,6 +65,11 @@ class PaymentProvider(Protocol):
 
     async def billing_url(self, *, customer_id: str, return_url: str) -> str: ...
 
+    async def cancel(self, *, subscription_id: str) -> None:
+        """Stop the subscription now (the person is deleting their account). Cancelling a
+        subscription that is already cancelled must succeed, so a retried deletion works."""
+        ...
+
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:
         """The body really comes from the payment company (its signature checks out)."""
         ...
@@ -84,6 +89,7 @@ class FakeProvider:
     def __init__(self, secret: bytes, site_url: str) -> None:
         self._secret = secret
         self._site_url = site_url.rstrip("/")
+        self.cancelled: list[str] = []
 
     def sign(self, body: bytes) -> str:
         return hmac.new(self._secret, body, hashlib.sha256).hexdigest()
@@ -104,6 +110,9 @@ class FakeProvider:
 
     async def billing_url(self, *, customer_id: str, return_url: str) -> str:
         return f"{return_url}?{urlencode({'fake_billing': '1'})}"
+
+    async def cancel(self, *, subscription_id: str) -> None:
+        self.cancelled.append(subscription_id)
 
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:
         given = headers.get(self.SIGNATURE_HEADER, "")

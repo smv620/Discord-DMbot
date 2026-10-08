@@ -35,6 +35,7 @@ class FakeDiscord:
         self.revoked: list[str] = []
         self.used_codes: set[str] = set()
         self.fail = False
+        self.installed_guild: int | None = None  # what Discord says DMbot was added to
 
     def authorize_url(self, state: str, redirect_uri: str) -> str:
         self.used_codes.clear()  # each sign-in Discord starts hands out a fresh code
@@ -55,6 +56,17 @@ class FakeDiscord:
 
     async def revoke(self, token: str) -> None:
         self.revoked.append(token)
+
+    def install_url(self, state: str, redirect_uri: str, guild_id: int, permissions: int) -> str:
+        return (
+            f"https://discord.com/oauth2/authorize?state={state}&guild_id={guild_id}"
+            f"&permissions={permissions}&redirect_uri={redirect_uri}"
+        )
+
+    async def exchange_install(self, code: str, redirect_uri: str) -> tuple[str, int | None]:
+        if self.fail or code != "install-code":
+            raise DiscordError("refused")
+        return "install-token", self.installed_guild
 
 
 def settings(**changes: object) -> WebSettings:
@@ -219,8 +231,20 @@ class WebApi(DatabaseTest):
         self.assertEqual(
             me["servers"],
             [
-                {"id": "111", "name": "Thursday Table", "hasDmbot": True},
-                {"id": "222", "name": "Quillon's Corner", "hasDmbot": False},
+                {
+                    "id": "111",
+                    "name": "Thursday Table",
+                    "hasDmbot": True,
+                    "canLink": False,
+                    "installedByYou": False,
+                },
+                {
+                    "id": "222",
+                    "name": "Quillon's Corner",
+                    "hasDmbot": False,
+                    "canLink": False,
+                    "installedByYou": False,
+                },
             ],
         )
 
