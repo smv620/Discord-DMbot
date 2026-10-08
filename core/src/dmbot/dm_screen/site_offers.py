@@ -349,11 +349,20 @@ class SiteOffers:
         if message is not None:
             now_it = await self._store.confirm_delivery(guild.id, offer, self._now(), message.id)
             log.info("Sent a hand-over offer made on the website (offer %s)", offer.id)
+            # None: this claim had lapsed and someone sent it again; the message just sent
+            # keeps its buttons, which only say the offer is settled if pressed.
             if now_it is not None and now_it.status != "open":
                 # Answered or taken back on the website while it was going out: then
                 # decided() saw it unsent and told only the owner. The message just sent
                 # has live buttons: say what happened instead (#797).
-                await _tell_decision(guild, now_it, campaign, tell_owner=False)
+                try:
+                    await _tell_decision(guild, now_it, campaign, tell_owner=False)
+                except Exception as exc:  # the offer was sent: say this part failed
+                    log.error(
+                        "Couldn't change offer %s's message after a website answer (%s)",
+                        offer.id,
+                        type(exc).__name__,
+                    )
             return
         result = await self._store.withdraw_handover(
             guild.id, offer.id, offer.from_user_id, self._now()

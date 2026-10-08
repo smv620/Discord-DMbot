@@ -663,6 +663,25 @@ class DecisionEdges(Harness):
         self.assertEqual(changes["content"], told)
         self.assertEqual(guild.owner.sent, [])
 
+    async def test_accepted_while_its_message_was_going_out_tells_the_owner_once(self) -> None:
+        sending, release = asyncio.Event(), asyncio.Event()
+
+        async def slow(guild: discord.Guild, campaign: Campaign, o: HandoverOffer) -> Any:
+            sending.set()
+            await release.wait()
+            return self.message
+
+        self.offers._deliver = slow
+        run = asyncio.ensure_future(self.offers.send(GUILD, 1))
+        await asyncio.wait_for(sending.wait(), 2)
+        self.decided("accepted", message_id=None, sent=False)
+        await self.offers.decided(GUILD, 1)  # tells the owner
+        release.set()
+        await run  # changes the person's message, without telling the owner again
+        guild = self.guilds[GUILD]
+        self.assertEqual(len(guild.owner.sent), 1)
+        self.assertEqual(len(guild.buyer.edits), 1)
+
     async def test_a_website_accept_notes_the_dm_screen_once(self) -> None:
         self.screen()
         self.decided("accepted")

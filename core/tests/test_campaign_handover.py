@@ -336,6 +336,38 @@ class SiteDelivery(HandoverTest):
         self.assertEqual(len(await self.store.undelivered_offers(GUILD, NOW)), 1)
 
 
+class Confirming(HandoverTest):
+    """confirm_delivery says how the offer stands once its message is out (#797)."""
+
+    async def site_offer(self) -> HandoverOffer:
+        return await self.store.offer_handover(
+            GUILD, self.campaign.id, OWNER, BUYER, NOW,
+            from_name="Owner", to_name="Buyer", delivered=False,
+        )  # fmt: skip
+
+    async def test_open_or_taken_back_meanwhile(self) -> None:
+        offer = await self.site_offer()
+        claimed = await self.store.claim_delivery(GUILD, offer.id, NOW)
+        assert claimed is not None
+        await self.store.withdraw_handover(GUILD, offer.id, OWNER, NOW)  # on the site
+        now_it = await self.store.confirm_delivery(GUILD, claimed, NOW + 1, 77)
+        assert now_it is not None
+        self.assertEqual(
+            (now_it.status, now_it.message_id, now_it.delivered_at), ("withdrawn", 77, NOW + 1)
+        )
+
+    async def test_a_lapsed_claim_confirms_nothing(self) -> None:
+        offer = await self.site_offer()
+        first = await self.store.claim_delivery(GUILD, offer.id, NOW)
+        assert first is not None
+        second = await self.store.claim_delivery(GUILD, offer.id, NOW + CLAIM_SECONDS)
+        assert second is not None
+        self.assertIsNone(await self.store.confirm_delivery(GUILD, first, NOW + CLAIM_SECONDS, 1))
+        still = await self.store.confirm_delivery(GUILD, second, NOW + CLAIM_SECONDS, 2)
+        assert still is not None
+        self.assertEqual((still.status, still.message_id), ("open", 2))
+
+
 class Announcing(HandoverTest):
     """An answer on the website tells the bot, which tells the other person (#737)."""
 
