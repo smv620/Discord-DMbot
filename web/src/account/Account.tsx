@@ -84,13 +84,13 @@ function useAction() {
     [signedOut],
   );
 
-  return { busy, notice, run };
+  const clear = useCallback(() => setNotice(null), []);
+  return { busy, notice, run, clear };
 }
 
-/** For actions about the account, not a campaign: "not allowed" there isn't the
- * campaign-DM sentence, just "that didn't work". */
-function notCampaignRelated(error: ApiError): string | null {
-  return error.kind === "not-allowed" ? text.actionFailed : null;
+/** For campaign actions: "not allowed" there means only the campaign's DM can. */
+function campaignRefusal(error: ApiError): string | null {
+  return error.kind === "not-allowed" ? text.notTheDm : null;
 }
 
 function Notice({ message }: { message: string | null }) {
@@ -345,7 +345,15 @@ function PlanSection({ me }: { me: Me }) {
   const { busy, notice, run } = useAction();
   const plan = me.plan;
   const portal = (): void =>
-    void run(async () => go(await api.billingPortalUrl()), notCampaignRelated);
+    void run(
+      async () => go(await api.billingPortalUrl()),
+      (error) => {
+        // The page is out of date (the plan stopped, or was never paid through the
+        // company): show what's true now, with the plans to pick from.
+        if (error.kind === "no-paid-plan") void refresh();
+        return null;
+      },
+    );
   const choices = (title: string) => (
     <>
       <p>{title}</p>
@@ -493,7 +501,7 @@ function CampaignRow({
           onClick={() =>
             void run(async () => {
               setPeople(await api.handoverCandidates(campaign.id));
-            })
+            }, campaignRefusal)
           }
         >
           {text.handOver}
@@ -513,7 +521,7 @@ function CampaignRow({
                 setPeople(null);
                 await onHandedOver(person);
               },
-              (error) => (error.kind === "no-free-slot" ? text.noFreeSlot : null),
+              (error) => (error.kind === "no-free-slot" ? text.noFreeSlot : campaignRefusal(error)),
             );
           }}
         >
@@ -625,7 +633,7 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
 
 function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
   const { api } = useShared();
-  const { busy, notice, run } = useAction();
+  const { busy, notice, run, clear } = useAction();
   const [step, setStep] = useState<0 | 1 | 2>(0);
   const [token, setToken] = useState<string | null>(null);
   const reset = (): void => {
@@ -638,7 +646,14 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
       <h2 id="delete-heading">{text.deleteHeading}</h2>
       <Notice message={notice} />
       {step === 0 && (
-        <button type="button" class="button secondary" onClick={() => setStep(1)}>
+        <button
+          type="button"
+          class="button secondary"
+          onClick={() => {
+            clear(); // a "took too long" from last time is about the old attempt
+            setStep(1);
+          }}
+        >
           {text.deleteStart}
         </button>
       )}
@@ -656,7 +671,7 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
                 void run(async () => {
                   setToken(await api.requestDelete());
                   setStep(2);
-                }, notCampaignRelated)
+                })
               }
             >
               {text.deleteNext}
@@ -690,7 +705,7 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
                     throw error;
                   }
                   onDeleted();
-                }, notCampaignRelated)
+                })
               }
             >
               {text.deleteConfirm}

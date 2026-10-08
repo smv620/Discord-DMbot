@@ -70,10 +70,11 @@ export const text = {
     "already-linked":
       "Someone else already said they added DMbot here. If that's wrong, ask your server's owner for help.",
     "not-installed": "DMbot isn't in this server yet. Tap Add DMbot first.",
-    "not-allowed": "You can't do that here. Only the DM who runs the campaign can.",
+    "not-allowed": "That didn't work. Reload this page and try again.",
     "no-free-slot": noFreeSlot,
     "confirm-again": "That took too long. Tap Start deleting again.",
-    "no-paid-plan": "You don't have a paid plan to change yet. Pick a plan below.",
+    "no-paid-plan":
+      "Your plan has changed since this page opened. Pick a plan below. If you still see Change plan, write to us for help.",
   } as Record<string, string>,
   install: {
     done: "Done! DMbot is in your server. In Discord, type /dmbot start to begin.",
@@ -82,9 +83,11 @@ export const text = {
     already_linked:
       "DMbot is in your server. Someone else is listed as the one who added it.",
     other_account:
-      "DMbot is in your server, but Discord was signed in as someone else. Sign in to Discord as you, then tap This is mine.",
+      "DMbot was added, but by a different Discord account than the one signed in here. If that was you, tap This is mine next to your server below.",
   } as Record<string, string>,
-  installSignedOut: "You were signed out. Sign in with Discord, then tap Add DMbot again.",
+  installSignedOut:
+    "You were signed out. Sign in with Discord again, then find your server below. Tap This is mine if it's there, or Add DMbot if not.",
+  notTheDm: "You can't do that here. Only the DM who runs the campaign can.",
   signedOutNow: "You've been signed out. Tap Sign in with Discord to carry on.",
   busy: "One moment…",
 

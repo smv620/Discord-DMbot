@@ -266,7 +266,7 @@ describe("actions", () => {
     api.handoverCandidates = () => Promise.reject(new ApiError("not-allowed"));
     render(<Account api={api} go={vi.fn()} />);
     fireEvent.click((await screen.findAllByRole("button", { name: text.handOver }))[0]!);
-    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["not-allowed"]);
+    expect((await screen.findByRole("alert")).textContent).toBe(text.notTheDm);
   });
 
   it("doesn't blame the campaign's DM for account actions", async () => {
@@ -274,15 +274,23 @@ describe("actions", () => {
     api.billingPortalUrl = () => Promise.reject(new ApiError("not-allowed"));
     render(<Account api={api} go={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: text.changePlan }));
-    expect((await screen.findByRole("alert")).textContent).toBe(text.actionFailed);
+    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["not-allowed"]);
+    expect(text.errors["not-allowed"]).not.toMatch(/campaign/);
   });
 
   it("says when there's no paid plan to change", async () => {
     const api = mockApi("table");
     api.billingPortalUrl = () => Promise.reject(new ApiError("no-paid-plan"));
+    let loads = 0;
+    const me = api.me.bind(api);
+    api.me = () => {
+      loads += 1;
+      return me();
+    };
     render(<Account api={api} go={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: text.changePlan }));
     expect((await screen.findByRole("alert")).textContent).toBe(text.errors["no-paid-plan"]);
+    await waitFor(() => expect(loads).toBe(2)); // the page reloads what's true now
   });
 
   it("says to start again when the delete confirmation ran out", async () => {
