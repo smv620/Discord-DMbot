@@ -1,6 +1,6 @@
-"""The admin page's sign-in routes (#772): Google, email and password, who is signed in,
-and sign out. The rules are in dmbot.web.admin; part 3 (#773) adds the grants routes
-behind `require_admin`.
+"""The admin page's routes: sign-in (#772: Google, email and password, who is signed in,
+sign out; the rules are in dmbot.web.admin) and free access (#773: the list, give or
+change, revoke; the rules are in dmbot.web.grants).
 
 Every POST already needs the website's own header and origin (the guard in dmbot.web.app);
 admin POSTs after sign-in also need the session's CSRF token.
@@ -10,17 +10,22 @@ admin POSTs after sign-in also need the session's CSRF token.
 # router() as real objects, or it reads them as query parameters.
 
 import asyncio
+import calendar
 import contextlib
+import datetime
 import json
 import logging
+import re
 import secrets
 from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, Any, TypeGuard
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
-from dmbot.web import tokens
+from dmbot.db import Database
+from dmbot.entitlements import GRANT_LEVELS
+from dmbot.web import grants, sessions, tokens
 from dmbot.web.admin import (
     CSRF_HEADER,
     MAX_SECONDS,
@@ -45,6 +50,9 @@ log = logging.getLogger(__name__)
 MAX_BODY = 4 * 1024
 # The same answer for a wrong email, a wrong password and a locked try (#772).
 WRONG = "wrong_sign_in"
+# A Discord user id: a snowflake, 17 to 20 digits (#773).
+DISCORD_ID = re.compile(r"[0-9]{17,20}")
+RECENT_CHANGES = 50
 # Password tries waiting for the one before them; more than this is a flood, answered
 # "busy" (not WRONG: the owner's own try in a flood mustn't say their password is wrong).
 MAX_WAITING = 8
@@ -53,6 +61,7 @@ MAX_WAITING = 8
 def router(
     settings: WebSettings,
     *,
+    db: Database,
     google: GoogleSignIn | None,
     admin_sessions: AdminSessions,
     tries: FailedTries,
@@ -99,6 +108,22 @@ def router(
         return session
 
     Admin = Annotated[AdminSession, Depends(current)]
+    AdminWrite = Annotated[AdminSession, Depends(require_admin)]
+
+    async def read_json(request: Request) -> Any:
+        """The body as JSON, at most MAX_BODY bytes; None if it isn't JSON."""
+        with contextlib.suppress(ValueError):
+            if int(request.headers.get("content-length", "0")) > MAX_BODY:
+                raise HTTPException(status_code=413, detail="too_long")
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_BODY:
+                raise HTTPException(status_code=413, detail="too_long")
+        try:
+            return json.loads(body)
+        except (ValueError, RecursionError):
+            return None
 
     @api.get("/me")
     async def me(session: Admin) -> dict[str, str]:
@@ -126,18 +151,7 @@ def router(
     @api.post("/auth/password", status_code=204)
     async def password(request: Request) -> Response:
         require_on()
-        with contextlib.suppress(ValueError):
-            if int(request.headers.get("content-length", "0")) > MAX_BODY:
-                raise HTTPException(status_code=413, detail="too_long")
-        body = b""
-        async for chunk in request.stream():
-            body += chunk
-            if len(body) > MAX_BODY:
-                raise HTTPException(status_code=413, detail="too_long")
-        try:
-            raw = json.loads(body)
-        except (ValueError, RecursionError):
-            raw = None
+        raw = await read_json(request)
         email = raw.get("email") if isinstance(raw, dict) else None
         given = raw.get("password") if isinstance(raw, dict) else None
         if not isinstance(email, str) or not isinstance(given, str) or len(given) > 1024:
@@ -291,4 +305,138 @@ def router(
         set_admin_cookie(done, admin_sessions.start(email))
         return done
 
+    # Free access (#773)
+
+    @api.get("/grants")
+    async def list_grants(session: Admin) -> dict[str, Any]:
+        """The owner's free list (server settings, not editable here), the grants still in
+        force or ended (revoked ones live in the history), and the last changes."""
+        rows = [r for r in await grants.grants(db) if r.revoked_at is None]
+        log_rows = await grants.log_entries(db, limit=RECENT_CHANGES)
+        free_ids = sorted(settings.free_users)
+        # Names, where a person signed in lately: for the ids on this page only.
+        names = await sessions.display_names(
+            db,
+            [*free_ids, *(r.discord_user_id for r in rows), *(e.discord_user_id for e in log_rows)],
+            now=clock(),
+        )
+
+        def who(user_id: int) -> dict[str, str | None]:
+            # Ids are strings: they don't fit in a JavaScript number.
+            return {"discordId": str(user_id), "name": names.get(user_id)}
+
+        return {
+            "free": [who(i) for i in free_ids],
+            "grants": [
+                {
+                    **who(r.discord_user_id),
+                    "level": r.level,
+                    "endsAt": r.ends_at,
+                    "note": r.note,
+                    "grantedBy": r.granted_by,
+                    "grantedAt": r.granted_at,
+                }
+                for r in rows
+            ],
+            "log": [
+                {
+                    **who(e.discord_user_id),
+                    "at": e.at,
+                    "by": e.admin_email,
+                    "action": e.action,
+                }
+                for e in log_rows
+            ],
+        }
+
+    @api.post("/grants")
+    async def give(request: Request, session: AdminWrite) -> dict[str, str | None]:
+        raw = await read_json(request)
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="bad_request")
+        discord_id, level = raw.get("discordId"), raw.get("level")
+        ends_on, note = raw.get("endsOn"), raw.get("note", "")
+        # Each refusal names what to fix; the site words it (web/src/content/admin.ts).
+        if not _is_discord_id(discord_id):
+            raise HTTPException(status_code=400, detail="bad_id")
+        if int(discord_id) in settings.free_users:
+            # Already covered by the server's list: a grant would only show them twice.
+            raise HTTPException(status_code=400, detail="already_free")
+        if level not in GRANT_LEVELS:
+            raise HTTPException(status_code=400, detail="bad_level")
+        if not isinstance(note, str) or not _storable(note):
+            raise HTTPException(status_code=400, detail="bad_note")
+        if len(" ".join(note.split())) > grants.NOTE_MAX:
+            raise HTTPException(status_code=400, detail="long_note")
+        now = clock()  # once: every check and the write agree on "today"
+        ends_at = None
+        if ends_on is not None:
+            day = _parse_day(ends_on)
+            ends_at = _end_of_day(day) if day is not None else None
+            if day is None or ends_at is None:
+                raise HTTPException(status_code=400, detail="bad_date")
+            # "After today": today itself is refused, so the words match what happens.
+            if day <= datetime.datetime.fromtimestamp(now, datetime.UTC).date():
+                raise HTTPException(status_code=400, detail="past_date")
+        try:
+            action = await grants.give(
+                db, session.email, int(discord_id), level, ends_at=ends_at, note=note, now=now
+            )
+        except grants.GrantError as exc:
+            raise HTTPException(status_code=400, detail=exc.code) from exc
+        # The id only: never the note or the admin's email.
+        log.info("Admin free access %s for %s", action, discord_id)
+        name = (await sessions.display_names(db, [int(discord_id)], now=now)).get(int(discord_id))
+        return {"action": action, "name": name}
+
+    @api.post("/grants/{discord_id}/revoke", status_code=204)
+    async def revoke(discord_id: str, session: AdminWrite) -> Response:
+        if not _is_discord_id(discord_id):
+            raise HTTPException(status_code=400, detail="bad_id")
+        if not await grants.revoke(db, session.email, int(discord_id), now=clock()):
+            # Never had one, already revoked, or on the server's free list (not a grant).
+            raise HTTPException(status_code=404, detail="no_grant")
+        log.info("Admin free access revoke for %s", discord_id)
+        return Response(status_code=204)
+
     return api
+
+
+def _is_discord_id(value: object) -> TypeGuard[str]:
+    """17 to 20 digits that fit the database's BIGINT (Discord ids are 64-bit)."""
+    return (
+        isinstance(value, str)
+        and DISCORD_ID.fullmatch(value) is not None
+        and 0 < int(value) < 2**63
+    )
+
+
+def _storable(note: str) -> bool:
+    """Postgres text holds no NUL, and a lone surrogate (JSON can carry one) can't be
+    encoded: either would be a 500 instead of words."""
+    if "\x00" in note:
+        return False
+    try:
+        note.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _parse_day(value: object) -> datetime.date | None:
+    """A date as the page sends it ("2026-12-31"), or None if it isn't one."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        return None
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _end_of_day(day: datetime.date) -> int | None:
+    """The moment access stops for this last day: the end of it in UTC, so the person
+    keeps it all that day. None past the last representable day (9999-12-31)."""
+    try:
+        return calendar.timegm((day + datetime.timedelta(days=1)).timetuple())
+    except OverflowError:
+        return None

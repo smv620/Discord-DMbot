@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { text } from "../content/admin";
 import { type AdminApi, AdminApiError, type AdminMe, type AdminWays } from "./api";
+import Grants from "./Grants";
 
 interface Props {
   api: AdminApi;
@@ -132,7 +133,6 @@ export default function Admin({ api, search }: Props) {
     return (
       <div class="stack">
         <p>{text.signedInAs(view.me.email)}</p>
-        <p class="muted">{text.comingSoon}</p>
         {notice && (
           <p class="warn" role="alert">
             {notice}
@@ -146,6 +146,15 @@ export default function Admin({ api, search }: Props) {
         >
           {text.signOut}
         </button>
+        <Grants
+          api={api}
+          csrf={view.me.csrf}
+          onSignedOut={() => {
+            setNotice(text.timedOut);
+            void load();
+          }}
+          onOff={() => void load()}
+        />
       </div>
     );
   }
