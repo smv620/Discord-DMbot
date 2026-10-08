@@ -399,8 +399,10 @@ test("after a decrypt error ears listens again at once, and counts what was lost
 
 /** A later try: ears waits its step (the `step`th try in a row, from 0) before listening again. */
 async function failAndWait(h: Harness, userId: string, step: number): Promise<void> {
+  const wait = RESUBSCRIBE_DELAYS_MS[step];
+  assert.ok(wait !== undefined, `no step ${step}`);
   await fail(h, userId);
-  mock.timers.tick(RESUBSCRIBE_DELAYS_MS[step] ?? 0);
+  mock.timers.tick(wait);
   await nextFrame();
 }
 
@@ -474,14 +476,28 @@ test("a packet heard starts the waits over; the minute's limit still counts", as
   assert.match(said, /listening again at once \(3 of 5 this minute\)/);
 });
 
-test("stopped between the error and the stream's close: no try is set up", async () => {
+test("stopped between the error and the stream's close: no retry timer is set", async () => {
   const h = harness();
   h.session.noteMember(ALICE, false);
   await speak(h, ALICE, 1);
   await fail(h, ALICE); // 1: at once
-  h.receiver.fail(ALICE); // 2 would wait 100 ms...
-  h.session.dropSpeakers([ALICE]); // ...but they stop first, before the close
-  await nextFrame();
+  const stream = h.receiver.subscriptions.get(ALICE);
+  assert.ok(stream);
+  // After ears' own "error" listener (the 2nd try, 100 ms) and before the "close".
+  stream.once("error", () => h.session.dropSpeakers([ALICE]));
+  let timers = 0;
+  const real = globalThis.setTimeout;
+  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+    timers++;
+    return real(...args);
+  }) as typeof setTimeout;
+  try {
+    h.receiver.fail(ALICE);
+    await new Promise((resolve) => setImmediate(resolve)); // the error, then the close
+  } finally {
+    globalThis.setTimeout = real;
+  }
+  assert.equal(timers, 0); // the close handler saw they had stopped
   mock.timers.tick(5_000);
   assert.deepEqual(h.receiver.subscribed, [ALICE, ALICE]);
 });
