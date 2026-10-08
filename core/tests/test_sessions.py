@@ -757,6 +757,7 @@ class SaveAndResume(SessionTests):
         await self.bot._on_ears_message(Status("joined", guild_id=GUILD))
         posted = AsyncMock(return_value=True)
         self.bot.post = posted  # type: ignore[method-assign]
+        self.bot.name_of = lambda guild_id, user_id: "Ulfgar"  # type: ignore[method-assign]
         warning = Status("warning", guild_id=GUILD, detail="kept failing", user_id=PLAYER)
         with self.assertLogs("dmbot.bot", level="WARNING") as logs:
             await self.bot._on_ears_message(warning)
@@ -765,6 +766,7 @@ class SaveAndResume(SessionTests):
         self.assertEqual(len(told), 1)
         self.assertEqual(told[0][0], SCREEN)
         self.assertIn("If this happens again, ask them to leave the voice channel", told[0][1])
+        self.assertIn("**Ulfgar**'s words", told[0][1])
         self.assertIn(f"Voice warning for user {PLAYER}", "\n".join(logs.output))
         self.assertTrue(self.bot.tables[GUILD].listening)  # the session goes on
         # Five minutes later it's said again.
