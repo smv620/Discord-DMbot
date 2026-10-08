@@ -116,7 +116,7 @@ from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber
-from dmbot.transcription.pipeline import TranscriptionPipeline
+from dmbot.transcription.pipeline import TranscriptionPipeline, speech_sent_line
 from dmbot.ui import logic as ui_logic
 from dmbot.ui.dmbot_commands import dmbot_group
 from dmbot.ui.name_card import UndoButton
@@ -266,6 +266,8 @@ class Table:
     heard_counts: Counter[tuple[str, int]] = field(default_factory=Counter)
     # The stored transcript (#41, #125): this session's row, and lines not saved yet.
     started_at: int = 0  # Unix seconds; the same after a restart
+    listening_from: int = 0  # Unix seconds; since this process took the session on
+    after_restart: bool = False  # listening_from is a restart (`resumed` resets on join)
     transcript_session_id: str | None = None  # set at the first save
     unsaved: TranscriptBuffer = field(default_factory=TranscriptBuffer)
     transcript_warned: bool = False  # told the DM saving isn't working
@@ -712,6 +714,8 @@ class DMBot(commands.AutoShardedBot):
         If the consent list can't be loaded, nothing is left half-started.
         """
         self.tables[table.guild_id] = table
+        table.listening_from = int(time.time())
+        table.after_restart = table.resumed
         self.pipeline.session_started(table.guild_id)  # told of an outage afresh (#470)
         try:
             await self.push_allowlist(table.guild_id)
@@ -769,6 +773,13 @@ class DMBot(commands.AutoShardedBot):
                 caught_up = await self.pipeline.drain(session, STOP_DRAIN_TIMEOUT_S)
                 if not caught_up:
                     log.warning("Stopped before the last speech was written down")
+                log.info(
+                    "%s%s",
+                    speech_sent_line(
+                        ended_at - table.listening_from, self.pipeline.sent_s_in.get(session, 0)
+                    ),
+                    " since the restart" if table.after_restart else "",
+                )
                 await self._after_session(table, ended_at, caught_up)
             finally:
                 ending = self._ending.get(gid, [])
@@ -781,6 +792,7 @@ class DMBot(commands.AutoShardedBot):
                         self._hint_people_cache.pop(gid, None)
                 self.pipeline.missed_in.pop(session, None)
                 self.pipeline.failed_in.pop(session, None)
+                self.pipeline.sent_s_in.pop(session, None)
 
     async def _after_session(self, table: Table, ended_at: int, caught_up: bool) -> None:
         sent = 0

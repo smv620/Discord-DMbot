@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -69,6 +69,16 @@ SKIPPED_ALERT_OUTSIDE = (
 
 def clip_budget_s(duration_s: float) -> float:
     return max(MIN_CLIP_BUDGET_S, CLIP_BUDGET_PER_AUDIO_S * duration_s)
+
+
+def speech_sent_line(listened_s: float, sent_s: float) -> str:
+    """For the log at a session's end (#523): listening time (what the DM is billed for)
+    against speech sent to the engine (what an outside engine charges for). Every
+    speaker's clips are added up, so people talking at once can pass 100%."""
+    share = sent_s / listened_s * 100 if listened_s > 0 else 0.0
+    return (
+        f"Listened {listened_s / 60:.1f} min, sent {sent_s / 60:.1f} min of speech ({share:.0f}%)"
+    )
 
 
 class ConsentChecker(Protocol):
@@ -133,6 +143,9 @@ class TranscriptionPipeline:
         # Per session (Utterance.session), for the end-of-session summary (#109).
         self.missed_in: Counter[int] = Counter()  # skipped or dropped clips
         self.failed_in: Counter[int] = Counter()
+        # Seconds of audio the engine wrote down or ran out of time on, per session: what an
+        # outside one charges for (a refused or failed request isn't). Popped at the end.
+        self.sent_s_in: defaultdict[int, float] = defaultdict(float)
         # Clips queued but not finished, per session, so a stopping session can wait for
         # its own last words (not other servers' backlog).
         self.pending: Counter[int] = Counter()
@@ -272,12 +285,15 @@ class TranscriptionPipeline:
                 text = await self.transcriber.transcribe(utterance, hints)
         except TimeoutError as exc:
             if timer.expired():
+                # Only expires once the audio is sent: the engine probably finished it.
+                self.sent_s_in[utterance.session] += utterance.duration_s
                 await self._on_skip(utterance, budget)
             else:
                 await self._on_failure(utterance, exc)
         except Exception as exc:
             await self._on_failure(utterance, exc)
         else:
+            self.sent_s_in[utterance.session] += utterance.duration_s
             await self._on_success(utterance.guild_id)
             took = time.monotonic() - started
             if took > max(SLOW_CLIP_S, utterance.duration_s):
