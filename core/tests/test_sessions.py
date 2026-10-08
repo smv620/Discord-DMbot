@@ -464,6 +464,8 @@ class SaveAndResume(SessionTests):
     async def test_a_refresh_overlapped_by_a_change_loads_again(self) -> None:
         await self.start()
         table = self.bot.tables[GUILD]
+        assert table.sheet_task is not None
+        await table.sheet_task  # the start's own load first: only this run's line counts
         state = {"now": [self.typed_sheet("0" * 32, "Kept Spell")]}
         self.bot.sheets = MagicMock(sheets=AsyncMock(side_effect=lambda *a, **k: state["now"]))
         reading, done = asyncio.Event(), asyncio.Event()
