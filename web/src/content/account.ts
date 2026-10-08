@@ -155,8 +155,8 @@ export const text = {
   acceptNoSlot:
     "To take this campaign you need a DMbot plan with room for one more campaign. Tap See my plan to pick one, then tap Accept again. The offer stays open until the date above.",
   seeMyPlan: "See my plan",
-  // The bot tells the other person in Discord whenever an answer comes from the site
-  // (#794, #797), so the words promise it plainly (#798).
+  // The bot tells the other person in Discord whenever an offer is answered or taken back
+  // on the site (#794, #797), so the words promise it plainly (#798).
   accepted: (campaign: string, person: string): string =>
     `${campaign} is yours now. You're a DM of it in Discord too. We'll tell ${person} in Discord.`,
   declined: (person: string): string => `Done. The offer is closed. We'll tell ${person} in Discord.`,
