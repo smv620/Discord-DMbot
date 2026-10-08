@@ -1064,6 +1064,7 @@ class SaveAndResume(SessionTests):
     async def test_capture_check_is_logged_and_only_gaps_reach_the_dm(self) -> None:
         from dmbot.audio.segmenter import Utterance
 
+        await self.consent.grant(GUILD, PLAYER)  # only people still recorded are checked
         await self.start()
         posted = AsyncMock(return_value=True)
         self.bot.post = posted  # type: ignore[method-assign]
@@ -1078,13 +1079,66 @@ class SaveAndResume(SessionTests):
         )
         posted.assert_not_awaited()  # all fine: nothing in the DM screen (#134)
         table.capture_log.add_utterance(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)))
-        table.capture_log.add_health(PLAYER, 300, 500)  # 4 s lost: enough to warn (#671)
+        table.capture_log.add_health(PLAYER, 300, 500)  # 4 s lost: the audio rule fires (#671)
+        # ...and their lines read garbled (#699): low confidence over enough words.
+        table.capture_log.add_line(PLAYER, "I go to the ... the ... north road and", 0.3)
         await self.bot.post_summary(table)
         posted.assert_awaited_once()
         call = posted.await_args
         assert call is not None
         self.assertEqual(call.args[0], SCREEN)
         self.assertIn("voice is cutting out for DMbot", call.args[1])
+        self.assertIn(PLAYER, table.totals.flagged)  # so the summary names them too
+
+    async def test_the_audio_check_reads_their_lines_before_warning(self) -> None:
+        # #699: the audio rule starts a check of their lines; only garbled lines warn, a
+        # stop during the AI's wait names nobody, and a large loss warns without asking.
+        from dmbot.ai import Reply
+        from dmbot.audio.segmenter import Utterance
+
+        class AI:
+            def __init__(self, answer: str, during: Any = None) -> None:
+                self.answer, self.during, self.calls = answer, during, 0
+
+            async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Reply:
+                self.calls += 1
+                if self.during is not None:
+                    self.during()
+                return Reply(self.answer, False, 100, 1)
+
+        await self.consent.grant(GUILD, PLAYER)
+        await self.start()
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        table = self.bot.tables[GUILD]
+
+        def patchy(received: int = 300, expected: int = 500) -> None:
+            table.capture_log.add_utterance(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)))
+            table.capture_log.add_health(PLAYER, received, expected)
+            table.capture_log.add_line(PLAYER, "the bridge north", None)  # unknown: ask
+
+        self.bot.topic_ai = AI("no")  # type: ignore[assignment]
+        patchy()
+        await self.bot.post_summary(table)
+        posted.assert_not_awaited()  # reads fine: nothing for the DM
+
+        table.audio_checker.asked_at.clear()
+        self.bot.topic_ai = AI(  # type: ignore[assignment]
+            "yes", during=lambda: self.bot.stop_recording(GUILD, PLAYER)
+        )
+        patchy()
+        await self.bot.post_summary(table)
+        posted.assert_not_awaited()  # garbled, but they stopped during the wait
+        self.assertNotIn(PLAYER, table.totals.flagged)
+
+        await self.consent.grant(GUILD, PLAYER)
+        asked = AI("no")
+        self.bot.topic_ai = asked  # type: ignore[assignment]
+        patchy(400, 1000)  # 40% got through, 12 s lost
+        await self.bot.post_summary(table)
+        posted.assert_awaited_once()  # at once, without asking
+        self.assertEqual(asked.calls, 0)
+        self.assertIn(PLAYER, table.totals.flagged)
 
     # ---- the live transcript channel (#124) ------------------------------------
 
