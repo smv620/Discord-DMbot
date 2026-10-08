@@ -15,6 +15,13 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   Check in the next Test A (DMBOT_DEBUG_AUDIO=1): `dave: ...` lines around the first
   packet; on a failure "listening again (n of 5 this minute)" or "is sending audio but
   none of it can be heard", and the DM screen's audio % drops.
+- dev3, PR #764 (#761): ears only. No core change, migration or setting. Deploy with #651.
+  After an error, the second re-listen waits 100 ms, not 1 s (then 300, 1500, 2100 ms), so
+  the Test B failure after an MLS welcome costs about 0.1 s, not 1 s. Check in the next
+  Test A/B (DMBOT_DEBUG_AUDIO=1; the DM joins the voice channel before DMbot, for a
+  welcome): after `dave: MLS welcome processed (transition id: 0)`, any errors show
+  "listening again at once (1 of 5 this minute)" then "in 100 ms (2 of 5 ...)". Several
+  "at once" lines within a second mean a stream flapping heard/errored, not a new bug.
 - dev3, #697 (#671 stage 1): core only. No migration or setting. The DM screen's audio
   warning now needs real loss: under 90% got through AND at least 2 s lost over a rolling
   minute per person, counting only pieces long enough to be written down. Check: Test A
