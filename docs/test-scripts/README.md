@@ -15,6 +15,7 @@ words, who said them, and where the silences are. That lets us check:
 | 3 or more (DM + players) | [dm-and-player.md](dm-and-player.md) | The DM reads `[DM]`. The players split the `[Player]` lines and agree who reads which before starting (for example, in voice-channel order) |
 | Speech-to-text bake-off (#128), 2–4 readers | [stt-bakeoff.md](stt-bakeoff.md) | Each reader reads every line, recorded on their own device (not through DMbot). About 6–8 minutes |
 | Twin name test, 1 reader (#367) | [bakeoff-story.md](bakeoff-story.md) | One reader, alone, recorded on their own device: a three-minute story with every bake-off name at least twice. Read with a two-count stop between lines, it should cut into about 27 pieces of speech (25 lines and 2 dramatic pauses). The recording, `bakeoff-story.m4a`, goes next to it once the owner records it. Its names list for the Add many test is [bakeoff-story-names.txt](bakeoff-story-names.txt), with [the setup](bakeoff-story-names-setup.md) (#368) |
+| Two voices, 1 reader (#534) | [two-voices.md](two-voices.md) | One reader, alone, recorded twice on their own device: once the `[DM]` lines, once the `[Player]` lines, quiet for ten seconds at the other voice's cues (but not after your own last line). About a minute and a half each |
 
 The two table scripts, [dm-only.md](dm-only.md) and [dm-and-player.md](dm-and-player.md),
 take about a minute each and score the same 12 D&D terms.
@@ -26,7 +27,8 @@ pauses). The bake-off recording is the better test for name resolution: 24 campa
 each said several times, at a natural pace.
 
 **Sending it:** paste the script into a Discord message (it fits, and Discord shows the bold
-labels) rather than sending the file.
+labels) rather than sending the file. two-voices.md doesn't fit in one Discord message:
+send the file or a link instead.
 
 ## What's in it
 
