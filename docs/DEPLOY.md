@@ -182,6 +182,42 @@ longer allowed in, if the session started more than 16 hours ago, or if it resta
 times in a row (to stop a crash loop). `/dmbot stop` always ends a session for good, even
 while DMbot is restarting.
 
+### Put the admin API online
+
+The admin sign-in needs the website's API reachable from the internet at
+`https://api.getdmbot.com`, because Google sends you back to it (#836). A Cloudflare
+Tunnel does this: the server only calls out to Cloudflare, so it opens no new door,
+and Cloudflare looks after the certificate. Only the admin paths go through. The paths
+customers will use stay closed until #498.
+
+**You (the owner), in Cloudflare:**
+1. Open Cloudflare, then Zero Trust, then Networks, then Tunnels, then Create a tunnel.
+   Pick cloudflared and name it `dmbot-api`.
+2. Copy the token Cloudflare shows. On the server (log in with ssh, then
+   `cd Discord-DMbot`), type `scripts/set-key CLOUDFLARE_TUNNEL_TOKEN` and paste it. When
+   it asks "Restart DMbot now?", answer No: dev1 starts the tunnel.
+3. Back in Cloudflare, add a public hostname to the tunnel:
+   - Subdomain `api`, domain `getdmbot.com`.
+   - Path `^/admin(/|$)`. This is what keeps everything else closed.
+   - Service type HTTP, URL `http://web-api:8080`.
+
+   Cloudflare adds the DNS record itself.
+4. Tell dev1, in the Claude Code window where dev1 runs (not GitHub): "tunnel ready".
+   Never paste the token anywhere but the set-key prompt.
+
+**dev1:**
+1. Check that `web` is in `COMPOSE_PROFILES` in `.env` (add it if not), and that
+   `WEB_CLIENT_IP_HEADER` is `CF-Connecting-IP`.
+2. Run `docker compose up -d web-api cloudflared`, then
+   `docker compose logs --tail 20 cloudflared`. It should say it registered a connection.
+3. Check from any computer:
+   - `https://api.getdmbot.com/admin/auth/ways` answers.
+   - `https://api.getdmbot.com/me` does not (Cloudflare turns it away).
+4. Record the result in the testing log.
+
+To turn it off, dev1 runs `docker compose stop cloudflared`. The admin page then can't
+be reached from outside until it is started again.
+
 ### Turn on the admin page
 
 The admin page (`/admin` on the website, never linked) is for giving free access (#772).

@@ -72,7 +72,7 @@ services:
   # The website's API (#435): Discord sign-in, the account page, payments. Same image as
   # core, its own process. Off until the Website API settings are in .env: start it with
   # COMPOSE_PROFILES=web in .env (or `docker compose --profile web up -d`). Listens only on
-  # the private network; Caddy or Cloudflare in front publishes it later.
+  # the private network; the cloudflared service below publishes it (admin paths only).
   web-api:
     profiles: ["web"]
     image: dmbot-core   # the same image as core: built once
@@ -121,6 +121,22 @@ services:
         condition: service_healthy
       core:
         condition: service_started   # core updates the database and grants dmbot_web
+    restart: unless-stopped
+
+  # The way in to web-api from the internet (#836): a Cloudflare Tunnel. cloudflared only
+  # makes an outbound connection to Cloudflare, so the server opens no inbound port and
+  # Cloudflare keeps the certificate. It is the only thing that reaches web-api, which is why
+  # WEB_CLIENT_IP_HEADER=CF-Connecting-IP can be trusted. Which paths go through is set in
+  # Cloudflare (the public hostname's path), not here: see "Put the admin API online" in
+  # docs/DEPLOY.md. Stop it with `docker compose stop cloudflared` to close the way in.
+  cloudflared:
+    profiles: ["web"]
+    image: cloudflare/cloudflared:2026.10.0   # pinned: no surprise upgrades; bump on purpose
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}   # from Cloudflare; set with scripts/set-key
+    depends_on:
+      - web-api
     restart: unless-stopped
 
 volumes:
