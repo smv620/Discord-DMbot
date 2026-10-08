@@ -48,6 +48,11 @@ NOISE_MARGIN_DB = 10.0
 SILENCE_MAX_DBFS = -40.0
 
 
+def seconds(pcm: bytes) -> float:
+    """How long decoded PCM lasts."""
+    return len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+
+
 class DecodeError(RuntimeError):
     """The recording can't be read (a missing decoder, an unknown format)."""
 

@@ -31,9 +31,20 @@ def _header(
     return [*lines, pieces]
 
 
-def _footer(result: Replay) -> list[str]:
+def speech_share(recording_s: float, sent_s: float) -> str:
+    """How much of the recording went to the engine as speech, against its length: what an
+    outside engine charges for, against the listening time the DM is billed for (#523;
+    docs/PLAN.md prices on 36-60 speech-minutes an hour, 60-100%). Overlapping lead-ins
+    send some audio twice, so it can pass 100%."""
+    share = sent_s / recording_s * 100 if recording_s else 0.0
+    return f"speech sent: {sent_s:.1f} s of a {recording_s:.1f} s recording ({share:.0f}%)"
+
+
+def _footer(result: Replay, recording_s: float) -> list[str]:
     sent = [h for h in result.heard if h.written_down]
     lines = [f"failed: {result.failed}   skipped: {result.skipped}   dropped: {result.dropped}"]
+    if recording_s:
+        lines.append(speech_share(recording_s, result.sent_s))
     if not result.finished:
         lines.append("NOT FINISHED: some pieces weren't written down in time; scores are low")
     if result.realtime:
@@ -61,6 +72,7 @@ def record(
     result: Replay,
     score: Score,
     cut: str = "",
+    recording_s: float = 0.0,
 ) -> list[str]:
     """The README's record block, filled in. Numbers only: no names, nothing heard."""
     part1 = score.part1
@@ -87,7 +99,11 @@ def record(
         f"whisper: {score.whisper}",
         pauses,
     ]
-    return [*_header(script.name, recording, engine, commit, result, cut), *body, *_footer(result)]
+    return [
+        *_header(script.name, recording, engine, commit, result, cut),
+        *body,
+        *_footer(result, recording_s),
+    ]
 
 
 def record_bakeoff(
@@ -99,11 +115,12 @@ def record_bakeoff(
     result: Replay,
     score: BakeoffScore,
     cut: str = "",
+    recording_s: float = 0.0,
 ) -> list[str]:
     """The record for the bake-off script: names, the nickname, rules words, false names
     and the everyday lines' word error rate."""
     head = _header(name, recording, engine, commit, result, cut)
-    return [*head, *bakeoff_record(score), *_footer(result)]
+    return [*head, *bakeoff_record(score), *_footer(result, recording_s)]
 
 
 def heard_lines(result: Replay) -> list[str]:

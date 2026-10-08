@@ -18,11 +18,18 @@ from unittest.mock import patch
 from dmbot.audio.segmenter import MAX_UTTERANCE_MS, Utterance
 from dmbot.devtools.replay import __main__ as replay_main
 from dmbot.devtools.replay import audio
-from dmbot.devtools.replay.report import history_entry, record
+from dmbot.devtools.replay.bakeoff import load_bakeoff, score_bakeoff
+from dmbot.devtools.replay.report import (
+    history_entry,
+    record,
+    record_bakeoff,
+    speech_share,
+)
 from dmbot.devtools.replay.run import (
     END_DELAY_MS,
     TWIN_GUILD,
     TWIN_SPEAKER,
+    Heard,
     Replay,
     TwinConsent,
     replay,
@@ -31,6 +38,7 @@ from dmbot.devtools.replay.score import align, score, words
 from dmbot.devtools.replay.script import Part, load_script, parse_script
 from dmbot.devtools.stt_bakeoff.data import NAMES as BAKEOFF_NAMES
 from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE
+from dmbot.transcription.base import MIN_UTTERANCE_S
 from dmbot.transcription.pipeline import QUEUE_SIZE
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "docs" / "test-scripts"
@@ -242,6 +250,45 @@ class ReportTests(unittest.TestCase):
         entry = history_entry(lines, title="dm-only.md", today=dt.date(2026, 10, 7))
         self.assertIn("2026-10-07  Twin run: dm-only.md\n", entry)
         self.assertIn("\n  part 2: 12 of 12 right\n", entry)
+
+    def test_speech_sent_against_the_recording_length(self) -> None:
+        script = load_script(SCRIPTS / "dm-only.md")
+        result = Replay(
+            heard=[
+                Heard(0, 20_000, "a", 0.0, 20.0),
+                Heard(30_000, 40_000, "b", 0.0, 9.75),
+                Heard(45_000, 45_250, None, 0.0, MIN_UTTERANCE_S),  # just long enough: sent
+                Heard(50_000, 50_240, None, 0.0, 0.24),  # too short to send: not paid for
+            ]
+        )
+        lines = record(
+            script=script, recording="x.m4a", engine="deepgram nova-3", commit="abc1234",
+            result=result, score=score(script, []), recording_s=120.0,
+        )  # fmt: skip
+        self.assertIn("speech sent: 30.0 s of a 120.0 s recording (25%)", lines)
+        self.assertAlmostEqual(result.speech_s, 30.24)  # the time line still counts them all
+
+    def test_the_bakeoff_record_has_it_too(self) -> None:
+        script = load_bakeoff(SCRIPTS / "stt-bakeoff.md")
+        result = Replay(heard=[Heard(0, 30_000, "a", 0.0, 30.0)])
+        lines = record_bakeoff(
+            name="stt-bakeoff", recording="x.m4a", engine="whisper", commit="abc1234",
+            result=result, score=score_bakeoff(script, ["a"]), recording_s=60.0,
+        )  # fmt: skip
+        self.assertIn("speech sent: 30.0 s of a 60.0 s recording (50%)", lines)
+
+    def test_no_speech_share_without_a_length(self) -> None:
+        script = load_script(SCRIPTS / "dm-only.md")
+        lines = record(
+            script=script, recording="x.m4a", engine="whisper", commit="abc1234",
+            result=Replay(), score=score(script, []),
+        )  # fmt: skip
+        self.assertFalse(any(line.startswith("speech sent") for line in lines))
+
+    def test_overlapping_lead_ins_can_pass_100_percent(self) -> None:
+        self.assertEqual(
+            speech_share(10.0, 10.5), "speech sent: 10.5 s of a 10.0 s recording (105%)"
+        )
 
 
 class IsolationTests(unittest.TestCase):
@@ -633,6 +680,22 @@ class CommitTests(unittest.TestCase):
             ):
                 self.assertEqual(replay_main.main(argv), 0)
             self.assertIn("commit: deadbee", history.read_text())
+
+    def test_the_speech_share_reaches_the_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            history = folder / "history.log"
+            argv = [str(CommandLineTests.wav(CommandLineTests(), folder)), "--script"]
+            argv += [str(SCRIPTS / "dm-only.md"), "--transcriber", "whisper-local"]
+            argv += ["--log", "--history", str(history)]
+            engine = ScriptedTranscriber(["Your story starts", "here"])
+            with (
+                patch.object(replay_main, "build_transcriber", return_value=engine),
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(replay_main.main(argv), 0)
+            # 2 s of audio; 400 ms pieces, the second with its 100 ms lead-in.
+            self.assertIn("speech sent: 0.9 s of a 2.0 s recording (45%)", history.read_text())
 
 
 class LeadInTests(unittest.TestCase):

@@ -146,6 +146,10 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
   looked into (#299).
 - An outside engine (`deepgram`, `cloud`) costs money: it runs only when `--transcriber`
   names it, and says first how much audio it sends and roughly what that costs.
+- **Speech sent (#523):** every record says how many seconds of speech went to the engine
+  (what an outside engine charges for) out of the recording's length, as a percentage.
+  Pieces the engine failed on still count. A read-aloud script is nearly all speech, so
+  this runs higher than at a real table.
 - **On the server:** run it from the host's venv, never inside the bot's container and never
   during a live session (speech-to-text competes with the bot). It holds the whole recording
   in memory, so keep to the one-minute scripts.
