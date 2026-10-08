@@ -1772,11 +1772,12 @@ class DMBot(commands.AutoShardedBot):
         self._redraw_fix_notes(table)
         if not self.consent.has_consent(guild_id, note.speaker):
             return fix_notes.STOPPED, allow  # their words aren't put back anywhere
-        await self._rewrite_line(
+        changed = await self._rewrite_line(
             table, note.speaker, note.started_ms, table.fix_notes.line_text(note)
         )
         md = discord.utils.escape_markdown
-        return fix_notes.done_text(md(note.fix.heard), md(note.fix.written)), allow
+        text = fix_notes.done_text(md(note.fix.heard), md(note.fix.written), line_kept=not changed)
+        return text, allow
 
     async def _rewrite_line(self, table: Table, speaker: int, started_ms: int, text: str) -> bool:
         """Change a line's words (#296, #503): saved, waiting to be saved, and in the

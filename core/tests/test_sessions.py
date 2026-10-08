@@ -1583,6 +1583,7 @@ class SaveAndResume(SessionTests):
         self.assertIn("Only this campaign's DM", answer)
         answer, allow = await self.bot.undo_fix(GUILD, note.id, DM)
         self.assertIn('"Hrothgarr" stays as heard', answer)
+        self.assertNotIn("couldn't be put back", answer)  # the waiting line was changed
         self.assertEqual(allow, (table.campaign_id, 3))  # "Allow again" takes it back
         self.assertEqual(memory.add_correction.await_args.kwargs["action"], "keep")
         self.assertEqual(memory.add_correction.await_args.args[2], "Hrothgarr")

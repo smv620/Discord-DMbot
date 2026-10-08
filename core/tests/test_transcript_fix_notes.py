@@ -20,6 +20,17 @@ def fixes(*, first_sure: bool = False) -> tuple[Fix, ...]:
     )
 
 
+class DoneTextTest(unittest.TestCase):
+    def test_says_when_the_line_itself_stays(self) -> None:
+        from dmbot.transcript.fix_notes import done_text
+
+        self.assertNotIn("couldn't", done_text("Hrothgarr", "Hrothgar"))
+        kept = done_text("Hrothgarr", "Hrothgar", line_kept=True)
+        self.assertTrue(
+            kept.endswith("That line couldn't be put back, so it still says **Hrothgar**.")
+        )
+
+
 class FixNotesTest(unittest.TestCase):
     def test_only_unsure_fixes_get_a_note(self) -> None:
         book = FixNotes()
