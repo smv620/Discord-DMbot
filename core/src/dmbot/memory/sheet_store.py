@@ -179,7 +179,8 @@ class SheetStore:
                 "SELECT e.campaign_id, c.name AS campaign_name, e.id, e.name"
                 " FROM memory_entities e JOIN campaigns c"
                 "  ON c.guild_id = e.guild_id AND c.id = e.campaign_id"
-                " WHERE e.guild_id = %s AND e.played_by = %s AND e.status = 'confirmed'"
+                " WHERE e.guild_id = %s AND e.played_by = %s"
+                "  AND e.status NOT IN ('merged', 'rejected')"
                 "  AND (%s::text IS NULL OR e.campaign_id = %s)"
                 " ORDER BY lower(c.name), lower(e.name), e.id",
                 (guild_id, user_id, campaign_id, campaign_id),
