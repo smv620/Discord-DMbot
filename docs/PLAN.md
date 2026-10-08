@@ -1535,6 +1535,10 @@ whether a member pays, so the plan and free-slot check happens only at Accept an
 shown only to the person offered ("you need a DMbot plan with a free campaign slot;
 pick one at the site, then press Accept again; the offer stays open for 7 days"), and
 the owner sees only that the offer was sent and nothing changes until they accept;**
+the campaign's #dm-screen notes an *accepted* offer (whose plan it uses now changed) and
+never a declined one, which under peek or open visibility would tell players who refused
+what; a campaign with no owner shows its DMs "Take it on", not a Hand over button that
+can only refuse (decided 2026-10-08 on #765);
 the bot checks membership when it delivers the private message and withdraws an offer it
 can't deliver, telling the owner; until the campaign count exists (part 3) "a free slot"
 means "a plan that works". *Offers made on the website (#690):* `offer_handover(...,
