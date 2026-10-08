@@ -875,9 +875,23 @@ class Lists(NamesTest):
         self.assertIn("goes to Anthropic", text)
         self.assertIn("right to use", text)
         offer = kw["view"]
+        store = self.bot.campaigns
+        self.assertEqual(await store.confirmations(GUILD, self.campaign.id), [])  # not yet
         it = self.it(MANAGER)
         it.edit_original_response = AsyncMock()
         await offer._read(it)
+        # #252: who confirmed the right to use it, when, and what for, kept with the
+        # campaign; a fingerprint of the text, never the text or the file's name.
+        from dmbot.campaigns.models import fingerprint
+
+        (row,) = await store.confirmations(GUILD, self.campaign.id)
+        self.assertEqual(
+            (row["user"], row["purpose"], row["fingerprint"]),
+            (str(MANAGER), "names_list", fingerprint(upload.text)),
+        )
+        self.assertNotIn("npcs", str(row))
+        elsewhere = await store.create(GUILD, "Strahd", DM)
+        self.assertEqual(await store.confirmations(GUILD, elsewhere.id), [])  # this one only
         system, sent = fake.complete.call_args.args
         self.assertIn("<document>", sent)
         self.assertIn("Leave out disguises", system)
@@ -889,6 +903,57 @@ class Lists(NamesTest):
         await preview["view"]._add(it)
         self.assertIn("Added 2 names", it.followup.send.call_args.args[0])
         self.assertIn("Ulfgar", await self.names())
+
+    async def test_nothing_is_recorded_without_the_press(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
+        for way_out in ("_cancel", "_as_is"):
+            with self.subTest(way_out=way_out):
+                it = self.it()
+                await name_lists.take_list(it, self.campaign.id, upload)
+                offer = it.response.sent[0][1]["view"]
+                it = self.it()
+                await getattr(offer, way_out)(it)
+        self.assertEqual(await self.bot.campaigns.confirmations(GUILD, self.campaign.id), [])
+
+    async def test_no_ai_reading_without_a_saved_confirmation(self) -> None:
+        from dmbot.ui import name_lists
+
+        fake: Any = SimpleNamespace(complete=AsyncMock())
+        self.bot.ai = fake
+        self.fresh()
+        it = self.it()
+        upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
+        await name_lists.take_list(it, self.campaign.id, upload)
+        offer = it.response.sent[0][1]["view"]
+        it = self.it()
+        it.edit_original_response = AsyncMock()
+        with (
+            patch.object(
+                self.bot.campaigns, "record_confirmation", AsyncMock(side_effect=OSError("db"))
+            ),
+            self.assertLogs("dmbot.ui.name_lists", "INFO") as logs,
+        ):
+            await offer._read(it)
+        fake.complete.assert_not_called()  # the IP rule: no record, no reading
+        self.assertIn("Nothing was added", it.edit_original_response.call_args.kwargs["content"])
+        self.assertFalse(any("confirmed" in line for line in logs.output))  # log agrees
+        # The campaign was deleted meanwhile: its own words, and still no reading.
+        from dmbot.campaigns.models import CampaignError
+
+        it = self.it()
+        await name_lists.take_list(it, self.campaign.id, upload)
+        offer = it.response.sent[0][1]["view"]
+        it = self.it()
+        it.edit_original_response = AsyncMock()
+        gone = CampaignError("That campaign doesn't exist in this server.")
+        with patch.object(self.bot.campaigns, "record_confirmation", AsyncMock(side_effect=gone)):
+            await offer._read(it)
+        fake.complete.assert_not_called()
+        self.assertEqual(it.edit_original_response.call_args.kwargs["content"], str(gone))
 
     async def test_ai_problems_say_nothing_was_added(self) -> None:
         from dmbot.ai import BUSY, AIError
