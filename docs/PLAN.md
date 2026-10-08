@@ -1619,6 +1619,13 @@ and stays a later browser extension in the DM's own session; never a password or
 on our side. Order: part A (link, snapshot, hints, unlink, fallback form; one developer,
 no table work), part B with phase 3 (the rules advisor reads the snapshot), part C later
 (the extension).
+*Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
+just to the character: if the DM gives the character to someone else, the old sheet is
+never shown to the new player (it shows only while that player still plays it). The
+player is told the truth about the link: DMbot shows it only to them and their DM, and it
+is also in the campaign's backup file. The 📜 button on the consent confirmation and the
+reminder is explained as optional and "doesn't change recording"; that sentence adds
+nothing anyone agrees to, so the consent terms version stays as it is.
 *Built, part A first half (#723, dev2):* the `character_sheets` table (one row per player
 character per campaign, its link and snapshot; its own table rather than columns on the
 entity, so a refresh is never in the undo log or the in-memory names), the allow-list
