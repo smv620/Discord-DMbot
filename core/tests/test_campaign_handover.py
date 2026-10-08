@@ -19,8 +19,10 @@ from dmbot.campaigns.store import (
     OFFER_WAITING,
     OWNER_STAYS,
 )
+from dmbot.db import Database, drop_schema
 from dmbot.entitlements import RENEWAL_SLACK_SECONDS
-from tests.pg import DatabaseTest
+from dmbot.schema import MIGRATIONS
+from tests.pg import TEST_URL, DatabaseTest
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 
 GUILD, OTHER_GUILD = 111, 222
@@ -166,6 +168,37 @@ class Offering(HandoverTest):
         offer = await self.offer()
         await self.store.delete(GUILD, self.campaign.id)
         self.assertIsNone(await self.store.get_offer(GUILD, offer, NOW))
+
+
+class Backfill(DatabaseTest):
+    """Migrations run with no server set; a backfill must still reach every row."""
+
+    async def test_offers_from_before_0025_count_as_sent(self) -> None:
+        before = [m for m in MIGRATIONS if m[0] < "0025"]
+        await self.db.close()  # start again from a schema as it was before 0025
+        await drop_schema(TEST_URL, self.schema)
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        store = CampaignStore(self.db, clock=lambda: NOW)
+        campaign = await store.create(GUILD, "Frostmaiden", OWNER)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "INSERT INTO campaign_handover_offers (guild_id, campaign_id, from_user_id,"
+                " to_user_id, from_name, to_name, created_at)"
+                " VALUES (%s, %s, %s, %s, 'Owner', 'Buyer', %s) RETURNING id",
+                (GUILD, campaign.id, OWNER, BUYER, NOW),
+            )
+            row = await cur.fetchone()
+            assert row is not None
+        await self.db.migrate()
+        offer = await store.get_offer(GUILD, int(row["id"]), NOW)
+        assert offer is not None
+        self.assertEqual(offer.delivered_at, NOW)
+        self.assertEqual(await store.undelivered_offers(GUILD, NOW), [])
+        async with self.db.unscoped() as conn:  # the opening is gone again
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
 
 
 class SiteDelivery(HandoverTest):

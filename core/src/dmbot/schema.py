@@ -519,7 +519,13 @@ HANDOVER_DELIVERED = """
     ALTER TABLE campaign_handover_offers
         ADD COLUMN delivered_at BIGINT,
         ADD COLUMN claimed_at   BIGINT;
+    -- Migrations run with no server set, so row-level security hides every row: open
+    -- the table to this one UPDATE (which also reads rows, hence FOR ALL), dropped again
+    -- inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON campaign_handover_offers
+        FOR ALL USING (true) WITH CHECK (true);
     UPDATE campaign_handover_offers SET delivered_at = created_at;
+    DROP POLICY migrate_backfill ON campaign_handover_offers;
     -- The bot's sweep when it starts listening: open offers not sent yet.
     CREATE INDEX campaign_handover_offers_undelivered
         ON campaign_handover_offers (guild_id)

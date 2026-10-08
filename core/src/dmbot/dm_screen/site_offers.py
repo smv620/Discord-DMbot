@@ -26,8 +26,7 @@ import discord
 
 from dmbot.campaigns import Campaign, offer_notify
 from dmbot.campaigns.models import HandoverOffer
-from dmbot.dm_screen.handover import NO_PINGS, deliver_offer
-from dmbot.dm_screen.handover import _md as md
+from dmbot.dm_screen.handover import NO_PINGS, deliver_offer, md
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
@@ -38,7 +37,8 @@ RECONNECT_DELAY_S = (1.0, 5.0, 30.0, 60.0)
 STEADY_S = 60.0
 SWEEP_EVERY_S = 3600.0
 
-# To the owner, when an offer they made on the website couldn't be sent.
+# To the owner, when an offer they made on the website couldn't be sent. Keep in step
+# with handover.UNREACHABLE (the same, for an offer made in Discord).
 NOT_SENT = (
     "Your offer of **{campaign}** (server **{server}**) to **{name}** wasn't sent, so DMbot "
     "took it back. They may have left the server, or they don't accept messages from "
@@ -191,7 +191,7 @@ class SiteOffers:
             return
         try:
             campaign = await self._store.get(guild.id, offer.campaign_id)
-            if campaign is None:  # deleted since (its offers go with it)
+            if campaign is None:  # deleted since: the offer went with it, no claim to let go
                 return
             reached = await self._deliver(guild, campaign, offer)
         except BaseException as exc:
