@@ -25,6 +25,12 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   the event loop). No migration. Deploy: rebuild core. Check: Add many with a line of 21
   other names says "line N: more than 20 other names. Put the rest on a new line...";
   Download all, then upload that file again: nothing is refused.
+- dev2, PR #670 (#52 part 1): the consent request and the per-session reminder say an
+  AI (Anthropic) reads the text to give the DM notes; terms version 2 -> 3. No migration.
+  Deploy with or before #678: rebuild core. Tell the table first: after the deploy,
+  everyone who said yes before is asked again and isn't recorded until they say yes.
+  Check: a player who agreed before gets the new request with a "What's new" note;
+  after they say yes, recording works as before.
 - dev2, PR #678 (#52 part 2): the off-topic filter. Clearly off-topic chat becomes
   "[1m 22s of off-topic chat skipped]" in the cleaned transcript and the live channel;
   As heard keeps every word. Migration 0024 adds topic and duration columns to
