@@ -161,8 +161,12 @@ class WordingTest(unittest.TestCase):
         kept = fixed_text("Marin", "Maren", line_kept=True)
         self.assertTrue(kept.endswith("Earlier lines stay as heard. That line stays as heard."))
         self.assertNotIn("That line", fixed_text("Marin", "Maren"))
-        kept = questions.undone_text("Marin", line_kept=True)  # #589
-        self.assertTrue(kept.endswith("couldn't be put back, so it still says the answer."))
+        kept = questions.undone_text("Marin", line_kept=True, written="Maren")  # #589
+        self.assertTrue(
+            kept.endswith(" That line couldn't be put back, so it still says **Maren**.")
+        )
+        unknown = questions.undone_text("Marin", line_kept=True)
+        self.assertTrue(unknown.endswith("so it still has your answer."))
         self.assertNotIn("couldn't", questions.undone_text("Marin"))
         gone = questions.undone_text("Marin", new_name=True)
         self.assertIn("again, and the new name is taken off 📝 Check new names. DMbot may", gone)

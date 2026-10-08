@@ -175,6 +175,8 @@ class UndoTest(unittest.IsolatedAsyncioTestCase):
                 await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
                 content = it.edit_original_response.await_args.kwargs["content"]
                 self.assertEqual("couldn't be put back" in content, said)
+                if said:  # names what the line still says, from the answer message
+                    self.assertIn("still says **Maren**", content)
 
     async def test_undo_takes_back_that_change(self) -> None:
         bot = self.bot()

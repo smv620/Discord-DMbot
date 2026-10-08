@@ -193,7 +193,10 @@ class NameAnswerUndoButton(
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=questions.undone_text(
-                    heard, new_name=questions.NEW_NAME in answer, line_kept=line_back is False
+                    heard,
+                    new_name=questions.NEW_NAME in answer,
+                    line_kept=line_back is False,
+                    written=_written(answer),
                 ),
                 view=None,
                 allowed_mentions=NO_PINGS,
@@ -201,6 +204,13 @@ class NameAnswerUndoButton(
 
 
 _QUOTED = re.compile(r'"([^"]+)"')
+_BOLD = re.compile(r"\*\*(.+?)\*\*")
+
+
+def _written(answer: str) -> str | None:
+    """The name an answer wrote ('… "Marin" is now written **Maren**, …'), as shown."""
+    found = _BOLD.search(answer)
+    return found.group(1) if found else None
 
 
 def _quoted(answer: str) -> str | None:
