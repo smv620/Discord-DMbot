@@ -685,3 +685,14 @@ class LeadInTests(unittest.TestCase):
             settings.assert_not_called()  # before any settings are read
         (piece,) = audio.pieces(tone(200) + silence(600) + tone(200), hangover_ms=-60)
         self.assertEqual(len(piece.frames) * audio.FRAME_MS, 400)  # no quiet kept, not most
+
+
+class LeadInDefaultTests(unittest.TestCase):
+    def test_the_command_line_sends_a_lead_in_by_default(self) -> None:
+        args = replay_main.parse_args(["x.wav", "--script", "s.md"])
+        self.assertEqual(args.lead_in_ms, audio.LEAD_IN_MS)
+        # pieces() itself sends none unless asked: only the command line has the default.
+        (piece,) = audio.pieces(silence(200) + tone(200))
+        self.assertEqual(piece.start_ms, 200)
+        off = replay_main.parse_args(["x.wav", "--script", "s.md", "--lead-in-ms", "0"])
+        self.assertEqual(off.lead_in_ms, 0)
