@@ -1152,6 +1152,7 @@ class SaveAndResume(SessionTests):
         self.addCleanup(setattr, self.bot, "topic_ai", self.bot.topic_ai)
         self.bot.topic_ai = SimpleNamespace(complete=complete)  # type: ignore[assignment]
         await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, DM)  # the DM speaks in some of these too
         table, _ = await self.joined_with_transcript()
         table.unsaved = TranscriptBuffer()
         self.addCleanup(setattr, self.bot, "transcripts", self.bot.transcripts)
@@ -1221,7 +1222,7 @@ class SaveAndResume(SessionTests):
         posted.edit.assert_awaited_once()  # one edit for the message, not one per line
         content = posted.edit.await_args.kwargs["content"]
         self.assertNotIn("boss", content)
-        self.assertEqual(content.count("of off-topic chat skipped]"), 2)
+        self.assertEqual(content.count("of off-topic chat skipped"), 2)  # brackets escaped
 
     async def test_table_talk_is_kept_everywhere(self) -> None:
         table = await self.filtered("1 table\n2 game")

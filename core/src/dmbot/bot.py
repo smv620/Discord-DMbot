@@ -296,6 +296,7 @@ class Table:
     topic_calls: int = 0
     topic_tokens: list[int] = field(default_factory=lambda: [0, 0])  # in, out
     topic_tasks: set[asyncio.Task[None]] = field(default_factory=set)  # awaited at the end
+    topic_timers: set[asyncio.Task[None]] = field(default_factory=set)  # cancelled then
     topic_failures: int = 0  # in a row: after a few, the filter rests a while
     topic_paused_until: float = 0.0  # monotonic seconds
     hidden: set[tuple[int, int]] = field(default_factory=set)  # lines shown as a marker
@@ -1667,19 +1668,26 @@ class DMBot(commands.AutoShardedBot):
         if table.topics.add(waiting, time.monotonic()):
             self._topic_task(table, self._label_topics(table, table.topics.take()))
         elif first:
-            self._topic_task(table, self._label_topics_later(table, table.topics.opened_at))
+            later = self._label_topics_later(table, table.topics.opened_at)
+            self._topic_task(table, later, timer=True)
         return True
 
-    def _topic_task(self, table: Table, work: Awaitable[None]) -> None:
+    def _topic_task(self, table: Table, work: Awaitable[None], *, timer: bool = False) -> None:
+        """Labelling runs in the background; the end of the session waits for it. A
+        timer (a window that may not fill) is only cancelled then: the last window is
+        labelled anyway."""
         task = self._track(work, "topics")
         if task is not None:
-            table.topic_tasks.add(task)
-            task.add_done_callback(table.topic_tasks.discard)
+            tasks = table.topic_timers if timer else table.topic_tasks
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
 
     async def _finish_topics(self, table: Table) -> None:
         """At the end of a session: wait (bounded) for windows still being labelled,
         then label the last one, so the names scan and the saved transcript see them.
         On shutdown there's no time: the waiting lines are kept as game talk."""
+        for timer in list(table.topic_timers):
+            timer.cancel()
         pending = [t for t in table.topic_tasks if not t.done()]
         if pending:
             await asyncio.wait(pending, timeout=TOPIC_CALL_TIMEOUT_S + 2)
