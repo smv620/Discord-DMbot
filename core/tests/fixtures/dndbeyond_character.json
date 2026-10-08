@@ -1,0 +1,87 @@
+{
+  "id": 1,
+  "success": true,
+  "message": "Character successfully received.",
+  "data": {
+    "id": 1,
+    "name": "Testa Placeholder",
+    "notes": {"backstory": "LEAK: a player's private backstory must never be kept."},
+    "decorations": {"avatarUrl": "https://example.invalid/avatar.png"},
+    "race": {
+      "fullName": "Test Species",
+      "description": "LEAK: species description text.",
+      "weightSpeeds": {"normal": {"walk": 30, "fly": 0}},
+      "racialTraits": [
+        {"definition": {"name": "Test Trait", "description": "LEAK: trait rules text."}}
+      ]
+    },
+    "classes": [
+      {
+        "level": 3,
+        "isStartingClass": true,
+        "definition": {"name": "Test Class", "description": "LEAK: class rules text."},
+        "subclassDefinition": {"name": "Test Subclass", "description": "LEAK: subclass text."},
+        "classFeatures": [
+          {"definition": {"name": "Test Feature", "description": "LEAK: feature rules text."}},
+          {"definition": {"name": "A name that is far too long to be the name of any feature at all really", "description": ""}}
+        ]
+      },
+      {
+        "level": 2,
+        "definition": {"name": "Second Class"},
+        "subclassDefinition": null,
+        "classFeatures": []
+      }
+    ],
+    "stats": [
+      {"id": 1, "value": 10}, {"id": 2, "value": 14}, {"id": 3, "value": 13},
+      {"id": 4, "value": 16}, {"id": 5, "value": 12}, {"id": 6, "value": 8}
+    ],
+    "bonusStats": [{"id": 1, "value": null}, {"id": 2, "value": 1}],
+    "overrideStats": [{"id": 6, "value": 11}],
+    "baseHitPoints": 28,
+    "bonusHitPoints": null,
+    "overrideHitPoints": null,
+    "modifiers": {
+      "race": [
+        {"type": "bonus", "subType": "intelligence-score", "value": 2},
+        {"type": "set-base", "subType": "darkvision", "value": 60},
+        {"type": "language", "subType": "common", "friendlySubtypeName": "Common"},
+        {"type": "language", "subType": "test-tongue", "friendlySubtypeName": "Test Tongue"}
+      ],
+      "class": [
+        {"type": "proficiency", "subType": "intelligence-saving-throws"},
+        {"type": "proficiency", "subType": "wisdom-saving-throws"},
+        {"type": "proficiency", "subType": "arcana"},
+        {"type": "expertise", "subType": "history"},
+        {"type": "proficiency", "subType": "light-armor"}
+      ],
+      "item": [
+        {"type": "bonus", "subType": "armor-class", "value": 1}
+      ],
+      "feat": []
+    },
+    "inventory": [
+      {"equipped": true, "definition": {"name": "Test Armour", "armorClass": 12, "armorTypeId": 1, "description": "LEAK: item rules text."}},
+      {"equipped": true, "definition": {"name": "Test Shield", "armorClass": 2, "armorTypeId": 4}},
+      {"equipped": false, "definition": {"name": "Spare Heavy Armour", "armorClass": 18, "armorTypeId": 3}},
+      {"equipped": false, "definition": {"name": "Test Rope"}}
+    ],
+    "feats": [
+      {"definition": {"name": "Test Feat", "description": "LEAK: feat rules text.", "snippet": "LEAK: snippet."}}
+    ],
+    "classSpells": [
+      {"characterClassId": 1, "spells": [
+        {"prepared": true, "definition": {"name": "Test Spell", "description": "LEAK: spell rules text.", "level": 1}},
+        {"prepared": false, "definition": {"name": "Other Test Spell", "description": "LEAK: more spell text."}}
+      ]}
+    ],
+    "spells": {
+      "race": [{"definition": {"name": "Species Test Spell"}}],
+      "class": [],
+      "item": [{"definition": {"name": "Test Spell"}}],
+      "feat": null
+    },
+    "characterValues": [{"typeId": 8, "value": "LEAK: a custom note."}]
+  }
+}
