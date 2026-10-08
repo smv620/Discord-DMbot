@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -189,7 +190,9 @@ class ConsentDMTests(DatabaseTest):
         await self.consent.grant(GUILD, PLAYER)
         await self.joined()
         assert "you said yes on <t:" in self.sent_text(self.player)
-        assert custom_ids(self.player.send.await_args.kwargs["view"]) == ["dmbot:consent:stop:1"]
+        stop, sheet = custom_ids(self.player.send.await_args.kwargs["view"])
+        assert stop == "dmbot:consent:stop:1"
+        assert re.fullmatch(r"dmbot:sheet:1:([0-9a-f]{32}|-)", sheet)  # this session's campaign
 
     async def age_consent(self, user_id: int) -> None:
         """Make a saved yes look as if it was given under older wording (#35)."""
@@ -487,7 +490,7 @@ class ConsentDMTests(DatabaseTest):
         assert str(PLAYER) in self.allowlists()[-1]
         edit = press.edit_original_response.await_args.kwargs
         assert "You said yes on <t:" in edit["content"]
-        assert custom_ids(edit["view"]) == ["dmbot:consent:stop:1"]
+        assert custom_ids(edit["view"]) == ["dmbot:consent:stop:1", "dmbot:sheet:1:-"]
         assert ":out" not in str(edit["view"].children[0].custom_id)
 
     async def test_consent_sticks_for_the_next_session(self) -> None:
@@ -669,4 +672,4 @@ class ConsentDMTests(DatabaseTest):
         await consent_give.callback(call)  # type: ignore[call-arg]
         args = call.followup.send.await_args
         assert "You said yes on <t:" in args.args[0]
-        assert custom_ids(args.kwargs["view"]) == ["dmbot:consent:stop:1"]
+        assert custom_ids(args.kwargs["view"]) == ["dmbot:consent:stop:1", "dmbot:sheet:1:-"]
