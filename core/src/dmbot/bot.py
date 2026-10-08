@@ -42,19 +42,19 @@ from dmbot.channel_access import (
 from dmbot.config import Settings
 from dmbot.consent import ConsentMethod, ConsentStore
 from dmbot.consent_dm import (
-    ALREADY_RECORDED,
+    CONSENT_BUTTONS,
     REASK_INTRO,
-    ConsentButton,
-    DeclineButton,
-    StopButton,
     confirmed_text,
+    menu_view,
+    not_recorded_text,
     reminder_text,
     renewed_text,
     request_text,
     request_view,
     send_prompt,
-    stop_view,
     unreachable_text,
+    warning_text,
+    warning_view,
 )
 from dmbot.db import Database
 from dmbot.dm_screen import (
@@ -475,7 +475,7 @@ class DMBot(commands.AutoShardedBot):
             NotNowButton,
         )
         # Consent buttons in private messages, likewise.
-        self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
+        self.add_dynamic_items(*CONSENT_BUTTONS)
         # "Check new names" on the DM screen after a session.
         self.add_dynamic_items(ReviewButton)
         # Undo after forgetting a name (its card), after a restart too.
@@ -593,6 +593,17 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             when = None  # saved; only the date for the reply is missing
         return when or int(time.time())
+
+    async def recorded(self, guild_id: int, user_id: int) -> bool:
+        """Whether they're recorded in this server now, for the ⚙️ Menu (Stop or I consent)
+        and the warning. Read from the database, right on a fresh process too; the cache
+        if that fails."""
+        try:
+            status = await self.consent.status(guild_id, [user_id])
+        except Exception:
+            log.exception("Couldn't look up consent in guild %s", guild_id)
+            return self.consent.has_consent(guild_id, user_id)
+        return user_id in status.granted
 
     def stop_recording(self, guild_id: int, user_id: int) -> None:
         """Stop capturing this player now, without waiting for anything.
@@ -727,7 +738,7 @@ class DMBot(commands.AutoShardedBot):
                 server = member.guild.name
                 if granted is not None and self.consent.has_consent(gid, member.id):
                     text = reminder_text(server, voice_name, granted, cloud=cloud, company=company)
-                    view = stop_view(gid, sheet=True, campaign_id=table.campaign_id)
+                    view = menu_view(gid, table.campaign_id)
                 else:
                     text = request_text(
                         server,
@@ -3039,7 +3050,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
     if granted is not None:
         await interaction.followup.send(
             confirmed_text(guild.name, granted),
-            view=stop_view(guild.id, sheet=True),
+            view=menu_view(guild.id),
             ephemeral=True,
         )
         return
@@ -3062,27 +3073,24 @@ async def consent_give(interaction: discord.Interaction) -> None:
     name="revoke", description="Stop DMbot from recording your voice in this server"
 )
 async def consent_revoke(interaction: discord.Interaction) -> None:
+    # One warning first, as from the ⚙️ Menu (#807): nothing stops until Yes, which stops
+    # at once and everywhere (consent_dm.StopYesButton).
     bot = _bot(interaction)
-    if interaction.guild is None:
+    guild = interaction.guild
+    if guild is None:
         await interaction.response.send_message("Use this in a server.", ephemeral=True)
         return
-    gid, uid = interaction.guild.id, interaction.user.id
-    bot.stop_recording(gid, uid)  # before anything that can be slow or fail
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    try:
-        await bot.withdraw_consent(gid, uid)
-    except Exception:
-        log.exception("Couldn't save a consent revoke in guild %s", gid)
-        await interaction.followup.send(
-            "DMbot has stopped recording you. It couldn't save this yet, so it might "
-            "record you again after a restart. Please run `/consent revoke` again in a "
-            "minute.",
-            ephemeral=True,
+    if not await bot.recorded(guild.id, interaction.user.id):
+        # Nothing to warn about. Clear anything left over all the same, quietly.
+        bot.stop_recording(guild.id, interaction.user.id)
+        await interaction.response.send_message(
+            not_recorded_text(guild.name), ephemeral=True, allowed_mentions=NO_PINGS
         )
+        with contextlib.suppress(Exception):
+            await bot.withdraw_consent(guild.id, interaction.user.id)
         return
-    await interaction.followup.send(
-        f"Done. DMbot won't record you anymore. {ALREADY_RECORDED}",
-        ephemeral=True,
+    await interaction.response.send_message(
+        warning_text(guild.name), view=warning_view(guild.id), ephemeral=True
     )
 
 
