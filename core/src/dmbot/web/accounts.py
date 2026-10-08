@@ -41,7 +41,7 @@ async def record_install(
     Returns "recorded", or "already_linked" when someone else is already the installer
     (DMbot is in the server either way; the first installer stays)."""
     async with db.user(user_id, install_guild=guild_id, session=session) as conn:
-        # The write contract (schema.py, migration 0013): someone else's install is left
+        # The write contract (schema.py, migration 0014): someone else's install is left
         # alone, quietly (no row comes back).
         cur = await conn.execute(
             "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
