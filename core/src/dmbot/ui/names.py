@@ -494,13 +494,7 @@ class AddNameForm(discord.ui.Modal, title="Add a name"):
 
 async def known_as(memory: MemoryStore, campaign: Campaign, name: str) -> str | None:
     """The confirmed entry already called `name` (by a name everyone may know), if any."""
-    key = name_key(name)
-    for a in await memory.aliases(campaign.guild_id, campaign.id):
-        if a.key == key and a.status == CONFIRMED:
-            entity = await memory.entity(campaign.guild_id, campaign.id, a.entity_id)
-            if entity is not None and entity.status == CONFIRMED:
-                return entity.name
-    return None
+    return await memory.confirmed_name_for(campaign.guild_id, campaign.id, name_key(name))
 
 
 def already_known(name: str, entry: str) -> str:

@@ -1471,7 +1471,8 @@ for this call" seam stays, pointing at the operator's keys.
 
 **Plans and pricing (owner decisions, 2026-10-07).** The plan belongs to one Discord user
 (the DM); every campaign has one owner whose hours and campaign count it uses; co-DMs
-need no plan; "Hand over this campaign" moves ownership to another subscriber. Hours are
+need no plan; "Hand over this campaign" offers ownership to another member of the
+server, who needs a working plan only to accept. Hours are
 DMbot's listening time, start to stop, rounded up to the minute, pooled per month, no
 roll-over. Every plan has every feature; only hours and campaigns differ, except that
 Try It has no backups or downloads. The site keeps the words in one place; the bot's
@@ -1515,7 +1516,8 @@ before this get their only DM as owner; one with several DMs
 has no owner until the first `/dmbot start` asks the DM who started it to take it on
 ("Take it on / Not now"; never guessed, since ownership spends someone's hours; once the
 plan checks are live, no owner means no start). A hand-over is an offer, never immediate:
-the new owner (any subscriber who is a member of that Discord server) gets a private
+the new owner (any member of that Discord server; their plan is checked only when they
+accept, and never shown to the owner) gets a private
 message with Accept / No thanks, also shown on their account page; ownership moves only
 on acceptance, and only if they still have a free campaign slot at that moment; the offer
 expires after 7 days and the old owner can withdraw it. On accepting they become a DM of
@@ -1591,10 +1593,13 @@ environment) so the owner can subscribe; no email sending yet. The public post h
 the message and date only; an optional "how to reach you" stays in the database with
 the message, never in the post, and the form says so. One post per IP per 10 minutes,
 2,000 characters, Turnstile. The page links to the repository and invites developers
-to open issues. The `feedback` table is add-only (the website's role inserts, never
-reads; the team reads it as the database's administrator), and the website's hourly
-sweep deletes rows after 12 months; the privacy page says so, and a post is taken down
-on request through the same page.
+to open issues. The page says, before Send, that the message is posted on GitHub where
+anyone can read and search it; the privacy page lists GitHub and says the "how to reach
+you" detail is kept with the message for a year, seen only by the team, and that a post
+is taken down on request through the same page (decided 2026-10-08 on #710). The
+`feedback` table is add-only (the website's role inserts, never reads; the team reads it
+as the database's administrator), and the website's hourly sweep deletes rows after 12
+months.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's

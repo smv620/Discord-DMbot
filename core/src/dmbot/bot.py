@@ -101,6 +101,7 @@ from dmbot.ears.protocol import (
 )
 from dmbot.ears.server import EarsServer
 from dmbot.logs import log_context, set_log_context
+from dmbot.memory import document_reader
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
@@ -481,6 +482,7 @@ class DMBot(commands.AutoShardedBot):
         if self._closing:  # SIGTERM and the normal exit can both call this
             return
         self._closing = True
+        document_reader.shutdown()  # files being read: end them, don't wait out their limit
         # Stopped sessions stop waiting for their last words and finish now (saving
         # first), alongside everything below.
         self.pipeline.stop_waiting()

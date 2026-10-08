@@ -251,6 +251,15 @@ class Caps(unittest.TestCase):
             "This list has more than 5,000 other names. Split it into two uploads.",
         )
 
+    def test_secret_names_count_toward_the_total_and_it_says_so(self) -> None:
+        names = [f"Kesh{chr(97 + i // 26)}{chr(97 + i % 26)}" for i in range(101)]
+        lines = [listed(n, 50, secret=True) for n in names[:100]]
+        lines.append(f"{names[100]} | npc | one more")
+        self.assertEqual(
+            too_many(run("\n".join(lines)), NAMES),
+            "This list has more than 5,000 other and secret names. Split it into two uploads.",
+        )
+
     def test_a_download_of_a_name_over_the_cap_uploads_again(self) -> None:
         # A campaign can already hold more (none today): its own file is never refused.
         others = [f"Bell{i}" for i in range(60)]
