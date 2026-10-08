@@ -710,3 +710,16 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     no session was live; .env already matched. Core rebuilt: "Database updated:
     0015_dm_screen_level", "Connected to 1 server(s)", "ears connected", no warnings.
     Not queued under Ready to deploy: deployed on the owner's question.
+
+==============================================================================
+2026-10-08  Server: deploy 46f7d5a (dev1, no test run)
+==============================================================================
+  - 04:05 UTC  development @ 46f7d5a: #505 (transcription follow-ups: bounded alert
+    posts, watched tasks, hint cache after the drain, #499), #525 (Type it… follow-ups,
+    #515), #529 (twin speech ratio, dev tool), #520 #521 #531 (website API and site
+    follow-ups, #497 #530; web-api still not started). No migrations (schema.py changed
+    comments only). Database backed up first (outside the repo; 25 tables); no session
+    was live; .env already matched. Core rebuilt: "Connected to 1 server(s)", "ears
+    connected", no warnings or errors.
+  - Correction to the 03:55 entry's checklist line: #512 is how much DMbot says in the
+    DM screen (quiet / normal / chatty), not a visibility setting.
