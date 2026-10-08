@@ -235,6 +235,11 @@ terminal output or Discord screenshots copied to it.
   comment saying why. RepoManager checks this on every PR.
 - Tests for every behaviour change. Pure logic (consent, protocol, buffering,
   rule matching) must be unit-testable without Discord or network access.
+- **A migration that changes rows must open row-level security for itself** (lesson from
+  #704, 2026-10-08): migrations run unscoped and every server table has forced RLS, so a
+  plain `UPDATE` silently matches nothing. Wrap it (`CREATE POLICY migrate_backfill … USING
+  (true) WITH CHECK (true); UPDATE …; DROP POLICY …`) and prove it with a test that migrates
+  a table holding rows.
 - **Database-backed tests run only where Postgres is:** core's session and store tests
   are skipped when no database is available, so a green local `pytest` proves little
   for that code. Read the CI core job on the PR's head commit before writing "tests

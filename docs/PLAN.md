@@ -1591,7 +1591,10 @@ environment) so the owner can subscribe; no email sending yet. The public post h
 the message and date only; an optional "how to reach you" stays in the database with
 the message, never in the post, and the form says so. One post per IP per 10 minutes,
 2,000 characters, Turnstile. The page links to the repository and invites developers
-to open issues.
+to open issues. The page says, before Send, that the message is posted on GitHub where
+anyone can read and search it; the privacy page lists GitHub and says the "how to reach
+you" detail is kept with the message for a year, seen only by the team, and that a post
+is taken down on request through the same page (decided 2026-10-08 on #710).
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's
