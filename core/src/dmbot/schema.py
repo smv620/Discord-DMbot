@@ -918,7 +918,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0020_campaign_owner", CAMPAIGN_OWNER),
     ("0021_campaign_handover_offers", HANDOVER_OFFERS),
     ("0022_handover_offer_names", HANDOVER_NAMES),
-    ("0023_transcript_topics", TRANSCRIPT_TOPICS),
+    ("0024_transcript_topics", TRANSCRIPT_TOPICS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
