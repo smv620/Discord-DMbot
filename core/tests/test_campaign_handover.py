@@ -345,7 +345,7 @@ class Confirming(HandoverTest):
             from_name="Owner", to_name="Buyer", delivered=False,
         )  # fmt: skip
 
-    async def test_open_or_taken_back_meanwhile(self) -> None:
+    async def test_taken_back_meanwhile_is_returned(self) -> None:
         offer = await self.site_offer()
         claimed = await self.store.claim_delivery(GUILD, offer.id, NOW)
         assert claimed is not None
@@ -355,6 +355,23 @@ class Confirming(HandoverTest):
         self.assertEqual(
             (now_it.status, now_it.message_id, now_it.delivered_at), ("withdrawn", 77, NOW + 1)
         )
+
+    async def test_an_accept_or_no_thanks_meanwhile_is_returned(self) -> None:
+        for status, answer in (("accepted", "accept_handover"), ("declined", "decline_handover")):
+            offer = await self.site_offer()
+            claimed = await self.store.claim_delivery(GUILD, offer.id, NOW)
+            assert claimed is not None
+            self.assertEqual(await getattr(self.store, answer)(GUILD, offer.id, BUYER, NOW), status)
+            now_it = await self.store.confirm_delivery(GUILD, claimed, NOW + 1, 88)
+            assert now_it is not None
+            stands = (now_it.status, now_it.delivered_at, now_it.message_id)
+            self.assertEqual(stands, (status, NOW + 1, 88), status)
+            if status == "accepted":  # hand it back, for the next offer
+                async with self.db.guild(GUILD) as conn:
+                    await conn.execute(
+                        "UPDATE campaigns SET owner_user_id = %s WHERE guild_id = %s AND id = %s",
+                        (OWNER, GUILD, self.campaign.id),
+                    )
 
     async def test_a_lapsed_claim_confirms_nothing(self) -> None:
         offer = await self.site_offer()
@@ -412,21 +429,33 @@ class Announcing(HandoverTest):
     async def test_an_accept_that_does_nothing_announces_nothing(self) -> None:
         # No room on their plan, not theirs, or past its days: nothing was decided.
         offer = await self.offer()
-        cases = (
-            lambda: self.store.accept_handover(GUILD, offer, OWNER, NOW, announce=True),  # gone
-            lambda: self.store.accept_handover(
-                GUILD, offer, BUYER, NOW + HANDOVER_SECONDS, announce=True
-            ),  # expired
-        )
-        for decide in cases:
+        results: list[object] = []
+
+        async def gone() -> None:  # not theirs to accept
+            results.append(
+                await self.store.accept_handover(GUILD, offer, OWNER, NOW, announce=True)
+            )
+
+        async def expired() -> None:
+            later = NOW + HANDOVER_SECONDS
+            results.append(
+                await self.store.accept_handover(GUILD, offer, BUYER, later, announce=True)
+            )
+
+        for decide in (gone, expired):
             self.assertEqual(await self.heard(decide), [])
+        self.assertEqual(results, ["gone", "gone"])
 
     async def test_no_room_announces_nothing(self) -> None:
         offer = await self.offer(to=NO_PLAN)
-        payloads = await self.heard(
-            lambda: self.store.accept_handover(GUILD, offer, NO_PLAN, NOW, announce=True)
-        )
-        self.assertEqual(payloads, [])
+        results: list[object] = []
+
+        async def no_room() -> None:
+            said = await self.store.accept_handover(GUILD, offer, NO_PLAN, NOW, announce=True)
+            results.append(said)
+
+        self.assertEqual(await self.heard(no_room), [])
+        self.assertEqual(results, ["no_free_slot"])
 
     async def test_the_bots_own_buttons_announce_nothing(self) -> None:
         offer = await self.offer()

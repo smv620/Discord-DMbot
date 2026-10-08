@@ -153,7 +153,9 @@ class SiteOffers:
             lambda: None,
             lambda ids: self._spawn(self.decided(*ids), "site-decision"),
             # Not yet: before Discord sends the server list, no server looks like ours,
-            # and a restart has that window every time. decided() waits, then checks.
+            # and a restart has that window every time. decided() waits, then checks. So
+            # before ready each answer (for any server) is one waiting task: bounded by
+            # how fast people click, and close() cancels them.
             ours_only=False,
         )
 
@@ -354,7 +356,8 @@ class SiteOffers:
             if now_it is not None and now_it.status != "open":
                 # Answered or taken back on the website while it was going out: then
                 # decided() saw it unsent and told only the owner. The message just sent
-                # has live buttons: say what happened instead (#797).
+                # has live buttons: say what happened instead (#797). In one narrow
+                # ordering decided() edits it too, with the same words: harmless.
                 try:
                     await _tell_decision(guild, now_it, campaign, tell_owner=False)
                 except Exception as exc:  # the offer was sent: say this part failed
