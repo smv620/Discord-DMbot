@@ -15,6 +15,11 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   Check in the next Test A (DMBOT_DEBUG_AUDIO=1): `dave: ...` lines around the first
   packet; on a failure "listening again (n of 5 this minute)" or "is sending audio but
   none of it can be heard", and the DM screen's audio % drops.
+- dev3, #697 (#671 stage 1): core only. No migration or setting. The DM screen's audio
+  warning now needs real loss: under 90% got through AND at least 2 s lost over a rolling
+  minute per person, counting only pieces long enough to be written down. Check: Test A
+  with a TV on gives no ⚠️ (the log line still shows "(audio gaps)"), and every DM line is
+  in the transcript. Stage 2 (#699, PR #718) follows.
 - CloudDev, PR #657 (#598): names reads never join names to entries (a freshly filled
   campaign's cold names load 1.4 s -> 0.08 s; Check new names' "sounds like" 2.6 s -> 8 ms).
   No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
