@@ -14,6 +14,12 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   (COMPOSE_PROFILES=web): it needs a domain, the Website API settings in .env and the
   go-live items on #498 first. No bot behaviour changes; core/ears now get the web
   secrets blanked in docker-compose.yml.
+- development @ 0618d7d (4ed3c52 is live; core only, rebuild core). Check:
+  - #509 (dev2, #503): on a "Did they mean…?" question, **Type it…** opens a form
+    pre-filled with the heard word; a typed known name fixes the line that was asked
+    about (store, buffer, and the channel message if within 30 s); a new name waits
+    in 📝 Check new names; Undo puts the line back.
+  - #501 (dev3, #299): twin sends 100 ms of lead-in by default; nothing live.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
