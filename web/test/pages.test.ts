@@ -103,6 +103,18 @@ describe("menu", () => {
     expect(html).toMatch(/<a href="\/pricing" aria-current="page"/);
   });
 
+  it("links to the questions from the menu and the front page", async () => {
+    const home = await container.renderToString(page("index.astro"), {
+      request: new Request("https://dmbot.example/"),
+    });
+    expect(home).toMatch(/<a href="\/pricing#questions"[^>]*>Q&amp;A<\/a>/);
+    expect(home).toMatch(/<a href="\/pricing#questions"[^>]*>Questions about plans and hours\? Read/);
+    const pricing = await container.renderToString(page("pricing.astro"), {
+      request: new Request("https://dmbot.example/pricing"),
+    });
+    expect(pricing).toMatch(/<section id="questions"/);
+  });
+
   // A static build renders /pricing as pricing.html, and the page sees that path.
   it.each([
     ["/pricing.html", "/pricing"],
