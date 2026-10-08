@@ -84,6 +84,7 @@ class ConfidenceTests(unittest.TestCase):
         self.assertIsNone(confidence_of("plain text"))
         self.assertIsNone(confidence_of(None))
         self.assertEqual(Transcript("hi", 0.5) + "!", "hi!")  # still a str
+        self.assertFalse(hasattr(Transcript("hi", 0.5), "__dict__"))  # light, kept per line
 
 
 class CheckTests(unittest.TestCase):
@@ -113,7 +114,8 @@ class CheckTests(unittest.TestCase):
         checker, ai = AudioChecker(), FakeAI("yes")
         lines = [("hmm", 0.7)]
         self.assertTrue(check(checker, due(lines), ai, 0).garbled)
-        self.assertEqual(check(checker, due(lines), ai, 30).how, "asked within the minute")
+        within = check(checker, due(lines), ai, 30)
+        self.assertEqual(within, Verdict(False, "asked within the minute"))
         self.assertTrue(check(checker, due(lines, user=2), ai, 30).garbled)  # someone else
         self.assertTrue(check(checker, due(lines), ai, AI_EVERY_S).garbled)
         self.assertEqual(len(ai.asked), 3)

@@ -26,6 +26,7 @@ class Transcript(str):
     confidence is lost as soon as the text is changed, which is fine: it's read on
     delivery (`confidence_of`)."""
 
+    __slots__ = ("confidence",)  # no dict per line: sessions keep many (table.heard)
     confidence: float | None
 
     def __new__(cls, text: str, confidence: float | None = None) -> Transcript:
