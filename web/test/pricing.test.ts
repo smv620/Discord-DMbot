@@ -177,8 +177,10 @@ describe("the words match the numbers", () => {
       "After your last game: 60 days on Try It, 6 months on Table, and 1 year on the other plans. If you stop paying, we keep it for 120 days. We message you on Discord 14 days and 3 days before anything is deleted.",
     );
     expect(answer("Can I give a campaign to someone else?")).toMatch(
-      /tap Hand over next to the campaign.*room for it/,
+      /Hand over.*7 days to say yes\. Nothing changes until they do/,
     );
+    // The owner is never told to judge whether someone pays (#437).
+    expect(answer("Can I give a campaign to someone else?")).not.toMatch(/plan|room/);
     expect(answer("Can I delete everything?")).toMatch(
       /^Yes, from My Account\. Your account and the campaigns you run go straight away\./,
     );

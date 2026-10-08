@@ -47,6 +47,11 @@ CI runs all of the above on every pull request. Never merge red CI.
   since the PR's last CI run, RepoManager merges `development` into the PR's branch and
   waits for green CI on that head; Supervisor's approval stands for a merge-of-development
   push that changes nothing else.
+  **RepoManager does that refresh itself** (2026-10-08, #516): when the merge of
+  `development` into an approved PR's branch is clean and the PR's own change is unchanged
+  (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
+  author round-trip. A conflict whose resolution touches the PR's own logic goes back to
+  the author and needs a fresh "approved".
 - Promotions (`development` → `beta`, `beta` → `main`) are PRs, opened only when the
   owner asks (through Supervisor); RepoManager opens and merges them.
 - One concern per PR. Link the GitHub issue it closes.
