@@ -1466,7 +1466,13 @@ website alike so the rules can't drift; the website may offer only to the campai
 other DMs who have a working plan (never a cross-person read of who in a server pays);
 the bot checks membership when it delivers the private message and withdraws an offer it
 can't deliver, telling the owner; until the campaign count exists (part 3) "a free slot"
-means "a plan that works". Campaigns are counted across servers through a `campaign_owners`
+means "a plan that works". A Try It plan may receive a hand-over if its one slot is free;
+the campaign then follows that plan (so, while on Try It, no backups or downloads). The
+website's database role gets only the narrow extra rights the account page needs, under
+restrictive policies (read and answer offers where the signed-in person is sender or
+recipient; move ownership and add the DM only for a campaign with an open offer to that
+person), never a wider grant; if that can't be written cleanly the API asks the bot over
+the internal link instead. Campaigns are counted across servers through a `campaign_owners`
 table (campaign, server, owner, active or paused) readable by the owner's user id like
 `entitlements`, never through a function that sees every server: row-level security stays
 the one rule. Cost basis for these prices: about $0.30 per table-hour (Deepgram Nova-3 clip

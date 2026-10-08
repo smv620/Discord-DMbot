@@ -144,9 +144,10 @@ FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after th
 IDLE_SWEEP_INTERVAL_S = 1
 NO_PINGS = discord.AllowedMentions.none()
 
+# For the DM: nothing they can do but wait (the server's log says why, #636).
 EARS_DOWN = (
-    "The voice service (ears) isn't connected. Start it from the `ears` folder "
-    "with `npm run dev`, then try again."
+    "I haven't started: I can't hear voice channels right now. "
+    "Try `/dmbot start` again in a few minutes."
 )
 
 
@@ -893,6 +894,8 @@ class DMBot(commands.AutoShardedBot):
     def start_blocker(self, guild_id: int) -> str | None:
         """Why `/dmbot start` can't begin right now, or None if it can."""
         if not self.ears.connected:
+            # Logged here too: if ears never connected, nothing else says so (#636).
+            log.warning("Can't start in server %s: ears isn't connected", guild_id)
             return EARS_DOWN
         table = self.tables.get(guild_id)
         if table is not None:

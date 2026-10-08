@@ -36,11 +36,14 @@ from dmbot.campaigns.models import (
     DEFAULT_TARGET,
     DM_SCREEN_LEVELS,
     DM_SCREEN_VISIBILITY,
+    HANDOVER_DAYS,
     HANDOVER_SECONDS,
     NAME_MAX,
+    NAME_ON_OFFER_MAX,
     Campaign,
     CampaignError,
     HandoverOffer,
+    HandoverStatus,
     check_dm_screen_level,
     check_dm_screen_visibility,
     check_rulesets,
@@ -281,6 +284,9 @@ _SETTABLE = frozenset(
 
 # Hand-over (#437 part 1b): plain words for the person who tried.
 NOT_THE_OWNER = "Only the campaign's owner can hand it over. Ask them to do it."
+NO_OWNER_YET = (
+    "This campaign has no owner yet. Run `/dmbot start` and take it on, then you can hand it over."
+)
 OFFER_TO_SELF = "This campaign is already yours. Pick someone else."
 NOT_A_SUBSCRIBER = (
     "They need a DMbot plan first. Ask them to sign in on the DMbot website and start one "
@@ -288,7 +294,7 @@ NOT_A_SUBSCRIBER = (
 )
 OFFER_WAITING = (
     "You already offered this campaign to someone. Withdraw that offer first, or wait: it "
-    "ends after 7 days."
+    f"ends after {HANDOVER_DAYS} days."
 )
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
@@ -497,10 +503,7 @@ class CampaignStore:
     async def remove_dm(self, guild_id: int, campaign_id: str, user_id: int) -> Campaign:
         async with self._db.guild(guild_id) as conn:
             # Lock the campaign row so two removals can't leave it with no DM.
-            await conn.execute(
-                "SELECT 1 FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
-                (guild_id, campaign_id),
-            )
+            await self._lock(conn, guild_id, campaign_id)
             campaign = await self._require(conn, guild_id, campaign_id)
             if user_id == campaign.owner_user_id:  # whose plan it uses (#437)
                 raise CampaignError(OWNER_STAYS)
@@ -578,10 +581,7 @@ class CampaignStore:
         async with self._db.guild(guild_id) as conn:
             # Lock the campaign first, as campaign-memory writes do, so the two can't
             # deadlock while the sections clear their rows.
-            await conn.execute(
-                "SELECT 1 FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
-                (guild_id, campaign_id),
-            )
+            await self._lock(conn, guild_id, campaign_id)
             await self._require(conn, guild_id, campaign_id)
             for section in self._sections.values():
                 await section.clear(conn, guild_id, campaign_id)
@@ -610,18 +610,34 @@ class CampaignStore:
     # first in each, like every other campaign write, so two can't cross.
 
     async def offer_handover(
-        self, guild_id: int, campaign_id: str, from_user_id: int, to_user_id: int, now: int
+        self,
+        guild_id: int,
+        campaign_id: str,
+        from_user_id: int,
+        to_user_id: int,
+        now: int,
+        *,
+        from_name: str,
+        to_name: str,
     ) -> HandoverOffer:
         """The owner offers the campaign to another subscriber, who accepts or not within
-        7 days. The caller checks the person offered is a member of this server, so
-        DMbot can message them. Raises CampaignError in plain words."""
-        if to_user_id == from_user_id:
-            raise CampaignError(OFFER_TO_SELF)
+        7 days. The names are the two people's display names now, kept on the offer for
+        the account page. The bot checks the person offered is in this server when it
+        delivers the offer, and withdraws it if they can't be reached (#437). Raises
+        CampaignError in plain words."""
+        names = _offer_name(from_name), _offer_name(to_name)
         async with self._db.guild(guild_id) as conn:
+            # The campaign lock is what keeps an old owner from offering again while an
+            # accept commits: their old offer is no longer open, so the one-open-offer
+            # index wouldn't stop a new one from someone who isn't the owner any more.
             await self._lock(conn, guild_id, campaign_id)
             campaign = await self._require(conn, guild_id, campaign_id)
+            if campaign.owner_user_id is None:
+                raise CampaignError(NO_OWNER_YET)
             if campaign.owner_user_id != from_user_id:
                 raise CampaignError(NOT_THE_OWNER)
+            if to_user_id == from_user_id:
+                raise CampaignError(OFFER_TO_SELF)
             if not await plan_works(conn, to_user_id, now):
                 raise CampaignError(NOT_A_SUBSCRIBER)
             # An open offer past its 7 days no longer counts: mark it, so the new one can
@@ -637,11 +653,13 @@ class CampaignStore:
                 raise CampaignError(OFFER_WAITING)
             try:  # the index is the last word, should a writer ever skip the lock
                 cur = await conn.execute(
-                    "INSERT INTO campaign_handover_offers"
-                    " (guild_id, campaign_id, from_user_id, to_user_id, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s) RETURNING *",
-                    (guild_id, campaign_id, from_user_id, to_user_id, now),
-                )
+                    "INSERT INTO campaign_handover_offers (guild_id, campaign_id,"
+                    " from_user_id, to_user_id, from_name, to_name, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                    (
+                        guild_id, campaign_id, from_user_id, to_user_id, *names, now,
+                    ),
+                )  # fmt: skip
             except pg_errors.UniqueViolation as exc:
                 raise CampaignError(OFFER_WAITING) from exc
             row = await cur.fetchone()
@@ -785,12 +803,12 @@ class CampaignStore:
             await self._decide(conn, offer.guild_id, offer.id, "expired", offer.expires_at)
 
     async def _decide(
-        self, conn: Conn, guild_id: int, offer_id: int, status: str, now: int
+        self, conn: Conn, guild_id: int, offer_id: int, status: HandoverStatus, decided_at: int
     ) -> None:
         await conn.execute(
             "UPDATE campaign_handover_offers SET status = %s, decided_at = %s"
             " WHERE guild_id = %s AND id = %s",
-            (status, now, guild_id, offer_id),
+            (status, decided_at, guild_id, offer_id),
         )
 
     async def _lock(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
@@ -867,10 +885,7 @@ class CampaignStore:
         info, sections = await asyncio.to_thread(self._checked, data)
         async with self._db.guild(guild_id) as conn:
             if replace_campaign_id is not None:
-                await conn.execute(
-                    "SELECT 1 FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
-                    (guild_id, replace_campaign_id),
-                )
+                await self._lock(conn, guild_id, replace_campaign_id)
                 existing = await self._require(conn, guild_id, replace_campaign_id)
                 if importer_id not in existing.dm_user_ids:
                     raise CampaignError("Only this campaign's DM can replace it with a backup.")
@@ -1056,6 +1071,15 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
     )
 
 
+def _offer_name(name: str) -> str:
+    """A display name kept on an offer: as shown, trimmed to fit. Callers always have
+    one (Discord's display name); an empty one is a mistake, not a name."""
+    clean = " ".join(name.split())[:NAME_ON_OFFER_MAX].rstrip()
+    if not clean:
+        raise ValueError("A hand-over offer needs both people's names")
+    return clean
+
+
 def _to_offer(row: dict[str, Any]) -> HandoverOffer:
     return HandoverOffer(
         id=int(row["id"]),
@@ -1064,7 +1088,9 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         from_user_id=int(row["from_user_id"]),
         to_user_id=int(row["to_user_id"]),
         created_at=int(row["created_at"]),
-        status=cast(Any, row["status"]),
+        from_name=row["from_name"],
+        to_name=row["to_name"],
+        status=cast(HandoverStatus, row["status"]),
         decided_at=row_int(row, "decided_at"),
     )
 

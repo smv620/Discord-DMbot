@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (deployed 70ac757 with #631's ears fix; Test A again next)
+Last updated: 2026-10-08 by dev1 (deployed 70ac757; Test A again passed; #651 to deploy)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,13 +9,17 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- dev3, #641 (#631): ears AND core (new "warning" status, both sides). No migration or
-  setting. Check: Test A with DMBOT_DEBUG_AUDIO=1 shows `dave: ...` lines around the first
-  packet; on a decrypt failure, "listening again (n of 5)" and the DM screen's audio % drops.
-- CloudDev, PR #644 (#437 part 1b, store half): hand-over offers table and store
-  methods; the owner can't be removed as a DM. Migration 0021 adds one new, empty table
-  (quick). Deploy: rebuild core. Check: `docker compose logs core` shows 0021 applied, no
-  new errors. Nothing a DM sees changes until the Discord side ships.
+- dev3, #651 (#645): ears AND core (the DM's "voice cut out" line). No migration or
+  setting. #641 (#631) is already live in 70ac757; this finishes it: a stream the voice
+  library ends while the speaker still sends now counts as lost and is listened to again.
+  Check in the next Test A (DMBOT_DEBUG_AUDIO=1): `dave: ...` lines around the first
+  packet; on a failure "listening again (n of 5 this minute)" or "is sending audio but
+  none of it can be heard", and the DM screen's audio % drops.
+- CloudDev, PR #657 (#598): names reads never join names to entries (a freshly filled
+  campaign's cold names load 1.4 s -> 0.08 s; Check new names' "sounds like" 2.6 s -> 8 ms).
+  No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
+  names answer as before; the `Built names for campaign` log line shows a small database
+  time.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -178,13 +182,12 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     of it can be heard"; the DM screen shows a warning and its audio % drops
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test A (2026-10-08 05:43), DM alone on a phone, Deepgram: FAIL (#631)
+LATEST RESULT: Test A again (2026-10-08 07:01), DM alone, Deepgram: PASS
 ------------------------------------------------------------------------------
-  /dmbot start, consent and /dmbot stop worked; no transcript line. ears dropped the
-  DM's audio on its first packets: "Failed to decrypt: DecryptionFailed(
-  UnencryptedWhenPassthroughDisabled)" (DAVE), 0 s sent to Deepgram, yet the capture
-  check said audio 100%. Fix #641 deployed 06:44. Next: Test A again
-  (docs/next-test-step.md), phone then computer. Previous result: run 7 (2026-10-06), PASS, audio 100%.
+  On 70ac757 (#641 live). Audio 145/145, 3.0 s sent, no Discord-side problems. ears:
+  one failed packet at the start, then decryption recovered by itself (DAVE commit at
+  transition 0 came 12 s before the DM spoke). The 05:43 failure (#631) didn't repeat.
+  Previous: Test A (05:43) FAIL, nothing written down (#631).
 
 Open issues from testing
   #631 DAVE decrypt error drops all of a speaker's audio (Test A)
