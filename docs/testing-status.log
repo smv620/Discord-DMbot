@@ -45,6 +45,10 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 - CloudDev, PR #668 (#652, #437): hand-over offers keep both people's names. Migration
   0022 adds two columns to the (still empty) offers table: quick. Deploy: rebuild core.
   Check: `docker compose logs core` shows 0022 applied, no new errors.
+- CloudDev, PR #637 (#595): a command, button, menu or form that breaks now tells the
+  person privately ("Something broke on DMbot's side… Try once more") and logs the
+  cause, instead of leaving "thinking…". No migration. Deploy: rebuild core. Check:
+  /dmbot names works as before.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
