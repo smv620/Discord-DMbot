@@ -36,6 +36,10 @@ DM_SCREEN_LEVELS: dict[str, str] = {
 DM_SCREEN_LEVELS_OFFERED = (QUIET, NORMAL)
 DEFAULT_DM_SCREEN_LEVEL = NORMAL
 
+# What a DM confirmed the right to use shared material for (CLAUDE.md, IP rule; #252).
+NAMES_LIST, SHARED_STORY, RULEBOOK = "names_list", "shared_story", "rulebook"
+CONFIRMATION_PURPOSES = (NAMES_LIST, SHARED_STORY, RULEBOOK)
+
 DEFAULT_TARGET = "2024"
 DEFAULT_FALLBACK = "2014"
 

@@ -870,9 +870,21 @@ class Lists(NamesTest):
         self.assertIn("goes to Anthropic", text)
         self.assertIn("right to use", text)
         offer = kw["view"]
+        store = self.bot.campaigns
+        self.assertEqual(await store.confirmations(GUILD, self.campaign.id), [])  # not yet
         it = self.it(MANAGER)
         it.edit_original_response = AsyncMock()
         await offer._read(it)
+        # #252: who confirmed the right to use it, when, and what for, kept with the
+        # campaign; a fingerprint of the text, never the text or the file's name.
+        from dmbot.campaigns.store import fingerprint
+
+        (row,) = await store.confirmations(GUILD, self.campaign.id)
+        self.assertEqual(
+            (row["user"], row["purpose"], row["fingerprint"]),
+            (str(MANAGER), "names_list", fingerprint(upload.text)),
+        )
+        self.assertNotIn("npcs", str(row))
         system, sent = fake.complete.call_args.args
         self.assertIn("<document>", sent)
         self.assertIn("Leave out disguises", system)
@@ -884,6 +896,28 @@ class Lists(NamesTest):
         await preview["view"]._add(it)
         self.assertIn("Added 2 names", it.followup.send.call_args.args[0])
         self.assertIn("Ulfgar", await self.names())
+
+    async def test_no_ai_reading_without_a_saved_confirmation(self) -> None:
+        from dmbot.ui import name_lists
+
+        fake: Any = SimpleNamespace(complete=AsyncMock())
+        self.bot.ai = fake
+        self.fresh()
+        it = self.it()
+        upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
+        await name_lists.take_list(it, self.campaign.id, upload)
+        offer = it.response.sent[0][1]["view"]
+        it = self.it()
+        it.edit_original_response = AsyncMock()
+        with (
+            patch.object(
+                self.bot.campaigns, "record_confirmation", AsyncMock(side_effect=OSError("db"))
+            ),
+            self.assertLogs("dmbot.ui.name_lists", "ERROR"),
+        ):
+            await offer._read(it)
+        fake.complete.assert_not_called()  # the IP rule: no record, no reading
+        self.assertIn("Nothing was added", it.edit_original_response.call_args.kwargs["content"])
 
     async def test_ai_problems_say_nothing_was_added(self) -> None:
         from dmbot.ai import BUSY, AIError

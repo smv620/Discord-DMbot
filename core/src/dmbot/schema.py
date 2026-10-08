@@ -458,6 +458,24 @@ MEMORY_HEARD = f"""
     """ + _isolate("memory_heard")
 
 
+SHARED_CONFIRMATIONS = f"""
+    -- Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule:
+    -- "Record who confirmed and when"; #252): one row per confirmation, what it was for
+    -- (a names list now; later a shared story or a rulebook), and a SHA-256 fingerprint
+    -- of the text that tells documents apart. Never the text or the file's name.
+    -- Deleted with the campaign; carried in its backups.
+    CREATE TABLE shared_confirmations (
+        {_memory_scope()}
+        id           TEXT NOT NULL,
+        user_id      BIGINT NOT NULL,
+        purpose      TEXT NOT NULL CHECK (purpose IN ('names_list', 'shared_story', 'rulebook')),
+        fingerprint  TEXT NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{{64}}$'),
+        confirmed_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id)
+    );
+    """ + _isolate("shared_confirmations")
+
+
 def _isolate_user(table: str) -> str:
     """Row-level security for a person's own rows (website accounts, #435): only the
     signed-in user's rows are visible or writable. Set by Database.user()."""
@@ -831,6 +849,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0016_web_role_limits", WEB_ROLE_LIMITS),
     ("0017_try_it_bare_id", TRY_IT_BARE_ID),
     ("0018_payment_event_subscription", PAYMENT_EVENT_SUBSCRIPTION),
+    ("0019_shared_confirmations", SHARED_CONFIRMATIONS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -845,6 +864,7 @@ ISOLATED_TABLES = (
     "transcript_sessions",
     "transcript_lines",
     "memory_heard",
+    "shared_confirmations",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

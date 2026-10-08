@@ -23,6 +23,7 @@ import discord
 from dmbot import fetch
 from dmbot.ai import AIError, AnthropicClient, Reply
 from dmbot.campaigns import Campaign
+from dmbot.campaigns.models import NAMES_LIST
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
     CONFIRMED,
@@ -650,13 +651,18 @@ class AIOffer(_Menu):
                 allowed_mentions=NO_PINGS,
             )
             # The IP rule (CLAUDE.md): who confirmed the right to use it, and when. The
-            # file's name stays out of the log (it may hold names); a short fingerprint
-            # tells documents apart.
+            # file's name stays out of the log and the record (it may hold names); a
+            # fingerprint tells documents apart.
             log.info(
                 "Shared material confirmed for AI reading: user=%s campaign=%s doc=%s",
                 interaction.user.id,
                 campaign.id,
                 hashlib.sha256(self.upload.text.encode()).hexdigest()[:12],
+            )
+            # A lasting record, kept with the campaign (#252). Before the AI reads
+            # anything: if it can't be saved, nothing is read.
+            await _bot(interaction).campaigns.record_confirmation(
+                guild, campaign.id, interaction.user.id, NAMES_LIST, self.upload.text
             )
             secrets = sees_secrets(campaign, interaction.user.id)
             async with asyncio.timeout(AI_TIME_LIMIT_S):

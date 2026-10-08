@@ -506,6 +506,53 @@ class DMScreenLevel(StoreTest):
         self.assertEqual(replaced.dm_screen_level, "normal")  # restore keeps the backup's
 
 
+class SharedConfirmations(StoreTest):
+    """Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule;
+    #252)."""
+
+    async def test_recorded_with_a_fingerprint_only(self) -> None:
+        from dmbot.campaigns.store import fingerprint
+
+        c = await self.make("A")
+        await self.store.record_confirmation(GUILD_A, c.id, DM, "names_list", "Ulfgar lives.")
+        (row,) = await self.store.confirmations(GUILD_A, c.id)
+        self.assertEqual(
+            (row["user"], row["purpose"], row["fingerprint"], row["at"]),
+            (str(DM), "names_list", fingerprint("Ulfgar lives."), int(self.clock())),
+        )
+        self.assertNotIn("Ulfgar", str(row))  # never the text
+        with self.assertRaises(ValueError):
+            await self.store.record_confirmation(GUILD_A, c.id, DM, "anything", "x")
+
+    async def test_another_server_or_campaign_sees_none(self) -> None:
+        c = await self.make("A")
+        other = await self.make("B")
+        await self.store.record_confirmation(GUILD_A, c.id, DM, "names_list", "x")
+        self.assertEqual(await self.store.confirmations(GUILD_A, other.id), [])
+        with self.assertRaisesRegex(CampaignError, "doesn't exist in this server"):
+            await self.store.confirmations(GUILD_B, c.id)
+        with self.assertRaisesRegex(CampaignError, "doesn't exist in this server"):
+            await self.store.record_confirmation(GUILD_B, c.id, DM, "names_list", "x")
+
+    async def test_backups_carry_them_and_a_damaged_one_is_refused(self) -> None:
+        c = await self.make("A")
+        await self.store.record_confirmation(GUILD_A, c.id, DM, "names_list", "x")
+        backup = await self.store.export(GUILD_A, c.id)
+        (saved,) = backup["sections"]["confirmations"]
+        restored = await self.store.import_backup(GUILD_B, backup, DM2)
+        self.assertEqual(await self.store.confirmations(GUILD_B, restored.id), [saved])
+        for field, bad in [("user", "x"), ("purpose", "other"), ("fingerprint", "abc"),
+                           ("at", True), ("id", "")]:  # fmt: skip
+            with self.subTest(field=field):
+                damaged = json.loads(json.dumps(backup))
+                damaged["sections"]["confirmations"][0][field] = bad
+                with self.assertRaisesRegex(CampaignError, "damaged"):
+                    await self.store.import_backup(GUILD_B, damaged, DM)
+        old = json.loads(json.dumps(backup))
+        del old["sections"]["confirmations"]  # made before #252
+        await self.store.import_backup(GUILD_B, old, DM)
+
+
 class DeleteAndChildRows(StoreTest):
     async def count(self, guild: int, table: str) -> int:
         async with self.db.guild(guild) as conn:
@@ -519,9 +566,10 @@ class DeleteAndChildRows(StoreTest):
     async def test_delete_removes_everything(self) -> None:
         c = await self.make("A")
         await self.store.set_optional_rule(GUILD_A, c.id, "xge-sleep", False)
+        await self.store.record_confirmation(GUILD_A, c.id, DM, "names_list", "x")
         await self.store.delete(GUILD_A, c.id)
         self.assertIsNone(await self.store.get(GUILD_A, c.id))
-        for table in ("campaign_dms", "campaign_optional_rules"):
+        for table in ("campaign_dms", "campaign_optional_rules", "shared_confirmations"):
             self.assertEqual(await self.count(GUILD_A, table), 0, table)
 
     async def test_child_rows_cannot_point_at_another_servers_campaign(self) -> None:
