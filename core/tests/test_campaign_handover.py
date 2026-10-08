@@ -277,7 +277,7 @@ class SiteDelivery(HandoverTest):
         self.assertEqual((claimed.claimed_at, claimed.delivered_at), (NOW + 5, None))
         self.assertIsNone(await self.store.claim_delivery(GUILD, offer.id, NOW + 6))
         self.assertEqual(await self.store.undelivered_offers(GUILD, NOW + 6), [])
-        await self.store.confirm_delivery(GUILD, claimed, NOW + 7)
+        await self.store.confirm_delivery(GUILD, claimed, NOW + 7, 98)
         sent = await self.store.get_offer(GUILD, offer.id, NOW + 7)
         assert sent is not None
         self.assertEqual(sent.delivered_at, NOW + 7)
@@ -374,6 +374,16 @@ class Ending(HandoverTest):
         await self.make_offer(GUILD, self.campaign.id, OWNER, CO_DM, later)  # expires `old`
         # (the new one is still open: only `old` has ended)
         self.assertEqual([o.id for o in await self.store.offers_to_end(GUILD, later)], [old])
+
+    async def test_two_claims_of_one_notice_at_once_tell_once(self) -> None:
+        offer = await self.offer()
+        later = NOW + HANDOVER_SECONDS
+        await self.store.offers_to_end(GUILD, later)
+        both = await asyncio.gather(
+            self.store.claim_end_notice(GUILD, offer, later),
+            self.store.claim_end_notice(GUILD, offer, later + 1),
+        )
+        self.assertEqual(sorted(both), [False, True])
 
     async def test_answered_or_taken_back_offers_are_never_announced(self) -> None:
         offer = await self.offer()
