@@ -24,7 +24,9 @@ class LevelsTest(unittest.TestCase):
 
     def test_plain_words(self) -> None:
         self.assertIn("only what you ask for", DM_SCREEN_LEVELS["quiet"])
-        self.assertIn("questions and fixes, one at a time", DM_SCREEN_LEVELS["normal"])
+        self.assertIn("shows its fixes, one at a time", DM_SCREEN_LEVELS["normal"])
+        self.assertIn("fewer misheard names get fixed", DM_SCREEN_LEVELS["quiet"])
+        self.assertIn("the same as Normal for now", DM_SCREEN_LEVELS["chatty"])
         self.assertIn("also tells you what it noticed", DM_SCREEN_LEVELS["chatty"])
 
 

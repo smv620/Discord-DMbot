@@ -88,11 +88,12 @@ class Wording(unittest.TestCase):
         self.assertEqual(shorten("  a   b ", 10), "a b")
 
     def test_settings_summary_is_plain(self) -> None:
-        text = "\n".join(settings_summary("2024", "none", False, "private"))
+        text = "\n".join(settings_summary("2024", "none", False, "private", "normal"))
         self.assertIn("2024 rules (newest)", text)
         self.assertIn("skip it, use only the main rules", text)
         self.assertIn(
-            "use the 2014 rules (older)", "\n".join(settings_summary("2024", "2014", True, "peek"))
+            "use the 2014 rules (older)",
+            "\n".join(settings_summary("2024", "2014", True, "peek", "normal")),
         )
         self.assertIn("off", text)
         self.assertIn("Only the DM", text)
@@ -143,13 +144,24 @@ class MenuChoices(unittest.TestCase):
     def test_the_summary_starts_each_line_like_its_buttons(self) -> None:
         from dmbot.ui.logic import settings_summary
 
-        lines = settings_summary("2024", "2014", True, "peek")
+        lines = settings_summary("2024", "2014", True, "peek", "normal")
         for line, words in zip(
             lines,
             ("Main rules", "If missing", "Optional rules", "DM screen", "DMbot says"),
             strict=True,
         ):
             self.assertTrue(line.startswith(f"• **{words}"), line)
+
+    def test_the_summary_says_what_each_level_does(self) -> None:
+        from dmbot.ui.logic import settings_summary
+
+        quiet = settings_summary("2024", "2014", True, "peek", "quiet")[-1]
+        self.assertIn("fewer misheard names get fixed", quiet)
+        self.assertIn("always show", quiet)
+        self.assertIn("never out loud", quiet)
+        self.assertIn(
+            "Normal (recommended)", settings_summary("2024", "2014", True, "peek", "normal")[-1]
+        )
 
     def test_campaign_names_are_cut_for_a_phone(self) -> None:
         from dmbot.ui.logic import NAME_LABEL_MAX, name_label

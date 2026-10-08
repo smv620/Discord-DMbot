@@ -1509,15 +1509,16 @@ class DMBot(commands.AutoShardedBot):
         table.totals.add_utterance(utterance)
         cleaned = text
         if text and table.name_lookup is not None:
-            result = self._clean(table, text)
+            # Fixes DMbot isn't sure of are never silent: made only when the DM screen
+            # shows them with Undo (a running session, not quiet; #296, #504).
+            noted = self.tables.get(table.guild_id) is table and screen_levels.allows(
+                table.screen_level, screen_levels.FIX_NOTE
+            )
+            result = self._clean(table, text, unsure=noted)
             cleaned = result.text
             self._offer_question(table, utterance.user_id, utterance.start_ms, text, result)
-            running = self.tables.get(table.guild_id) is table  # not one still finishing
-            shown = screen_levels.allows(table.screen_level, screen_levels.FIX_NOTE)
-            if (
-                running
-                and shown
-                and table.fix_notes.add(utterance.user_id, utterance.start_ms, text, result.fixes)
+            if noted and table.fix_notes.add(
+                utterance.user_id, utterance.start_ms, text, result.fixes
             ):
                 self._redraw_fix_notes(table)
             named = mentions(table.name_lookup, cleaned)  # once per name per line
@@ -1545,10 +1546,10 @@ class DMBot(commands.AutoShardedBot):
                 utterance.start_ms,
             )
 
-    def _clean(self, table: Table, heard: str) -> Cleaned:
+    def _clean(self, table: Table, heard: str, *, unsure: bool) -> Cleaned:
         """The line with misheard names fixed (#127), from the campaign's names as last
-        loaded; as heard if cleaning fails. No await: the consent check just made still
-        holds."""
+        loaded; as heard if cleaning fails. `unsure`: also fixes from names DMbot only
+        suggested (shown with Undo). No await: the consent check just made still holds."""
         assert table.name_lookup is not None
         try:
             result = clean(
@@ -1557,8 +1558,7 @@ class DMBot(commands.AutoShardedBot):
                 vocabulary=table.vocabulary,
                 people=table.people,
                 scene=table.scene.scene(time.monotonic()).keys(),
-                # Not shown with Undo at quiet: then not made at all (never silent).
-                unsure=screen_levels.allows(table.screen_level, screen_levels.FIX_NOTE),
+                unsure=unsure,
             )
         except Exception:
             now = time.monotonic()
@@ -1579,12 +1579,12 @@ class DMBot(commands.AutoShardedBot):
         answered any more."""
         if self.tables.get(table.guild_id) is not table or table.name_lookup is None:
             return
-        if not screen_levels.allows(table.screen_level, screen_levels.QUESTION):
-            return  # quiet: the words stay as heard
         now = time.monotonic()
         expired = table.questions.expire(now)
         if expired is not None:
             self._track(self._close_question(table, self._not_answered(table, expired)), "q")
+        if not screen_levels.allows(table.screen_level, screen_levels.QUESTION):
+            return  # quiet: the words stay as heard (after expiring any still open)
         if not result.questions:
             return
         lookup, scene = table.name_lookup, table.scene.scene(now)

@@ -2,10 +2,11 @@
 Pure: no Discord, no database.
 
 A campaign setting: **Quiet** (only what you ask for), **Normal** (the default:
-questions and fixes, one at a time) or **Chatty** (also what it noticed). Every post DMbot
-makes on its own to the DM screen asks `allows` first, with what kind of post it is.
-Alerts (transcription stopped or working again, hours warnings) are shown at every
-level: the DM needs them to know the bot is working.
+questions and fixes, one at a time) or **Chatty** (also what it noticed). Every post that
+a level can turn off (questions, fix notes, notices) asks `allows` first, with its kind.
+Alerts (transcription stopped or working again, hours warnings) always post and don't
+ask: the DM needs them to know the bot is working. The level is read when a session
+starts; a later way to change it mid-session must update the running table too.
 """
 
 from __future__ import annotations

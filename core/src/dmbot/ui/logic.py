@@ -11,7 +11,7 @@ from collections.abc import Collection, Iterable
 from datetime import UTC, datetime
 
 from dmbot.campaigns import DM_SCREEN_VISIBILITY, FALLBACK_NONE, RULESETS, Campaign
-from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL, DM_SCREEN_LEVELS
+from dmbot.campaigns.models import DM_SCREEN_LEVELS
 from dmbot.transcription.config import Engine
 
 # Discord limits.
@@ -128,7 +128,7 @@ def settings_summary(
     fallback: str,
     optional_rules: bool,
     visibility: str,
-    level: str = DEFAULT_DM_SCREEN_LEVEL,
+    level: str,
 ) -> list[str]:
     """The settings in full, in the message above the buttons (message text wraps on a
     phone; buttons don't). Each line starts with the words its buttons start with."""
@@ -139,8 +139,9 @@ def settings_summary(
         f"all {'on' if optional_rules else 'off'} "
         "(pick which ones later with `/dmbot optionalrules`)",
         f"• **DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
-        f"• **DMbot says:** {DM_SCREEN_LEVELS.get(level, level)}. Warnings, like "
-        "speech-to-text stopping, always show.",
+        f"• **DMbot says** (in the DM screen, never out loud): "
+        f"{DM_SCREEN_LEVELS.get(level, level)}. Warnings, like DMbot no longer hearing the "
+        "table, always show. For now this can't be changed after the campaign is made.",
     ]
 
 

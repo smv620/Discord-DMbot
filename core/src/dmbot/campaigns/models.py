@@ -27,9 +27,9 @@ DEFAULT_DM_SCREEN_VISIBILITY = "peek"
 # How much DMbot says in the DM screen (docs/PLAN.md, "How much DMbot says"; #504).
 QUIET, NORMAL, CHATTY = "quiet", "normal", "chatty"
 DM_SCREEN_LEVELS: dict[str, str] = {
-    QUIET: "Quiet: only what you ask for",
-    NORMAL: "Normal: questions and fixes, one at a time (recommended)",
-    CHATTY: "Chatty: also tells you what it noticed",
+    QUIET: "Quiet: only what you ask for, so fewer misheard names get fixed",
+    NORMAL: "Normal (recommended): asks about names it misheard and shows its fixes, one at a time",
+    CHATTY: "Chatty: the same as Normal for now. Later it also tells you what it noticed",
 }
 DEFAULT_DM_SCREEN_LEVEL = NORMAL
 
@@ -104,4 +104,4 @@ def check_dm_screen_visibility(value: str) -> None:
 
 def check_dm_screen_level(value: str) -> None:
     if value not in DM_SCREEN_LEVELS:
-        raise CampaignError("Please pick how much DMbot says from the list.")
+        raise CampaignError("Please tap one of the DMbot says buttons.")

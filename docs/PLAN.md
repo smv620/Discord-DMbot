@@ -478,16 +478,18 @@ changing it from the DM screen's settings comes later). Backups carry it, and a 
 uses the backup's (older backups: Normal).
 | Level | What DMbot posts on its own |
 |---|---|
-| **Quiet** | Only what you ask for, plus warnings |
+| **Quiet** | Only what you ask for, plus warnings (so fewer misheard names get fixed) |
 | **Normal** (default) | Also questions and fixes, one at a time: "Did they mean…?" and ✏️ Name fixes to check |
 | **Chatty** | Also what it noticed (reserved: behaves like Normal until something uses it) |
 
-Every post DMbot makes on its own to the DM screen asks `dmbot.dm_screen.levels.allows`
-first, with its kind: `question`, `fix_note`, `alert` or `notice`. **Alerts**
-(speech-to-text stopped or working again, hours warnings) show at every level. An
+Every post a level can turn off asks `dmbot.dm_screen.levels.allows` first, with its
+kind: `question`, `fix_note` or `notice`. **Alerts** (speech-to-text stopped or working
+again, hours warnings) always post, at every level. The level is read when a session
+starts, so a later way to change it mid-session must update the running session too. An
 unknown kind never shows, so nothing new slips past Quiet. At Quiet a fix from a name
 DMbot only suggested isn't made at all, because such a fix is never silent and there'd
-be no Undo to show. Continuity warnings (Phase 5a) and rules alerts must pick a kind
+be no Undo to show (nor in a stopped session still finishing its last lines).
+Continuity warnings (Phase 5a) and rules alerts must pick a kind
 when they land.
 
 **Channel structure (decided 2026-10-04, #85).** Every channel DMbot creates starts with

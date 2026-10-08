@@ -476,7 +476,7 @@ class DMScreenLevel(StoreTest):
         self.assertEqual(c.dm_screen_level, "quiet")
         c = await self.store.set_dm_screen_level(GUILD_A, c.id, "chatty")
         self.assertEqual(c.dm_screen_level, "chatty")
-        with self.assertRaisesRegex(CampaignError, "how much DMbot says"):
+        with self.assertRaisesRegex(CampaignError, "DMbot says buttons"):
             await self.make("C", dm_screen_level="loud")
         with self.assertRaisesRegex(CampaignError, "doesn't exist in this server"):
             await self.store.set_dm_screen_level(GUILD_B, c.id, "quiet")

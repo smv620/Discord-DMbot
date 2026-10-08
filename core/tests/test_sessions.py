@@ -380,6 +380,18 @@ class SaveAndResume(SessionTests):
         await bot._on_status(table, Status("joined", guild_id=GUILD))  # a repeat
         self.assertEqual(self.posts, [])
 
+    async def test_a_resumed_session_keeps_how_much_dmbot_says_and_alerts_still_show(
+        self,
+    ) -> None:
+        await self.campaigns.set_dm_screen_level(GUILD, self.campaign.id, "quiet")
+        await self.start()
+        bot = await self.restart()
+        await bot.resume_sessions()
+        self.assertEqual(bot.tables[GUILD].screen_level, "quiet")  # #504
+        self.posts.clear()
+        await bot._alert_dm(GUILD, "⚠️ DMbot stopped hearing the table.")
+        self.assertIn("⚠️ DMbot stopped hearing the table.", self.screen_posts())  # always
+
     async def test_quick_repeat_restarts_stay_quiet(self) -> None:
         from dmbot.ears.protocol import Status
 
@@ -977,9 +989,12 @@ class SaveAndResume(SessionTests):
             )
         )
 
-    async def asked_about_marin(self, *, saving: bool = False) -> tuple[Any, Any, Any, Any]:
+    async def asked_about_marin(
+        self, *, saving: bool = False, level: str = "normal"
+    ) -> tuple[Any, Any, Any, Any]:
         """A question asked; the table, its message, the post and the campaign memory.
-        `saving`: the line waits to be saved (and `self.bot.transcripts` is a stand-in)."""
+        `saving`: the line waits to be saved (and `self.bot.transcripts` is a stand-in);
+        `level`: how much DMbot says in the DM screen (#504)."""
         from dmbot.transcript.models import TranscriptBuffer
 
         await self.consent.grant(GUILD, PLAYER)
@@ -997,6 +1012,7 @@ class SaveAndResume(SessionTests):
         memory: Any = MagicMock(add_correction=AsyncMock(return_value=MagicMock(batch=41)))
         self.addCleanup(setattr, self.bot, "memory", self.bot.memory)  # put back after
         self.bot.memory = memory
+        table.screen_level = level
         self.said(table, "then Marin speaks")
         for _ in range(5):
             await asyncio.sleep(0)  # the question is posted in the background
@@ -1233,27 +1249,11 @@ class SaveAndResume(SessionTests):
         memory.add_typed_name.assert_not_awaited()
         self.assertIn("won't change", text)
 
-    async def test_quiet_asks_nothing_and_makes_no_unsure_fixes(self) -> None:
-        # #504: at quiet, no "Did they mean…?" and no "Name fixes to check".
-        from dmbot.transcript.models import TranscriptBuffer
-
-        await self.consent.grant(GUILD, PLAYER)
-        table, _ = await self.joined_with_transcript()
-        table.screen_level = "quiet"
-        table.name_lookup = self.two_alike()
-        import time
-
-        table.scene.note(["a" * 32], DM, time.monotonic())
-        table.unsaved = TranscriptBuffer()
-        self.bot.transcripts = object()  # type: ignore[assignment]  # only checked for None
-        self.bot.post_message = AsyncMock()  # type: ignore[method-assign]
-        self.said(table, "then Marin speaks")
-        self.said(table, "then Marin speaks")
-        for _ in range(5):
-            await asyncio.sleep(0)
-        self.bot.post_message.assert_not_awaited()
+    async def test_quiet_asks_nothing(self) -> None:
+        # #504: at quiet, no "Did they mean…?" (fix notes: with a suggestion, below).
+        table, _, posted, _ = await self.asked_about_marin(level="quiet")
+        posted.assert_not_awaited()
         self.assertIsNone(table.questions.open)
-        self.assertEqual(table.fix_notes.notes, [])
 
     async def test_keep_as_heard_is_saved(self) -> None:
         table, _, _, memory = await self.asked_about_marin()
@@ -1417,6 +1417,15 @@ class SaveAndResume(SessionTests):
         (line,) = list(table.unsaved._waiting)
         self.assertEqual(line.text, "then Hrothgarr roars")
         self.assertEqual(table.fix_notes.notes, [])
+
+    async def test_a_session_still_finishing_makes_no_unsure_fixes(self) -> None:
+        # Its fix notes can't be shown any more, so such a fix would be silent.
+        table, _, _ = await self.fixed_from_a_suggestion()
+        self.bot.tables.pop(GUILD)
+        self.bot._ending[GUILD] = [table]
+        self.addCleanup(self.bot._ending.pop, GUILD, None)
+        self.said(table, "and Hrothgarr leaves")
+        self.assertEqual(list(table.unsaved._waiting)[-1].text, "and Hrothgarr leaves")
 
     async def test_the_campaigns_level_is_used_when_a_session_starts(self) -> None:
         await self.campaigns.set_dm_screen_level(GUILD, self.campaign.id, "quiet")

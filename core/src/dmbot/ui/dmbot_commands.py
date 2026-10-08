@@ -285,7 +285,7 @@ class NewCampaignSettings(_Menu):
             [
                 f"**New campaign: {self.name}**",
                 "Blue ✓ buttons are chosen (we recommend these). Tap another to change "
-                "it, then press **▶ Create campaign**.",
+                "it, then press the green **▶ Create campaign** at the bottom.",
                 *logic.settings_summary(
                     self.target, self.fallback, self.optional, self.visibility, self.level
                 ),
