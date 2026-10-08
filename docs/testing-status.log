@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (deployed 05aa6c1; web-api not started; ready for run 8)
+Last updated: 2026-10-08 by dev1 (deployed fa87a60; web-api not started; ready for run 8)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,11 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- CloudDev, PR #584 (#537): names menus answer Discord first, then load names, so
-  Browse by kind no longer times out on a big campaign. Deploy: rebuild core. Check: in
-  the 147-name campaign, /dmbot names -> Browse by kind and a name's card answer at once
-  (no "didn't respond in time"); copy a few `Built names for campaign ... in N ms
-  (waited W, database D, index I; K names)` lines (timings only) into the history.
+(nothing waiting)
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -27,12 +23,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 05aa6c1 (2026-10-08 04:53 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: fa87a60 (2026-10-08 05:10 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since 05aa6c1, ask it to redeploy first. Use a steady connection (run 8a
+      moved since fa87a60, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -153,6 +149,12 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
   Deployed 2026-10-08 04:53 (05aa6c1)
   - #568 (#525): fixing a name in a line changes all of it or none of it; Undo puts the
     whole line back
+  Deployed 2026-10-08 05:10 (fa87a60)
+  - #584 (#537): in the 147-name campaign, /dmbot names -> Browse by kind and a name's
+    card answer at once (no "didn't respond in time"); dev1 copies a few "Built names
+    for campaign ... in N ms" timings into the history
+  - #563 (#252): confirming the right to use a pasted names list is remembered (who,
+    when; no text); a backup keeps it
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
