@@ -32,6 +32,9 @@ GARBLED_BELOW = 0.6
 FINE_FROM = 0.9
 MIN_WORDS = 8
 AI_EVERY_S = 60.0  # one question per person per minute at most
+FINE_FOR_S = 180.0  # an AI "reads fine" is trusted this long, for someone who stays patchy
+# Across every table: so many tables can't send tables x speakers questions in one tick.
+_AI_AT_ONCE = asyncio.Semaphore(8)
 CALL_TIMEOUT_S = 10.0
 ANSWER_TOKENS = 4
 
@@ -47,20 +50,24 @@ Answer with one word: yes or no."""
 _ANSWER = re.compile(r"^\s*(yes|no)\b", re.IGNORECASE)
 
 
+_ELLIPSIS = {"...", "…", "--"}
+
+
 def mean_confidence(lines: Sequence[tuple[str, float | None]]) -> tuple[float, int] | None:
-    """The lines' confidence averaged per word, and how many words it covers; None if the
-    engine gave none."""
-    weighted = [(len(text.split()), c) for text, c in lines if c is not None]
+    """The lines' confidence averaged per word, and how many words it covers (not "…",
+    which is what garbled lines are full of); None if the engine gave none."""
+    weighted = [
+        (sum(w not in _ELLIPSIS for w in text.split()), c) for text, c in lines if c is not None
+    ]
     words = sum(n for n, _ in weighted)
     if not words:
         return None
     return sum(n * c for n, c in weighted) / words, words
 
 
-def by_confidence(lines: Sequence[tuple[str, float | None]]) -> bool | None:
-    """True (garbled) or False (reads fine) from the engine's confidence, or None if it
-    gave none, it's middling, or there are too few words to tell."""
-    found = mean_confidence(lines)
+def by_confidence(found: tuple[float, int] | None) -> bool | None:
+    """True (garbled) or False (reads fine) from `mean_confidence`, or None if the
+    engine gave none, it's middling, or there are too few words to tell."""
     if found is None or found[1] < MIN_WORDS:
         return None
     if found[0] < GARBLED_BELOW:
@@ -89,39 +96,52 @@ class AudioChecker:
     the session's log line. Numbers only."""
 
     asked_at: dict[int, float] = field(default_factory=dict)
+    fine_until: dict[int, float] = field(default_factory=dict)  # the AI said "reads fine"
     checks: int = 0
     calls: int = 0  # answered
     failed: int = 0  # late or failed: often billed all the same
-    tokens: list[int] = field(default_factory=lambda: [0, 0])  # in, out (answered calls)
+    tokens_in: int = 0  # answered calls
+    tokens_out: int = 0
 
     async def check(self, due: Due, ai: Completes | None, now: float) -> Verdict:
         """Whether `due`'s lines read garbled. Only the lines given are read: one
-        person's, from one session, as shown in the transcript."""
+        person's, from one session, as the transcript has them.
+
+        No lines at all while the rule fired is garbled: an empty transcript while someone
+        is clearly talking is the clearest sign there is. No check possible (no AI key,
+        and the engine's confidence doesn't decide) falls back to the audio rule, so a
+        table without a key still hears about a bad line. A question asked within the
+        minute, a late or failed one, or a recent "reads fine" stays quiet."""
         self.checks += 1
         if not due.lines:
-            return Verdict(False, "no lines to read")
-        verdict = by_confidence(due.lines)
-        if verdict is not None:
-            mean, words = mean_confidence(due.lines) or (0.0, 0)
-            return Verdict(verdict, f"confidence {mean:.2f} over {words} words")
+            return Verdict(True, "no lines came through")
+        found = mean_confidence(due.lines)
+        verdict = by_confidence(found)
+        if verdict is not None and found is not None:
+            return Verdict(verdict, f"confidence {found[0]:.2f} over {found[1]} words")
         if ai is None:
-            return Verdict(False, "no AI key")
+            return Verdict(True, "no check possible: audio rule")
+        if now < self.fine_until.get(due.user_id, 0.0):
+            return Verdict(False, "read fine recently")
         last = self.asked_at.get(due.user_id)
         if last is not None and now - last < AI_EVERY_S:
             return Verdict(False, "asked within the minute")
         self.asked_at[due.user_id] = now
         try:
-            answer, reply = await asyncio.wait_for(
-                ask(ai, [text for text, _ in due.lines]), CALL_TIMEOUT_S
-            )
+            async with _AI_AT_ONCE:
+                answer, reply = await asyncio.wait_for(
+                    ask(ai, [text for text, _ in due.lines]), CALL_TIMEOUT_S
+                )
         except Exception as exc:  # late or failed: no warning (the log has the numbers)
             self.failed += 1
             return Verdict(False, f"AI failed ({type(exc).__name__})")
         self.calls += 1
-        self.tokens[0] += reply.input_tokens
-        self.tokens[1] += reply.output_tokens
+        self.tokens_in += reply.input_tokens
+        self.tokens_out += reply.output_tokens
         if answer is None:
             return Verdict(False, "AI answer unclear")
+        if not answer:
+            self.fine_until[due.user_id] = now + FINE_FOR_S
         return Verdict(answer, "AI")
 
     def log_line(self) -> str | None:
@@ -131,5 +151,5 @@ class AudioChecker:
         failed = f", {self.failed} failed" if self.failed else ""
         return (
             f"Audio checks: {self.checks}, AI calls {self.calls + self.failed}{failed} "
-            f"({self.tokens[0]} in, {self.tokens[1]} out tokens)"
+            f"({self.tokens_in} in, {self.tokens_out} out tokens)"
         )

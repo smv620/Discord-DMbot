@@ -7,7 +7,14 @@ from collections.abc import Sequence
 from unittest.mock import patch
 
 from dmbot.ai import Reply
-from dmbot.audio_check import AI_EVERY_S, AudioChecker, Verdict, by_confidence
+from dmbot.audio_check import (
+    AI_EVERY_S,
+    FINE_FOR_S,
+    AudioChecker,
+    Verdict,
+    mean_confidence,
+)
+from dmbot.audio_check import by_confidence as _by_found
 from dmbot.capture_log import CaptureLog, Due
 from dmbot.transcription.base import Transcript, confidence_of
 from dmbot.transcription.deepgram import transcript
@@ -25,6 +32,10 @@ class FakeAI:
         if self.delay:
             await asyncio.sleep(self.delay)
         return Reply(self.answer, False, 120, 1)
+
+
+def by_confidence(lines: Sequence[tuple[str, float | None]]) -> bool | None:
+    return _by_found(mean_confidence(lines))
 
 
 def due(lines: Sequence[tuple[str, float | None]], user: int = 1) -> Due:
@@ -96,7 +107,7 @@ class CheckTests(unittest.TestCase):
             checker = AudioChecker()
             verdict = check(checker, due([("the bridge ... north", None)]), FakeAI(answer))
             self.assertEqual(verdict.garbled, garbled, answer)
-            self.assertEqual((checker.calls, checker.tokens), (1, [120, 1]))
+            self.assertEqual((checker.calls, checker.tokens_in, checker.tokens_out), (1, 120, 1))
 
     def test_once_a_minute_per_person(self) -> None:
         checker, ai = AudioChecker(), FakeAI("yes")
@@ -161,9 +172,29 @@ class CheckTests(unittest.TestCase):
         asyncio.run(pipeline.process(Utterance(1, 7, 0, 0, bytes(32000))))
         self.assertEqual(confidence_of(got[0]), 0.4)
 
-    def test_no_key_or_no_lines_means_no_warning(self) -> None:
-        self.assertEqual(check(AudioChecker(), due([("x", None)]), None).how, "no AI key")
-        self.assertEqual(check(AudioChecker(), due([]), FakeAI("yes")).how, "no lines to read")
+    def test_no_check_possible_falls_back_to_the_audio_rule(self) -> None:
+        # Supervisor's decision on #699: a table without an AI key still hears about it.
+        verdict = check(AudioChecker(), due([("x", None)]), None)
+        self.assertEqual(verdict, Verdict(True, "no check possible: audio rule"))
+
+    def test_no_lines_at_all_is_garbled(self) -> None:
+        # An empty transcript while someone is clearly talking is the clearest sign there is.
+        self.assertEqual(
+            check(AudioChecker(), due([]), FakeAI("no")), Verdict(True, "no lines came through")
+        )
+
+    def test_a_fine_answer_is_trusted_for_a_while(self) -> None:
+        checker, ai = AudioChecker(), FakeAI("no")
+        lines = [("hmm", None)]
+        self.assertFalse(check(checker, due(lines), ai, 0).garbled)
+        self.assertEqual(check(checker, due(lines), ai, AI_EVERY_S).how, "read fine recently")
+        self.assertEqual(check(checker, due(lines), ai, FINE_FOR_S).how, "AI")
+        self.assertEqual(len(ai.asked), 2)
+
+    def test_ellipses_are_not_words(self) -> None:
+        mean, words = mean_confidence([("I ... the … north --", 0.4)]) or (0.0, 0)
+        self.assertEqual(words, 3)
+        self.assertAlmostEqual(mean, 0.4)
 
     def test_the_prompt_holds_only_their_lines_as_quoted_data(self) -> None:
         ai = FakeAI("no")

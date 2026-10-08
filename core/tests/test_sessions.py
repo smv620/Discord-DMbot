@@ -1090,6 +1090,23 @@ class SaveAndResume(SessionTests):
         self.assertIn("voice is cutting out for DMbot", call.args[1])
         self.assertIn(PLAYER, table.totals.flagged)  # so the summary names them too
 
+    async def test_one_tables_failed_check_never_stops_the_others(self) -> None:
+        await self.start()
+        first = self.bot.tables[GUILD]
+        other = replace(first, guild_id=GUILD + 1)
+        done: list[int] = []
+
+        async def post_summary(table: Any) -> None:
+            if table is first:
+                raise RuntimeError("boom")
+            done.append(table.guild_id)
+
+        self.bot.post_summary = post_summary  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.bot", level="ERROR") as logs:
+            await asyncio.gather(self.bot._summary_one(first), self.bot._summary_one(other))
+        self.assertIn("Capture check failed", "\n".join(logs.output))
+        self.assertEqual(done, [GUILD + 1])
+
     async def test_the_audio_check_reads_their_lines_before_warning(self) -> None:
         # #699: the audio rule starts a check of their lines; only garbled lines warn, a
         # stop during the AI's wait names nobody, and a large loss warns without asking.
@@ -1121,6 +1138,25 @@ class SaveAndResume(SessionTests):
         patchy()
         await self.bot.post_summary(table)
         posted.assert_not_awaited()  # reads fine: nothing for the DM
+
+        # A stop that lands after the check is scheduled, before its turn: their lines
+        # never reach the AI.
+        table.audio_checker.asked_at.clear()
+        table.audio_checker.fine_until.clear()
+        early = AI("yes")
+        self.bot.topic_ai = early  # type: ignore[assignment]
+        due = table.capture_log.due
+
+        def due_then_stop(now: float) -> Any:
+            asyncio.get_running_loop().call_soon(self.bot.stop_recording, GUILD, PLAYER)
+            return due(now)
+
+        patchy()
+        with patch.object(table.capture_log, "due", due_then_stop):
+            await self.bot.post_summary(table)
+        self.assertEqual(early.calls, 0)
+        posted.assert_not_awaited()
+        await self.consent.grant(GUILD, PLAYER)
 
         table.audio_checker.asked_at.clear()
         self.bot.topic_ai = AI(  # type: ignore[assignment]

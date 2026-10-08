@@ -861,8 +861,6 @@ class DMBot(commands.AutoShardedBot):
                     ),
                     " since the restart" if table.after_restart else "",
                 )
-                if checks := table.audio_checker.log_line():  # cost of #699's checks
-                    log.info(checks)
                 await self._finish_topics(table)  # bounded: saving comes first
                 if table.topic_calls:  # for cost per session hour (#52)
                     log.info(
@@ -871,6 +869,9 @@ class DMBot(commands.AutoShardedBot):
                         *table.topic_tokens,
                     )
                 await self._after_session(table, ended_at, caught_up)
+                # After it: the end-of-session capture check runs the last audio checks.
+                if checks := table.audio_checker.log_line():  # cost of #699's checks
+                    log.info(checks)
             finally:
                 ending = self._ending.get(gid, [])
                 if table in ending:
@@ -1692,9 +1693,10 @@ class DMBot(commands.AutoShardedBot):
             if len(table.heard) == HEARD_MAX:
                 log.info("Name scan: kept the first %d lines of this session", HEARD_MAX)
         if text:
-            # What the audio check reads if their audio rule fires (#699): the line as
-            # shown, with the engine's confidence.
-            table.capture_log.add_line(utterance.user_id, cleaned or text, confidence_of(text))
+            # What the audio check reads if their audio rule fires (#699): the line as the
+            # transcript has it (before the off-topic filter, which may hide it later),
+            # with the engine's confidence; kept as plain text.
+            table.capture_log.add_line(utterance.user_id, str(cleaned or text), confidence_of(text))
         if text and table.transcript_channel_id is not None:
             guild = self.get_guild(utterance.guild_id)
             member = guild.get_member(utterance.user_id) if guild else None
@@ -2576,7 +2578,15 @@ class DMBot(commands.AutoShardedBot):
         while True:
             await asyncio.sleep(SUMMARY_INTERVAL_S)
             # Together: a table's audio check can wait on the AI (#699), bounded.
-            await asyncio.gather(*(self.post_summary(t) for t in list(self.tables.values())))
+            await asyncio.gather(*(self._summary_one(t) for t in list(self.tables.values())))
+
+    async def _summary_one(self, table: Table) -> None:
+        """One table's capture check; its failure never stops the others' (or later ones)."""
+        try:
+            await self.post_summary(table)
+        except Exception:
+            with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                log.exception("Capture check failed")
 
     async def _transcript_poster(self) -> None:
         limit = asyncio.Semaphore(TRANSCRIPT_PARALLEL)
@@ -2831,6 +2841,10 @@ class DMBot(commands.AutoShardedBot):
             return
 
         async def confirmed(due: Due) -> bool:
+            # Consent again: a stop can land between scheduling and this task's turn, and
+            # their lines must not reach the AI then (CLAUDE.md, after every async step).
+            if not self.consent.has_consent(gid, due.user_id):
+                return False
             if due.large:
                 verdict = Verdict(True, "large loss")
             else:
