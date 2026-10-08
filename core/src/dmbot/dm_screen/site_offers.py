@@ -301,6 +301,7 @@ async def _tell_expired(guild: discord.Guild, offer: HandoverOffer, campaign: Ca
                 owner=md(offer.from_name), campaign=md(campaign.name), days=HANDOVER_DAYS
             ),
             view=None,
+            allowed_mentions=NO_PINGS,
         )
 
 

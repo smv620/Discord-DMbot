@@ -102,7 +102,7 @@ ENDED = "This offer has ended: it was answered, taken back, or its {days} days a
 # owner is told.
 OFFER_EXPIRED = (
     "**{owner}**'s offer of **{campaign}** has ended: its {days} days are up. Nothing "
-    "changed. If you still want it, ask {owner} to offer it again."
+    "changed. If you still want it, ask **{owner}** to offer it again."
 )
 _OFFER_AGAIN = (
     "It stays yours. To offer it again: ⚙️ Settings, then **Hand over**, or your account "

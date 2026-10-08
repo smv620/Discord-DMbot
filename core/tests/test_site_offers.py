@@ -15,7 +15,7 @@ import discord
 
 from dmbot.campaigns import Campaign, offer_notify
 from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
-from dmbot.dm_screen import site_offers
+from dmbot.dm_screen import handover, site_offers
 from dmbot.dm_screen.handover import TOLD_EXPIRED, TOLD_EXPIRED_UNSENT, deliver_offer
 from dmbot.dm_screen.site_offers import NOT_SENT, SiteOffers
 
@@ -355,6 +355,7 @@ class Expiring(Harness):
         (edit,) = guild.buyer.edits
         self.assertEqual(edit[0], 4242)
         self.assertIsNone(edit[1]["view"])
+        self.assertEqual(edit[1]["allowed_mentions"], handover.NO_PINGS)  # never pings
         self.assertIn("**Oskar**'s offer of **Frost\\*maiden** has ended", edit[1]["content"])
         await self.offers.sweep_server(GUILD)  # announced once
         self.assertEqual(len(guild.owner.sent), 1)
