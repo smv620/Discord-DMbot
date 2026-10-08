@@ -147,7 +147,7 @@ class MenuChoices(unittest.TestCase):
         lines = settings_summary("2024", "2014", True, "peek", "normal")
         for line, words in zip(
             lines,
-            ("Main rules", "If missing", "Optional rules", "DM screen", "DMbot says"),
+            ("Main rules", "If missing", "Optional rules", "DM screen", "Normal"),
             strict=True,
         ):
             self.assertTrue(line.startswith(f"• **{words}"), line)
@@ -158,9 +158,11 @@ class MenuChoices(unittest.TestCase):
         quiet = settings_summary("2024", "2014", True, "peek", "quiet")[-1]
         self.assertIn("fewer misheard names get fixed", quiet)
         self.assertIn("always show", quiet)
-        self.assertIn("never out loud", quiet)
+        self.assertTrue(quiet.startswith("• **Quiet** — how much DMbot says"), quiet)
+        self.assertNotIn("recommended", quiet)
         self.assertIn(
-            "Normal (recommended)", settings_summary("2024", "2014", True, "peek", "normal")[-1]
+            "**Normal** (recommended) — how much DMbot says",
+            settings_summary("2024", "2014", True, "peek", "normal")[-1],
         )
 
     def test_campaign_names_are_cut_for_a_phone(self) -> None:

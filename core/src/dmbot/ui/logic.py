@@ -11,7 +11,11 @@ from collections.abc import Collection, Iterable
 from datetime import UTC, datetime
 
 from dmbot.campaigns import DM_SCREEN_VISIBILITY, FALLBACK_NONE, RULESETS, Campaign
-from dmbot.campaigns.models import DM_SCREEN_LEVELS
+from dmbot.campaigns.models import (
+    DEFAULT_DM_SCREEN_LEVEL,
+    DM_SCREEN_LEVELS,
+    DM_SCREEN_LEVELS_OFFERED,
+)
 from dmbot.transcription.config import Engine
 
 # Discord limits.
@@ -139,9 +143,10 @@ def settings_summary(
         f"all {'on' if optional_rules else 'off'} "
         "(pick which ones later with `/dmbot optionalrules`)",
         f"• **DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
-        f"• **DMbot says** (in the DM screen, never out loud): "
-        f"{DM_SCREEN_LEVELS.get(level, level)}. Warnings, like DMbot no longer hearing the "
-        "table, always show. For now this can't be changed after the campaign is made.",
+        f"• **{level.capitalize()}**{RECOMMENDED if level == DEFAULT_DM_SCREEN_LEVEL else ''}"
+        f" — how much DMbot says, in the DM screen only: {DM_SCREEN_LEVELS.get(level, level)}."
+        " Warnings (like DMbot no longer hearing the table) always show. Can't be changed"
+        " later yet.",
     ]
 
 
@@ -171,9 +176,12 @@ def visibility_choices() -> dict[str, str]:
     return {k: f"DM screen: {_SCREEN_SHORT[k]}" for k in DM_SCREEN_VISIBILITY}
 
 
+RECOMMENDED = " (recommended)"
+
+
 def level_choices() -> dict[str, str]:
     """How much DMbot says in the DM screen (#504)."""
-    return {k: f"DMbot says: {k}" for k in DM_SCREEN_LEVELS}
+    return {k: k.capitalize() for k in DM_SCREEN_LEVELS_OFFERED}
 
 
 def chosen_label(label: str, chosen: bool) -> str:

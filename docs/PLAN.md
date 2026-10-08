@@ -473,14 +473,15 @@ channel's chat.
   created or was given.
 
 **How much DMbot says (built 2026-10-08, #504).** A campaign setting for the DM screen,
-picked with buttons when creating a campaign (**DMbot says: quiet / normal / chatty**;
+picked with buttons when creating a campaign (**Quiet / Normal**, sharing the last row
+with Create; Chatty isn't offered until something uses it;
 changing it from the DM screen's settings comes later). Backups carry it, and a restore
 uses the backup's (older backups: Normal).
 | Level | What DMbot posts on its own |
 |---|---|
 | **Quiet** | Only what you ask for, plus warnings (so fewer misheard names get fixed) |
 | **Normal** (default) | Also questions and fixes, one at a time: "Did they mean…?" and ✏️ Name fixes to check |
-| **Chatty** | Also what it noticed (reserved: behaves like Normal until something uses it) |
+| **Chatty** | Also what it noticed (reserved: not offered yet; behaves like Normal) |
 
 Every post a level can turn off asks `dmbot.dm_screen.levels.allows` first, with its
 kind: `question`, `fix_note` or `notice`. **Alerts** (speech-to-text stopped or working
@@ -1275,7 +1276,7 @@ consent check just made still holds:
     same check as every fix, on the line as written): the rule is saved, the line stays
     as heard. Undo of the answer puts that line back while the session still runs
     (after a restart only the rule is taken back). Keep changes nothing in the line.
-  - **Not yet:** the quiet verbosity level.
+  - **Quiet:** when How much DMbot says is Quiet, no questions are asked (#504).
 - **Cleaned and both downloads:**
   - **At the end of a session:** the message has **[📄 Cleaned]**, **[🎙 As heard]** and
     **[📄🎙 Both]**, one line explaining each. Buttons sent before this still give
