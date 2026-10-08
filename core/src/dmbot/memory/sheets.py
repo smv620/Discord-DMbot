@@ -366,8 +366,9 @@ def clean(snapshot: Any) -> dict[str, Any] | None:
     for key in _NAME_LISTS:
         out[key] = _names(_list(snapshot.get(key)))
     # Never bigger than SNAPSHOT_MAX_BYTES as Postgres stores it (UTF-8, not \u escapes):
-    # the longest lists lose their last entries. If nothing is left to trim, it isn't a
-    # sheet DMbot keeps (only a hand-edited file gets here).
+    # the longest lists lose their last entries. Each pass shrinks a list or returns, so
+    # this always ends. With UTF-8 measured, allow-listed content can't reach the None
+    # (it fits once the lists are empty): it stays as the guard that ends the loop.
     trimmable = (*_NAME_LISTS, "languages", "classes")
     while len(json.dumps(out, ensure_ascii=False).encode()) > SNAPSHOT_MAX_BYTES:
         longest = max(trimmable, key=lambda k: len(out[k]))

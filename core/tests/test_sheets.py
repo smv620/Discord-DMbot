@@ -167,9 +167,10 @@ class Cleaning(unittest.TestCase):
         self.assertLessEqual(len(stored), sheets.SNAPSHOT_MAX_BYTES)
         self.assertGreater(len(snapshot["spells"]), 10)
 
-    def test_a_snapshot_nothing_can_shrink_is_refused_not_looped_on(self) -> None:
-        # The review's case: long non-ASCII languages, every other list empty.
-        languages = ["\u0928" * 59 + str(i) for i in range(100)]
+    def test_the_size_cap_ends_even_when_only_languages_are_long(self) -> None:
+        # The review's case: 100 sixty-character non-ASCII languages, every name list
+        # empty. The old trim loop never ended here.
+        languages = ["\u0928" * 57 + f"{i:03d}" for i in range(100)]
         long_classes = [{"name": "\u0928" * 60, "level": 1, "subclass": "\u0928" * 60}] * 4
         started = time.monotonic()
         snapshot = sheets.clean(
@@ -182,9 +183,9 @@ class Cleaning(unittest.TestCase):
             }
         )
         self.assertLess(time.monotonic() - started, 1)
-        if snapshot is not None:
-            stored = json.dumps(snapshot, ensure_ascii=False).encode()
-            self.assertLessEqual(len(stored), sheets.SNAPSHOT_MAX_BYTES)
+        assert snapshot is not None
+        stored = json.dumps(snapshot, ensure_ascii=False).encode()
+        self.assertLessEqual(len(stored), sheets.SNAPSHOT_MAX_BYTES)
 
     def test_odd_entries_in_a_backup_are_dropped_not_raised(self) -> None:
         snapshot = sheets.clean(

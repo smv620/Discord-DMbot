@@ -91,8 +91,9 @@ async def _refresh_one(
 
 
 def _shared_session(stack: contextlib.AsyncExitStack) -> Fetch:
-    """sheets.fetch over one session for the whole refresh, opened at the first fetch
-    (not before waiting for a permit) and closed with `stack`, cancelled or not."""
+    """sheets.fetch over one session for the whole refresh, made at the first fetch and
+    closed with `stack`, cancelled or not. Its connection opens only once that fetch
+    holds a permit (sheets.fetch takes the permit before the request)."""
     client: list[aiohttp.ClientSession] = []
 
     async def fetch(character: int) -> dict[str, Any]:

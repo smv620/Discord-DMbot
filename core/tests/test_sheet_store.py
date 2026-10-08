@@ -196,6 +196,12 @@ class Backups(SheetTest):
         (copy,) = await self.sheets.sheets(GUILD_B, restored.id)
         self.assertNotIn("LEAK", json.dumps(copy.sheet))
 
+    async def test_a_snapshot_from_another_version_keeps_the_link(self) -> None:
+        backup = await self.edited({"sheet": {"v": 99, "name": "From the future"}})
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        (copy,) = await self.sheets.sheets(GUILD_B, restored.id)
+        self.assertEqual((copy.url, copy.sheet), (sheets.sheet_url(CHARACTER), None))
+
     async def test_a_bad_link_in_a_backup_is_refused(self) -> None:
         for change in (
             {"url": "https://evil.example/characters/1"},

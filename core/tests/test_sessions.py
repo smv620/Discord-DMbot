@@ -419,10 +419,14 @@ class SaveAndResume(SessionTests):
         sheet = CharacterSheet("0" * 32, "Testa", PLAYER, "u", kept, 1)
         self.bot.sheets = MagicMock(sheets=AsyncMock(return_value=[sheet]))
         await self.start()
-        table = self.bot.tables[GUILD]
+        table = self.bot.tables.pop(GUILD)  # as if picked up again after a restart
+        table.resumed, table.sheet_hints = True, ()
         refresh = AsyncMock()
         with patch("dmbot.bot.refresh_sheets", refresh):
-            await self.bot._sheet_hints(table, refresh=False)  # as start_table does on resume
+            await self.bot.start_table(table)
+            task = table.sheet_task
+            assert task is not None
+            await asyncio.wait_for(task, 2)
         refresh.assert_not_awaited()
         self.assertEqual(table.sheet_hints, ("Old Spell",))
 

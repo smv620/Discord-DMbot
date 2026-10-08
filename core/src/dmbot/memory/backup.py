@@ -253,13 +253,23 @@ def _checked_sheet(raw: dict[str, Any]) -> dict[str, Any]:
     ):
         raise CampaignError(DAMAGED)
     cleaned = None if snapshot is None else sheets.clean(snapshot)
-    if (snapshot is None) != (cleaned is None) or (url is None and cleaned is None):
+    if snapshot is not None and cleaned is None:
+        if url is None or not _other_version(snapshot):
+            raise CampaignError(DAMAGED)
+        # A snapshot from another version of DMbot: keep the link, read it again at the
+        # next session, rather than refuse the whole backup.
+        return {**raw, "sheet": None, "source": None, "fetched_at": None}
+    if url is None and cleaned is None:
         raise CampaignError(DAMAGED)
     if cleaned is not None and (source != cleaned["source"] or not _valid("created_at", fetched)):
         raise CampaignError(DAMAGED)
     if cleaned is None and (source is not None or fetched is not None):
         raise CampaignError(DAMAGED)
     return {**raw, "sheet": cleaned}
+
+
+def _other_version(snapshot: Any) -> bool:
+    return isinstance(snapshot, dict) and snapshot.get("v") != sheets.SNAPSHOT_VERSION
 
 
 def _db_value(column: str, value: Any) -> Any:
