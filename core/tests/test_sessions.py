@@ -1134,8 +1134,10 @@ class SaveAndResume(SessionTests):
         self.assertIn("in that line and from now on", text)  # #503
         self.assertEqual(self.waiting_text(table), f"then {name} speaks")
         assert undo is not None
-        await self.bot.answer_undone(GUILD, table.campaign_id, undo[1])
+        back = await self.bot.answer_undone(GUILD, table.campaign_id, undo[1])
+        self.assertIs(back, True)
         self.assertEqual(self.waiting_text(table), "then Marin speaks")  # as heard again
+        self.assertIsNone(await self.bot.answer_undone(GUILD, table.campaign_id, undo[1]))
 
     async def test_an_answer_fixes_the_saved_line(self) -> None:
         table, _, _, _ = await self.asked_about_marin(saving=True)
@@ -1238,6 +1240,36 @@ class SaveAndResume(SessionTests):
         self.assertEqual(undo, (table.campaign_id, 41))
         self.assertIn("That line stays as heard.", text)
         self.assertEqual(table.fix_notes.answers, [])  # not brought in by a later rewrite
+
+    async def test_undo_of_an_answer_says_when_its_line_stays(self) -> None:
+        # #589: the database can't put the line back: the DM is told (False).
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        table.unsaved.take(lambda _: True)  # already saved
+        table.transcript_session_id = "s5"
+        asked = table.questions.open
+        assert asked is not None
+        _, _, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        assert undo is not None
+        saved: Any = self.bot.transcripts
+        saved.relabel_line.side_effect = RuntimeError("database down")
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            back = await self.bot.answer_undone(GUILD, table.campaign_id, undo[1])
+        self.assertIs(back, False)
+
+    async def test_undo_of_an_answer_says_nothing_about_someone_who_stopped(self) -> None:
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        asked = table.questions.open
+        assert asked is not None
+        _, _, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        assert undo is not None
+        await table.save_lock.acquire()  # a batch being saved
+        undoing = asyncio.create_task(self.bot.answer_undone(GUILD, table.campaign_id, undo[1]))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertFalse(undoing.done())  # waiting for the lock
+        await self.consent.revoke(GUILD, PLAYER)
+        table.save_lock.release()
+        self.assertIsNone(await undoing)
 
     async def test_a_failed_save_leaves_the_channel_as_heard_too(self) -> None:
         # All or nothing: "That line stays as heard" must be true in the channel as well.

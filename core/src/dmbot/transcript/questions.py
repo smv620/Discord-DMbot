@@ -287,13 +287,17 @@ def not_answered_text(heard: str) -> str:
     return f'⌛ Not answered: "{_short(heard)}" stays as heard.'
 
 
-def undone_text(heard: str | None, *, new_name: bool = False) -> str:
+def undone_text(heard: str | None, *, new_name: bool = False, line_kept: bool = False) -> str:
     """After Undo of an answer. `new_name`: the answer had added a name DMbot didn't know,
-    and the Undo took it out of Check new names too."""
+    and the Undo took it out of Check new names too. `line_kept`: the line the answer
+    fixed couldn't be put back (#589)."""
+    kept = (
+        " The line it fixed couldn't be put back, so it still says the answer." if line_kept else ""
+    )
     if not heard:
-        return UNDONE
+        return UNDONE + kept
     also = ", and the new name is taken off 📝 Check new names" if new_name else ""
     return (
         f'↩️ Undone. "{_short(heard)}" stays as heard again{also}. DMbot may ask about it next '
-        "session."
+        f"session.{kept}"
     )

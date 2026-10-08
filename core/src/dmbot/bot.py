@@ -2058,9 +2058,12 @@ class DMBot(commands.AutoShardedBot):
                 notes.answers.remove(answer)
         return changed
 
-    async def answer_undone(self, guild_id: int, campaign_id: str, batch: int) -> None:
+    async def answer_undone(self, guild_id: int, campaign_id: str, batch: int) -> bool | None:
         """The DM undid an answer to "Did they mean…?" (the saved change is already taken
-        back): put its line back, if this session still has it (#503)."""
+        back): put its line back, if this session still has it (#503). True if it was put
+        back, False if it couldn't be (#589), None if there's nothing to say: no line this
+        session knows (too old, or after a restart), or its speaker stopped being
+        recorded (checked again after the wait)."""
         for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
             if table is None or table.campaign_id != campaign_id:
                 continue
@@ -2070,8 +2073,11 @@ class DMBot(commands.AutoShardedBot):
             text = table.fix_notes.words_now(
                 answer.speaker, answer.started_ms, answer.heard, answer.fixes
             )
-            await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
-            return
+            changed = await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
+            if not self.consent.has_consent(guild_id, answer.speaker):
+                return None  # nothing about their line
+            return changed
+        return None
 
     async def set_screen_level(self, guild_id: int, campaign_id: str, level: str) -> Campaign:
         """How much DMbot says in this campaign's DM screen (#504, #515): saved, and a

@@ -165,6 +165,17 @@ class UndoTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(it.response.send_message.await_args.args[0], questions.UNDO_ONLY_DM)
         bot.memory.undo.assert_not_awaited()
 
+    async def test_undo_says_when_the_line_couldnt_be_put_back(self) -> None:
+        # #589: answer_undone says whether the line went back; None means nothing to say.
+        for line_back, said in [(False, True), (True, False), (None, False)]:
+            with self.subTest(line_back=line_back):
+                bot = self.bot()
+                bot.answer_undone = AsyncMock(return_value=line_back)
+                it = self.press(bot, DM_ID)
+                await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
+                content = it.edit_original_response.await_args.kwargs["content"]
+                self.assertEqual("couldn't be put back" in content, said)
+
     async def test_undo_takes_back_that_change(self) -> None:
         bot = self.bot()
         it = self.press(bot, DM_ID)

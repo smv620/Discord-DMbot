@@ -183,14 +183,18 @@ class NameAnswerUndoButton(
         lookup = getattr(bot, "lookup", None)
         if lookup is not None:
             lookup.mark_stale(campaign.guild_id, campaign.id)  # the next line sees it
+        line_back: bool | None = None
         if hasattr(bot, "answer_undone"):  # the line it fixed goes back too (#503)
             try:
-                await bot.answer_undone(campaign.guild_id, campaign.id, self.batch)
+                line_back = await bot.answer_undone(campaign.guild_id, campaign.id, self.batch)
             except Exception:
                 log.exception("Couldn't put a line back after undoing an answer")
+                line_back = False
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
-                content=questions.undone_text(heard, new_name=questions.NEW_NAME in answer),
+                content=questions.undone_text(
+                    heard, new_name=questions.NEW_NAME in answer, line_kept=line_back is False
+                ),
                 view=None,
                 allowed_mentions=NO_PINGS,
             )
