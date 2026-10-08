@@ -254,9 +254,22 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return campaignId === "cmp-ashen" ? [] : candidates;
     },
     async handover(campaignId: string, toUserId: string) {
+      // Hand-over is an offer the other person accepts (#437): the campaign stays yours
+      // until then, with the offer and Withdraw on its row.
       calls.push(`handover:${campaignId}:${toUserId}`);
       const now = signedIn();
-      me = { ...now, campaigns: now.campaigns.filter((c) => c.id !== campaignId) };
+      const campaign = now.campaigns.find((c) => c.id === campaignId);
+      const person = candidates.find((p) => p.id === toUserId);
+      if (!campaign || !person) throw new ApiError("not-allowed");
+      const offer: Offer = {
+        id: `offer-${campaignId}`,
+        campaignId,
+        campaignName: campaign.name,
+        serverName: campaign.serverName,
+        personName: person.name,
+        expiresAt: "2026-10-15T18:00:00Z",
+      };
+      me = { ...now, offers: { ...now.offers, outgoing: [...now.offers.outgoing, offer] } };
     },
     async acceptOffer(offerId: string) {
       calls.push(`accept:${offerId}`);

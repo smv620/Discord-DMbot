@@ -197,7 +197,7 @@ describe("actions", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(text.errors["try-it-used"]);
   });
 
-  it("hands a campaign over to a chosen person", async () => {
+  it("offers a campaign to a chosen person; it stays yours until they accept", async () => {
     const { api } = show("table");
     await screen.findByText("The Brynwater Crossing");
     const row = document.querySelector('[data-campaign="cmp-brynwater"]') as HTMLElement;
@@ -209,13 +209,12 @@ describe("actions", () => {
     expect((confirm as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(confirm);
 
-    expect(
-      await screen.findByText(text.handOverDone("The Brynwater Crossing", "Oskar Vane")),
-    ).toBeTruthy();
+    expect(await screen.findByText(text.handOverDone("Oskar Vane"))).toBeTruthy();
     expect(api.calls).toContain("handover:cmp-brynwater:100000000000000002");
     await waitFor(() =>
-      expect(document.querySelector('[data-campaign="cmp-brynwater"]')).toBeNull(),
+      expect(within(row).getByRole("button", { name: text.withdraw })).toBeTruthy(),
     );
+    expect(row.textContent).toContain("Oskar Vane");
   });
 
   it("says plainly when nobody can take a campaign", async () => {

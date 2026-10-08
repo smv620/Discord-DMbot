@@ -559,7 +559,7 @@ function CampaignsSection({ me }: { me: Me }) {
                 await refresh();
               }}
               onHandedOver={async (person) => {
-                setDone(text.handOverDone(c.name, person.name));
+                setDone(text.handOverDone(person.name));
                 await refresh();
               }}
             />
