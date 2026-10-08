@@ -106,6 +106,8 @@ class FixNotes:
         return self.notes[-SHOWN:]
 
     def find(self, note_id: str) -> Note | None:
+        # Among all shown notes, even one a very long message left out: harmless, since
+        # every redraw replaces the buttons, so a left-out note has none to press.
         return next((n for n in self.shown() if n.id == note_id), None)
 
     def undo(self, note_id: str) -> list[Note]:
@@ -145,12 +147,14 @@ class FixNotes:
 
 def message_text(
     notes: list[Note], names: dict[int, str], escape: Callable[[str], str] = str
-) -> str:
-    """The DM screen's message. `names`: speaker → display name (already safe to show);
-    `escape` makes heard words and names safe (Discord markdown). Cut to fit Discord."""
+) -> tuple[str, list[Note]]:
+    """The DM screen's message, and the notes it shows. `names`: speaker → display name
+    (already safe to show); `escape` makes heard words and names safe (Discord
+    markdown). Too long for Discord: the oldest whole lines go (never half a line, so
+    no bold or strikethrough breaks), and with them their Undo buttons."""
     if not notes:
-        return f"{HEADER}\n{NOTHING}"
-    lines = [HEADER]
+        return f"{HEADER}\n{NOTHING}", []
+    lines = []
     for note in notes:
         who = names.get(note.speaker, "Someone")
         heard, written = escape(_short(note.fix.heard)), escape(_short(note.fix.written))
@@ -158,5 +162,10 @@ def message_text(
             lines.append(f"{note.number}. ~~{heard} → {written}~~ ({who}): ↩️ undone")
         else:
             lines.append(f"{note.number}. **{heard}** → **{written}** ({who})")
-    text = "\n".join(lines)
-    return text if len(text) <= MESSAGE_MAX else text[: MESSAGE_MAX - 1] + "…"
+    kept = len(lines)
+    while kept > 1 and len(HEADER) + sum(len(x) + 1 for x in lines[-kept:]) > MESSAGE_MAX:
+        kept -= 1
+    shown = notes[-kept:]
+    # The cut below is only a safety net: one line is at most ~350 characters (names
+    # are cut to NAME_MAX first), so whole lines always fit.
+    return "\n".join([HEADER, *lines[-kept:]])[:MESSAGE_MAX], shown

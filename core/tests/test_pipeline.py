@@ -9,11 +9,13 @@ from unittest import mock
 from dmbot.audio.segmenter import Utterance
 from dmbot.transcription.base import TranscriptionProblem
 from dmbot.transcription.pipeline import (
+    ALL_CLEAR_AFTER_S,
     BACKLOG_WARN,
     FAILURES_BEFORE_ALERT,
     MIN_CLIP_BUDGET_S,
     SKIP_ALERT_EVERY_S,
     SKIPPED_ALERT,
+    SUCCESSES_BEFORE_ALL_CLEAR,
     TranscriptionPipeline,
     clip_budget_s,
 )
@@ -117,9 +119,43 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(text is None for _, text in self.delivered))
         self.engine.fail = False
         await self.pipeline.process(utt())
+        self.assertEqual(self.pipeline.consecutive_failures, 0)
+        self.assertEqual(len(self.alerts), 1)  # one answer isn't steady yet (#470)
+        for _ in range(SUCCESSES_BEFORE_ALL_CLEAR - 1):
+            await self.pipeline.process(utt())
         self.assertEqual(len(self.alerts), 2)
         self.assertIn("working again", self.alerts[1])
-        self.assertEqual(self.pipeline.consecutive_failures, 0)
+
+    async def test_a_flapping_engine_doesnt_churn_the_dm_screen(self) -> None:
+        self.engine.fail = True
+        for _ in range(FAILURES_BEFORE_ALERT):
+            await self.pipeline.process(utt())
+        for _ in range(5):  # answer, fail, answer, fail…: never steady
+            self.engine.fail = False
+            await self.pipeline.process(utt())
+            self.engine.fail = True
+            await self.pipeline.process(utt())
+        self.assertEqual(len(self.alerts), 1)  # just the one "stopped"
+        # One answer and quiet for ALL_CLEAR_AFTER_S counts as steady too.
+        self.engine.fail = False
+        clock = [0.0]
+        with mock.patch("dmbot.transcription.pipeline._clock", lambda: clock[0]):
+            await self.pipeline.process(utt())
+            self.assertEqual(len(self.alerts), 1)
+            clock[0] = ALL_CLEAR_AFTER_S + 1  # quiet for a while, then one more answer
+            await self.pipeline.process(utt())
+        self.assertIn("working again", self.alerts[-1])
+
+    async def test_a_new_session_during_an_outage_is_told_again(self) -> None:
+        self.engine.fail = True
+        for _ in range(FAILURES_BEFORE_ALERT):
+            await self.pipeline.process(utt())
+        await self.pipeline.process(utt())
+        self.assertEqual(len(self.alerts), 1)
+        self.pipeline.session_started(1)  # a new session
+        await self.pipeline.process(utt(session=1))
+        self.assertEqual(len(self.alerts), 2)
+        self.assertIn("stopped working", self.alerts[1])
 
     async def test_a_plain_engine_problem_is_shown_in_plain_words(self) -> None:
         problem = TranscriptionProblem(
@@ -629,10 +665,81 @@ class WorkerPool(unittest.IsolatedAsyncioTestCase):
         stopped = [g for g, m in told if "stopped" in m or "No transcript" in m]
         self.assertEqual(sorted(stopped), [1, 2])  # both tables, once each
         engine.fail = False
-        p.enqueue(self.clip(2, 2000))
+        for at in range(SUCCESSES_BEFORE_ALL_CLEAR):  # steady: "working again" (#470)
+            p.enqueue(self.clip(2, 2000 + at * 1000))
         await self.wait_for(lambda: any("working again" in m for _, m in told))
         await self.stop(task)
         self.assertEqual(sorted(g for g, m in told if "working again" in m), [1, 2])
+
+    async def test_stopping_with_clips_in_flight_leaves_nothing_half_done(self) -> None:
+        engine = GatedTranscriber()  # server 1 hangs mid-clip
+        p = self.make(engine, workers=2)
+        p.enqueue(self.clip(1, 0))
+        p.enqueue(self.clip(1, 1000))
+        p.enqueue(self.clip(2, 0))
+        task = asyncio.create_task(p.run())
+        await self.wait_for(lambda: engine.writing.get(1) == 1 and len(self.delivered) == 1)
+        await self.stop(task)  # shutting down mid-clip
+        self.assertFalse(p._running)
+        self.assertEqual(p._writing, set())  # nothing claims to be in progress
+        self.assertEqual(p.pending[0], 1)  # the clip never started is still counted
+        self.assertEqual(p.backlog_of(1), 1)  # still queued, and its turn is still there
+        self.assertIn(1, list(p._turns._queue))
+
+    async def test_an_ended_sessions_last_clips_dont_block_telling_the_next(self) -> None:
+        engine = FakeTranscriber()
+        engine.fail = True
+        p = self.make(engine, workers=1)
+        told: list[tuple[int, str]] = []
+
+        async def alert(guild_id: int, message: str) -> None:
+            told.append((guild_id, message))
+
+        p._alert = alert
+        task = asyncio.create_task(p.run())
+        for at in range(FAILURES_BEFORE_ALERT):  # an outage: told once
+            p.enqueue(self.clip(1, at * 1000))
+        await self.wait_for(lambda: len(told) == 1)
+        p.enqueue(self.clip(1, 9000))  # the stopped session's last words, still failing
+        await self.wait_for(lambda: p.backlog == 0 and not p._writing)
+        p.session_started(1)  # a new /dmbot start during the same outage
+        p.enqueue(self.clip(1, 20_000))
+        await self.wait_for(lambda: len(told) == 2)
+        await self.stop(task)
+        self.assertEqual([g for g, _ in told], [1, 1])  # the new session is told too
+
+    async def test_a_problem_posting_an_alert_never_loses_the_clip(self) -> None:
+        engine = FakeTranscriber()
+        engine.fail = True
+        p = self.make(engine, workers=1)
+
+        async def broken(guild_id: int, message: str) -> None:
+            raise RuntimeError("Discord said no")
+
+        p._alert = broken
+        for _ in range(FAILURES_BEFORE_ALERT):
+            await p.process(self.clip(1, 0))
+        engine.fail = False
+        with self.assertLogs("dmbot.transcription.pipeline", "ERROR"):
+            for at in range(SUCCESSES_BEFORE_ALL_CLEAR):
+                await p.process(self.clip(1, at))
+        self.assertEqual(len([t for _, t in self.delivered if t]), SUCCESSES_BEFORE_ALL_CLEAR)
+
+    async def test_a_revoke_while_waiting_its_turn_means_it_isnt_written(self) -> None:
+        engine = GatedTranscriber()
+        consent = FakeConsent({7})
+        p = self.make(engine, workers=1)
+        p._consent = consent
+        p.enqueue(self.clip(1, 0))  # holds the only worker
+        waiting = Utterance(2, 7, 0, 1000, ONE_SECOND, 0)
+        p.enqueue(waiting)
+        task = asyncio.create_task(p.run())
+        await self.wait_for(lambda: engine.writing.get(1) == 1)
+        consent.users.discard(7)  # stops being recorded while queued
+        engine.gate.set()
+        await self.wait_for(lambda: p.backlog == 0 and not p._writing)
+        await self.stop(task)
+        self.assertNotIn(2, [g for g, _ in engine.order])  # never sent to be written
 
     async def test_the_backlog_warning_is_per_server(self) -> None:
         alerts: list[int] = []
