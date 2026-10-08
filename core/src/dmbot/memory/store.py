@@ -337,6 +337,27 @@ class MemoryStore:
             live = await _live_ids(scope, None if entity_id is None else [entity_id])
             return [_alias(r) for r in rows if r["entity_id"] in live]
 
+    async def confirmed_name_for(self, guild_id: int, campaign_id: str, key: str) -> str | None:
+        """The confirmed entry already called `key` by a name everyone may know (not a
+        secret one), if any: its name. Two look-ups by key and ID, never every name of the
+        campaign (#580); like `aliases`, the first such name by its ID."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            cur = await scope.conn.execute(
+                "SELECT entity_id FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
+                " AND key = %s AND status = 'confirmed' AND NOT secret ORDER BY id",
+                (*scope.ids, key),
+            )
+            ids = [str(r["entity_id"]) for r in await cur.fetchall()]
+            if not ids:
+                return None
+            cur = await scope.conn.execute(
+                "SELECT id, name FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'confirmed' AND id = ANY(%s)",
+                (*scope.ids, ids),
+            )
+            names = {str(r["id"]): str(r["name"]) for r in await cur.fetchall()}
+        return next((names[i] for i in ids if i in names), None)
+
     async def sound_alikes(
         self, guild_id: int, campaign_id: str, codes: Sequence[str], *, limit: int = 500
     ) -> list[tuple[str, str, str]]:
@@ -811,18 +832,22 @@ class MemoryStore:
             onto.active_type(type)
             if onto_is_pc(onto, type):
                 raise MemoryRuleError("A player's character needs its player.")
-            done = 0
-            for entity_id in entity_ids:
-                current = await w.get(ENTITIES, entity_id)
-                if current is None or current["status"] != PROPOSED:
-                    continue  # checked or removed since
-                await w.update(ENTITIES, entity_id, {"type": type, "status": CONFIRMED})
-                for alias in await w.select(
-                    ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
-                ):
-                    await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
-                done += 1
-            return Written(done, w.batch)
+            # A few statements for the whole group, not a chain per name (#580). Names
+            # checked or removed since aren't proposed any more, so they're left alone.
+            confirmed = await w.update_where(
+                ENTITIES,
+                {"type": type, "status": CONFIRMED},
+                " AND status = 'proposed' AND id = ANY(%s)",
+                [sorted(set(entity_ids))],
+            )
+            ids = [row["id"] for row in confirmed]
+            await w.update_where(
+                ALIASES,
+                {"status": CONFIRMED},
+                " AND status = 'proposed' AND entity_id = ANY(%s)",
+                [ids],
+            )
+            return Written(len(ids), w.batch)
 
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
         """Every name and word DMbot already has an answer for in this campaign, whatever

@@ -1369,6 +1369,69 @@ class Lists(MemoryTest):
         aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=ids[1])
         self.assertTrue(all(a.status == CONFIRMED for a in aliases))
 
+    async def test_the_name_a_key_belongs_to_is_one_look_up(self) -> None:
+        """known_as asks for one key, never every name (#580): only a confirmed entry,
+        by a name everyone may know."""
+        from dmbot.memory.models import NewName, name_key
+
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [
+                NewName("Belleros", "npc", CONFIRMED, ("Bell",), ("the Stranger",)),
+                NewName("Kesh", "npc", PROPOSED),
+                NewName("Ulfgar", "npc", CONFIRMED),
+            ],
+            source="dm",
+        )
+        ulfgar = written.value[2]
+        assert ulfgar is not None
+        await self.memory.set_entity_status(GUILD_A, self.c, ulfgar, REJECTED, source="dm")
+
+        async def named(text: str) -> str | None:
+            return await self.memory.confirmed_name_for(GUILD_A, self.c, name_key(text))
+
+        self.assertEqual(await named("bell"), "Belleros")
+        self.assertEqual(await named("BELLEROS"), "Belleros")
+        self.assertIsNone(await named("the stranger"))  # a secret name: no clash shown
+        self.assertIsNone(await named("Kesh"))  # only suggested
+        self.assertIsNone(await named("Ulfgar"))  # removed
+        self.assertIsNone(await named("Auril"))
+
+    async def test_a_big_group_gets_its_kind_in_a_few_statements(self) -> None:
+        """ "Every wizard is an NPC" for 150 names, each with names of its own, takes a few
+        statements, not one chain per name and per name of it (#580)."""
+        from dmbot.memory.models import NewName
+
+        written = await self.memory.add_names(
+            GUILD_A,
+            self.c,
+            [
+                NewName(f"Mage {n}", "concept", PROPOSED, (f"M{n}", f"Magus {n}"), (f"veil {n}",))
+                for n in range(150)
+            ],
+            source="dm",
+        )
+        ids = [i for i in written.value if i is not None]
+        statements = 0
+        real = AsyncConnection.execute
+
+        async def counting(conn: Any, *args: Any, **kw: Any) -> Any:
+            nonlocal statements
+            statements += 1
+            return await real(conn, *args, **kw)
+
+        with patch.object(AsyncConnection, "execute", counting):
+            done = await self.memory.confirm_kinds(GUILD_A, self.c, ids, "npc", source="dm")
+        self.assertEqual(done.value, 150)
+        self.assertLess(statements, 40)  # was 2,557 (13 now)
+        names = await self.memory.aliases(GUILD_A, self.c, include_secret=True)
+        self.assertEqual(len(names), 600)
+        self.assertTrue(all(a.status == CONFIRMED for a in names))
+        confirmed = await self.memory.entities(GUILD_A, self.c, statuses=[CONFIRMED])
+        self.assertEqual({e.type for e in confirmed}, {"npc"})
+        self.assertIsNotNone(done.batch)  # one change
+
     async def save_list(
         self, size: int, first: int = 0, more: Sequence[Any] = ()
     ) -> tuple[Written[Any], int, float]:
