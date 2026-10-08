@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { apiOrigin, inlineScriptHashes, MOCK_MARKER, mockLeaks } from "../scripts/csp.mjs";
+import { apiOrigin, effectiveApiBase, inlineScriptHashes, isDevSite, MOCK_MARKER, mockLeaks } from "../scripts/csp.mjs";
 import { MOCK_MARKER as APP_MARKER } from "../src/account/mock";
 
 const hash = (body: string): string =>
@@ -38,6 +38,27 @@ describe("apiOrigin", () => {
     ["https://api.dmbot.example/v1/", "https://api.dmbot.example"],
   ])("%s → %s", (base, origin) => {
     expect(apiOrigin(base)).toBe(origin);
+  });
+});
+
+describe("effectiveApiBase (the development site, #837)", () => {
+  const real = "https://api.dmbot.example";
+  it("gives the development branch the real API, even when previews are set to the pretend one", () => {
+    const env = { CF_PAGES_BRANCH: "development", PUBLIC_API_BASE: "mock", PUBLIC_DEV_API_BASE: real };
+    expect(effectiveApiBase(env)).toBe(real);
+    expect(apiOrigin(effectiveApiBase(env))).toBe(real);
+    expect(isDevSite(env)).toBe(true);
+  });
+
+  it("keeps the pretend API for every other preview", () => {
+    const env = { CF_PAGES_BRANCH: "webdev/837", PUBLIC_API_BASE: "mock", PUBLIC_DEV_API_BASE: real };
+    expect(effectiveApiBase(env)).toBe("mock");
+    expect(isDevSite(env)).toBe(false);
+  });
+
+  it("never switches production, and falls back when the variable is empty", () => {
+    expect(effectiveApiBase({ CF_PAGES_BRANCH: "main", PUBLIC_API_BASE: "/api", PUBLIC_DEV_API_BASE: real })).toBe("/api");
+    expect(effectiveApiBase({ CF_PAGES_BRANCH: "development", PUBLIC_API_BASE: "mock", PUBLIC_DEV_API_BASE: " " })).toBe("mock");
   });
 });
 
