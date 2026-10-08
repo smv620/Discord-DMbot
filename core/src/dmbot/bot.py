@@ -1772,19 +1772,21 @@ class DMBot(commands.AutoShardedBot):
         self._redraw_fix_notes(table)
         if not self.consent.has_consent(guild_id, note.speaker):
             return fix_notes.STOPPED, allow  # their words aren't put back anywhere
-        await self._rewrite_line(
+        changed = await self._rewrite_line(
             table, note.speaker, note.started_ms, table.fix_notes.line_text(note)
         )
         md = discord.utils.escape_markdown
-        return fix_notes.done_text(md(note.fix.heard), md(note.fix.written)), allow
+        text = fix_notes.done_text(md(note.fix.heard), md(note.fix.written), line_kept=not changed)
+        return text, allow
 
     async def _rewrite_line(self, table: Table, speaker: int, started_ms: int, text: str) -> bool:
         """Change a line's words (#296, #503): saved, waiting to be saved, and in the
         transcript channel if it was posted in the last ~30 s. Only while the speaker is
         still recorded, checked again after every wait. True if the line changed: saved
-        or waiting, or (with no saved copy that failed to change) the channel message. A
-        database error is logged, and the channel is still edited."""
-        guild_id, found, failed, edited = table.guild_id, False, False, False
+        or waiting, or the channel message. All or nothing: if the saved line can't be
+        changed (a database error, logged), the channel isn't either, so "That line stays
+        as heard" is true everywhere."""
+        guild_id, found, edited = table.guild_id, False, False
         # The saved line: hold the save lock, so a batch being saved can't miss this.
         async with table.save_lock:
             if self.consent.has_consent(guild_id, speaker):
@@ -1798,9 +1800,9 @@ class DMBot(commands.AutoShardedBot):
                             )
                         )
                     except Exception:
-                        failed = True
                         log.exception("Couldn't change a saved line's words")
-                    if not found and not failed:
+                        return False
+                    if not found:
                         log.warning("A name change found no saved line to change")
         # The channel: hold its lock, so a message being posted can't miss this either.
         async with table.transcript_lock:
@@ -1820,7 +1822,7 @@ class DMBot(commands.AutoShardedBot):
                         pass
                     except Exception:
                         log.exception("Couldn't edit a transcript message with a name change")
-        return found or (edited and not failed)
+        return found or edited
 
     async def allow_fix_again(
         self, guild_id: int, campaign_id: str, batch: int, user_id: int
