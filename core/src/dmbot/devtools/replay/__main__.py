@@ -14,11 +14,17 @@ import argparse
 import asyncio
 import os
 import re
-import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+# Re-exported: the offline tools share them (dmbot.devtools.common).
+from dmbot.devtools.common import HISTORY as HISTORY
+from dmbot.devtools.common import REPO as REPO
+from dmbot.devtools.common import TEST_SCRIPTS as TEST_SCRIPTS
+from dmbot.devtools.common import commit as commit
+from dmbot.devtools.common import commit_id as commit_id
+from dmbot.devtools.common import public_name as public_name
 from dmbot.devtools.replay import audio, voices
 from dmbot.devtools.replay import names as name_scan
 from dmbot.devtools.replay.bakeoff import (
@@ -46,12 +52,6 @@ from dmbot.transcription.config import (
     load_transcription_settings,
 )
 from dmbot.transcription.factory import build_transcriber
-
-# Only from a checkout (pip install -e): an installed copy has no docs/ next to it.
-REPO = Path(__file__).resolve().parents[5]
-HISTORY = REPO / "docs" / "testing-history.log"
-TEST_SCRIPTS = REPO / "docs" / "test-scripts"
-
 
 # List prices per minute of audio, to tell whoever runs a replay roughly what it costs.
 # Check the company's current prices before relying on them.
@@ -81,48 +81,6 @@ def describe(settings: TranscriptionSettings) -> str:
             f"compute {settings.whisper_compute_type}, beam {settings.whisper_beam_size})"
         )
     return "none (no text)"
-
-
-_SHA = re.compile(r"[0-9a-f]{4,40}")
-
-
-def _commit_id(value: str | None) -> str | None:
-    """A commit id, shortened, or None: nothing else may go in the public log."""
-    if not value:
-        return None
-    value = value.strip().casefold()
-    return value[:7] if _SHA.fullmatch(value) else None
-
-
-def commit(given: str | None = None) -> str:
-    """Which code was replayed, for the record: `--commit`, then GIT_COMMIT (a container
-    has no git checkout to ask), then git itself. Only a commit id goes in the public log."""
-    if found := _commit_id(given):
-        return found
-    if found := _commit_id(env := os.environ.get("GIT_COMMIT")):
-        return found
-    if env:
-        print("replay: GIT_COMMIT isn't a commit id; ignoring it", file=sys.stderr)
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
-    return out.stdout.strip() or "unknown"
-
-
-def public_name(recording: Path) -> str:
-    """The recording's name for the public log: only the repo's own test recordings are
-    named, since a file of someone's own could be named after them."""
-    try:
-        recording.resolve().relative_to(TEST_SCRIPTS)
-    except ValueError:
-        return "a recording"
-    return recording.name
 
 
 def _milliseconds(text: str) -> int:
@@ -285,7 +243,7 @@ async def main_async(args: argparse.Namespace) -> int:
     except TranscriptionConfigError as exc:
         print(f"replay: {exc}", file=sys.stderr)
         return 2
-    if args.commit and _commit_id(args.commit) is None:
+    if args.commit and commit_id(args.commit) is None:
         print(
             "replay: --commit takes a commit id: 4 to 40 of the digits and letters a-f "
             "(see git rev-parse HEAD)",

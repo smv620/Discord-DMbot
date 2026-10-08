@@ -880,41 +880,108 @@ class SaveAndResume(SessionTests):
             guild=self.guild,
             user=user,
             message=MagicMock(edit=AsyncMock()),
-            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+            response=SimpleNamespace(
+                defer=AsyncMock(), send_message=AsyncMock(), edit_message=AsyncMock()
+            ),
             followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(),
         )
 
-    async def test_the_stop_button_stops_only_for_the_dm(self) -> None:
+    async def ask_to_stop(self, user: Any, campaign_id: str | None = None) -> Any:
+        """Press ⏹ Stop listening: the private question (#554), and its view."""
         from dmbot.dm_screen import StopListeningButton
+
+        it = self.press_stop(user)
+        await StopListeningButton(campaign_id or self.campaign.id).callback(it)
+        return it
+
+    @staticmethod
+    def became(it: Any) -> str:
+        """What the question became after the answer."""
+        return str(it.edit_original_response.await_args.kwargs["content"])
+
+    async def answer(self, question: Any, label: str, user: Any) -> Any:
+        """Press "Yes, stop" or "Cancel" on the question."""
+        view = question.response.send_message.await_args.kwargs["view"]
+        (button,) = [b for b in view.children if b.label == label]
+        it = self.press_stop(user)
+        await button.callback(it)
+        return it
+
+    async def test_the_stop_button_asks_first_and_stops_only_for_the_dm(self) -> None:
         from dmbot.dm_screen import messages as m
 
         await self.start()
-        button = StopListeningButton(self.campaign.id)
-        player = self.press_stop(member(PLAYER))
-        await button.callback(player)
-        self.assertIn("Only the DM can stop", player.followup.send.await_args.args[0])
+        question = await self.ask_to_stop(member(DM))
+        self.assertIn(GUILD, self.bot.tables)  # one tap stops nothing
+        args, kwargs = question.response.send_message.await_args
+        self.assertEqual(args[0], "Stop listening and end the session for **Frostmaiden**?")
+        self.assertTrue(kwargs["ephemeral"])
+        self.assertEqual([b.label for b in kwargs["view"].children], ["Yes, stop", "Cancel"])
+        # A player is told at once, with no question to answer.
+        theirs = await self.ask_to_stop(member(PLAYER))
+        self.assertEqual(theirs.response.send_message.await_args.args[0], m.ONLY_DM_STOPS)
+        self.assertIsNone(theirs.response.send_message.await_args.kwargs.get("view"))
+        # …and checked again at "Yes, stop" (say a DM lost the role meanwhile).
+        from dmbot.dm_screen.buttons import StopConfirm
+
+        session, _ = self.bot.active_session(GUILD) or (0, "")
+        late = self.press_stop(member(PLAYER))
+        yes = next(b for b in StopConfirm(self.campaign.id, session).children)
+        await yes.callback(late)
+        self.assertEqual(self.became(late), m.ONLY_DM_STOPS)
         self.assertIn(GUILD, self.bot.tables)  # still listening
-        dm = self.press_stop(member(DM))
-        await button.callback(dm)
-        self.assertIn("Stopped listening", dm.followup.send.await_args.args[0])
+        dm = await self.answer(question, "Yes, stop", member(DM))
+        dm.response.edit_message.assert_awaited_once_with(content=m.STOPPING, view=None)
+        self.assertIn("Stopped listening", self.became(dm))
         self.assertNotIn(GUILD, self.bot.tables)
-        again = self.press_stop(member(DM))  # an old message, pressed later
-        await button.callback(again)
+        again = await self.ask_to_stop(member(DM))  # an old message, pressed later
         again.response.send_message.assert_awaited_once()
         self.assertEqual(again.response.send_message.await_args.args[0], m.NOT_LISTENING_NOW)
         again.message.edit.assert_awaited_with(view=None)
 
-    async def test_a_server_manager_can_press_stop_but_not_for_another_campaign(self) -> None:
-        from dmbot.dm_screen import StopListeningButton
+    async def test_cancel_keeps_listening(self) -> None:
+        await self.start()
+        question = await self.ask_to_stop(member(DM))
+        cancel = await self.answer(question, "Cancel", member(DM))
+        cancel.response.edit_message.assert_awaited_once_with(content="Still listening.", view=None)
+        self.assertIn(GUILD, self.bot.tables)
+
+    async def test_a_yes_from_an_earlier_session_stops_nothing(self) -> None:
+        from dmbot.dm_screen import messages as m
 
         await self.start()
+        question = await self.ask_to_stop(member(DM))
+        await self.bot.stop_session(GUILD, DM, False)
+        ok, message = await self.start()  # a new session of the same campaign
+        self.assertTrue(ok, message)
+        stale = await self.answer(question, "Yes, stop", member(DM))
+        self.assertEqual(stale.edit_original_response.await_args.kwargs["content"], m.STOP_STALE)
+        self.assertIn(GUILD, self.bot.tables)  # the new session keeps going
+        await self.bot.stop_session(GUILD, DM, False)
+        after = await self.answer(question, "Yes, stop", member(DM))  # nothing running now
+        self.assertEqual(self.became(after), m.NOT_LISTENING_NOW)
+
+    async def test_an_expired_question_says_so(self) -> None:
+        from dmbot.dm_screen import messages as m
+
+        await self.start()
+        question = await self.ask_to_stop(member(DM))
+        view = question.response.send_message.await_args.kwargs["view"]
+        self.assertEqual(view.timeout, m.STOP_CONFIRM_S)
+        await view.on_timeout()
+        question.edit_original_response.assert_awaited_once_with(content=m.STOP_EXPIRED, view=None)
+        self.assertIn(GUILD, self.bot.tables)
+
+    async def test_a_server_manager_can_stop_but_not_for_another_campaign(self) -> None:
+        await self.start()
         other = await self.campaigns.create(GUILD, "Strahd", DM)
-        wrong = self.press_stop(member(OTHER_PERSON, manager=True))
-        await StopListeningButton(other.id).callback(wrong)
+        wrong = await self.ask_to_stop(member(OTHER_PERSON, manager=True), other.id)
+        self.assertIsNone(wrong.response.send_message.await_args.kwargs.get("view"))
         self.assertIn(GUILD, self.bot.tables)  # an old button never stops a newer session
-        manager = self.press_stop(member(OTHER_PERSON, manager=True))
-        await StopListeningButton(self.campaign.id).callback(manager)
-        self.assertIn("Stopped listening", manager.followup.send.await_args.args[0])
+        question = await self.ask_to_stop(member(OTHER_PERSON, manager=True))
+        manager = await self.answer(question, "Yes, stop", member(OTHER_PERSON, manager=True))
+        self.assertIn("Stopped listening", self.became(manager))
         self.assertNotIn(GUILD, self.bot.tables)
 
     async def test_settings_change_how_much_dmbot_says_mid_session(self) -> None:

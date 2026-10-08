@@ -26,8 +26,7 @@ from dmbot.devtools.claims import cost
 from dmbot.devtools.claims.extract import MAX_TOKENS, SYSTEM, Client, extract, transcript
 from dmbot.devtools.claims.scenes import WORDS_PER_SECOND, Scene, batches, load_scenes
 from dmbot.devtools.claims.score import Score, score
-from dmbot.devtools.replay.__main__ import HISTORY, TEST_SCRIPTS, commit
-from dmbot.devtools.replay.report import history_entry
+from dmbot.devtools.common import HISTORY, TEST_SCRIPTS, commit, history_entry, public_name
 
 SCENES = TEST_SCRIPTS / "story-scenes.md"
 BATCH_S = 30.0  # live batches are 30 to 60 s of talk
@@ -135,15 +134,21 @@ class Run:
     score: Score
     usage: cost.Usage | None  # None: every call failed
     notes: list[str]
+    capped: bool = False  # the cap stopped this pass part-way
+    done: str = ""  # "3 of 5 batches" when it did
 
 
 def record(model: str, runs: Sequence[Run], price: tuple[float, float]) -> list[str]:
     """Numbers only."""
+    if not runs:
+        return [f"model: {model}: not run: cap reached"]
     lines = [f"model: {model} ({len(runs)} run{'s' if len(runs) != 1 else ''}, pilot set)"]
     for n, run in enumerate(runs, 1):
         result = run.score
         kinds = ", ".join(f"{how} {right}/{of}" for how, (right, of) in result.by_kind().items())
         tag = f"  run {n}: " if len(runs) > 1 else "  "
+        if run.capped:  # its numbers cover only part of the set
+            tag += f"(stopped part-way: {run.done}) "
         lines += [
             f"{tag}how it was said: {result.how_right} of {result.pulled} pulled claims right "
             f"{percent(result.how_right, result.pulled)}: {kinds}",
@@ -175,12 +180,26 @@ def record(model: str, runs: Sequence[Run], price: tuple[float, float]) -> list[
     return lines
 
 
-async def measure(client: Client, scenes: Sequence[Scene]) -> Run:
+async def measure(
+    client: Client,
+    scenes: Sequence[Scene],
+    *,
+    price: tuple[float, float] = (0.0, 0.0),
+    budget_usd: float = math.inf,
+) -> Run:
+    """One pass over the batches. Stops before the next call once this pass has spent
+    `budget_usd` or more, so the cap is overshot by one call at most. A reply that says nothing of
+    its usage counts nothing against it, and is noted."""
     total = Score()
     input_tokens = output_tokens = 0
-    dropped = cut = failed = calls = 0
+    dropped = cut = failed = calls = unbilled = 0
     talk_s = 0.0
+    capped = False
     for scene in scenes:
+        if cost.dollars(price, input_tokens, output_tokens) >= budget_usd:
+            capped = True
+            total.expected += sum(len(line.expected) for line in scene.lines)
+            continue
         try:
             got = await extract(client, scene.lines)
         except AIError:
@@ -194,21 +213,25 @@ async def measure(client: Client, scenes: Sequence[Scene]) -> Run:
         output_tokens += got.output_tokens
         dropped += got.dropped
         cut += got.cut
+        unbilled += got.input_tokens == 0 and got.output_tokens == 0
     notes = []
+    if unbilled:
+        replies = "reply says" if unbilled == 1 else "replies say"
+        notes.append(f"  {unbilled} {replies} nothing of their usage: not counted against the cap")
     if dropped or cut or failed:
         notes.append(
             f"  answers: {dropped} claims dropped as malformed, {cut} cut off, {failed} failed "
             "(a failed call that timed out may still be billed)"
         )
     if not calls:
-        return Run(total, None, notes)
+        return Run(total, None, notes, capped, f"{calls + failed} of {len(scenes)} batches")
     share = (
         cost.tokens_for(SYSTEM)
         / sum(cost.tokens_for(SYSTEM + transcript(s.lines)) for s in scenes)
         * len(scenes)
     )
     usage = cost.Usage(calls, input_tokens, output_tokens, talk_s, min(1.0, share))
-    return Run(total, usage, notes)
+    return Run(total, usage, notes, capped, f"{calls + failed} of {len(scenes)} batches")
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -224,7 +247,8 @@ async def main_async(args: argparse.Namespace) -> int:
     wanted = sum(len(line.expected) for s in scenes for line in s.lines)
     lines = [
         f"batches: {len(scenes)} of {args.batch_s:g} s or more ({said} lines, {wanted} "
-        f"expected claims), one call each per model and run; commit: {commit(args.commit)}"
+        f"expected claims), one call each per model and run; commit: "
+        f"{commit(args.commit, tool='claims')}"
     ]
     total_usd = 0.0
     for model in models:
@@ -234,8 +258,8 @@ async def main_async(args: argparse.Namespace) -> int:
         usd = cost.dollars(prices[model], tokens_in, tokens_out) * args.runs
         total_usd += usd
         lines.append(
-            f"estimate for {model}: at most {tokens_in * args.runs} in, "
-            f"{tokens_out * args.runs} out, ${usd:.3f}"
+            f"estimate for {model}: about {tokens_in * args.runs} in (a guess at 3 "
+            f"characters a token), at most {tokens_out * args.runs} out, ${usd:.3f}"
         )
     print("\n".join(lines))
     if args.extractor == "none":
@@ -258,29 +282,39 @@ async def main_async(args: argparse.Namespace) -> int:
         return 2
     out = lines[:1]
     spent = 0.0
-    measured = False
+    measured = capped = False
     for model in models:
         runs: list[Run] = []
-        client = AnthropicClient(key, model)
-        try:
-            for _ in range(args.runs):
-                if spent > args.max_usd:  # the estimate was wrong: stop, don't overspend
-                    out.append(f"stopped: ${spent:.2f} spent, over ${args.max_usd:g}")
-                    break
-                run = await measure(client, scenes)
-                runs.append(run)
-                if run.usage is not None:
-                    measured = True
-                    spent += cost.dollars(
-                        prices[model], run.usage.input_tokens, run.usage.output_tokens
+        if not capped:
+            client = AnthropicClient(key, model)
+            try:
+                for _ in range(args.runs):
+                    if spent > args.max_usd:  # the estimate was wrong: stop, don't overspend
+                        out.append(f"stopped: ${spent:.2f} spent, over ${args.max_usd:g}")
+                        capped = True
+                        break
+                    run = await measure(
+                        client, scenes, price=prices[model], budget_usd=args.max_usd - spent
                     )
-        finally:
-            await client.close()
+                    runs.append(run)
+                    if run.usage is not None:
+                        measured = True
+                        spent += cost.dollars(
+                            prices[model], run.usage.input_tokens, run.usage.output_tokens
+                        )
+                    if run.capped:
+                        out.append(f"stopped part-way: ${spent:.2f} spent, cap ${args.max_usd:g}")
+                        capped = True
+                        break
+            finally:
+                await client.close()
         out += record(model, runs, prices[model])
     print("\n".join(out[1:]))
     if args.log and measured:
         with args.history.open("a", encoding="utf-8") as history:
-            history.write(history_entry(out, title=f"story-memory extraction, {args.scenes.name}"))
+            name = public_name(args.scenes, other="a scenes file")
+            title = f"story-memory extraction, {name}"
+            history.write(history_entry(out, title=title, kind="Measurement"))
         print(f"\nAppended to {args.history}")
     elif args.log:
         print("\nNothing logged: every call failed.")

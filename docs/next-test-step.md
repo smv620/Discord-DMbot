@@ -4,11 +4,11 @@
 
 ---
 
-## Test A: DMbot writes down what one person says
+## Test A again: DMbot writes down what one person says
 
 **People:** 1 (you, as the DM)
 **Time:** about 3 minutes
-**Why:** many updates went in today. Check the most basic thing still works before anything bigger.
+**Why:** last time (Oct 8) nothing was written down. This checks whether it happens again. Same test, same device as last time.
 
 ### Before you start
 - Be in your test Discord server, on a steady connection.
@@ -31,6 +31,7 @@
 ### Tell dev1
 - **Worked** or **didn't work**.
 - If it didn't: what you saw (or didn't see) at the step where it went wrong.
+- Phone or computer.
 
 ---
 

@@ -632,7 +632,10 @@ true picture of who is recorded. Only people at the table get these lines. The
 message carries a **⏹ Stop listening** button (the same as `/dmbot stop`: this
 campaign's DMs or a server manager; anyone else is told how to stop recording
 themselves). Only the newest listening message has the button, it comes off when the
-session ends, and it works after a restart. The help card says how to stop too.
+session ends, and it works after a restart. The help card says how to stop too. The
+button asks first, privately ("Stop listening and end the session for **…**? [⏹ Yes,
+stop] [Cancel]", for 60 seconds, tied to that session); the typed `/dmbot stop` stops at
+once (#554).
 
 **Writing speech down for several tables: built (2026-10-07, #173).** Each Discord
 server has its own queue of speech (64 pieces; 256 across all servers bound memory when
@@ -888,7 +891,9 @@ names panel nor the speech-to-text hints can be a fixed list.
     with other names separated by `;` and the kind optional, in plain words (NPC,
     place, group, creature, item, god, spell, event, other). Paste up to about 200
     names (a form holds 4,000 characters) or upload a file (UTF-8, up to 256 KB and
-    2,000 lines; each name up to 100 characters). **Names only:** lines with
+    2,000 lines; each name up to 100 characters; at most 20 other names and 20 secret
+    names on a line, decided 2026-10-08 on #598 so a worst-case file stays bounded, a
+    line over it being refused with its number and "split them"). **Names only:** lines with
     descriptions or other columns are refused as unclear, and DMbot never offers
     ready-made sourcebook name lists (IP rule). It writes only into the chosen
     campaign, through the normal memory rules (checks, change log), **saved in one go**
@@ -1440,7 +1445,9 @@ the Discord account number, if that account used Try It (one trial per person), 
 reference numbers of its payments with the account number (so no payment is counted
 twice). **Campaign ownership and hand-over (decided 2026-10-08, #437):** every campaign
 has one owner (`campaigns.owner_user_id`): the DM who created it, or whoever restored it
-from a backup. Campaigns from before this get their only DM as owner; one with several DMs
+from a backup as a new campaign (replacing an existing campaign from a backup keeps that
+campaign's owner, so a restore can never be used as a hand-over; #609). Campaigns from
+before this get their only DM as owner; one with several DMs
 has no owner until the first `/dmbot start` asks the DM who started it to take it on
 ("Take it on / Not now"; never guessed, since ownership spends someone's hours; once the
 plan checks are live, no owner means no start). A hand-over is an offer, never immediate:
