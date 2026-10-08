@@ -34,11 +34,13 @@ async def first_paid_month_after_trial(db: Database, user_id: int) -> bool:
     return bool(row and row["tried"] and not row["paid"])
 
 
-async def record_install(db: Database, user_id: int, guild_id: int, *, now: int) -> str:
+async def record_install(
+    db: Database, user_id: int, guild_id: int, *, now: int, session: str
+) -> str:
     """DMbot was added to this server through the website by this person (#435).
     Returns "recorded", or "already_linked" when someone else is already the installer
     (DMbot is in the server either way; the first installer stays)."""
-    async with db.user(user_id, install_guild=guild_id) as conn:
+    async with db.user(user_id, install_guild=guild_id, session=session) as conn:
         # The write contract (schema.py, migration 0014): someone else's install is left
         # alone, quietly (no row comes back).
         cur = await conn.execute(
@@ -54,11 +56,11 @@ async def record_install(db: Database, user_id: int, guild_id: int, *, now: int)
         return "recorded" if await cur.fetchone() is not None else "already_linked"
 
 
-async def link_install(db: Database, user_id: int, guild_id: int) -> str:
+async def link_install(db: Database, user_id: int, guild_id: int, *, session: str) -> str:
     """Fill in who added DMbot to a server it joined through a plain link. Returns
     "linked", "already_linked" (someone else did), or "not_installed" (DMbot isn't
     there, or has left)."""
-    async with db.user(user_id, install_guild=guild_id) as conn:
+    async with db.user(user_id, install_guild=guild_id, session=session) as conn:
         cur = await conn.execute(
             "SELECT installed_by_user_id FROM installs WHERE guild_id = %s AND left_at IS NULL",
             (guild_id,),

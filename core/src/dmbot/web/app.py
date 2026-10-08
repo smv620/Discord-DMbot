@@ -303,7 +303,9 @@ def create_app(
             if approver.id != session.user_id:
                 # Discord was signed in as someone else: DMbot joined, but not as theirs.
                 return back("other_account")
-            result = await record_install(db, session.user_id, guild_id, now=clock())
+            result = await record_install(
+                db, session.user_id, guild_id, now=clock(), session=session.id_hash
+            )
         except DiscordError as exc:
             log.warning("Install failed: %s", exc)
             return failed
@@ -325,7 +327,7 @@ def create_app(
         session, _token = signed
         fresh(session)
         guild_id = managed(session, server_id)
-        result = await link_install(db, session.user_id, guild_id)
+        result = await link_install(db, session.user_id, guild_id, session=session.id_hash)
         if result != "linked":
             raise HTTPException(status_code=409, detail=result)
         return Response(status_code=204)

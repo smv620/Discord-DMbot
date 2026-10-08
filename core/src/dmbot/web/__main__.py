@@ -10,11 +10,11 @@ import sys
 import time
 
 import uvicorn
-from psycopg.conninfo import make_conninfo
 
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
+from dmbot.schema import WEB_ROLE
 from dmbot.sharding import ShardSettings
 from dmbot.web import sessions
 from dmbot.web.app import create_app
@@ -39,10 +39,15 @@ async def _sweep_expired_sessions(db: Database) -> None:
 
 async def serve(settings: WebSettings) -> None:
     # A small pool of its own, and no query may run longer than 5 seconds: a busy website
-    # can never hold many of the database's connections for long.
+    # can never hold many of the database's connections for long. It never changes the
+    # schema (its role, dmbot_web, can't): the bot does, so it only checks it's current.
     db = await Database.open(
-        make_conninfo(settings.database_url, options="-c statement_timeout=5000"),
+        settings.database_url,
+        options="-c statement_timeout=5000",
         max_size=4,
+        migrate=False,
+        # Its limits in the database only hold for its own role (#498).
+        require_role=None if settings.any_db_role else WEB_ROLE,
     )
     discord = HttpDiscord(settings.discord_client_id, settings.discord_client_secret)
     payments = (

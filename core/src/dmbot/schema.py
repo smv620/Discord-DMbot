@@ -726,6 +726,79 @@ INSTALLS_LEFT = """
         'Write contract: see migration 0014 in core/src/dmbot/schema.py.';
     """
 
+# The website API's own database role (#498). Its policies only ever narrow what it sees;
+# they never apply to the bot (role `dmbot`). The role itself is made by
+# whoever runs Postgres (deploy/postgres-init/02-dmbot-web.sh, or the README for an
+# existing server), because DMbot's own role can't create roles.
+WEB_ROLE = "dmbot_web"
+
+WEB_ROLE_LIMITS = """
+    -- The servers in the signed-in session's own Discord list (#498): the session on this
+    -- request (dmbot.session), belonging to the signed-in person (dmbot.user_id), not
+    -- expired. Empty otherwise. Policies call it as (SELECT ...), so it runs once per
+    -- statement, not per row. The policies themselves are made with the role's rights
+    -- (WEB_ROLE_POLICIES): a policy for a role can only be made once the role exists.
+    CREATE FUNCTION dmbot_web_guilds() RETURNS BIGINT[]
+        LANGUAGE sql STABLE
+        AS $fn$
+            SELECT coalesce(array_agg((e->>'id')::BIGINT), '{}')
+            FROM web_sessions s, jsonb_array_elements(s.guilds) AS e
+            WHERE s.id_hash = dmbot_current_session()
+              AND s.user_id = dmbot_current_user()
+              AND s.expires_at > dmbot_now()
+        $fn$;
+
+    -- The same, only the servers the person could add bots to when they signed in.
+    CREATE FUNCTION dmbot_web_managed_guilds() RETURNS BIGINT[]
+        LANGUAGE sql STABLE
+        AS $fn$
+            SELECT coalesce(array_agg((e->>'id')::BIGINT), '{}')
+            FROM web_sessions s, jsonb_array_elements(s.guilds) AS e
+            WHERE s.id_hash = dmbot_current_session()
+              AND s.user_id = dmbot_current_user()
+              AND s.expires_at > dmbot_now()
+              AND (e->>'manage')::BOOLEAN
+        $fn$;
+    """
+
+# The website's role is held to its session's servers by these RESTRICTIVE policies
+# (ANDed with each table's own), made `TO dmbot_web` so the bot's role never runs them
+# and any role that is a member of dmbot_web is held too. Database.migrate (re)makes them
+# with the grants, whenever the role exists. What they guard against: the API's code
+# setting a server it shouldn't (a bug), not a taken-over API process, which can write
+# its own session row.
+WEB_ROLE_POLICIES = """
+    DROP POLICY IF EXISTS web_session_servers ON campaigns;
+    CREATE POLICY web_session_servers ON campaigns AS RESTRICTIVE TO dmbot_web
+        USING (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+        WITH CHECK (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]));
+    DROP POLICY IF EXISTS web_session_servers ON campaign_dms;
+    CREATE POLICY web_session_servers ON campaign_dms AS RESTRICTIVE TO dmbot_web
+        USING (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+        WITH CHECK (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]));
+    -- Reading: the session's servers, or the person's own installs (the account page lists
+    -- them even after a server leaves their list). Writing: only the one install server,
+    -- only one they manage, and only naming themselves.
+    DROP POLICY IF EXISTS web_session_servers ON installs;
+    CREATE POLICY web_session_servers ON installs AS RESTRICTIVE TO dmbot_web
+        USING (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[])
+               OR installed_by_user_id = dmbot_current_user())
+        WITH CHECK (guild_id = dmbot_install_guild()
+                    AND guild_id = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])
+                    AND installed_by_user_id = dmbot_current_user());
+    """
+
+# What the website's role may touch at all: its own tables, and only reads of the two
+# server tables /me needs. Everything else (consent, transcripts, memory...) is refused
+# outright. Applied by Database.migrate whenever the role exists, so a new table is never
+# opened to it by accident: it has to be added here.
+WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("SELECT", ("schema_migrations", "campaigns", "campaign_dms")),
+    ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
+    ("SELECT, INSERT", ("payment_events", "try_it_used")),
+    ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -742,6 +815,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0013_web_session_name", WEB_SESSION_NAME),
     ("0014_installs_left_at", INSTALLS_LEFT),
     ("0015_dm_screen_level", DM_SCREEN_LEVEL),
+    ("0016_web_role_limits", WEB_ROLE_LIMITS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

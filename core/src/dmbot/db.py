@@ -27,7 +27,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from dmbot.schema import MIGRATIONS, Migration
+from dmbot.schema import MIGRATIONS, WEB_ROLE, WEB_ROLE_GRANTS, WEB_ROLE_POLICIES, Migration
 
 log = logging.getLogger(__name__)
 
@@ -57,17 +57,27 @@ class Database:
         max_size: int = 10,
         open_timeout: float = 15,
         migrations: Sequence[Migration] = MIGRATIONS,
+        migrate: bool = True,
+        options: str = "",
+        require_role: str | None = None,
     ) -> Database:
         """Connect, check the role is safe, and bring the schema up to date.
 
         `schema` puts everything in a separate Postgres schema (used by tests).
+        `migrate=False` only checks the schema is up to date: for the website's role,
+        which may not change it (the bot updates it). `options` are extra server
+        settings, e.g. "-c statement_timeout=5000". `require_role` refuses any other
+        database user: the website's limits only hold for its own role (#498).
         """
         conninfo = url
         if schema is not None:
             if not _SCHEMA_NAME.match(schema):
                 raise ValueError(f"Invalid schema name: {schema!r}")
-            await _create_schema(url, schema)
-            conninfo = make_conninfo(url, options=f"-c search_path={schema}")
+            if migrate:
+                await _create_schema(url, schema)
+            options = f"{options} -c search_path={schema}".strip()
+        if options:
+            conninfo = make_conninfo(url, options=options)
         pool: AsyncConnectionPool[Conn] = AsyncConnectionPool(
             conninfo,
             connection_class=AsyncConnection[DictRow],
@@ -90,8 +100,11 @@ class Database:
             ) from exc
         db = cls(pool, conninfo)
         try:
-            await db._check_role()
-            await db.migrate(migrations)
+            await db._check_role(require_role)
+            if migrate:
+                await db.migrate(migrations)
+            else:
+                await db._check_up_to_date(migrations)
         except BaseException:
             await db.close()
             raise
@@ -127,16 +140,23 @@ class Database:
             yield conn
 
     @asynccontextmanager
-    async def user(self, user_id: int, *, install_guild: int | None = None) -> AsyncIterator[Conn]:
+    async def user(
+        self, user_id: int, *, install_guild: int | None = None, session: str | None = None
+    ) -> AsyncIterator[Conn]:
         """A transaction that can only see one person's website rows (#435): their
-        account, plan (read only), sessions and installs. Never any server's campaigns.
+        account, plan (read only), sessions and installs. Server rows stay hidden unless
+        code also sets a server (only dmbot.web.me does, for servers in the session's own
+        list; the website's role is held to that list, #498).
 
         `install_guild` lets it record or link DMbot's install on that one server, and
         nothing else of that server's. The caller must first have checked, with Discord,
-        that the person manages that server."""
+        that the person manages that server. `session` (the cookie's hash) is the
+        signed-in session whose server list the website's role is held to (#498)."""
         settings = {"user_id": str(int(user_id))}
         if install_guild is not None:
             settings["install_guild"] = str(int(install_guild))
+        if session is not None:
+            settings["session"] = session
         async with self._with(**settings) as conn:
             yield conn
 
@@ -209,13 +229,19 @@ class Database:
         finally:
             await conn.close()
 
-    async def _check_role(self) -> None:
+    async def _check_role(self, require_role: str | None = None) -> None:
         async with self.unscoped() as conn:
             cur = await conn.execute(
-                "SELECT rolsuper, rolbypassrls, current_setting('server_encoding') AS encoding"
+                "SELECT rolname, rolsuper, rolbypassrls,"
+                " current_setting('server_encoding') AS encoding"
                 " FROM pg_roles WHERE rolname = current_user"
             )
             row = await cur.fetchone()
+        if require_role is not None and (row is None or row["rolname"] != require_role):
+            raise DatabaseError(
+                f"This must connect to the database as {require_role}, its own user with "
+                "only the rights it needs. Check DATABASE_URL. See README, 'Database'."
+            )
         if row is None or row["rolsuper"] or row["rolbypassrls"]:
             raise DatabaseError(
                 "DMbot's database user must be an ordinary user, not a superuser, so "
@@ -225,6 +251,27 @@ class Database:
             raise DatabaseError(
                 "DMbot's database must use UTF8 encoding (campaign and player names can "
                 "contain any character). See README, 'Database'."
+            )
+
+    async def _check_up_to_date(self, migrations: Sequence[Migration]) -> None:
+        try:
+            async with self.unscoped() as conn:
+                cur = await conn.execute("SELECT name FROM schema_migrations")
+                done = {r["name"] for r in await cur.fetchall()}
+        except pg_errors.InsufficientPrivilege as exc:
+            raise DatabaseError(
+                "This database user has no rights yet. Restart core (the bot gives them "
+                "on start), then this. See README, 'Database'."
+            ) from exc
+        except pg_errors.UndefinedTable as exc:
+            raise DatabaseError(
+                "The database isn't set up yet. Start the bot first (it updates the "
+                "database), then this."
+            ) from exc
+        if any(name not in done for name, _ in migrations):
+            raise DatabaseError(
+                "The database is older than this code. Start the updated bot first (it "
+                "updates the database), then this."
             )
 
     async def migrate(self, migrations: Sequence[Migration] = MIGRATIONS) -> list[str]:
@@ -248,9 +295,40 @@ class Database:
                 await conn.execute(statements)  # no parameters: several statements are fine
                 await conn.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (name,))
                 applied.append(name)
+            await _grant_web_role(conn)
         if applied:
             log.info("Database updated: %s", ", ".join(applied))
         return applied
+
+
+async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
+    """Give the website's role (#498) exactly WEB_ROLE_GRANTS in this schema, and its
+    limits (WEB_ROLE_POLICIES), if the role exists (it's made outside DMbot): everything
+    is revoked first, so a right taken out of the list is taken away too. Run on every
+    start, in the migration's transaction, so rights and limits appear together."""
+    cur = await conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (WEB_ROLE,))
+    if await cur.fetchone() is None:
+        return
+    role = sql.Identifier(WEB_ROLE)
+    cur = await conn.execute("SELECT current_schema() AS s")
+    row = await cur.fetchone()
+    if row is None or row["s"] is None:
+        raise DatabaseError("The database's search_path names no schema that exists.")
+    here = sql.Identifier(row["s"])
+    await conn.execute(sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA {} FROM {}").format(here, role))
+    await conn.execute(
+        sql.SQL("REVOKE ALL ON ALL SEQUENCES IN SCHEMA {} FROM {}").format(here, role)
+    )
+    await conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(here, role))
+    await conn.execute(WEB_ROLE_POLICIES)  # constants: several statements, no parameters
+    for privileges, tables in WEB_ROLE_GRANTS:
+        await conn.execute(
+            sql.SQL("GRANT {} ON {} TO {}").format(
+                sql.SQL(privileges),  # constants from schema.py, never input
+                sql.SQL(", ").join(sql.Identifier(t) for t in tables),
+                role,
+            )
+        )
 
 
 async def _take_migration_lock(conn: AsyncConnection[Any]) -> None:
