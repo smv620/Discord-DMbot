@@ -1,5 +1,6 @@
 """The /dmbot commands' first steps, with fake Discord interactions."""
 
+import asyncio
 import json
 import unittest
 from types import SimpleNamespace
@@ -248,6 +249,60 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
                 "dm_screen_level": "quiet",
             },
         )
+
+
+class AnswerBeforeTheLock(unittest.IsolatedAsyncioTestCase):
+    """#88: /dmbot stop and Restore answer before waiting for the session lock, which a
+    /dmbot start setting up the DM screen can hold for a few seconds."""
+
+    def bot_with_a_held_lock(self) -> tuple[Any, asyncio.Lock]:
+        lock = asyncio.Lock()
+        locked_out = AsyncMock(return_value="✅ Stopped listening.")
+
+        async def stop_session(*_: Any, **__: Any) -> str:
+            async with lock:
+                return str(await locked_out())
+
+        bot = SimpleNamespace(
+            stop_session=stop_session,
+            session_lock=lambda _gid: lock,
+            is_campaign_playing=AsyncMock(return_value=False),
+            campaigns=SimpleNamespace(import_backup=AsyncMock(return_value=MagicMock(name="c"))),
+        )
+        return bot, lock
+
+    async def test_stop_defers_first(self) -> None:
+        bot, lock = self.bot_with_a_held_lock()
+        it = fake_interaction(bot)
+        await lock.acquire()  # a start is setting up the DM screen
+        stopping = asyncio.create_task(cmds.dmbot_stop.callback(it))  # type: ignore[call-arg]
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertTrue(it.response.deferred)  # answered while waiting
+        lock.release()
+        await stopping
+        self.assertIn("Stopped listening", it.followup.send.await_args.args[0])
+
+    async def test_restore_says_restoring_first(self) -> None:
+        bot, lock = self.bot_with_a_held_lock()
+        it = fake_interaction(bot)
+        response = it.response
+
+        async def answered(**_: Any) -> None:
+            response.done = True
+
+        response.edit_message = AsyncMock(side_effect=answered)
+        it.edit_original_response = AsyncMock()
+        choice = cmds.RestoreChoice({}, "Frostmaiden", [])
+        await lock.acquire()
+        restoring = asyncio.create_task(choice.restore(it, None))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertEqual(it.response.edit_message.await_args.kwargs["content"], "Restoring…")
+        bot.campaigns.import_backup.assert_not_awaited()  # still waiting for the lock
+        lock.release()
+        await restoring
+        self.assertIn("Restored", it.edit_original_response.await_args.kwargs["content"])
 
 
 class CampaignPickersFitAPhone(unittest.TestCase):

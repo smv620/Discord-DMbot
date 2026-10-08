@@ -606,6 +606,9 @@ class RestoreChoice(_Menu):
             await _tell(interaction, NOT_IN_SERVER)
             return
         bot = _bot(interaction)
+        # Answer first (#88, as #351): the session lock may be held for a few seconds
+        # by a /dmbot start setting up the DM screen.
+        await _replace(interaction, "Restoring…", None)
         # The session lock stops a campaign being replaced while it's starting up.
         async with bot.session_lock(guild.id):
             try:
@@ -614,19 +617,18 @@ class RestoreChoice(_Menu):
                 )
             except Exception:
                 log.exception("Couldn't check whether the campaign is playing")
-                await _tell(interaction, "Something went wrong. Try again in a moment.")
+                await _replace(interaction, "Something went wrong. Try again in a moment.", None)
                 return
             if playing:
-                await _tell(
-                    interaction, "That campaign is playing right now. Use `/dmbot stop` first."
-                )
+                playing_now = "That campaign is playing right now. Use `/dmbot stop` first."
+                await _replace(interaction, playing_now, None)
                 return
             try:
                 campaign = await bot.campaigns.import_backup(
                     guild.id, self.data, interaction.user.id, replace_campaign_id=replace_id
                 )
             except CampaignError as exc:
-                await _tell(interaction, str(exc))
+                await _replace(interaction, str(exc), None)
                 return
         self.stop()
         if replace_id is None:
@@ -705,6 +707,9 @@ async def dmbot_stop(interaction: discord.Interaction) -> None:
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
         return
+    # Answer first (#88): stopping waits for the session lock, which a /dmbot start
+    # setting up the DM screen can hold for a few seconds.
+    await interaction.response.defer(ephemeral=True, thinking=True)
     message = await _bot(interaction).stop_session(
         guild.id, interaction.user.id, _is_manager(interaction)
     )
