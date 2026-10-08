@@ -148,12 +148,11 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
                     event.event_id,
                 )
                 return "rejected"
-            if (
-                row is not None
-                and row["provider"] == event.provider
-                and (event.occurred_at < row["last_event_at"])
-            ):
-                await _record(conn, event, now)  # seen, but older than what's applied
+            # Older than what's applied: seen, changes nothing. Whatever the row's provider:
+            # Try It keeps the stopped paid plan's last_event_at, so a late renewal of
+            # that dead subscription can't overwrite Try It (a fresh one has 0).
+            if row is not None and event.occurred_at < row["last_event_at"]:
+                await _record(conn, event, now)
                 return "stale"
             second = (
                 row is not None

@@ -295,6 +295,27 @@ class Payments(DatabaseTest):
         self.assertEqual(late.status_code, 200)
         self.assertEqual((await self.plan()).status, "active")
 
+    async def test_late_news_of_a_stopped_plan_doesnt_overwrite_try_it(self) -> None:
+        await self.start_table(subscription_id="sub_1")
+        await self.send(
+            kind="subscription_ended", subscription_id="sub_1", occurred_at=self.now + 1
+        )
+        self.assertEqual((await self.post("/plan/try-it")).status_code, 204)
+        for kind in ("subscription_renewed", "subscription_started"):
+            late = await self.start_table(
+                kind=kind,
+                subscription_id="sub_1",
+                occurred_at=self.now,  # before the end
+                period_start=self.now + 30 * DAY,
+                period_end=self.now + 60 * DAY,
+            )
+            self.assertEqual(late.status_code, 200, kind)
+            got = await self.plan()
+            self.assertEqual((got.plan, got.status), ("try-it", "active"), kind)
+        # A new subscription afterwards still applies.
+        await self.start_table(subscription_id="sub_2", occurred_at=self.now + 5)
+        self.assertEqual((await self.plan()).plan, "table")
+
     async def test_a_second_subscription_renewing_is_left_for_a_person(self) -> None:
         await self.start_table(subscription_id="sub_1")
         with self.assertLogs("dmbot.web.entitlements_writer", "ERROR") as logs:
