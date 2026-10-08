@@ -12,7 +12,7 @@ import discord
 from dmbot.bot import DMBotTree
 from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup, LookupData
-from dmbot.memory.models import CONFIRMED, Alias, Entity, MemoryRuleError, name_key
+from dmbot.memory.models import CONFIRMED, Alias, Entity, MemoryRuleError, Relation, name_key
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import dmbot_commands, logic, name_card, name_lists, names
 
@@ -206,6 +206,90 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         await pick._picked(it)
         self.assert_in_time(it, "defer", "edit_original", defer=IN_PLACE)
 
+    def slow(self, value: Any = None) -> AsyncMock:
+        """A database write or read that takes SLOW_S on the fake clock."""
+
+        async def run(*_: Any, **__: Any) -> Any:
+            self.clock.now += SLOW_S
+            return value
+
+        return AsyncMock(side_effect=run)
+
+    async def test_every_saving_step_answers_before_the_slow_part(self) -> None:
+        # #698 (from the #637 review): the steps that gained _answer_first in #537 with
+        # no clock test. Each answers in place, then does its slow part (a save, or for
+        # the other names list a read) and edits the answer.
+        bell = Alias("d" * 32, BELL, "Bell", "bell", "nickname", None, False, CONFIRMED,
+                     sound_codes("Bell"), "dm", 0)  # fmt: skip
+        memory = self.bot.memory
+        memory.aliases = self.slow([bell])
+        for write in ("set_entity_type", "confirm_entity", "set_main_name", "update_alias",
+                      "add_alias", "update_relation"):  # fmt: skip
+            setattr(memory, write, self.slow())
+        memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
+        memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
+        memory.add_relation = self.slow(SimpleNamespace(value=(None, [])))
+        knows = Relation("r" * 32, BELL, "knows", ULF, "", 1.0, CONFIRMED, "dm", (),
+                         None, None, None, None, False, 0)  # fmt: skip
+        memory.relations = AsyncMock(return_value=[knows])
+        player = MagicMock(spec=discord.Member, bot=False, id=5)
+
+        def picked(view: Any, select: Any, value: str) -> Any:
+            select._values = [value]
+            return view
+
+        fix = name_card.FixSpellingForm(CAMPAIGN.id, BELL, "Belleros")
+        fix.name._value = "Bellerose"
+        more = name_card.AnotherNameForm(CAMPAIGN.id, BELL, "Belleros", secrets=True)
+        more.other._value, more.secret._value = "Bel", ""
+        kind = names.KindPicker(CAMPAIGN.id, "Kesh", [], [])
+        change = name_card.KindChange(CAMPAIGN.id, BELL, "Belleros")
+        one = name_card.OneName(CAMPAIGN.id, BELL, bell, secrets=True)
+        links = name_card.Connect(CAMPAIGN.id, BELL, "Belleros", [("r" * 32, "knows Ulfgar")])
+        # Each step, and the slow call it must reach (not an early "isn't there" reply).
+        steps: dict[str, tuple[Any, str]] = {
+            "KindPicker": (lambda it: picked(kind, kind.pick, "npc")._picked(it), "add_entity"),
+            "NameCard._edit_others": (
+                lambda it: name_card.NameCard(
+                    CAMPAIGN.id, BELL, others=True, longer=False
+                )._edit_others(it),
+                "aliases",
+            ),
+            "FixSpellingForm": (fix.on_submit, "rename_entity"),
+            "AnotherNameForm": (more.on_submit, "add_alias"),
+            "KindChange._picked": (
+                lambda it: picked(change, change.pick, "npc")._picked(it),
+                "set_entity_type",
+            ),
+            "KindChange._player_picked": (
+                lambda it: change._player_picked(it, player),
+                "confirm_entity",
+            ),
+            "OneName._main": (one._main, "set_main_name"),
+            "OneName._secret": (one._secret, "update_alias"),
+            "OneName._not_this": (one._not_this, "update_alias"),
+            "Connect._remove_picked": (
+                lambda it: picked(links, links.remove, "r" * 32)._remove_picked(it),
+                "update_relation",
+            ),
+            "connect": (
+                lambda it: name_card.connect(it, CAMPAIGN.id, BELL, "knows", ULF),
+                "add_relation",
+            ),
+        }
+        for name, (step, reaches) in steps.items():
+            with self.subTest(name):
+                getattr(memory, reaches).reset_mock()
+                it = self.it()
+                with self.assertNoLogs("dmbot", "ERROR"):
+                    await step(it)
+                getattr(memory, reaches).assert_awaited()
+                self.assertEqual(self.clock.calls, ["defer", "edit_original"])
+                self.assertEqual(it.response.defer_kw, IN_PLACE)
+                assert self.clock.answered_at is not None
+                self.assertLess(self.clock.answered_at, DISCORD_WAITS_S)
+                self.assertGreaterEqual(self.clock.now, SLOW_S)  # the slow part came after
+
     async def test_a_failed_load_after_answering_says_so(self) -> None:
         self.lookup.fail = True
         it = self.it()
@@ -356,6 +440,53 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("dmbot.ui.name_lists", "WARNING") as logs:
             await self.pick_wizard(it)  # saved: no "Try again", but never silent
         self.assertIn("Couldn't redraw", logs.output[0])
+
+    async def test_a_kind_question_that_cant_answer_says_so_and_can_be_picked_again(
+        self,
+    ) -> None:
+        # #698: the "Saving…" edit itself fails (Discord gave up): nothing is saved, the
+        # menu isn't stuck "saving", and the error reaches on_error, which says so.
+        it = self.it()
+        expired = discord.NotFound(MagicMock(status=404), "Unknown interaction")
+        it.response.edit_message = AsyncMock(side_effect=expired)
+        questions = name_lists.KindQuestions(CAMPAIGN.id, [("wizard", [BELL])])
+        (select,) = questions.children
+        assert isinstance(select, name_lists.KindSelect)
+        select._values = ["npc"]
+        with self.assertRaises(discord.NotFound):
+            await questions.picked(select, it)
+        self.assertFalse(questions.busy)
+        self.bot.memory.confirm_kinds.assert_not_awaited()
+        self.assertIs(it.edit_original_response.await_args.kwargs["view"], questions)  # back
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            await questions.on_error(it, expired, select)  # nothing raises out
+        self.assertEqual(it.response.sent_kw["text"], dmbot_commands.TRY_AGAIN)
+        it = self.it()
+        await questions.picked(select, it)  # picked again: saves
+        self.bot.memory.confirm_kinds.assert_awaited_once()
+
+    async def test_saying_it_broke_never_breaks_too(self) -> None:
+        # #698: after a stall the token can be gone, so even "Something broke" fails to
+        # send. That's swallowed, and the first error is still logged.
+        for answered in (False, True):
+            with self.subTest(answered=answered):
+                it = self.it()
+                gone = discord.HTTPException(MagicMock(status=401), "Invalid Webhook Token")
+                it.response.send_message = AsyncMock(side_effect=gone)
+                it.followup.send = AsyncMock(side_effect=gone)
+                if answered:
+                    await it.response.defer()
+                with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR") as logs:
+                    await dmbot_commands._failed(it, RuntimeError("database away"))
+                record = logs.records[0]
+                assert record.exc_info is not None
+                self.assertIsInstance(record.exc_info[1], RuntimeError)
+                self.assertEqual(len(logs.records), 1)  # the swallowed one isn't logged too
+                sender, other = (it.followup.send, it.response.send_message)[
+                    :: 1 if answered else -1
+                ]
+                sender.assert_awaited_once()
+                other.assert_not_awaited()
 
     async def test_kind_questions_keep_every_answer(self) -> None:
         asked = [("wizard", [BELL]), ("goblin", [ULF])]
