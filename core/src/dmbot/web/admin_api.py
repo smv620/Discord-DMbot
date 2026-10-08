@@ -194,7 +194,9 @@ def router(
         if google is None:
             # A plain link leads here: answer with the page and its words, not bare JSON.
             return RedirectResponse(f"{admin_page}?signin=off", status_code=302)
-        if tries.locked("addr:" + rate_key(client_address(request))):
+        address = client_address(request)
+        if tries.locked("addr:" + rate_key(address)):
+            log.warning("Admin Google sign-in refused from %s: locked", address)
             return RedirectResponse(f"{admin_page}?signin=failed", status_code=302)
         # Nothing is kept on the server until the callback: a flood of starts costs nothing.
         state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
@@ -275,8 +277,11 @@ def router(
         )
         # Spent here, after Google vouched for an admin and with no await since: a
         # replay (even one racing this) finds it spent.
-        if email is None or not used_states.spend(parts[0]):
+        if email is None:
             log.warning("Admin Google sign-in refused from %s: not an admin", address)
+            return failed
+        if not used_states.spend(parts[0]):
+            log.warning("Admin Google sign-in refused from %s: too many recent sign-ins", address)
             return failed
         log.info("Admin signed in with Google from %s", address)
         done = RedirectResponse(admin_page, status_code=302)

@@ -142,7 +142,10 @@ class FailedTries:
         self._fails[key] = recent
 
     def clear(self, key: str) -> None:
+        """After a sign-in that worked: the count and any lock go. A Google callback counts
+        a try before Google answers, so its own success can be what set the lock."""
         self._fails.pop(key, None)
+        self._locked.pop(key, None)
 
 
 # Sessions

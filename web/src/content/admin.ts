@@ -20,7 +20,7 @@ export const text = {
   // it names the pause (and Google, when it's set up), so a locked owner isn't sent to
   // doubt their password.
   wrong:
-    "Not signed in. Check the email and password. After 5 wrong tries, sign-in pauses for 15 minutes, even with the right password. If the wrong tries weren't yours, Sign in with Google still works.",
+    "Not signed in. Check the email and password. After 5 wrong tries, sign-in pauses for 15 minutes, even with the right password. If the wrong tries weren't yours, \"Sign in with Google\" still works.",
   wrongNoGoogle:
     "Not signed in. Check the email and password. After 5 wrong tries, sign-in pauses for 15 minutes, even with the right password.",
   busy: "Too many sign-in tries right now. Try again in a minute.",
@@ -31,14 +31,14 @@ export const text = {
   googleOff: "Google sign-in isn't set up on the server. Sign in with your email and password below.",
   // The full steps, not a short cut: ADMIN_EMAILS alone stops the website from starting.
   off: 'The admin page is off. To turn it on, follow "Turn on the admin page" in docs/DEPLOY.md, in DMbot\'s GitHub or on the server, then reload this page.',
-  // Only the owner sees this page, so it can name where to look.
-  down: "Can't reach DMbot right now. Try again in a minute. If you just changed .env, look at docker compose logs web-api on the server.",
+  // Only the owner sees this page; the server is dev1's to look at (CLAUDE.md).
+  down: "Can't reach DMbot right now. Try again in a minute. If it keeps happening, tell dev1.",
   tryAgain: "Try again",
   signedInAs: (email: string): string => `Signed in as ${email}.`,
   comingSoon: "The free access list comes here next.",
   signOut: "Sign out",
   signOutFailed:
-    "You're still signed in. Can't reach DMbot right now. Try Sign out again in a minute.",
+    "You're still signed in. Can't reach DMbot right now. Try \"Sign out\" again in a minute.",
   signedOut: "You're signed out.",
   // For part 3 (#773), when an admin change finds the session has ended.
   timedOut:

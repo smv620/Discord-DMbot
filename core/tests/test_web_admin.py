@@ -484,6 +484,25 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(done.headers["location"], f"{SITE}/admin")
 
+    async def test_a_google_success_lifts_the_connections_lock(self) -> None:
+        # The google_sign_in helper sends no address header: it's the test client's own.
+        here = "127.0.0.1"
+        for _ in range(4):
+            await self.password(password="wrong wrong wrong wrong", ip=here)
+        done = await self.google_sign_in()  # counted first, so it sets the lock, then lifts it
+        self.assertEqual(done.headers["location"], f"{SITE}/admin")
+        self.client.cookies.clear()
+        self.assertEqual((await self.password(ip=here)).status_code, 204)
+        self.client.cookies.clear()
+        start = await self.client.get("/admin/auth/google/start")
+        self.assertTrue(start.headers["location"].startswith("https://accounts.google.com"))
+
+    async def test_many_google_sign_ins_in_a_row_keep_working(self) -> None:
+        for n in range(6):
+            self.client.cookies.clear()
+            done = await self.google_sign_in()
+            self.assertEqual(done.headers["location"], f"{SITE}/admin", n)
+
     async def test_a_locked_connection_cant_start_google_either(self) -> None:
         for _ in range(5):
             await self.password(password="wrong wrong wrong wrong", ip="198.51.100.9")
