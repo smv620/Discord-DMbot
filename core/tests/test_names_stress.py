@@ -68,3 +68,6 @@ class NamesStressTests(unittest.TestCase):
         result = plan(list(parsed.lines), empty, secrets=False)
         self.assertEqual(len(result.new), 38)
         self.assertEqual((result.near, result.kinds, result.look), ([], [], 0))
+        # The twin saves them the same way (#574): every name confirmed.
+        twin = load_known(NAMES)
+        self.assertEqual({e.status for e in twin.lookup.entities.values()}, {"confirmed"})

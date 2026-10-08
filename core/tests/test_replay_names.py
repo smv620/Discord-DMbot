@@ -46,14 +46,22 @@ class KnownNamesTests(unittest.TestCase):
         self.assertIn("Bell", hints)
 
     def test_saved_as_add_many_saves_them(self) -> None:
-        known = known_from_text("Belleros | NPC\nBellaros | NPC\nZanthor\nBelleros | NPC | Bell\n")
-        self.assertEqual(known.count, 3)  # the repeated Belleros is skipped
+        # The real Add many decides (#574): held only if near a name above (spelled at
+        # least 0.9 alike) or with no kind; a look-alike by sound alone is confirmed.
+        known = known_from_text(
+            "Kaelen | NPC\nQuillon | NPC\nQuilon | NPC | Kwilo\nZanthor\nQuillon | NPC | Kwil\n"
+        )
+        self.assertEqual(known.count, 4)  # the repeated Quillon folds into the first
         statuses = {e.name: e.status for e in known.lookup.entities.values()}
-        self.assertEqual(statuses["Belleros"], "confirmed")
-        self.assertEqual(statuses["Bellaros"], "proposed")  # sounds like a listed name
+        self.assertEqual(statuses["Quillon"], "confirmed")
+        self.assertEqual(statuses["Quilon"], "proposed")  # spelled almost like Quillon
+        self.assertEqual(statuses["Kaelen"], "confirmed")  # sounds like Quillon (KLN): fine
         self.assertEqual(statuses["Zanthor"], "proposed")  # no kind
+        names = {n.key: n for n in known.lookup.names}
+        self.assertEqual((names["kwil"].kind, names["kwil"].confirmed), ("nickname", True))
+        self.assertFalse(names["kwilo"].confirmed)  # a held name's other names wait too
         hints = known.hints()
-        self.assertLess(hints.index("Belleros"), hints.index("Zanthor"))  # guesses go last
+        self.assertLess(hints.index("Quillon"), hints.index("Zanthor"))  # guesses go last
 
     def test_a_fenced_block_with_a_language_tag(self) -> None:
         known = known_from_text("Intro\n```text\nCerric | NPC\n```\n")

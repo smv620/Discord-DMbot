@@ -27,8 +27,6 @@ from dmbot.devtools.stt_bakeoff.data import NAMES as BAKEOFF_NAMES
 from dmbot.memory import scan
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import (
-    CONFIRMED,
-    PROPOSED,
     Alias,
     Entity,
     MemoryRuleError,
@@ -40,6 +38,7 @@ from dmbot.memory.name_list import parse
 from dmbot.memory.scene import SceneTracker, mentions, prepare, scene_hints
 from dmbot.memory.sounds import sound_codes
 from dmbot.transcript.cleaner import Vocabulary, clean
+from dmbot.ui.list_matches import plan
 
 SPEAKER = 1001  # the twin's one made-up speaker
 # Rules words the scripts say with capitals. Not story names: a scan that suggests them is
@@ -84,47 +83,41 @@ def _names_block(text: str) -> str:
 
 
 def known_from_text(text: str) -> Known:
-    """Names in the Add many format, saved as Add many saves them: a line with no kind,
-    or one that sounds like a name already listed, waits as a proposed name (which the
-    Cleaner never fixes towards, and which the hints put last); a repeated name is skipped."""
+    """Names in the Add many format, saved as a new campaign's Add many saves them (#574):
+    the real `list_matches.plan` decides, so a name the bot would hold for the DM to
+    check (no kind, or near a name above it) waits as a proposed name, which the
+    Cleaner never fixes towards and the hints put last; a repeated line adds its other
+    names to the first."""
     parsed = parse(_names_block(text), secrets=False)
     if parsed.refused:
         number, why = parsed.refused[0]
         raise ValueError(f"names file, line {number}: {why}")
+    empty = CampaignLookup.build(LookupData(1, (), (), (), ()))
     entities: list[Entity] = []
     aliases: list[Alias] = []
-    taken: set[str] = set()
-    confirmed_codes: set[str] = set()
-    for index, line in enumerate(parsed.lines):
-        try:
-            name = clean_text(line.name)
-            key = lookup_key(name)
-            others = [clean_text(o) for o in line.others]
-        except MemoryRuleError as exc:
-            raise ValueError(f"names file, line {line.number}: {exc}") from exc
-        if key in taken:
-            continue
-        sounds_known = bool(set(sound_codes(name)) & confirmed_codes)
-        status = PROPOSED if line.kind is None or sounds_known else CONFIRMED
+    keys: set[str] = set()
+    line_of = {name_key(line.name): line.number for line in parsed.lines}
+    for index, new in enumerate(plan(list(parsed.lines), empty, secrets=False).new):
         eid = f"{index:032x}"
-        entities.append(Entity(eid, line.kind or "concept", name, "", status, None, "dm", 0))
-        for n, spelling in enumerate((name, *others)):
-            alias_key = lookup_key(spelling)
-            if alias_key in taken:
-                continue
-            taken.add(alias_key)
+        try:
+            name = clean_text(new.name)
+            spellings = [name, *(clean_text(o) for o in new.others)]
+            alias_keys = [lookup_key(spelling) for spelling in spellings]
+        except MemoryRuleError as exc:
+            number = line_of.get(name_key(new.name), 0)
+            raise ValueError(f"names file, line {number}: {exc}") from exc
+        entities.append(Entity(eid, new.type, name, "", new.status, None, "dm", 0))
+        for n, (spelling, alias_key) in enumerate(zip(spellings, alias_keys, strict=True)):
             kind = "full" if n == 0 else "nickname"
-            codes = sound_codes(spelling)
             aliases.append(
                 Alias(
                     f"{index:016x}{n:016x}", eid, spelling, alias_key, kind, None, False,
-                    status, codes, "dm", 0,
+                    new.status, sound_codes(spelling), "dm", 0,
                 )
             )  # fmt: skip
-            if status == CONFIRMED:
-                confirmed_codes.update(codes)
+            keys.add(alias_key)
     lookup = CampaignLookup.build(LookupData(1, tuple(entities), tuple(aliases), (), ()))
-    return Known(lookup, frozenset(taken), len(entities))
+    return Known(lookup, frozenset(keys), len(entities))
 
 
 def load_known(path: Path) -> Known:
