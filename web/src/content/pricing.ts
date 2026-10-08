@@ -33,12 +33,15 @@ interface Facts {
   order: PlanId[];
   plans: Record<PlanId, PlanFacts>;
   extraHours: { hours: number; priceCents: number };
+  /** Days to fix a failed payment before the plan stops (owner decision, #437). */
+  paymentGraceDays: number;
   keepAfterPlanStopsPaying: Period;
   deletionWarningDaysBefore: number[];
   recommended: PlanId;
 }
 
-const data = facts as Facts;
+/** The plan file, checked against its shape when the site is built (and in the tests). */
+export const data: Facts = facts as Facts;
 
 export interface Plan extends PlanFacts {
   id: PlanId;
@@ -65,7 +68,7 @@ export function formatPeriod({ count, unit }: Period): string {
 function hoursLine(p: PlanFacts): string {
   return p.aboutHoursPerWeek === null
     ? `${p.hoursPerMonth} hours a month`
-    : `About ${p.aboutHoursPerWeek} hours a week (${p.hoursPerMonth} a month)`;
+    : `About ${p.aboutHoursPerWeek} hours a week (${p.hoursPerMonth} hours a month)`;
 }
 
 function campaignsLine(p: PlanFacts): string {
@@ -126,11 +129,15 @@ export const extraHours = {
   name: "Extra hours",
   priceCents: data.extraHours.priceCents,
   hours: data.extraHours.hours,
-  line: `Run out of hours? Add ${data.extraHours.hours} more. They're for this month only. Add them from My account.`,
+  /** "$4.99 for 10 hours" */
+  priceLine: `${formatPrice(data.extraHours.priceCents)} for ${data.extraHours.hours} hours`,
+  line: `Run out? In My account, tap Change plan to add ${data.extraHours.hours} hours. They last until the end of this month.`,
 };
 
-const features =
-  "Every plan writes down what’s said at the table, remembers the names your table makes up, helps with rules, remembers your story, and keeps backups.";
+/** What every plan does, after "every plan": one list, used twice below. */
+const featureList =
+  "writes down what’s said at the table, remembers the names your table makes up, helps with rules, remembers your story, and keeps backups";
+const features = `Every plan ${featureList}.`;
 
 export const labels = {
   recommendedBadge: "Best for one game a week",
@@ -162,11 +169,11 @@ export const questions: readonly Question[] = [
   },
   {
     question: "Do unused hours carry over?",
-    answer: `No. Your hours are for the month. Next month you get a full set again. If you run out, you can add ${extraHours.hours} more hours.`,
+    answer: `No. Your hours are for the month. Next month you get a full set again. If you run out, you can add ${extraHours.hours} more hours (on paid plans).`,
   },
   {
     question: "What's different between the plans?",
-    answer: `Only the hours and how many campaigns you can run. ${features} The free ${tryItName} has everything except backups and downloads.`,
+    answer: `Only the hours and how many campaigns you can run. The free ${tryItName} has no backups or downloads; everything else is the same on every plan: it ${featureList}.`,
   },
   {
     question: "Can I change my plan?",
@@ -175,7 +182,11 @@ export const questions: readonly Question[] = [
   {
     question: "What if I move to a plan with fewer campaigns?",
     answer:
-      "Nothing is deleted. The first campaigns you play after the change keep going, up to your new limit. The rest pause. To play a paused one, pause another or move to a bigger plan.",
+      "Nothing is deleted. The first campaigns you play after the change keep going, up to your new limit. The rest pause. To play a paused one, move to a bigger plan.",
+  },
+  {
+    question: "What if a payment doesn't go through?",
+    answer: `Your plan keeps working for ${data.paymentGraceDays} days while you fix it. Tap Fix my payment in My account.`,
   },
   {
     question: "How long do you keep my campaign?",
@@ -184,11 +195,11 @@ export const questions: readonly Question[] = [
   {
     question: "Can I give a campaign to someone else?",
     answer:
-      "Yes. Use “Hand over this campaign” in Discord or in My account, and pick someone whose plan has room for another campaign. After that, it uses their hours.",
+      "Yes. In My account, tap Hand over next to the campaign and pick someone whose plan has room for it. From then on it uses their hours.",
   },
   {
     question: "Can I delete everything?",
     answer:
-      "Yes. Ask from My account and we delete it all. Backups other people already downloaded are theirs to delete.",
+      "Yes, from My account. Your account and the campaigns you run go straight away. Backups people downloaded, and lines you said in other people's games, stay.",
   },
 ];

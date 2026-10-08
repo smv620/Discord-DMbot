@@ -8,11 +8,12 @@ interface Props {
   title: string;
   description: string;
   heading: string;
-  /** One paragraph: the whole page in plain words. */
-  summary: string;
+  /** The whole page in plain words: one paragraph, or one short line per sentence. */
+  summary: string | string[];
 }
 
 const { title, description, heading, summary } = Astro.props;
+const summaryLines = Array.isArray(summary) ? summary : [summary];
 ---
 
 <Base title={title} description={description}>
@@ -24,7 +25,7 @@ const { title, description, heading, summary } = Astro.props;
     <h1>{heading}</h1>
     <section class="short" aria-labelledby="short-heading">
       <h2 id="short-heading">The short version</h2>
-      <p>{summary}</p>
+      {summaryLines.map((line) => <p>{line}</p>)}
     </section>
     <slot />
     <footer class="effective">
@@ -60,6 +61,10 @@ const { title, description, heading, summary } = Astro.props;
 
   .short p {
     margin: 0;
+  }
+
+  .short p + p {
+    margin-top: var(--space-2);
   }
 
   .legal :global(h2) {

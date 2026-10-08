@@ -46,6 +46,10 @@ pretend API is never included in a real build. `src/account/api.ts` is the contr
 subdomain of the website's domain (`api.example.com` for `example.com`). The sign-in
 cookie is `SameSite=Lax`, and browsers don't send it to another site.
 
+Payments are pages on the payment company's site (a redirect), so the CSP needs nothing
+for them. An embedded checkout (Paddle.js or Lemon.js) would need its script in
+`script-src` and its frame in `frame-src`.
+
 `npm run build` also runs `scripts/csp-hashes.mjs`. It adds the hashes of Astro's small
 inline island loader to `script-src` in `dist/_headers`, so the Content-Security-Policy
 never needs `'unsafe-inline'` for scripts, and adds the API's address to `connect-src`
@@ -73,6 +77,10 @@ until then.
   material uses our own invented names, the bake-off cast in `docs/test-scripts/`
   (Belleros, Oskar Vane, Brynwater, Gorrak, …). `npm test` fails if a banned name appears
   in `src/` or `public/`.
+  **The one exception, approved by web (#469):** the not-affiliated sentence on
+  `/legal/terms` ("DMbot is not affiliated with or endorsed by Wizards of the Coast…"),
+  which lives in `src/content/legal.ts`. Naming the company to say we aren't connected to
+  it is allowed there only; the tests check it appears on that page and nowhere else.
 - **Plain words, simple enough for a child.** Every message says what to do next. The
   ux-critic agent (`.claude/agents/ux-critic.md`) reviews every PR that changes words a
   customer sees.

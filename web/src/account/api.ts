@@ -193,9 +193,10 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       });
     },
     requestDelete: async () =>
-      ((await call("POST", "/account/delete")) as { confirm_token: string }).confirm_token,
+      ((await call("POST", "/account/delete/request")) as { confirm_token: string })
+        .confirm_token,
     confirmDelete: async (token) => {
-      await call("POST", "/account/delete", { confirm_token: token });
+      await call("POST", "/account/delete/confirm", { confirm_token: token });
     },
   };
 }

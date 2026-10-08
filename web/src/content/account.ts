@@ -1,7 +1,9 @@
 /**
  * Every word on the account page (#434). Plain words; every message says what to do next.
  */
-import { byId, type PlanId } from "./pricing";
+import { byId, data, formatPeriod, formatPrice, type PlanId } from "./pricing";
+
+const extra = `${data.extraHours.hours} hours for ${formatPrice(data.extraHours.priceCents)}`;
 
 /** "Oct 14", in the reader's own language and time zone. */
 export function shortDate(iso: string, locale?: string): string {
@@ -32,13 +34,14 @@ export function hoursLeftLine(
   const more =
     plan === "try-it"
       ? "Pick a plan below to keep playing."
-      : "Need more now? Tap Change plan to add 10 hours.";
+      : `Need more now? Tap Change plan, then add ${extra}.`;
   return again ? `${again} ${more}` : more;
 }
 
 export const planName = (id: PlanId): string => byId[id].name;
 
-const noFreeSlot = "Their plan is full. Ask them to pause a campaign or pick a bigger plan.";
+const noFreeSlot =
+  "Their plan is full. Ask them to move to a bigger plan, or pick someone else.";
 
 export const text = {
   heading: "My account",
@@ -49,7 +52,8 @@ export const text = {
   signIn: "Sign in with Discord",
   signInNote: "DMbot only asks Discord for your name, your email and your list of servers.",
   startTryItFree: "Start Try It, free",
-  startTryItSignIn: "Free for 30 days. No card needed. You'll sign in with Discord first.",
+  startTryItSignIn:
+    "Free for 30 days. No card needed. You'll sign in with Discord first, then confirm your plan.",
   haveAccount: "Already have a plan?",
   seePrices: "See the plans",
   signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",
@@ -66,6 +70,7 @@ export const text = {
     "already-linked":
       "Someone else already said they added DMbot here. If that's wrong, ask your server's owner for help.",
     "not-installed": "DMbot isn't in this server yet. Tap Add DMbot first.",
+    "not-allowed": "You can't do that here. Only the DM who runs the campaign can.",
     "no-free-slot": noFreeSlot,
   } as Record<string, string>,
   install: {
@@ -96,8 +101,7 @@ export const text = {
       ? `Your last payment didn't go through. Fix it by ${shortDate(date)} to keep your plan.`
       : "Your last payment didn't go through. Fix it soon to keep your plan.",
   fixPayment: "Fix my payment",
-  lapsed:
-    "Your plan has stopped. Your campaigns are kept for 120 days. Pick a plan to play again.",
+  lapsed: `Your plan has stopped. Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns
   campaignsHeading: "Your campaigns",
@@ -116,7 +120,7 @@ export const text = {
     "They become the DM. You can't undo this; only they can hand it back. After this, it uses their hours, not yours.",
   handOverNobody:
     "Nobody can take it yet. Ask the person to sign in here and start a plan (Try It is free). Then tap Hand over again.",
-  handOverConfirm: "Give it to them",
+  handOverConfirm: "Hand it over",
   handOverDone: (campaign: string, person: string): string =>
     `Done. ${campaign} now belongs to ${person}.`,
   noFreeSlot,
@@ -130,13 +134,17 @@ export const text = {
   youAddedIt: "You added DMbot here",
   noServers: "You don't run any Discord servers. Ask a server's owner to add DMbot.",
   addTo: "Add DMbot",
-  alreadyThere: "DMbot is here",
+  alreadyThere: "Already added",
 
   // Delete
   deleteHeading: "Delete my account and data",
   deleteStart: "Start deleting",
-  deleteWarning:
-    "First: hand over or save your campaigns. Your players lose any campaign you run. To save one, type /dmbot backup in Discord. Then this deletes your account and plan, and stops payments. Backups people already have stay. So do lines you said in other people's games.",
+  /** Three short lines, the consequence first. */
+  deleteWarning: [
+    "This deletes your account and your plan, and stops payments. Your players lose any campaign you run.",
+    "First, hand over or save your campaigns. To save one, type /dmbot backup in Discord.",
+    "Backups people already have stay, and so do lines you said in other people's games.",
+  ],
   deleteHandOverLink: "Hand over a campaign first",
   deleteNext: "Delete everything",
   keep: "Keep my account",

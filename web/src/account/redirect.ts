@@ -5,9 +5,13 @@
  */
 const allowedHosts = ["discord.com", "paddle.com", "lemonsqueezy.com"];
 
-export function isSafeRedirect(url: string): boolean {
-  // The pretend API (mock builds) returns same-page links like "#demo-checkout-table".
-  if (url.startsWith("#")) return true;
+/** True only in a preview build with the pretend API (PUBLIC_API_BASE=mock). */
+const mockBuild = import.meta.env.PUBLIC_API_BASE === "mock";
+
+export function isSafeRedirect(url: string, allowSamePage: boolean = mockBuild): boolean {
+  // The pretend API returns same-page links like "#demo-checkout-table"; a real build
+  // never follows one.
+  if (url.startsWith("#")) return allowSamePage;
   let parsed: URL;
   try {
     parsed = new URL(url);
