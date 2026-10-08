@@ -35,7 +35,7 @@ async def first_paid_month_after_trial(db: Database, user_id: int) -> bool:
 
 
 async def record_install(
-    db: Database, user_id: int, guild_id: int, *, now: int, session: str | None = None
+    db: Database, user_id: int, guild_id: int, *, now: int, session: str
 ) -> str:
     """DMbot was added to this server through the website by this person (#435).
     Returns "recorded", or "already_linked" when someone else is already the installer
@@ -56,9 +56,7 @@ async def record_install(
         return "recorded" if await cur.fetchone() is not None else "already_linked"
 
 
-async def link_install(
-    db: Database, user_id: int, guild_id: int, *, session: str | None = None
-) -> str:
+async def link_install(db: Database, user_id: int, guild_id: int, *, session: str) -> str:
     """Fill in who added DMbot to a server it joined through a plain link. Returns
     "linked", "already_linked" (someone else did), or "not_installed" (DMbot isn't
     there, or has left)."""

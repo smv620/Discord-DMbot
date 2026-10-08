@@ -38,6 +38,8 @@ class WebSettings:
     payment_provider: str = ""
     # Checks that payment events really come from the payment company.
     payment_webhook_secret: bytes = field(default=b"", repr=False)
+    # Connect as any database user, not only dmbot_web: for testing on localhost only.
+    any_db_role: bool = False
     host: str = "0.0.0.0"  # inside its container; nothing is published to the internet
     port: int = 8080
     session_days: int = 30
@@ -103,6 +105,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         "127.0.0.1",
     ):
         raise ConfigError("PAYMENT_PROVIDER=fake is only for testing on localhost.")
+    any_db_role = get("WEB_DB_ANY_ROLE") == "1"
+    if any_db_role and urlsplit(get("WEB_API_URL")).hostname not in ("localhost", "127.0.0.1"):
+        raise ConfigError("WEB_DB_ANY_ROLE=1 is only for testing on localhost.")
     if provider and len(webhook_secret) < 16:
         raise ConfigError("PAYMENT_WEBHOOK_SECRET must be set (16 characters or more).")
     return WebSettings(
@@ -117,4 +122,5 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         session_days=session_days,
         payment_provider=provider,
         payment_webhook_secret=webhook_secret.encode("utf-8"),
+        any_db_role=any_db_role,
     )

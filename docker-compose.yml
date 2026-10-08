@@ -107,6 +107,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      core:
+        condition: service_started   # core updates the database and grants dmbot_web
     restart: unless-stopped
 
 volumes:

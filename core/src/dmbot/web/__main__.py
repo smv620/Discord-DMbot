@@ -14,6 +14,7 @@ import uvicorn
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
+from dmbot.schema import WEB_ROLE
 from dmbot.sharding import ShardSettings
 from dmbot.web import sessions
 from dmbot.web.app import create_app
@@ -45,6 +46,8 @@ async def serve(settings: WebSettings) -> None:
         options="-c statement_timeout=5000",
         max_size=4,
         migrate=False,
+        # Its limits in the database only hold for its own role (#498).
+        require_role=None if settings.any_db_role else WEB_ROLE,
     )
     discord = HttpDiscord(settings.discord_client_id, settings.discord_client_secret)
     payments = (
