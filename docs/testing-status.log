@@ -116,6 +116,13 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   of reading every name. No migration. Deploy: rebuild core. Check: after Add many,
   answer a kind question for a group: it saves at once and Undo puts it back; adding a
   name that's already known still says so.
+- CloudDev, PR #760 (#581, #759): /dmbot names find: suggestions wait at most 1.5 s for
+  a campaign's names and are ready on the next keystroke; while names reload, nobody gets
+  the old copy (a name just made secret), and each speech-to-text clip waits at most
+  1.5 s for names (people-only hints meanwhile). No migration or setting. Deploy: rebuild
+  core. Check: right after a restart, type in /dmbot names find: (suggestions appear by
+  the second keystroke); make a name secret during a session: it isn't suggested or
+  used as a hint after that; no "Couldn't load names" warnings in the log.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
