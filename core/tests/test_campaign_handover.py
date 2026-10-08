@@ -167,6 +167,70 @@ class Offering(HandoverTest):
         self.assertIsNone(await self.store.get_offer(GUILD, offer, NOW))
 
 
+class SiteDelivery(HandoverTest):
+    """Offers made on the website wait for the bot to send them (#690)."""
+
+    async def site_offer(self, now: int = NOW) -> HandoverOffer:
+        return await self.store.offer_handover(
+            GUILD, self.campaign.id, OWNER, BUYER, now,
+            from_name="Owner", to_name="Buyer", delivered=False,
+        )  # fmt: skip
+
+    async def test_a_discord_offer_is_sent_already(self) -> None:
+        offer = await self.make_offer(GUILD, self.campaign.id, OWNER, BUYER, NOW)
+        self.assertEqual(offer.delivered_at, NOW)
+        self.assertEqual(await self.store.undelivered_offers(GUILD, NOW), [])
+        self.assertIsNone(await self.store.claim_delivery(GUILD, offer.id, NOW))
+
+    async def test_a_site_offer_is_announced_with_ids_only_and_claimed_once(self) -> None:
+        listener = await self.db._pool.getconn()
+        try:
+            await listener.execute("LISTEN dmbot_handover_offers")
+            offer = await self.site_offer()
+            gen = listener.notifies(timeout=1)  # already queued at commit
+            payloads = [n.payload async for n in gen]
+        finally:
+            await listener.execute("UNLISTEN *")
+            await self.db._pool.putconn(listener)
+        self.assertIn(f"{GUILD}:{offer.id}", payloads)  # no names: they skip row security
+        self.assertIsNone(offer.delivered_at)
+        self.assertEqual(await self.store.undelivered_offers(GUILD, NOW), [offer.id])
+        claimed = await self.store.claim_delivery(GUILD, offer.id, NOW + 5)
+        assert claimed is not None
+        self.assertEqual(claimed.delivered_at, NOW + 5)
+        self.assertIsNone(await self.store.claim_delivery(GUILD, offer.id, NOW + 6))
+        self.assertEqual(await self.store.undelivered_offers(GUILD, NOW), [])
+
+    async def test_two_claims_at_once_send_it_once(self) -> None:
+        offer = await self.site_offer()
+        both = await asyncio.gather(
+            self.store.claim_delivery(GUILD, offer.id, NOW),
+            self.store.claim_delivery(GUILD, offer.id, NOW),
+        )
+        self.assertEqual(sum(c is not None for c in both), 1)
+
+    async def test_an_answered_or_expired_offer_is_never_sent(self) -> None:
+        offer = await self.site_offer()
+        later = NOW + HANDOVER_SECONDS
+        self.assertEqual(await self.store.undelivered_offers(GUILD, later), [])
+        self.assertIsNone(await self.store.claim_delivery(GUILD, offer.id, later))
+        await self.store.withdraw_handover(GUILD, offer.id, OWNER, NOW)
+        self.assertEqual(await self.store.undelivered_offers(GUILD, NOW), [])
+        self.assertIsNone(await self.store.claim_delivery(GUILD, offer.id, NOW))
+
+    async def test_another_server_neither_sees_nor_claims_it(self) -> None:
+        offer = await self.site_offer()
+        self.assertEqual(await self.store.undelivered_offers(OTHER_GUILD, NOW), [])
+        self.assertIsNone(await self.store.claim_delivery(OTHER_GUILD, offer.id, NOW))
+        self.assertEqual(await self.store.undelivered_offers(GUILD, NOW), [offer.id])
+
+    async def test_a_refused_site_offer_announces_nothing_and_saves_nothing(self) -> None:
+        await self.site_offer()
+        with self.assertRaises(CampaignError):  # one open offer at a time
+            await self.site_offer()
+        self.assertEqual(len(await self.store.undelivered_offers(GUILD, NOW)), 1)
+
+
 class Answering(HandoverTest):
     async def test_only_the_person_offered_accepts_while_it_is_open(self) -> None:
         offer = await self.offer()

@@ -509,6 +509,19 @@ HANDOVER_NAMES = """
         ALTER COLUMN to_name DROP DEFAULT;
     """
 
+HANDOVER_DELIVERED = """
+    -- When DMbot sent the private message about an offer (#690). An offer made on the
+    -- website is saved with none and announced on dmbot_handover_offers; the bot that
+    -- serves the server claims it (sets this) and then sends the message, so it's sent
+    -- once. Every offer before this was made in Discord and sent there and then.
+    ALTER TABLE campaign_handover_offers ADD COLUMN delivered_at BIGINT;
+    UPDATE campaign_handover_offers SET delivered_at = created_at;
+    -- The bot's sweep when it starts listening: open offers not sent yet.
+    CREATE INDEX campaign_handover_offers_undelivered
+        ON campaign_handover_offers (guild_id)
+        WHERE status = 'open' AND delivered_at IS NULL;
+    """
+
 SHARED_CONFIRMATIONS = f"""
     -- Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule:
     -- "Record who confirmed and when"; #252): one row per confirmation, what it was for
@@ -919,6 +932,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0021_campaign_handover_offers", HANDOVER_OFFERS),
     ("0022_handover_offer_names", HANDOVER_NAMES),
     ("0024_transcript_topics", TRANSCRIPT_TOPICS),
+    ("0025_handover_delivered", HANDOVER_DELIVERED),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

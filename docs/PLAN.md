@@ -1507,7 +1507,14 @@ website alike so the rules can't drift; the website may offer only to the campai
 other DMs who have a working plan (never a cross-person read of who in a server pays);
 the bot checks membership when it delivers the private message and withdraws an offer it
 can't deliver, telling the owner; until the campaign count exists (part 3) "a free slot"
-means "a plan that works". A Try It plan may receive a hand-over if its one slot is free;
+means "a plan that works". *Offers made on the website (#690):* `offer_handover(...,
+delivered=False)` saves the offer with no `delivered_at` and, in the same transaction,
+sends `NOTIFY dmbot_handover_offers, '<server id>:<offer id>'` (IDs only: notifications
+skip row-level security). The bot process that serves that server claims the offer (one
+UPDATE that sets `delivered_at` only if it's still empty, open and unexpired, so it's sent
+once) and sends the same private message as the Discord button; each time it starts
+listening it sweeps its servers for open offers not sent yet. Offers made in Discord are
+saved as delivered. A Try It plan may receive a hand-over if its one slot is free;
 the campaign then follows that plan (so, while on Try It, no backups or downloads). The
 website's database role gets only the narrow extra rights the account page needs, under
 restrictive policies (read and answer offers where the signed-in person is sender or

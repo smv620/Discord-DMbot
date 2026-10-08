@@ -83,6 +83,7 @@ from dmbot.dm_screen.name_questions import (
     question_view,
 )
 from dmbot.dm_screen.settings import LevelButton, SettingsButton, SettingsVisibilityButton
+from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -420,6 +421,14 @@ class DMBot(commands.AutoShardedBot):
         self._closing = False
         # Servers whose saved session is waiting for Discord to make the server available.
         self._resume_when_available: set[int] = set()
+        # Offers made on the website: this process sends those of its own servers (#690).
+        self.site_offers = SiteOffers(
+            campaigns,
+            get_guild=self.get_guild,
+            guild_ids=lambda: [g.id for g in self.guilds],
+            wait_until_ready=self.wait_until_ready,
+            spawn=self._track,
+        )
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -475,6 +484,7 @@ class DMBot(commands.AutoShardedBot):
             ),
             asyncio.create_task(self._transcript_poster(), name="transcripts"),
             asyncio.create_task(self._transcript_saver(), name="transcript-saves"),
+            self._watched(self.site_offers.follow(self.campaigns.listen), "site-offers"),
         ]
 
     async def close(self) -> None:

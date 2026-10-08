@@ -21,13 +21,14 @@ import re
 import time
 import uuid
 import zlib
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, Literal, LiteralString, Protocol, cast
 
 from psycopg import errors as pg_errors
 from psycopg import sql
 
 from dmbot import entitlements
+from dmbot.campaigns import offer_notify
 from dmbot.campaigns.models import (
     CONFIRMATION_PURPOSES,
     DEFAULT_DM_SCREEN_LEVEL,
@@ -619,12 +620,17 @@ class CampaignStore:
         *,
         from_name: str,
         to_name: str,
+        delivered: bool = True,
     ) -> HandoverOffer:
         """The owner offers the campaign to another subscriber, who accepts or not within
         7 days. The names are the two people's display names now, kept on the offer for
         the account page. The bot checks the person offered is in this server when it
         delivers the offer, and withdraws it if they can't be reached (#437). Raises
-        CampaignError in plain words."""
+        CampaignError in plain words.
+
+        `delivered`: the caller sends the private message itself, now (the Discord
+        button). The website passes False: the offer is saved as not sent yet and the bot
+        is told, when this commits, to send it (#690)."""
         names = _offer_name(from_name), _offer_name(to_name)
         async with self._db.guild(guild_id) as conn:
             # The campaign lock is what keeps an old owner from offering again while an
@@ -654,17 +660,53 @@ class CampaignStore:
             try:  # the index is the last word, should a writer ever skip the lock
                 cur = await conn.execute(
                     "INSERT INTO campaign_handover_offers (guild_id, campaign_id,"
-                    " from_user_id, to_user_id, from_name, to_name, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                    " from_user_id, to_user_id, from_name, to_name, created_at, delivered_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
                     (
                         guild_id, campaign_id, from_user_id, to_user_id, *names, now,
+                        now if delivered else None,
                     ),
                 )  # fmt: skip
             except pg_errors.UniqueViolation as exc:
                 raise CampaignError(OFFER_WAITING) from exc
             row = await cur.fetchone()
             assert row is not None
-            return _to_offer(row)
+            offer = _to_offer(row)
+            if not delivered:
+                await offer_notify.send(conn, guild_id, offer.id)
+            return offer
+
+    async def claim_delivery(self, guild_id: int, offer_id: int, now: int) -> HandoverOffer | None:
+        """Mark an offer made on the website as sent, just before the bot sends its private
+        message (#690). None if it was already claimed (another process, or the sweep and
+        a notification together), or isn't open any more: then nothing is sent."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaign_handover_offers SET delivered_at = %s"
+                " WHERE guild_id = %s AND id = %s AND status = 'open'"
+                " AND delivered_at IS NULL AND created_at + %s > %s RETURNING *",
+                (now, guild_id, offer_id, HANDOVER_SECONDS, now),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _to_offer(row)
+
+    async def undelivered_offers(self, guild_id: int, now: int) -> list[int]:
+        """Open offers in this server whose private message hasn't been sent yet, oldest
+        first (the bot's sweep when it starts listening, #690)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM campaign_handover_offers"
+                " WHERE guild_id = %s AND status = 'open' AND delivered_at IS NULL"
+                " AND created_at + %s > %s ORDER BY id",
+                (guild_id, HANDOVER_SECONDS, now),
+            )
+            return [int(row["id"]) for row in await cur.fetchall()]
+
+    def listen(
+        self, channel: str, on_listening: Callable[[], None] | None = None
+    ) -> AsyncGenerator[str, None]:
+        """Offer notifications (for `SiteOffers.follow`): see `Database.listen`."""
+        return self._db.listen(channel, on_listening)
 
     async def accept_handover(
         self, guild_id: int, offer_id: int, user_id: int, now: int
@@ -1092,6 +1134,7 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         to_name=row["to_name"],
         status=cast(HandoverStatus, row["status"]),
         decided_at=row_int(row, "decided_at"),
+        delivered_at=row_int(row, "delivered_at"),
     )
 
 
