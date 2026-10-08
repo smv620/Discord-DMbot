@@ -171,14 +171,21 @@ SHEET_NOTE = (
     f"Optional: if you play on D&D Beyond, press ⚙️ {MENU_LABEL}, then {SHEET_LABEL}, so "
     "DMbot spells your spell names better. It doesn't change recording."
 )
-MENU_HINT = f"Press ⚙️ {MENU_LABEL} below to stop or change things."
+MENU_HINT = f"To stop being recorded, press ⚙️ {MENU_LABEL} below."
+# What a reminder from before the menu said; given the menu's words when it's restored.
+OLD_STOP_HINT = "Press 🛑 below to stop any time."
 
 
-def confirmed_text(server: str, granted_at: int) -> str:
+def _sheet_note(sheets: bool) -> str:
+    """Only when character sheets are on: otherwise the menu has no 📜 to point at."""
+    return f" {SHEET_NOTE}" if sheets else ""
+
+
+def confirmed_text(server: str, granted_at: int, *, sheets: bool = True) -> str:
     return (
         f"✅ You said yes on {_date(granted_at)}. DMbot now records you in "
         f"**{_plain(server)}**, this session and later ones. You'll get a short reminder "
-        f"each time you play. {MENU_HINT} {SHEET_NOTE}"
+        f"each time you play. {MENU_HINT}{_sheet_note(sheets)}"
     )
 
 
@@ -197,13 +204,14 @@ def reminder_text(
     *,
     cloud: bool = False,
     company: str | None = None,
+    sheets: bool = True,
 ) -> str:
     where = f"**{_plain(voice)}** on " if voice else ""
     outside = f" {outside_note(company)}" if cloud else ""
     return (
         f"🎙️ DMbot is recording you in {where}**{_plain(server)}** (you said yes on "
         f"{_date(granted_at)}). Anyone in this server can read the text.{outside} {AI_SHORT} "
-        f"{MENU_HINT} {SHEET_NOTE}"
+        f"{MENU_HINT}{_sheet_note(sheets)}"
     )
 
 
@@ -238,15 +246,48 @@ def warning_text(server: str) -> str:
 
 
 def kept_text(server: str) -> str:
-    return f"OK, DMbot keeps recording you in **{_plain(server)}**."
+    return (
+        f"OK, DMbot keeps recording you in **{_plain(server)}**. To stop later, press "
+        f"⚙️ {MENU_LABEL} in DMbot's private message, or type `/consent revoke`."
+    )
 
 
-def not_recorded_text(server: str) -> str:
-    """Keep recording or /consent revoke from someone DMbot isn't recording."""
+def not_recorded_menu_text(server: str) -> str:
+    """A stale Keep recording on a lasting message, which keeps its ⚙️ Menu."""
+    return (
+        f"DMbot isn't recording you in **{_plain(server)}**. To start again, press "
+        f"⚙️ {MENU_LABEL} below, then {CONSENT_LABEL}."
+    )
+
+
+def no_longer_recorded_text(server: str) -> str:
+    """A stale Keep recording on an only-you menu, which has no buttons left."""
+    return (
+        f"DMbot isn't recording you in **{_plain(server)}** anymore. To start again, type "
+        "`/consent give`."
+    )
+
+
+def nothing_to_stop_text(server: str) -> str:
+    """/consent revoke from someone DMbot isn't recording."""
     return (
         f"DMbot isn't recording you in **{_plain(server)}**, so there's nothing to stop. To "
-        f"start again, press ⚙️ {MENU_LABEL}, then {CONSENT_LABEL}."
+        "start, type `/consent give`."
     )
+
+
+def with_warning(server: str, text: str) -> str:
+    """A lasting message with the warning first, in its text (an embed can be hidden)."""
+    return f"{warning_text(server)}\n\n{text}"
+
+
+def without_warning(server: str, text: str) -> str:
+    """The message's own text back, exactly; an old reminder's 🛑 hint becomes the menu's.
+    Text without the warning (edited, or from elsewhere) stays as it is."""
+    prefix = f"{warning_text(server)}\n\n"
+    if text.startswith(prefix):
+        text = text[len(prefix) :]
+    return text.replace(OLD_STOP_HINT, MENU_HINT)
 
 
 NOTHING_CHANGED = "Nothing changed."
@@ -292,7 +333,7 @@ class ConsentActions(Protocol):
     @property
     def sheets(self) -> object | None: ...  # only whether it's None: sheets are off
 
-    async def recorded(self, guild_id: int, user_id: int) -> bool: ...
+    async def recorded(self, guild_id: int, user_id: int) -> bool: ...  # unsure: True
 
     def stop_recording(self, guild_id: int, user_id: int) -> None: ...
 
@@ -405,7 +446,7 @@ class ConsentButton(
                 await interaction.followup.send(GRANT_FAILED, ephemeral=True)
                 return
             await interaction.edit_original_response(
-                content=confirmed_text(guild.name, granted_at),
+                content=confirmed_text(guild.name, granted_at, sheets=actions.sheets is not None),
                 view=menu_view(self.guild_id),
             )
 
@@ -431,8 +472,8 @@ async def _stop(interaction: discord.Interaction, guild_id: int, button: str) ->
             await interaction.followup.send(revoke_not_saved(button), ephemeral=True)
             return
         done = stopped_text if had_consented else declined_text
-        await interaction.edit_original_response(  # a reminder's warning card goes too
-            content=done(guild.name), embeds=[], view=consent_view(guild_id)
+        await interaction.edit_original_response(
+            content=done(guild.name), view=consent_view(guild_id)
         )
 
 
@@ -495,11 +536,12 @@ class StopButton(
                 return
             text = warning_text(guild.name)
             view = warning_view(self.guild_id, self.campaign_id)
-            if _lasting(interaction):
-                # Under the message's own text, so Keep recording can give it back as it
-                # was, even after a restart.
-                embed = discord.Embed(description=text)
-                await interaction.response.edit_message(embed=embed, view=view)
+            message = interaction.message
+            if _lasting(interaction) and message is not None:
+                # First in the message's own text (an embed can be hidden), so Keep
+                # recording can give the text back exactly, even after a restart.
+                content = with_warning(guild.name, without_warning(guild.name, message.content))
+                await interaction.response.edit_message(content=content, view=view)
             else:  # an only-you menu: it becomes the warning
                 await interaction.response.edit_message(content=text, view=view)
 
@@ -575,13 +617,17 @@ class KeepButton(
             recorded = guild is not None and await _actions(interaction).recorded(
                 self.guild_id, interaction.user.id
             )
-            if _lasting(interaction):
+            message = interaction.message
+            if _lasting(interaction) and message is not None:
                 menu = menu_view(self.guild_id, self.campaign_id)
-                if recorded or guild is None:  # the reminder is still true
-                    await interaction.response.edit_message(embeds=[], view=menu)
+                if guild is None:
+                    await interaction.response.edit_message(view=menu)
+                elif recorded:  # the message's own text, as it was
+                    content = without_warning(guild.name, message.content)
+                    await interaction.response.edit_message(content=content, view=menu)
                 else:  # a stale warning: they stopped some other way, so say so
                     await interaction.response.edit_message(
-                        content=not_recorded_text(guild.name), embeds=[], view=menu
+                        content=not_recorded_menu_text(guild.name), view=menu
                     )
                 return
             if guild is None:
@@ -589,7 +635,7 @@ class KeepButton(
             elif recorded:
                 text = kept_text(guild.name)
             else:
-                text = not_recorded_text(guild.name)
+                text = no_longer_recorded_text(guild.name)
             await interaction.response.edit_message(content=text, view=None)
 
 
@@ -665,8 +711,15 @@ class CloseButton(
         return cls(int(match["guild"]), _campaign(match))
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        if _lasting(interaction):
-            await interaction.response.edit_message(view=menu_view(self.guild_id, self.campaign_id))
+        message = interaction.message
+        if _lasting(interaction) and message is not None:
+            guild = _served_here(interaction, self.guild_id)
+            content = (
+                message.content if guild is None else without_warning(guild.name, message.content)
+            )
+            await interaction.response.edit_message(
+                content=content, view=menu_view(self.guild_id, self.campaign_id)
+            )
             return
         await interaction.response.defer()
         try:

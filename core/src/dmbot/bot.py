@@ -46,7 +46,7 @@ from dmbot.consent_dm import (
     REASK_INTRO,
     confirmed_text,
     menu_view,
-    not_recorded_text,
+    nothing_to_stop_text,
     reminder_text,
     renewed_text,
     request_text,
@@ -167,6 +167,7 @@ TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel 
 STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be written
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
 IDLE_SWEEP_INTERVAL_S = 1
+RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
 
 # For the DM: nothing they can do but wait (the server's log says why, #636).
@@ -595,14 +596,20 @@ class DMBot(commands.AutoShardedBot):
         return when or int(time.time())
 
     async def recorded(self, guild_id: int, user_id: int) -> bool:
-        """Whether they're recorded in this server now, for the ⚙️ Menu (Stop or I consent)
-        and the warning. Read from the database, right on a fresh process too; the cache
-        if that fails."""
+        """Whether they may be recorded in this server now, for the ⚙️ Menu (Stop or I
+        consent), Keep recording and /consent revoke. Quick, so Discord's 3 seconds hold:
+        the cache first (exactly who is captured now); the database only when the cache
+        says no (a fresh process may not have loaded this server), and only briefly. Unsure
+        counts as recorded, so the way to stop is never hidden."""
+        if self.consent.has_consent(guild_id, user_id):
+            return True
         try:
-            status = await self.consent.status(guild_id, [user_id])
+            status = await asyncio.wait_for(
+                self.consent.status(guild_id, [user_id]), RECORDED_CHECK_S
+            )
         except Exception:
-            log.exception("Couldn't look up consent in guild %s", guild_id)
-            return self.consent.has_consent(guild_id, user_id)
+            log.warning("Couldn't look up consent in guild %s in time", guild_id, exc_info=True)
+            return True
         return user_id in status.granted
 
     def stop_recording(self, guild_id: int, user_id: int) -> None:
@@ -737,7 +744,14 @@ class DMBot(commands.AutoShardedBot):
                 granted = times.get(member.id)
                 server = member.guild.name
                 if granted is not None and self.consent.has_consent(gid, member.id):
-                    text = reminder_text(server, voice_name, granted, cloud=cloud, company=company)
+                    text = reminder_text(
+                        server,
+                        voice_name,
+                        granted,
+                        cloud=cloud,
+                        company=company,
+                        sheets=self.sheets is not None,
+                    )
                     view = menu_view(gid, table.campaign_id)
                 else:
                     text = request_text(
@@ -3049,7 +3063,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
     # fresh process whose cache hasn't loaded this server yet.
     if granted is not None:
         await interaction.followup.send(
-            confirmed_text(guild.name, granted),
+            confirmed_text(guild.name, granted, sheets=bot.sheets is not None),
             view=menu_view(guild.id),
             ephemeral=True,
         )
@@ -3084,7 +3098,7 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
         # Nothing to warn about. Clear anything left over all the same, quietly.
         bot.stop_recording(guild.id, interaction.user.id)
         await interaction.response.send_message(
-            not_recorded_text(guild.name), ephemeral=True, allowed_mentions=NO_PINGS
+            nothing_to_stop_text(guild.name), ephemeral=True, allowed_mentions=NO_PINGS
         )
         with contextlib.suppress(Exception):
             await bot.withdraw_consent(guild.id, interaction.user.id)

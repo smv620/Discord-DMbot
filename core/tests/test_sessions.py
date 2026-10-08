@@ -885,13 +885,13 @@ class SaveAndResume(SessionTests):
 
     async def test_revoke_from_someone_not_recorded_says_so_without_a_warning(self) -> None:
         from dmbot.bot import consent_revoke
-        from dmbot.consent_dm import not_recorded_text
+        from dmbot.consent_dm import nothing_to_stop_text
 
         self.guild.name = "Dragon Club"
         interaction = self._consent_interaction(PLAYER)
         await consent_revoke.callback(interaction)  # type: ignore[call-arg]
         args = interaction.response.send_message.await_args
-        self.assertEqual(args.args[0], not_recorded_text(self.guild.name))
+        self.assertEqual(args.args[0], nothing_to_stop_text(self.guild.name))
         self.assertNotIn("view", args.kwargs)
         self.assertFalse(self.consent.has_consent(GUILD, PLAYER))
 
