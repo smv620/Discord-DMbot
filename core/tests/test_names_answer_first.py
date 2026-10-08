@@ -206,6 +206,69 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         await pick._picked(it)
         self.assert_in_time(it, "defer", "edit_original", defer=IN_PLACE)
 
+    def slow(self, value: Any = None) -> AsyncMock:
+        """A database write or read that takes SLOW_S on the fake clock."""
+
+        async def run(*_: Any, **__: Any) -> Any:
+            self.clock.now += SLOW_S
+            return value
+
+        return AsyncMock(side_effect=run)
+
+    async def test_every_saving_step_answers_before_the_slow_part(self) -> None:
+        # #698 (from the #637 review): the steps that gained _answer_first in #537 with
+        # no clock test. Each answers in place, then saves and reloads the names.
+        bell = Alias("d" * 32, BELL, "Bell", "bell", "nickname", None, False, CONFIRMED,
+                     sound_codes("Bell"), "dm", 0)  # fmt: skip
+        memory = self.bot.memory
+        memory.aliases = self.slow([bell])
+        for write in ("set_entity_type", "confirm_entity", "set_main_name", "update_alias",
+                      "add_alias", "update_relation"):  # fmt: skip
+            setattr(memory, write, self.slow())
+        memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
+        memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
+        memory.add_relation = self.slow(SimpleNamespace(value=(None, [])))
+        player = MagicMock(spec=discord.Member, bot=False, id=5)
+
+        def picked(view: Any, select: Any, value: str) -> Any:
+            select._values = [value]
+            return view
+
+        fix = name_card.FixSpellingForm(CAMPAIGN.id, BELL, "Belleros")
+        fix.name._value = "Bellerose"
+        more = name_card.AnotherNameForm(CAMPAIGN.id, BELL, "Belleros", secrets=True)
+        more.other._value, more.secret._value = "Bel", ""
+        kind = names.KindPicker(CAMPAIGN.id, "Kesh", [], [])
+        change = name_card.KindChange(CAMPAIGN.id, BELL, "Belleros")
+        one = name_card.OneName(CAMPAIGN.id, BELL, bell, secrets=True)
+        links = name_card.Connect(CAMPAIGN.id, BELL, "Belleros", [("r" * 32, "knows Ulfgar")])
+        steps: dict[str, Any] = {
+            "KindPicker": lambda it: picked(kind, kind.pick, "npc")._picked(it),
+            "NameCard._edit_others": lambda it: name_card.NameCard(
+                CAMPAIGN.id, BELL, others=True, longer=False
+            )._edit_others(it),
+            "FixSpellingForm": fix.on_submit,
+            "AnotherNameForm": more.on_submit,
+            "KindChange._picked": lambda it: picked(change, change.pick, "npc")._picked(it),
+            "KindChange._player_picked": lambda it: change._player_picked(it, player),
+            "OneName._main": one._main,
+            "OneName._secret": one._secret,
+            "OneName._not_this": one._not_this,
+            "Connect._remove_picked": lambda it: picked(
+                links, links.remove, "r" * 32
+            )._remove_picked(it),
+            "connect": lambda it: name_card.connect(it, CAMPAIGN.id, BELL, "knows", ULF),
+        }
+        for name, step in steps.items():
+            with self.subTest(name):
+                it = self.it()
+                with self.assertNoLogs("dmbot", "ERROR"):
+                    await step(it)
+                self.assertEqual(self.clock.calls[0], "defer")
+                self.assertEqual(it.response.defer_kw, IN_PLACE)
+                self.assertLess(self.clock.answered_at, DISCORD_WAITS_S)
+                self.assertGreaterEqual(self.clock.now, SLOW_S)  # the slow part came after
+
     async def test_a_failed_load_after_answering_says_so(self) -> None:
         self.lookup.fail = True
         it = self.it()
