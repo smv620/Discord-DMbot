@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -40,6 +41,17 @@ class WebSettings:
     payment_webhook_secret: bytes = field(default=b"", repr=False)
     # Connect as any database user, not only dmbot_web: for testing on localhost only.
     any_db_role: bool = False
+    # The "Say hello" forms (#665): a GitHub token that can only write Discussions in
+    # feedback_repo. Empty: the forms answer feedback_off.
+    feedback_token: str = field(default="", repr=False)
+    feedback_repo: str = "smv620/Discord-DMbot"
+    # Cloudflare Turnstile's secret key, the check that a person sent the form. Needed
+    # whenever the forms are on, except when testing on localhost.
+    turnstile_secret: str = field(default="", repr=False)
+    # The request header holding the visitor's address when a proxy sits in front (for
+    # Cloudflare: CF-Connecting-IP). Empty: the connection's own address. Only set it when
+    # every request comes through that proxy, or anyone could pick their own address.
+    client_ip_header: str = ""
     host: str = "0.0.0.0"  # inside its container; nothing is published to the internet
     port: int = 8080
     session_days: int = 30
@@ -110,6 +122,21 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError("WEB_DB_ANY_ROLE=1 is only for testing on localhost.")
     if provider and len(webhook_secret) < 16:
         raise ConfigError("PAYMENT_WEBHOOK_SECRET must be set (16 characters or more).")
+    feedback_token = get("GITHUB_FEEDBACK_TOKEN")
+    feedback_repo = get("GITHUB_FEEDBACK_REPO") or "smv620/Discord-DMbot"
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", feedback_repo):
+        raise ConfigError("GITHUB_FEEDBACK_REPO must look like owner/name.")
+    turnstile_secret = get("TURNSTILE_SECRET_KEY")
+    if (
+        feedback_token
+        and not turnstile_secret
+        and urlsplit(get("WEB_API_URL")).hostname not in ("localhost", "127.0.0.1")
+    ):
+        # Without it, a script could fill the repository with posts from many addresses.
+        raise ConfigError("TURNSTILE_SECRET_KEY must be set when GITHUB_FEEDBACK_TOKEN is.")
+    client_ip_header = get("WEB_CLIENT_IP_HEADER")
+    if client_ip_header and not re.fullmatch(r"[A-Za-z0-9-]+", client_ip_header):
+        raise ConfigError("WEB_CLIENT_IP_HEADER must be a header name, like CF-Connecting-IP.")
     return WebSettings(
         database_url=get("DATABASE_URL"),
         discord_client_id=get("DISCORD_CLIENT_ID"),
@@ -123,4 +150,8 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         payment_provider=provider,
         payment_webhook_secret=webhook_secret.encode("utf-8"),
         any_db_role=any_db_role,
+        feedback_token=feedback_token,
+        feedback_repo=feedback_repo,
+        turnstile_secret=turnstile_secret,
+        client_ip_header=client_ip_header,
     )

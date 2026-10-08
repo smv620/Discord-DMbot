@@ -574,6 +574,26 @@ TRANSCRIPT_TOPICS = """
         ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0);
     """
 
+FEEDBACK = """
+    -- Messages sent from the website's "Say hello" page (#665). The message is also posted
+    -- as a GitHub Discussion (with its date, nothing else); how to reach the sender stays
+    -- here, with the team. No Discord id, no IP address: the form needs no sign-in.
+    CREATE TABLE feedback (
+        id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        kind          TEXT NOT NULL CHECK (kind IN ('feedback', 'question')),
+        message       TEXT NOT NULL CHECK (char_length(message) BETWEEN 1 AND 2000),
+        contact       TEXT CHECK (char_length(contact) BETWEEN 1 AND 200),
+        discussion    INTEGER NOT NULL,  -- the GitHub Discussion's number
+        created_at    BIGINT NOT NULL
+    );
+    -- Write-only for DMbot: anyone may add a row, but no policy lets the bot or the
+    -- website read, change or remove one (FORCE holds the table's owner too). The team
+    -- reads contacts as the database's administrator, which skips these policies.
+    ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE feedback FORCE ROW LEVEL SECURITY;
+    CREATE POLICY add_only ON feedback FOR INSERT WITH CHECK (true);
+    """
+
 WEB_ACCOUNTS = (
     _setting("dmbot_current_user", "dmbot.user_id", "BIGINT")
     + _setting("dmbot_current_session", "dmbot.session", "TEXT")
@@ -892,6 +912,7 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("schema_migrations", "campaigns", "campaign_dms")),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
+    ("INSERT", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
 )
 
@@ -919,6 +940,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0021_campaign_handover_offers", HANDOVER_OFFERS),
     ("0022_handover_offer_names", HANDOVER_NAMES),
     ("0024_transcript_topics", TRANSCRIPT_TOPICS),
+    ("0025_feedback", FEEDBACK),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -947,6 +969,8 @@ USER_ISOLATED_TABLES = (
     "web_sessions",
     "installs",
 )
+# Anyone may add a row; nobody but the database's administrator may read one (#665).
+WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
 ROUTING_TABLES = ("live_session_guilds",)
 UNSCOPED_TABLES = ("schema_migrations", *ROUTING_TABLES)

@@ -2,7 +2,8 @@
 # Nothing loads from other sites. Inline scripts (Astro's island loader) are allowed by
 # hash: scripts/csp-hashes.mjs adds them to script-src after the build. Astro inlines small
 # stylesheets, hence 'unsafe-inline' for styles only. The build adds the web API's address
-# to connect-src when PUBLIC_API_BASE is a full address.
+# to connect-src when PUBLIC_API_BASE is a full address, and Cloudflare Turnstile's script
+# and frame (the "Say hello" forms' person check, #665) when PUBLIC_TURNSTILE_SITE_KEY is set.
 # Payments: checkout and billing are pages on the payment company's site (a redirect), so
 # they need nothing here. An embedded checkout (Paddle.js or Lemon.js) would need its
 # script in script-src and its checkout frame in frame-src: add them only if we embed.

@@ -1,0 +1,156 @@
+---
+// "Say hello" (#665): feedback and questions for the team, and where developers go.
+import { REPO_URL, text } from "../content/hello";
+import HelloIsland from "../hello/HelloIsland";
+import Base from "../layouts/Base.astro";
+---
+
+<Base title={text.title} description={text.description}>
+  <div class="hello">
+    <h1>{text.heading}</h1>
+    <p class="lead">{text.intro}</p>
+    <p class="privacy">{text.privacy}</p>
+    <HelloIsland client:load />
+    <noscript>
+      <p>{text.needsScript}</p>
+    </noscript>
+    <p class="developers">
+      {text.developers}
+      <a href={`${REPO_URL}/issues`}>{text.developersLink}</a>
+    </p>
+  </div>
+</Base>
+
+<style>
+  .hello {
+    max-width: var(--text-width);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .hello > * {
+    margin: 0;
+  }
+
+  .lead {
+    font-size: var(--text-lg);
+  }
+
+  .privacy {
+    padding: var(--space-4);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+  }
+
+  .hello :global(.forms) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+  }
+
+  .hello :global(.panel) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-6);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .hello :global(.panel h2) {
+    font-size: var(--text-lg);
+    margin: 0;
+  }
+
+  .hello :global(form) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .hello :global(form p),
+  .hello :global(.panel p) {
+    margin: 0;
+  }
+
+  .hello :global(label) {
+    font-weight: 600;
+  }
+
+  .hello :global(textarea),
+  .hello :global(input) {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .hello :global(textarea) {
+    resize: vertical;
+  }
+
+  .hello :global(.small) {
+    font-size: var(--text-sm);
+  }
+
+  .hello :global(.warn) {
+    padding: var(--space-4);
+    border-radius: var(--radius);
+    background: var(--warn-soft);
+    border: 1px solid var(--warn);
+  }
+
+  .hello :global(.ok) {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .hello :global(.turnstile) {
+    max-width: 100%;
+  }
+
+  .hello :global(button.button) {
+    align-self: flex-start;
+    margin-top: var(--space-2);
+    border: 0;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .hello :global(.button:disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .hello :global(button.link) {
+    align-self: flex-start;
+    min-height: var(--tap);
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  .developers {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .developers a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+  }
+</style>

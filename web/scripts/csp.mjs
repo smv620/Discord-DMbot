@@ -40,3 +40,6 @@ export function apiOrigin(base) {
   if (!base || !/^https?:\/\//i.test(base)) return null;
   return new URL(base).origin;
 }
+
+/** Cloudflare Turnstile, the "Say hello" forms' person check (#665). */
+export const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";

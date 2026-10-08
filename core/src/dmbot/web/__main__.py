@@ -19,6 +19,7 @@ from dmbot.sharding import ShardSettings
 from dmbot.web import sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
+from dmbot.web.feedback import GitHubDiscussions, Turnstile
 from dmbot.web.payments import FakeProvider
 from dmbot.web.settings import WebSettings, load_web_settings
 
@@ -55,7 +56,20 @@ async def serve(settings: WebSettings) -> None:
         if settings.payment_provider == "fake"
         else None
     )
-    app = create_app(settings, db, discord, payments=payments)
+    discussions = (
+        GitHubDiscussions(settings.feedback_token, settings.feedback_repo)
+        if settings.feedback_token
+        else None
+    )
+    human_check = Turnstile(settings.turnstile_secret) if settings.turnstile_secret else None
+    app = create_app(
+        settings,
+        db,
+        discord,
+        payments=payments,
+        discussions=discussions,
+        human_check=human_check,
+    )
     sweeper = asyncio.create_task(_sweep_expired_sessions(db))
     config = uvicorn.Config(
         app,
@@ -72,6 +86,10 @@ async def serve(settings: WebSettings) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await sweeper
         await discord.close()
+        if discussions is not None:
+            await discussions.close()
+        if human_check is not None:
+            await human_check.close()
         await db.close()
 
 
