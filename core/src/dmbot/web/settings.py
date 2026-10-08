@@ -137,6 +137,14 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     client_ip_header = get("WEB_CLIENT_IP_HEADER")
     if client_ip_header and not re.fullmatch(r"[A-Za-z0-9-]+", client_ip_header):
         raise ConfigError("WEB_CLIENT_IP_HEADER must be a header name, like CF-Connecting-IP.")
+    if (
+        feedback_token
+        and not client_ip_header
+        and urlsplit(get("WEB_API_URL")).hostname not in ("localhost", "127.0.0.1")
+    ):
+        # Behind the proxy every visitor has the proxy's address: without the header, one
+        # message would use up the whole site's turn for 10 minutes.
+        raise ConfigError("WEB_CLIENT_IP_HEADER must be set when GITHUB_FEEDBACK_TOKEN is.")
     return WebSettings(
         database_url=get("DATABASE_URL"),
         discord_client_id=get("DISCORD_CLIENT_ID"),

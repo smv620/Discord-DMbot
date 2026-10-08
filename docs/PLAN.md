@@ -1532,8 +1532,8 @@ Feedback and Ask a question, with no sign-in. The web API posts each one as a Gi
 Discussion in this repository (categories "Feedback" and "Questions", made by hand; the
 token can only write Discussions). The public post holds the message and the date only;
 the optional "how to reach you" box is kept with the message in the `feedback` table,
-which DMbot can add to but never read (the team reads it as the database's
-administrator). Abuse limits: one message per address per 10 minutes (kept in memory,
+which the website's role can only add to and the bot never queries (the team reads it
+as the database's administrator). Abuse limits: one message per address per 10 minutes (kept in memory,
 never stored), 2,000 characters, and Cloudflare Turnstile. No email is sent. The page
 also points developers to GitHub issues.
 

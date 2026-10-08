@@ -3,7 +3,7 @@
 // button. Used twice on /hello, for feedback and for questions.
 import { useState } from "preact/hooks";
 
-import { lettersLeft, MAX_MESSAGE, text } from "../content/hello";
+import { lettersLeft, MAX_CONTACT, MAX_MESSAGE, text } from "../content/hello";
 import type { Kind, Send, SendResult } from "./api";
 import Turnstile from "./Turnstile";
 
@@ -74,24 +74,31 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
           id={`${id}-message`}
           rows={5}
           value={message}
-          onInput={(e) => setMessage(e.currentTarget.value)}
-          aria-describedby={`${id}-left`}
+          onInput={(e) => {
+            setMessage(e.currentTarget.value);
+            if (result) setResult(null); // an old warning goes once they type again
+          }}
+          aria-describedby={`${id}-public ${id}-left`}
         />
-        <p id={`${id}-left`} class="small muted" aria-live="polite">
+        <p id={`${id}-public`} class="small muted">
+          {text.messageHint}
+        </p>
+        {/* Not a live region: a screen reader would read it out on every key press. */}
+        <p id={`${id}-left`} class="small muted">
           {lettersLeft(letters(message.trim()))}
         </p>
-        <label for={`${id}-contact`}>{text.contactLabel}</label>
+        <label for={`${id}-contact`}>{words.contactLabel}</label>
         <input
           id={`${id}-contact`}
           type="text"
-          autocomplete="email"
-          maxLength={200}
+          autocomplete="off"
+          maxLength={MAX_CONTACT}
           value={contact}
           onInput={(e) => setContact(e.currentTarget.value)}
           aria-describedby={`${id}-hint`}
         />
         <p id={`${id}-hint`} class="small muted">
-          {text.contactHint}
+          {words.contactHint}
         </p>
         {siteKey && <Turnstile siteKey={siteKey} onToken={setToken} round={round} />}
         {result && (

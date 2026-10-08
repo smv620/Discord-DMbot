@@ -15,13 +15,21 @@ export interface Note {
 }
 
 /** "sent", or why not, in a form the page turns into plain words. */
-export type SendResult = "sent" | "empty" | "too-long" | "slow-down" | "not-human" | "failed";
+export type SendResult =
+  | "sent"
+  | "empty"
+  | "too-long"
+  | "contact-too-long"
+  | "slow-down"
+  | "not-human"
+  | "failed";
 
 export type Send = (note: Note) => Promise<SendResult>;
 
 const results: Record<string, SendResult> = {
   empty: "empty",
   too_long: "too-long",
+  contact_too_long: "contact-too-long",
   slow_down: "slow-down",
   not_human: "not-human",
 };

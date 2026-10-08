@@ -8,7 +8,10 @@ import Base from "../layouts/Base.astro";
 <Base title={text.title} description={text.description}>
   <div class="hello">
     <h1>{text.heading}</h1>
-    <p class="lead">{text.intro}</p>
+    <p class="lead">
+      {text.intro}
+      {text.qaNote} <a href="/pricing#questions">{text.qaLink}</a>.
+    </p>
     <p class="privacy">{text.privacy}</p>
     <HelloIsland client:load />
     <noscript>
@@ -16,7 +19,7 @@ import Base from "../layouts/Base.astro";
     </noscript>
     <p class="developers">
       {text.developers}
-      <a href={`${REPO_URL}/issues`}>{text.developersLink}</a>
+      <a href={`${REPO_URL}/issues/new/choose`}>{text.developersLink}</a>
     </p>
   </div>
 </Base>

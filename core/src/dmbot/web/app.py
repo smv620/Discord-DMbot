@@ -10,7 +10,9 @@ Security rules (CLAUDE.md, #434, #435):
 - Logs carry ids only, never names, emails or tokens.
 """
 
+import contextlib
 import hmac
+import ipaddress
 import json
 import logging
 import time
@@ -497,10 +499,11 @@ def create_app(
     def client_address(request: Request) -> str:
         # Behind Cloudflare and Caddy the connection comes from the proxy, so the
         # visitor's own address is in the header the proxy sets (settings.client_ip_header).
+        # Only that header, and only when it holds a real address.
         if settings.client_ip_header:
             forwarded = request.headers.get(settings.client_ip_header, "").strip()
-            if forwarded:
-                return forwarded
+            with contextlib.suppress(ValueError):
+                return str(ipaddress.ip_address(forwarded))
         return request.client.host if request.client else "unknown"
 
     @app.post("/feedback", status_code=204)
@@ -514,29 +517,28 @@ def create_app(
                 raise HTTPException(status_code=413, detail="too_long")
         try:
             raw = json.loads(body)
-        except ValueError:
+        except (ValueError, RecursionError):  # RecursionError: "[[[[..." nested too deep
             raw = None
         message = feedback.read_message(raw)
         if isinstance(message, str):
             raise HTTPException(status_code=400, detail=message)
         address = client_address(request)
-        if not feedback_limit.take(address):
+        turn = feedback.rate_key(address)
+        if not feedback_limit.take(turn):
             raise HTTPException(status_code=429, detail="slow_down")
         try:
             if human_check is not None:
                 token = raw.get("turnstile") if isinstance(raw, dict) else None
                 if not await human_check.verify(str(token or ""), address):
-                    feedback_limit.give_back(address)
                     raise HTTPException(status_code=400, detail="not_human")
+            # Once GitHub has the post, the turn is used, whatever happens next.
             number = await feedback.post(db, discussions, message, now=clock())
         except FeedbackError as exc:
-            feedback_limit.give_back(address)
+            feedback_limit.give_back(turn)
             log.warning("Feedback couldn't be posted: %s", exc)
             raise HTTPException(status_code=502, detail="feedback_unavailable") from exc
-        except HTTPException:
-            raise
-        except Exception:
-            feedback_limit.give_back(address)
+        except BaseException:
+            feedback_limit.give_back(turn)
             raise
         log.info("Feedback posted: discussion %s", number)
         return Response(status_code=204)

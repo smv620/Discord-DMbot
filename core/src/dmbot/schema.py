@@ -586,9 +586,9 @@ FEEDBACK = """
         discussion    INTEGER NOT NULL,  -- the GitHub Discussion's number
         created_at    BIGINT NOT NULL
     );
-    -- Write-only for DMbot: anyone may add a row, but no policy lets the bot or the
-    -- website read, change or remove one (FORCE holds the table's owner too). The team
-    -- reads contacts as the database's administrator, which skips these policies.
+    -- Add-only: no policy lets anyone read, change or remove a row (FORCE holds the
+    -- table's owner, the bot's role, too; the bot never queries it, and the website's
+    -- role may only INSERT). The team reads contacts as the database's administrator.
     ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
     ALTER TABLE feedback FORCE ROW LEVEL SECURITY;
     CREATE POLICY add_only ON feedback FOR INSERT WITH CHECK (true);
@@ -969,7 +969,8 @@ USER_ISOLATED_TABLES = (
     "web_sessions",
     "installs",
 )
-# Anyone may add a row; nobody but the database's administrator may read one (#665).
+# Add-only: no policy allows reading a row; the team reads them as the database's
+# administrator (#665).
 WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
 ROUTING_TABLES = ("live_session_guilds",)

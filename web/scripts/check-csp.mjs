@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
-import { htmlFiles, inlineScriptHashes, mockLeaks } from "./csp.mjs";
+import { htmlFiles, inlineScriptHashes, mockLeaks, TURNSTILE_ORIGIN } from "./csp.mjs";
 
 const SCRIPTED = new Set(["account.html", "hello.html"]);
 const dist = process.argv[2] ?? new URL("../dist/", import.meta.url).pathname;
@@ -22,6 +22,17 @@ for (const page of htmlFiles(dist)) {
   }
   for (const hash of inlineScriptHashes(html)) {
     if (!policy?.split(" ").includes(hash)) problems.push(`${name}: inline script ${hash} not allowed`);
+  }
+}
+
+// A build with a Turnstile key must let its script and frame load, or the forms on /hello
+// can never pass the check.
+if (process.env.PUBLIC_TURNSTILE_SITE_KEY?.trim()) {
+  const csp =
+    readFileSync(join(dist, "_headers"), "utf8").match(/^\s*Content-Security-Policy:.*$/m)?.[0] ?? "";
+  for (const directive of ["script-src", "frame-src"]) {
+    const sources = csp.match(new RegExp(`${directive} ([^;\\n]*)`))?.[1]?.split(" ") ?? [];
+    if (!sources.includes(TURNSTILE_ORIGIN)) problems.push(`${directive} doesn't allow Turnstile`);
   }
 }
 

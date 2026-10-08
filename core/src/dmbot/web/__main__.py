@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import time
+from urllib.parse import urlsplit
 
 import uvicorn
 
@@ -61,7 +62,11 @@ async def serve(settings: WebSettings) -> None:
         if settings.feedback_token
         else None
     )
-    human_check = Turnstile(settings.turnstile_secret) if settings.turnstile_secret else None
+    human_check = (
+        Turnstile(settings.turnstile_secret, urlsplit(settings.site_url).hostname or "")
+        if settings.turnstile_secret
+        else None
+    )
     app = create_app(
         settings,
         db,

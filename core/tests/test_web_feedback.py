@@ -164,6 +164,57 @@ class FeedbackRoute(DatabaseTest):
         self.assertEqual((await self.send()).status_code, 204)
         self.assertEqual(self.human.seen[-1], ("person", "203.0.113.5"))
 
+    async def test_control_and_reordering_characters_are_removed(self) -> None:
+        sent = await self.send(message="Hi\x00 there\r\nbye\u202e!", contact="bel\n#1\x07")
+        self.assertEqual(sent.status_code, 204)
+        self.assertIn("```text\nHi there\nbye!\n```", self.github.posts[0][2])
+        [row] = await self.stored()
+        self.assertEqual((row["message"], row["contact"]), ("Hi there\nbye!", "bel #1"))
+
+    async def test_storing_failing_after_the_post_still_says_sent_and_uses_the_turn(
+        self,
+    ) -> None:
+        async with self.db.unscoped() as conn:
+            await conn.execute("DROP TABLE feedback")
+        with self.assertLogs("dmbot.web.feedback", "ERROR") as logs:
+            self.assertEqual((await self.send(message="secret words")).status_code, 204)
+        self.assertNotIn("secret words", "\n".join(logs.output))
+        self.assertIn("discussion 101", "\n".join(logs.output))
+        # Sending again would only post it twice.
+        self.assertEqual((await self.send()).status_code, 429)
+        self.assertEqual(len(self.github.posts), 1)
+
+    async def test_the_address_comes_only_from_a_real_address_in_the_header(self) -> None:
+        # The test client's own connection address.
+        self.assertEqual((await self.send(ip="")).status_code, 204)
+        self.assertEqual((await self.send(ip="not-an-address")).status_code, 429)
+        self.assertEqual(self.human.seen[-1][1], "127.0.0.1")
+        # One IPv6 network is one person, whatever address it picks.
+        self.assertEqual((await self.send(ip="2001:db8:1:2::1")).status_code, 204)
+        self.assertEqual((await self.send(ip="2001:db8:1:2::ffff")).status_code, 429)
+        self.assertEqual((await self.send(ip="2001:db8:1:3::1")).status_code, 204)
+
+    async def test_without_the_header_setting_the_header_is_ignored(self) -> None:
+        await self.client.aclose()
+        app = create_app(
+            settings(),
+            self.db,
+            FakeDiscord(),
+            discussions=self.github,
+            feedback_limit=RateLimit(clock=lambda: self.time),
+        )
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API)
+        self.assertEqual((await self.send(ip="203.0.113.5")).status_code, 204)
+        self.assertEqual((await self.send(ip="198.51.100.7")).status_code, 429)
+
+    async def test_deeply_nested_json_is_a_bad_request(self) -> None:
+        response = await self.client.post(
+            "/feedback",
+            content=b"[" * 20_000,
+            headers={**HEADERS, "Content-Type": "application/json"},
+        )
+        self.assertEqual((response.status_code, response.json()), (400, {"error": "bad_request"}))
+
     async def test_a_huge_body_is_refused(self) -> None:
         response = await self.client.post(
             "/feedback", content=b"x" * 40_000, headers={**HEADERS, "Content-Type": "text/plain"}
@@ -205,6 +256,13 @@ class Body(unittest.TestCase):
             body.endswith("`````text\n@everyone ```` see #1 ![x](https://e.example)\n`````\n")
         )
 
+    def test_a_message_cant_close_its_block(self) -> None:
+        message = "````\n~~~\n```"
+        body = discussion_body(message, datetime.date(2027, 1, 15))
+        # The fence is longer than any run of backticks in the message, so no line of the
+        # message can end the block early.
+        self.assertTrue(body.endswith("`````text\n````\n~~~\n```\n`````\n"))
+
 
 class PretendGitHub:
     def __init__(self) -> None:
@@ -223,7 +281,7 @@ class PretendGitHub:
         payload = await request.json()
         self.requests.append(payload)
         if self.errors:
-            return web.json_response({"errors": [{"message": "no"}]})
+            return web.json_response({"errors": [{"message": "SECRET_ECHO"}]})
         if payload["query"].startswith("query"):
             return web.json_response(
                 {
@@ -273,7 +331,12 @@ class GitHubClient(unittest.IsolatedAsyncioTestCase):
         self.pretend.errors = True
         with self.assertRaises(FeedbackError) as caught:
             await self.github.create("feedback", "T", "B")
-        self.assertNotIn("no", str(caught.exception).replace("refused", ""))
+        self.assertNotIn("SECRET_ECHO", str(caught.exception))
+
+    async def test_an_unexpected_answer_is_a_feedback_error(self) -> None:
+        self.pretend.categories = [{"label": "Feedback"}]  # no name or id
+        with self.assertRaises(FeedbackError):
+            await self.github.create("feedback", "T", "B")
 
 
 class TurnstileClient(unittest.IsolatedAsyncioTestCase):
@@ -283,13 +346,18 @@ class TurnstileClient(unittest.IsolatedAsyncioTestCase):
         async def verify(request: web.Request) -> web.Response:
             form = {k: str(v) for k, v in (await request.post()).items()}
             self.forms.append(form)
-            return web.json_response({"success": form["response"] == "ok"})
+            host = "elsewhere.example" if form["response"] == "other-site" else "dmbot.example"
+            return web.json_response(
+                {"success": form["response"] in ("ok", "other-site"), "hostname": host}
+            )
 
         app = web.Application()
         app.router.add_post("/verify", verify)
         self.server = TestServer(app)
         await self.server.start_server()
-        self.turnstile = Turnstile("ts-secret", url=str(self.server.make_url("/verify")))
+        self.turnstile = Turnstile(
+            "ts-secret", "dmbot.example", url=str(self.server.make_url("/verify"))
+        )
 
     async def asyncTearDown(self) -> None:
         await self.turnstile.close()
@@ -298,11 +366,13 @@ class TurnstileClient(unittest.IsolatedAsyncioTestCase):
     async def test_it_asks_cloudflare(self) -> None:
         self.assertTrue(await self.turnstile.verify("ok", "203.0.113.5"))
         self.assertFalse(await self.turnstile.verify("bad", "203.0.113.5"))
+        # Solved, but on another website.
+        self.assertFalse(await self.turnstile.verify("other-site", "203.0.113.5"))
         self.assertFalse(await self.turnstile.verify("", "203.0.113.5"))  # not even asked
         self.assertEqual(
             self.forms[0], {"secret": "ts-secret", "response": "ok", "remoteip": "203.0.113.5"}
         )
-        self.assertEqual(len(self.forms), 2)
+        self.assertEqual(len(self.forms), 3)
 
 
 class FeedbackSettings(unittest.TestCase):
@@ -310,10 +380,11 @@ class FeedbackSettings(unittest.TestCase):
         **SettingsTest.ENV,
         "GITHUB_FEEDBACK_TOKEN": "gh-tok-1",
         "TURNSTILE_SECRET_KEY": "ts-key-1",
+        "WEB_CLIENT_IP_HEADER": "CF-Connecting-IP",
     }
 
     def test_reads_the_feedback_settings_and_hides_secrets(self) -> None:
-        loaded = load_web_settings({**self.ENV, "WEB_CLIENT_IP_HEADER": "CF-Connecting-IP"})
+        loaded = load_web_settings(self.ENV)
         self.assertEqual(loaded.feedback_repo, "smv620/Discord-DMbot")
         self.assertEqual(loaded.client_ip_header, "CF-Connecting-IP")
         self.assertNotIn("gh-tok-1", repr(loaded))
@@ -325,6 +396,12 @@ class FeedbackSettings(unittest.TestCase):
             load_web_settings(env)
         local = load_web_settings({**env, "WEB_API_URL": "http://localhost:8080"})
         self.assertEqual(local.turnstile_secret, "")
+
+    def test_the_address_header_is_needed_except_on_localhost(self) -> None:
+        env = {**self.ENV, "WEB_CLIENT_IP_HEADER": ""}
+        with self.assertRaisesRegex(ConfigError, "WEB_CLIENT_IP_HEADER"):
+            load_web_settings(env)
+        load_web_settings({**env, "WEB_API_URL": "http://localhost:8080"})
 
     def test_bad_values_are_refused(self) -> None:
         for name, value in (

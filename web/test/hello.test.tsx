@@ -25,7 +25,7 @@ describe("the form", () => {
   it("sends feedback with the contact, then thanks the person", async () => {
     const send = show("feedback");
     type(text.feedback.label, "  Love the rules alerts!  ");
-    type(text.contactLabel, "bel#1");
+    type(text.feedback.contactLabel, "bel#1");
     fireEvent.click(screen.getByRole("button", { name: text.feedback.send }));
     expect((await screen.findByRole("status")).textContent).toBe(text.sent);
     expect(send).toHaveBeenCalledWith({
@@ -109,6 +109,7 @@ describe("httpSend", () => {
     [429, "slow_down", "slow-down"],
     [400, "too_long", "too-long"],
     [400, "not_human", "not-human"],
+    [400, "contact_too_long", "contact-too-long"],
     [503, "feedback_off", "failed"],
     [502, "feedback_unavailable", "failed"],
     [500, undefined, "failed"],
