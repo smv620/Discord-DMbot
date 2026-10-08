@@ -48,8 +48,8 @@ FORM_TITLE = "Type the name"
 FORM_FIELD = "The name, as it should be written"
 FORM_HINT = "For example: Hrothgar"
 TYPED_SECRET = (
-    "That's a secret name. Everyone in the server can read the transcript, so DMbot "
-    "won't write it there. Pick another answer, or ignore the question."
+    "That would put a secret name in the transcript, which everyone in the server can "
+    "read, so DMbot won't write it. Pick another answer, or ignore the question."
 )
 TYPED_TWO = (
     "Two names in this campaign are spelled exactly like that, so DMbot can't tell which "
@@ -57,9 +57,10 @@ TYPED_TWO = (
 )
 TYPED_CANT_CHECK = "DMbot can't check the names right now. Try again in a moment."
 TYPED_REFUSED = (
-    "DMbot couldn't add that name: it may already be one (perhaps a secret one). Pick a "
-    "button, or look it up in `/dmbot names`."
+    "That name is already in this campaign (maybe as a secret one), so DMbot can't add it "
+    "again. Pick a button, or look it up in `/dmbot names`."
 )
+NEW_NAME = "is new: it waits in 📝 Check new names."  # in an answer, after the name
 _AGAIN = "Press **Type it…** again and type just the name."
 TYPED_PROBLEMS = {
     name_list.EMPTY: "No name was typed. Press **Type it…** again, or ignore the question.",
@@ -156,17 +157,17 @@ class QuestionBook:
                 continue  # once, and nothing in the scene: not worth the DM's attention
             self.asked_keys.add(key)
             self.open = Asked(
-                secrets.token_hex(4),
-                speaker,
-                question.heard,
-                question.options,
-                now,
-                question.context,
-                started_ms,
-                line,
-                fixes,
-                question.start,
-                question.end,
+                id=secrets.token_hex(4),
+                speaker=speaker,
+                heard=question.heard,
+                options=question.options,
+                asked_at=now,
+                context=question.context,
+                started_ms=started_ms,
+                line=line,
+                fixes=fixes,
+                start=question.start,
+                end=question.end,
             )
             return self.open
         return None
@@ -238,9 +239,12 @@ def keep_label(heard: str) -> str:
     return f'Keep "{_short(heard, LABEL_MAX - 7)}"'
 
 
-def fixed_text(heard: str, name: str, *, line_fixed: bool = False, new: bool = False) -> str:
+def fixed_text(
+    heard: str, name: str, *, line_fixed: bool = False, line_kept: bool = False, new: bool = False
+) -> str:
     """After the DM picked or typed a name (both already escaped). `line_fixed`: the line
-    that was asked about was fixed too; `new`: a typed name DMbot didn't know."""
+    that was asked about was fixed too; `line_kept`: it couldn't be (it would have put a
+    secret name there, or saving failed); `new`: a typed name DMbot didn't know."""
     if line_fixed:
         text = (
             f'✅ Got it: "{_short(heard)}" is now written **{_short(name)}**, in that line '
@@ -251,8 +255,10 @@ def fixed_text(heard: str, name: str, *, line_fixed: bool = False, new: bool = F
             f'✅ Got it: from now on, "{_short(heard)}" is written **{_short(name)}** in '
             "this campaign. Earlier lines stay as heard."
         )
+        if line_kept:
+            text += " That line stays as heard."
     if new:
-        text += f"\n**{_short(name)}** is new: it waits in 📝 Check new names."
+        text += f"\n**{_short(name)}** {NEW_NAME}"
     return text
 
 
@@ -281,7 +287,15 @@ def not_answered_text(heard: str) -> str:
     return f'⌛ Not answered: "{_short(heard)}" stays as heard.'
 
 
-def undone_text(heard: str | None) -> str:
-    if not heard:
-        return UNDONE
-    return f'↩️ Undone. "{_short(heard)}" stays as heard again. DMbot may ask about it next session.'
+def undone_text(heard: str | None, *, new_name: bool = False) -> str:
+    """After Undo of an answer. `new_name`: the answer had added a name DMbot didn't know,
+    and the Undo took it out of Check new names too."""
+    text = (
+        UNDONE
+        if not heard
+        else (
+            f'↩️ Undone. "{_short(heard)}" stays as heard again. DMbot may ask about it next '
+            "session."
+        )
+    )
+    return text + (" The new name is gone from 📝 Check new names too." if new_name else "")

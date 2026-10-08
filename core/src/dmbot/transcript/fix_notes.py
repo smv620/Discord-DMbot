@@ -177,20 +177,13 @@ class FixNotes:
         undone = {n.fix for n in self.notes if n.undone and n.line == (speaker, started_ms)}
         return tuple(f for f in fixes if f not in undone)
 
-    def words_now(
-        self,
-        speaker: int,
-        started_ms: int,
-        heard: str,
-        fixes: tuple[Fix, ...],
-        more: tuple[tuple[int, int, str], ...] = (),
-    ) -> str:
-        """A line's words now: `fixes` without the ones undone, the answers that fixed
-        it, and `more` (start, end, written) changes."""
+    def words_now(self, speaker: int, started_ms: int, heard: str, fixes: tuple[Fix, ...]) -> str:
+        """A line's words now: `fixes` without the ones undone, and the answers that
+        fixed it."""
         line = (speaker, started_ms)
         edits = [(f.start, f.end, f.written) for f in self.still_fixed(speaker, started_ms, fixes)]
         edits += [(a.start, a.end, a.written) for a in self.answers if a.line == line]
-        return rewrite(heard, [*edits, *more])
+        return rewrite(heard, edits)
 
     def answered(self, answer: Answer) -> None:
         """Keep the newest answers, and any on a line that still has notes (its text

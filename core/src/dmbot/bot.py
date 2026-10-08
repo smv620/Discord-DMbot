@@ -1948,22 +1948,25 @@ class DMBot(commands.AutoShardedBot):
         heard = discord.utils.escape_markdown(asked.heard)
         if chosen is None:
             return name_questions.kept_text(heard), True, undo
-        line_fixed = await self._fix_asked_line(table, asked, name, undo)
+        line = await self._fix_asked_line(table, asked, name, undo)
         if not self.consent.has_consent(guild_id, asked.speaker):
             return name_questions.GONE, True, undo
         md = discord.utils.escape_markdown
-        new = chosen[0] is None
-        answer = name_questions.fixed_text(heard, md(name), line_fixed=line_fixed, new=new)
+        answer = name_questions.fixed_text(
+            heard, md(name), line_fixed=line is True, line_kept=line is False, new=chosen[0] is None
+        )
         return answer, True, undo
 
     async def _fix_asked_line(
         self, table: Table, asked: name_questions.Asked, name: str, undo: tuple[str, int] | None
-    ) -> bool:
+    ) -> bool | None:
         """Write the answer into the line that was asked about (#503); Undo of the answer
         puts it back (`answer_undone`). Never if that would put a secret name in the line
-        (checked with the names as they are now). True if the line was found."""
+        (checked with the names as they are now). True if the line was fixed, False if it
+        stays as heard, None if there's no line to fix. A failure here never loses the
+        answer: it's saved already, and its message still gets its Undo."""
         if not asked.line:
-            return False
+            return None
         lookup = await self._names_now(table)
         notes, speaker, started = table.fix_notes, asked.speaker, asked.started_ms
         written = with_ending(asked.heard, name)
@@ -1979,7 +1982,11 @@ class DMBot(commands.AutoShardedBot):
             )
         )
         text = notes.words_now(speaker, started, asked.line, asked.fixes)
-        return await self._rewrite_line(table, speaker, started, text)
+        try:
+            return await self._rewrite_line(table, speaker, started, text)
+        except Exception:
+            log.exception("Couldn't write an answer into the line it was about")
+            return False
 
     async def answer_undone(self, guild_id: int, campaign_id: str, batch: int) -> None:
         """The DM undid an answer to "Did they mean…?" (the saved change is already taken

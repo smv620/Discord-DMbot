@@ -1133,7 +1133,22 @@ class SaveAndResume(SessionTests):
         text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, pick, DM)
         self.assertTrue(done)  # the rule is saved
         self.assertNotIn("in that line", text)
+        self.assertIn("That line stays as heard.", text)
         self.assertEqual(self.waiting_text(table), "then Marin speaks")  # not written
+
+    async def test_a_failure_writing_the_line_still_gives_the_answer_its_undo(self) -> None:
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        table.unsaved.take(lambda _: True)  # already saved
+        table.transcript_session_id = "s5"
+        saved: Any = self.bot.transcripts
+        saved.relabel_line.side_effect = RuntimeError("database down")
+        asked = table.questions.open
+        assert asked is not None
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            text, done, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        self.assertEqual(undo, (table.campaign_id, 41))
+        self.assertIn("That line stays as heard.", text)
 
     async def test_a_typed_name_dmbot_doesnt_know_becomes_a_new_name(self) -> None:
         table, _, _, memory = await self.asked_about_marin(saving=True)

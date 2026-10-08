@@ -131,6 +131,17 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
 
 
 class UndoTest(unittest.IsolatedAsyncioTestCase):
+    async def test_undo_of_a_new_typed_name_says_it_left_check_new_names(self) -> None:
+        bot = self.bot()
+        it = self.press(bot, DM_ID)
+        it.message.content = (
+            '✅ Got it: "Marin" is now written **Maerin**, in that line and from now on.\n'
+            f"**Maerin** {questions.NEW_NAME}"
+        )
+        await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
+        content = it.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("gone from 📝 Check new names", content)
+
     def bot(self, *, undo: Any = None) -> Any:
         campaign = MagicMock(guild_id=GUILD, id=CAMPAIGN, dm_user_ids=frozenset({DM_ID}))
         return MagicMock(
