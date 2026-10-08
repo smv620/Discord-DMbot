@@ -677,3 +677,17 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     25 tables); no session was live. .env already matched .env.example. Core rebuilt:
     "Database updated: 0012_transcript_engines" (transcript_sessions.engines TEXT[]
     default '{}'), "Connected to 1 server(s)", "ears connected", no warnings or errors.
+
+==============================================================================
+2026-10-08  Server: deploy 4ed3c52 (dev1, no test run)
+==============================================================================
+  - 01:48 UTC  development @ 4ed3c52: the website's API in core (#467 sign-in and
+    sessions, #475 payments, #485 add/link a server and delete account, #489 follow-ups,
+    #435), and web/ pages (#486, #488: not deployed anywhere).
+  - Database backed up first ("pre0013", outside the repo; pg_restore -l reads 25
+    tables); no session was live. scripts/update-env kept 32 values and added the 9
+    website settings, all empty. Core rebuilt: "Database updated: 0013_web_session_name,
+    0014_installs_left_at", "Connected to 1 server(s)", "ears connected", no warnings.
+  - The web-api container was NOT started: it's behind COMPOSE_PROFILES=web and needs the
+    owner's Discord OAuth secret, WEB_SECRET_KEY, the site addresses and a payment
+    provider first. Running: core, ears, postgres.
