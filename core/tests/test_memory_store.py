@@ -7,7 +7,7 @@ import itertools
 import json
 import random
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -16,7 +16,7 @@ from psycopg import errors as pg_errors
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
-from dmbot.memory._changes import ALIASES, ALL, scoped_select
+from dmbot.memory._changes import ALIASES, ALL, Changes, scoped_select
 from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
 from dmbot.memory._changes import FLAGS as FLAGS_TABLE
 from dmbot.memory.backup import MemorySection
@@ -1367,6 +1367,84 @@ class Lists(MemoryTest):
         )
         aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=ids[1])
         self.assertTrue(all(a.status == CONFIRMED for a in aliases))
+
+    async def save_list(
+        self, size: int, first: int = 0, more: Sequence[Any] = ()
+    ) -> tuple[Written[Any], int, float]:
+        """Add a list of `size` names, each with another name and a secret one: what it
+        returned, the statements it took, and the seconds."""
+        from dmbot.memory.models import NewName
+
+        names = [
+            NewName(f"Guard {n}", "npc", CONFIRMED, (f"G{n}",), (f"the spy {n}",))
+            for n in range(first, first + size)
+        ]
+        statements = 0
+        real = AsyncConnection.execute
+
+        async def counting(conn: Any, *args: Any, **kw: Any) -> Any:
+            nonlocal statements
+            statements += 1
+            return await real(conn, *args, **kw)
+
+        with patch.object(AsyncConnection, "execute", counting):
+            started = time.perf_counter()
+            written = await self.memory.add_names(GUILD_A, self.c, names, source="dm", more=more)
+            seconds = time.perf_counter() - started
+        return written, statements, seconds
+
+    async def test_a_long_list_saves_in_a_few_statements(self) -> None:
+        """#253: the write lock is held for a fixed few statements, however long the list:
+        one for the entries, one for their names, and one log statement each."""
+        from dmbot.memory.models import MoreNames
+
+        bel = await self.add("Belleros", status=CONFIRMED)
+        _, one, _ = await self.save_list(1, more=[MoreNames(bel, ("Bell",))])
+        before = await self.snapshot()
+        more = [MoreNames(bel, ("the old knight",), ("the hooded stranger",))]
+        written, many, _ = await self.save_list(300, first=1, more=more)
+        self.assertEqual(many, one)
+        self.assertLess(many, 20)
+        self.assertEqual(len([i for i in written.value if i is not None]), 301)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT table_name, count(*) AS n FROM memory_changes WHERE guild_id = %s"
+                " AND campaign_id = %s AND batch = %s GROUP BY table_name",
+                (GUILD_A, self.c, written.batch),
+            )
+            logged = {r["table_name"]: r["n"] for r in await cur.fetchall()}
+        # One log row each, Belleros's two new names among the aliases.
+        self.assertEqual(logged, {"memory_entities": 300, "memory_aliases": 902})
+        assert written.batch is not None
+        statements = 0
+        real = AsyncConnection.execute
+
+        async def counting(conn: Any, *args: Any, **kw: Any) -> Any:
+            nonlocal statements
+            statements += 1
+            return await real(conn, *args, **kw)
+
+        with patch.object(AsyncConnection, "execute", counting):
+            await self.memory.undo_names(GUILD_A, self.c, written.batch)  # still one Undo
+        self.assertLess(statements, 25)  # names, then entries: a few runs, not row by row
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:
+        """#253: timed against the old way, one INSERT and one log row per name."""
+
+        async def row_by_row(w: Changes, table: Any, rows: Any) -> list[dict[str, Any]]:
+            return [await w.insert(table, row) for row in rows]
+
+        with patch.object(Changes, "insert_many", row_by_row):
+            _, old_statements, old = await self.save_list(2000)
+        _, new_statements, new = await self.save_list(2000, first=2000)
+        print(
+            f"\n2,000 names (6,000 rows): row by row {old_statements} statements"
+            f" {old * 1000:.0f} ms; now {new_statements} statements {new * 1000:.0f} ms"
+        )
+        self.assertGreater(old_statements, 12_000)
+        self.assertLess(new_statements, 20)
+        self.assertLess(new, old)
 
     async def test_only_the_dm_and_never_a_players_character(self) -> None:
         from dmbot.memory.models import NewName

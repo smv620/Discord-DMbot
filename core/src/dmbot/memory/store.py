@@ -517,14 +517,23 @@ class MemoryStore:
             _check_choice(n.status, LIVE, "entity status")
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
+            # Names in use, in two plain reads joined here: as one query, a campaign just
+            # given a long list (no table statistics yet) got a plan comparing every name
+            # with every entry, 1.6 s for 2,000 names under the write lock (#253 review).
             cur = await w.conn.execute(
-                "SELECT key FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
-                " AND status <> 'rejected' AND (%s OR NOT secret) AND entity_id IN"
-                + _LIVE_ENTITY_IDS,
-                (*w.ids, secret_clashes, *w.ids),
+                "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND status IN ('proposed', 'confirmed')",
+                w.ids,
             )
-            used = {str(r["key"]) for r in await cur.fetchall()}
+            live_ids = {str(r["id"]) for r in await cur.fetchall()}
+            cur = await w.conn.execute(
+                "SELECT entity_id, key FROM memory_aliases WHERE guild_id = %s"
+                " AND campaign_id = %s AND status <> 'rejected' AND (%s OR NOT secret)",
+                (*w.ids, secret_clashes),
+            )
+            used = {str(r["key"]) for r in await cur.fetchall() if r["entity_id"] in live_ids}
             folded: list[str | None] = []
+            aliases: list[dict[str, Any]] = []  # every new name, written together at the end
             wanted = sorted({m.entity_id for m in more})
             live = {
                 str(r["id"]): str(r["status"])
@@ -550,13 +559,11 @@ class MemoryStore:
                         continue
                     used.add(key)
                     has.add(key)
-                    await w.insert(
-                        ALIASES,
-                        _new_alias(w, m.entity_id, text, kind, status, secret, None),
-                    )
+                    aliases.append(_new_alias(w, m.entity_id, text, kind, status, secret, None))
                     added = True
                 folded.append(m.entity_id if added else None)
             ids: list[str | None] = []
+            entities: list[dict[str, Any]] = []
             for n in names:
                 onto.active_type(n.type)
                 if onto_is_pc(onto, n.type):
@@ -565,28 +572,30 @@ class MemoryStore:
                 if lookup_key(name) in used:
                     ids.append(None)
                     continue
-                row = await w.insert(
-                    ENTITIES,
+                entity_id = new_id()
+                entities.append(
                     {
-                        "id": new_id(), "type": n.type, "name": name, "description": "",
+                        "id": entity_id, "type": n.type, "name": name, "description": "",
                         "status": n.status, "merged_into": None, "source": source,
                         "created_at": w.now, "played_by": None,
-                    },
+                    }
                 )  # fmt: skip
                 seen = {lookup_key(name)}
-                aliases = [(name, "full", False)]
-                aliases += [(clean_text(t), "nickname", False) for t in n.others]
-                aliases += [(clean_text(t), "title", True) for t in n.secrets]
-                for text, kind, secret in aliases:
+                texts = [(name, "full", False)]
+                texts += [(clean_text(t), "nickname", False) for t in n.others]
+                texts += [(clean_text(t), "title", True) for t in n.secrets]
+                for text, kind, secret in texts:
                     key = lookup_key(text)
                     if (key in seen or key in used) and kind != "full":
                         continue
                     seen.add(key)
-                    await w.insert(
-                        ALIASES, _new_alias(w, row["id"], text, kind, n.status, secret, None)
-                    )
+                    aliases.append(_new_alias(w, entity_id, text, kind, n.status, secret, None))
                 used |= seen
-                ids.append(row["id"])
+                ids.append(entity_id)
+            # Two statements however long the list (#253): the entries, then all their
+            # names, so the campaign's write lock is held for a moment, not seconds.
+            await w.insert_many(ENTITIES, entities)
+            await w.insert_many(ALIASES, aliases)
             return Written(ids + folded, w.batch)
 
     async def undo_names(self, guild_id: int, campaign_id: str, batch: int) -> Written[None]:
