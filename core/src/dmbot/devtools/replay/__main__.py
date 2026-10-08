@@ -224,6 +224,7 @@ async def main_async(args: argparse.Namespace) -> int:
     except (OSError, ValueError, audio.DecodeError) as exc:
         print(f"replay: {exc}", file=sys.stderr)
         return 2
+    recording_s = audio.seconds(pcm)
     levels = audio.frame_levels(pcm)
     silence = args.silence_db if args.silence_db is not None else audio.silence_dbfs_for(levels)
     pieces = list(
@@ -288,6 +289,7 @@ async def main_async(args: argparse.Namespace) -> int:
             result=result,
             score=names,
             cut=cut,
+            recording_s=recording_s,
         )
     else:
         lines = record(
@@ -298,9 +300,12 @@ async def main_async(args: argparse.Namespace) -> int:
             result=result,
             score=score(script, heard),
             cut=cut,
+            recording_s=recording_s,
         )
     if cost:
-        lines.insert(2, cost)
+        # What was sent, now it's known: the estimate above also counted pieces too short
+        # to send.
+        lines.insert(2, cost_line(settings, result.sent_s) or cost)
     scan_story = isinstance(script, Bakeoff) or args.script.stem == "bakeoff-story"
     if args.names and not scan_story:
         details.append("name scan: scored only for stt-bakeoff.md and bakeoff-story.md")

@@ -66,6 +66,13 @@ class Replay:
     def speech_s(self) -> float:
         return sum(h.seconds for h in self.heard)
 
+    @property
+    def sent_s(self) -> float:
+        """Speech the engine was sent, which is what an outside engine charges for (#523):
+        pieces too short to write down are counted in `speech_s` but never sent. A piece
+        the engine failed on still counts (see `failed`), and a retry counts once."""
+        return sum(h.seconds for h in self.heard if h.written_down)
+
 
 async def replay(
     pieces: Sequence[Piece],
