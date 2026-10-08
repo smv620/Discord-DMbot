@@ -319,6 +319,38 @@ class WebAccounts(DatabaseTest):
             cur = await conn.execute("DELETE FROM installs")
             self.assertEqual(cur.rowcount, 0)
 
+    async def test_a_plan_can_be_read_inside_a_server_transaction(self) -> None:
+        await self.add_user(ALICE)
+        await self.add_plan(ALICE)
+        async with self.db.guild(GUILD_A) as conn:  # like /dmbot start (#437)
+            got = await entitlements.read(conn, ALICE)
+            assert got is not None
+            self.assertEqual(got.plan, "table")
+            self.assertIsNone(await entitlements.read(conn, BOB))
+
+    async def test_reading_a_plan_leaves_nothing_else_open(self) -> None:
+        await self.add_user(ALICE)
+        await self.add_plan(ALICE)
+        await self.add_session(ALICE, "h", FAR_FUTURE)
+        async with self.db.user(ALICE, install_guild=GUILD_B) as conn:
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
+                " VALUES (%s, %s, 0, 'site')",
+                (GUILD_B, ALICE),
+            )
+        async with self.db.guild(GUILD_A) as conn:
+            await entitlements.read(conn, ALICE)
+            for table in ("web_sessions", "web_users", "installs", "entitlements"):
+                cur = await conn.execute(f"SELECT count(*) AS n FROM {table}")
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertEqual(row["n"], 0, table)
+
+    async def test_reading_a_plan_needs_an_open_transaction(self) -> None:
+        async with self.db._pool.connection() as conn:  # autocommit, no transaction
+            with self.assertRaises(RuntimeError):
+                await entitlements.read(conn, ALICE)
+
     async def test_settings_do_not_leak_to_the_next_transaction(self) -> None:
         await self.add_user(ALICE)
         async with self.db.plan_writer(ALICE):

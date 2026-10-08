@@ -10,13 +10,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from dmbot.db import Database
+from psycopg import pq
+
+from dmbot.db import Conn, Database
 from dmbot.plans import PlanId
 
 Status = Literal["active", "grace", "lapsed"]
 
-# A renewal's payment event can arrive a little after the period ends; don't stop a
-# paying person's game in that gap. A missed lapse event still stops the plan after this.
+# A technical guard, not a plan rule (accepted by web, #469; docs/PLAN.md "Plans and
+# pricing"): a renewal's payment event can arrive a little after the period ends, so a
+# paying person's game isn't stopped in that gap. A missed lapse event still stops the
+# plan after this. Try It has no slack: it ends exactly when its 30 days do.
 RENEWAL_SLACK_SECONDS = 3 * 24 * 3600
 
 
@@ -52,6 +56,20 @@ class Entitlement:
 async def get(db: Database, user_id: int) -> Entitlement | None:
     """This person's plan, or None if they never had one."""
     async with db.user(user_id) as conn:
+        return await read(conn, user_id)
+
+
+async def read(conn: Conn, user_id: int) -> Entitlement | None:
+    """This person's plan, inside a transaction the caller already has open (for example
+    `/dmbot start`'s server transaction, #437). The person is set only for this one read
+    and then put back as it was, so the rest of the caller's transaction sees nothing more
+    of anyone's website rows than before."""
+    if conn.info.transaction_status != pq.TransactionStatus.INTRANS:
+        raise RuntimeError("entitlements.read needs an open transaction (use Database.guild)")
+    cur = await conn.execute("SELECT current_setting('dmbot.user_id', true) AS before")
+    before = await cur.fetchone()
+    await conn.execute("SELECT set_config('dmbot.user_id', %s, true)", (str(int(user_id)),))
+    try:
         cur = await conn.execute(
             "SELECT user_id, plan, status, hours_cap, extra_hours, campaign_cap, period_start,"
             " period_end, grace_ends_at, lapsed_at, plan_changed_at"
@@ -59,6 +77,11 @@ async def get(db: Database, user_id: int) -> Entitlement | None:
             (user_id,),
         )
         row = await cur.fetchone()
+    finally:
+        await conn.execute(
+            "SELECT set_config('dmbot.user_id', %s, true)",
+            ((before or {}).get("before") or "",),
+        )
     if row is None:
         return None
     return Entitlement(

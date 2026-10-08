@@ -39,19 +39,19 @@ async def record_install(db: Database, user_id: int, guild_id: int, *, now: int)
     Returns "recorded", or "already_linked" when someone else is already the installer
     (DMbot is in the server either way; the first installer stays)."""
     async with db.user(user_id, install_guild=guild_id) as conn:
+        # The write contract (schema.py, migration 0013): someone else's install is left
+        # alone, quietly (no row comes back).
         cur = await conn.execute(
             "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
-            " VALUES (%s, %s, %s, 'site') ON CONFLICT (guild_id) DO NOTHING RETURNING guild_id",
+            " VALUES (%s, %s, %s, 'site')"
+            " ON CONFLICT (guild_id) DO UPDATE SET"
+            "   installed_by_user_id = EXCLUDED.installed_by_user_id, via = 'site', left_at = NULL"
+            " WHERE installs.installed_by_user_id IS NULL"
+            "   OR installs.installed_by_user_id = EXCLUDED.installed_by_user_id"
+            " RETURNING guild_id",
             (guild_id, user_id, now),
         )
-        if await cur.fetchone() is not None:
-            return "recorded"
-        cur = await conn.execute(
-            "UPDATE installs SET installed_by_user_id = %s, via = 'site'"
-            " WHERE guild_id = %s AND (installed_by_user_id IS NULL OR installed_by_user_id = %s)",
-            (user_id, guild_id, user_id),
-        )
-        return "recorded" if cur.rowcount == 1 else "already_linked"
+        return "recorded" if await cur.fetchone() is not None else "already_linked"
 
 
 async def link_install(db: Database, user_id: int, guild_id: int, *, now: int) -> str:
