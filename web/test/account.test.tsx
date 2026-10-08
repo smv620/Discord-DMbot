@@ -227,7 +227,7 @@ describe("actions", () => {
   it("deletes the account only after a warning and a second yes", async () => {
     const { api } = show("table");
     fireEvent.click(await screen.findByRole("button", { name: text.deleteStart }));
-    expect(screen.getByText(text.deleteWarning)).toBeTruthy();
+    expect(screen.getByText(text.deleteWarning[0] ?? "")).toBeTruthy();
     expect(api.calls).not.toContain("requestDelete");
 
     fireEvent.click(screen.getByRole("button", { name: text.deleteNext }));
@@ -238,6 +238,26 @@ describe("actions", () => {
     fireEvent.click(confirm);
     expect(await screen.findByText(text.deleted)).toBeTruthy();
     expect(api.calls).toContain("confirmDelete:demo-token");
+  });
+
+  it("starts over when the last delete step fails, so a retry can work", async () => {
+    const api = mockApi("table");
+    api.confirmDelete = () => Promise.reject(new ApiError("server"));
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.deleteStart }));
+    fireEvent.click(screen.getByRole("button", { name: text.deleteNext }));
+    fireEvent.click(await screen.findByRole("button", { name: text.deleteConfirm }));
+    expect(await screen.findByText(text.actionFailed)).toBeTruthy();
+    expect(screen.getByRole("button", { name: text.deleteStart })).toBeTruthy();
+    expect(screen.queryByText(text.deleteSure)).toBeNull();
+  });
+
+  it("says plainly when only the campaign's DM can do something", async () => {
+    const api = mockApi("table");
+    api.billingPortalUrl = () => Promise.reject(new ApiError("not-allowed"));
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.changePlan }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["not-allowed"]);
   });
 
   it("can back out of deleting", async () => {
@@ -378,13 +398,17 @@ describe("redirects", () => {
   ])("%s → %s", (url, ok) => {
     expect(isSafeRedirect(url)).toBe(ok);
   });
+
+  it("never follows a same-page link outside a pretend-API build", () => {
+    expect(isSafeRedirect("#demo-billing", false)).toBe(false);
+  });
 });
 
 describe("hours words", () => {
   it("tells a Try It user and a paid user different next steps at the cap", () => {
     expect(hoursLeftLine(8, 8, null, "try-it")).toBe("Pick a plan below to keep playing.");
     expect(hoursLeftLine(18, 18, "2026-10-14", "table")).toBe(
-      "Your hours start again on Oct 14. Need more now? Tap Change plan to add 10 hours.",
+      "Your hours start again on Oct 14. Need more now? Tap Change plan, then add 10 hours for $4.99.",
     );
   });
 
@@ -442,7 +466,7 @@ describe("the HTTP client", () => {
   it("sends the delete token in the body, not the URL", async () => {
     const { calls, fetcher } = fakeFetch(204);
     await httpApi("https://api.example", fetcher).confirmDelete("secret-token");
-    expect(calls[0]?.url).toBe("https://api.example/account/delete");
+    expect(calls[0]?.url).toBe("https://api.example/account/delete/confirm");
     expect(calls[0]?.init.body).toBe(JSON.stringify({ confirm_token: "secret-token" }));
   });
 

@@ -486,6 +486,13 @@ TRANSCRIPT_ENGINES = """
     ALTER TABLE transcript_sessions ADD COLUMN engines TEXT[] NOT NULL DEFAULT '{}';
     """
 
+DM_SCREEN_LEVEL = """
+    -- How much DMbot says in the DM screen (#504): quiet, normal (the default) or
+    -- chatty. Alerts are shown at every level.
+    ALTER TABLE campaigns ADD COLUMN dm_screen_level TEXT NOT NULL DEFAULT 'normal'
+        CHECK (dm_screen_level IN ('quiet', 'normal', 'chatty'));
+    """
+
 WEB_ACCOUNTS = (
     _setting("dmbot_current_user", "dmbot.user_id", "BIGINT")
     + _setting("dmbot_current_session", "dmbot.session", "TEXT")
@@ -807,7 +814,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0012_transcript_engines", TRANSCRIPT_ENGINES),
     ("0013_web_session_name", WEB_SESSION_NAME),
     ("0014_installs_left_at", INSTALLS_LEFT),
-    ("0015_web_role_limits", WEB_ROLE_LIMITS),
+    ("0015_dm_screen_level", DM_SCREEN_LEVEL),
+    ("0016_web_role_limits", WEB_ROLE_LIMITS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

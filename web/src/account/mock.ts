@@ -9,6 +9,10 @@ import type { PlanId } from "../content/pricing";
 import type { AccountApi, Campaign, Me, Person } from "./api";
 import { ApiError } from "./api";
 
+/** Found in the built files only if the pretend API was included; check-csp fails a real
+ * build that contains it. */
+export const MOCK_MARKER = "dmbot-pretend-api-7f3c";
+
 export const scenarios = [
   "signed-out",
   "no-plan",
@@ -154,6 +158,7 @@ export function scenarioMe(scenario: Scenario): Me | null {
 
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
+  console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
   const calls: string[] = [];
   const reachable = async (): Promise<void> => {

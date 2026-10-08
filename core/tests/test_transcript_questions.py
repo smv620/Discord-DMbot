@@ -2,13 +2,14 @@
 
 import unittest
 
-from dmbot.transcript.cleaner import Question
+from dmbot.transcript.cleaner import SOUND, Fix, Question
 from dmbot.transcript.questions import (
     ANSWERED,
     COOLDOWN_S,
     NOT_POSTED,
     QUESTION_TTL_S,
     STOPPED,
+    TYPED_MAX,
     Begin,
     QuestionBook,
     fixed_text,
@@ -117,6 +118,15 @@ class QuestionBookTest(unittest.TestCase):
         self.assertIs(book.begin("00000000"), Begin.GONE)
         self.assertIsNotNone(book.open)
 
+    def test_the_question_knows_its_line(self) -> None:
+        fix = Fix(0, 4, "then", "Then", "c" * 32, SOUND)
+        got = QuestionBook().offer(
+            MIA, (question(),), 0.0, SCENE, started_ms=1500, line="then Marin", fixes=(fix,)
+        )
+        assert got is not None
+        self.assertEqual((got.started_ms, got.line, got.fixes), (1500, "then Marin", (fix,)))
+        self.assertEqual(got.line[got.start : got.end], "Marin")
+
 
 class WordingTest(unittest.TestCase):
     def test_plain_words(self) -> None:
@@ -126,10 +136,30 @@ class WordingTest(unittest.TestCase):
         fixed = fixed_text("Marin", "Maren")
         self.assertIn("is written **Maren** in this campaign", fixed)
         self.assertIn("Earlier lines stay as heard.", fixed)
+        that_line = fixed_text("Marin", "Maren", line_fixed=True)
+        self.assertIn("**Maren**, in that line and from now on", that_line)
+        self.assertIn("Earlier lines stay as heard.", that_line)
+        new = fixed_text("Marin", "Maerin", line_fixed=True, new=True)
+        self.assertIn("**Maerin** is new: it waits in 📝 Check new names.", new)
         self.assertIn('won\'t change "Marin" in this campaign', kept_text("Marin"))
         self.assertEqual(not_answered_text("Marin"), '⌛ Not answered: "Marin" stays as heard.')
         self.assertIn('"Marin" stays as heard again', undone_text("Marin"))
         self.assertEqual(keep_label("Marin"), 'Keep "Marin"')
+
+    def test_type_it_wording(self) -> None:
+        from dmbot.transcript import questions
+
+        self.assertEqual(TYPED_MAX, 60)
+        self.assertLessEqual(len(questions.TYPE_LABEL), 25)
+        self.assertLessEqual(len(questions.FORM_TITLE), 45)
+        for typed in ["Mae | rin", "x" * 61, "   ", "a b c d e f g h i", "www.x.com", "Ma\x07rin"]:
+            with self.subTest(typed=typed):
+                self.assertIn("**Type it…** again", questions.typed_problem(typed) or "")
+        self.assertIsNone(questions.typed_problem("Hrothgar the Bold"))
+        self.assertIn("can read the transcript", questions.TYPED_SECRET)
+        late = questions.too_late_text("Maerin")
+        self.assertIn("**Maerin**", late)
+        self.assertIn("/dmbot names", late)
 
     def test_short_enough_for_a_phone(self) -> None:
         self.assertLessEqual(len(option_label("x" * 200)), 25)

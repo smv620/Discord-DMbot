@@ -49,6 +49,20 @@ class Reading(unittest.TestCase):
         self.assertEqual(parsed.lines, [])
         self.assertEqual([n for n, _ in parsed.refused], [2, 3, 4, 5])
 
+    def test_one_typed_name_is_checked_with_the_same_rules(self) -> None:
+        from dmbot.memory import name_list as nl
+        from dmbot.memory.name_list import check_name
+
+        self.assertIsNone(check_name("Hrothgar the Bold"))
+        self.assertEqual(check_name("Hrothgar | NPC"), nl.BAR)
+        self.assertEqual(
+            check_name("one two three four five six seven eight nine"), nl.TOO_MANY_WORDS
+        )
+        self.assertEqual(check_name("www.example.com"), nl.LINK)
+        self.assertEqual(check_name("  "), nl.EMPTY)
+        self.assertEqual(check_name("x" * 61, 60), nl.TOO_LONG)
+        self.assertEqual(check_name("Ma\x07rin"), nl.UNREADABLE)
+
     def test_a_link_is_never_a_name(self) -> None:
         text = "\n".join(
             [

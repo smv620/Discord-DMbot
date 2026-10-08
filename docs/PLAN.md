@@ -25,7 +25,8 @@ the DM decides.**
    or settings.**
 4. **Cite, don't assert.** Every alert names its source (SRD section, homebrew doc,
    or house rule number) and a confidence level.
-5. **Quiet by default.** Verbosity levels and cooldowns keep the DM from being flooded.
+5. **Quiet by default.** "How much DMbot says" (quiet / normal / chatty) and cooldowns
+   keep the DM from being flooded.
 6. **Least access.** Narrow OAuth scopes, encrypted tokens, and commands to review,
    test, and revoke every access the bot holds.
 
@@ -470,6 +471,27 @@ channel's chat.
 - Granting peek access needs the bot to manage that channel's permissions (Manage
   Channels and Manage Roles); per least privilege it only does this in the DM screen it
   created or was given.
+
+**How much DMbot says (built 2026-10-08, #504).** A campaign setting for the DM screen,
+picked with buttons when creating a campaign (**Quiet / Normal**, sharing the last row
+with Create; Chatty isn't offered until something uses it;
+changing it from the DM screen's settings comes later). Backups carry it, and a restore
+uses the backup's (older backups: Normal).
+| Level | What DMbot posts on its own |
+|---|---|
+| **Quiet** | Only what you ask for, plus warnings (so fewer misheard names get fixed) |
+| **Normal** (default) | Also questions and fixes, one at a time: "Did they mean…?" and ✏️ Name fixes to check |
+| **Chatty** | Also what it noticed (reserved: not offered yet; behaves like Normal) |
+
+Every post a level can turn off asks `dmbot.dm_screen.levels.allows` first, with its
+kind: `question`, `fix_note` or `notice`. **Alerts** (speech-to-text stopped or working
+again, hours warnings) always post, at every level. The level is read when a session
+starts, so a later way to change it mid-session must update the running session too. An
+unknown kind never shows, so nothing new slips past Quiet. At Quiet a fix from a name
+DMbot only suggested isn't made at all, because such a fix is never silent and there'd
+be no Undo to show (nor in a stopped session still finishing its last lines).
+Continuity warnings (Phase 5a) and rules alerts must pick a kind
+when they land.
 
 **Channel structure (decided 2026-10-04, #85).** Every channel DMbot creates starts with
 `dmb-`, so its channels group together in the sidebar and are clearly bot-managed.
@@ -1124,8 +1146,8 @@ reads the campaign memory and never changes it.
     message that is edited in place, one line and one Undo each. At most one question is
     open at a time, with a cooldown, and only for names that come up again or matter to
     the scene. Unanswered questions expire quietly (the line stays as heard) and move to
-    the after-session report. At the **quiet** verbosity level there are no live
-    questions at all.
+    the after-session report. When **How much DMbot says** is Quiet there are no live
+    questions at all (#504).
   - **Undo says what it learned:** "↩️ Undone. DMbot won't change "Sara" to **Cerric**
     again in this campaign. [Allow again]"
 - **Rolling window:** one utterance at a time (DMbot already splits speech after a ~2 s
@@ -1205,7 +1227,7 @@ consent check just made still holds:
 - **"Did they mean…?":**
   - **When:** a word that sounds like two or three confirmed names stays as heard, and
     the DM screen asks: "❓ **DMbot heard Mia say "Marin".** Did they mean… Not sure?
-    Ignore this and it stays as heard. [Maren] [Marron] [Keep "Marin"]". Each name must
+    Ignore this and it stays as heard. [Maren] [Marron] [Type it…] [Keep "Marin"]". Each name must
     be spelled at least 0.7 alike (0.8 for a player's character), none may be secret or
     only suggested, and the words must not be next to a secret name. No scene is
     needed to ask. A question about a longer run of words never blocks a sure fix of
@@ -1215,8 +1237,8 @@ consent check just made still holds:
     is asked about at most once per session, and only once it has been heard a second
     time this session or may be a name in the scene (said in the last ~10 minutes, or
     a player's character). A question nobody answers expires after 5 minutes and
-    shrinks to one line (`⌛ Not answered: "Marin" stays as heard.`). When the
-    verbosity setting lands, questions must check it.
+    shrinks to one line (`⌛ Not answered: "Marin" stays as heard.`). Not asked at all
+    when How much DMbot says is Quiet (#504).
   - **Answering:** only the campaign's DMs can answer. A name becomes a fixed spelling
     (`add_correction`, fix, source DM); **Keep** becomes a keep rule. Either way the
     same words are handled silently from the next line, and the message turns into the
@@ -1232,8 +1254,29 @@ consent check just made still holds:
     without repeating their words.
   - **When it closes:** questions live with the running session. When it ends, the
     open one is closed; after a restart, a press says it's closed.
-  - **Not yet:** Type it…, fixing the line that was asked about, and the quiet
-    verbosity level.
+  - **Type it… (built 2026-10-08, #503):** a button after the names opens a form, "The
+    name, as it should be written", starting with the words heard (DM only, at most 60
+    characters, the names list's rules: no `|`, at most 8 words, no links). A name or
+    other name DMbot knows (spelled the same way) means that name, written its own way;
+    the words exactly as heard mean Keep; a name it doesn't know becomes a new name
+    waiting in 📝 Check new names, with the fix rule, in one change (one Undo takes back
+    both), and the answer says it's waiting there. Any DM rule pointing at a name not
+    checked yet fixes later lines silently (the DM wrote it, so no fix note); the name
+    doesn't count as said until it's checked. Refused, with the question left open: a
+    secret name, a name that would make or stand next to a secret one in the line, a
+    spelling two names share, and a name already in the campaign (checked again when
+    saving, secret names included). The names are checked as they are now, not the
+    session's copy. A typing mistake answers privately, saying to press Type it… again.
+    An answer that arrives after the question closed repeats the typed name and points
+    to `/dmbot names`. Consent is checked again when the form is sent.
+  - **The line that was asked about (built 2026-10-08, #503):** the answer is written
+    into that line too: saved, waiting, and in the transcript channel within ~30 s
+    (the same paths as a fix's Undo). The answer says "in that line and from now on…
+    Earlier lines stay as heard." Never if it would put a secret name in the line (the
+    same check as every fix, on the line as written): the rule is saved, the line stays
+    as heard. Undo of the answer puts that line back while the session still runs
+    (after a restart only the rule is taken back). Keep changes nothing in the line.
+  - **Quiet:** when How much DMbot says is Quiet, no questions are asked (#504).
 - **Cleaned and both downloads:**
   - **At the end of a session:** the message has **[📄 Cleaned]**, **[🎙 As heard]** and
     **[📄🎙 Both]**, one line explaining each. Buttons sent before this still give

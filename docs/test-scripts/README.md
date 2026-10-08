@@ -139,6 +139,11 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
 - Recordings other than 16 kHz mono WAV need `pip install -e ".[twin]"` in `core/`.
 - The engine's settings come from the environment, as for the bot.
 - `--realtime` sends the audio as it was spoken, to time the delay a table would see.
+- Each piece also gets the 100 ms of audio just before it (`--lead-in-ms`, 0 to turn off).
+  Live audio probably gets this anyway, as Discord starts sending a moment before the first
+  loud sound (not measured). On DMOnlyAudio.m4a it saved a first word after a pause and the
+  whole whispered sentence, but one pause no longer counted as split; that is still being
+  looked into (#299).
 - An outside engine (`deepgram`, `cloud`) costs money: it runs only when `--transcriber`
   names it, and says first how much audio it sends and roughly what that costs.
 - **On the server:** run it from the host's venv, never inside the bot's container and never

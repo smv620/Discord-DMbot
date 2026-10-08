@@ -174,6 +174,35 @@ def _problem(text: str) -> str | None:
     return None
 
 
+# Why one name typed on its own can't be saved (`check_name`).
+EMPTY, BAR, UNREADABLE, TOO_LONG, TOO_MANY_WORDS, LINK = (
+    "empty",
+    "bar",
+    "unreadable",
+    "too long",
+    "too many words",
+    "link",
+)
+
+
+def check_name(text: str, limit: int = NAME_MAX) -> str | None:
+    """Why one name typed on its own can't be saved, with the list's rules (#503): one
+    of EMPTY, BAR, UNREADABLE, TOO_LONG, TOO_MANY_WORDS or LINK; None if it's fine."""
+    if not text.strip():
+        return EMPTY
+    if "|" in text:
+        return BAR
+    if any(unicodedata.category(c) == "Cc" for c in text):
+        return UNREADABLE
+    if len(text) > limit or len(name_key(text)) > limit:
+        return TOO_LONG
+    if len(text.split()) > MAX_WORDS:
+        return TOO_MANY_WORDS
+    if _LINK.search(text):
+        return LINK
+    return None
+
+
 def kind_of(word: str) -> str | None:
     """A kind in plain words ("Places", "cities", "god") → the memory rules' kind."""
     word = " ".join(word.casefold().split())

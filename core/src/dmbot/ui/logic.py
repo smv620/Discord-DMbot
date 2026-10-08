@@ -11,6 +11,11 @@ from collections.abc import Collection, Iterable
 from datetime import UTC, datetime
 
 from dmbot.campaigns import DM_SCREEN_VISIBILITY, FALLBACK_NONE, RULESETS, Campaign
+from dmbot.campaigns.models import (
+    DEFAULT_DM_SCREEN_LEVEL,
+    DM_SCREEN_LEVELS,
+    DM_SCREEN_LEVELS_OFFERED,
+)
 from dmbot.transcription.config import Engine
 
 # Discord limits.
@@ -123,7 +128,11 @@ def fallback_words(fallback: str) -> str:
 
 
 def settings_summary(
-    target: str, fallback: str, optional_rules: bool, visibility: str
+    target: str,
+    fallback: str,
+    optional_rules: bool,
+    visibility: str,
+    level: str,
 ) -> list[str]:
     """The settings in full, in the message above the buttons (message text wraps on a
     phone; buttons don't). Each line starts with the words its buttons start with."""
@@ -134,6 +143,10 @@ def settings_summary(
         f"all {'on' if optional_rules else 'off'} "
         "(pick which ones later with `/dmbot optionalrules`)",
         f"• **DM screen:** {DM_SCREEN_VISIBILITY.get(visibility, visibility)}",
+        f"• **{level.capitalize()}**{RECOMMENDED if level == DEFAULT_DM_SCREEN_LEVEL else ''}"
+        f" — how much DMbot says, in the DM screen only: {DM_SCREEN_LEVELS.get(level, level)}."
+        " Warnings (like DMbot no longer hearing the table) always show. Can't be changed"
+        " later yet.",
     ]
 
 
@@ -161,6 +174,14 @@ _SCREEN_SHORT = {"private": "only the DM", "peek": "players peek", "open": "ever
 
 def visibility_choices() -> dict[str, str]:
     return {k: f"DM screen: {_SCREEN_SHORT[k]}" for k in DM_SCREEN_VISIBILITY}
+
+
+RECOMMENDED = " (recommended)"
+
+
+def level_choices() -> dict[str, str]:
+    """How much DMbot says in the DM screen (#504)."""
+    return {k: k.capitalize() for k in DM_SCREEN_LEVELS_OFFERED}
 
 
 def chosen_label(label: str, chosen: bool) -> str:

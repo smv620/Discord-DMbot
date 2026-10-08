@@ -633,7 +633,9 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
       )}
       {step === 1 && (
         <>
-          <p>{text.deleteWarning}</p>
+          {text.deleteWarning.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
           <a href="#campaigns">{text.deleteHandOverLink}</a>
           <div class="row">
             <ActionButton
@@ -670,7 +672,12 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
               kind="danger"
               onClick={() =>
                 void run(async () => {
-                  await api.confirmDelete(token);
+                  try {
+                    await api.confirmDelete(token);
+                  } catch (error) {
+                    reset(); // back to step 0 ("Start deleting"): a retry gets a new confirmation
+                    throw error;
+                  }
                   onDeleted();
                 })
               }

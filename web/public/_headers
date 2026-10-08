@@ -3,6 +3,9 @@
 # hash: scripts/csp-hashes.mjs adds them to script-src after the build. Astro inlines small
 # stylesheets, hence 'unsafe-inline' for styles only. The build adds the web API's address
 # to connect-src when PUBLIC_API_BASE is a full address.
+# Payments: checkout and billing are pages on the payment company's site (a redirect), so
+# they need nothing here. An embedded checkout (Paddle.js or Lemon.js) would need its
+# script in script-src and its checkout frame in frame-src: add them only if we embed.
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'
   X-Frame-Options: DENY

@@ -34,6 +34,10 @@ FRAME_BYTES = SAMPLE_RATE * FRAME_MS // 1000 * BYTES_PER_SAMPLE
 # How long the Discord client keeps sending after speech stops.
 HANGOVER_MS = 200
 SPEECH_END_MS = 1000  # ears' 800 ms, plus the hangover
+# Live, the client's packets start a little before the first loud moment: what a replay
+# gets by sending this much audio from just before each piece (#299: on DMOnlyAudio.m4a
+# it saved a first word after a pause and the whole whispered sentence).
+LEAD_IN_MS = 100
 # Quieter than this is silence. A muted mic is digital silence (about -90 dBFS); a quiet
 # room is around -60 to -50. A recording that wasn't muted between lines has its room
 # noise there, so silence is also anything within NOISE_MARGIN_DB of the room's noise.
