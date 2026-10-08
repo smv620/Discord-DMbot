@@ -77,7 +77,7 @@ class NoAlarmOnALittle(unittest.TestCase):
         text = summary([Spoke("Mia", 120, 85, 1.5)], sent=0)
         self.assertNotIn("cutting out", text)
 
-    def test_test_as_numbers_say_nothing(self) -> None:
+    def test_dev1s_tv_numbers_say_nothing(self) -> None:
         # dev1's Test A, a TV in the room: the DM spoke twice; the TV came in patchy.
         totals = SessionTotals()
         for received, expected in ((52, 52), (53, 53), (155, 169), (4, 23)):
@@ -88,7 +88,7 @@ class NoAlarmOnALittle(unittest.TestCase):
         self.assertNotIn("cutting out", text)
 
     def test_nearly_all_lost_still_counts(self) -> None:
-        # 2 of 500 frames: too little to write down, but 10 s lost is the worst case.
+        # 2 of 500 frames: a long piece, nearly all lost; 10 s lost is the worst case.
         totals = SessionTotals()
         totals.add_health(7, 300, 300)
         totals.add_health(7, 2, 500)

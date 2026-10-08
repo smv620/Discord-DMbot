@@ -291,7 +291,7 @@ class NoiseIsNoAlarm(unittest.TestCase):
             log.add_health(1, received, expected, at)
         return log.render(lambda uid: f"P{uid}", now)
 
-    def test_test_as_numbers_say_nothing(self) -> None:
+    def test_dev1s_tv_numbers_say_nothing(self) -> None:
         # dev1's Test A, a TV in the room: two pieces of the DM, then two patchy TV bursts.
         # The bursts count (both are long enough); the 2 s floor keeps them quiet: 33 frames
         # lost is 0.66 s.
@@ -303,10 +303,21 @@ class NoiseIsNoAlarm(unittest.TestCase):
         self.assertIn("(audio gaps)", log.log_line() or "")  # the log keeps the raw numbers
         self.assertIsNone(log.render(str, 62))
 
-    def test_three_seconds_lost_in_a_minute_at_90_percent_warns(self) -> None:
-        pieces = [(at, 270, 300) for at in (0, 15, 30, 45, 59)]  # 1500 expected, 150 lost: 3 s
+    def test_real_loss_in_a_minute_warns(self) -> None:
+        pieces = [(at, 255, 300) for at in (0, 15, 30, 45, 59)]  # 85%, 225 lost: 4.5 s
         text = self.warning(pieces, 60)
-        self.assertIn("**P1's voice is cutting out for DMbot** (90% got through)", text or "")
+        self.assertIn("**P1's voice is cutting out for DMbot** (85% got through)", text or "")
+
+    def test_a_steady_92_percent_stays_quiet(self) -> None:
+        # A phone at 92% for 30 s loses 2.4 s, but 90-94% rarely costs real words.
+        pieces = [(at, 276, 300) for at in (0, 10, 20, 29, 30)]
+        self.assertIsNone(self.warning(pieces, 30))
+
+    def test_ten_tv_bursts_in_a_minute_warn_at_stage_1(self) -> None:
+        # Documents stage 1: ten 4/23 bursts lose 3.8 s, so this warns. #699 (stage 2)
+        # checks the lines first and stays quiet when they read fine.
+        pieces = [(at, 4, 23) for at in range(0, 50, 5)]
+        self.assertIsNotNone(self.warning(pieces, 50))
 
     def test_the_same_loss_spread_over_more_than_a_minute_doesnt(self) -> None:
         pieces = [(0, 270, 345), (70, 270, 345)]  # 1.5 s lost each, 70 s apart
@@ -329,19 +340,18 @@ class NoiseIsNoAlarm(unittest.TestCase):
     def test_a_little_loss_at_a_low_percent_doesnt(self) -> None:
         self.assertIsNone(self.warning([(0, 30, 100)], 1))  # 70% but only 1.4 s lost
 
-    def test_audio_lost_entirely_is_left_to_ears_own_warning(self) -> None:
-        # #631: nothing got through, so nothing here counts; ears warns at once instead
-        # (the "warning" status, tests/test_sessions.py).
+    def test_a_short_total_loss_is_left_to_ears_own_warning(self) -> None:
+        # #631: 0/37 counts here, but 0.74 s lost is under the 2 s floor; ears' "warning"
+        # status (tests/test_sessions.py) warns at once instead.
         self.assertIsNone(self.warning([(0, 0, 37)], 1))
 
     def test_nearly_all_lost_warns(self) -> None:
         self.assertIsNotNone(self.warning([(0, 2, 500)], 1))  # 10 s lost, 2 frames heard
 
     def test_the_boundary_of_long_enough_to_write_down(self) -> None:
-        log = CaptureLog()
-        log.add_health(1, 0, 12, 0)  # 0.24 s: too short
-        log.add_health(1, 0, 13, 0)  # 0.26 s: counts, even with nothing heard
-        self.assertEqual(len(log._window[1]), 1)
+        # Eight pieces with nothing heard: 0.24 s each don't count; 0.26 s each do (2.08 s).
+        self.assertIsNone(self.warning([(i, 0, 12) for i in range(8)], 8))
+        self.assertIsNotNone(self.warning([(i, 0, 13) for i in range(8)], 8))
 
     def test_checks_every_15_s_warn_once_as_a_minute_fills(self) -> None:
         log = CaptureLog()

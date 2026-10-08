@@ -22,21 +22,23 @@ from dmbot.transcription.base import MIN_UTTERANCE_S
 HEALTH_WARN_PERCENT = 95
 # The DM screen's ⚠️ means "DMbot is missing what people say" (#671), so it counts only
 # speech worth writing down, over enough of it to matter: per person, over the last
-# DM_WINDOW_S, under HEALTH_WARN_PERCENT got through AND at least DM_WARN_LOST_S lost. A
+# DM_WINDOW_S, under DM_WARN_PERCENT got through AND at least DM_WARN_LOST_S lost. A
 # piece shorter than gets transcribed (a blip, a cough) counts in neither column; a short
 # answer ("yes", 0.3-0.6 s) counts, so one patchy "yes" never alarms but answers that keep
 # breaking up add up. A TV's patchy bursts stay quiet through the 2 s floor. The window
 # is timed from when health arrives: if transcription falls a minute behind, older gaps
-# leave it before their speech is checked. Then once per person, and again only if it gets clearly
-# worse or after a while: a phone on bad Wi-Fi mustn't bury the notes that need the DM.
+# leave it before their speech is checked. Then once per person, and again only if it gets
+# clearly worse or after a while: a phone on bad Wi-Fi mustn't bury the notes that need
+# the DM.
 # (A speaker whose audio is lost entirely, #631, is warned at once by ears' own path.)
 DM_WINDOW_S = 60.0
 DM_WARN_LOST_S = 2.0
 FRAMES_PER_S = 50  # ears' health counts 20 ms frames (ears/src/health.ts FRAME_MS)
 DM_WARN_LOST_FRAMES = int(DM_WARN_LOST_S * FRAMES_PER_S)
 MIN_FRAMES = math.ceil(MIN_UTTERANCE_S * FRAMES_PER_S)  # long enough to be written down
-# The session summary says someone's voice "kept cutting out" below this, over the pieces
-# that count, and only if at least DM_WARN_LOST_S was lost (90-94% rarely costs real words).
+# The DM screen's line (live, and in the session summary) needs under this, as well as
+# DM_WARN_LOST_S lost: 90-94% rarely costs real words (#671; #699 raises the live one,
+# once a check of the lines filters it).
 DM_WARN_PERCENT = 90
 WARN_AGAIN_DROP = 10
 WARN_AGAIN_AFTER_S = 600.0
@@ -76,7 +78,7 @@ class _SpeakerStats:
         return self.utterances > 0
 
 
-def counts_for_dm(received: int, expected: int) -> bool:
+def counts_for_dm(expected: int) -> bool:
     """Whether a piece's health counts towards the DM screen's warning (#671): the piece
     is long enough to be written down, however much of it was lost."""
     return expected >= MIN_FRAMES
@@ -108,7 +110,7 @@ class CaptureLog:
         stats.frames_expected += max(0, expected)
         stats.checks_waited = 0  # the wait for speech counts from the latest report
         at = time.monotonic() if now is None else now
-        if counts_for_dm(received, expected):
+        if counts_for_dm(expected):
             self._window.setdefault(user_id, deque()).append((at, received, expected))
         self._prune(user_id, at)
 
@@ -161,6 +163,8 @@ class CaptureLog:
         still being transcribed; every count is still reported exactly once. The DM is
         told by the rule at the top of this file, over the last DM_WINDOW_S."""
         now = time.monotonic() if now is None else now
+        for user_id in list(self._window):  # people gone quiet keep no old gaps
+            self._prune(user_id, now)
         gaps: list[tuple[str, int]] = []
         # sorted() copies, so entries can be deleted inside the loop.
         for user_id, s in sorted(self._stats.items(), key=lambda kv: -kv[1].seconds):
@@ -179,7 +183,7 @@ class CaptureLog:
             if health is None:
                 continue
             percent, lost = health
-            if percent >= HEALTH_WARN_PERCENT or lost < DM_WARN_LOST_FRAMES:
+            if percent >= DM_WARN_PERCENT or lost < DM_WARN_LOST_FRAMES:
                 continue
             last = self._warned.get(user_id)
             if (
@@ -237,6 +241,6 @@ class SessionTotals:
     def add_health(self, user_id: int, received: int, expected: int) -> None:
         total = self.speakers.setdefault(user_id, SpeakerTotal())
         received = max(0, min(received, expected))
-        if counts_for_dm(received, expected):
+        if counts_for_dm(expected):
             total.counted_received += received
             total.counted_expected += max(0, expected)
