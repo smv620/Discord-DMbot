@@ -202,6 +202,10 @@ class Command(DatabaseTest):
     async def test_every_switch_checks_who_is_asking(self) -> None:
         menu = (await self.open_list()).response.sent[0][1]["view"]
         await self.campaigns.add_dm(GUILD, self.campaign.id, PLAYER)
+        async with self.db.guild(GUILD) as conn:  # handed over first: the owner can't go
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = %s WHERE id = %s", (PLAYER, self.campaign.id)
+            )
         await self.campaigns.remove_dm(GUILD, self.campaign.id, DM)  # no longer this DM's
         it = await self.switch(menu, "xge-sleep")
         self.assertIn("Only this campaign's DM", self.told(it))

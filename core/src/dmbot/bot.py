@@ -187,6 +187,9 @@ def resumed_message(campaign_name: str, voice_channel_id: int) -> str:
     )
 
 
+# ears may warn again on every utterance while someone's audio keeps failing (#631):
+# the DM is told at most this often per person.
+VOICE_LOST_TELL_EVERY_S = 300
 # A session older than this isn't resumed (nobody plays that long without a break).
 MAX_RESUME_AGE_S = 16 * 3600
 # Resumes closer together than this count as one streak...
@@ -245,6 +248,7 @@ class Table:
     listening: bool = False
     notice_posted: bool = False
     peek_offered: bool = False  # players have been shown the Peek button this session
+    voice_lost_told: dict[int, float] = field(default_factory=dict)  # user → when (#631)
     campaign_id: str | None = None
     campaign_name: str = ""
     dm_user_ids: frozenset[int] = frozenset()
@@ -1512,6 +1516,15 @@ class DMBot(commands.AutoShardedBot):
                 # After a restart only people whose yes no longer counts (the consent
                 # wording changed) need asking: everyone else was asked before it.
                 self._ask_everyone_in_voice(table, only_renewals=True)
+        elif status.state == "warning" and status.user_id is not None:
+            # One speaker's audio failed; the session goes on (#631). IDs only in the log.
+            log.warning("Voice warning for user %s: %s", status.user_id, status.detail or "")
+            now = time.monotonic()
+            last = table.voice_lost_told.get(status.user_id)
+            if table.listening and (last is None or now - last >= VOICE_LOST_TELL_EVERY_S):
+                table.voice_lost_told[status.user_id] = now
+                name = self.name_of(table.guild_id, status.user_id)
+                await self.post(table.screen_channel_id, screen_messages.voice_lost_message(name))
         elif status.state in ("left", "error"):
             table.listening = False
             # The detail comes from ears' own fixed messages, never from users.

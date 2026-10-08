@@ -153,10 +153,14 @@ class Settings(StoreTest):
         c = await self.make("A")
         c = await self.store.add_dm(GUILD_A, c.id, DM2)
         self.assertEqual(c.dm_user_ids, frozenset({DM, DM2}))
-        c = await self.store.remove_dm(GUILD_A, c.id, DM)
-        self.assertEqual(c.dm_user_ids, frozenset({DM2}))
+        c = await self.store.remove_dm(GUILD_A, c.id, DM2)
+        self.assertEqual(c.dm_user_ids, frozenset({DM}))
+        with self.assertRaisesRegex(CampaignError, "Hand the campaign over first"):
+            await self.store.remove_dm(GUILD_A, c.id, DM)  # the owner (#437)
+        async with self.db.guild(GUILD_A) as conn:  # a campaign from before owners
+            await conn.execute("UPDATE campaigns SET owner_user_id = NULL WHERE id = %s", (c.id,))
         with self.assertRaisesRegex(CampaignError, "at least one DM"):
-            await self.store.remove_dm(GUILD_A, c.id, DM2)
+            await self.store.remove_dm(GUILD_A, c.id, DM)
 
     async def test_channels_and_played(self) -> None:
         c = await self.make("A")
@@ -343,12 +347,20 @@ class CampaignOwner(StoreTest):
         assert unchanged is not None
         self.assertEqual(unchanged.owner_user_id, DM)
 
-    async def test_removing_the_owner_as_a_dm_keeps_them_owner_for_now(self) -> None:
-        # What should happen is open in #437; this pins today's behaviour.
+    async def test_replacing_keeps_the_owner_a_dm_whatever_the_copy_says(self) -> None:
         c = await self.make("Frostmaiden")
         await self.store.add_dm(GUILD_A, c.id, DM2)
-        c = await self.store.remove_dm(GUILD_A, c.id, DM)
-        self.assertEqual((c.dm_user_ids, c.owner_user_id), (frozenset({DM2}), DM))
+        backup = await self.store.export(GUILD_A, c.id)
+        backup["sections"]["dms"] = [str(DM2)]  # a copy from when only DM2 ran it
+        replaced = await self.store.import_backup(GUILD_A, backup, DM2, replace_campaign_id=c.id)
+        self.assertEqual((replaced.owner_user_id, replaced.dm_user_ids), (DM, frozenset({DM, DM2})))
+
+    async def test_the_owner_cannot_be_removed_as_a_dm(self) -> None:
+        # Decided on #437: hand the campaign over first (test_campaign_handover).
+        c = await self.make("Frostmaiden")
+        await self.store.add_dm(GUILD_A, c.id, DM2)
+        with self.assertRaisesRegex(CampaignError, "Hand the campaign over first"):
+            await self.store.remove_dm(GUILD_A, c.id, DM)
 
     async def test_a_campaign_from_before_owners_has_none(self) -> None:
         c = await self.make("Frostmaiden")

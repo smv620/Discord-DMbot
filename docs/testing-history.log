@@ -825,3 +825,17 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     migrations, no .env changes. ears not rebuilt (unchanged; #631's fix is with dev3).
   - Database backed up first (outside the repo; 26 tables); no session was live. Core
     rebuilt: "Connected to 1 server(s)", "ears connected", no warnings or errors.
+
+==============================================================================
+2026-10-08  Server: deploy 70ac757 (dev1, no test run)
+==============================================================================
+  - 06:44 UTC  development @ 70ac757: #641 (ears never loses a speaker's audio silently
+    on a receive error, #631: listens again, counts the loss, warns core and the DM
+    screen, logs DAVE debug lines with DMBOT_DEBUG_AUDIO=1; protocol change in both
+    services), #644 (campaign hand-over offers in the store, #437 part 1b).
+  - Migration 0021_campaign_handover_offers: a new table. Read before deploying.
+  - Database backed up first ("pre0021", outside the repo; 26 tables); no session was
+    live; .env already matched. ears and core rebuilt together: "Database updated:
+    0021_campaign_handover_offers", "Connected to 1 server(s)", "ears connected". Two
+    ears warnings "core link error: connect ECONNREFUSED" in the first second while core
+    started, then "connected to core"; nothing else.
