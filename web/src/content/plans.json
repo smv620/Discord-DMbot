@@ -1,0 +1,67 @@
+{
+  "_comment": "The plan facts (#432, #437). Owner decisions: don't change a number without the owner's say-so on the issue. Plain JSON so core (the web API's /me and the bot's plan rules) can read the same file. Wording is built from these numbers in pricing.ts.",
+  "currency": "USD",
+  "order": ["try-it", "table", "two-tables", "guild", "pro"],
+  "plans": {
+    "try-it": {
+      "name": "Try It",
+      "priceCents": 0,
+      "hoursPerMonth": 8,
+      "aboutHoursPerWeek": null,
+      "campaigns": 1,
+      "trialDays": 30,
+      "backups": false,
+      "keepAfterLastSession": { "count": 60, "unit": "day" },
+      "firstMonthAfterTrialCents": null
+    },
+    "table": {
+      "name": "Table",
+      "priceCents": 899,
+      "hoursPerMonth": 18,
+      "aboutHoursPerWeek": 4,
+      "campaigns": 1,
+      "trialDays": null,
+      "backups": true,
+      "keepAfterLastSession": { "count": 6, "unit": "month" },
+      "firstMonthAfterTrialCents": 199
+    },
+    "two-tables": {
+      "name": "Two Tables",
+      "priceCents": 1799,
+      "hoursPerMonth": 43,
+      "aboutHoursPerWeek": 10,
+      "campaigns": 2,
+      "trialDays": null,
+      "backups": true,
+      "keepAfterLastSession": { "count": 1, "unit": "year" },
+      "firstMonthAfterTrialCents": null
+    },
+    "guild": {
+      "name": "Guild",
+      "priceCents": 3499,
+      "hoursPerMonth": 87,
+      "aboutHoursPerWeek": 20,
+      "campaigns": 5,
+      "trialDays": null,
+      "backups": true,
+      "keepAfterLastSession": { "count": 1, "unit": "year" },
+      "firstMonthAfterTrialCents": null
+    },
+    "pro": {
+      "name": "Pro",
+      "priceCents": null,
+      "hoursPerMonth": 217,
+      "aboutHoursPerWeek": 50,
+      "campaigns": 20,
+      "trialDays": null,
+      "backups": true,
+      "keepAfterLastSession": { "count": 1, "unit": "year" },
+      "firstMonthAfterTrialCents": null
+    }
+  },
+  "extraHours": { "hours": 10, "priceCents": 499 },
+  "paymentGraceDays": 7,
+  "keepAfterPlanStopsPaying": { "count": 120, "unit": "day" },
+  "deletionWarningDaysBefore": [14, 3],
+  "recommended": "table"
+}

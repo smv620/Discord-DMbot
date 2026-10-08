@@ -299,29 +299,17 @@ class Changes(Scope):
                 sql.SQL("o.{0} IS DISTINCT FROM n.{0}").format(sql.Identifier(c)) for c in columns
             )
         )
-        return await self._update_from(table, sets, joined, where, (Jsonb(new), *self.ids))
-
-    async def _update_from(
-        self,
-        table: Table,
-        sets: sql.Composable,
-        rows: sql.Composable,
-        where: sql.Composable,
-        params: Sequence[Any],
-    ) -> list[dict[str, Any]]:
-        """One UPDATE of the rows `rows` (aliased o) picks, returning each row's values
-        before (o, read at the statement's start) and after (t), then one log write.
-        The table is joined to itself on its key, so the plan always uses the key's
-        index, even before Postgres has statistics for the table (#164 review). The
-        campaign row is locked for the whole write, so nothing else changes these rows
-        meanwhile."""
+        # One UPDATE, the table joined to itself on its key so the plan always uses the
+        # key's index, even before Postgres has statistics for the table (#164 review).
+        # It returns each row before (o, read at the statement's start) and after (t);
+        # the campaign row is locked for the whole write, so nothing else changes them.
         query = sql.SQL(
             "UPDATE {} t SET {} FROM {} WHERE {} AND t.guild_id = o.guild_id"
             " AND t.campaign_id = o.campaign_id AND t.{} = o.{} RETURNING {}"
         ).format(
             sql.Identifier(table.name),
             sets,
-            rows,
+            joined,
             where,
             sql.Identifier(table.key),
             sql.Identifier(table.key),
@@ -336,7 +324,7 @@ class Changes(Scope):
                 ]
             ),
         )
-        cur = await self.conn.execute(query, params)
+        cur = await self.conn.execute(query, (Jsonb(new), *self.ids))
         found = sorted(await cur.fetchall(), key=lambda r: str(r["b_" + table.key]))
         logged = [
             (

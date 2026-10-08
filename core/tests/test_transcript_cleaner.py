@@ -188,8 +188,14 @@ class TrapsTest(unittest.TestCase):
         names = lookup(corrections=(correction("the hooded stranger", BELLEROS, FIX),))
         self.assertEqual(text("the hooded stranger waits", names), "the hooded stranger waits")
 
-    def test_a_suggested_name_never_makes_a_fix(self) -> None:
-        self.assertEqual(text("then Hrothgarr roars"), "then Hrothgarr roars")
+    def test_a_suggested_name_never_makes_a_silent_fix(self) -> None:
+        # #296: spelled very alike, it's fixed, but marked unsure (shown with Undo)
+        result = clean(lookup(), "then Hrothgarr roars", scene=EVERYONE)
+        self.assertEqual(result.text, "then Hrothgar roars")
+        (fix,) = result.fixes
+        self.assertFalse(fix.sure)
+        # less alike than that: left as heard
+        self.assertEqual(text("then Hrothgor roars"), "then Hrothgor roars")
 
     def test_two_names_sounding_alike_are_left_alone(self) -> None:
         names = lookup(

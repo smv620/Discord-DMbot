@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import PurePath
 from typing import Literal
+from urllib.parse import urlsplit
 
 Engine = Literal["whisper-local", "cloud", "deepgram", "none"]
 ENGINES: tuple[Engine, ...] = ("whisper-local", "cloud", "deepgram", "none")
@@ -42,6 +44,21 @@ class TranscriptionSettings:
     deepgram_api_key: str = field(default="", repr=False)
     deepgram_model: str = "nova-3"
     deepgram_url: str = DEFAULT_DEEPGRAM_URL
+    # Clips written at once, for different servers (#173). Local Whisper fills the CPU
+    # with one; an outside company answers several requests side by side.
+    workers: int = 1
+
+    @property
+    def source(self) -> str:
+        """Which speech-to-text writes a session down, for its stored transcript (#173):
+        "engine model host". Never a key. Empty with TRANSCRIBER=none."""
+        if self.engine == "deepgram":
+            return f"deepgram {_word(self.deepgram_model)} {_host(self.deepgram_url)}"
+        if self.engine == "cloud":
+            return f"cloud {_word(self.cloud_model)} {_host(self.cloud_url)}"
+        if self.engine == "whisper-local":
+            return f"whisper-local {_word(self.whisper_model)} local"
+        return ""
 
     @property
     def sends_audio_out(self) -> bool:
@@ -59,6 +76,17 @@ class TranscriptionSettings:
         return "Deepgram" if self.engine == "deepgram" else None
 
 
+def _word(model: str) -> str:
+    """A model's name as one plain word: a local model folder keeps only its last part
+    (never the server's folders), and spaces become _."""
+    return "_".join(PurePath(model).name.split()) or "custom"
+
+
+def _host(url: str) -> str:
+    """The endpoint's host only: never a user, password, path or query."""
+    return urlsplit(url).hostname or "unknown"
+
+
 def _language(value: str) -> str:
     """'auto' means let the engine detect the language (empty string)."""
     return "" if value.lower() == "auto" else value
@@ -70,6 +98,25 @@ def _positive_int(name: str, value: str) -> int:
             f'{name} must be a whole number of 1 or more, got "{value}".'
         )
     return int(value)
+
+
+MAX_WORKERS = 16
+
+
+def _workers(value: str, engine: str) -> int:
+    workers = _positive_int("TRANSCRIBE_WORKERS", value)
+    if engine == "whisper-local" and workers > 1:
+        # One model behind one lock: extra workers would only wait, and their clips'
+        # time would run out while waiting (skipped clips, lost text).
+        raise TranscriptionConfigError(
+            "TRANSCRIBE_WORKERS must be 1 with TRANSCRIBER=whisper-local (it fills the CPU). "
+            "Leave it blank."
+        )
+    if workers > MAX_WORKERS:
+        raise TranscriptionConfigError(
+            f"TRANSCRIBE_WORKERS can be at most {MAX_WORKERS}, got {workers}."
+        )
+    return workers
 
 
 def load_transcription_settings(env: Mapping[str, str]) -> TranscriptionSettings:
@@ -94,6 +141,9 @@ def load_transcription_settings(env: Mapping[str, str]) -> TranscriptionSettings
         deepgram_api_key=get("DEEPGRAM_API_KEY", ""),
         deepgram_model=get("DEEPGRAM_MODEL", "nova-3"),
         deepgram_url=get("DEEPGRAM_LISTEN_URL", DEFAULT_DEEPGRAM_URL),
+        workers=_workers(
+            get("TRANSCRIBE_WORKERS", "3" if engine in OUTSIDE_ENGINES else "1"), engine
+        ),
     )
     if settings.engine == "cloud" and not settings.cloud_api_key:
         raise TranscriptionConfigError(
