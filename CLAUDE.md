@@ -143,7 +143,11 @@ terminal output or Discord screenshots copied to it.
   finished items to the history and trimming them here.
 - **`docs/testing-history.log`:** the complete record of every test run, append-only and
   oldest first. Fix mistakes with a new dated entry, never by rewriting.
-- **Maintainer:** dev1 updates both after every live test and whenever
+- **`docs/next-test-step.md`** (owner request, 2026-10-08, #569): the one next small test
+  for the people at the table, in plain words a non-developer can follow on a phone: how
+  many people, how long, why, the steps, what "it worked" looks like, what to tell dev1.
+  One test, one thing. dev1 replaces it after every result.
+- **Maintainer:** dev1 updates all three after every live test and whenever
   testing plans change, from the server logs and what the owner pastes from Discord. The
   PyCharm session adds its offline test results the same way. Other sessions read them
   before planning test-related work.
