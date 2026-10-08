@@ -398,5 +398,14 @@ def joined_recorded_message(name: str) -> str:
     return f"🎙 **{_who(name)}** joined and is recorded (they said yes before)."
 
 
+def voice_lost_message(name: str) -> str:
+    """ears couldn't hear someone (#631) and listens again when they next speak."""
+    return (
+        f"⚠️ DMbot missed some of **{_who(name)}**'s words just now: their voice cut out. "
+        "It hears them again when they next speak. If this happens again, ask them to leave "
+        "the voice channel and join again."
+    )
+
+
 def joined_not_recorded_message(name: str) -> str:
     return f"✉️ **{_who(name)}** joined. Not recorded unless they say yes."

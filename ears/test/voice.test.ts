@@ -6,7 +6,13 @@ import { VoiceReceiver, type DiscordGatewayAdapterCreator, type VoiceConnection 
 import { Allowlist } from "../src/consent.js";
 import { Logger } from "../src/log.js";
 import type { EarsMessage } from "../src/protocol.js";
-import { TableSession, UNKNOWN_RETRY_MS, type BotLookup } from "../src/voice.js";
+import {
+  RESUBSCRIBE_DELAY_MS,
+  TableSession,
+  UNKNOWN_RETRY_MS,
+  WATCHDOG_MS,
+  type BotLookup,
+} from "../src/voice.js";
 import { applyConsentList } from "../src/voiceMembers.js";
 
 const GUILD = "111";
@@ -16,6 +22,7 @@ const BOB = "1002"; // not opted in
 const CAROL = "1003"; // on the list, but noted as a bot
 const DAVE = "1004"; // never seen, not opted in
 const SPEECH = Buffer.from([0x78, 0x01, 0x02]); // any non-silence Opus packet
+const SILENCE = Buffer.from([0xf8, 0xff, 0xfe]); // Discord's Opus silence frame
 
 /**
  * Behaves like @discordjs/voice's VoiceReceiver.onUdpMessage: each packet first tells
@@ -23,7 +30,8 @@ const SPEECH = Buffer.from([0x78, 0x01, 0x02]); // any non-silence Opus packet
  * subscription, or is dropped if there is none yet.
  */
 class FakeReceiver {
-  readonly speaking = new EventEmitter();
+  /** Like the library's SpeakingMap: "start" events, and who is sending right now. */
+  readonly speaking = Object.assign(new EventEmitter(), { users: new Map<string, number>() });
   readonly subscriptions = new Map<string, Readable>();
   readonly subscribed: string[] = [];
   private readonly talking = new Set<string>();
@@ -37,16 +45,33 @@ class FakeReceiver {
   }
 
   packet(userId: string, packet = SPEECH): void {
+    this.sending(userId);
+    this.subscriptions.get(userId)?.push(packet);
+  }
+
+  /** A packet arrives but the library can't decrypt it: no data for the stream. */
+  sending(userId: string): void {
     if (!this.talking.has(userId)) {
       this.talking.add(userId);
+      this.speaking.users.set(userId, Date.now());
       this.speaking.emit("start", userId);
     }
-    this.subscriptions.get(userId)?.push(packet);
+  }
+
+  /** No more packets (the speaking map's 100 ms ran out), with no stream end. */
+  quiet(userId: string): void {
+    this.talking.delete(userId);
+    this.speaking.users.delete(userId);
+  }
+
+  /** The library errors the stream, as @discordjs/voice does when a packet won't decrypt. */
+  fail(userId: string, message = "Failed to decrypt: DecryptionFailed(UnencryptedWhenPassthroughDisabled)"): void {
+    this.subscriptions.get(userId)?.destroy(new Error(message));
   }
 
   /** The speaker goes quiet; their stream ends as it would after the silence timeout. */
   stop(userId: string): void {
-    this.talking.delete(userId);
+    this.quiet(userId);
     this.subscriptions.get(userId)?.push(null);
   }
 }
@@ -70,15 +95,32 @@ function fakeDecoder(): Transform {
   });
 }
 
+interface Extra {
+  debugAudio?: boolean;
+  /** Log lines written, if given. */
+  logLines?: string[];
+  /** The connection's "debug" listeners, if given. */
+  debugListeners?: ((message: string) => void)[];
+}
+
 function harness(
   lookUpBot: BotLookup = () => Promise.resolve(false),
   cached: ReadonlyMap<string, boolean> = new Map(),
+  extra: Extra = {},
 ): Harness {
   const receiver = new FakeReceiver();
   const sent: EarsMessage[] = [];
   const audio: Buffer[] = [];
   const lookups: string[] = [];
-  const connection = { receiver, on: () => connection, state: { status: "ready" }, destroy: () => undefined };
+  const connection = {
+    receiver,
+    on: (event: string, listener: (message: string) => void) => {
+      if (event === "debug") extra.debugListeners?.push(listener);
+      return connection;
+    },
+    state: { status: "ready" },
+    destroy: () => undefined,
+  };
   const allowlist = new Allowlist();
   allowlist.set(GUILD, [ALICE, CAROL]);
   const session = new TableSession({
@@ -92,7 +134,13 @@ function harness(
       lookups.push(userId);
       return lookUpBot(userId);
     },
-    log: new Logger({ format: "text", level: "ERROR", shards: { count: 1, ids: [0] }, write: () => undefined }),
+    debugAudio: extra.debugAudio,
+    log: new Logger({
+      format: "text",
+      level: extra.logLines ? "INFO" : "ERROR",
+      shards: { count: 1, ids: [0] },
+      write: (line: string) => extra.logLines?.push(line),
+    }),
     // The fake has just the parts TableSession uses.
     connect: () => connection as unknown as VoiceConnection,
     createDecoder: fakeDecoder,
@@ -124,7 +172,7 @@ function health(sent: EarsMessage[]): { framesReceived: number; framesExpected: 
   );
 }
 
-beforeEach(() => mock.timers.enable({ apis: ["Date"], now: 1_000_000 }));
+beforeEach(() => mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000_000 }));
 afterEach(() => mock.timers.reset());
 
 test("a known person's speech is kept from the first packet", async () => {
@@ -311,4 +359,222 @@ test("the real receiver announces a new speaker before routing their packet", ()
   receiver.onUdpMessage(packet);
   assert.equal(seen[0], "start");
   assert.equal(seen.at(-1), "routed, subscribed");
+});
+
+// ---- receive errors (#631) ----------------------------------------------------
+
+async function fail(h: Harness, userId: string, message?: string): Promise<void> {
+  h.receiver.fail(userId, message);
+  await nextFrame(); // the stream closes, and ears listens again
+}
+
+function warnings(sent: EarsMessage[]): EarsMessage[] {
+  return sent.filter((m) => m.type === "status" && m.state === "warning");
+}
+
+function ends(sent: EarsMessage[]): number {
+  return sent.filter((m) => m.type === "speaking" && m.event === "end").length;
+}
+
+test("after a decrypt error ears listens again at once, and counts what was lost", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 1);
+  mock.timers.tick(720); // the library drops 37 packets without a word, then errors
+  await fail(h, ALICE);
+  await speak(h, ALICE, 5); // still talking: no pause, no new "start"
+  await stop(h, ALICE);
+  // 1 heard, 37 lost (the 740 ms since it), 5 heard again.
+  assert.deepEqual(health(h.sent), [{ framesReceived: 6, framesExpected: 43 }]);
+  assert.equal(h.audio.length, 6); // the speech after the error reached core
+  assert.deepEqual(h.receiver.subscribed, [ALICE, ALICE]);
+  assert.deepEqual(warnings(h.sent), []);
+});
+
+/** A later try: ears waits RESUBSCRIBE_DELAY_MS before listening again. */
+async function failAndWait(h: Harness, userId: string): Promise<void> {
+  await fail(h, userId);
+  mock.timers.tick(RESUBSCRIBE_DELAY_MS);
+  await nextFrame();
+}
+
+test("five errors in a minute: ears stops listening to them and tells core, once", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 1);
+  await fail(h, ALICE); // the first try is at once
+  for (let i = 0; i < 4; i++) await failAndWait(h, ALICE); // the others a second apart
+  assert.equal(h.receiver.subscribed.length, 6); // the first, and 5 tries
+  await fail(h, ALICE); // the sixth error: give up
+  assert.equal(h.receiver.subscribed.length, 6);
+  const [report] = health(h.sent);
+  assert.ok(report);
+  assert.equal(report.framesReceived, 1);
+  assert.ok(report.framesExpected > 4 * 50, `the waits count as lost: ${report.framesExpected}`);
+  assert.deepEqual(warnings(h.sent), [
+    { type: "status", state: "warning", guildId: GUILD, userId: ALICE, detail: "Their audio kept failing." },
+  ]);
+  // They're captured again when they next start speaking; failing again in the same
+  // minute ends that at once, but core isn't told twice.
+  await stop(h, ALICE);
+  await speak(h, ALICE, 2);
+  assert.equal(h.receiver.subscribed.length, 7);
+  await fail(h, ALICE);
+  assert.equal(warnings(h.sent).length, 1);
+  assert.equal(h.receiver.subscribed.length, 7);
+});
+
+test("the tries come back after a minute", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 1);
+  await fail(h, ALICE);
+  for (let i = 0; i < 4; i++) await failAndWait(h, ALICE);
+  mock.timers.tick(60_000);
+  await fail(h, ALICE);
+  assert.deepEqual(warnings(h.sent), []);
+  assert.equal(h.receiver.subscribed.length, 7);
+});
+
+test("an error right after a pause doesn't count the pause as lost", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 3);
+  for (let i = 0; i < 5; i++) {
+    h.receiver.packet(ALICE, SILENCE); // the client's silence run before a pause
+    await nextFrame();
+  }
+  mock.timers.tick(600); // the pause (the stream is still open)
+  await fail(h, ALICE); // the first packet after it doesn't decrypt
+  await stop(h, ALICE);
+  // 8 heard, and one lost: not the 600 ms pause.
+  assert.deepEqual(health(h.sent), [{ framesReceived: 8, framesExpected: 9 }]);
+});
+
+test("a normal pause isn't counted as lost by the watchdog", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 5);
+  for (let i = 0; i < 5; i++) {
+    h.receiver.packet(ALICE, SILENCE);
+    await nextFrame();
+  }
+  h.receiver.quiet(ALICE); // they stop sending: the speaking map lets them go after 100 ms
+  mock.timers.tick(700);
+  await speak(h, ALICE, 5); // back before the stream ends
+  await stop(h, ALICE);
+  assert.deepEqual(health(h.sent), [{ framesReceived: 15, framesExpected: 15 }]);
+});
+
+test("packets arriving but none heard for 3 s: core is told too", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  h.receiver.sending(ALICE);
+  for (let i = 0; i < 3; i++) mock.timers.tick(WATCHDOG_MS);
+  assert.equal(warnings(h.sent).length, 1);
+  for (let i = 0; i < 5; i++) mock.timers.tick(WATCHDOG_MS);
+  assert.equal(warnings(h.sent).length, 1); // not again within the minute
+});
+
+test("another kind of receive error counts the time lost too", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 3);
+  await fail(h, ALICE, "Failed to parse packet");
+  await stop(h, ALICE);
+  assert.deepEqual(health(h.sent), [{ framesReceived: 3, framesExpected: 4 }]);
+});
+
+test("loss is reported even when nothing got through (the DM screen said 100%)", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  h.receiver.sending(ALICE); // speaking, but no packet decrypts
+  mock.timers.tick(740);
+  await fail(h, ALICE);
+  await stop(h, ALICE);
+  assert.deepEqual(health(h.sent), [{ framesReceived: 0, framesExpected: 37 }]);
+});
+
+test("a stream that hears nothing after the error ends once they stop sending", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 2);
+  await fail(h, ALICE);
+  h.receiver.quiet(ALICE); // they stop; the new stream never gets a packet, so never ends
+  mock.timers.tick(1_000);
+  await nextFrame();
+  assert.equal(ends(h.sent), 1); // core hears the speech ended
+  assert.deepEqual(health(h.sent), [{ framesReceived: 2, framesExpected: 3 }]);
+});
+
+test("packets arriving but none heard count as lost, with no error at all", async () => {
+  // Another speaker's good packets reset the library's failure count, so it never errors.
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  h.receiver.sending(ALICE);
+  mock.timers.tick(1_000);
+  mock.timers.tick(1_000);
+  h.receiver.quiet(ALICE);
+  mock.timers.tick(1_000);
+  await nextFrame();
+  assert.deepEqual(health(h.sent), [{ framesReceived: 0, framesExpected: 100 }]);
+  assert.equal(ends(h.sent), 1);
+});
+
+test("normal speech is never counted as lost by the watchdog", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 10);
+  await stop(h, ALICE);
+  mock.timers.tick(5_000);
+  assert.deepEqual(health(h.sent), [{ framesReceived: 10, framesExpected: 10 }]);
+});
+
+test("consent withdrawn before ears listens again: no new subscription", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 2);
+  h.receiver.fail(ALICE);
+  h.allowlist.set(GUILD, [CAROL]); // not dropped yet: the check before re-listening catches it
+  await nextFrame();
+  assert.deepEqual(h.receiver.subscribed, [ALICE]);
+  assert.deepEqual(health(h.sent), [{ framesReceived: 2, framesExpected: 3 }]);
+});
+
+test("a speaker dropped meanwhile isn't listened to again", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 2);
+  h.receiver.fail(ALICE);
+  h.session.dropSpeakers([ALICE]);
+  await nextFrame();
+  assert.deepEqual(h.receiver.subscribed, [ALICE]);
+});
+
+test("with DMBOT_DEBUG_AUDIO, the encryption's debug lines are logged, and only those", () => {
+  const logLines: string[] = [];
+  const debugListeners: ((message: string) => void)[] = [];
+  harness(undefined, undefined, { debugAudio: true, logLines, debugListeners });
+  assert.equal(debugListeners.length, 1);
+  const emit = (message: string) => debugListeners[0]?.(message);
+  emit("[NW] [DAVE] Transition executed (v0 -> v1, id: 0)");
+  emit("[NW] [DAVE] Failed to decrypt a packet (1 consecutive fails)");
+  emit("[NW] [DAVE] Failed to decrypt a packet (2 consecutive fails)"); // within a second
+  emit("[NW] [DAVE] Failed to decrypt a packet (reinitializing session)");
+  mock.timers.tick(1_000);
+  emit("[NW] [DAVE] Failed to decrypt a packet (40 consecutive fails)");
+  emit('[NW] [WS] >> {"op":0,"d":{"token":"secret-token"}}'); // never: it holds credentials
+  emit('[NW] [WS] << {"d":"[NW] [DAVE] secret-token"}'); // not even with the tag inside
+  const logged = logLines.join("\n");
+  assert.match(logged, /dave: Transition executed \(v0 -> v1, id: 0\)/);
+  assert.match(logged, /dave: Failed to decrypt a packet \(1 consecutive fails\)/);
+  assert.match(logged, /dave: Failed to decrypt a packet \(40 consecutive fails\) \(and 2 more like it\)/);
+  assert.doesNotMatch(logged, /\(2 consecutive/);
+  assert.doesNotMatch(logged, /secret-token/);
+});
+
+test("without it, the connection's debug lines aren't even asked for", () => {
+  const debugListeners: ((message: string) => void)[] = [];
+  harness(undefined, undefined, { debugListeners });
+  assert.equal(debugListeners.length, 0);
 });
