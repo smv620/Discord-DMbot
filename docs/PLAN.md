@@ -603,7 +603,10 @@ the engine is down for everyone). `TRANSCRIBE_WORKERS` workers take turns betwee
 3 by default with Deepgram or cloud, and exactly 1 with local Whisper (one model on the
 CPU; more would only wait). A server's speech is written one piece at a time and in
 order, so its lines never swap, while a slow table can't hold up the others. When
-writing stops, every table with speech waiting is told, and told again when it works.
+writing stops, every table with speech waiting is told, and told again once it's steady
+(3 answers in a row, or an answer and 30 s without a failure; #470), so a flapping
+engine doesn't churn the DM screen. A table whose session starts during an outage is
+told too. Deepgram's "wait" (Retry-After) is looked at again after each wait.
 Each table's status shows its own backlog and delay.
 
 **End of a session: built (2026-10-06, #109).** When the DM stops DMbot:
@@ -650,7 +653,9 @@ building:
   (`frostmaiden-session-7-as-heard.txt`): a short header, then
   `[0:42:10] (Mia) {Cerric}: …` per line (#53; no `{…}` for someone who plays no
   character, such as the DM, until speaker tagging). The file says it's what DMbot wrote down, with no fixes, and that some words
-  may be misheard. While DMbot is still recording that session it warns first
+  may be misheard, and which speech-to-text wrote it ("Speech to text: Deepgram, an
+  online service (model nova-3)"; #173). Each session stores its engines as "engine model host" (more than
+  one if a resumed session switched); the endpoint's host stays in the database. While DMbot is still recording that session it warns first
   ([Download anyway] [Cancel]), in different words for the DM and players. Replies
   are deferred first, since building a file can take more than Discord's 3 seconds.
 - When a session ends, the DM(s) and everyone recorded get a private message with one
@@ -896,8 +901,12 @@ names panel nor the speech-to-text hints can be a fixed list.
   taken from the front, so the order is what matters. **Never secret names, and a
   match on a secret name adds nothing:** saying "the hooded stranger" must not pull
   Belleros, or anything connected to Belleros, into the hints.
-  1. **Always:** the players' characters and the players' display names (players call
-     each other by name), each capped at a few nicknames.
+  1. **Always:** the players' characters and the display names of the people who agreed
+     **and are in the table's voice channel** (players call each other by name), each
+     capped at a few nicknames. People who agreed but aren't there go **last**, after
+     every campaign name, so a big server's members never crowd out the scene (#173).
+     Who's there is looked at every 5 seconds per server; anyone who stops being
+     recorded is gone from the very next clip's hints.
   2. **The scene:** confirmed names said in about the last 10 minutes, newest and most
      said first. Each written-down line, only after the per-line consent check, is
      matched against the campaign's non-secret names (exact names, other names and
@@ -1111,7 +1120,7 @@ reads the campaign memory and never changes it.
     channel. The question leads with what was heard: "❓ **Mia said "Bell or us"**: did
     they mean… [Belleros] [Bellamy] [Type it…] [Keep as heard]". At most 3 options.
     **Keep as heard** saves a "don't change this" rule, like Undo.
-  - **Not flooding the DM screen:** medium fixes go into one "✏️ Name fixes this scene"
+  - **Not flooding the DM screen:** medium fixes go into one "✏️ Name fixes to check"
     message that is edited in place, one line and one Undo each. At most one question is
     open at a time, with a cooldown, and only for names that come up again or matter to
     the scene. Unanswered questions expire quietly (the line stays as heard) and move to
@@ -1240,7 +1249,7 @@ consent check just made still holds:
   - **Where they show:** only in the DM screen, in one "✏️ Name fixes to check" message
     edited in place: "DMbot changed these words in the transcript but isn't sure.
     Wrong? Press its Undo to put back what was heard." One numbered line and one
-    **↩️ Undo N** each (the newest 10). A fix keeps its number for the whole session,
+    **↩️ Undo N** each (the newest 10, fewer if the names are very long). A fix keeps its number for the whole session,
     so a number never changes meaning while the DM aims at it. A burst of fixes is one
     edit, and if the message is deleted a new one is posted. Nothing about these
     guesses ever goes in the transcript channel.

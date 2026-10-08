@@ -347,7 +347,7 @@ class Accounts(DatabaseTest):
 
     async def test_a_server_dmbot_left_is_offered_again(self) -> None:
         await self.joined_by_link(QUILLON.id)
-        async with self.db.guild(QUILLON.id) as conn:  # the bot leaving (contract, 0013)
+        async with self.db.guild(QUILLON.id) as conn:  # the bot leaving (contract, 0014)
             await conn.execute("UPDATE installs SET left_at = 1 WHERE guild_id = %s", (QUILLON.id,))
         server = next(s for s in (await self.me())["servers"] if s["id"] == str(QUILLON.id))
         self.assertFalse(server["hasDmbot"])

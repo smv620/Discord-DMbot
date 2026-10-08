@@ -234,10 +234,13 @@ def scene_hints(
     now: float,
     *,
     people: Iterable[str] = (),
+    absent: Iterable[str] = (),
     limit: int = MAX_HINTS,
 ) -> list[str]:
     """The hints for the next clip, most useful first, one per name however it's
-    written, never a secret name. `parts`: `prepare(lookup)`, made once per change."""
+    written, never a secret name. `parts`: `prepare(lookup)`, made once per change.
+    `people`: those at the table (in its voice channel); `absent`: people who agreed but
+    aren't there, last, so a big server's members never crowd out the scene (#173)."""
     out: dict[str, str] = {}
 
     def entries(entity_ids: Iterable[str]) -> Iterator[str]:
@@ -261,6 +264,7 @@ def scene_hints(
         entries(parts.recent),
         entries(parts.fill),
         parts.guesses,
+        absent,
     ]
     for tier in tiers:
         for text in tier:
