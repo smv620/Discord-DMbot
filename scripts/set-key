@@ -11,7 +11,8 @@
 # The new .env replaces the old file, so a symlinked .env becomes a plain file owned by
 # whoever runs this.
 #
-# Tests point DMBOT_ENV_FILE, DMBOT_ENV_EXAMPLE and DMBOT_DOCKER at stand-ins.
+# Tests point DMBOT_ENV_FILE, DMBOT_ENV_EXAMPLE and DMBOT_DOCKER at stand-ins, and set
+# DMBOT_TEST_NO_TERMINAL to pipe the key in.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -27,8 +28,9 @@ fail() {
 [[ -f $example ]] || fail "Can't find .env.example in $root.
 Get it back with: git checkout .env.example"
 
-# Without a terminal the paste can't be hidden (ssh host scripts/set-key). Tests pipe in.
-[[ -t 0 || -n ${DMBOT_ENV_FILE:-} ]] || fail "Log in to the server first, then run:
+# Without a terminal the paste can't be hidden (ssh host scripts/set-key). Only the
+# test-only switch skips this, so pointing DMBOT_ENV_FILE elsewhere doesn't (#811).
+[[ -t 0 || -n ${DMBOT_TEST_NO_TERMINAL:-} ]] || fail "Log in to the server first, then run:
 scripts/set-key"
 
 # Every key, token and secret in .env.example, in file order.

@@ -705,6 +705,7 @@ class AdminSettings(unittest.TestCase):
         self.assertEqual(loaded.admin_emails, ("owner@example.com", "second@example.com"))
         self.assertNotIn(HASH, repr(loaded))
         self.assertNotIn("g-secret-1", repr(loaded))
+        self.assertNotIn("owner@example.com", repr(loaded))
 
     def test_refuses_bad_admin_settings(self) -> None:
         for change in (

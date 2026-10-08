@@ -55,7 +55,8 @@ class WebSettings:
     client_ip_header: str = ""
     # The admin page (#772): the only addresses that may sign in, lower case. Empty: the
     # admin sign-in is off.
-    admin_emails: tuple[str, ...] = ()
+    # repr=False: the admin's address stays out of any log that prints the settings.
+    admin_emails: tuple[str, ...] = field(default=(), repr=False)
     # The admin password's argon2id hash, base64 (scripts/set-admin-password writes it).
     # Empty: only "Sign in with Google" works.
     admin_password_hash: str = field(default="", repr=False)
