@@ -784,3 +784,16 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     .env changes. Database backed up first (outside the repo; 26 tables); no session
     was live. Core rebuilt: "Connected to 1 server(s)", "ears connected", no warnings
     or errors.
+
+==============================================================================
+2026-10-08  Server: deploy fba4f77 (dev1, no test run)
+==============================================================================
+  - 05:37 UTC  development @ fba4f77: #611 (records each campaign's owner, #437 part
+    1a), #604 (Undo of an answer says when its line couldn't be put back, #589), #608
+    (dev tool: measures a draft story-memory extractor, #234), #590 (site look, web-api
+    not running). #599's queue line cleared (deployed at 05:24 in b4ab397).
+  - Migration 0020_campaign_owner: one nullable column on campaigns. Read before
+    deploying.
+  - Database backed up first ("pre0020", outside the repo; 26 tables); no session was
+    live; .env already matched. Core rebuilt: "Database updated: 0020_campaign_owner",
+    "Connected to 1 server(s)", "ears connected", no warnings or errors.
