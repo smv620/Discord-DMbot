@@ -389,19 +389,46 @@ class Payments(DatabaseTest):
     async def test_a_deleted_plans_last_events_dont_wait_on_a_new_account(self) -> None:
         # Deletion cancels at the period's end (#435), so the old subscription's last news can
         # come weeks later, after the person has signed up again: it isn't about them now.
+        for kind in ("subscription_ended", "payment_failed"):
+            with self.subTest(kind=kind):
+                await self.start_table()
+                await accounts.delete_person(self.db, ALICE.id)
+                await self.sign_in()  # the same Discord account, a new DMbot account
+                news: dict[str, Any] = {"kind": kind, "subscription_id": "sub_1"}
+                news["id"] = f"late-{kind}"
+                response = await self.send(**news, occurred_at=self.now + 30 * DAY)
+                self.assertEqual(response.status_code, 200)  # not 503: no month of resends
+                self.assertIsNone(await entitlements.get(self.db, ALICE.id))
+                # Recorded, not just dropped: the company's resend is a duplicate.
+                with self.assertLogs("dmbot.web.app", "INFO") as logs:
+                    again = await self.send(**news, occurred_at=self.now + 30 * DAY)
+                self.assertEqual(again.status_code, 200)
+                self.assertTrue(logs.output[-1].endswith(": duplicate"), logs.output)
+                if kind == "subscription_ended":  # Try It is once per person, ever
+                    # On the Try It they started meanwhile: still not about them.
+                    self.assertEqual((await self.post("/plan/try-it")).status_code, 204)
+                    news["id"] = f"later-{kind}"
+                    response = await self.send(**news, occurred_at=self.now + 31 * DAY)
+                    self.assertEqual(response.status_code, 200)
+                    got = await self.plan()
+                    self.assertEqual((got.plan, got.status), ("try-it", "active"))
+                await accounts.delete_person(self.db, ALICE.id)
+                await self.sign_in()
+
+    async def test_a_subscription_brought_back_after_deletion_applies_at_renewal(self) -> None:
+        # Never stuck: the company undoes the cancel, and its renewal gives the plan back.
         await self.start_table()
         await accounts.delete_person(self.db, ALICE.id)
-        await self.sign_in()  # the same Discord account, a new DMbot account
-        ended: dict[str, Any] = {"kind": "subscription_ended", "subscription_id": "sub_1"}
-        response = await self.send(**ended, occurred_at=self.now + 30 * DAY)
-        self.assertEqual(response.status_code, 200)  # not 503: no redelivery for a month
-        self.assertIsNone(await entitlements.get(self.db, ALICE.id))
-        # And on the Try It they started meanwhile: still not about them.
-        self.assertEqual((await self.post("/plan/try-it")).status_code, 204)
-        response = await self.send(**ended, occurred_at=self.now + 31 * DAY)
+        await self.sign_in()
+        response = await self.start_table(
+            kind="subscription_renewed",
+            occurred_at=self.now + 30 * DAY,
+            period_start=self.now + 30 * DAY,
+            period_end=self.now + 60 * DAY,
+        )
         self.assertEqual(response.status_code, 200)
         got = await self.plan()
-        self.assertEqual((got.plan, got.status), ("try-it", "active"))
+        self.assertEqual((got.plan, got.status), ("table", "active"))
 
     async def test_a_renewal_ends_the_grace(self) -> None:
         await self.start_table()

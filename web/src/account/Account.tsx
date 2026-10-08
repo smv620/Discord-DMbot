@@ -667,8 +667,13 @@ function DeleteSection({ paidPlan, onDeleted }: { paidPlan: boolean; onDeleted: 
           {text.deleteWarning.map((line) => (
             <p key={line}>{line}</p>
           ))}
-          {paidPlan && <p>{text.deletePlanStops}</p>}
           <a href="#campaigns">{text.deleteHandOverLink}</a>
+          {paidPlan && (
+            <>
+              <p>{text.deletePlanStops}</p>
+              <a href="/legal/refunds#stopping">{text.deleteRefundsLink}</a>
+            </>
+          )}
           <div class="row">
             <ActionButton
               busy={busy}

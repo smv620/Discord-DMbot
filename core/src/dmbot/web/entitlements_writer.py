@@ -68,7 +68,9 @@ async def _record(conn: Conn, event: PaymentEvent, now: int) -> None:
 
 async def _old_subscription(conn: Conn, event: PaymentEvent) -> bool:
     """This person had news about this subscription before, but it isn't the plan they
-    have now (the caller checked): one that ended with a deleted account, for example."""
+    have now (the caller checked): one that ended with a deleted account, for example.
+    A subscription brought back at the company (cancel undone) is picked up at its next
+    renewal, which always applies; failure or end news before that is dropped."""
     if event.subscription_id is None:
         return False
     cur = await conn.execute(
