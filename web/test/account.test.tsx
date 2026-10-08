@@ -233,6 +233,20 @@ describe("actions", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(text.noFreeSlot);
   });
 
+  it("tells a paying person they won't be charged again when deleting", async () => {
+    for (const [scenario, says] of [
+      ["table", true],
+      ["grace", true],
+      ["try-it", false],
+      ["lapsed", false],
+    ] as const) {
+      const { unmount } = render(<Account api={mockApi(scenario)} go={vi.fn()} />);
+      fireEvent.click(await screen.findByRole("button", { name: text.deleteStart }));
+      expect(screen.queryByText(text.deletePlanStops) !== null).toBe(says);
+      unmount();
+    }
+  });
+
   it("deletes the account only after a warning and a second yes", async () => {
     const { api } = show("table");
     fireEvent.click(await screen.findByRole("button", { name: text.deleteStart }));

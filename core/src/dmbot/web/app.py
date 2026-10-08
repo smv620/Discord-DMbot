@@ -365,7 +365,8 @@ def create_app(
             settings.secret_key, "delete", given, now=clock()
         ) != delete_binding(session, cookie_token):
             raise HTTPException(status_code=403, detail="confirm_again")
-        # Stop the payments first: a deleted account must never be charged again.
+        # Stop the payments first: a deleted account must never be charged again. The
+        # subscription ends with the month already paid for (no refund, no new charge).
         subscription = await active_subscription(db, session.user_id)
         if subscription is not None:
             if payments is None or subscription[0] != payments.name:

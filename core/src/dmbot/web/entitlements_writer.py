@@ -60,10 +60,23 @@ async def _record(conn: Conn, event: PaymentEvent, now: int) -> None:
     """Record the event id, so a repeat delivery is a duplicate. (_seen has already
     checked under the person's lock; DO NOTHING only guards against the impossible.)"""
     await conn.execute(
-        "INSERT INTO payment_events (provider, event_id, user_id, received_at)"
-        " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-        (event.provider, event.event_id, event.user_id, now),
+        "INSERT INTO payment_events (provider, event_id, user_id, subscription_id, received_at)"
+        " VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+        (event.provider, event.event_id, event.user_id, event.subscription_id, now),
     )
+
+
+async def _old_subscription(conn: Conn, event: PaymentEvent) -> bool:
+    """This person had news about this subscription before, but it isn't the plan they
+    have now (the caller checked): one that ended with a deleted account, for example."""
+    if event.subscription_id is None:
+        return False
+    cur = await conn.execute(
+        "SELECT 1 FROM payment_events"
+        " WHERE user_id = %s AND provider = %s AND subscription_id = %s LIMIT 1",
+        (event.user_id, event.provider, event.subscription_id),
+    )
+    return await cur.fetchone() is not None
 
 
 async def _seen(conn: Conn, event: PaymentEvent) -> bool:
@@ -225,11 +238,19 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
             return "applied"
 
         # payment_failed and subscription_ended change the paid plan the person has.
+        waiting = row is None or (
+            row["provider"] != event.provider and event.occurred_at > row["last_event_at"]
+        )
+        if waiting and await _old_subscription(conn, event):
+            # A subscription they had before, such as one cancelled when they deleted their
+            # account (it ends with the paid month): not about the plan they have now.
+            await _record(conn, event, now)
+            return "ignored"
         if row is None:
             # Nothing to change yet: the company may have sent this before the "started"
             # event. Not recorded, so its next delivery is applied.
             return "retry"
-        if row["provider"] != event.provider and event.occurred_at > row["last_event_at"]:
+        if waiting:
             # On Try It (ours): news newer than the company's last word must be about a
             # new subscription whose "started" hasn't arrived yet, so wait for it. Try It
             # keeps the stopped paid plan's last_event_at, so that plan's late news isn't.
@@ -273,9 +294,9 @@ async def start_try_it(db: Database, user_id: int, *, now: int) -> TryItResult:
         if row is not None and row["status"] != "lapsed":
             return TryItResult(False, "has_plan")
         cur = await conn.execute(
-            "INSERT INTO try_it_used (user_id, used_at) VALUES (%s, %s)"
+            "INSERT INTO try_it_used (user_id) VALUES (%s)"
             " ON CONFLICT DO NOTHING RETURNING user_id",
-            (user_id, now),
+            (user_id,),
         )
         if await cur.fetchone() is None:
             return TryItResult(False, "used")
