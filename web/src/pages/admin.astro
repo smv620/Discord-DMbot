@@ -42,7 +42,8 @@ import Base from "../layouts/Base.astro";
     font-weight: 600;
   }
 
-  .admin :global(input) {
+  .admin :global(input),
+  .admin :global(select) {
     width: 100%;
     box-sizing: border-box;
     min-height: var(--tap);
@@ -81,6 +82,33 @@ import Base from "../layouts/Base.astro";
     border-radius: var(--radius);
     background: var(--warn-soft);
     border: 1px solid var(--warn);
+  }
+
+  .admin :global(.grants),
+  .admin :global(.history) {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .admin :global(.grants li) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow-wrap: anywhere;
+  }
+
+  .admin :global(.row) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
   }
 
   .admin :global(.ok) {

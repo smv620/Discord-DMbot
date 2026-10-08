@@ -9,12 +9,30 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev3, PR #821 (#807): core only. No migration or setting; the consent terms version is
+  unchanged (nobody is asked again). DMbot's private messages now carry a grey ⚙️ Menu
+  instead of the red 🛑; stopping shows one warning first. #843 (#834, follow-ups) can
+  ride along once merged. Check: a player's new reminder shows ⚙️ Menu; on it, Menu →
+  Stop recording me puts the warning first in the message's text → Yes leaves the
+  message reading "🛑 Stopped" and the DM screen shows the usual "said stop" line; Keep
+  recording and Close give the reminder back unchanged; /consent revoke warns first.
 - dev2, PR #804 (#771 part 1): free access. **Core and migration 0030 are live (core
   45c0bcc, 22:02); only web-api waits (it stays off).** **Leave
   DMBOT_FREE_USERS empty until #806 (the account page for covered people) is live.** A
   bot-only check is fine meanwhile: set the owner's id, restart core only (not web-api),
   and accepting a hand-over without a plan works. Checked: 0030 applied; core logs "Free
   access list: 0 ids".
+- WebDev, PR #829 (#773): the admin page's free access list (/admin, signed in): who has
+  it (by name where they signed in lately), give, change and revoke, recent changes.
+  No migration. Deploy: rebuild web-api and the site, with #786's admin sign-in (turn
+  both on together with the owner: docs/DEPLOY.md "Turn on the admin page"). Every
+  change goes through the grant writer and is logged in access_log. **Order: #825's
+  account page must be live before DMBOT_FREE_USERS is set or anyone is given free
+  access.** Check: signed in as the admin, /admin shows the list ("Always free" for ids
+  in DMBOT_FREE_USERS); add a test account (Discord user ID), it starts a session with
+  no plan, then Revoke it; the Recent changes list shows both, and the logs name ids
+  only (never notes or emails). Owner's "done when": his test account starts a session
+  with no plan on the live site.
 - WebDev, PR #825 (#806): the account page for people with free access. Website only
   (Cloudflare Pages deploys it): no migration, no API change. It shows "Free access" (or
   "...until <date>") instead of plans and prices, a "Stop paying" button while a paid
@@ -33,6 +51,20 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   ADMIN_EMAILS set and no password hash or Google settings, or a Client secret without
   an ID: `docker compose logs --tail 20 web-api` names the setting. Check: the logs show
   no error; /admin on the site shows the sign-in; record the result with no email.
+- CloudDev, PR #840 (#836): the Cloudflare Tunnel that puts web-api online for the admin
+  sign-in (admin paths only). No migration, no rebuild. Not live until the owner has done
+  his part, so nothing is exposed on deploy. **Order:** (1) the owner follows docs/DEPLOY.md
+  "Put the admin API online" (tunnel `dmbot-api`, `scripts/set-key CLOUDFLARE_TUNNEL_TOKEN`
+  answering No to the restart, a route `api.getdmbot.com` with path `^/admin(/|$)` to
+  `web-api:8080`) and tells dev1 "tunnel ready"; (2) dev1 follows "dev1" there: check
+  WEB_API_URL, WEB_SITE_URL, WEB_CLIENT_IP_HEADER and COMPOSE_PROFILES in .env, run
+  `docker compose up -d web-api` and read its log, then `docker compose up -d cloudflared`.
+  Name only those services: core and ears also changed (they now blank the token), but
+  recreating them restarts the voice part, so let them pick it up at the next deploy.
+  Check from outside: `https://api.getdmbot.com/health` prints 404 (a 200 means the path
+  limit is off: `docker compose stop cloudflared` at once and tell Supervisor);
+  `/admin/auth/ways` answers from DMbot (404 JSON until ADMIN_EMAILS is set, then 200); the
+  cloudflared log says "Registered tunnel connection". Record the result, no token.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
