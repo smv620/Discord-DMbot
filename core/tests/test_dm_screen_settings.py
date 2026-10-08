@@ -14,6 +14,7 @@ from dmbot.dm_screen.settings import (
     FAILED,
     GONE,
     ONLY_DM,
+    SAVED,
     LevelButton,
     SettingsButton,
     SettingsVisibilityButton,
@@ -115,9 +116,16 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_database_error_says_try_again(self) -> None:
         it = press(DM)
         it.client.campaigns.get.side_effect = RuntimeError("database down")
-        with self.assertLogs("dmbot.dm_screen.settings", "ERROR"):
+        with self.assertLogs("dmbot.dm_screen.buttons", "ERROR"):  # the one shared check
             await SettingsButton(CAMPAIGN).callback(it)
         self.assertEqual(it.response.send_message.await_args.args[0], FAILED)
+
+    async def test_a_card_too_old_to_redraw_still_says_saved(self) -> None:
+        it = press(DM, found=campaign())
+        it.client.set_screen_level.return_value = campaign("quiet")
+        it.edit_original_response.side_effect = discord.NotFound(MagicMock(status=404), "gone")
+        await LevelButton(CAMPAIGN, "quiet").callback(it)
+        self.assertEqual(it.followup.send.await_args.args[0], SAVED)
 
     async def test_a_level_tap_saves_and_redraws_the_card(self) -> None:
         for who, manager in [(DM, False), (PLAYER, True)]:

@@ -16,13 +16,14 @@ campaign, so they work after a restart. Register with
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from typing import Any
 
 import discord
 
-from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_LEVEL,
     DM_SCREEN_LEVELS,
@@ -40,6 +41,7 @@ SETTINGS_LABEL = "Settings"
 ONLY_DM = "Only this campaign's DM (or a server manager) can open or change its settings."
 GONE = "I can't find this campaign anymore. It may have been deleted. To start one: `/dmbot start`."
 FAILED = "Sorry, that didn't save. Please try again."
+SAVED = "Saved. Press ⚙️ Settings again to see your settings."
 
 
 def _tick(label: str, current: bool) -> str:
@@ -60,7 +62,8 @@ def settings_text(campaign: Campaign) -> str:
             f"• **Who can see the DM screen:** {who}",
             "• **Saved transcripts:** anyone in the server can read and download them with "
             "`/transcript`.",
-            "Tap a button to change it. Changes work at once, even mid-session.",
+            "Tap a button to change it. A session that's running uses the change from its "
+            "next line.",
         ]
     )
 
@@ -77,34 +80,25 @@ def settings_view(campaign: Campaign) -> discord.ui.View:
 
 async def _allowed(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
     """The campaign, if this person may change its settings; otherwise None, after
-    telling them why. Scoped to the server the button was pressed in."""
-    store = getattr(interaction.client, "campaigns", None)
-    guild, member = interaction.guild, interaction.user
-    try:
-        campaign = (
-            await store.get(guild.id, campaign_id)
-            if isinstance(store, CampaignStore) and guild is not None
-            else None
-        )
-    except Exception:
-        log.exception("Couldn't load a campaign for its settings")
-        await interaction.response.send_message(FAILED, ephemeral=True)
-        return None
-    if campaign is None:
-        await interaction.response.send_message(GONE, ephemeral=True)
-        return None
-    manager = isinstance(member, discord.Member) and member.guild_permissions.manage_guild
-    if member.id not in campaign.dm_user_ids and not manager:
-        await interaction.response.send_message(ONLY_DM, ephemeral=True)
-        return None
-    return campaign
+    telling them why. The same check as the help card's buttons."""
+    allowed = await may_change_screen(
+        interaction, campaign_id, not_dm=ONLY_DM, gone=GONE, failed=FAILED
+    )
+    return allowed[0] if allowed is not None else None
 
 
 async def _redraw(interaction: discord.Interaction, campaign: Campaign) -> None:
-    """Show the card as saved now (the press was deferred as an update)."""
-    await interaction.edit_original_response(
-        content=settings_text(campaign), view=settings_view(campaign), allowed_mentions=NO_PINGS
-    )
+    """Show the card as saved now (the press was deferred as an update). If the card
+    can't be redrawn (it's too old), the change still is saved: say so."""
+    try:
+        await interaction.edit_original_response(
+            content=settings_text(campaign),
+            view=settings_view(campaign),
+            allowed_mentions=NO_PINGS,
+        )
+    except discord.HTTPException:
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.followup.send(SAVED, ephemeral=True)
 
 
 class SettingsButton(

@@ -262,21 +262,33 @@ class VisibilityButton(
 
 
 async def may_change_screen(
-    interaction: discord.Interaction, campaign_id: str
+    interaction: discord.Interaction,
+    campaign_id: str,
+    *,
+    not_dm: str = messages.NOT_THE_DM,
+    gone: str = messages.CAMPAIGN_GONE,
+    failed: str = messages.SOMETHING_WENT_WRONG,
 ) -> tuple[Campaign, discord.Guild, CampaignStore] | None:
-    """The campaign, if this person (its DM, or a server manager) may change who can see
-    its screen; otherwise None, after telling them why."""
-    campaign = await _campaign(interaction, campaign_id)
+    """The campaign, if this person (its DM, or a server manager) may change its DM
+    screen or settings; otherwise None, after telling them why (with these words). The
+    one check for the help card and ⚙️ Settings (#515). Scoped to the server the button
+    was pressed in."""
     guild = interaction.guild
     member = interaction.user
     store = _store(interaction)
+    try:
+        campaign = await _campaign(interaction, campaign_id)
+    except Exception:
+        log.exception("Couldn't load a campaign for its DM screen")
+        await interaction.response.send_message(failed, ephemeral=True)
+        return None
     if campaign is None or guild is None or store is None:
-        await interaction.response.send_message(messages.CAMPAIGN_GONE, ephemeral=True)
+        await interaction.response.send_message(gone, ephemeral=True)
         return None
     if not isinstance(member, discord.Member) or not (
         member.id in campaign.dm_user_ids or member.guild_permissions.manage_guild
     ):
-        await interaction.response.send_message(messages.NOT_THE_DM, ephemeral=True)
+        await interaction.response.send_message(not_dm, ephemeral=True)
         return None
     return campaign, guild, store
 
