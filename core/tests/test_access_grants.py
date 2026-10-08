@@ -3,6 +3,7 @@ by the person they cover, counted by every plan rule, and gone with the account.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from psycopg import errors
@@ -166,16 +167,19 @@ class Isolation(AccessTest):
 
 class AccountPage(AccessTest):
     async def me(self) -> dict[str, Any]:
-        token = await sessions.sign_in(self.db, ALICE, [THURSDAY], now=NOW, days=30)
-        session = await sessions.find(self.db, token, now=NOW)
+        # A real time: the database hides sessions by its own clock too.
+        token = await sessions.sign_in(self.db, ALICE, [THURSDAY], now=self.now, days=30)
+        session = await sessions.find(self.db, token, now=self.now)
         assert session is not None
-        return await build_me(self.db, session, now=NOW)
+        return await build_me(self.db, session, now=self.now)
 
     async def test_access_for_each_kind(self) -> None:
+        self.now = int(time.time())
         self.assertEqual((await self.me())["access"], {"kind": "none"})
-        await grants.give(self.db, ADMIN, ALICE.id, "guild", ends_at=NOW + 99, note="", now=NOW)
-        self.assertEqual((await self.me())["access"], {"kind": "grant", "until": NOW + 99})
-        await grants.revoke(self.db, ADMIN, ALICE.id, now=NOW)
+        until = self.now + 99
+        await grants.give(self.db, ADMIN, ALICE.id, "guild", ends_at=until, note="", now=self.now)
+        self.assertEqual((await self.me())["access"], {"kind": "grant", "until": until})
+        await grants.revoke(self.db, ADMIN, ALICE.id, now=self.now)
         await self.give_plan(ALICE.id)
         self.assertEqual((await self.me())["access"], {"kind": "paid"})
         entitlements.configure_free_users({ALICE.id})
