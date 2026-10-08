@@ -195,6 +195,15 @@ class Offering(unittest.IsolatedAsyncioTestCase):
             GUILD, offer().id, it.member.send.return_value.id
         )
 
+    async def test_an_offer_whose_message_isnt_kept_is_still_sent(self) -> None:
+        it = interaction(OWNER)
+        it.client.campaigns.offer_handover.return_value = offer()
+        it.client.campaigns.set_offer_message.side_effect = RuntimeError("database down")
+        with self.assertLogs("dmbot.dm_screen.handover", "ERROR"):
+            await self.picker(self.person(BUYER))._picked(it)
+        done = it.edit_original_response.await_args.kwargs
+        self.assertTrue(done["content"].startswith("Offer sent to **Mirelle**."))
+
     async def test_an_offer_they_cant_get_is_taken_back(self) -> None:
         it = interaction(OWNER)
         it.client.campaigns.offer_handover.return_value = offer()

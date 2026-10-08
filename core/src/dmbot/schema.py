@@ -529,12 +529,19 @@ HANDOVER_DELIVERED = """
 HANDOVER_EXPIRY = """
     -- An offer whose 7 days are up is announced once (#690): the owner is told, and the
     -- buttons come off the private message to the person offered (message_id). Offers
-    -- already closed count as told, so nobody gets an old notice.
+    -- already closed, or already past their 7 days, count as told, so nobody gets an old
+    -- notice. end_told_at is set just before the owner is told, and cleared again if
+    -- telling them failed for a moment (the next sweep tries again).
     ALTER TABLE campaign_handover_offers
         ADD COLUMN message_id  BIGINT,
         ADD COLUMN end_told_at BIGINT;
     UPDATE campaign_handover_offers SET end_told_at = COALESCE(decided_at, created_at)
-        WHERE status <> 'open';
+        WHERE status <> 'open'
+           OR created_at + 604800 <= extract(epoch FROM now())::BIGINT;
+    -- The sweep's "ended, nobody told yet" (stays nearly empty).
+    CREATE INDEX campaign_handover_offers_untold
+        ON campaign_handover_offers (guild_id)
+        WHERE status = 'expired' AND end_told_at IS NULL;
     """
 
 SHARED_CONFIRMATIONS = f"""

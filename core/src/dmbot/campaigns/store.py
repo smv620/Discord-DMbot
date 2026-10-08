@@ -712,9 +712,9 @@ class CampaignStore:
             )
 
     async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]:
-        """Offers in this server whose 7 days are up and that nobody was told about yet,
-        marked told now (so each is announced once, by whoever gets here first). Open
-        ones past their days are marked expired first (#690)."""
+        """Offers in this server whose 7 days are up and whose owner hasn't been told,
+        oldest first. Open ones past their days are marked expired first (#690). Before
+        telling the owner, `claim_end_notice` each."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE campaign_handover_offers SET status = 'expired',"
@@ -723,12 +723,32 @@ class CampaignStore:
                 (HANDOVER_SECONDS, guild_id, HANDOVER_SECONDS, now),
             )
             cur = await conn.execute(
-                "UPDATE campaign_handover_offers SET end_told_at = %s"
+                "SELECT * FROM campaign_handover_offers"
                 " WHERE guild_id = %s AND status = 'expired' AND end_told_at IS NULL"
-                " RETURNING *",
-                (now, guild_id),
+                " ORDER BY id",
+                (guild_id,),
             )
-            return sorted((_to_offer(row) for row in await cur.fetchall()), key=lambda o: o.id)
+            return [_to_offer(row) for row in await cur.fetchall()]
+
+    async def claim_end_notice(self, guild_id: int, offer_id: int, now: int) -> bool:
+        """Mark an ended offer told, just before telling its owner: False if someone else
+        got there first (so it's told once)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaign_handover_offers SET end_told_at = %s"
+                " WHERE guild_id = %s AND id = %s AND end_told_at IS NULL RETURNING id",
+                (now, guild_id, offer_id),
+            )
+            return await cur.fetchone() is not None
+
+    async def release_end_notice(self, guild_id: int, offer_id: int, told_at: int) -> None:
+        """Telling the owner failed for a moment: the next sweep tries again."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET end_told_at = NULL"
+                " WHERE guild_id = %s AND id = %s AND end_told_at = %s",
+                (guild_id, offer_id, told_at),
+            )
 
     async def release_delivery(self, guild_id: int, offer: HandoverOffer) -> None:
         """The send failed: let this claim go so a later sweep tries again (unless

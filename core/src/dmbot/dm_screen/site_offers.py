@@ -28,7 +28,13 @@ import discord
 
 from dmbot.campaigns import Campaign, offer_notify
 from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
-from dmbot.dm_screen.handover import NO_PINGS, OFFER_EXPIRED, TOLD_EXPIRED, deliver_offer
+from dmbot.dm_screen.handover import (
+    NO_PINGS,
+    OFFER_EXPIRED,
+    TOLD_EXPIRED,
+    TOLD_EXPIRED_UNSENT,
+    deliver_offer,
+)
 from dmbot.dm_screen.handover import _md as md
 from dmbot.logs import log_context
 
@@ -59,6 +65,10 @@ class OfferStore(Protocol):
     ) -> None: ...
 
     async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]: ...
+
+    async def claim_end_notice(self, guild_id: int, offer_id: int, now: int) -> bool: ...
+
+    async def release_end_notice(self, guild_id: int, offer_id: int, told_at: int) -> None: ...
 
     async def release_delivery(self, guild_id: int, offer: HandoverOffer) -> None: ...
 
@@ -185,7 +195,8 @@ class SiteOffers:
 
     async def end_expired(self, guild_id: int) -> None:
         """Tell the owner of each offer whose days are up, and take the buttons off the
-        person's message. Best effort: each is announced once. Never raises."""
+        person's message. Each is announced once; if Discord failed for a moment, the
+        next sweep tries again. Never raises."""
         guild = self._get_guild(guild_id)
         if guild is None:
             return
@@ -196,12 +207,30 @@ class SiteOffers:
                 log.exception("Couldn't check for hand-over offers that ran out of days")
                 return
             for offer in ended:
-                try:
-                    campaign = await self._store.get(guild_id, offer.campaign_id)
-                    if campaign is not None:
-                        await _tell_expired(guild, offer, campaign)
-                except Exception:
-                    log.exception("Couldn't announce the end of hand-over offer %s", offer.id)
+                await self._end(guild, offer)
+
+    async def _end(self, guild: discord.Guild, offer: HandoverOffer) -> None:
+        told_at = self._now()
+        try:
+            if not await self._store.claim_end_notice(guild.id, offer.id, told_at):
+                return  # someone else is telling them
+        except Exception:
+            log.exception("Couldn't announce the end of hand-over offer %s", offer.id)
+            return
+        try:
+            campaign = await self._store.get(guild.id, offer.campaign_id)
+            if campaign is not None:  # deleted since: its offers go with it
+                await _tell_expired(guild, offer, campaign)
+        except BaseException as exc:
+            # Not told: let it go, so the next sweep tries again.
+            with contextlib.suppress(Exception):
+                await self._store.release_end_notice(guild.id, offer.id, told_at)
+            if not isinstance(exc, Exception):
+                raise
+            if isinstance(exc, discord.HTTPException):
+                log.warning("Discord failed announcing offer %s's end (%s)", offer.id, exc)
+            else:
+                log.exception("Couldn't announce the end of hand-over offer %s", offer.id)
 
     async def send(self, guild_id: int, offer_id: int) -> None:
         """Send one offer's private message, if this process serves its server and nobody
@@ -248,23 +277,29 @@ async def _member(guild: discord.Guild, user_id: int) -> discord.Member:
 
 
 async def _tell_expired(guild: discord.Guild, offer: HandoverOffer, campaign: Campaign) -> None:
-    """The owner hears the offer ended; the person's message loses its buttons. Each is
-    best effort: either of them may have left the server or closed their messages."""
-    with contextlib.suppress(discord.HTTPException):
+    """The owner hears the offer ended; the person's message loses its buttons. An owner
+    who left the server or closed their messages counts as told; any other Discord error
+    is raised (try again later). The buttons are best effort: pressing them after the
+    end only says it ended."""
+    told = TOLD_EXPIRED if offer.delivered_at is not None else TOLD_EXPIRED_UNSENT
+    try:
         owner = await _member(guild, offer.from_user_id)
         await owner.send(
-            TOLD_EXPIRED.format(
-                name=md(offer.to_name), campaign=md(campaign.name), days=HANDOVER_DAYS
-            ),
+            told.format(name=md(offer.to_name), campaign=md(campaign.name), days=HANDOVER_DAYS),
             allowed_mentions=NO_PINGS,
         )
+    except (discord.Forbidden, discord.NotFound):
+        pass
     if offer.message_id is None:  # sent before messages were kept
         return
     with contextlib.suppress(discord.HTTPException):
         person = await _member(guild, offer.to_user_id)
         channel = person.dm_channel or await person.create_dm()
         await channel.get_partial_message(offer.message_id).edit(
-            content=OFFER_EXPIRED.format(days=HANDOVER_DAYS), view=None
+            content=OFFER_EXPIRED.format(
+                owner=md(offer.from_name), campaign=md(campaign.name), days=HANDOVER_DAYS
+            ),
+            view=None,
         )
 
 

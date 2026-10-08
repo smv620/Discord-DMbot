@@ -16,7 +16,7 @@ import discord
 from dmbot.campaigns import Campaign, offer_notify
 from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
 from dmbot.dm_screen import site_offers
-from dmbot.dm_screen.handover import OFFER_EXPIRED, TOLD_EXPIRED, deliver_offer
+from dmbot.dm_screen.handover import TOLD_EXPIRED, TOLD_EXPIRED_UNSENT, deliver_offer
 from dmbot.dm_screen.site_offers import NOT_SENT, SiteOffers
 
 GUILD, OTHER_GUILD = 111, 222
@@ -56,6 +56,7 @@ class FakeStore:
         self.withdraw_result = "withdrawn"
         self.message_ids: dict[tuple[int, int], int | None] = {}
         self.to_end: list[HandoverOffer] = []
+        self.told: set[int] = set()
         self.campaign: Any = type("C", (), {"id": "c1", "name": "Frost*maiden"})()
         self.fail_reads: set[int] = set()
 
@@ -77,8 +78,16 @@ class FakeStore:
         self.message_ids[(guild_id, o.id)] = message_id
 
     async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]:
-        ended, self.to_end = self.to_end, []  # each is handed out once
-        return ended
+        return [o for o in self.to_end if o.id not in self.told]
+
+    async def claim_end_notice(self, guild_id: int, offer_id: int, now: int) -> bool:
+        if offer_id in self.told:
+            return False
+        self.told.add(offer_id)
+        return True
+
+    async def release_end_notice(self, guild_id: int, offer_id: int, told_at: int) -> None:
+        self.told.discard(offer_id)
 
     async def release_delivery(self, guild_id: int, o: HandoverOffer) -> None:
         self.claimed.discard((guild_id, o.id))
@@ -325,30 +334,59 @@ class Sweeping(Harness):
 
 
 class Expiring(Harness):
-    def ended(self, message_id: int | None = 4242) -> HandoverOffer:
-        return replace(offer(), status="expired", decided_at=NOW, message_id=message_id)
+    def ended(self, message_id: int | None = 4242, *, sent: bool = True) -> HandoverOffer:
+        return replace(
+            offer(),
+            status="expired",
+            decided_at=NOW,
+            message_id=message_id,
+            delivered_at=NOW if sent else None,
+        )
+
+    def told(self, text: str = TOLD_EXPIRED) -> str:
+        return text.format(name="Bea\\_\\*", campaign="Frost\\*maiden", days=HANDOVER_DAYS)
 
     async def test_the_owner_is_told_and_the_buttons_come_off(self) -> None:
         self.store.waiting = {}
         self.store.to_end = [self.ended()]
         await self.offers.sweep_server(GUILD)
         guild = self.guilds[GUILD]
-        self.assertEqual(
-            guild.owner.sent,
-            [TOLD_EXPIRED.format(name="Bea\\_\\*", campaign="Frost\\*maiden", days=HANDOVER_DAYS)],
-        )
-        self.assertEqual(
-            guild.buyer.edits,
-            [(4242, {"content": OFFER_EXPIRED.format(days=HANDOVER_DAYS), "view": None})],
-        )
+        self.assertEqual(guild.owner.sent, [self.told()])
+        (edit,) = guild.buyer.edits
+        self.assertEqual(edit[0], 4242)
+        self.assertIsNone(edit[1]["view"])
+        self.assertIn("**Oskar**'s offer of **Frost\\*maiden** has ended", edit[1]["content"])
         await self.offers.sweep_server(GUILD)  # announced once
         self.assertEqual(len(guild.owner.sent), 1)
 
-    async def test_an_offer_without_a_kept_message_still_tells_the_owner(self) -> None:
-        self.store.to_end = [self.ended(message_id=None)]
+    async def test_an_offer_never_sent_says_so(self) -> None:
+        self.store.to_end = [self.ended(message_id=None, sent=False)]
         await self.offers.end_expired(GUILD)
-        self.assertEqual(len(self.guilds[GUILD].owner.sent), 1)
+        self.assertEqual(self.guilds[GUILD].owner.sent, [self.told(TOLD_EXPIRED_UNSENT)])
         self.assertEqual(self.guilds[GUILD].buyer.edits, [])
+
+    async def test_a_discord_hiccup_tells_them_on_the_next_sweep(self) -> None:
+        self.store.to_end = [self.ended()]
+        guild = self.guilds[GUILD]
+        real_send = guild.owner.send
+
+        async def hiccup(text: str, **_: Any) -> None:
+            raise http_error(503)
+
+        guild.owner.send = hiccup  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.dm_screen.site_offers", "WARNING"):
+            await self.offers.end_expired(GUILD)
+        self.assertEqual(self.store.told, set())  # let go
+        guild.owner.send = real_send  # type: ignore[method-assign]
+        await self.offers.end_expired(GUILD)
+        self.assertEqual(guild.owner.sent, [self.told()])
+
+    async def test_a_deleted_campaign_counts_as_told(self) -> None:
+        self.store.to_end = [self.ended()]
+        self.store.campaign = None
+        await self.offers.end_expired(GUILD)
+        self.assertEqual(self.store.told, {1})
+        self.assertEqual(self.guilds[GUILD].owner.sent, [])
 
     async def test_people_who_left_are_skipped_quietly(self) -> None:
         self.store.to_end = [self.ended()]
@@ -359,12 +397,14 @@ class Expiring(Harness):
             raise http_error(404, discord.NotFound)
 
         guild.fetch_member = gone  # type: ignore[attr-defined]
-        await self.offers.end_expired(GUILD)  # nothing raised, nothing logged as an error
+        with self.assertNoLogs("dmbot.dm_screen.site_offers", "WARNING"):
+            await self.offers.end_expired(GUILD)
+        self.assertEqual(self.store.told, {1})  # nobody to tell: done
 
     async def test_another_process_s_server_is_left_alone(self) -> None:
         self.store.to_end = [self.ended()]
         await self.offers.end_expired(OTHER_GUILD)
-        self.assertEqual(len(self.store.to_end), 1)  # never claimed here
+        self.assertEqual(self.store.told, set())
 
 
 class Following(Harness):

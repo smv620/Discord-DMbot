@@ -269,13 +269,34 @@ class Ending(HandoverTest):
         later = NOW + HANDOVER_SECONDS
         (ended,) = await self.store.offers_to_end(GUILD, later)
         self.assertEqual((ended.id, ended.status, ended.decided_at), (offer.id, "expired", later))
-        self.assertEqual((ended.message_id, ended.end_told_at), (4242, later))
+        self.assertEqual((ended.message_id, ended.end_told_at), (4242, None))
+        self.assertTrue(await self.store.claim_end_notice(GUILD, offer.id, later))
+        self.assertFalse(await self.store.claim_end_notice(GUILD, offer.id, later))  # once
         self.assertEqual(await self.store.offers_to_end(GUILD, later + 1), [])
+
+    async def test_a_notice_that_failed_is_tried_again(self) -> None:
+        offer = await self.offer()
+        later = NOW + HANDOVER_SECONDS
+        await self.store.offers_to_end(GUILD, later)
+        self.assertTrue(await self.store.claim_end_notice(GUILD, offer, later))
+        await self.store.release_end_notice(GUILD, offer, later + 1)  # not that claim: kept
+        self.assertEqual(await self.store.offers_to_end(GUILD, later), [])
+        await self.store.release_end_notice(GUILD, offer, later)
+        self.assertEqual([o.id for o in await self.store.offers_to_end(GUILD, later)], [offer])
+
+    async def test_an_offer_accepted_just_in_time_is_never_announced(self) -> None:
+        offer = await self.offer()
+        just_in_time = NOW + HANDOVER_SECONDS - 1
+        self.assertEqual(
+            await self.store.accept_handover(GUILD, offer, BUYER, just_in_time), "accepted"
+        )
+        self.assertEqual(await self.store.offers_to_end(GUILD, NOW + HANDOVER_SECONDS), [])
 
     async def test_one_marked_expired_quietly_is_still_announced(self) -> None:
         old = await self.offer()
         later = NOW + HANDOVER_SECONDS
         await self.make_offer(GUILD, self.campaign.id, OWNER, CO_DM, later)  # expires `old`
+        # (the new one is still open: only `old` has ended)
         self.assertEqual([o.id for o in await self.store.offers_to_end(GUILD, later)], [old])
 
     async def test_answered_or_taken_back_offers_are_never_announced(self) -> None:

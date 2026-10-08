@@ -92,10 +92,22 @@ TOLD_DECLINED = "**{name}** said no thanks to **{campaign}**. It stays yours."
 ENDED = "This offer has ended: it was answered, taken back, or its {days} days are up."
 # When an offer's days are up (#690): the person's message loses its buttons, and the
 # owner is told.
-OFFER_EXPIRED = "This offer has ended: its {days} days are up. Nothing changed."
+OFFER_EXPIRED = (
+    "**{owner}**'s offer of **{campaign}** has ended: its {days} days are up. Nothing "
+    "changed. If you still want it, ask {owner} to offer it again."
+)
+_OFFER_AGAIN = (
+    "It stays yours. To offer it again: ⚙️ Settings, then **Hand over**, or your account "
+    "page on the DMbot website."
+)
 TOLD_EXPIRED = (
     "**{name}** didn't answer your offer of **{campaign}** within {days} days, so it ended. "
-    "The campaign stays yours. You can offer it again any time."
+    + _OFFER_AGAIN
+)
+# An offer made on the website that DMbot never managed to send (Discord kept failing).
+TOLD_EXPIRED_UNSENT = (
+    "DMbot couldn't get your offer of **{campaign}** to **{name}** within {days} days, so "
+    "it ended. " + _OFFER_AGAIN
 )
 WITHDRAWN = "Offer taken back. **{campaign}** stays yours."
 TOLD_WITHDRAWN = "**{owner}** took back the offer of **{campaign}**. Nothing changed for you."
