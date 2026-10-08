@@ -83,7 +83,8 @@ export const text = {
       "You need a DMbot plan with room for one more campaign. Tap See my plan, then tap Accept again.",
     "offer-gone": "That offer has ended. We've updated this page.",
     "confirm-again": "That took too long. Tap Start deleting again.",
-    "free-access": "You have free access, so there's nothing to pay. Reload this page.",
+    // Only an out-of-date page gets this, so the page updates itself (like no-paid-plan).
+    "free-access": "You have free access, so there's nothing to pay. We've updated this page.",
     "no-paid-plan":
       "Your plan has changed since this page opened, so we've updated it. If nothing looks different, write to us for help.",
   } as Record<string, string>,
@@ -126,6 +127,12 @@ export const text = {
   stillPaying: (plan: string): string =>
     `You're still paying for ${plan}. Tap Stop paying if you don't need it.`,
   stopPaying: "Stop paying",
+  yourPlan: "your plan",
+  freeNext: "In Discord, type /dmbot start to play.",
+  freeEnds: (iso: string, stillPaying: string | null): string =>
+    stillPaying
+      ? `After ${shortDate(iso)} you're back on ${stillPaying}.`
+      : `After ${shortDate(iso)}, pick a plan to keep playing.`,
   lapsed: `Your plan has stopped. Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns
@@ -161,6 +168,9 @@ export const text = {
   // offer is made, so the owner never learns whether someone pays (#437, PLAN).
   acceptNoSlot:
     "To take this campaign you need a DMbot plan with room for one more campaign. Tap See my plan to pick one, then tap Accept again. The offer stays open until the date above.",
+  // Free access has no plans to pick (#806), and never says why someone has it.
+  acceptNoSlotFree:
+    "You can't take on another campaign right now. Hand over one of yours first, then tap Accept again. The offer stays open until the date above.",
   seeMyPlan: "See my plan",
   accepted: (campaign: string): string =>
     `${campaign} is yours now. You're a DM of it in Discord too.`,
@@ -193,6 +203,9 @@ export const text = {
   ],
   /** Shown with the warning when a paid plan would otherwise renew (#435: cancelled at the
    * end of the paid period). */
+  /** The first warning line for someone with free access (#806): no plan, and it goes too. */
+  deleteWarningFree:
+    "This deletes your account and your free access. Your players lose any campaign you run.",
   deletePlanStops:
     "You won't be charged again. Money you've already paid isn't paid back. If you want to ask about that, do it before you delete (see the Refunds page).",
   deleteRefundsLink: "Read the Refunds page",

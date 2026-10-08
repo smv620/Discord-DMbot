@@ -6,13 +6,14 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Account from "../src/account/Account";
-import { ApiError, httpApi } from "../src/account/api";
+import { type Access, ApiError, httpApi, type Me } from "../src/account/api";
 import {
   candidates,
   incomingOffers,
   mockApi,
   outgoingOffer,
   type Scenario,
+  scenarioMe,
 } from "../src/account/mock";
 import { isSafeRedirect } from "../src/account/redirect";
 import { hoursLeftLine, hoursUsedLine, text } from "../src/content/account";
@@ -747,5 +748,64 @@ describe("the HTTP client", () => {
     render(<Account api={api} go={vi.fn()} />);
     await screen.findByText("The Brynwater Crossing");
     expect(screen.queryByRole("button", { name: text.handOver })).toBeNull();
+  });
+});
+
+describe("free access (#806)", () => {
+  // A scenario's data with free access added, as the API sends it after #804.
+  function showFree(scenario: Scenario, access: Access | null) {
+    const api = mockApi(scenario);
+    const base = scenarioMe(scenario);
+    api.me = vi.fn(async (): Promise<Me | null> => (base && access ? { ...base, access } : base));
+    const go = vi.fn<(url: string) => void>();
+    render(<Account api={api} go={go} search="" />);
+    return { api, go };
+  }
+
+  it("says what to do next, and what happens when a dated grant ends", async () => {
+    showFree("lapsed", { kind: "free", endsOn: "2026-12-31" });
+    const next = await screen.findByText(/type \/dmbot start/);
+    expect(next.textContent).toBe(`${text.freeNext} ${text.freeEnds("2026-12-31", null)}`);
+    // A lapsed paid plan under free access: no "plan has stopped", no plans to pick.
+    expect(screen.queryByText(text.lapsed)).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Choose / })).toBeNull();
+  });
+
+  it("a plan in payment grace shows Stop paying, not Fix my payment", async () => {
+    showFree("grace", { kind: "free", stillPaying: true, paidPlan: "Two Tables" });
+    expect(await screen.findByText(text.stillPaying("Two Tables"))).toBeTruthy();
+    expect(screen.getByRole("button", { name: text.stopPaying })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.fixPayment })).toBeNull();
+  });
+
+  it("still paying without a plan name falls back to plain words", async () => {
+    showFree("no-plan", { kind: "free", stillPaying: true });
+    expect(await screen.findByText(text.stillPaying(text.yourPlan))).toBeTruthy();
+  });
+
+  it("Accept without a free slot gives the free-access words and no See my plan", async () => {
+    showFree("offers", { kind: "free" });
+    await screen.findByText(text.offersHeading);
+    const row = document.querySelector('[data-offer="offer-full"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: text.accept }));
+    expect((await within(row).findByRole("alert")).textContent).toBe(text.acceptNoSlotFree);
+    expect(within(row).queryByRole("link", { name: text.seeMyPlan })).toBeNull();
+  });
+
+  it("the delete warning says free access goes too", async () => {
+    showFree("table", { kind: "free" });
+    fireEvent.click(await screen.findByRole("button", { name: text.deleteStart }));
+    expect(screen.getByText(text.deleteWarningFree)).toBeTruthy();
+    expect(screen.queryByText(text.deleteWarning[0] ?? "")).toBeNull();
+  });
+
+  it("an out-of-date Choose updates the page when the API says free access", async () => {
+    const { api } = showFree("no-plan", null);
+    api.checkoutUrl = vi.fn(async () => {
+      throw new ApiError("free-access");
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Choose Table" }));
+    expect(await screen.findByText(text.errors["free-access"] ?? "")).toBeTruthy();
+    await waitFor(() => expect(api.me).toHaveBeenCalledTimes(2));
   });
 });
