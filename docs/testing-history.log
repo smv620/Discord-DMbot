@@ -701,3 +701,12 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     Core rebuilt: "Connected to 1 server(s)", "ears connected", no warnings or errors.
   - The queue's website-API entry (#467 #475 #485 #489) was already done at 01:48
     (migrations 0013 and 0014 applied, see above); web-api still not started (#498).
+
+==============================================================================
+2026-10-08  Server: deploy 64d1e90 (dev1, no test run)
+==============================================================================
+  - 03:55 UTC  development @ 64d1e90: #512 (DM-screen level, #504; migration 0015),
+    #518 (repo docs). Database backed up first ("pre0015", outside the repo; 25 tables);
+    no session was live; .env already matched. Core rebuilt: "Database updated:
+    0015_dm_screen_level", "Connected to 1 server(s)", "ears connected", no warnings.
+    Not queued under Ready to deploy: deployed on the owner's question.
