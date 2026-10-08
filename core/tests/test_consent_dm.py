@@ -29,9 +29,10 @@ TOO_FAST = discord.HTTPException(MagicMock(status=400), "Opening DMs too fast")
 async def cancel_late_lookups(bot: Any) -> None:
     """Stop recorded()'s lookups left running, even ones slow to take the cancel."""
     for _ in range(2):
-        for task in list(bot._late_lookups):
+        for task in list(bot._lookups.values()):
             task.cancel()
         await asyncio.sleep(0)
+    assert not bot._lookups
 
 
 class FakeEars:
@@ -87,6 +88,10 @@ def test_the_warning_comes_off_whatever_the_server_is_called_now() -> None:
     assert c.without_warning(text) == text  # no warning: as it is
     edited = "Stop recording you? Not the warning.\n\n" + text
     assert c.without_warning(edited) == edited
+    later = "Before.\n\n" + c.with_warning("X", text)  # only a warning at the very start
+    assert c.without_warning(later) == later
+    tricky = "A **? DMbot won't write down** @everyone"  # escaped, so it can't end the name
+    assert c.without_warning(c.with_warning(tricky, text)) == text
 
 
 def test_an_old_reminder_gets_the_menus_words_back() -> None:
@@ -721,6 +726,15 @@ class ConsentDMTests(DatabaseTest):
         close.delete_original_response.assert_not_called()  # never deletes the reminder
         assert self.consent.has_consent(GUILD, PLAYER)
 
+    async def test_keep_and_close_for_a_server_not_served_here_still_drop_the_warning(
+        self,
+    ) -> None:
+        warned = c.with_warning("Old name", self.REMINDER)
+        for button in (c.KeepButton(ELSEWHERE), c.CloseButton(ELSEWHERE)):
+            press = self.lasting(self.button_press(PLAYER), warned)
+            await button.callback(press)
+            assert press.response.edit_message.await_args.kwargs["content"] == self.REMINDER
+
     async def test_on_the_reminder_a_stale_keep_corrects_its_text(self) -> None:
         press = self.lasting(self.button_press(PLAYER))  # they stopped another way
         await c.KeepButton(GUILD).callback(press)
@@ -805,8 +819,28 @@ class ConsentDMTests(DatabaseTest):
             menu.response.send_message.await_args.kwargs["view"]
         )
         assert keep.response.edit_message.await_args.kwargs["content"] == self.REMINDER
-        assert self.bot._late_lookups  # left to finish alone, not awaited
+        assert self.bot._lookups.values()  # left to finish alone, not awaited
         await cancel_late_lookups(self.bot)
+
+    async def test_one_lookup_per_person_and_a_late_failure_is_tidied(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.consent = ConsentStore(self.db)  # nothing loaded for this server
+        release = asyncio.Event()
+
+        async def late_failure(*_: Any, **__: Any) -> Any:
+            await release.wait()
+            raise RuntimeError("db down, late")
+
+        self.bot.consent.status = AsyncMock(side_effect=late_failure)  # type: ignore[method-assign]
+        with patch("dmbot.bot.RECORDED_CHECK_S", 0.01), self.assertLogs("dmbot.bot", "WARNING"):
+            assert await self.bot.recorded(GUILD, PLAYER)
+            assert await self.bot.recorded(GUILD, PLAYER)  # waits on the same lookup
+        self.bot.consent.status.assert_awaited_once()
+        (lookup,) = self.bot._lookups.values()
+        release.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert lookup.done() and not self.bot._lookups  # gone, its failure read
 
     async def test_a_failing_database_still_offers_stop(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
