@@ -299,9 +299,13 @@ async def save_visibility(
     guild: discord.Guild,
     store: CampaignStore,
     visibility: str,
+    *,
+    quiet: bool = False,
 ) -> Campaign | None:
     """Change who can see the DM screen (the interaction is already deferred) and say so
-    privately. The campaign as saved, or None if it failed (the DM is told)."""
+    privately. The campaign as saved, or None if it failed (the DM is told). `quiet`: the
+    caller shows the change itself (the ⚙️ Settings card is redrawn), so the private
+    reply is only sent when it adds something (a warning, or peekers losing access)."""
     was = campaign.dm_screen_visibility
     try:
         # Saved and applied together under the campaign's lock.
@@ -316,11 +320,15 @@ async def save_visibility(
         return None
     campaign = result.campaign
     reply = messages.visibility_changed(visibility, was=was)
+    peekers_lost = was == "peek" and visibility == "private"  # the reply says so
+    worth_saying = not quiet or peekers_lost
     if result.warning:
         reply += "\n" + result.warning
+        worth_saying = True
         with contextlib.suppress(discord.HTTPException):
             await result.channel.send(result.warning, allowed_mentions=NO_PINGS)
-    await interaction.followup.send(reply, ephemeral=True, allowed_mentions=NO_PINGS)
+    if worth_saying:
+        await interaction.followup.send(reply, ephemeral=True, allowed_mentions=NO_PINGS)
     # Let a live session catch up (for example, give players the Peek button).
     hook = getattr(interaction.client, "after_screen_change", None)
     if hook is not None:

@@ -23,7 +23,7 @@ from typing import Any
 
 import discord
 
-from dmbot.campaigns import Campaign
+from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_LEVEL,
     DM_SCREEN_LEVELS,
@@ -41,6 +41,7 @@ SETTINGS_LABEL = "Settings"
 ONLY_DM = "Only this campaign's DM (or a server manager) can open or change its settings."
 GONE = "I can't find this campaign anymore. It may have been deleted. To start one: `/dmbot start`."
 FAILED = "Sorry, that didn't save. Please try again."
+LOAD_FAILED = "Sorry, something went wrong. Please try again."
 SAVED = "Saved. Press ⚙️ Settings again to see your settings."
 
 
@@ -61,9 +62,9 @@ def settings_text(campaign: Campaign) -> str:
             f"{what[:1].upper()}{what[1:]}. Warnings always show.",
             f"• **Who can see the DM screen:** {who}",
             "• **Saved transcripts:** anyone in the server can read and download them with "
-            "`/transcript`.",
-            "Tap a button to change it. A session that's running uses the change from its "
-            "next line.",
+            "`/transcript`. (This can't be changed.)",
+            "Tap a button to change it. If DMbot is listening now, it follows the change from "
+            "now on.",
         ]
     )
 
@@ -81,10 +82,17 @@ def settings_view(campaign: Campaign) -> discord.ui.View:
 async def _allowed(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
     """The campaign, if this person may change its settings; otherwise None, after
     telling them why. The same check as the help card's buttons."""
-    allowed = await may_change_screen(
-        interaction, campaign_id, not_dm=ONLY_DM, gone=GONE, failed=FAILED
-    )
+    allowed = await _may(interaction, campaign_id)
     return allowed[0] if allowed is not None else None
+
+
+async def _may(
+    interaction: discord.Interaction, campaign_id: str
+) -> tuple[Campaign, discord.Guild, CampaignStore] | None:
+    """The one check for every settings button, with the card's own words."""
+    return await may_change_screen(
+        interaction, campaign_id, not_dm=ONLY_DM, gone=GONE, failed=LOAD_FAILED
+    )
 
 
 async def _redraw(interaction: discord.Interaction, campaign: Campaign) -> None:
@@ -139,7 +147,7 @@ class SettingsButton(
 
 class LevelButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:level:{_ID}:(?P<level>quiet|normal)",  # the levels offered
+    template=rf"dmbot:level:{_ID}:(?P<level>{'|'.join(DM_SCREEN_LEVELS_OFFERED)})",
 ):
     """How much DMbot says: one tap saves it, and the card shows the new choice."""
 
@@ -211,10 +219,10 @@ class SettingsVisibilityButton(
         return cls(match["campaign"], match["visibility"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        allowed = await may_change_screen(interaction, self.campaign_id)
+        allowed = await _may(interaction, self.campaign_id)
         if allowed is None:
             return
         await interaction.response.defer()  # the card is redrawn after saving
-        saved = await save_visibility(interaction, *allowed, self.visibility)
+        saved = await save_visibility(interaction, *allowed, self.visibility, quiet=True)
         if saved is not None:
             await _redraw(interaction, saved)

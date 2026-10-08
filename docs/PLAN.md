@@ -485,7 +485,12 @@ with Create; Chatty isn't offered until something uses it) and changed any time 
 the "Listening" message (built 2026-10-08, #515). Settings opens privately, for the
 campaign's DMs or a server manager: how much DMbot says (one tap saves it, and a running
 session follows it from its next line) and who can see the DM screen, each tap redrawing
-the card with what's saved, plus where saved transcripts are (`/transcript`).
+the card with what's saved, plus where saved transcripts are (`/transcript`). A level
+change is noted in the DM screen ("🔇 How much DMbot says: Quiet."), so a co-DM knows
+why DMbot went quiet, and a session starting at that moment follows it too (#553). The
+help card is posted again when its words or its buttons change; after a quick restart
+it isn't (it's refreshed at the next `/dmbot start`), so a resumed session may lack
+⚙️ Settings on its Listening message until then (decided, #553).
 Backups carry the level, and a restore uses the backup's (older backups: Normal).
 | Level | What DMbot posts on its own |
 |---|---|
