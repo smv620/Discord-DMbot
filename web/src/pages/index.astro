@@ -17,8 +17,23 @@ import Base from "../layouts/Base.astro";
     <p class="questions">
       <a href="/pricing#questions">Questions about plans and hours? Read the answers.</a>
     </p>
-    <p class="note muted">This page is being written. Check back soon.</p>
   </section>
+
+  <section class="features" aria-label="What DMbot does">
+    <article class="surface feature">
+      <h2>Writes it down</h2>
+      <p class="muted">What was said at the table, as text, from the players who said yes.</p>
+    </article>
+    <article class="surface feature">
+      <h2>Remembers your names</h2>
+      <p class="muted">The people and places your table makes up, from one game to the next.</p>
+    </article>
+    <article class="surface feature">
+      <h2>Quiet tips for the DM</h2>
+      <p class="muted">Only the game master sees them. DMbot never makes up the story or decides.</p>
+    </article>
+  </section>
+  <p class="note muted">This page is being written. Check back soon.</p>
 </Base>
 
 <style>
@@ -39,6 +54,31 @@ import Base from "../layouts/Base.astro";
     display: inline-flex;
     align-items: center;
     min-height: var(--tap);
+  }
+
+  .features {
+    display: grid;
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+  }
+
+  @media (min-width: 48rem) {
+    .features {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  .feature {
+    padding: var(--space-6);
+  }
+
+  .feature h2 {
+    font-size: var(--text-lg);
+    margin-bottom: var(--space-2);
+  }
+
+  .feature p {
+    margin: 0;
   }
 
   .note {

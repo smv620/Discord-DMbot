@@ -53,7 +53,13 @@ const menu = [
     <a class="skip" href="#main">Skip to the page</a>
     <header class="site-header">
       <div class="wrap bar">
-        <a class="brand" href="/">DMbot</a>
+        <a class="brand" href="/">
+          <svg class="mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false">
+            <rect width="32" height="32" rx="8" fill="currentColor" />
+            <path class="mark-letter" d="M10 9h6a7 7 0 0 1 0 14h-6z" fill="none" stroke-width="3" />
+          </svg>
+          DMbot
+        </a>
         <nav aria-label="Main">
           <ul>
             {
@@ -119,7 +125,8 @@ const menu = [
 
   .site-header {
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    background: color-mix(in srgb, var(--surface) 85%, transparent);
+    box-shadow: var(--shadow);
   }
 
   .bar {
@@ -139,6 +146,16 @@ const menu = [
     min-height: var(--tap);
     display: inline-flex;
     align-items: center;
+    gap: var(--space-2);
+  }
+
+  .mark {
+    flex: none;
+    color: var(--accent);
+  }
+
+  .mark-letter {
+    stroke: var(--accent-text);
   }
 
   nav ul,
@@ -193,6 +210,7 @@ const menu = [
 
   .site-footer {
     border-top: 1px solid var(--border);
+    background: var(--surface);
     padding-block: var(--space-6);
     font-size: var(--text-sm);
   }
