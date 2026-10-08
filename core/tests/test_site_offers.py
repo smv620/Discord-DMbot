@@ -58,6 +58,7 @@ class FakeStore:
         self.to_end: list[HandoverOffer] = []
         self.offers: dict[tuple[int, int], HandoverOffer] = {}
         self.claim_lapsed = False
+        self.released: list[tuple[int, int]] = []
         self.told: set[int] = set()
         self.campaign: Any = type(
             "C", (), {"id": "c1", "name": "Frost*maiden", "dm_screen_channel_id": None}
@@ -103,6 +104,7 @@ class FakeStore:
 
     async def release_delivery(self, guild_id: int, o: HandoverOffer) -> None:
         self.claimed.discard((guild_id, o.id))
+        self.released.append((guild_id, o.id))
 
     async def undelivered_offers(self, guild_id: int, now: int) -> list[int]:
         if guild_id in self.fail_reads:
@@ -717,6 +719,7 @@ class DecisionEdges(Harness):
             await self.offers.send(GUILD, 1)  # never raises
         self.assertIn("Couldn't change offer 1's message", logs.output[0])
         self.assertEqual(self.store.sent, {(GUILD, 1)})  # it was sent, and stays so
+        self.assertEqual(self.store.released, [])  # its claim was never given back
 
     async def test_the_dm_screen_note_failing_still_tells_the_owner(self) -> None:
         self.screen()
