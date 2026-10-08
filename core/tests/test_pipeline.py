@@ -18,6 +18,7 @@ from dmbot.transcription.pipeline import (
     SUCCESSES_BEFORE_ALL_CLEAR,
     TranscriptionPipeline,
     clip_budget_s,
+    speech_sent_line,
 )
 
 ONE_SECOND = bytes(32000)
@@ -283,6 +284,32 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.engine.fail = True
         await self.pipeline.process(utt(session=4))
         self.assertEqual((self.pipeline.failed_in[4], self.pipeline.failed_in[3]), (1, 0))
+
+    async def test_speech_sent_is_counted_per_session(self) -> None:
+        await self.pipeline.process(utt(session=3))
+        await self.pipeline.process(utt(pcm=ONE_SECOND * 2, session=3))
+        await self.pipeline.process(utt(session=4))
+        await self.pipeline.process(utt(pcm=bytes(3200), session=3))  # 0.1 s: never sent
+        await self.pipeline.process(utt(user=8, session=3))  # no consent: never sent
+        self.engine.fail = True
+        await self.pipeline.process(utt(session=3))  # refused or failed: not charged
+        self.assertEqual((self.pipeline.sent_s_in[3], self.pipeline.sent_s_in[4]), (3.0, 1.0))
+
+    async def test_speech_that_ran_out_of_time_still_counts(self) -> None:
+        async def slow_engine(utterance: Utterance, hints: list[str]) -> str:
+            await asyncio.sleep(10)
+            return "late"
+
+        self.pipeline._budget_s = lambda d: 0.01
+        self.engine.transcribe = slow_engine  # type: ignore[method-assign]
+        await self.pipeline.process(utt(session=6))  # sent, then ran over: charged
+        self.assertEqual((self.pipeline.skipped, self.pipeline.sent_s_in[6]), (1, 1.0))
+
+    def test_the_speech_sent_line(self) -> None:
+        self.assertEqual(
+            speech_sent_line(3600, 1800), "Listened 60.0 min, sent 30.0 min of speech (50%)"
+        )
+        self.assertEqual(speech_sent_line(0, 0), "Listened 0.0 min, sent 0.0 min of speech (0%)")
 
 
 class BacklogTests(unittest.IsolatedAsyncioTestCase):

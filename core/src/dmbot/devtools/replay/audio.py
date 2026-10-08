@@ -30,6 +30,10 @@ if TYPE_CHECKING:
     import av
 
 FRAME_MS = 20
+# Made-up speakers: no real person has these. One reader is the DM; a second voice,
+# recorded separately (#534), is the player.
+TWIN_SPEAKER = 1001
+TWIN_PLAYER = 1002
 FRAME_BYTES = SAMPLE_RATE * FRAME_MS // 1000 * BYTES_PER_SAMPLE
 # How long the Discord client keeps sending after speech stops.
 HANGOVER_MS = 200
@@ -130,6 +134,7 @@ class Piece:
     """One piece of speech: the frames ears would have sent, each with its time."""
 
     frames: tuple[tuple[int, bytes], ...]  # (milliseconds from the start, 20 ms of PCM)
+    speaker: int = TWIN_SPEAKER
 
     @property
     def start_ms(self) -> int:
@@ -138,6 +143,10 @@ class Piece:
     @property
     def end_ms(self) -> int:
         return self.frames[-1][0] + FRAME_MS
+
+    def moved(self, by_ms: int, speaker: int) -> Piece:
+        """The same speech, said `by_ms` later by `speaker`."""
+        return Piece(tuple((at + by_ms, pcm) for at, pcm in self.frames), speaker)
 
 
 def pieces(

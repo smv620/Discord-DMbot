@@ -386,6 +386,23 @@ class Payments(DatabaseTest):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([r.levelname for r in logs.records], ["WARNING"])
 
+    async def test_a_deleted_plans_last_events_dont_wait_on_a_new_account(self) -> None:
+        # Deletion cancels at the period's end (#435), so the old subscription's last news can
+        # come weeks later, after the person has signed up again: it isn't about them now.
+        await self.start_table()
+        await accounts.delete_person(self.db, ALICE.id)
+        await self.sign_in()  # the same Discord account, a new DMbot account
+        ended: dict[str, Any] = {"kind": "subscription_ended", "subscription_id": "sub_1"}
+        response = await self.send(**ended, occurred_at=self.now + 30 * DAY)
+        self.assertEqual(response.status_code, 200)  # not 503: no redelivery for a month
+        self.assertIsNone(await entitlements.get(self.db, ALICE.id))
+        # And on the Try It they started meanwhile: still not about them.
+        self.assertEqual((await self.post("/plan/try-it")).status_code, 204)
+        response = await self.send(**ended, occurred_at=self.now + 31 * DAY)
+        self.assertEqual(response.status_code, 200)
+        got = await self.plan()
+        self.assertEqual((got.plan, got.status), ("try-it", "active"))
+
     async def test_a_renewal_ends_the_grace(self) -> None:
         await self.start_table()
         await self.send(kind="payment_failed", occurred_at=self.now + 10)

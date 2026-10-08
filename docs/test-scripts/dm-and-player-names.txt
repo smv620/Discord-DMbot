@@ -1,0 +1,6 @@
+### DMbot names list: the two names run 8 adds before the test (#534)
+### Run 7 missed both. For the live test, upload it with /dmbot names -> Add many.
+### For the twin, it sends them to speech-to-text as hints, as the bot would:
+###   scripts/replay ... --names docs/test-scripts/dm-and-player-names.txt
+Auril | god
+Caer-Dineval | place

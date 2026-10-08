@@ -5,6 +5,7 @@ import contextlib
 import dataclasses
 import json
 import logging
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
@@ -665,6 +666,23 @@ class SaveAndResume(SessionTests):
             await self.bot._on_ears_message(Status("joined", guild_id=GUILD))
         self.assertIn("Recording notice NOT posted", "\n".join(logs.output))
 
+    async def test_after_a_restart_the_speech_line_says_so(self) -> None:
+        # #523: the minutes count from the restart, and `resumed` resets on the join.
+        from dmbot.ears.protocol import Status
+
+        await self.start()
+        bot = await self.restart()
+        await bot.resume_sessions()
+        table = bot.tables[GUILD]
+        await bot._on_status(table, Status("joined", guild_id=GUILD))
+        self.assertFalse(table.resumed)
+        with self.assertLogs("dmbot.bot", "INFO") as logs:
+            await bot.stop_table(GUILD, "test")
+            await asyncio.gather(*bot._finishing)
+        self.assertTrue(
+            any("of speech (0%) since the restart" in m for m in logs.output), logs.output
+        )
+
     async def test_resume_and_saved_stop_are_logged(self) -> None:
         await self.start()
         bot = await self.restart()
@@ -757,8 +775,9 @@ class SaveAndResume(SessionTests):
         self.assertIn("✉️ Not recorded yet: Dee. DMbot is asking privately", text)
         self.assertNotIn("0 player", text)
         # #108: the DM stops with one press; the button comes off at the end.
-        (button,) = call.args[2].children
+        settings, button = call.args[2].children  # Settings first (#515)
         self.assertEqual(button.custom_id, f"dmbot:stop:{self.campaign.id}")
+        self.assertEqual(settings.custom_id, f"dmbot:settings:{self.campaign.id}")  # #515
         await self.bot.stop_table(GUILD, "test")
         await asyncio.gather(*self.bot._finishing)
         listening.edit.assert_awaited_with(view=None)
@@ -805,6 +824,28 @@ class SaveAndResume(SessionTests):
         await StopListeningButton(self.campaign.id).callback(manager)
         self.assertIn("Stopped listening", manager.followup.send.await_args.args[0])
         self.assertNotIn(GUILD, self.bot.tables)
+
+    async def test_settings_change_how_much_dmbot_says_mid_session(self) -> None:
+        # #515: ⚙️ Settings → Quiet saves it and the running session follows at once.
+        from dmbot.dm_screen.settings import LevelButton
+
+        await self.start()
+        player = self.press_stop(member(PLAYER))
+        await LevelButton(self.campaign.id, "quiet").callback(player)
+        self.assertIn("Only this campaign's DM", player.response.send_message.await_args.args[0])
+        self.assertEqual(self.bot.tables[GUILD].screen_level, "normal")
+        dm = self.press_stop(member(DM))
+        dm.edit_original_response = AsyncMock()
+        await LevelButton(self.campaign.id, "quiet").callback(dm)
+        self.assertEqual(self.bot.tables[GUILD].screen_level, "quiet")
+        saved = await self.campaigns.get(GUILD, self.campaign.id)
+        assert saved is not None
+        self.assertEqual(saved.dm_screen_level, "quiet")
+        content = dm.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("**How much DMbot says:** Quiet.", content)
+        other = await self.campaigns.create(GUILD, "Strahd", DM)
+        await self.bot.set_screen_level(GUILD, other.id, "normal")  # another campaign
+        self.assertEqual(self.bot.tables[GUILD].screen_level, "quiet")  # untouched
 
     async def test_people_joining_mid_session_are_shown(self) -> None:
         from dmbot.ears.protocol import Status
@@ -1690,6 +1731,22 @@ class SaveAndResume(SessionTests):
         self.assertIn("under a minute", summaries[0])
         self.assertIn("Everything DMbot heard was written down", summaries[0])
         self.assertEqual(self.bot._ending, {})
+
+    async def test_the_log_says_how_much_speech_was_sent(self) -> None:
+        # #523: listening time against speech sent, for the prices; numbers only.
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        release = await self.slow_worker("Words that must stay off the log.")
+        self.queue_speech(table)
+        release.set()
+        table.listening_from = int(time.time()) - 120  # two minutes of listening
+        with self.assertLogs("dmbot.bot", "INFO") as logs:
+            await self.bot.stop_table(GUILD, "test")
+            await asyncio.gather(*self.bot._finishing)
+        line = "Listened 2.0 min, sent 0.0 min of speech (1%)"  # one second of speech
+        self.assertTrue(any(line in m for m in logs.output), logs.output)
+        self.assertNotIn("Words that must", "\n".join(logs.output))
+        self.assertNotIn(table.segmenter.session, self.bot.pipeline.sent_s_in)
 
     async def slow_worker(self, text: str) -> asyncio.Event:
         """A running transcription worker that holds each clip until released."""

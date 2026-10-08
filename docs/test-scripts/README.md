@@ -127,15 +127,29 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
   --transcriber deepgram          # or whisper-local, cloud; --log adds a "Twin run"
 ```
 
-- **The name scan (#395):** with `--names FILE` (a names list, or a setup note such as
-  `bakeoff-story-names-setup.md`) and `stt-bakeoff.md` or `bakeoff-story.md`, the campaign
-  knows those names: they go as the bot's own hints, and the real Cleaner fixes them when
-  misheard. After the replay, the bot's after-session name scan runs on the text as heard
+- **The name scan (#395):** `--names FILE` (a names list, or a setup note such as
+  `bakeoff-story-names-setup.md`) sends those names as the bot's own hints, with any
+  script. With `stt-bakeoff.md` or `bakeoff-story.md`, the campaign also knows them for the
+  name scan, and the real Cleaner fixes them when misheard. After the replay, the bot's after-session name scan runs on the text as heard
   (what it scans today), on the cleaned text (#394), and on the script's own text (the most
   it could find). The record counts the new story names found, known names suggested again,
   rules words suggested and anything else, with the bot's 10-suggestion limit (what the DM
   sees) and without it (the real recall). Without `--names` there's no scan score: the live
   bot never hints names it doesn't know.
+- **Two voices (#534):** [two-voices.md](two-voices.md) is the DM and Player script recorded
+  by one person as two files, one per voice. Give them with
+  `--speakers two-voices-dm.m4a:1001,two-voices-player.m4a:1002` instead of one recording.
+  The twin finds each file's turns at 5 s of quiet (`--turn-quiet-ms`) and plays them in
+  the script's order as two made-up people. Each turn starts 800 ms after the last one ends
+  (`--answer-ms`; a negative number talks over the end). The record adds each speaker's own
+  score.
+  - `--stop 1002@0:25`: that person presses Stop recording me at 0:25 of the replay. What
+    they say after it must never be written down, and the record checks this.
+  - `--agree 1002@0:25`: they say yes only then (the first-time question), so nothing
+    before it is heard. The times are the replay's, as printed under "heard:".
+  - One of these per person. Without `--realtime`, the twin waits at each one for what was
+    said before it to be written down, which is kinder than a table: live, words still
+    being written down when someone stops are thrown away. Only `--realtime` shows that.
 - Recordings other than 16 kHz mono WAV need `pip install -e ".[twin]"` in `core/`.
 - The engine's settings come from the environment, as for the bot.
 - `--realtime` sends the audio as it was spoken, to time the delay a table would see.
@@ -159,6 +173,90 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
   are quiet, not muted. It scores the text as heard, before the name cleaning the transcript
   channel shows (part 2 of #299). So use replays to compare speech-to-text and changes to
   core, and live runs for audio and pieces of speech.
+
+## Run 8: what the twin answers, and what needs Discord (#534)
+
+Live tests need the owner and a table, so run 8 only checks what the twin can't. The twin
+replays recordings through the bot's own code. It can't test Discord itself (buttons,
+private messages, channels, menus, phones) or the live audio.
+
+**The twin answers these.** Each row is its own run. The `--speakers`, `--stop` and `--agree`
+rows wait for #549 (those options and two-voices.md) and for the owner's two recordings of
+two-voices.md; until both are in, check those four live.
+
+| Run 8 item | Twin run, and the line to read |
+|---|---|
+| Each voice's own accuracy, two people taking turns | `scripts/replay --speakers docs/test-scripts/two-voices-dm.m4a:1001,docs/test-scripts/two-voices-player.m4a:1002 --script docs/test-scripts/two-voices.md --transcriber deepgram`: the "DM (1001)" and "Player (1002)" lines |
+| Script score: part 1 (35 words), part 2 (12 terms), the whisper | the same run: "part 1:", "part 2:" and "whisper:" |
+| A player stops: nothing after it is written down | the first command plus `--stop 1002@M:SS`, with a time between two of the player's cues, read from the first run's "heard:" lines (the replay's own clock): "Player stopped at …: 0 pieces (should be 0)" |
+| Capture only after the first-time yes | the first command plus `--agree 1002@M:SS` (a separate run: one change per person): "Player agreed at …: 0 pieces (should be 0)" |
+| Auril and Caer-Dineval with hints (run 7's misses) | `scripts/replay docs/test-scripts/dm-and-player.m4a --script docs/test-scripts/dm-and-player.md --names docs/test-scripts/dm-and-player-names.txt --transcriber deepgram`: "part 2:". Ready now. It sends only those two names as hints (live also sends people's names and the campaign's others), and scores the text as heard, before any name fixing |
+| How much speech goes to Deepgram compared with the time listened (#523) | every record's "speech sent:" line, for a recording. Live gives a real table's number |
+
+**Partly** (the twin helps, but check these live too):
+- First word after a dramatic pause (#121, #270): the twin scores it, but a recording's
+  pauses are quiet, not muted, so how Discord handles a mute is only tested live.
+- Last words kept at a stop (#202): the twin always writes everything down, so only live
+  tests the stop button's wait.
+- Deepgram refusing a long list of names (#262): a twin run with a real names list shows
+  "failed: 0", but a list that short is rarely refused. Only live shows the refusal and
+  the retry in the log.
+
+**Live only** (the short run 8 checklist, in session order):
+
+Before the session
+- [ ] Tell the server session how many people are playing. It redeploys if development has
+  moved. Use a steady connection.
+- [ ] Add Auril and Caer-Dineval: /dmbot names → Add many → upload
+  dm-and-player-names.txt (#244)
+- [ ] Bulk import, setup B of bakeoff-story-names-setup.md: "📥 Added 22 names · 4 already
+  known · 3 look like known names · 2 kinds differ", the questions, then Undo takes all 22
+  back (#425)
+- [ ] The name card: easy to find from /dmbot names (#380); Fix spelling, Edit other
+  names, Remove asks first, Undo brings it back (#223, #226)
+- [ ] Uploads and links in Add many (#249, #389, #408, #414)
+- [ ] Turn an optional rule on and off (#314, #338)
+- [ ] Change how much DMbot says (#512)
+- [ ] Make a backup as a player, then restore it (#241, #345)
+- [ ] Someone who has never agreed before is ready to join voice
+
+Joining and agreeing
+- [ ] Everyone presses I consent before speaking. The first-time request says Deepgram will
+  hear them; nothing is written down until they press Yes
+- [ ] The DM screen's "who is recorded" list updates (#107)
+
+During play
+- [ ] /dmbot start typed inside the transcript channel works (#188)
+- [ ] Lines appear a few seconds after speaking, one per speaker, no pop-ups, and the DM
+  screen stays quiet (#194)
+- [ ] Lines read "(speaker) {character}"; say "Bell Eros" with Belleros known: fixed in
+  the line. Secret names never appear (#283)
+- [ ] Mute at each dramatic pause; the first word after it is still written down (#121,
+  #270)
+- [ ] Someone agrees part-way through, then says one sentence at once: their first word is
+  kept (#306)
+- [ ] A player presses Stop recording me: their lines stop at once (#306)
+- [ ] /consent revoke from the DM screen stops someone (#190)
+- [ ] Use DMbot on a phone too (#284, #288, #302)
+
+Ending
+- [ ] Press Stop listening (#108): last words kept, then the summary, the download and
+  Check new names (#202, #196, #184)
+- [ ] The download's first lines name Deepgram, and its text stays as heard (#492, #283)
+- [ ] Name fixes to check, "Did they mean…" and "Type it…" work (#456, #509, #525)
+- [ ] "It's X" and "New name" on the new names (#405); the name card shows "Last heard"
+  (#220)
+- [ ] /transcript on a campaign played with transcripts off says "No transcripts yet"
+  (#329)
+
+For the server session (from the log afterwards, not at the table)
+- Audio received equals audio expected, and matches the DM screen's audio % (#306, #276);
+  pieces of speech per person
+- Session saved and removed, with reasons (#293); "N opted out" (#329)
+- Change and flag counts after stop (#410, #436); flags look as before (#477, #487)
+- Workers and per-server queues (#309, #464); outage messages (#495, #505)
+- Any "Deepgram refused N keyterms" and what came next (#262)
+- "Listened N min, sent M min of speech" (#543)
 
 ## Record
 

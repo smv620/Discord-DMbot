@@ -74,6 +74,7 @@ from dmbot.dm_screen.name_questions import (
     fix_notes_view,
     question_view,
 )
+from dmbot.dm_screen.settings import LevelButton, SettingsButton, SettingsVisibilityButton
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -116,7 +117,7 @@ from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber
-from dmbot.transcription.pipeline import TranscriptionPipeline
+from dmbot.transcription.pipeline import TranscriptionPipeline, speech_sent_line
 from dmbot.ui import logic as ui_logic
 from dmbot.ui.dmbot_commands import dmbot_group
 from dmbot.ui.name_card import UndoButton
@@ -266,6 +267,8 @@ class Table:
     heard_counts: Counter[tuple[str, int]] = field(default_factory=Counter)
     # The stored transcript (#41, #125): this session's row, and lines not saved yet.
     started_at: int = 0  # Unix seconds; the same after a restart
+    listening_from: int = 0  # Unix seconds; since this process took the session on
+    after_restart: bool = False  # listening_from is a restart (`resumed` resets on join)
     transcript_session_id: str | None = None  # set at the first save
     unsaved: TranscriptBuffer = field(default_factory=TranscriptBuffer)
     transcript_warned: bool = False  # told the DM saving isn't working
@@ -381,6 +384,7 @@ class DMBot(commands.AutoShardedBot):
         self.tree.add_command(transcript_command)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
+        self.add_dynamic_items(SettingsButton, LevelButton, SettingsVisibilityButton)
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
         # "Check new names" on the DM screen after a session.
@@ -644,7 +648,13 @@ class DMBot(commands.AutoShardedBot):
     async def _post_listening(self, table: Table, text: str) -> None:
         """The DM screen's "listening" message, with a Stop listening button (#108). The
         button comes off when the session ends, so old messages can't be pressed."""
-        view = stop_listening_view(table.campaign_id) if table.campaign_id else None
+        view = None
+        if table.campaign_id:
+            # ⚙️ Settings first (#515): the common tap isn't next to Stop's edge.
+            view = discord.ui.View(timeout=None)
+            view.add_item(SettingsButton(table.campaign_id))
+            for item in stop_listening_view(table.campaign_id).children:
+                view.add_item(item)
         message = await self.post_message(table.screen_channel_id, text, view)
         if message is None:
             return
@@ -712,6 +722,8 @@ class DMBot(commands.AutoShardedBot):
         If the consent list can't be loaded, nothing is left half-started.
         """
         self.tables[table.guild_id] = table
+        table.listening_from = int(time.time())
+        table.after_restart = table.resumed
         self.pipeline.session_started(table.guild_id)  # told of an outage afresh (#470)
         try:
             await self.push_allowlist(table.guild_id)
@@ -769,6 +781,13 @@ class DMBot(commands.AutoShardedBot):
                 caught_up = await self.pipeline.drain(session, STOP_DRAIN_TIMEOUT_S)
                 if not caught_up:
                     log.warning("Stopped before the last speech was written down")
+                log.info(
+                    "%s%s",
+                    speech_sent_line(
+                        ended_at - table.listening_from, self.pipeline.sent_s_in.get(session, 0)
+                    ),
+                    " since the restart" if table.after_restart else "",
+                )
                 await self._after_session(table, ended_at, caught_up)
             finally:
                 ending = self._ending.get(gid, [])
@@ -781,6 +800,7 @@ class DMBot(commands.AutoShardedBot):
                         self._hint_people_cache.pop(gid, None)
                 self.pipeline.missed_in.pop(session, None)
                 self.pipeline.failed_in.pop(session, None)
+                self.pipeline.sent_s_in.pop(session, None)
 
     async def _after_session(self, table: Table, ended_at: int, caught_up: bool) -> None:
         sent = 0
@@ -2048,6 +2068,15 @@ class DMBot(commands.AutoShardedBot):
             )
             await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
             return
+
+    async def set_screen_level(self, guild_id: int, campaign_id: str, level: str) -> Campaign:
+        """How much DMbot says in this campaign's DM screen (#504, #515): saved, and a
+        running session (or one still finishing) follows it from its next line."""
+        campaign = await self.campaigns.set_dm_screen_level(guild_id, campaign_id, level)
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if table is not None and table.campaign_id == campaign_id:
+                table.screen_level = campaign.dm_screen_level
+        return campaign
 
     async def _alert_dm(self, guild_id: int, message: str) -> None:
         table = self.tables.get(guild_id)

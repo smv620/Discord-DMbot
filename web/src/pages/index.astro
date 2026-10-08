@@ -14,6 +14,9 @@ import Base from "../layouts/Base.astro";
       are recorded. For 5e-compatible tabletop games.
     </p>
     <a class="button" href="/install">Add DMbot to Discord</a>
+    <p class="questions">
+      <a href="/pricing#questions">Questions about plans and hours? Read the answers.</a>
+    </p>
     <p class="note muted">This page is being written. Check back soon.</p>
   </section>
 </Base>
@@ -26,6 +29,16 @@ import Base from "../layouts/Base.astro";
 
   .lead {
     font-size: var(--text-lg);
+  }
+
+  .questions {
+    margin-top: var(--space-4);
+  }
+
+  .questions a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
   }
 
   .note {

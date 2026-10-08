@@ -723,3 +723,27 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     connected", no warnings or errors.
   - Correction to the 03:55 entry's checklist line: #512 is how much DMbot says in the
     DM screen (quiet / normal / chatty), not a visibility setting.
+
+==============================================================================
+2026-10-08  Server: deploy 35095c7 (dev1, no test run)
+==============================================================================
+  - 04:18 UTC  development @ 35095c7: #527 (the website API's own database role and its
+    limits, #498; migration 0016: two read-only functions), #543 (end-of-session log of
+    listening time against speech sent, #523), #532 (site wording).
+  - Database backed up first ("pre0016", outside the repo; 25 tables); no session was
+    live. scripts/update-env kept 41 values and added DMBOT_WEB_DB_PASSWORD (empty).
+    Postgres was recreated too (#527 added that setting to its Compose block); its data
+    is in the volume and was kept (campaigns still there). Core rebuilt: "Database
+    updated: 0016_web_role_limits", "Connected to 1 server(s)", "ears connected", no
+    warnings or errors.
+  - Not done, on purpose: the dmbot_web role (needs the owner's password in .env and
+    README "Database") and the web-api container. Both wait for go-live (#498).
+
+==============================================================================
+2026-10-08  Server: deploy 4005809 (dev1, no test run)
+==============================================================================
+  - 04:38 UTC  development @ 4005809: #544 (⚙️ Settings on the DM screen: change how
+    much DMbot says any time, #515), #549 (twin: two voices, dev tool, #534). No
+    migrations, no .env changes. Database backed up first (outside the repo; 25 tables);
+    no session was live. Core rebuilt: "Connected to 1 server(s)", "ears connected", no
+    warnings or errors.

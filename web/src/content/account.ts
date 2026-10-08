@@ -149,10 +149,13 @@ export const text = {
   deleteStart: "Start deleting",
   /** Three short lines, the consequence first. */
   deleteWarning: [
-    "This deletes your account and your plan, and stops payments. Your players lose any campaign you run.",
+    "This deletes your account and your plan. Your players lose any campaign you run.",
     "First, hand over or save your campaigns. To save one, type /dmbot backup in Discord.",
     "Backups people already have stay, and so do lines you said in other people's games.",
   ],
+  /** Shown with the warning when a paid plan would otherwise renew (#435: cancelled at the
+   * end of the paid period). */
+  deletePlanStops: "You won't be charged again.",
   deleteHandOverLink: "Hand over a campaign first",
   deleteNext: "Delete everything",
   keep: "Keep my account",
