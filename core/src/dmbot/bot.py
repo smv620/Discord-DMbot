@@ -76,6 +76,7 @@ from dmbot.dm_screen.handover import (
     TakeOnButton,
     WithdrawOfferButton,
 )
+from dmbot.dm_screen.left_out import PutBackButton, left_out_view
 from dmbot.dm_screen.name_questions import (
     FixUndoButton,
     NameAnswerUndoButton,
@@ -115,7 +116,7 @@ from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SavedSession, SessionStore
-from dmbot.transcript import fix_notes
+from dmbot.transcript import fix_notes, left_out
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
@@ -126,6 +127,7 @@ from dmbot.transcript.cleaner import (
     safe_answer,
     with_ending,
 )
+from dmbot.transcript.export import clock
 from dmbot.transcript.models import Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
@@ -272,7 +274,12 @@ class Table:
     fix_message: discord.Message | None = None
     fix_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     fix_queued: bool = False  # a redraw is waiting: more changes just ride along
-    fix_ended: bool = False  # the session is over: the list stays, the Undo buttons go
+    fix_ended: bool = False  # the session is over: the lists stay, their buttons go
+    # Lines the off-topic filter left out, each run with Put it back (#677), likewise.
+    left_out: left_out.LeftOut = field(default_factory=left_out.LeftOut)
+    left_out_message: discord.Message | None = None
+    left_out_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    left_out_queued: bool = False
     people: tuple[str, ...] = ()
     # The whole session's numbers, for the summary when it ends (#109).
     totals: SessionTotals = field(default_factory=SessionTotals)
@@ -484,6 +491,7 @@ class DMBot(commands.AutoShardedBot):
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
         self.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton, FixUndoButton)
+        self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
         # A player's 📜 My character sheet, in their private messages (#723).
         self.add_dynamic_items(MySheetButton)
         if self.settings.dev_guild_id:
@@ -615,6 +623,8 @@ class DMBot(commands.AutoShardedBot):
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
             if table.fix_notes.drop_speaker(user_id):  # their fixes leave the DM screen
                 self._redraw_fix_notes(table)
+            if table.left_out.drop_speaker(user_id):  # and their lines left out (#677)
+                self._redraw_left_out(table)
             if table.questions.drop_speaker(user_id, time.monotonic()) is not None:
                 self._track(self._close_question(table), "name-question")
             for key in [k for k in table.heard_counts if k[1] == user_id]:
@@ -938,6 +948,7 @@ class DMBot(commands.AutoShardedBot):
                 self._track(self._close_question(table, self._not_answered(table, ended)), "q")
         table.fix_ended = True  # the fixes stay listed; their Undo buttons go
         self._redraw_fix_notes(table)
+        self._redraw_left_out(table)  # likewise the lines left out, and Put it back
         for utterance in table.segmenter.flush_all():
             self.pipeline.enqueue(utterance)
         # In the background: /dmbot stop must answer within Discord's 3 seconds. Kept
@@ -1917,7 +1928,7 @@ class DMBot(commands.AutoShardedBot):
             if topic == OFF_TOPIC:
                 hide.append(waiting)
         if hide:
-            await self._hide_lines(table, hide)
+            await self._hide_lines(table, hide, lines)
 
     async def _save_topic(self, table: Table, waiting: Waiting, topic: str) -> None:
         """Save a line's topic, waiting or saved. Only while its speaker is recorded."""
@@ -1934,15 +1945,21 @@ class DMBot(commands.AutoShardedBot):
                     except Exception:
                         log.exception("Couldn't save a line's topic")
 
-    async def _hide_lines(self, table: Table, lines: list[Waiting]) -> None:
+    async def _hide_lines(
+        self, table: Table, lines: list[Waiting], checked: list[Waiting] | None = None
+    ) -> None:
         """Off-topic lines in the live channel become their markers: every line first,
         then each message edited once (one window could otherwise edit one message six
-        times, while new lines wait for this lock)."""
+        times, while new lines wait for this lock). The DM screen lists them, with Put
+        it back (#677), while the session runs. `checked`: all the lines of that check,
+        so another line said in between ends a run."""
         async with table.transcript_lock:
             edits: dict[int, tuple[transcript_lines.Editable, str]] = {}
+            hidden = []
             for waiting in lines:
                 if not self.consent.has_consent(table.guild_id, waiting.speaker):
                     continue
+                hidden.append(waiting)
                 table.hidden.add((waiting.speaker, waiting.started_ms))
                 edit = table.transcript.relabel(
                     waiting.speaker,
@@ -1952,6 +1969,10 @@ class DMBot(commands.AutoShardedBot):
                 )
                 if edit is not None:
                     edits[id(edit[0])] = edit  # the latest content has every change
+            # Before any await: a Stop now finds them listed, and takes them down.
+            running = self.tables.get(table.guild_id) is table and not table.fix_ended
+            if hidden and running and table.left_out.add(hidden, checked or lines):
+                self._redraw_left_out(table)
             for message, content in edits.values():
                 with contextlib.suppress(discord.HTTPException, TimeoutError):
                     await asyncio.wait_for(
@@ -2220,6 +2241,150 @@ class DMBot(commands.AutoShardedBot):
         if self.lookup is not None:
             self.lookup.mark_stale(guild_id, campaign_id)
         return fix_notes.ALLOWED
+
+    def _redraw_left_out(self, table: Table) -> None:
+        """Bring the "🙈 Left out as off-topic" message up to date, soon (#677): one
+        redraw at a time and at most one waiting, as for the name fixes."""
+        if table.left_out_queued:
+            return
+        table.left_out_queued = True
+        self._track(self._show_left_out(table), "left-out")
+
+    async def _show_left_out(self, table: Table) -> None:
+        """Post or update the left-out message (#677): only in the DM screen, at every
+        level (it's the DM's only chance to undo; edited in place, it never pings); only
+        lines of people still recorded (checked as it's drawn); no buttons once the
+        session ended."""
+        async with table.left_out_lock:
+            table.left_out_queued = False
+            runs = [
+                r
+                for r in table.left_out.shown()
+                if self.consent.has_consent(table.guild_id, r.speaker)
+            ]
+            if not runs and table.left_out_message is None:
+                return
+            names = {}
+            for run in runs:
+                name = self.name_of(table.guild_id, run.speaker)
+                names[run.speaker] = (
+                    "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
+                )
+            start_ms = table.started_at * 1000
+
+            def when(started_ms: int) -> str:
+                return clock((started_ms - start_ms) / 1000)
+
+            text, shown = left_out.message_text(runs, names, when, transcript_lines.escape)
+            view = None if table.fix_ended else left_out_view(table.guild_id, shown)
+            if table.left_out_message is not None:
+                try:
+                    await table.left_out_message.edit(
+                        content=text, view=view, allowed_mentions=NO_PINGS
+                    )
+                    return
+                except discord.NotFound:
+                    table.left_out_message = None  # deleted, or a new DM screen: post again
+                except discord.HTTPException:
+                    return
+            if not table.fix_ended:
+                table.left_out_message = await self.post_message(
+                    table.screen_channel_id, text, view
+                )
+
+    async def put_back(self, guild_id: int, run_id: str, user_id: int) -> str:
+        """The DM pressed Put it back (#677): that run's lines are game talk again, saved
+        or waiting to be saved, in the live channel if still recent, and in the names
+        scan (once). Only for the running session; what to tell them. Consent is
+        checked after every await."""
+        table = self.tables.get(guild_id)
+        run = table.left_out.find(run_id) if table is not None and not table.fix_ended else None
+        if table is None or run is None:
+            return left_out.EXPIRED
+        if not table.is_dm(user_id):
+            return left_out.ONLY_DM
+        if not self.consent.has_consent(guild_id, run.speaker):
+            self._redraw_left_out(table)  # their lines shouldn't be listed any more
+            return left_out.STOPPED
+        if run.put_back:
+            return left_out.ALREADY
+        run.put_back = True  # before any await: put back once
+        if not await self._restore_topics(table, run.lines):
+            run.put_back = False  # not saved: can be pressed again
+            return left_out.NOT_SAVED
+        self._redraw_left_out(table)
+        if not self.consent.has_consent(guild_id, run.speaker):
+            return left_out.STOPPED  # stopped meanwhile: nothing about their lines
+        in_channel = await self._show_lines_again(table, run.lines)
+        if not self.consent.has_consent(guild_id, run.speaker):
+            return left_out.STOPPED
+        for line in run.lines:  # what the names scan would have had (#52)
+            if len(table.heard) < HEARD_MAX:
+                table.heard.append((line.speaker, self._words_now(table, line)))
+        return left_out.done_text(in_channel=in_channel)
+
+    async def _restore_topics(self, table: Table, lines: list[Waiting]) -> bool:
+        """Lines left out become game talk again, waiting or saved. False if saving
+        failed (logged); a line in neither place has nothing to change."""
+        guild_id, session_id = table.guild_id, table.transcript_session_id
+        async with table.save_lock:
+            for line in lines:
+                if not self.consent.has_consent(guild_id, line.speaker):
+                    return True  # stopped: their lines are being dropped, not changed
+                if table.unsaved.set_topic(line.speaker, line.started_ms, GAME):
+                    continue
+                if self.transcripts is None or session_id is None:
+                    continue
+                try:
+                    await self.transcripts.set_topic(
+                        guild_id, session_id, line.speaker, line.started_ms, GAME
+                    )
+                except Exception:
+                    log.exception("Couldn't put a line left out as off-topic back")
+                    return False
+        return True
+
+    async def _show_lines_again(self, table: Table, lines: list[Waiting]) -> bool:
+        """The live channel shows these lines' words again instead of their markers,
+        each message edited once. True if every line could be changed there (it can
+        only be, about 30 s after it's posted)."""
+        changed = True
+        async with table.transcript_lock:
+            edits: dict[int, tuple[transcript_lines.Editable, str]] = {}
+            now = time.monotonic()
+            for line in lines:
+                table.hidden.discard((line.speaker, line.started_ms))
+                if not self.consent.has_consent(table.guild_id, line.speaker):
+                    return False
+                if not table.transcript.can_change(line.speaker, line.started_ms, now):
+                    changed = False
+                    continue
+                words = self._words_now(table, line)
+                edit = table.transcript.relabel(line.speaker, line.started_ms, words, now)
+                if edit is not None:
+                    edits[id(edit[0])] = edit  # the latest content has every change
+            for message, content in edits.values():
+                try:
+                    await asyncio.wait_for(
+                        message.edit(content=content, allowed_mentions=NO_PINGS),
+                        EDIT_TIMEOUT_S,
+                    )
+                except (discord.HTTPException, TimeoutError):
+                    changed = False
+        return changed
+
+    @staticmethod
+    def _words_now(table: Table, line: Waiting) -> str:
+        """A line's words now: as cleaned, with any name fix the DM undid or answered
+        since (#296, #503)."""
+        notes, key = table.fix_notes, (line.speaker, line.started_ms)
+        note = next((n for n in notes.notes if n.line == key), None)
+        if note is not None:
+            return notes.line_text(note)
+        answer = next((a for a in notes.answers if a.line == key), None)
+        if answer is not None:
+            return notes.words_now(line.speaker, line.started_ms, answer.heard, answer.fixes)
+        return line.text
 
     def _session_table(self, guild_id: int, question_id: str) -> Table | None:
         """The table, running or still finishing, whose question this is."""

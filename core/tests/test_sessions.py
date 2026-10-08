@@ -1481,6 +1481,136 @@ class SaveAndResume(SessionTests):
         self.assertNotIn("boss", content)
         self.assertEqual(content.count("of off-topic chat skipped"), 2)  # brackets escaped
 
+    async def left_out_line(self, level: str = "normal") -> tuple[Any, Any, Any]:
+        """#677: the player's line left out as off-topic (the DM's kept), posted in the
+        live channel and listed in the DM screen. The table, the channel message, and
+        the DM screen's message."""
+        table = await self.filtered("1 other\n2 game")
+        table.screen_level = level
+        posted = MagicMock(edit=AsyncMock())
+
+        async def post(channel_id: int, text: str) -> Any:
+            return "posted", posted
+
+        self.bot._post_transcript = post  # type: ignore[method-assign]
+        screen = MagicMock(edit=AsyncMock())
+        self.bot.post_message = AsyncMock(return_value=screen)  # type: ignore[method-assign]
+        self.said(table, "my boss called again")
+        self.said(table, "we sneak past the guards", user=DM, at_ms=5_000)
+        await self.bot.flush_transcript(table)
+        await self.settle()
+        return table, posted, screen
+
+    async def test_a_line_left_out_is_listed_with_put_it_back_even_at_quiet(self) -> None:
+        await self.left_out_line("quiet")  # the DM's only chance to undo
+        channel, text, view = self.bot.post_message.await_args.args  # type: ignore[attr-defined]
+        self.assertEqual(channel, SCREEN)  # the DM screen, never the transcript channel
+        self.assertIn("🙈 **Left out as off-topic** (tap Put it back if it was game talk)", text)
+        self.assertIn("1. [0:00:00] Someone: my boss called again", text)
+        self.assertNotIn("sneak", text)  # kept lines aren't listed
+        self.assertEqual([b.item.label for b in view.children], ["Put it back 1"])
+
+    async def test_put_it_back_brings_the_line_back_everywhere_once(self) -> None:
+        from dmbot.transcript import export
+        from dmbot.transcript.models import TranscriptSession
+
+        table, posted, screen = await self.left_out_line()
+        (run,) = table.left_out.runs
+        self.assertNotIn("boss", posted.edit.await_args.kwargs["content"])  # a marker now
+        answer = await self.bot.put_back(GUILD, run.id, DM)
+        self.assertIn("Put back: those lines are in the cleaned transcript again", answer)
+        self.assertNotIn("still shows", answer)
+        topics = {line.text: line.topic for line in table.unsaved._waiting}
+        self.assertEqual(topics["my boss called again"], "game")
+        channel = posted.edit.await_args.kwargs["content"]
+        self.assertIn("my boss called again", channel)
+        self.assertNotIn("off-topic chat skipped", channel)
+        session = TranscriptSession("s", GUILD, "c", 0, None)
+        cleaned = export.render("X", session, table.unsaved._waiting, {}, version=export.CLEANED)
+        self.assertIn("my boss called again", cleaned)
+        self.assertNotIn("skipped]", cleaned)
+        scanned = [text for _, text in table.heard]
+        self.assertEqual(scanned.count("my boss called again"), 1)
+        self.assertEqual(table.hidden, set())  # a later name Undo may edit it again
+        await self.settle()
+        drawn = screen.edit.await_args.kwargs
+        self.assertIn("1. Put back: [0:00:00] Someone: my boss called again", drawn["content"])
+        self.assertIsNone(drawn["view"])  # nothing left to press
+        self.assertIn("already back", await self.bot.put_back(GUILD, run.id, DM))
+        self.assertEqual([text for _, text in table.heard], scanned)  # scanned once
+
+    async def test_put_it_back_changes_a_saved_line_or_can_be_pressed_again(self) -> None:
+        table, _, _ = await self.left_out_line()
+        (run,) = table.left_out.runs
+        table.unsaved.take(lambda _: True)  # already saved
+        table.transcript_session_id = "s5"
+        store = MagicMock(set_topic=AsyncMock(side_effect=[RuntimeError("database down"), 1]))
+        self.bot.transcripts = store
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            answer = await self.bot.put_back(GUILD, run.id, DM)
+        self.assertIn("Try again", answer)
+        self.assertNotIn("my boss called again", [text for _, text in table.heard])
+        answer = await self.bot.put_back(GUILD, run.id, DM)
+        self.assertIn("Put back", answer)
+        store.set_topic.assert_awaited_with(GUILD, "s5", PLAYER, 0, "game")
+
+    async def test_only_the_dm_can_put_a_line_back(self) -> None:
+        table, posted, _ = await self.left_out_line()
+        (run,) = table.left_out.runs
+        edits = posted.edit.await_count
+        answer = await self.bot.put_back(GUILD, run.id, PLAYER)
+        self.assertIn("Only this campaign's DM", answer)
+        topics = {line.text: line.topic for line in table.unsaved._waiting}
+        self.assertEqual(topics["my boss called again"], "off_topic")
+        self.assertEqual(posted.edit.await_count, edits)
+        self.assertFalse(run.put_back)
+
+    async def test_no_put_it_back_after_the_session_ends(self) -> None:
+        table, _, screen = await self.left_out_line()
+        (run,) = table.left_out.runs
+        await self.bot.stop_table(GUILD, "test")
+        await self.settle()
+        self.assertIsNone(screen.edit.await_args.kwargs["view"])  # the buttons go
+        self.assertIn("closed", await self.bot.put_back(GUILD, run.id, DM))
+        topics = {line.text: line.topic for line in table.unsaved._waiting}
+        self.assertEqual(topics.get("my boss called again", "off_topic"), "off_topic")
+
+    async def test_another_campaigns_session_never_sees_these_lines(self) -> None:
+        import dataclasses
+
+        from dmbot.transcript.left_out import LeftOut
+
+        table, _, _ = await self.left_out_line()
+        (run,) = table.left_out.runs
+        other = await self.campaigns.create(GUILD, "Rime", DM)
+        # Campaign A is still finishing; campaign B's session now runs in the server.
+        rime = dataclasses.replace(
+            table, campaign_id=other.id, left_out=LeftOut(), left_out_message=None
+        )
+        self.bot.tables[GUILD] = rime
+        self.bot._ending[GUILD] = [table]
+        self.addCleanup(self.bot._ending.pop, GUILD, None)
+        self.assertIn("closed", await self.bot.put_back(GUILD, run.id, DM))
+        self.assertFalse(run.put_back)
+        self.said(rime, "did you see the match", at_ms=9_000)
+        self.said(rime, "we sneak past again", user=DM, at_ms=12_000)
+        await self.settle()
+        (theirs,) = rime.left_out.runs
+        self.assertNotEqual(theirs.id, run.id)
+        text = self.bot.post_message.await_args.args[1]  # type: ignore[attr-defined]
+        self.assertIn("did you see the match", text)
+        self.assertNotIn("my boss", text)  # campaign A's line never shows in B's list
+        self.assertEqual(len(table.left_out.runs), 1)
+
+    async def test_someone_who_stops_has_their_lines_taken_down(self) -> None:
+        table, _, screen = await self.left_out_line()
+        (run,) = table.left_out.runs
+        self.bot.stop_recording(GUILD, PLAYER)
+        await self.settle()
+        self.assertEqual(table.left_out.runs, [])
+        self.assertNotIn("boss", screen.edit.await_args.kwargs["content"])
+        self.assertIn("closed", await self.bot.put_back(GUILD, run.id, DM))
+
     async def test_table_talk_is_kept_everywhere(self) -> None:
         table = await self.filtered("1 table\n2 game")
         self.said(table, "wait whose turn is it")
