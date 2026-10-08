@@ -438,7 +438,17 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   `/consent revoke` shows the same warning. Rules that keep stopping easy:
   - one warning, one tap to confirm; never a second ask, a wait, or a reason to give;
   - plain facts only, no guilt ("you'll ruin the game") and no pressure;
-  - **Keep recording** changes nothing and says nothing more;
+  - **Keep recording** changes nothing; it says "OK, DMbot keeps recording you in
+    <server>" and how to stop later;
+  - **in place on lasting messages** (2026-10-08, #807): on the per-session reminder and
+    the "you said yes" message, ⚙️ Menu swaps that message's buttons for the menu, Stop
+    puts the warning at the top of that message's text, Yes leaves it reading "🛑
+    Stopped…" with ✅ I consent, and Keep or Close restore it exactly. So a reminder never
+    keeps saying "recording you" after a stop. The warning is in the text, never an embed,
+    because Discord hides embeds for people who turn previews off;
+  - ⚙️ Menu and `/consent revoke` answer from the in-memory consent first, never waiting
+    on the database before Discord's 3-second limit, so stopping can't fail on a slow
+    database;
   - a 🛑 button on a message sent before this change shows the warning too;
   - **No thanks** on the first request stays one tap (nothing is recorded yet).
   Why: the owner wants a calmer message, and people who stop should know what it costs
