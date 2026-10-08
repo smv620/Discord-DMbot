@@ -38,8 +38,10 @@ from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
+    _answer_first,
     _bot,
     _Button,
+    _failed,
     _is_manager,
     _Menu,
     _replace,
@@ -230,9 +232,13 @@ async def show_card(
 ) -> None:
     """The card, as a new private message or in place of the one pressed; `note` goes
     on top (what just changed). `full`: Show all."""
+    await _answer_first(interaction, in_place=replace)  # names may load slowly (#537)
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
-    if campaign is None or memory is None:
+    if campaign is None:
+        return
+    if memory is None:  # never leave Discord's "thinking…" up
+        await _tell(interaction, NOT_AVAILABLE)
         return
     names = await _names(interaction, campaign)
     if names is None:
@@ -322,6 +328,7 @@ class NameCard(_Menu):
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True, full=True)
 
     async def _edit_others(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
         found = await _current(interaction, self.campaign_id, self.entity_id)
         if found is None:
             return
@@ -354,6 +361,7 @@ class NameCard(_Menu):
             )
 
     async def _connect(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
         found = await _current(interaction, self.campaign_id, self.entity_id)
         if found is None:
             return
@@ -447,6 +455,7 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
         self.name.default = current[:NAME_LIMIT]
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)  # saves, then reloads names
         found = await _current(interaction, self.campaign_id, self.entity_id)
         memory = _memory(interaction)
         if found is None or memory is None:
@@ -493,6 +502,7 @@ class AnotherNameForm(discord.ui.Modal, title="Add another name"):
             self.other.required = True
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)  # saves, then reloads names
         found = await _current(interaction, self.campaign_id, self.entity_id)
         memory = _memory(interaction)
         if found is None or memory is None:
@@ -557,6 +567,7 @@ class KindChange(_Menu):
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:
@@ -585,6 +596,7 @@ class KindChange(_Menu):
         if player.bot:
             await _tell(interaction, "Pick a person, not a bot.")
             return
+        await _answer_first(interaction, in_place=True)
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:
@@ -816,6 +828,7 @@ class OneName(_Menu):
         self.add_item(_Button(self._back, label="Back", style=grey))
 
     async def _main(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
         found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
         memory = _memory(interaction)
         if found is None or memory is None:
@@ -837,6 +850,7 @@ class OneName(_Menu):
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
     async def _secret(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
         found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
         memory = _memory(interaction)
         if found is None or memory is None:
@@ -863,6 +877,7 @@ class OneName(_Menu):
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
     async def _not_this(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
         found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
         memory = _memory(interaction)
         if found is None or memory is None:
@@ -909,6 +924,11 @@ class PickForm(discord.ui.Modal, title="Find the other name"):
         self.entity_id = entity_id
         self.how = how
 
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await show_picks(interaction, self.campaign_id, self.entity_id, self.how, self.typed.value)
 
@@ -925,6 +945,7 @@ def _asked(name: str, how: str) -> str:
 async def show_picks(
     interaction: discord.Interaction, campaign_id: str, entity_id: str, how: str, typed: str
 ) -> None:
+    await _answer_first(interaction, in_place=True)
     found = await _current(interaction, campaign_id, entity_id)
     if found is None:
         return
@@ -973,6 +994,7 @@ class PickOther(_Menu):
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         other_id = self.pick.values[0]
+        await _answer_first(interaction, in_place=True)
         if self.how == SAME:
             found = await _current(interaction, self.campaign_id, self.entity_id)
             other = await _current(interaction, self.campaign_id, other_id) if found else None
@@ -1117,6 +1139,7 @@ class Connect(_Menu):
             )
 
     async def _remove_picked(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
         found = await _current(interaction, self.campaign_id, self.entity_id)
         memory = _memory(interaction)
         if found is None or memory is None:
@@ -1159,6 +1182,7 @@ async def connect(
     interaction: discord.Interaction, campaign_id: str, entity_id: str, how: str, other_id: str
 ) -> None:
     """Save the connection the DM picked (confirmed: the DM said it), then the card."""
+    await _answer_first(interaction, in_place=True)
     found = await _current(interaction, campaign_id, entity_id)
     other = await _current(interaction, campaign_id, other_id) if found else None
     memory = _memory(interaction)
@@ -1210,6 +1234,11 @@ class FindForm(discord.ui.Modal, title="Find a name"):
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign_id = campaign_id
 
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await show_matches(interaction, self.campaign_id, self.typed.value)
 
@@ -1222,6 +1251,7 @@ def _label(names: CampaignLookup, m: Match) -> str:
 
 
 async def show_matches(interaction: discord.Interaction, campaign_id: str, typed: str) -> None:
+    await _answer_first(interaction)  # names may load slowly (#537)
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return

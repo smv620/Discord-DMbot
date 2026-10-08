@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
@@ -216,11 +217,14 @@ class LookupCache:
         slot = self._slots.setdefault((guild_id, campaign_id), _Slot())
         if slot.lookup is not None and not slot.stale:
             return slot.lookup
+        asked = time.perf_counter()
         async with slot.lock:  # one load at a time per campaign
             if slot.lookup is None or slot.stale:
                 slot.stale = False  # a change arriving during the load marks it again
+                started = time.perf_counter()
                 try:
                     data = await self._source.lookup_data(guild_id, campaign_id)
+                    loaded = time.perf_counter()
                     # Off the event loop's own turn, so voice keeps flowing while a big
                     # campaign is indexed.
                     slot.lookup = await asyncio.to_thread(CampaignLookup.build, data)
@@ -229,6 +233,17 @@ class LookupCache:
                     # change could be a name the DM just made secret.
                     slot.stale = True
                     raise
+                built = time.perf_counter()
+                log.info(  # how long a menu waits on a cold copy, and on what (#537)
+                    "Built names for campaign %s in %d ms (waited %d, database %d, "
+                    "index %d; %d names)",
+                    campaign_id,
+                    (built - asked) * 1000,
+                    (started - asked) * 1000,
+                    (loaded - started) * 1000,
+                    (built - loaded) * 1000,
+                    len(slot.lookup.entities),
+                )
             return slot.lookup
 
     def changed(self, event: notify.MemoryChanged) -> None:

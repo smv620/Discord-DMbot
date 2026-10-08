@@ -99,6 +99,11 @@ class _Menu(discord.ui.View):
             with contextlib.suppress(discord.HTTPException):
                 await self.origin.edit_original_response(content=TIMED_OUT, view=None)
 
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]
+    ) -> None:
+        await _failed(interaction, error)
+
 
 def _bot(interaction: discord.Interaction) -> DMBot:
     return cast("DMBot", interaction.client)
@@ -146,6 +151,29 @@ async def _replace(interaction: discord.Interaction, text: str, view: _Menu | No
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
     if view is not None:
         view.origin = interaction
+
+
+async def _answer_first(interaction: discord.Interaction, *, in_place: bool = False) -> None:
+    """Answer Discord before a step that may be slow (loading a campaign's names, the
+    database): it gives up after 3 seconds (#537). `in_place`: the reply will edit the
+    message pressed (_replace); otherwise it's a new private message (_send, _tell)."""
+    if interaction.response.is_done():
+        return
+    if in_place:
+        await interaction.response.defer()
+    else:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+
+TRY_AGAIN = "DMbot couldn't do that just now. Try again in a moment."
+
+
+async def _failed(interaction: discord.Interaction, error: Exception) -> None:
+    """A button, menu or form broke. Say so: once answered first (_answer_first),
+    Discord would otherwise show "thinking…" or nothing at all, for good."""
+    log.error("A menu step failed", exc_info=error)
+    with contextlib.suppress(discord.HTTPException):
+        await _tell(interaction, TRY_AGAIN)
 
 
 NOT_IN_SERVER = "Use this in a server."

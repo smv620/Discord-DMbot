@@ -27,6 +27,7 @@ from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
+    _answer_first,
     _bot,
     _Button,
     _is_manager,
@@ -310,6 +311,7 @@ class NamesHome(_Menu):
 
 
 async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
+    await _answer_first(interaction)  # a big campaign's names take a while to load (#537)
     memory = _memory(interaction)
     cache = _bot(interaction).lookup
     if memory is None or cache is None:
@@ -523,6 +525,7 @@ class KindPicker(_Menu):
         self.add_item(self.pick)
 
     async def _picked(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)  # saves, then reloads names
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:

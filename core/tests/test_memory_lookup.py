@@ -188,6 +188,17 @@ class Cache(unittest.IsolatedAsyncioTestCase):
         second = await self.cache.get(1, "camp")
         self.assertEqual((second.version, self.source.calls), (2, 2))
 
+    async def test_each_build_is_logged_with_its_time_once(self) -> None:
+        with self.assertLogs("dmbot.memory.lookup", "INFO") as logs:
+            await self.cache.get(1, "camp")
+            await self.cache.get(1, "camp")  # from the copy: not built again
+        (line,) = logs.output
+        self.assertRegex(
+            line,
+            r"Built names for campaign camp in \d+ ms "
+            r"\(waited \d+, database \d+, index \d+; \d+ names\)",
+        )
+
     async def test_servers_and_campaigns_have_their_own_copies(self) -> None:
         await self.cache.get(1, "camp")
         await self.cache.get(2, "camp")

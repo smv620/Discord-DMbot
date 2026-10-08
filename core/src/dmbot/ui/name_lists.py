@@ -59,7 +59,18 @@ from dmbot.memory.name_list import (
     template,
 )
 from dmbot.ui import logic
-from dmbot.ui.dmbot_commands import NO_PINGS, _bot, _Button, _Menu, _replace, _Select, _send, _tell
+from dmbot.ui.dmbot_commands import (
+    NO_PINGS,
+    _answer_first,
+    _bot,
+    _Button,
+    _failed,
+    _Menu,
+    _replace,
+    _Select,
+    _send,
+    _tell,
+)
 from dmbot.ui.list_matches import UNKNOWN_KIND, KindDiffers, Near, plan
 from dmbot.ui.names import (
     KIND_SHORT,
@@ -249,6 +260,7 @@ class Browse(_Menu):
         return "\n".join(lines)
 
     async def _redraw(self, interaction: discord.Interaction, **changes: Any) -> None:
+        await _answer_first(interaction, in_place=True)
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
             return
@@ -286,6 +298,7 @@ class Browse(_Menu):
 
 
 async def show_browse(interaction: discord.Interaction, campaign_id: str) -> None:
+    await _answer_first(interaction)  # a big campaign's names take a while to load (#537)
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
@@ -1028,39 +1041,67 @@ class KindSelect(discord.ui.Select["KindQuestions"]):
 
 
 class KindQuestions(discord.ui.View):
-    """ "wizard (50): what is it?" once per unknown kind word, under the summary."""
+    """ "wizard (50): what is it?" once per unknown kind word, under the summary. Each
+    answer saves with the menus taken away (no second pick), like _Questions."""
 
     def __init__(self, campaign_id: str, asked: list[tuple[str, list[str]]]) -> None:
         super().__init__(timeout=60 * 60)
         self.campaign_id = campaign_id
+        self.busy = False
+        self.summary: str | None = None  # the message's text above the answers
+        self.notes: list[str] = []  # one per answer, kept here: never read back (#537)
         for row, (word, ids) in enumerate(asked):
             self.add_item(KindSelect(self, word, ids, row))
 
+    def text(self) -> str:
+        return _fit("\n".join([self.summary or "", *self.notes]).split("\n"))
+
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]
+    ) -> None:
+        await _failed(interaction, error)
+
     async def picked(self, select: KindSelect, interaction: discord.Interaction) -> None:
-        campaign = await _campaign_for(interaction, self.campaign_id)
-        memory = _memory(interaction)
-        if campaign is None or memory is None:
+        if self.busy:  # picked again while saving
+            await interaction.response.defer()
             return
-        kind = select.values[0]
+        if self.summary is None:
+            self.summary = interaction.message.content if interaction.message else ""
+        self.busy = True
         try:
-            written = await memory.confirm_kinds(
-                campaign.guild_id, campaign.id, select.ids, kind, source=DM
+            await interaction.response.edit_message(  # at once: saving many takes a while
+                content=_fit(self.text().split("\n"), 1990 - len(SAVING)) + SAVING, view=None,
+                allowed_mentions=NO_PINGS,
+            )  # fmt: skip
+            campaign = await _campaign_for(interaction, self.campaign_id)
+            memory = _memory(interaction)
+            if campaign is None or memory is None:
+                return
+            kind = select.values[0]
+            try:
+                written = await memory.confirm_kinds(
+                    campaign.guild_id, campaign.id, select.ids, kind, source=DM
+                )
+            except MemoryRuleError as exc:
+                await _tell(interaction, f"Couldn't change them. {exc}")
+                return
+            changed(interaction, campaign)
+            self.remove_item(select)
+            what = f"Every **{_md(select.word)}**" if select.word else "The names with no kind"
+            done = written.value
+            rest = "" if done == len(select.ids) else " (The rest were checked or changed already.)"
+            self.notes.append(
+                f"✅ {what}: {done} name{'' if done == 1 else 's'} set to **{_md(KINDS[kind])}**."
+                + rest
             )
-        except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't change them. {exc}")
-            return
-        changed(interaction, campaign)
-        self.remove_item(select)
-        what = f"Every **{_md(select.word)}**" if select.word else "The names with no kind"
-        done = written.value
-        note = (
-            f"✅ {what}: {done} name{'' if done == 1 else 's'} set to **{_md(KINDS[kind])}**."
-            + ("" if done == len(select.ids) else " (The rest were checked or changed already.)")
-        )
-        content = (interaction.message.content if interaction.message else "") + "\n" + note
-        await interaction.response.edit_message(
-            content=content[:2000], view=self, allowed_mentions=NO_PINGS
-        )
+        finally:
+            self.busy = False
+            if not self.children:
+                self.stop()
+            await interaction.edit_original_response(
+                content=self.text(), view=self if self.children else None,
+                allowed_mentions=NO_PINGS,
+            )  # fmt: skip
 
 
 # ---- after 📥 Add many: names that look like known ones, kinds that differ (#369) -------
@@ -1102,6 +1143,11 @@ class _Questions(discord.ui.View):
 
     def text(self) -> str:
         raise NotImplementedError
+
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]
+    ) -> None:
+        await _failed(interaction, error)
 
     def build(self) -> None:
         raise NotImplementedError
