@@ -12,8 +12,8 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   the bot's own reads don't change). Deploy core as usual; check `docker compose logs
   core` shows it applied and no new errors. The dmbot_web role is optional until
   go-live: scripts/update-env, put a long random DMBOT_WEB_DB_PASSWORD in .env with an
-  editor (set-key doesn't take it yet, #542), then the three commands in README
-  "Database" (02-dmbot-web.sh, restart core so it grants the role). Web API only, also
+  editor (set-key leaves database passwords out on purpose), then the three commands
+  in README "Database" (02-dmbot-web.sh, restart core so it grants the role). Web API only, also
   in development: #520 (#497 findings), #531 (#530). web-api stays off until go-live.
 
 ------------------------------------------------------------------------------
