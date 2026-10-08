@@ -832,7 +832,10 @@ class ConsentDMTests(DatabaseTest):
         release = asyncio.Event()
 
         async def late_failure(*_: Any, **__: Any) -> Any:
-            await release.wait()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:  # slow to take the cancel, then fails
+                await release.wait()
             raise RuntimeError("db down, late")
 
         self.bot.consent.status = AsyncMock(side_effect=late_failure)  # type: ignore[method-assign]
@@ -901,7 +904,10 @@ class ConsentDMTests(DatabaseTest):
         (lookup,) = self.bot._lookups.values()
         self.bot.pipeline.transcriber.close = AsyncMock()  # type: ignore[method-assign]
         self.bot.ears.stop = AsyncMock()  # type: ignore[method-assign]
-        with patch.object(discord.Client, "close", AsyncMock()):
+        with (
+            patch("dmbot.bot.document_reader.shutdown"),  # global: other tests read files
+            patch.object(discord.AutoShardedClient, "close", AsyncMock()),
+        ):
             await asyncio.wait_for(self.bot.close(), 5)
         assert lookup.cancelled()
         assert await press  # the press still got an answer: Stop
