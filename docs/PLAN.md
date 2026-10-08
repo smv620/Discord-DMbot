@@ -1519,9 +1519,26 @@ admin makes, not the default. Grants live in their own table, never in `entitlem
 stays the payment company's truth; wherever DMbot asks "does this person's plan work, and
 with what caps", a grant or the free list counts, and the better of a grant and a paid plan
 wins. A grant ends on its end date or when revoked, and the person falls back to whatever
-they pay for. Grants and revocations are logged (who, what, when, ids only). Nobody sees a
+they pay for. Grants and revocations are logged (who, what, when: Discord ids and the
+admin's own email). Nobody sees a
 price or a payment button while a grant covers them; the bot and the account page say "Free
-access". Deleting an account deletes its grant.
+access". Deleting an account deletes its grant. *Built, part 1 (#771, dev2):* the free
+list is read at start by the bot and the web API (only its count is logged); grants live
+in `access_grants` (migration 0030; one row per Discord id, no link to `web_users`) with
+an add-only `access_log` (Discord ids, and the admin's own email: the one email it
+holds), both written only through `Database.grant_writer()`, which only `dmbot.web.grants`
+opens (a test checks); the one exception is deleting an account, which deletes the
+person's own grant (`own_delete`). A person reads only their own grant.
+`entitlements.effective()` is the one answer every plan rule asks (`plan_works` today;
+the hours meter and campaign cap when they come). `/me` gains `access: {kind, endsOn?,
+stillPaying?, paidPlan?}` with one kind for people, "free", whether from the list or a
+grant (people see "Free access", never why); `stillPaying` when a paid plan still works
+alongside, so the page can offer to stop paying. Checkout and Try It answer
+`has_free_access` for covered people (a covered person's one trial isn't used up). *The
+hours meter (#437 part 2), decided:* the free list has no meter; a Guild-level grant has
+Guild's hours, its month running from the day the grant started (as a paid plan's runs
+from its billing date), and a grant that ends mid-month just stops; a grant overlapping a
+paid plan uses the larger caps and the paid plan's month.
 **Admin sign-in:** only addresses in `ADMIN_EMAILS` (server settings) may sign in, either with
 Google ("Sign in with Google", verified email only) or with that email and an admin password
 whose hash (argon2id) is in the server settings, never in the database or the repository; a
