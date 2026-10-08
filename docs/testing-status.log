@@ -67,6 +67,17 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   No migration. Deploy: rebuild core. Check: Add many with one name given 51 other names
   says "Nothing was added. … has more than 50 other names in this list…"; Download all,
   then upload that file again: nothing is refused.
+- WebDev, PR #710 (#665): the website's "Say hello" page (feedback and questions become
+  GitHub Discussions). Migration 0026 adds the add-only `feedback` table: the bot
+  migrates first (the website's rights come with the migration), then rebuild web-api.
+  Before turning it on: the owner turns on Discussions in the repository and makes two
+  categories named exactly "Feedback" and "Questions". .env: GITHUB_FEEDBACK_TOKEN (a
+  fine-grained token for this repo, Discussions read and write only), plus
+  TURNSTILE_SECRET_KEY and WEB_CLIENT_IP_HEADER=CF-Connecting-IP, both required once the
+  token is set (the API must be reachable only through Cloudflare). Build the site with
+  the matching PUBLIC_TURNSTILE_SITE_KEY. Check: `docker compose logs core` shows 0026;
+  a test message on /hello appears as a discussion holding only the message and date,
+  and the page links to it.
 - CloudDev, PR #630 (#251): PDF and Word files are read in their own short-lived
   process (dmbot-document) with a 30 s limit and 256 MB of memory, so a slow or broken
   file can't hold up voice or other servers. No migration or setting. Deploy: rebuild

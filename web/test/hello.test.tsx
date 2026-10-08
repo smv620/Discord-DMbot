@@ -193,3 +193,30 @@ describe("the person check failing", () => {
     );
   });
 });
+
+describe("follow-ups (#710 review)", () => {
+  it("doesn't send without a tick from the person check", async () => {
+    const send = vi.fn<(note: Note) => Promise<SendResult>>(async () => SENT);
+    render(<HelloForm kind="feedback" send={send} siteKey="key" />);
+    type(text.feedback.label, "Hello");
+    fireEvent.click(screen.getByRole("button", { name: text.feedback.send }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/tick|check/);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("tells a question sent without a contact where the answer will be", async () => {
+    show("question");
+    type(text.question.label, "Does it work on phones?");
+    fireEvent.click(screen.getByRole("button", { name: text.question.send }));
+    expect(await screen.findByText(text.answerOnGitHub)).toBeTruthy();
+  });
+
+  it("says nothing extra when the question has a contact", async () => {
+    show("question");
+    type(text.question.label, "Does it work on phones?");
+    type(text.question.contactLabel, "bel#1");
+    fireEvent.click(screen.getByRole("button", { name: text.question.send }));
+    await screen.findByRole("status");
+    expect(screen.queryByText(text.answerOnGitHub)).toBeNull();
+  });
+});

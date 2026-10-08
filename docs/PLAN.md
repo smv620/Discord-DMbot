@@ -1537,7 +1537,18 @@ pick one at the site, then press Accept again; the offer stays open for 7 days")
 the owner sees only that the offer was sent and nothing changes until they accept;**
 the bot checks membership when it delivers the private message and withdraws an offer it
 can't deliver, telling the owner; until the campaign count exists (part 3) "a free slot"
-means "a plan that works". A Try It plan may receive a hand-over if its one slot is free;
+means "a plan that works". *Offers made on the website (#690):* `offer_handover(...,
+delivered=False)` saves the offer with no `delivered_at` and, in the same transaction,
+sends `NOTIFY dmbot_handover_offers, '<server id>:<offer id>'` (IDs only: notifications
+skip row-level security). The bot process that serves that server claims the offer for
+10 minutes (`claimed_at`, set only if it's unsent, unclaimed or its claim lapsed, open
+and unexpired, so it's sent once), sends the same private message as the Discord
+button, then sets `delivered_at`. Only "not in the server" or "doesn't take messages"
+takes the offer back (and tells the owner); any other Discord error lets the claim go
+for a later try, and a claim left by a process that stopped lapses. It sweeps for unsent
+offers each time it starts listening, when a server becomes available or is joined, and
+hourly. Offers made in Discord are saved as delivered. The website's role, when it
+offers, must only be able to insert unsent, unclaimed offers from the signed-in owner. A Try It plan may receive a hand-over if its one slot is free;
 the campaign then follows that plan (so, while on Try It, no backups or downloads). The
 website's database role gets only the narrow extra rights the account page needs, under
 restrictive policies (read and answer offers where the signed-in person is sender or
