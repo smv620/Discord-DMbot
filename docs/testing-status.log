@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (deployed 46f7d5a; web-api not started; ready for run 8)
+Last updated: 2026-10-08 by dev1 (deployed 35095c7: migration 0016; web-api not started; ready for run 8)
 
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
@@ -8,13 +8,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- WebDev, #527 (#498): core migration 0016_web_role_limits (two read-only functions;
-  the bot's own reads don't change). Deploy core as usual; check `docker compose logs
-  core` shows it applied and no new errors. The dmbot_web role is optional until
-  go-live: scripts/update-env, put a long random DMBOT_WEB_DB_PASSWORD in .env with an
-  editor (set-key leaves database passwords out on purpose), then the three commands
-  in README "Database" (02-dmbot-web.sh, restart core so it grants the role). Web API only, also
-  in development: #520 (#497 findings), #531 (#530). web-api stays off until go-live.
+(nothing queued; web-api and the dmbot_web role wait for the owner's go-live, #498)
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -28,12 +22,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 46f7d5a (2026-10-08 04:05 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 35095c7 (2026-10-08 04:18 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since 46f7d5a, ask it to redeploy first. Use a steady connection (run 8a
+      moved since 35095c7, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -147,6 +141,8 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
   Deployed 2026-10-08 04:05 (46f7d5a)
   - #505 (#499): if Deepgram fails for several tables, each is told once, quickly
   - #525 (#515): Type it… follow-ups on name questions
+  Deployed 2026-10-08 04:18 (35095c7)
+  - #543 (#523): after /dmbot stop the log compares listening time with speech sent
 
 ------------------------------------------------------------------------------
 LATEST RESULT: Test 1, run 7 (2026-10-06 04:35), DM alone, dm-only.md, Deepgram: PASS
