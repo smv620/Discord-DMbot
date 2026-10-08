@@ -843,6 +843,7 @@ class SaveAndResume(SessionTests):
         from dmbot.bot import consent_revoke
         from dmbot.consent_dm import StopYesButton, warning_text
 
+        self.guild.name = "Dragon Club"
         await self.consent.grant(GUILD, PLAYER)
         bot = await self.restart()  # ears may still be in voice from before
         await bot.consent.consenting(GUILD)
@@ -886,6 +887,7 @@ class SaveAndResume(SessionTests):
         from dmbot.bot import consent_revoke
         from dmbot.consent_dm import not_recorded_text
 
+        self.guild.name = "Dragon Club"
         interaction = self._consent_interaction(PLAYER)
         await consent_revoke.callback(interaction)  # type: ignore[call-arg]
         args = interaction.response.send_message.await_args
@@ -902,13 +904,14 @@ class SaveAndResume(SessionTests):
         interaction = self._consent_interaction(PLAYER)
 
         async def already_stopped(*_: Any, **__: Any) -> None:
-            self.assertFalse(self.consent.has_consent(GUILD, PLAYER))
-            last = [json.loads(m) for m in self.ears.sent if '"allowlist"' in m][-1]
-            self.assertNotIn(str(PLAYER), last["userIds"])
+            self.assertFalse(self.consent.has_consent(GUILD, PLAYER))  # before any await
 
         interaction.response.defer = AsyncMock(side_effect=already_stopped)
         await StopYesButton(GUILD).callback(interaction)
         interaction.response.defer.assert_awaited_once()
+        await asyncio.sleep(0)  # the allowlist goes to ears in its own task
+        last = [json.loads(m) for m in self.ears.sent if '"allowlist"' in m][-1]
+        self.assertNotIn(str(PLAYER), last["userIds"])
 
     async def test_resume_starts_once(self) -> None:
         bot = await self.restart()
