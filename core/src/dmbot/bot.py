@@ -67,6 +67,14 @@ from dmbot.dm_screen import (
 )
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen.handover import (
+    AcceptOfferButton,
+    DeclineOfferButton,
+    HandoverButton,
+    NotNowButton,
+    TakeOnButton,
+    WithdrawOfferButton,
+)
 from dmbot.dm_screen.name_questions import (
     FixUndoButton,
     NameAnswerUndoButton,
@@ -429,6 +437,15 @@ class DMBot(commands.AutoShardedBot):
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
         self.add_dynamic_items(SettingsButton, LevelButton, SettingsVisibilityButton)
+        # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
+        self.add_dynamic_items(
+            HandoverButton,
+            WithdrawOfferButton,
+            AcceptOfferButton,
+            DeclineOfferButton,
+            TakeOnButton,
+            NotNowButton,
+        )
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
         # "Check new names" on the DM screen after a session.

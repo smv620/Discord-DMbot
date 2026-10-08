@@ -34,6 +34,7 @@ from dmbot.campaigns.store import (
     decode_backup,
     encode_backup,
 )
+from dmbot.dm_screen import handover
 from dmbot.logs import set_log_context
 from dmbot.ui import logic
 
@@ -451,6 +452,8 @@ class VoicePicker(_Menu):
             await interaction.edit_original_response(
                 content=message, view=None, allowed_mentions=NO_PINGS
             )
+            # A campaign with no owner yet: ask this DM to take it on (#437).
+            await handover.ask_to_take_on(interaction, self.campaign.id)
         else:
             await _tell(interaction, message)
 
