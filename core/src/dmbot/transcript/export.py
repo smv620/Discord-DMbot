@@ -26,15 +26,16 @@ NAME_MAX = 80
 FILE_NAME_MAX = 60
 
 AS_HEARD_NOTE = (
-    "As heard: the words exactly as DMbot heard them, before it fixed any names, so "
-    'some names may be misheard. The "Cleaned" version (/transcript) has the names '
-    "fixed. Only people who agreed were recorded."
+    "As heard: every word exactly as DMbot heard it, off-topic chat included, before it "
+    'fixed any names, so some names may be misheard. The "Cleaned" version (/transcript) '
+    "has the names fixed and leaves out clearly off-topic chat. Only people who agreed "
+    "were recorded."
 )
 CLEANED_NOTE = (
     "Cleaned: DMbot fixed the spelling of names it was sure about; a few may still be "
-    "wrong. Clearly off-topic chat is skipped, with how long it lasted. For the exact "
-    'words, download the "As heard" version with /transcript. Only people who agreed were '
-    "recorded."
+    "wrong. Chat clearly not about the game is left out, and a short note says how long "
+    'it was spoken. The "As heard" version (/transcript) still has every word. Only people '
+    "who agreed were recorded."
 )
 HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."
 

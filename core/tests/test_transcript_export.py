@@ -80,7 +80,7 @@ class Render(unittest.TestCase):
         self.assertIn("[0:00:05] (Dee) [1m 22s of off-topic chat skipped]\n", cleaned)
         self.assertNotIn("boss", cleaned)
         self.assertIn("(Mia): is it my turn?", cleaned)  # table talk stays
-        self.assertIn("Clearly off-topic chat is skipped", cleaned)
+        self.assertIn("Chat clearly not about the game is left out", cleaned)
         heard = export.render("X", session(), lines, names)
         self.assertIn("my boss called", heard)
         self.assertIn("he wants me Monday", heard)

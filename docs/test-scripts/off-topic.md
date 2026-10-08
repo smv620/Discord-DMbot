@@ -13,8 +13,10 @@ needed. About two minutes.
   script as `off-topic.m4a`.
 
 **While reading**
-- Don't read the words in **[ ]** or **(( ))** out loud.
+- Don't read the line numbers, or the words in **[ ]** or **(( ))**, out loud.
 - Read the chat part as you'd really chat: it's fine to sound bored or laugh.
+- Read the lines as written; don't swap in your own real plans or names (the recording is
+  public).
 
 ---
 
@@ -49,8 +51,10 @@ needed. About two minutes.
 **What the twin should show**
 - **As heard:** all 13 lines.
 - **Cleaned:** lines 1 to 4 and 11 to 13 as they were. Lines 5 to 10 become one line, the
-  marker with how long the chat lasted, such as `[0:00:31] (Reader) [52s of off-topic chat
-  skipped]`. Line 3 ("Roll a perception check") is table talk: it stays.
+  marker with how long the chat was spoken (pauses don't count), about 25 to 35 seconds,
+  such as `[0:00:31] (Reader) [28s of off-topic chat skipped]`. Line 3 ("Roll a perception
+  check") is table talk: it stays. Line 11 ("Back to it. Something moves…") starts as chat
+  but is the game: it must stay.
 - **When unsure, keep it:** if a chat line is kept, that's acceptable; a game line hidden is
   a failure.
 - **Cost:** the session's log line "Off-topic filter: N calls, … tokens" should show one or

@@ -62,12 +62,13 @@ CHOICES: dict[str, tuple[tuple[str, ...], str]] = {
     "both": ((export.CLEANED, export.AS_HEARD), "📄🎙 Both"),
 }
 VERSION_HELP = (
-    "📄 **Cleaned:** misheard names fixed (the easiest to read).\n"
-    "🎙 **As heard:** word for word, before DMbot fixed any names."
+    "📄 **Cleaned:** names spelled right, clearly off-topic chat left out (the easiest to "
+    "read).\n"
+    "🎙 **As heard:** every word, exactly as DMbot heard it, off-topic chat included."
 )
 SENT = {
-    (export.CLEANED,): "📄 Here's the cleaned transcript: names spelled right. Open it in any "
-    "text app.",
+    (export.CLEANED,): "📄 Here's the cleaned transcript: names spelled right, off-topic chat "
+    "left out. Open it in any text app.",
     (export.AS_HEARD,): "🎙 Here's the transcript as heard, word for word. Open it in any text app.",
     (export.CLEANED, export.AS_HEARD): "📄🎙 Here are both versions: cleaned and as heard. "
     "Open them in any text app.",
