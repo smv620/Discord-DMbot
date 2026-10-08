@@ -38,6 +38,10 @@ CI runs all of the above on every pull request. Never merge red CI.
   decision, 2026-10-07): a PR merges when CI is green, Supervisor's design review
   approves it ("Supervisor review: approved" as a PR comment) and RepoManager's
   compliance review passes. Log-only PRs are the exception (see "Testing logs").
+  **All three, always** (2026-10-08, after #637 and #705 merged minutes after opening):
+  the approval must be newer than the PR's head commit, a "changes needed" needs a new
+  approval, and a PR Supervisor has not reviewed yet waits for the next round (they run
+  every few minutes), never merges on compliance alone.
 - Promotions (`development` → `beta`, `beta` → `main`) are PRs, opened only when the
   owner asks (through Supervisor); RepoManager opens and merges them.
 - One concern per PR. Link the GitHub issue it closes.
