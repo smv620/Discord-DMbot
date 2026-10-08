@@ -6,9 +6,10 @@ the database (Discord waits 3 seconds), and a failure after saving never says it
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -25,6 +26,7 @@ from dmbot.dm_screen.handover import (
     TakeOnButton,
     WithdrawOfferButton,
 )
+from dmbot.ui.dmbot_commands import VoicePicker
 
 GUILD, OTHER_GUILD, OWNER, BUYER, OTHER = 111, 222, 7, 9, 8
 CAMPAIGN_ID = "c" * 32
@@ -111,19 +113,23 @@ class Words(unittest.TestCase):
         self.assertIn("Offered to **Mirelle**; waiting", handover.owner_line(campaign(), offer()))
 
     def test_one_button_hand_over_or_take_back(self) -> None:
-        (hand,) = handover.owner_buttons(campaign(), None)
+        (hand,) = handover.owner_buttons(campaign(), None, OWNER)
         self.assertIsInstance(hand, HandoverButton)
-        (back,) = handover.owner_buttons(campaign(), offer())
+        (back,) = handover.owner_buttons(campaign(), offer(), OWNER)
         self.assertIsInstance(back, WithdrawOfferButton)
 
-    def test_only_the_owner_sees_the_hand_over_button(self) -> None:
+    def test_each_person_gets_only_the_button_they_can_use(self) -> None:
         # The card is private, so it knows who's looking (#714).
-        self.assertEqual(handover.owner_buttons(campaign(), None, viewer=OTHER), [])
-        self.assertEqual(handover.owner_buttons(campaign(), offer(), viewer=OTHER), [])
-        (mine,) = handover.owner_buttons(campaign(), offer(), viewer=OWNER)
+        self.assertEqual(handover.owner_buttons(campaign(), None, OTHER), [])
+        self.assertEqual(handover.owner_buttons(campaign(), offer(), OTHER), [])
+        (mine,) = handover.owner_buttons(campaign(), offer(), OWNER)
         self.assertIsInstance(mine, WithdrawOfferButton)
-        (any_dm,) = handover.owner_buttons(campaign(owner=None), None, viewer=OTHER)
-        self.assertIsInstance(any_dm, HandoverButton)  # says how a campaign gets an owner
+        # No owner yet: its DMs can take it on (#765 review), nobody else gets a button.
+        (take,) = handover.owner_buttons(campaign(owner=None), None, OTHER)
+        assert isinstance(take, TakeOnButton)
+        self.assertEqual(take.item.row, 2)
+        self.assertEqual(handover.owner_buttons(campaign(owner=None), None, BUYER), [])
+        self.assertIn("**Take it on**", handover.owner_line(campaign(owner=None), None))
 
     def test_a_dm_is_never_told_to_ask_their_dm(self) -> None:
         # The players' "ask your DM" would send a DM to themselves (#714 review).
@@ -281,7 +287,9 @@ class Offering(unittest.IsolatedAsyncioTestCase):
         picker = PickNewOwner(campaign())
         picker.message = MagicMock(edit=AsyncMock())
         await picker.on_timeout()
-        picker.message.edit.assert_awaited_once_with(content=handover.MENU_TIMED_OUT, view=None)
+        picker.message.edit.assert_awaited_once_with(
+            content=handover.MENU_TIMED_OUT, view=None, allowed_mentions=handover.NO_PINGS
+        )
 
     async def test_a_message_that_cant_be_edited_is_said_anew(self) -> None:
         it = interaction(OWNER)
@@ -346,13 +354,19 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         self.assertIn("**Oskar** is still one of its DMs", done["content"])
         self.assertIsNone(done["view"])  # the buttons go
         self.assertIn("**Mirelle** accepted", it.member.send.await_args.args[0])
+        it.client.post.assert_not_called()  # no #dm-screen saved: nothing posted
 
     async def test_pressed_again_says_it_again(self) -> None:
         it = interaction(BUYER, guild=False)
         it.client.campaigns.get_offer.return_value = offer(status="accepted")
+        it.client.campaigns.get.return_value = campaign(owner=BUYER)
         await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
         self.assertIn("uses your plan now", shown(it))
         it.client.campaigns.accept_handover.assert_not_awaited()
+        it = interaction(BUYER, guild=False)  # handed on again since: not theirs to claim
+        it.client.campaigns.get_offer.return_value = offer(status="accepted")
+        await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
+        self.assertIn("This offer has ended", shown(it))
 
     async def test_no_room_keeps_the_offer_and_says_what_to_do(self) -> None:
         it = interaction(BUYER, guild=False)
@@ -450,34 +464,48 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         it.client.campaigns.get_offer.side_effect = [offer(), offer("accepted")]
         await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
         self.assertIn("uses your plan now", shown(it))
+        it.member.send.assert_not_awaited()  # the winning press told the owner, not this one
+        it.client.post.assert_not_called()
         it = interaction(BUYER, guild=False)
         it.client.campaigns.accept_handover.return_value = "gone"  # taken back meanwhile
         it.client.campaigns.get_offer.side_effect = [offer(), offer("withdrawn")]
         await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
         self.assertIn("This offer has ended", shown(it))
 
-    async def test_the_answer_is_noted_on_the_dm_screen_too(self) -> None:
-        # The owner's private messages may be off: the campaign's #dm-screen says it too.
-        screen = campaign()
-        object.__setattr__(screen, "dm_screen_channel_id", 555)
-        for button, result, words in (
-            (AcceptOfferButton, "accepted", "**Mirelle** accepted: **Frost\\*maiden** now uses"),
-            (DeclineOfferButton, "declined", "**Mirelle** said no thanks to **Frost\\*maiden**"),
-        ):
-            with self.subTest(button.__name__):
-                it = interaction(BUYER, guild=False)
-                it.client.campaigns.get.return_value = screen
-                it.client.campaigns.accept_handover.return_value = result
-                it.client.campaigns.decline_handover.return_value = result
-                it.client.post = AsyncMock(return_value=True)
-                await button(GUILD, OFFER_ID).callback(it)
-                channel, text = it.client.post.await_args.args
-                self.assertEqual(channel, 555)
-                self.assertIn(words, text)
+    async def test_an_accept_is_noted_on_the_dm_screen_and_a_no_thanks_is_not(self) -> None:
+        # The owner's private messages may be off: the #dm-screen says whose plan the
+        # table uses now. A "no thanks" changed nothing for the table (#765 review).
+        screen = dataclasses.replace(campaign(), dm_screen_channel_id=555)
+        it = interaction(BUYER, guild=False)
+        it.client.campaigns.get.return_value = screen
+        it.client.campaigns.accept_handover.return_value = "accepted"
+        it.client.post = AsyncMock(return_value=True)
+        await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
+        channel, text = it.client.post.await_args.args
+        self.assertEqual(channel, 555)
+        self.assertIn("**Mirelle** accepted: **Frost\\*maiden** now uses", text)
+        it = interaction(BUYER, guild=False)
+        it.client.campaigns.get.return_value = screen
+        it.client.campaigns.decline_handover.return_value = "declined"
+        it.client.post = AsyncMock(return_value=True)
+        await DeclineOfferButton(GUILD, OFFER_ID).callback(it)
+        it.client.post.assert_not_awaited()
+        self.assertIn("**Mirelle** said no thanks", it.member.send.await_args.args[0])
+
+    async def test_only_a_process_serving_the_server_posts_on_its_screen(self) -> None:
+        it = interaction(BUYER, guild=False)
+        it.client.campaigns.get.return_value = dataclasses.replace(
+            campaign(), dm_screen_channel_id=555
+        )
+        it.client.campaigns.accept_handover.return_value = "accepted"
+        it.client.get_guild.return_value = None  # another process serves it
+        it.client.post = AsyncMock(return_value=True)
+        await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
+        self.assertIn("uses your plan now", shown(it))
+        it.client.post.assert_not_awaited()
 
     async def test_a_dm_screen_that_cant_be_posted_to_changes_nothing(self) -> None:
-        screen = campaign()
-        object.__setattr__(screen, "dm_screen_channel_id", 555)
+        screen = dataclasses.replace(campaign(), dm_screen_channel_id=555)
         it = interaction(BUYER, guild=False)
         it.client.campaigns.get.return_value = screen
         it.client.campaigns.accept_handover.return_value = "accepted"
@@ -493,6 +521,8 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         it.client.campaigns.get_offer.side_effect = [offer(), offer("declined")]
         await DeclineOfferButton(GUILD, OFFER_ID).callback(it)
         self.assertIn("You said no thanks", shown(it))
+        it.member.send.assert_not_awaited()  # the owner hears it once
+        it.client.post.assert_not_called()
 
     async def test_no_room_says_until_when(self) -> None:
         it = interaction(BUYER, guild=False)
@@ -515,6 +545,7 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         answered_first(self, it)
         self.assertIn("You said no thanks. Nothing changed.", shown(it))
         self.assertIn("**Mirelle** said no thanks", it.member.send.await_args.args[0])
+        it.client.post.assert_not_called()  # no #dm-screen saved: nothing posted
         it = interaction(BUYER, guild=False)
         it.client.campaigns.get_offer.return_value = offer(status="declined")
         await DeclineOfferButton(GUILD, OFFER_ID).callback(it)  # pressed again
@@ -542,10 +573,6 @@ class TakingItOn(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_only_a_session_that_started_asks(self) -> None:
-        from unittest.mock import patch
-
-        from dmbot.ui.dmbot_commands import VoicePicker
-
         for ok in (True, False):
             with self.subTest(ok=ok), patch.object(handover, "ask_to_take_on") as ask:
                 ask.side_effect = AsyncMock()

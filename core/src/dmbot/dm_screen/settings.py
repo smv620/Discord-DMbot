@@ -73,9 +73,7 @@ def settings_text(campaign: Campaign, offer: HandoverOffer | None = None) -> str
     )
 
 
-def settings_view(
-    campaign: Campaign, offer: HandoverOffer | None = None, viewer: int | None = None
-) -> discord.ui.View:
+def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) -> discord.ui.View:
     """The card's buttons. `viewer`: who it's for (it's private), so only the owner gets
     the hand-over button."""
     view = discord.ui.View(timeout=None)
@@ -90,7 +88,7 @@ def settings_view(
 
 
 def _card(campaign: Campaign, viewer: int) -> tuple[str, discord.ui.View]:
-    return settings_text(campaign), settings_view(campaign, viewer=viewer)
+    return settings_text(campaign), settings_view(campaign, None, viewer)
 
 
 handover.use_settings_card(_card)  # it redraws this card after an offer is taken back

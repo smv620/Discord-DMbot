@@ -75,9 +75,9 @@ class SettingsCardTest(unittest.TestCase):
         self.assertNotIn("recommended", quiet)
 
     def test_buttons_fit_a_phone_and_survive_a_restart(self) -> None:
-        view = settings_view(campaign("quiet", vis="private"))
+        view = settings_view(campaign("quiet", vis="private"), None, DM)
         items: list[Any] = list(view.children)
-        self.assertEqual([i.row for i in items], [0, 0, 1, 1, 1, 2])  # 🤝 Hand over (#437)
+        self.assertEqual([i.row for i in items], [0, 0, 1, 1, 1, 2])  # 🤝 Take it on: no owner yet
         labels = [i.item.label for i in items]
         self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
         self.assertEqual(labels[2], "✓ Only the DM")  # the current one, the same way

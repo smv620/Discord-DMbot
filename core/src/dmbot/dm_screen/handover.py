@@ -121,14 +121,13 @@ NOT_A_MEMBER = (
     "You're not in that server any more, so you can't take over its campaign. Rejoin it, "
     "then tap **Accept** again before the deadline."
 )
-# Posted in the campaign's #dm-screen too: the owner's private messages may be off.
-# Players may read #dm-screen (peek or open): say only what changed, the plan.
+# An accept is noted in the campaign's #dm-screen too (the owner's private messages may
+# be off): it changes whose plan the table uses. Players may read #dm-screen (peek or
+# open), so it says only that. A "no thanks" changes nothing for the table: it stays a
+# private note to the owner.
 SCREEN_ACCEPTED = (
     "🤝 **{name}** accepted: **{campaign}** now uses their DMbot plan. Nothing else changed: "
     "same DMs, same notes."
-)
-SCREEN_DECLINED = (
-    "🤝 **{name}** said no thanks to **{campaign}**. Nothing changed: it stays on the same plan."
 )
 TAKE_ON_ASK = (
     "Use your plan for **{campaign}**? It has no owner yet (the DM whose plan pays for its "
@@ -171,7 +170,7 @@ def md(text: str) -> str:
 
 
 def _store(interaction: discord.Interaction) -> CampaignStore:
-    store: CampaignStore = interaction.client.campaigns  # type: ignore[attr-defined]
+    store: CampaignStore = getattr(interaction.client, "campaigns")  # noqa: B009  # the bot's
     return store
 
 
@@ -194,8 +193,8 @@ def owner_line(campaign: Campaign, offer: HandoverOffer | None) -> str:
     """For the ⚙️ Settings card: whose plan the campaign uses, and any offer waiting."""
     if campaign.owner_user_id is None:
         line = (
-            "• **Owner:** none yet. Whoever runs `/dmbot start` next will be asked to take it "
-            "on (their plan pays for its hours)."
+            "• **Owner:** none yet. Any of its DMs can press **Take it on** so it uses their "
+            "plan's hours (DMbot also asks whoever runs `/dmbot start` next)."
         )
     else:
         line = f"• **Owner:** <@{campaign.owner_user_id}>. This campaign uses their plan's hours."
@@ -206,16 +205,20 @@ def owner_line(campaign: Campaign, offer: HandoverOffer | None) -> str:
 
 
 def owner_buttons(
-    campaign: Campaign, offer: HandoverOffer | None, viewer: int | None = None
+    campaign: Campaign, offer: HandoverOffer | None, viewer: int
 ) -> list[discord.ui.Item[Any]]:
-    """The card's hand-over button: take back a waiting offer, or hand over. Only for the
-    owner when the card knows who's looking (`viewer`); with no owner yet, Hand over
-    stays, to say how a campaign gets one."""
+    """The card's hand-over button, for the person looking (`viewer`; the card is private):
+    Take back offer for whoever made a waiting offer, Hand over for the owner, and Take
+    it on for the DMs of a campaign with no owner yet. Nobody else gets one."""
     if offer is not None:
-        mine = viewer is None or viewer == offer.from_user_id
-        return [WithdrawOfferButton(campaign.guild_id, offer.id)] if mine else []
-    owner = campaign.owner_user_id
-    return [HandoverButton(campaign.id)] if viewer in (None, owner) or owner is None else []
+        return (
+            [WithdrawOfferButton(campaign.guild_id, offer.id)]
+            if viewer == offer.from_user_id
+            else []
+        )
+    if campaign.owner_user_id is None:
+        return [TakeOnButton(campaign.id, row=2)] if viewer in campaign.dm_user_ids else []
+    return [HandoverButton(campaign.id)] if viewer == campaign.owner_user_id else []
 
 
 class HandoverButton(
@@ -292,7 +295,9 @@ class PickNewOwner(discord.ui.View):
         """A menu past its time no longer answers: never leave it looking live."""
         if self.message is not None:
             with contextlib.suppress(discord.HTTPException):
-                await self.message.edit(content=MENU_TIMED_OUT, view=None)
+                await self.message.edit(
+                    content=MENU_TIMED_OUT, view=None, allowed_mentions=NO_PINGS
+                )
 
     async def on_error(
         self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]
@@ -403,10 +408,13 @@ async def _tell_screen(interaction: discord.Interaction, campaign: Campaign, tex
     post = getattr(interaction.client, "post", None)
     if campaign.dm_screen_channel_id is None or post is None:
         return
+    if interaction.client.get_guild(campaign.guild_id) is None:  # served elsewhere
+        return
     try:
         await post(campaign.dm_screen_channel_id, text)  # logs a Discord failure itself
     except Exception:
-        log.warning("Couldn't note a hand-over answer on the DM screen", exc_info=True)
+        with log_context(guild_id=campaign.guild_id, campaign_id=campaign.id):
+            log.warning("Couldn't note a hand-over answer on the DM screen", exc_info=True)
 
 
 async def _offer_guild(interaction: discord.Interaction, guild_id: int) -> discord.Guild | None:
@@ -486,8 +494,9 @@ class AcceptOfferButton(
         accepted = ACCEPTED.format(
             campaign=md(campaign.name), server=md(guild.name), owner=md(offer.from_name)
         )
-        if offer.status == "accepted":  # pressed again: say it again
-            await _end_message(interaction, accepted)
+        if offer.status == "accepted":  # pressed again: say it again, if it's still theirs
+            mine = campaign.owner_user_id == me
+            await _end_message(interaction, accepted if mine else ENDED.format(days=HANDOVER_DAYS))
             return
         if not offer.is_open(now):  # taken back, declined or out of time: nothing to check
             await _end_message(interaction, ENDED.format(days=HANDOVER_DAYS))
@@ -572,7 +581,6 @@ class DeclineOfferButton(
         if campaign is not None:
             names = {"name": md(offer.to_name), "campaign": md(campaign.name)}
             await _tell_person(guild, offer.from_user_id, TOLD_DECLINED.format(**names))
-            await _tell_screen(interaction, campaign, SCREEN_DECLINED.format(**names))
 
 
 class WithdrawOfferButton(
@@ -695,11 +703,15 @@ class TakeOnButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:takeon:{_CAMPAIGN}",
 ):
-    def __init__(self, campaign_id: str) -> None:
+    """Take it on: after `/dmbot start`, and on ⚙️ Settings of a campaign with no owner."""
+
+    def __init__(self, campaign_id: str, *, row: int | None = None) -> None:
         super().__init__(
             discord.ui.Button(
                 label=TAKE_ON_LABEL,
+                emoji="🤝",
                 style=discord.ButtonStyle.primary,
+                row=row,
                 custom_id=f"dmbot:takeon:{campaign_id}",
             )
         )
