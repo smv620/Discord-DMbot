@@ -163,7 +163,8 @@ class NameAnswerUndoButton(
         if interaction.user.id not in campaign.dm_user_ids:  # DM-only, like answering
             await _tell(interaction, questions.UNDO_ONLY_DM)
             return
-        heard = _quoted(interaction.message.content if interaction.message else "")
+        answer = interaction.message.content if interaction.message else ""
+        heard = _quoted(answer)
         await interaction.response.defer()
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
@@ -189,7 +190,9 @@ class NameAnswerUndoButton(
                 log.exception("Couldn't put a line back after undoing an answer")
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
-                content=questions.undone_text(heard), view=None, allowed_mentions=NO_PINGS
+                content=questions.undone_text(heard, new_name=questions.NEW_NAME in answer),
+                view=None,
+                allowed_mentions=NO_PINGS,
             )
 
 

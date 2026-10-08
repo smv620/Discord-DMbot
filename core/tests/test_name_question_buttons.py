@@ -131,6 +131,17 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
 
 
 class UndoTest(unittest.IsolatedAsyncioTestCase):
+    async def test_undo_of_a_new_typed_name_says_it_left_check_new_names(self) -> None:
+        bot = self.bot()
+        it = self.press(bot, DM_ID)
+        it.message.content = (
+            '✅ Got it: "Marin" is now written **Maerin**, in that line and from now on.\n'
+            f"**Maerin** {questions.NEW_NAME}"
+        )
+        await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
+        content = it.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("taken off 📝 Check new names", content)
+
     def bot(self, *, undo: Any = None) -> Any:
         campaign = MagicMock(guild_id=GUILD, id=CAMPAIGN, dm_user_ids=frozenset({DM_ID}))
         return MagicMock(
@@ -163,6 +174,7 @@ class UndoTest(unittest.IsolatedAsyncioTestCase):
         bot.answer_undone.assert_awaited_once_with(GUILD, CAMPAIGN, 5)  # the line goes back
         content = it.edit_original_response.await_args.kwargs["content"]
         self.assertIn('"Marin" stays as heard again', content)
+        self.assertNotIn("Check new names", content)  # no new name was added
 
     async def test_changed_since(self) -> None:
         from dmbot.memory.models import MemoryRuleError
