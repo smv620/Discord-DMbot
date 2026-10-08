@@ -899,6 +899,7 @@ class SaveAndResume(SessionTests):
         # #69, through the #807 path: ears drops them before anything slow.
         from dmbot.consent_dm import StopYesButton
 
+        self.guild.name = "Dragon Club"
         await self.consent.grant(GUILD, PLAYER)
         await self.start()
         interaction = self._consent_interaction(PLAYER)
