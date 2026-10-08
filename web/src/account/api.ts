@@ -51,6 +51,18 @@ export interface Person {
   name: string;
 }
 
+/** A campaign hand-over waiting for an answer (#614, #437). It ends after 7 days. */
+export interface Offer {
+  id: string;
+  campaignId: string;
+  campaignName: string;
+  serverName: string;
+  /** Incoming: who offers it. Outgoing: who it's offered to. */
+  personName: string;
+  /** ISO date and time the offer ends if nobody answers. */
+  expiresAt: string;
+}
+
 export interface Me {
   user: Person;
   plan: MyPlan | null;
@@ -58,13 +70,15 @@ export interface Me {
   servers: Server[];
   // The API also sends `installs` (servers this person added DMbot to); the servers list
   // already says "You added DMbot here", so the page doesn't use it (#497).
+  /** Hand-overs offered to you, and the ones you offered (#614). */
+  offers: { incoming: Offer[]; outgoing: Offer[] };
 }
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
   | "signed-out" // the session ended
-  | "no-free-slot" // hand-over: that person's plan is full
+  | "no-free-slot" // accepting a hand-over: you have no free campaign slot
   | "not-allowed" // not your campaign, or not allowed right now
   | "sign-in-again" // acting for a server or deleting needs a sign-in from the last day
   | "try-it-used" // Try It was used before
@@ -72,6 +86,7 @@ export type ApiErrorKind =
   | "payments-off" // the payment company isn't set up yet
   | "already-linked" // someone else already said they added DMbot to this server
   | "not-installed" // DMbot isn't in that server yet
+  | "offer-gone" // the hand-over offer ended, expired or was answered already
   | "confirm-again" // the delete confirmation ran out (10 minutes) or belongs elsewhere
   | "no-paid-plan" // the billing page needs a paid plan
   | "server"; // anything else
@@ -99,9 +114,18 @@ export interface AccountApi {
   installUrl(serverId: string): string;
   /** Say you added DMbot to a server it joined through a plain link. */
   linkServer(serverId: string): Promise<void>;
-  /** People who can take over a campaign (they have a plan with room for it). */
-  handoverCandidates(campaignId: string): Promise<Person[]>;
-  handover(campaignId: string, toUserId: string): Promise<void>;
+  /** The campaign's other DMs, who can be offered it (never filtered by plan: the owner
+   * must not learn whether someone pays, #437). Missing until the API has the route
+   * (#704's follow-up); the page then shows no Hand over button. */
+  handoverCandidates?(campaignId: string): Promise<Person[]>;
+  /** Offer a campaign to one of them. Missing until the API has the route, as above. */
+  handover?(campaignId: string, toUserId: string): Promise<void>;
+  /** Take a campaign offered to you (needs a free campaign slot now). */
+  acceptOffer(offerId: string): Promise<void>;
+  /** Say no to a campaign offered to you. */
+  declineOffer(offerId: string): Promise<void>;
+  /** Take back a hand-over you offered. */
+  withdrawOffer(offerId: string): Promise<void>;
   /** Step 1 of deleting the account: returns a short-lived token for step 2. */
   requestDelete(): Promise<string>;
   /** Step 2: delete the account and its data now. */
@@ -120,6 +144,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_installed: "not-installed",
   confirm_again: "confirm-again",
   no_paid_plan: "no-paid-plan",
+  offer_gone: "offer-gone",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
@@ -181,14 +206,16 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
     },
-    // Hand-over paths are a guess until #437 ships the API: check them against it then.
-    handoverCandidates: async (campaignId) =>
-      (await call("GET", `/campaigns/${encodeURIComponent(campaignId)}/handover-candidates`)) as
-        Person[],
-    handover: async (campaignId, toUserId) => {
-      await call("POST", `/campaigns/${encodeURIComponent(campaignId)}/handover`, {
-        to_user_id: toUserId,
-      });
+    // No handoverCandidates or handover yet: the API has no route to make an offer from
+    // the site until #704's follow-up, so the Hand over button stays hidden.
+    acceptOffer: async (offerId) => {
+      await call("POST", `/offers/${encodeURIComponent(offerId)}/accept`);
+    },
+    declineOffer: async (offerId) => {
+      await call("POST", `/offers/${encodeURIComponent(offerId)}/decline`);
+    },
+    withdrawOffer: async (offerId) => {
+      await call("POST", `/offers/${encodeURIComponent(offerId)}/withdraw`);
     },
     requestDelete: async () =>
       ((await call("POST", "/account/delete/request")) as { confirm_token: string })

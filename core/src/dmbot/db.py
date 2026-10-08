@@ -15,6 +15,7 @@ row-level security. `Database.open` refuses otherwise.
 from __future__ import annotations
 
 import contextlib
+import copy
 import logging
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
@@ -46,6 +47,17 @@ class Database:
     def __init__(self, pool: AsyncConnectionPool[Conn], conninfo: str) -> None:
         self._pool = pool
         self._conninfo = conninfo  # for connections outside the pool (listen)
+        # Set in every guild() transaction too: see as_person().
+        self._person: dict[str, str] = {}
+
+    def as_person(self, user_id: int, session: str) -> Database:
+        """The same database, for code shared with the bot (the campaign store) run by the
+        website (#614): every guild() transaction also names the signed-in person and
+        their session, which the website's role needs to see a server at all (#498). It
+        shares this pool: close the original, never this."""
+        scoped = copy.copy(self)
+        scoped._person = {"user_id": str(int(user_id)), "session": session}
+        return scoped
 
     @classmethod
     async def open(
@@ -126,6 +138,11 @@ class Database:
             await conn.execute(
                 "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild_id)),)
             )
+            for name, value in self._person.items():
+                await conn.execute(
+                    sql.SQL("SELECT set_config({}, %s, true)").format(sql.Literal(f"dmbot.{name}")),
+                    (value,),
+                )
             yield conn
 
     @asynccontextmanager
@@ -324,11 +341,19 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     )
     await conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(here, role))
     await conn.execute(WEB_ROLE_POLICIES)  # constants: several statements, no parameters
+    # Only tables that exist yet: a database brought up to an older migration (a test of a
+    # backfill, say) doesn't have the newer tables the list names. Each gets its rights
+    # once its own migration has run, since this runs after every migration.
+    cur = await conn.execute("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
+    existing = {r["tablename"] for r in await cur.fetchall()}
     for privileges, tables in WEB_ROLE_GRANTS:
+        present = [t for t in tables if t in existing]
+        if not present:
+            continue
         await conn.execute(
             sql.SQL("GRANT {} ON {} TO {}").format(
                 sql.SQL(privileges),  # constants from schema.py, never input
-                sql.SQL(", ").join(sql.Identifier(t) for t in tables),
+                sql.SQL(", ").join(sql.Identifier(t) for t in present),
                 role,
             )
         )
