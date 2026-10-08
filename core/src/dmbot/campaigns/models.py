@@ -84,6 +84,10 @@ class HandoverOffer:
     # it (a claim lapses after CLAIM_SECONDS, so a send cut short is tried again).
     delivered_at: int | None = None
     claimed_at: int | None = None
+    # The private message to the person offered, and when the owner was told the offer
+    # ran out of days (#690).
+    message_id: int | None = None
+    end_told_at: int | None = None
 
     @property
     def expires_at(self) -> int:

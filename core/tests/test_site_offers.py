@@ -7,15 +7,16 @@ import asyncio
 import contextlib
 import unittest
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from dataclasses import replace
 from typing import Any, cast
 from unittest import mock
 
 import discord
 
 from dmbot.campaigns import Campaign, offer_notify
-from dmbot.campaigns.models import HandoverOffer
+from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
 from dmbot.dm_screen import site_offers
-from dmbot.dm_screen.handover import deliver_offer
+from dmbot.dm_screen.handover import OFFER_EXPIRED, TOLD_EXPIRED, deliver_offer
 from dmbot.dm_screen.site_offers import NOT_SENT, SiteOffers
 
 GUILD, OTHER_GUILD = 111, 222
@@ -53,6 +54,8 @@ class FakeStore:
         self.sent: set[tuple[int, int]] = set()
         self.withdrawn: list[tuple[int, int, int]] = []
         self.withdraw_result = "withdrawn"
+        self.message_ids: dict[tuple[int, int], int | None] = {}
+        self.to_end: list[HandoverOffer] = []
         self.campaign: Any = type("C", (), {"id": "c1", "name": "Frost*maiden"})()
         self.fail_reads: set[int] = set()
 
@@ -66,9 +69,16 @@ class FakeStore:
         self.claimed.add((guild_id, offer_id))
         return offer(offer_id, guild_id, claimed_at=now)
 
-    async def confirm_delivery(self, guild_id: int, o: HandoverOffer, now: int) -> None:
+    async def confirm_delivery(
+        self, guild_id: int, o: HandoverOffer, now: int, message_id: int | None = None
+    ) -> None:
         self.claimed.discard((guild_id, o.id))
         self.sent.add((guild_id, o.id))
+        self.message_ids[(guild_id, o.id)] = message_id
+
+    async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]:
+        ended, self.to_end = self.to_end, []  # each is handed out once
+        return ended
 
     async def release_delivery(self, guild_id: int, o: HandoverOffer) -> None:
         self.claimed.discard((guild_id, o.id))
@@ -89,9 +99,17 @@ class FakeStore:
 class FakeMember:
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.edits: list[tuple[int, dict[str, Any]]] = []
+        self.dm_channel = self
 
     async def send(self, text: str, **_: Any) -> None:
         self.sent.append(text)
+
+    def get_partial_message(self, message_id: int) -> Any:
+        async def edit(**changes: Any) -> None:
+            self.edits.append((message_id, changes))
+
+        return mock.Mock(edit=edit)
 
 
 class FakeGuild:
@@ -99,9 +117,10 @@ class FakeGuild:
         self.id = guild_id
         self.name = "The Table"
         self.owner = FakeMember()
+        self.buyer = FakeMember()
 
     def get_member(self, user_id: int) -> FakeMember | None:
-        return self.owner if user_id == OWNER else None
+        return {OWNER: self.owner, BUYER: self.buyer}.get(user_id)
 
 
 class Harness(unittest.IsolatedAsyncioTestCase):
@@ -111,17 +130,20 @@ class Harness(unittest.IsolatedAsyncioTestCase):
         self.delivered: list[int] = []
         # What delivering does: True (sent), False (can't reach them), or an error.
         self.outcome: bool | BaseException = True
+        self.message = mock.Mock(id=4242)
         self.ready = asyncio.Event()
         self.ready.set()
         self.tasks: list[asyncio.Task[None]] = []
         self.slept: list[float] = []
         self.clock = 0.0
 
-        async def deliver(guild: discord.Guild, campaign: Campaign, o: HandoverOffer) -> bool:
+        async def deliver(
+            guild: discord.Guild, campaign: Campaign, o: HandoverOffer
+        ) -> discord.Message | None:
             self.delivered.append(o.id)
             if isinstance(self.outcome, BaseException):
                 raise self.outcome
-            return self.outcome
+            return cast(discord.Message, self.message) if self.outcome else None
 
         async def wait_until_ready() -> None:
             await self.ready.wait()
@@ -169,6 +191,7 @@ class Sending(Harness):
         await self.offers.send(GUILD, 1)  # announced again, or the sweep found it too
         self.assertEqual(self.delivered, [1])
         self.assertEqual(self.store.sent, {(GUILD, 1)})
+        self.assertEqual(self.store.message_ids, {(GUILD, 1): 4242})  # for its buttons, later
         self.assertEqual(self.store.withdrawn, [])
 
     async def test_another_process_s_server_is_left_alone(self) -> None:
@@ -229,7 +252,7 @@ class DeliverOffer(unittest.IsolatedAsyncioTestCase):
     """The shared private message: only "not there" and "no messages" count as
     unreachable when the caller can try again."""
 
-    async def outcome(self, error: Any, *, raise_if_discord_fails: bool) -> bool:
+    async def outcome(self, error: Any, *, raise_if_discord_fails: bool) -> Any:
         member = mock.Mock(send=mock.AsyncMock(side_effect=error))
         guild = mock.Mock(id=GUILD, get_member=mock.Mock(return_value=member))
         guild.name = "The Table"
@@ -241,10 +264,19 @@ class DeliverOffer(unittest.IsolatedAsyncioTestCase):
 
     async def test_closed_messages_or_gone_are_unreachable(self) -> None:
         for error in (http_error(403, discord.Forbidden), http_error(404, discord.NotFound)):
-            self.assertFalse(await self.outcome(error, raise_if_discord_fails=True))
+            self.assertIsNone(await self.outcome(error, raise_if_discord_fails=True))
+
+    async def test_the_message_sent_comes_back(self) -> None:
+        sent = mock.Mock(id=77)
+        member = mock.Mock(send=mock.AsyncMock(return_value=sent))
+        guild = mock.Mock(id=GUILD, get_member=mock.Mock(return_value=member))
+        guild.name = "The Table"
+        campaign = mock.Mock(id="c1")
+        campaign.name = "Frost"
+        self.assertIs(await deliver_offer(guild, campaign, offer()), sent)
 
     async def test_other_discord_errors_are_raised_only_when_asked(self) -> None:
-        self.assertFalse(await self.outcome(http_error(503), raise_if_discord_fails=False))
+        self.assertIsNone(await self.outcome(http_error(503), raise_if_discord_fails=False))
         with self.assertRaises(discord.HTTPException):
             await self.outcome(http_error(503), raise_if_discord_fails=True)
 
@@ -290,6 +322,49 @@ class Sweeping(Harness):
             await hourly
         self.assertEqual(self.slept[0], site_offers.SWEEP_EVERY_S)
         self.assertEqual(self.delivered, [1])
+
+
+class Expiring(Harness):
+    def ended(self, message_id: int | None = 4242) -> HandoverOffer:
+        return replace(offer(), status="expired", decided_at=NOW, message_id=message_id)
+
+    async def test_the_owner_is_told_and_the_buttons_come_off(self) -> None:
+        self.store.waiting = {}
+        self.store.to_end = [self.ended()]
+        await self.offers.sweep_server(GUILD)
+        guild = self.guilds[GUILD]
+        self.assertEqual(
+            guild.owner.sent,
+            [TOLD_EXPIRED.format(name="Bea\\_\\*", campaign="Frost\\*maiden", days=HANDOVER_DAYS)],
+        )
+        self.assertEqual(
+            guild.buyer.edits,
+            [(4242, {"content": OFFER_EXPIRED.format(days=HANDOVER_DAYS), "view": None})],
+        )
+        await self.offers.sweep_server(GUILD)  # announced once
+        self.assertEqual(len(guild.owner.sent), 1)
+
+    async def test_an_offer_without_a_kept_message_still_tells_the_owner(self) -> None:
+        self.store.to_end = [self.ended(message_id=None)]
+        await self.offers.end_expired(GUILD)
+        self.assertEqual(len(self.guilds[GUILD].owner.sent), 1)
+        self.assertEqual(self.guilds[GUILD].buyer.edits, [])
+
+    async def test_people_who_left_are_skipped_quietly(self) -> None:
+        self.store.to_end = [self.ended()]
+        guild = self.guilds[GUILD]
+        guild.get_member = lambda user_id: None  # type: ignore[method-assign]
+
+        async def gone(user_id: int) -> FakeMember:
+            raise http_error(404, discord.NotFound)
+
+        guild.fetch_member = gone  # type: ignore[attr-defined]
+        await self.offers.end_expired(GUILD)  # nothing raised, nothing logged as an error
+
+    async def test_another_process_s_server_is_left_alone(self) -> None:
+        self.store.to_end = [self.ended()]
+        await self.offers.end_expired(OTHER_GUILD)
+        self.assertEqual(len(self.store.to_end), 1)  # never claimed here
 
 
 class Following(Harness):

@@ -90,6 +90,13 @@ NO_FREE_SLOT = (
 DECLINED = "You said no thanks. Nothing changed. DMbot will let **{owner}** know."
 TOLD_DECLINED = "**{name}** said no thanks to **{campaign}**. It stays yours."
 ENDED = "This offer has ended: it was answered, taken back, or its {days} days are up."
+# When an offer's days are up (#690): the person's message loses its buttons, and the
+# owner is told.
+OFFER_EXPIRED = "This offer has ended: its {days} days are up. Nothing changed."
+TOLD_EXPIRED = (
+    "**{name}** didn't answer your offer of **{campaign}** within {days} days, so it ended. "
+    "The campaign stays yours. You can offer it again any time."
+)
 WITHDRAWN = "Offer taken back. **{campaign}** stays yours."
 TOLD_WITHDRAWN = "**{owner}** took back the offer of **{campaign}**. Nothing changed for you."
 NOT_YOUR_OFFER = "Only **{owner}**, who made this offer, can take it back."
@@ -261,8 +268,13 @@ class PickNewOwner(discord.ui.View):
             await _say(interaction, str(exc))
             return
         self.stop()
-        if await deliver_offer(guild, self.campaign, offer):
+        message = await deliver_offer(guild, self.campaign, offer)
+        if message is not None:
             text = OFFER_SENT.format(name=_md(name), days=HANDOVER_DAYS)
+            try:  # so its buttons can be taken off when the offer's days are up
+                await store.set_offer_message(guild.id, offer.id, message.id)
+            except Exception:
+                log.exception("Couldn't save which message holds a hand-over offer")
         else:
             try:
                 await store.withdraw_handover(guild.id, offer.id, interaction.user.id, _now())
@@ -286,14 +298,14 @@ async def deliver_offer(
     offer: HandoverOffer,
     *,
     raise_if_discord_fails: bool = False,
-) -> bool:
-    """The private message to the person offered. False if they aren't in the server or
-    can't be messaged (the caller then takes the offer back). Never raises, unless
+) -> discord.Message | None:
+    """The private message to the person offered, once sent. None if they aren't in the
+    server or can't be messaged (the caller then takes the offer back). Never raises, unless
     `raise_if_discord_fails`: then any other Discord error is raised, so the caller can
     try again later instead (offers made on the website, #690)."""
     try:
         member = guild.get_member(offer.to_user_id) or await guild.fetch_member(offer.to_user_id)
-        await member.send(
+        return await member.send(
             OFFER_TEXT.format(
                 owner=_md(offer.from_name),
                 campaign=_md(campaign.name),
@@ -308,8 +320,7 @@ async def deliver_offer(
             raise
         with log_context(guild_id=guild.id, campaign_id=campaign.id):
             log.info("Couldn't deliver a hand-over offer to user %s: %s", offer.to_user_id, exc)
-        return False
-    return True
+        return None
 
 
 async def _tell_person(guild: discord.Guild, user_id: int, text: str) -> None:

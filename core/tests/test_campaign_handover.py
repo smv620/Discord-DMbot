@@ -259,6 +259,48 @@ class SiteDelivery(HandoverTest):
         self.assertEqual(len(await self.store.undelivered_offers(GUILD, NOW)), 1)
 
 
+class Ending(HandoverTest):
+    """An offer whose days are up is announced once (#690)."""
+
+    async def test_an_offer_past_its_days_is_ended_and_announced_once(self) -> None:
+        offer = await self.make_offer(GUILD, self.campaign.id, OWNER, BUYER, NOW)
+        await self.store.set_offer_message(GUILD, offer.id, 4242)
+        self.assertEqual(await self.store.offers_to_end(GUILD, NOW + HANDOVER_SECONDS - 1), [])
+        later = NOW + HANDOVER_SECONDS
+        (ended,) = await self.store.offers_to_end(GUILD, later)
+        self.assertEqual((ended.id, ended.status, ended.decided_at), (offer.id, "expired", later))
+        self.assertEqual((ended.message_id, ended.end_told_at), (4242, later))
+        self.assertEqual(await self.store.offers_to_end(GUILD, later + 1), [])
+
+    async def test_one_marked_expired_quietly_is_still_announced(self) -> None:
+        old = await self.offer()
+        later = NOW + HANDOVER_SECONDS
+        await self.make_offer(GUILD, self.campaign.id, OWNER, CO_DM, later)  # expires `old`
+        self.assertEqual([o.id for o in await self.store.offers_to_end(GUILD, later)], [old])
+
+    async def test_answered_or_taken_back_offers_are_never_announced(self) -> None:
+        offer = await self.offer()
+        await self.store.decline_handover(GUILD, offer, BUYER, NOW)
+        self.assertEqual(await self.store.offers_to_end(GUILD, NOW + HANDOVER_SECONDS), [])
+
+    async def test_another_server_never_ends_it(self) -> None:
+        await self.offer()
+        self.assertEqual(await self.store.offers_to_end(OTHER_GUILD, NOW + HANDOVER_SECONDS), [])
+        self.assertEqual(len(await self.store.offers_to_end(GUILD, NOW + HANDOVER_SECONDS)), 1)
+
+    async def test_a_site_offer_keeps_the_message_it_was_sent_in(self) -> None:
+        offer = await self.store.offer_handover(
+            GUILD, self.campaign.id, OWNER, BUYER, NOW,
+            from_name="Owner", to_name="Buyer", delivered=False,
+        )  # fmt: skip
+        claimed = await self.store.claim_delivery(GUILD, offer.id, NOW)
+        assert claimed is not None
+        await self.store.confirm_delivery(GUILD, claimed, NOW, 99)
+        sent = await self.store.get_offer(GUILD, offer.id, NOW)
+        assert sent is not None
+        self.assertEqual((sent.delivered_at, sent.message_id), (NOW, 99))
+
+
 class Answering(HandoverTest):
     async def test_only_the_person_offered_accepts_while_it_is_open(self) -> None:
         offer = await self.offer()

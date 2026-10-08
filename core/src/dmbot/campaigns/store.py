@@ -691,14 +691,44 @@ class CampaignStore:
             row = await cur.fetchone()
         return None if row is None else _to_offer(row)
 
-    async def confirm_delivery(self, guild_id: int, offer: HandoverOffer, now: int) -> None:
+    async def confirm_delivery(
+        self, guild_id: int, offer: HandoverOffer, now: int, message_id: int | None = None
+    ) -> None:
         """The private message went out: the offer is sent."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE campaign_handover_offers SET delivered_at = %s"
+                "UPDATE campaign_handover_offers SET delivered_at = %s, message_id = %s"
                 " WHERE guild_id = %s AND id = %s AND delivered_at IS NULL",
-                (now, guild_id, offer.id),
+                (now, message_id, guild_id, offer.id),
             )
+
+    async def set_offer_message(self, guild_id: int, offer_id: int, message_id: int) -> None:
+        """The private message an offer made in Discord went out in (#690)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET message_id = %s"
+                " WHERE guild_id = %s AND id = %s",
+                (message_id, guild_id, offer_id),
+            )
+
+    async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]:
+        """Offers in this server whose 7 days are up and that nobody was told about yet,
+        marked told now (so each is announced once, by whoever gets here first). Open
+        ones past their days are marked expired first (#690)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET status = 'expired',"
+                " decided_at = created_at + %s"
+                " WHERE guild_id = %s AND status = 'open' AND created_at + %s <= %s",
+                (HANDOVER_SECONDS, guild_id, HANDOVER_SECONDS, now),
+            )
+            cur = await conn.execute(
+                "UPDATE campaign_handover_offers SET end_told_at = %s"
+                " WHERE guild_id = %s AND status = 'expired' AND end_told_at IS NULL"
+                " RETURNING *",
+                (now, guild_id),
+            )
+            return sorted((_to_offer(row) for row in await cur.fetchall()), key=lambda o: o.id)
 
     async def release_delivery(self, guild_id: int, offer: HandoverOffer) -> None:
         """The send failed: let this claim go so a later sweep tries again (unless
@@ -1166,6 +1196,8 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         decided_at=row_int(row, "decided_at"),
         delivered_at=row_int(row, "delivered_at"),
         claimed_at=row_int(row, "claimed_at"),
+        message_id=row_int(row, "message_id"),
+        end_told_at=row_int(row, "end_told_at"),
     )
 
 

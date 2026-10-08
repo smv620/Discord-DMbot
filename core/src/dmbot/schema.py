@@ -526,6 +526,17 @@ HANDOVER_DELIVERED = """
         WHERE status = 'open' AND delivered_at IS NULL;
     """
 
+HANDOVER_EXPIRY = """
+    -- An offer whose 7 days are up is announced once (#690): the owner is told, and the
+    -- buttons come off the private message to the person offered (message_id). Offers
+    -- already closed count as told, so nobody gets an old notice.
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN message_id  BIGINT,
+        ADD COLUMN end_told_at BIGINT;
+    UPDATE campaign_handover_offers SET end_told_at = COALESCE(decided_at, created_at)
+        WHERE status <> 'open';
+    """
+
 SHARED_CONFIRMATIONS = f"""
     -- Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule:
     -- "Record who confirmed and when"; #252): one row per confirmation, what it was for
@@ -937,6 +948,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0022_handover_offer_names", HANDOVER_NAMES),
     ("0024_transcript_topics", TRANSCRIPT_TOPICS),
     ("0025_handover_delivered", HANDOVER_DELIVERED),
+    ("0026_handover_expiry", HANDOVER_EXPIRY),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

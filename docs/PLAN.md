@@ -1536,7 +1536,12 @@ takes the offer back (and tells the owner); any other Discord error lets the cla
 for a later try, and a claim left by a process that stopped lapses. It sweeps for unsent
 offers each time it starts listening, when a server becomes available or is joined, and
 hourly. Offers made in Discord are saved as delivered. The website's role, when it
-offers, must only be able to insert unsent, unclaimed offers from the signed-in owner. A Try It plan may receive a hand-over if its one slot is free;
+offers, must only be able to insert unsent, unclaimed offers from the signed-in owner.
+*When an offer's 7 days are up (#690, part 2):* the same hourly sweep marks it expired
+(also catching ones already marked expired quietly) and announces it once
+(`end_told_at`): the owner hears "they didn't answer within 7 days … the campaign stays
+yours", and the person's private message (`message_id`, kept by both paths) loses its
+buttons. Best effort, at most an hour late. A Try It plan may receive a hand-over if its one slot is free;
 the campaign then follows that plan (so, while on Try It, no backups or downloads). The
 website's database role gets only the narrow extra rights the account page needs, under
 restrictive policies (read and answer offers where the signed-in person is sender or

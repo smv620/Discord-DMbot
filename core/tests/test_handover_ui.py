@@ -190,6 +190,10 @@ class Offering(unittest.IsolatedAsyncioTestCase):
         done = it.edit_original_response.await_args.kwargs  # the picker itself becomes this
         self.assertTrue(done["content"].startswith("Offer sent to **Mirelle**."))
         self.assertIsNone(done["view"])
+        # Kept, so the buttons can come off when its days are up (#690).
+        it.client.campaigns.set_offer_message.assert_awaited_once_with(
+            GUILD, offer().id, it.member.send.return_value.id
+        )
 
     async def test_an_offer_they_cant_get_is_taken_back(self) -> None:
         it = interaction(OWNER)
