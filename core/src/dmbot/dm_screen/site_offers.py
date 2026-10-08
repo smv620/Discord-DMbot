@@ -62,7 +62,7 @@ class OfferStore(Protocol):
     ) -> HandoverOffer | None: ...
 
     async def confirm_delivery(
-        self, guild_id: int, offer: HandoverOffer, now: int, message_id: int | None = None
+        self, guild_id: int, offer: HandoverOffer, now: int, message_id: int
     ) -> None: ...
 
     async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]: ...
@@ -213,13 +213,15 @@ class SiteOffers:
     async def _end(self, guild: discord.Guild, offer: HandoverOffer) -> None:
         told_at = self._now()
         try:
+            # Read first: a database hiccup here leaves the notice unclaimed for the next
+            # sweep, rather than claimed with nobody told.
+            campaign = await self._store.get(guild.id, offer.campaign_id)
             if not await self._store.claim_end_notice(guild.id, offer.id, told_at):
                 return  # someone else is telling them
         except Exception:
             log.exception("Couldn't announce the end of hand-over offer %s", offer.id)
             return
         try:
-            campaign = await self._store.get(guild.id, offer.campaign_id)
             if campaign is not None:  # deleted since: its offers go with it
                 await _tell_expired(guild, offer, campaign)
         except BaseException as exc:
