@@ -1457,7 +1457,16 @@ on acceptance, and only if they still have a free campaign slot at that moment; 
 expires after 7 days and the old owner can withdraw it. On accepting they become a DM of
 the campaign; the old owner stays a co-DM. Only the owner can offer; removing the owner as
 a DM is refused ("Hand the campaign over first"); a campaign whose owner has vanished is
-saved by a restore. Campaigns are counted across servers through a `campaign_owners`
+saved by a restore. *Details (decided 2026-10-08, #644, #614):* offers live in one table
+(`campaign_handover_offers`: server, campaign, from, to, both display names as they were
+when offered, created, status open / accepted / declined / withdrawn / expired) and every
+write goes through `CampaignStore` (`offer_handover`, `accept_handover`,
+`decline_handover`, `withdraw_handover`, `take_ownership`), used by the bot and the
+website alike so the rules can't drift; the website may offer only to the campaign's
+other DMs who have a working plan (never a cross-person read of who in a server pays);
+the bot checks membership when it delivers the private message and withdraws an offer it
+can't deliver, telling the owner; until the campaign count exists (part 3) "a free slot"
+means "a plan that works". Campaigns are counted across servers through a `campaign_owners`
 table (campaign, server, owner, active or paused) readable by the owner's user id like
 `entitlements`, never through a function that sees every server: row-level security stays
 the one rule. Cost basis for these prices: about $0.30 per table-hour (Deepgram Nova-3 clip

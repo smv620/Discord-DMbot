@@ -179,3 +179,35 @@ test("isSilenceFrame matches only Discord's 3-byte silence frame", () => {
   // The receiver hands over subarray views of larger buffers.
   assert.equal(isSilenceFrame(Buffer.from([0x00, 0xf8, 0xff, 0xfe, 0x00]).subarray(1, 4)), true);
 });
+
+// ---- packets lost to receive errors (#631) ------------------------------------
+
+test("packets lost to a receive error count, and so does the wait for audio to resume", () => {
+  const t = new UtteranceTracker();
+  for (let i = 0; i < 10; i++) t.packet(i * FRAME_MS, false); // 0..180 ms
+  t.lost(200, 37); // the library dropped 37, then errored
+  for (let i = 0; i < 5; i++) t.packet(300 + i * FRAME_MS, false); // resumes 100 ms later
+  const h = t.finish();
+  assert.ok(h);
+  // 10 heard, 37 lost, 4 more frames of waiting (200 to 300 ms), 5 heard.
+  assert.deepEqual([h.framesReceived, h.framesExpected], [15, 10 + 37 + 4 + 5]);
+});
+
+test("a loss with nothing heard is still reported, not dropped as no audio", () => {
+  const t = new UtteranceTracker();
+  t.lost(0, 37);
+  assert.deepEqual(t.finish(), { framesReceived: 0, framesExpected: 37, pauses: 0, pausedMs: 0 });
+  assert.equal(t.finish(), null); // and the tracker starts afresh
+});
+
+test("a loss doesn't make the next pause look like loss", () => {
+  const t = new UtteranceTracker();
+  t.packet(0, false);
+  t.lost(20, 1);
+  for (let i = 0; i < 5; i++) t.packet(40 + i * FRAME_MS, true); // a silence run, then a pause
+  t.packet(1_000, false);
+  const h = t.finish();
+  assert.ok(h);
+  assert.equal(h.pauses, 1);
+  assert.deepEqual([h.framesReceived, h.framesExpected], [7, 1 + 1 + 5 + 1]);
+});
