@@ -1579,7 +1579,13 @@ offers, must only be able to insert unsent, unclaimed offers from the signed-in 
 (also catching ones already marked expired quietly) and announces it once
 (`end_told_at`): the owner hears "they didn't answer within 7 days … the campaign stays
 yours", and the person's private message (`message_id`, kept by both paths) loses its
-buttons. Best effort, at most an hour late. A Try It plan may receive a hand-over if its one slot is free;
+buttons. Best effort, at most an hour late. *Answers on the website (#737):* accepting,
+declining or taking back an offer on the account page sends `NOTIFY dmbot_handover_decided`
+(ids only) in the same transaction (`announce=True`; the bot's own buttons tell people
+themselves). The bot process serving that server sends the same private messages the
+Discord buttons send: the owner hears of an accept or a no thanks, and the person's offer
+message says what happened and loses its buttons. One answered while no bot listened
+isn't told (the account page shows it). A Try It plan may receive a hand-over if its one slot is free;
 the campaign then follows that plan (so, while on Try It, no backups or downloads). The
 website's database role gets only the narrow extra rights the account page needs, under
 restrictive policies (read and answer offers where the signed-in person is sender or
@@ -1619,6 +1625,13 @@ and stays a later browser extension in the DM's own session; never a password or
 on our side. Order: part A (link, snapshot, hints, unlink, fallback form; one developer,
 no table work), part B with phase 3 (the rules advisor reads the snapshot), part C later
 (the extension).
+*Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
+just to the character: if the DM gives the character to someone else, the old sheet is
+never shown to the new player (it shows only while that player still plays it). The
+player is told the truth about the link: DMbot shows it only to them and their DM, and it
+is also in the campaign's backup file. The 📜 button on the consent confirmation and the
+reminder is explained as optional and "doesn't change recording"; that sentence adds
+nothing anyone agrees to, so the consent terms version stays as it is.
 *Built, part A first half (#723, dev2):* the `character_sheets` table (one row per player
 character per campaign, its link and snapshot; its own table rather than columns on the
 entity, so a refresh is never in the undo log or the in-memory names), the allow-list

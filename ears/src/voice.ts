@@ -433,6 +433,7 @@ export class TableSession {
     // The receiver forgets the old stream on its "close" (which always follows "error" or
     // "end", though `closed` may already be true here); only then can it give a new one.
     old.once("close", () => {
+      if (this.destroyed || this.speakers.get(userId) !== pipeline) return; // stopped meanwhile
       if (delay === 0) {
         this.listenAgain(userId, pipeline);
         return;

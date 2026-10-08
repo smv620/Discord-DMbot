@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (live 70ac757; Test B passed; Test C next)
+Last updated: 2026-10-08 by dev1 (deployed e299bfc; Test D, TV on, next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,127 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- dev3, #651 (#645): ears AND core (the DM's "voice cut out" line). No migration or
-  setting. #641 (#631) is already live in 70ac757; this finishes it: a stream the voice
-  library ends while the speaker still sends now counts as lost and is listened to again.
-  Check in the next Test A (DMBOT_DEBUG_AUDIO=1): `dave: ...` lines around the first
-  packet; on a failure "listening again (n of 5 this minute)" or "is sending audio but
-  none of it can be heard", and the DM screen's audio % drops.
-- dev3, PR #764 (#761): ears only. No core change, migration or setting. Deploy with #651.
-  After an error, the second re-listen waits 100 ms, not 1 s (then 300, 1500, 2100 ms), so
-  the Test B failure after an MLS welcome costs about 0.1 s, not 1 s. Check in the next
-  Test A/B (DMBOT_DEBUG_AUDIO=1; the DM joins the voice channel before DMbot, for a
-  welcome): after `dave: MLS welcome processed (transition id: 0)`, any errors show
-  "listening again at once (1 of 5 this minute)" then "in 100 ms (2 of 5 ...)". Several
-  "at once" lines within a second mean a stream flapping heard/errored, not a new bug.
-- dev3, #697 (#671 stage 1): core only. No migration or setting. The DM screen's audio
-  warning now needs real loss: under 90% got through AND at least 2 s lost over a rolling
-  minute per person, counting only pieces long enough to be written down. Check: Test A
-  with a TV on gives no ⚠️ (the log line still shows "(audio gaps)"), and every DM line is
-  in the transcript. Stage 2 (#699, PR #718) follows.
-- dev3, PR #718 (#699 stage 2): core only. No migration or setting. Deploy with or
-  after #697. When someone's audio rule fires (now under 95% and at least 2 s lost), DMbot
-  reads their lines from that minute first and warns only if they read garbled: by
-  Deepgram's word confidence, else one yes/no to the small AI model (at most once a minute
-  per person). A large loss (under 50%, 10 s) warns at once; no lines at all warns; with
-  no AI key it warns on the audio rule alone. Check: Test A with a TV on gives no ⚠️; the
-  log has "Audio check for user N: ..." lines and, at the end, "Audio checks: ...".
-- CloudDev, PR #657 (#598): names reads never join names to entries (a freshly filled
-  campaign's cold names load 1.4 s -> 0.08 s; Check new names' "sounds like" 2.6 s -> 8 ms).
-  No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
-  names answer as before; the `Built names for campaign` log line shows a small database
-  time.
-- CloudDev, PR #689 (#598 item 3): Add many takes at most 20 other and 20 secret names
-  on a line; a list with one name on many lines reads in under 2 s (was about 50 s, on
-  the event loop). No migration. Deploy: rebuild core. Check: Add many with a line of 21
-  other names says "line N: more than 20 other names. Put the rest on a new line...";
-  Download all, then upload that file again: nothing is refused.
-- dev2, PR #670 (#52 part 1): the consent request and the per-session reminder say an
-  AI (Anthropic) reads the text, with who said it, to give the DM notes; terms version
-  2 -> 3. No migration. Deploy together with dev2's #52 wording PR (it adds "with who
-  said it"), and with or before #678: rebuild core. Tell the table first: after the deploy,
-  everyone who said yes before is asked again and isn't recorded until they say yes.
-  Check: a player who agreed before gets the new request with a "What's new" note;
-  after they say yes, recording works as before.
-- dev2, PR #678 (#52 part 2): the off-topic filter. Clearly off-topic chat becomes
-  "[1m 22s of off-topic chat skipped]" in the cleaned transcript and the live channel;
-  As heard keeps every word. Migration 0024 adds topic and duration columns to
-  transcript_lines (defaults, quick). Needs #670 (terms version 3) live first or in the
-  same deploy. Deploy: rebuild core. Check: `docker compose logs core` shows 0024 applied;
-  at the end of a session "Off-topic filter: N calls, ... tokens"; replay
-  docs/test-scripts/off-topic.md.
-- CloudDev, PR #659 (#636): /dmbot start says "I haven't started: I can't hear voice
-  channels right now…" instead of developer steps when ears is down, and logs it. No
-  migration. Deploy: rebuild core. Check: with ears stopped, /dmbot start gives the new
-  words and `docker compose logs core` shows "Can't start in server …".
-- CloudDev, PR #668 (#652, #437): hand-over offers keep both people's names. Migration
-  0022 adds two columns to the (still empty) offers table: quick. Deploy: rebuild core.
-  Check: `docker compose logs core` shows 0022 applied, no new errors.
-- CloudDev, PR #637 (#595): a command, button, menu or form that breaks now tells the
-  person privately ("Something broke on DMbot's side… Try once more") and logs the
-  cause, instead of leaving "thinking…". No migration. Deploy: rebuild core. Check:
-  /dmbot names works as before.
-- CloudDev, PR #705 (#437 part 1b): hand over a campaign from Discord. **Deploy only
-  together with the #713 fix** (without it an offer can be refused for "no plan",
-  telling the owner whether a member pays). ⚙️ Settings shows the campaign's owner; the
-  owner can 🤝 Hand over to a member, who gets a private Accept / No thanks. No
-  migration (needs #668's 0022). Deploy: rebuild core.
-  Check: ⚙️ Settings shows the owner; Hand over to a test member sends them the
-  message; Accept moves the campaign to their plan.
-- dev2, PR #704 (#690 part 1): hand-over offers made on the website reach the person
-  through the bot (private Accept / No thanks). Migration 0025 adds delivered_at and
-  claimed_at to the offers table; existing offers count as sent (quick). Deploy with or
-  after #705: rebuild core. Nothing visible until the site's offer route (#625) is on;
-  Discord offers work as before. Check: `docker compose logs core` shows 0025 applied,
-  no "Lost hand-over offer notifications" warnings.
-- dev2, PR #721 (#690 part 2): when an offer's 7 days are up, the owner is told once and
-  the buttons come off the person's message (within the hour). Migration 0027 adds
-  message_id and end_told_at; old offers count as told, so nobody gets a late notice.
-  Deploy with or after #704: rebuild core. Check: 0027 applied; no "Discord failed
-  announcing offer" warnings.
-- CloudDev, PR #712 (#598 item 4): Add many gives one name at most 50 other and 50
-  secret names, and a list at most 5,000 new ones in all; only what the list adds counts.
-  No migration. Deploy: rebuild core. Check: Add many with one name given 51 other names
-  says "Nothing was added. … has more than 50 other names in this list…"; Download all,
-  then upload that file again: nothing is refused.
-- WebDev, PR #710 (#665): the website's "Say hello" page (feedback and questions become
-  GitHub Discussions). Migration 0026 adds the add-only `feedback` table: the bot
-  migrates first (the website's rights come with the migration), then rebuild web-api.
-  Before turning it on: the owner turns on Discussions in the repository and makes two
-  categories named exactly "Feedback" and "Questions". .env: GITHUB_FEEDBACK_TOKEN (a
-  fine-grained token for this repo, Discussions read and write only), plus
-  TURNSTILE_SECRET_KEY and WEB_CLIENT_IP_HEADER=CF-Connecting-IP, both required once the
-  token is set (the API must be reachable only through Cloudflare). Build the site with
-  the matching PUBLIC_TURNSTILE_SITE_KEY. Check: `docker compose logs core` shows 0026;
-  a test message on /hello appears as a discussion holding only the message and date,
-  and the page links to it.
-- CloudDev, PR #630 (#251): PDF and Word files are read in their own short-lived
-  process (dmbot-document) with a 30 s limit and 256 MB of memory, so a slow or broken
-  file can't hold up voice or other servers. No migration or setting. Deploy: rebuild
-  core. Check: 📎 Upload a file with a short PDF still gives the names list; no new
-  warnings in the log; `ps` shows no `dmbot-document` process after the read. Expect one
-  resource-tracker helper process for the life of the bot in `docker compose top core`:
-  it's not a leftover reader.
-- CloudDev, PR #724 (#713): hand-over fixes. **Deploy together with #705** (above): an
-  offer is never refused for "no plan", the offer message is three short paragraphs, and
-  an offer DMbot can't deliver says what happened. No migration. Deploy: rebuild core.
-  Check: Hand over to a test member who has no plan: the offer is sent; their Accept
-  says to pick a plan; No thanks tells the owner.
-- CloudDev, PR #730 (#598): Add many's 5,000 cap message and the DM template say "other
-  and secret names". No migration. Deploy: rebuild core (with #712). Check: 📄 Get the
-  template says "5,000 new other and secret names in all."
-- CloudDev, PR #735 (#580, #734): "Every wizard is an NPC" for a big group takes a few
-  database statements, not thousands, and the name-clash check looks up one name instead
-  of reading every name. No migration. Deploy: rebuild core. Check: after Add many,
-  answer a kind question for a group: it saves at once and Undo puts it back; adding a
-  name that's already known still says so.
-- CloudDev, PR #760 (#581, #759): /dmbot names find: suggestions wait at most 1.5 s for
-  a campaign's names and are ready on the next keystroke; while names reload, nobody gets
-  the old copy (a name just made secret), and each speech-to-text clip waits at most
-  1.5 s for names (people-only hints meanwhile). No migration or setting. Deploy: rebuild
-  core. Check: right after a restart, type in /dmbot names find: (suggestions appear by
-  the second keystroke); make a name secret during a session: it isn't suggested or
-  used as a hint after that; no "Couldn't load names" warnings in the log.
+(nothing waiting)
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -143,12 +23,12 @@ Already confirmed in run 8a: consent carries over, Stop recording me and I conse
 again work at once, the download is offered.
 
 Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: 70ac757 (2026-10-08 06:44 UTC).
+DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: e299bfc (2026-10-08 18:18 UTC).
 
 Before the test (owner)
   [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
       paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since 70ac757, ask it to redeploy first. Use a steady connection (run 8a
+      moved since e299bfc, ask it to redeploy first. Use a steady connection (run 8a
       on bad Wi-Fi got 26% of the audio)
   [ ] Someone who has NOT agreed before (ideally a third account) in voice before
       /dmbot start, for the first-time question
@@ -292,12 +172,12 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     of it can be heard"; the DM screen shows a warning and its audio % drops
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test B (2026-10-08 16:14), DM alone: PASS
+LATEST RESULT: Test C (2026-10-08 18:04), DM alone: PASS
 ------------------------------------------------------------------------------
-  On 70ac757. ⏹ Stop listening asked first; Cancel kept DMbot listening; /dmbot stop
-  ended it. The #631 decrypt error came back at the start (after a DAVE "welcome", not
-  a "commit") and #641 caught it: listened again, ~1 s lost (audio 66%), then 100%.
-  Next: Test C (docs/next-test-step.md), Yes, stop ends the session.
+  On 70ac757. ⏹ Stop listening -> Yes, stop ended the session: DMbot left voice and the
+  download was offered. The #631 decrypt error came back at the start (after a DAVE
+  commit this time) and #641 re-listened: audio 88%. Previous: Test B PASS (16:14).
+  Deployed e299bfc at 18:18. Next: Test D (docs/next-test-step.md), TV on.
 
 Open issues from testing
   #671 the audio warning fires on background noise (owner)

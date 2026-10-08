@@ -47,6 +47,11 @@ CI runs all of the above on every pull request. Never merge red CI.
   since the PR's last CI run, RepoManager merges `development` into the PR's branch and
   waits for green CI on that head; Supervisor's approval stands for a merge-of-development
   push that changes nothing else.
+  **RepoManager does that refresh itself** (2026-10-08, #516): when the merge of
+  `development` into an approved PR's branch is clean and the PR's own change is unchanged
+  (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
+  author round-trip. A conflict whose resolution touches the PR's own logic goes back to
+  the author and needs a fresh "approved".
 - Promotions (`development` → `beta`, `beta` → `main`) are PRs, opened only when the
   owner asks (through Supervisor); RepoManager opens and merges them.
 - One concern per PR. Link the GitHub issue it closes.
@@ -251,7 +256,9 @@ terminal output or Discord screenshots copied to it.
   #704, 2026-10-08): migrations run unscoped and every server table has forced RLS, so a
   plain `UPDATE` silently matches nothing. Wrap it (`CREATE POLICY migrate_backfill … USING
   (true) WITH CHECK (true); UPDATE …; DROP POLICY …`) and prove it with a test that migrates
-  a table holding rows.
+  a table holding rows. Open **every** table the statement reads, not only the one it
+  writes (a `FROM` or join on a hidden table matches nothing; found in #781's 0029, whose
+  backfill would have deleted every row it meant to fill).
 - **Database-backed tests run only where Postgres is:** core's session and store tests
   are skipped when no database is available, so a green local `pytest` proves little
   for that code. Read the CI core job on the PR's head commit before writing "tests

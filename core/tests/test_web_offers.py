@@ -4,6 +4,8 @@ offers and servers."""
 
 from __future__ import annotations
 
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -259,3 +261,19 @@ class WebOffers(DatabaseTest):
             refused = await client.post(f"/offers/{self.ref}/withdraw")  # no site header
             self.assertEqual(refused.status_code, 403)
         self.assertEqual((await self.owner_and_dms())[0], BOB.id)
+
+
+class SiteAnswersAnnounce(unittest.IsolatedAsyncioTestCase):
+    """Every answer on the site tells the bot, so the other person hears (#737)."""
+
+    async def test_each_answer_is_made_with_announce(self) -> None:
+        session = MagicMock(user_id=7, id_hash="h", guilds=[MagicMock(id=111)])
+        for what, method in (
+            ("accept", "accept_handover"),
+            ("decline", "decline_handover"),
+            ("withdraw", "withdraw_handover"),
+        ):
+            with patch.object(CampaignStore, method, AsyncMock(return_value="gone")) as call:
+                await offers.answer(MagicMock(), session, "111-5", what, now=1)  # type: ignore[arg-type]
+            assert call.await_args is not None
+            self.assertEqual(call.await_args.kwargs, {"announce": True}, what)

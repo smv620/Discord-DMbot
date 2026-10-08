@@ -4,27 +4,33 @@
 
 ---
 
-## Test C: Yes, stop ends the session
+## Test D: no false warning with a TV on
 
 **People:** 1 (you, as the DM)
-**Time:** about 2 minutes
-**Why:** Test B showed **Cancel** keeps DMbot listening. This checks the other answer: **Yes, stop** really ends the session.
+**Time:** about 3 minutes
+**Why:** on Oct 8 a TV in the room set off DMbot's ⚠️ warning even though everything you said was written down. DMbot now reads the transcript before it warns. Check that a noisy room gives no false alarm.
 
 ### Before you start
-- Phone or computer, either is fine.
+- **dev1 must update DMbot first.** Check that dev1 has said the update is done.
+- Turn on a TV (or music with talking) in the room, at a normal volume.
+- DMbot may ask you to agree to recording again after the update. If it does, press **I consent**.
 - Tell dev1 you're starting, so it can watch from its side.
 
 ### Steps
 1. Join the voice channel you play in.
 2. Type `/dmbot start`. Press **▶ Continue last campaign** (or pick your campaign), then **▶ Start listening**.
-3. Open the channel whose name starts with **dmb-dm-screen**. Find DMbot's message that says it's listening.
-4. Press **⏹ Stop listening**. A question appears that only you can see: "Stop listening and end the session for …?"
-5. Press **Yes, stop**.
+3. Say these three sentences clearly, with a short pause between them:
+   - **"The party walks into the tavern and orders three drinks."**
+   - **"The innkeeper says the road north is closed."**
+   - **"Roll for initiative."**
+4. Let the TV play for about one minute while you stay quiet.
+5. Look at the channel whose name starts with **dmb-dm-screen**, and the one whose name starts with **dmb-transcript**.
+6. Type `/dmbot stop`.
 
 ### It worked if
-- DMbot shows **"Stopping…"**, then the session ends: DMbot leaves the voice channel and the transcript channel shows **Session ended**.
+- **No ⚠️ warning** appears on the DM screen, **and** your three sentences are in the **dmb-transcript** channel.
 
-**If not:** type `/dmbot stop` anyway, then tell dev1 below. Don't try again until dev1 answers.
+**If not:** type `/dmbot stop` anyway, then tell dev1 below. Don't try again until dev1 answers. If a ⚠️ line showed, copy it for dev1.
 
 ### Tell dev1
 - **Worked** or **didn't work**.

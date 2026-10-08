@@ -895,3 +895,35 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     143/143; core "audio 66% (audio gaps)", then 100%. Before #641 the whole sentence
     would have been lost. In the two clean runs DAVE logged "commit", not "welcome":
     posted on #631 as a clue for the upstream report.
+
+==============================================================================
+2026-10-08  Test C: Yes, stop ends the session (owner, alone): PASS
+==============================================================================
+  - 18:04-18:05 UTC on 70ac757, docs/next-test-step.md. Owner: everything worked.
+  - core: session started 18:04:10, ended 18:05:03 (logged as "/dmbot stop by user",
+    the button shares that path); "Listened 0.9 min, sent 0.1 min of speech (13%)";
+    download offered to 1 of 1. ears "left voice (core asked)" at 18:05:03.
+  - The #631 error again: "MLS commit processed (transition id: 0)" at 18:04:15.6,
+    then "receive error ... listening again (1 of 5)" and "(2 of 5)" at 18:04:16.5;
+    health 348/392; core "audio 88% (audio gaps)". So it isn't specific to a DAVE
+    "welcome" (correcting the 16:14 entry's clue); posted on #631.
+
+==============================================================================
+2026-10-08  Server: deploy e299bfc (dev1, owner's go, no test run)
+==============================================================================
+  - 18:18 UTC  development @ e299bfc, ears and core. First deploy since 70ac757
+    (06:44): #651, #764, #776 (ears: re-listening after receive errors), #697 + #718
+    (audio warning in two stages, #671/#699), #670 + #695 (consent terms version 3:
+    everyone is asked to agree again), #678 (off-topic filter), #657, #689, #712,
+    #730, #735, #760 (names), #659, #637 (plain words when something breaks), #630
+    (document reader), #668, #704, #705, #721, #724, #765, #769, #794, #625 (campaign
+    hand-over, Discord and website), #710, #742 (feedback forms; web API still off),
+    #740 (D&D Beyond sheets, part A), plus docs.
+  - Migrations 0022-0028 (handover names, offer indexes, transcript topics, handover
+    delivered, feedback, handover expiry, character sheets). Read before deploying; the
+    hand-over offers table had 0 rows; web-role policies skipped (no dmbot_web role).
+  - Database backed up first ("pre0022-0028", outside the repo; 27 tables); no session
+    was live. scripts/update-env kept 42 values and added the empty feedback-form
+    settings. Images built ahead; `up -d` as its own step. Logs: "Database updated:
+    0022 ... 0028", "Connected to 1 server(s)", "ears connected"; two ears "core link
+    error: ECONNREFUSED" in the first second, then "connected to core"; nothing else.

@@ -507,6 +507,7 @@ class DMBot(commands.AutoShardedBot):
             asyncio.create_task(self._transcript_saver(), name="transcript-saves"),
             self._watched(self.site_offers.follow(self.campaigns.listen), "site-offers"),
             self._watched(self.site_offers.every_hour(), "site-offer-sweeps"),
+            self._watched(self.site_offers.follow_decided(self.campaigns.listen), "site-decisions"),
         ]
 
     async def close(self) -> None:
