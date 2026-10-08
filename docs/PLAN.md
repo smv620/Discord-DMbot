@@ -592,12 +592,18 @@ so the docs always show names the way Discord does. For the campaign
   (audio gaps, speech-to-text falling behind), the start and stop messages, and the
   end-of-session summary (#109). The 15-second capture checks leave it; audio health
   shows only as a warning when there's a problem, and in the summary.
-  **The audio warning counts only speech worth writing down (decided 2026-10-08, #671,
-  owner's request after a TV in the room set it off):** pieces shorter than the
-  transcription minimum never count; among the rest the ⚠️ needs both under 95%
-  received and at least 2 s lost in a rolling 60 s window per speaker. The #631
-  failure (a speaker sending while nothing is heard) stays an immediate warning from
-  ears' watchdog. The end-of-session line keeps the raw numbers for the logs.
+  **The audio warning checks the transcript before it warns (owner decision 2026-10-08,
+  #671, after a TV in the room set it off; #697 stage 1, #699 stage 2):** pieces shorter
+  than the transcription minimum (by length as ears measured them, so a short answer
+  that breaks up still counts) never count; among the rest, under 95% received and at
+  least 2 s lost in a rolling 60 s window per speaker is the *trigger*: it starts a
+  check of that speaker's lines in the window (the engine's per-word confidence first,
+  else one small AI call per speaker per minute on the cleaned text), and the ⚠️ shows
+  only if they read garbled. Large losses skip the check: the #631 watchdog (sending,
+  nothing heard) and under 50% received with at least 10 s lost in a minute warn at
+  once. Until stage 2 lands, stage 1 warns directly at the DM screen's existing 90%
+  (90–94% rarely costs words), not 95%. The end-of-session line keeps the raw numbers
+  for the logs; the summary's "kept cutting out" follows the same rule.
 - **Organized mode:** each campaign gets a category, `📋 Rime of the Frostmaiden`
   (categories keep capitals and emoji), holding its `dmb-` channels. Each channel has a
   pinned "What's this channel?" card saying what it's for and who can see it. This
