@@ -134,6 +134,7 @@ def test_help_card_explains_who_can_see_and_how_to_start() -> None:
     assert "never makes rulings or story" in peek
     assert m.HIDE_LABEL in peek
     assert "change who can see this" in peek
+    assert "⚙️ **Settings** for how much DMbot says" in peek  # #515
     assert "admins can always see" in m.help_card("Frostmaiden", "private")
     assert "admins" not in m.help_card("Frostmaiden", "open")
 

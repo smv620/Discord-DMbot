@@ -254,42 +254,66 @@ class VisibilityButton(
         return cls(match["campaign"], match["visibility"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        campaign = await _campaign(interaction, self.campaign_id)
-        guild = interaction.guild
-        member = interaction.user
-        store = _store(interaction)
-        if campaign is None or guild is None or store is None:
-            await interaction.response.send_message(messages.CAMPAIGN_GONE, ephemeral=True)
-            return
-        if not isinstance(member, discord.Member) or not (
-            member.id in campaign.dm_user_ids or member.guild_permissions.manage_guild
-        ):
-            await interaction.response.send_message(messages.NOT_THE_DM, ephemeral=True)
+        allowed = await may_change_screen(interaction, self.campaign_id)
+        if allowed is None:
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        was = campaign.dm_screen_visibility
-        try:
-            # Saved and applied together under the campaign's lock.
-            result = await setup_dm_screen(guild, campaign.id, store, visibility=self.visibility)
-        except DMScreenError as exc:
-            await interaction.followup.send(str(exc), ephemeral=True)
-            return
-        except Exception:
-            # Never leave the DM on "thinking…".
-            log.exception("Changing DM-screen visibility failed")
-            await interaction.followup.send(messages.SOMETHING_WENT_WRONG, ephemeral=True)
-            return
-        campaign = result.campaign
-        reply = messages.visibility_changed(self.visibility, was=was)
-        if result.warning:
-            reply += "\n" + result.warning
-            with contextlib.suppress(discord.HTTPException):
-                await result.channel.send(result.warning, allowed_mentions=NO_PINGS)
-        await interaction.followup.send(reply, ephemeral=True, allowed_mentions=NO_PINGS)
-        # Let a live session catch up (for example, give players the Peek button).
-        hook = getattr(interaction.client, "after_screen_change", None)
-        if hook is not None:
-            await hook(campaign, result.channel)
+        await save_visibility(interaction, *allowed, self.visibility)
+
+
+async def may_change_screen(
+    interaction: discord.Interaction, campaign_id: str
+) -> tuple[Campaign, discord.Guild, CampaignStore] | None:
+    """The campaign, if this person (its DM, or a server manager) may change who can see
+    its screen; otherwise None, after telling them why."""
+    campaign = await _campaign(interaction, campaign_id)
+    guild = interaction.guild
+    member = interaction.user
+    store = _store(interaction)
+    if campaign is None or guild is None or store is None:
+        await interaction.response.send_message(messages.CAMPAIGN_GONE, ephemeral=True)
+        return None
+    if not isinstance(member, discord.Member) or not (
+        member.id in campaign.dm_user_ids or member.guild_permissions.manage_guild
+    ):
+        await interaction.response.send_message(messages.NOT_THE_DM, ephemeral=True)
+        return None
+    return campaign, guild, store
+
+
+async def save_visibility(
+    interaction: discord.Interaction,
+    campaign: Campaign,
+    guild: discord.Guild,
+    store: CampaignStore,
+    visibility: str,
+) -> Campaign | None:
+    """Change who can see the DM screen (the interaction is already deferred) and say so
+    privately. The campaign as saved, or None if it failed (the DM is told)."""
+    was = campaign.dm_screen_visibility
+    try:
+        # Saved and applied together under the campaign's lock.
+        result = await setup_dm_screen(guild, campaign.id, store, visibility=visibility)
+    except DMScreenError as exc:
+        await interaction.followup.send(str(exc), ephemeral=True)
+        return None
+    except Exception:
+        # Never leave the DM on "thinking…".
+        log.exception("Changing DM-screen visibility failed")
+        await interaction.followup.send(messages.SOMETHING_WENT_WRONG, ephemeral=True)
+        return None
+    campaign = result.campaign
+    reply = messages.visibility_changed(visibility, was=was)
+    if result.warning:
+        reply += "\n" + result.warning
+        with contextlib.suppress(discord.HTTPException):
+            await result.channel.send(result.warning, allowed_mentions=NO_PINGS)
+    await interaction.followup.send(reply, ephemeral=True, allowed_mentions=NO_PINGS)
+    # Let a live session catch up (for example, give players the Peek button).
+    hook = getattr(interaction.client, "after_screen_change", None)
+    if hook is not None:
+        await hook(campaign, result.channel)
+    return campaign
 
 
 def peek_view(campaign_id: str) -> discord.ui.View:
@@ -306,11 +330,15 @@ def hide_view(campaign_id: str) -> discord.ui.View:
 
 
 def card_view(campaign: Campaign) -> discord.ui.View:
-    """The help card's buttons: who can see the screen (for the DM), and Hide (peekers)."""
+    """The help card's buttons: who can see the screen and ⚙️ Settings (for the DM), and
+    Hide (peekers)."""
+    from dmbot.dm_screen.settings import SettingsButton  # settings imports this module
+
     view = discord.ui.View(timeout=None)
     for visibility in messages.VISIBILITY_BUTTONS:
         current = visibility == campaign.dm_screen_visibility
         view.add_item(VisibilityButton(campaign.id, visibility, current=current))
+    view.add_item(SettingsButton(campaign.id))  # there between sessions too (#515)
     if campaign.dm_screen_visibility == "peek":
         view.add_item(HideButton(campaign.id))
     return view

@@ -74,7 +74,7 @@ from dmbot.dm_screen.name_questions import (
     fix_notes_view,
     question_view,
 )
-from dmbot.dm_screen.settings import LevelButton, SettingsButton
+from dmbot.dm_screen.settings import LevelButton, SettingsButton, SettingsVisibilityButton
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -384,7 +384,7 @@ class DMBot(commands.AutoShardedBot):
         self.tree.add_command(transcript_command)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
-        self.add_dynamic_items(SettingsButton, LevelButton)
+        self.add_dynamic_items(SettingsButton, LevelButton, SettingsVisibilityButton)
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
         # "Check new names" on the DM screen after a session.
@@ -650,8 +650,11 @@ class DMBot(commands.AutoShardedBot):
         button comes off when the session ends, so old messages can't be pressed."""
         view = None
         if table.campaign_id:
-            view = stop_listening_view(table.campaign_id)
-            view.add_item(SettingsButton(table.campaign_id))  # ⚙️ Settings (#515)
+            # ⚙️ Settings first (#515): the common tap isn't next to Stop's edge.
+            view = discord.ui.View(timeout=None)
+            view.add_item(SettingsButton(table.campaign_id))
+            for item in stop_listening_view(table.campaign_id).children:
+                view.add_item(item)
         message = await self.post_message(table.screen_channel_id, text, view)
         if message is None:
             return

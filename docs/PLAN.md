@@ -475,10 +475,11 @@ channel's chat.
 **How much DMbot says (built 2026-10-08, #504).** A campaign setting for the DM screen,
 picked with buttons when creating a campaign (**Quiet / Normal**, sharing the last row
 with Create; Chatty isn't offered until something uses it) and changed any time with
-**⚙️ Settings** on the DM screen's "Listening" message (built 2026-10-08, #515). Settings
-opens privately, for the campaign's DMs or a server manager: how much DMbot says (one
-tap saves it, and a running session follows it from its next line), who can see the DM
-screen (the help card's buttons), and where saved transcripts are (`/transcript`).
+**⚙️ Settings**, on the DM screen's help card (there between sessions too) and first on
+the "Listening" message (built 2026-10-08, #515). Settings opens privately, for the
+campaign's DMs or a server manager: how much DMbot says (one tap saves it, and a running
+session follows it from its next line) and who can see the DM screen, each tap redrawing
+the card with what's saved, plus where saved transcripts are (`/transcript`).
 Backups carry the level, and a restore uses the backup's (older backups: Normal).
 | Level | What DMbot posts on its own |
 |---|---|

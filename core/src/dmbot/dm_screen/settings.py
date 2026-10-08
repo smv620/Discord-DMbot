@@ -1,14 +1,17 @@
 """⚙️ Settings on the DM screen (#515): the campaign's settings, privately, one tap per
-change. It sits on the "Listening" message next to Stop listening. Only the campaign's
-DMs, or a server manager, may open it or change anything.
+change. The button sits on the DM screen's help card (there between sessions too) and on
+the "Listening" message. Only the campaign's DMs, or a server manager, may open it or
+change anything.
 
 - **How much DMbot says** (Quiet / Normal, #504): saved for the campaign, and a running
   session follows it from the next line (`DMBot.set_screen_level`).
-- **Who can see the DM screen:** the help card's own buttons (`VisibilityButton`).
+- **Who can see the DM screen:** saved the same way as the help card's buttons
+  (`save_visibility`).
 - **Saved transcripts:** where to find them (there's nothing to change).
 
-The buttons' IDs carry the campaign, so they work after a restart. Register with
-`bot.add_dynamic_items(SettingsButton, LevelButton)`.
+Each tap redraws the card, so it always shows what's saved. The buttons' IDs carry the
+campaign, so they work after a restart. Register with
+`bot.add_dynamic_items(SettingsButton, LevelButton, SettingsVisibilityButton)`.
 """
 
 from __future__ import annotations
@@ -27,32 +30,37 @@ from dmbot.campaigns.models import (
     CampaignError,
 )
 from dmbot.dm_screen import messages
-from dmbot.dm_screen.buttons import VisibilityButton
+from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 
 log = logging.getLogger(__name__)
 
 NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 SETTINGS_LABEL = "Settings"
-ONLY_DM = "Only this campaign's DM (or a server manager) can change its settings."
+ONLY_DM = "Only this campaign's DM (or a server manager) can open or change its settings."
+GONE = "I can't find this campaign anymore. It may have been deleted. To start one: `/dmbot start`."
 FAILED = "Sorry, that didn't save. Please try again."
+
+
+def _tick(label: str, current: bool) -> str:
+    return f"✓ {label}" if current else label
 
 
 def settings_text(campaign: Campaign) -> str:
     """The settings card (only the person who opened it sees it)."""
     level = campaign.dm_screen_level
     recommended = " (recommended)" if level == DEFAULT_DM_SCREEN_LEVEL else ""
+    what = DM_SCREEN_LEVELS.get(level, level)
     who = messages.WHO_CAN_SEE.get(campaign.dm_screen_visibility, "")
     return "\n".join(
         [
-            f"⚙️ **Settings for {discord.utils.escape_markdown(campaign.name)}** "
-            "(only you can see this)",
-            f"• **{level.capitalize()}**{recommended}: how much DMbot says, in the DM screen "
-            f"only: {DM_SCREEN_LEVELS.get(level, level)}. Warnings always show.",
+            f"⚙️ **Settings for {discord.utils.escape_markdown(campaign.name)}**",
+            f"• **How much DMbot says:** {level.capitalize()}{recommended}. "
+            f"{what[:1].upper()}{what[1:]}. Warnings always show.",
             f"• **Who can see the DM screen:** {who}",
             "• **Saved transcripts:** anyone in the server can read and download them with "
             "`/transcript`.",
-            "Tap a button to change a setting. A change works at once, even mid-session.",
+            "Tap a button to change it. Changes work at once, even mid-session.",
         ]
     )
 
@@ -63,9 +71,7 @@ def settings_view(campaign: Campaign) -> discord.ui.View:
         view.add_item(LevelButton(campaign.id, level, current=level == campaign.dm_screen_level))
     for visibility in messages.VISIBILITY_BUTTONS:
         current = visibility == campaign.dm_screen_visibility
-        item = VisibilityButton(campaign.id, visibility, current=current)
-        item.row = 1
-        view.add_item(item)
+        view.add_item(SettingsVisibilityButton(campaign.id, visibility, current=current))
     return view
 
 
@@ -74,13 +80,18 @@ async def _allowed(interaction: discord.Interaction, campaign_id: str) -> Campai
     telling them why. Scoped to the server the button was pressed in."""
     store = getattr(interaction.client, "campaigns", None)
     guild, member = interaction.guild, interaction.user
-    campaign = (
-        await store.get(guild.id, campaign_id)
-        if isinstance(store, CampaignStore) and guild is not None
-        else None
-    )
+    try:
+        campaign = (
+            await store.get(guild.id, campaign_id)
+            if isinstance(store, CampaignStore) and guild is not None
+            else None
+        )
+    except Exception:
+        log.exception("Couldn't load a campaign for its settings")
+        await interaction.response.send_message(FAILED, ephemeral=True)
+        return None
     if campaign is None:
-        await interaction.response.send_message(messages.CAMPAIGN_GONE, ephemeral=True)
+        await interaction.response.send_message(GONE, ephemeral=True)
         return None
     manager = isinstance(member, discord.Member) and member.guild_permissions.manage_guild
     if member.id not in campaign.dm_user_ids and not manager:
@@ -89,18 +100,26 @@ async def _allowed(interaction: discord.Interaction, campaign_id: str) -> Campai
     return campaign
 
 
+async def _redraw(interaction: discord.Interaction, campaign: Campaign) -> None:
+    """Show the card as saved now (the press was deferred as an update)."""
+    await interaction.edit_original_response(
+        content=settings_text(campaign), view=settings_view(campaign), allowed_mentions=NO_PINGS
+    )
+
+
 class SettingsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:settings:{_ID}",
 ):
     """⚙️ Settings: opens the campaign's settings privately."""
 
-    def __init__(self, campaign_id: str) -> None:
+    def __init__(self, campaign_id: str, *, row: int | None = None) -> None:
         super().__init__(
             discord.ui.Button(
                 label=SETTINGS_LABEL,
                 emoji="⚙️",
                 style=discord.ButtonStyle.secondary,
+                row=row,
                 custom_id=f"dmbot:settings:{campaign_id}",
             )
         )
@@ -126,14 +145,14 @@ class SettingsButton(
 
 class LevelButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:level:{_ID}:(?P<level>quiet|normal|chatty)",
+    template=rf"dmbot:level:{_ID}:(?P<level>quiet|normal)",  # the levels offered
 ):
     """How much DMbot says: one tap saves it, and the card shows the new choice."""
 
     def __init__(self, campaign_id: str, level: str, *, current: bool = False) -> None:
         super().__init__(
             discord.ui.Button(
-                label=f"✓ {level.capitalize()}" if current else level.capitalize(),
+                label=_tick(level.capitalize(), current),
                 style=discord.ButtonStyle.primary if current else discord.ButtonStyle.secondary,
                 disabled=current,
                 row=0,
@@ -151,18 +170,57 @@ class LevelButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         campaign = await _allowed(interaction, self.campaign_id)
-        bot: Any = interaction.client
         if campaign is None:
             return
+        save = getattr(interaction.client, "set_screen_level", None)
+        await interaction.response.defer()  # saving may take a moment
         try:
-            campaign = await bot.set_screen_level(campaign.guild_id, campaign.id, self.level)
+            if save is None:
+                raise RuntimeError("no running DMbot to save it")
+            saved: Campaign = await save(campaign.guild_id, campaign.id, self.level)
         except CampaignError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            await interaction.followup.send(str(exc), ephemeral=True)
             return
         except Exception:
             log.exception("Couldn't change how much DMbot says")
-            await interaction.response.send_message(FAILED, ephemeral=True)
+            await interaction.followup.send(FAILED, ephemeral=True)
             return
-        await interaction.response.edit_message(
-            content=settings_text(campaign), view=settings_view(campaign), allowed_mentions=NO_PINGS
+        await _redraw(interaction, saved)
+
+
+class SettingsVisibilityButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:setvis:{_ID}:(?P<visibility>private|peek|open)",
+):
+    """Who can see the DM screen, on the settings card: saved like the help card's
+    buttons, then the card is redrawn."""
+
+    def __init__(self, campaign_id: str, visibility: str, *, current: bool = False) -> None:
+        emoji, label = messages.VISIBILITY_BUTTONS[visibility]
+        super().__init__(
+            discord.ui.Button(
+                label=_tick(label, current),
+                emoji=emoji,
+                style=discord.ButtonStyle.primary if current else discord.ButtonStyle.secondary,
+                disabled=current,
+                row=1,
+                custom_id=f"dmbot:setvis:{campaign_id}:{visibility}",
+            )
         )
+        self.campaign_id = campaign_id
+        self.visibility = visibility
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SettingsVisibilityButton:
+        return cls(match["campaign"], match["visibility"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        allowed = await may_change_screen(interaction, self.campaign_id)
+        if allowed is None:
+            return
+        await interaction.response.defer()  # the card is redrawn after saving
+        saved = await save_visibility(interaction, *allowed, self.visibility)
+        if saved is not None:
+            await _redraw(interaction, saved)

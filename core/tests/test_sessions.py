@@ -775,7 +775,7 @@ class SaveAndResume(SessionTests):
         self.assertIn("✉️ Not recorded yet: Dee. DMbot is asking privately", text)
         self.assertNotIn("0 player", text)
         # #108: the DM stops with one press; the button comes off at the end.
-        button, settings = call.args[2].children
+        settings, button = call.args[2].children  # Settings first (#515)
         self.assertEqual(button.custom_id, f"dmbot:stop:{self.campaign.id}")
         self.assertEqual(settings.custom_id, f"dmbot:settings:{self.campaign.id}")  # #515
         await self.bot.stop_table(GUILD, "test")
