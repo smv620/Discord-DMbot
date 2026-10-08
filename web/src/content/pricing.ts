@@ -131,7 +131,7 @@ export const extraHours = {
   hours: data.extraHours.hours,
   /** "$4.99 for 10 hours" */
   priceLine: `${formatPrice(data.extraHours.priceCents)} for ${data.extraHours.hours} hours`,
-  line: `Run out? In My account, tap Change plan to add ${data.extraHours.hours} hours. They last until the end of this month.`,
+  line: `Run out? In My Account, tap Change plan to add ${data.extraHours.hours} hours. They last until the end of this month.`,
 };
 
 /** What every plan does, after "every plan": one list, used twice below. */
@@ -177,7 +177,7 @@ export const questions: readonly Question[] = [
   },
   {
     question: "Can I change my plan?",
-    answer: "Yes, any time, from My account.",
+    answer: "Yes, any time, from My Account.",
   },
   {
     question: "What if I move to a plan with fewer campaigns?",
@@ -186,7 +186,7 @@ export const questions: readonly Question[] = [
   },
   {
     question: "What if a payment doesn't go through?",
-    answer: `Your plan keeps working for ${data.paymentGraceDays} days while you fix it. Tap Fix my payment in My account.`,
+    answer: `Your plan keeps working for ${data.paymentGraceDays} days while you fix it. Tap Fix my payment in My Account.`,
   },
   {
     question: "How long do you keep my campaign?",
@@ -195,11 +195,11 @@ export const questions: readonly Question[] = [
   {
     question: "Can I give a campaign to someone else?",
     answer:
-      "Yes. In My account, tap Hand over next to the campaign and pick someone whose plan has room for it. From then on it uses their hours.",
+      "Yes. In My Account, tap Hand over next to the campaign and pick someone whose plan has room for it. From then on it uses their hours.",
   },
   {
     question: "Can I delete everything?",
     answer:
-      "Yes, from My account. Your account and the campaigns you run go straight away. Backups people downloaded, and lines you said in other people's games, stay.",
+      "Yes, from My Account. Your account and the campaigns you run go straight away. Backups people downloaded, and lines you said in other people's games, stay.",
   },
 ];

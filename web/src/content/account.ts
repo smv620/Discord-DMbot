@@ -44,7 +44,7 @@ const noFreeSlot =
   "Their plan is full. Ask them to move to a bigger plan, or pick someone else.";
 
 export const text = {
-  heading: "My account",
+  heading: "My Account",
   loading: "Loading your account…",
 
   // Signed out

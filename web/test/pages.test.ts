@@ -27,7 +27,7 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/", "index.astro", "DMbot", false],
   ["/pricing", "pricing.astro", "Prices · DMbot", false],
   ["/install", "install.astro", "Add to Discord · DMbot", false],
-  ["/account", "account.astro", "My account · DMbot", true],
+  ["/account", "account.astro", "My Account · DMbot", true],
   ["/legal/terms", "legal/terms.astro", "Terms of use · DMbot", false],
   ["/legal/privacy", "legal/privacy.astro", "Privacy · DMbot", false],
   ["/legal/refunds", "legal/refunds.astro", "Refunds · DMbot", false],
