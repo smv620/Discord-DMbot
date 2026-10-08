@@ -335,6 +335,8 @@ class DMBotTree(app_commands.CommandTree["DMBot"]):
         if isinstance(error, app_commands.CommandNotFound | app_commands.CommandSignatureMismatch):
             # Their Discord still has the commands from before an update.
             log.warning("/%s isn't up to date for this person: %s", command, error)
+        # No command has a check today. One that adds a check gives a refused check
+        # (app_commands.CheckFailure) its own plain words, not "something broke" (#698).
         cause = error.original if isinstance(error, app_commands.CommandInvokeError) else error
         await _failed(interaction, cause, f"/{command}")
 

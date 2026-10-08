@@ -266,6 +266,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
                     await step(it)
                 self.assertEqual(self.clock.calls[0], "defer")
                 self.assertEqual(it.response.defer_kw, IN_PLACE)
+                assert self.clock.answered_at is not None
                 self.assertLess(self.clock.answered_at, DISCORD_WAITS_S)
                 self.assertGreaterEqual(self.clock.now, SLOW_S)  # the slow part came after
 
@@ -419,6 +420,47 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("dmbot.ui.name_lists", "WARNING") as logs:
             await self.pick_wizard(it)  # saved: no "Try again", but never silent
         self.assertIn("Couldn't redraw", logs.output[0])
+
+    async def test_a_kind_question_that_cant_answer_says_so_and_can_be_picked_again(
+        self,
+    ) -> None:
+        # #698: the "Saving…" edit itself fails (Discord gave up): nothing is saved, the
+        # menu isn't stuck "saving", and the error reaches on_error, which says so.
+        it = self.it()
+        expired = discord.NotFound(MagicMock(status=404), "Unknown interaction")
+        it.response.edit_message = AsyncMock(side_effect=expired)
+        questions = name_lists.KindQuestions(CAMPAIGN.id, [("wizard", [BELL])])
+        (select,) = questions.children
+        assert isinstance(select, name_lists.KindSelect)
+        select._values = ["npc"]
+        with self.assertRaises(discord.NotFound):
+            await questions.picked(select, it)
+        self.assertFalse(questions.busy)
+        self.bot.memory.confirm_kinds.assert_not_awaited()
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            await questions.on_error(it, expired, select)  # nothing raises out
+        it = self.it()
+        await questions.picked(select, it)  # picked again: saves
+        self.bot.memory.confirm_kinds.assert_awaited_once()
+
+    async def test_saying_it_broke_never_breaks_too(self) -> None:
+        # #698: after a stall the token can be gone, so even "Something broke" fails to
+        # send. That's swallowed, and the first error is still logged.
+        for answered in (False, True):
+            with self.subTest(answered=answered):
+                it = self.it()
+                gone = discord.HTTPException(MagicMock(status=401), "Invalid Webhook Token")
+                it.response.send_message = AsyncMock(side_effect=gone)
+                it.followup.send = AsyncMock(side_effect=gone)
+                if answered:
+                    await it.response.defer()
+                with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR") as logs:
+                    await dmbot_commands._failed(it, RuntimeError("database away"))
+                record = logs.records[0]
+                assert record.exc_info is not None
+                self.assertIsInstance(record.exc_info[1], RuntimeError)
+                sender = it.followup.send if answered else it.response.send_message
+                sender.assert_awaited_once()
 
     async def test_kind_questions_keep_every_answer(self) -> None:
         asked = [("wizard", [BELL]), ("goblin", [ULF])]
