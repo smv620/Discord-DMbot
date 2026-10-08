@@ -15,6 +15,8 @@ their players made public, and fetches rarely (once per character per session).
 from __future__ import annotations
 
 import asyncio
+import json
+import math
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -30,7 +32,9 @@ SNAPSHOT_VERSION = 1
 API = "https://character-service.dndbeyond.com/character/v5/character/{id}"
 USER_AGENT = "DMbot (Discord bot for tabletop games; https://github.com/smv620/Discord-DMbot)"
 FETCH_TIMEOUT_S = 10
-MAX_BYTES = 1024 * 1024  # a big sheet is a few hundred KB
+MAX_BYTES = 2 * 1024 * 1024  # a big sheet is a few hundred KB
+FETCHING = asyncio.Semaphore(2)  # sheets read at once, across all servers
+SNAPSHOT_MAX_BYTES = 32 * 1024  # a kept snapshot (the database allows 64 KB)
 SHEET_URL = "https://www.dndbeyond.com/characters/{id}"
 _LINK = re.compile(
     r"^\s*<?https://(?:www\.)?dndbeyond\.com/characters/(\d{1,12})(?:[/?#][^\s>]*)?>?\s*$",
@@ -163,6 +167,8 @@ def _list(value: Any) -> list[Any]:
 
 def _int(value: Any, low: int, high: int) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     number = int(value)
     return number if low <= number <= high else None
@@ -357,6 +363,10 @@ def clean(snapshot: Any) -> dict[str, Any] | None:
     }
     for key in _NAME_LISTS:
         out[key] = _names(_list(snapshot.get(key)))
+    # Never bigger than SNAPSHOT_MAX_BYTES: the longest name lists lose their last names.
+    while len(json.dumps(out).encode()) > SNAPSHOT_MAX_BYTES:
+        longest = max(_NAME_LISTS, key=lambda k: len(out[k]))
+        out[longest] = out[longest][: len(out[longest]) * 3 // 4]
     return out
 
 
@@ -398,39 +408,50 @@ def who(snapshot: Mapping[str, Any]) -> str:
 # ---- fetching --------------------------------------------------------------------------
 
 
-async def fetch(character: int, *, session: aiohttp.ClientSession | None = None) -> dict[str, Any]:
-    """The snapshot of a public character: one GET, 10 s at most. Raises SheetError
-    (`public=False` if D&D Beyond refused: not public, or no such character)."""
-    url = API.format(id=int(character))
-    own = session is None
-    client = session or aiohttp.ClientSession(
+def new_session() -> aiohttp.ClientSession:
+    """One session for a refresh's sheets (one connection, reused)."""
+    return aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=FETCH_TIMEOUT_S),
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
+
+
+async def fetch(character: int, *, session: aiohttp.ClientSession | None = None) -> dict[str, Any]:
+    """The snapshot of a public character: one GET, 10 s at most, two at a time across
+    the process. Raises SheetError (`public=False` if D&D Beyond refused: not public, or
+    no such character)."""
+    url = API.format(id=int(character))
+    own = session is None
+    client = session or new_session()
     try:
-        async with asyncio.timeout(FETCH_TIMEOUT_S):
-            async with client.get(url, allow_redirects=False) as resp:
-                if resp.status in (401, 403, 404):
-                    raise SheetError(NOT_PUBLIC, public=False)
-                if resp.status != 200:
-                    raise SheetError(f"D&D Beyond answered {resp.status}")
-                body = await resp.content.read(MAX_BYTES + 1)
+        async with (
+            FETCHING,
+            asyncio.timeout(FETCH_TIMEOUT_S),
+            client.get(url, allow_redirects=False) as resp,
+        ):
+            if resp.status in (401, 403, 404):
+                raise SheetError(NOT_PUBLIC, public=False)
+            if resp.status != 200:
+                raise SheetError(f"D&D Beyond answered {resp.status}")
+            body = bytearray()
+            async for piece in resp.content.iter_chunked(64 * 1024):
+                body += piece
                 if len(body) > MAX_BYTES:
                     raise SheetError("The sheet was too big to read.")
-                answer = await asyncio.to_thread(_json, body)
-    except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
-        raise SheetError(f"Couldn't reach D&D Beyond: {type(exc).__name__}") from exc
+        answer = await asyncio.to_thread(_json, bytes(body))
+        if answer.get("success") is False:
+            raise SheetError(NOT_PUBLIC, public=False)
+        return await asyncio.to_thread(parse, answer)
+    except SheetError:
+        raise
+    except (aiohttp.ClientError, TimeoutError, ValueError, TypeError, OverflowError) as exc:
+        raise SheetError(f"Couldn't read the sheet: {type(exc).__name__}") from exc
     finally:
         if own:
             await client.close()
-    if answer.get("success") is False:
-        raise SheetError(NOT_PUBLIC, public=False)
-    return await asyncio.to_thread(parse, answer)
 
 
 def _json(body: bytes) -> Mapping[str, Any]:
-    import json
-
     answer = json.loads(body)
     if not isinstance(answer, Mapping):
         raise ValueError("not a JSON object")

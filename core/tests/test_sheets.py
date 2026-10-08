@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import json
 import unittest
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from unittest import mock
 
 from dmbot.memory import sheets
 from dmbot.memory.sheet_refresh import SHEET_HINTS_MAX
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
+from dmbot.memory.sheet_refresh import refresh as sheet_refresh
 from dmbot.memory.sheet_store import CharacterSheet
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dndbeyond_character.json"
@@ -145,6 +146,20 @@ class Cleaning(unittest.TestCase):
         self.assertNotIn("str", cleaned["abilities"])
         self.assertEqual(cleaned["skills"], ["arcana"])
 
+    def test_a_snapshot_is_never_too_big_to_keep(self) -> None:
+        names = ["\u0928" * 55 + str(i) for i in range(100)]  # three bytes a letter
+        snapshot = sheets.clean(
+            {
+                "v": 1,
+                "source": "typed",
+                "name": "X",
+                **{k: names for k in ("spells", "features", "feats", "items")},
+            }
+        )
+        assert snapshot is not None
+        self.assertLessEqual(len(json.dumps(snapshot).encode()), sheets.SNAPSHOT_MAX_BYTES)
+        self.assertGreater(len(snapshot["spells"]), 10)
+
     def test_not_a_snapshot(self) -> None:
         bad: object
         for bad in (None, [], {"v": 2, "name": "A", "source": "typed"}, {"v": 1, "source": "x"}):
@@ -182,10 +197,81 @@ class Hints(unittest.TestCase):
         self.assertEqual(sheet_hint_names([self.sheet("Shield"), self.sheet("shield")]), ["Shield"])
 
 
+class RefreshStore:
+    """Just enough of SheetStore for refresh(): no database."""
+
+    def __init__(self, found: list[CharacterSheet]) -> None:
+        self.found = found
+        self.saved: list[str] = []
+
+    async def sheets(self, guild_id: int, campaign_id: str) -> list[CharacterSheet]:
+        return self.found
+
+    async def save(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        snapshot: Any,
+        now: int,
+        *,
+        url: str | None = None,
+    ) -> bool:
+        self.saved.append(entity_id)
+        return True
+
+
+class Refreshing(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        url = sheets.sheet_url(5)
+        self.store = RefreshStore(
+            [
+                CharacterSheet("a" * 32, "A", 1, url, None, None),
+                CharacterSheet("b" * 32, "B", 2, None, {"v": 1}, 1),  # typed: nothing to read
+                CharacterSheet("c" * 32, "C", 3, url, None, None),
+            ]
+        )
+        self.read: list[int] = []
+
+    async def fetch(self, character: int) -> dict[str, Any]:
+        self.read.append(character)
+        if len(self.read) == 1:
+            raise sheets.SheetError("down")
+        return sheets.parse(answer())
+
+    async def test_only_linked_sheets_are_read_and_a_failure_keeps_going(self) -> None:
+        with self.assertLogs("dmbot.memory.sheet_refresh", "INFO"):
+            await sheet_refresh(self.store, 1, "c", 5, fetch=self.fetch)
+        self.assertEqual(self.read, [5, 5])
+        self.assertEqual(self.store.saved, ["c" * 32])  # the first failed: its old one stays
+
+    async def test_a_session_that_ended_stops_reading(self) -> None:
+        await sheet_refresh(
+            self.store,
+            1,
+            "c",
+            5,
+            fetch=self.fetch,
+            still_wanted=lambda: not self.read,
+        )
+        self.assertEqual(self.read, [5])
+
+
+class FakeContent:
+    """A body that arrives in small pieces, as a real one does."""
+
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    async def iter_chunked(self, size: int) -> AsyncIterator[bytes]:
+        for start in range(0, len(self.body), 1000):
+            yield self.body[start : start + 1000]
+
+
 class FakeResponse:
     def __init__(self, status: int, body: bytes) -> None:
         self.status = status
-        self.content = mock.Mock(read=mock.AsyncMock(return_value=body))
+        self.content = FakeContent(body)
 
     async def __aenter__(self) -> FakeResponse:
         return self
@@ -223,6 +309,21 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
                 await sheets.fetch(42, session=session)  # type: ignore[arg-type]
             self.assertFalse(caught.exception.public)
             self.assertEqual(str(caught.exception), sheets.NOT_PUBLIC)
+
+    async def test_a_body_in_many_pieces_is_read_whole(self) -> None:
+        body = json.dumps(answer()).encode()
+        self.assertGreater(len(body), 3000)  # several pieces
+        snapshot = await sheets.fetch(42, session=FakeSession(200, body))  # type: ignore[arg-type]
+        self.assertEqual(snapshot["spells"][0], "Test Spell")
+
+    async def test_odd_numbers_in_an_answer_are_a_sheet_error(self) -> None:
+        data = answer()
+        data["data"]["baseHitPoints"] = float("inf")
+        data["data"]["stats"][0]["value"] = float("nan")
+        body = json.dumps(data).encode()  # NaN and Infinity, as json allows
+        snapshot = await sheets.fetch(42, session=FakeSession(200, body))  # type: ignore[arg-type]
+        self.assertIsNone(snapshot["max_hp"])
+        self.assertNotIn("str", snapshot["abilities"])
 
     async def test_other_failures(self) -> None:
         for session in (

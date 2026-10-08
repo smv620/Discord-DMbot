@@ -15,7 +15,7 @@ from dmbot.memory import sheets
 NOT_A_CHARACTER = "That isn't a player character in this campaign any more."
 
 
-class SheetError(ValueError):
+class SheetRefused(ValueError):
     """A problem the person can fix; the message is safe to show as-is."""
 
 
@@ -72,7 +72,7 @@ class SheetStore:
         was being read): False then. A typed one (no `url`) replaces any link."""
         cleaned = sheets.clean(snapshot)
         if cleaned is None:
-            raise SheetError("That isn't a character sheet DMbot can keep.")
+            raise SheetRefused("That isn't a character sheet DMbot can keep.")
         async with self._db.guild(guild_id) as conn:
             if url is not None:
                 cur = await conn.execute(
@@ -142,4 +142,4 @@ class SheetStore:
         )
         row = await cur.fetchone()
         if row is None or row["status"] in ("merged", "rejected") or row["played_by"] is None:
-            raise SheetError(NOT_A_CHARACTER)
+            raise SheetRefused(NOT_A_CHARACTER)

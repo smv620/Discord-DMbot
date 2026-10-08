@@ -12,7 +12,7 @@ from dmbot.campaigns import CampaignError
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import sheets
 from dmbot.memory.sheet_refresh import refresh
-from dmbot.memory.sheet_store import SheetError, SheetStore
+from dmbot.memory.sheet_store import SheetRefused, SheetStore
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, MemoryTest
 from tests.test_sheets import answer
 
@@ -84,9 +84,9 @@ class Linking(SheetTest):
 
     async def test_only_a_player_character_with_a_player(self) -> None:
         npc = await self.add("Belleros")
-        with self.assertRaises(SheetError):
+        with self.assertRaises(SheetRefused):
             await self.sheets.link(GUILD_A, self.c, npc, CHARACTER)
-        with self.assertRaises(SheetError):
+        with self.assertRaises(SheetRefused):
             await self.sheets.link(GUILD_A, self.c, "0" * 32, CHARACTER)
 
     async def test_the_database_refuses_anything_but_a_character_link(self) -> None:
@@ -120,7 +120,7 @@ class Isolation(SheetTest):
         await self.linked()
         self.assertEqual(await self.sheets.sheets(GUILD_B, self.c), [])
         self.assertFalse(await self.sheets.unlink(GUILD_B, self.c, self.pc))
-        with self.assertRaises(SheetError):
+        with self.assertRaises(SheetRefused):
             await self.sheets.link(GUILD_B, self.c, self.pc, CHARACTER)
 
     async def test_deleted_with_the_campaign(self) -> None:

@@ -234,6 +234,10 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
         by_tag[raw["table"]].append(raw)
     _check_terms(by_tag)
+    # A sheet belongs to a player character someone plays, as everywhere else (#723).
+    played = {r["id"] for r in by_tag["entity"] if r["played_by"] is not None}
+    if any(r["entity_id"] not in played for r in by_tag["sheet"]):
+        raise CampaignError(DAMAGED)
     return by_tag
 
 

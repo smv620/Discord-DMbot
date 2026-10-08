@@ -828,14 +828,18 @@ class DMBot(commands.AutoShardedBot):
         if self.sheets is None or table.campaign_id is None:
             return
         guild_id, campaign_id = table.guild_id, table.campaign_id
+
+        def current() -> bool:  # stopped (or started again) meanwhile: leave it be
+            return self.tables.get(guild_id) is table
+
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
             try:
-                table.sheet_hints = tuple(
-                    sheet_hint_names(await self.sheets.sheets(guild_id, campaign_id))
-                )
-                if refresh:
+                kept = await self.sheets.sheets(guild_id, campaign_id)
+                table.sheet_hints = tuple(sheet_hint_names(kept))
+                if refresh and current():
+                    now = int(time.time())
                     found = await refresh_sheets(
-                        self.sheets, guild_id, campaign_id, int(time.time())
+                        self.sheets, guild_id, campaign_id, now, found=kept, still_wanted=current
                     )
                     table.sheet_hints = tuple(sheet_hint_names(found))
                     linked = sum(s.url is not None for s in found)
@@ -845,8 +849,8 @@ class DMBot(commands.AutoShardedBot):
                             linked,
                             len(table.sheet_hints),
                         )
-            except Exception:
-                log.exception("Couldn't load the campaign's character sheets")
+            except Exception as exc:  # never the text: it can quote a row (links, names)
+                log.error("Couldn't load the campaign's character sheets (%s)", type(exc).__name__)
 
     async def stop_table(self, guild_id: int, reason: str) -> Table | None:
         """End a running session. `reason` goes in the log (IDs only, no names)."""

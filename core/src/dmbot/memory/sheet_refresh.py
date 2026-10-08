@@ -3,14 +3,16 @@ hints (#723). Pure apart from the store and the fetch, which are passed in."""
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from itertools import zip_longest
-from typing import Any
+from typing import Any, Protocol
 
 from dmbot.memory import sheets
 from dmbot.memory.models import name_key
-from dmbot.memory.sheet_store import CharacterSheet, SheetStore
+from dmbot.memory.sheet_store import CharacterSheet
 
 log = logging.getLogger(__name__)
 
@@ -21,30 +23,71 @@ SHEET_HINTS_MAX = 15
 Fetch = Callable[[int], Awaitable[dict[str, Any]]]
 
 
+class Sheets(Protocol):  # what refresh needs of SheetStore
+    async def sheets(self, guild_id: int, campaign_id: str) -> list[CharacterSheet]: ...
+
+    async def save(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        snapshot: dict[str, Any],
+        now: int,
+        *,
+        url: str | None = None,
+    ) -> bool: ...
+
+
 async def refresh(
-    store: SheetStore,
+    store: Sheets,
     guild_id: int,
     campaign_id: str,
     now: int,
     *,
-    fetch: Fetch = sheets.fetch,
+    found: Sequence[CharacterSheet] | None = None,
+    fetch: Fetch | None = None,
+    still_wanted: Callable[[], bool] = lambda: True,
 ) -> list[CharacterSheet]:
-    """Read every linked sheet again, one at a time (one request per character), and
-    return the campaign's sheets. A sheet that can't be read keeps its old snapshot;
-    the failure is logged with the character's entry id only."""
-    for sheet in await store.sheets(guild_id, campaign_id):
-        character = sheet.character
-        if character is None:
-            continue
-        try:
-            snapshot = await fetch(character)
-            await store.save(guild_id, campaign_id, sheet.entity_id, snapshot, now, url=sheet.url)
-        except sheets.SheetError as exc:
-            reason = "not public" if not exc.public else "unreachable"
-            log.info("Couldn't refresh the sheet of entry %s (%s)", sheet.entity_id, reason)
-        except Exception:
-            log.exception("Couldn't refresh the sheet of entry %s", sheet.entity_id)
+    """Read every linked sheet again, one at a time (one request per character, over one
+    connection), and return the campaign's sheets. `found`: the sheets if already read.
+    A sheet that can't be read keeps its old snapshot; the failure is logged with the
+    character's entry id only. Stops early once `still_wanted()` is False (the session
+    ended)."""
+    sheets_now = list(found) if found is not None else await store.sheets(guild_id, campaign_id)
+    linked = [s for s in sheets_now if s.character is not None]
+    if not linked:
+        return sheets_now
+    async with contextlib.AsyncExitStack() as stack:
+        if fetch is None:
+            client = await stack.enter_async_context(sheets.new_session())
+            fetch = functools.partial(sheets.fetch, session=client)
+        for sheet in linked:
+            if not still_wanted():
+                break
+            await _refresh_one(store, guild_id, campaign_id, sheet, now, fetch)
     return await store.sheets(guild_id, campaign_id)
+
+
+async def _refresh_one(
+    store: Sheets,
+    guild_id: int,
+    campaign_id: str,
+    sheet: CharacterSheet,
+    now: int,
+    fetch: Fetch,
+) -> None:
+    assert sheet.character is not None
+    try:
+        snapshot = await fetch(sheet.character)
+        await store.save(guild_id, campaign_id, sheet.entity_id, snapshot, now, url=sheet.url)
+    except sheets.SheetError as exc:
+        reason = "not public" if not exc.public else "unreachable"
+        log.info("Couldn't refresh the sheet of entry %s (%s)", sheet.entity_id, reason)
+    except Exception as exc:
+        # Never the exception's text: a database error can quote the row (links, names).
+        log.error(
+            "Couldn't refresh the sheet of entry %s (%s)", sheet.entity_id, type(exc).__name__
+        )
 
 
 def hint_names(found: Sequence[CharacterSheet], limit: int = SHEET_HINTS_MAX) -> list[str]:
