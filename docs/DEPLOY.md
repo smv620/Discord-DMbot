@@ -197,11 +197,12 @@ The pages customers will use stay closed until #498.
    "Cloudflared" and name it `dmbot-api`. Cloudflare then shows an "Install and Run" page
    with a choice of system (Windows, Mac, Debian, Docker and so on) and a long command with
    the token inside it. Pick Docker (any choice will do: only the text matters) and **do
-   not run any command shown there.** Copy only the token: the very long text that starts
-   with `eyJ`, after `--token` (or after `install`). Paste it into a private note on your
-   phone (not a chat, an email, an issue, or the Claude Code window) and delete the note
-   after step 4. If you lose it, open the tunnel's page in Cloudflare and copy it again;
-   if Cloudflare won't show it again, tell dev1 (a new tunnel is easy to make).
+   not run any command shown there.** The token is only the very long text that starts
+   with `eyJ`, after `--token` (or after `install`). You don't need to copy or keep it now:
+   when dev1 says the update is in (step 4), open the tunnel's page in Cloudflare and copy
+   it again from its install command. Never paste it into a chat, an email, an issue, or the
+   Claude Code window. If Cloudflare won't show it again, tell dev1 (a new tunnel is easy to
+   make).
 2. Continue stays grey ("No connection detected yet"). That is normal: leave the page with
    Cancel or the back arrow. It stays grey because nothing is connected until dev1 starts
    the tunnel. You should now see `dmbot-api` in your list of tunnels, marked Inactive or
@@ -223,8 +224,9 @@ The pages customers will use stay closed until #498.
 
 **You (the owner), on the server, once dev1 says the update is in:**
 
-4. Open your server connection (ssh) as for the earlier steps, `cd Discord-DMbot`, type this
-   and press Enter:
+4. Copy the token again from the tunnel's page in Cloudflare (step 1 says where). Open your
+   server connection (ssh) as for the earlier steps, `cd Discord-DMbot`, type this and press
+   Enter:
 
        scripts/set-key CLOUDFLARE_TUNNEL_TOKEN
 
