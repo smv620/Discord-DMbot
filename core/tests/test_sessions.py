@@ -1239,6 +1239,27 @@ class SaveAndResume(SessionTests):
         self.assertIn("That line stays as heard.", text)
         self.assertEqual(table.fix_notes.answers, [])  # not brought in by a later rewrite
 
+    async def test_a_failed_save_leaves_the_channel_as_heard_too(self) -> None:
+        # All or nothing: "That line stays as heard" must be true in the channel as well.
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        posted = MagicMock(edit=AsyncMock())
+
+        async def post(channel_id: int, text: str) -> Any:
+            return "posted", posted
+
+        self.bot._post_transcript = post  # type: ignore[method-assign]
+        await self.bot.flush_transcript(table)
+        table.unsaved.take(lambda _: True)  # already saved
+        table.transcript_session_id = "s5"
+        saved: Any = self.bot.transcripts
+        saved.relabel_line.side_effect = RuntimeError("database down")
+        asked = table.questions.open
+        assert asked is not None
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            text, _, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertIn("That line stays as heard.", text)
+        posted.edit.assert_not_awaited()
+
     async def test_a_failure_editing_the_channel_after_the_save_still_says_fixed(self) -> None:
         table, _, _, _ = await self.asked_about_marin(saving=True)
         posted = MagicMock(edit=AsyncMock(side_effect=OSError("connection reset")))
