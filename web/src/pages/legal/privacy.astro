@@ -68,6 +68,13 @@ import {
     </li>
   </ul>
 
+  <h3>When you use the Say hello page</h3>
+  <p>
+    Your message is posted on GitHub, where anyone can read it. If you tell us how to reach
+    you, we keep that with your message for a year; only the team sees it. To have a post
+    taken down, ask on the same page.
+  </p>
+
   <h3>When you pay</h3>
   <p>
     Payments go through {paymentProvider}. They are the seller, and they hold your card or
@@ -107,8 +114,10 @@ import {
       text it needs, not sound.
     </li>
     <li><strong>{paymentProvider}</strong>: takes payments.</li>
+    <li><strong>GitHub</strong>: where messages from the Say hello page are posted, for anyone to read.</li>
     <li>
-      <strong>Cloudflare</strong>: delivers this website. {"{{CHECK: once the owner sets it up}}"}
+      <strong>Cloudflare</strong>: delivers this website, and checks that a person (not a
+      robot) sent a Say hello message; for that it sees your internet address. {"{{CHECK: once the owner sets it up}}"}
     </li>
     <li>
       <strong>{"{{HOSTING PROVIDER}}"}</strong>: the server DMbot and its database run on.
