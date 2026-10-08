@@ -49,14 +49,21 @@ async def _known_person(conn: Conn, user_id: int) -> bool:
     return await cur.fetchone() is not None
 
 
-async def _record(conn: Conn, event: PaymentEvent, now: int) -> bool:
-    """Record the event id; False if it was already recorded (a repeat delivery)."""
-    cur = await conn.execute(
+async def _paid_before(conn: Conn, user_id: int) -> bool:
+    """Event ids outlive a deleted account (delete_person), so this tells "deleted their
+    account" apart from "never signed in here"."""
+    cur = await conn.execute("SELECT 1 FROM payment_events WHERE user_id = %s", (user_id,))
+    return await cur.fetchone() is not None
+
+
+async def _record(conn: Conn, event: PaymentEvent, now: int) -> None:
+    """Record the event id, so a repeat delivery is a duplicate. (_seen has already
+    checked under the person's lock; DO NOTHING only guards against the impossible.)"""
+    await conn.execute(
         "INSERT INTO payment_events (provider, event_id, user_id, received_at)"
-        " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING event_id",
+        " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
         (event.provider, event.event_id, event.user_id, now),
     )
-    return await cur.fetchone() is not None
 
 
 async def _seen(conn: Conn, event: PaymentEvent) -> bool:
@@ -81,13 +88,20 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
     loaded = plans.load()
     async with db.plan_writer(event.user_id) as conn:  # one change per person at a time
         if not await _known_person(conn, event.user_id):
-            # Not someone who signed in here (or they deleted their account): nothing to
-            # attach the plan to. The company still has the payment; ids are logged.
-            log.error(
-                "Payment event %s for unknown user %s: needs a person to look at it",
-                event.event_id,
-                event.user_id,
-            )
+            # Nothing to attach the plan to. The company still has the payment; ids only.
+            if await _paid_before(conn, event.user_id):
+                # Expected after a deletion: the cancelled subscription's last events.
+                log.warning(
+                    "Payment event %s for user %s, whose account was deleted: ignored",
+                    event.event_id,
+                    event.user_id,
+                )
+            else:
+                log.error(
+                    "Payment event %s for unknown user %s: needs a person to look at it",
+                    event.event_id,
+                    event.user_id,
+                )
             return "ignored"
         if await _seen(conn, event):
             return "duplicate"
@@ -96,15 +110,23 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
         if event.kind == "extra_hours_bought":
             # A one-off purchase, not a change of state: credit it whenever it arrives, as
             # long as there's a working plan to add it to.
-            if row is None or row["status"] == "lapsed":
+            if row is None or row["status"] == "lapsed" or row["plan"] == "try-it":
+                # Extra hours are a paid add-on: not on Try It, not without a plan.
                 log.error(
-                    "Extra hours %s for user %s with no working plan: needs a refund or credit",
+                    "Extra hours %s for user %s with no working paid plan: needs a refund"
+                    " or credit",
                     event.event_id,
                     event.user_id,
                 )
                 await _record(conn, event, now)
                 return "ignored"
             await _record(conn, event, now)
+            log.info(
+                "Extra hours %s added to user %s's %s plan",
+                event.event_id,
+                event.user_id,
+                row["plan"],
+            )
             await conn.execute(
                 "UPDATE entitlements SET extra_hours = extra_hours + %s, updated_at = %s"
                 " WHERE user_id = %s",
@@ -126,13 +148,38 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
                     event.event_id,
                 )
                 return "rejected"
-            if (
-                row is not None
-                and row["provider"] == event.provider
-                and (event.occurred_at < row["last_event_at"])
-            ):
-                await _record(conn, event, now)  # seen, but older than what's applied
+            # Older than what's applied: seen, changes nothing. Whatever the row's provider:
+            # Try It keeps the stopped paid plan's last_event_at, so a late renewal of
+            # that dead subscription can't overwrite Try It (a fresh one has 0).
+            if row is not None and event.occurred_at < row["last_event_at"]:
+                await _record(conn, event, now)
                 return "stale"
+            second = (
+                row is not None
+                and row["status"] != "lapsed"
+                and row["provider"] == event.provider
+                and not _same_subscription(row, event)
+            )
+            if second and event.kind == "subscription_started":
+                # Could be a plan change made as a new subscription, so it's applied; but
+                # if the old one keeps renewing, two are being charged.
+                log.warning(
+                    "Payment event %s starts another subscription for user %s while one works",
+                    event.event_id,
+                    event.user_id,
+                )
+            if second and event.kind == "subscription_renewed":
+                # Two subscriptions at once (two checkout tabs, say): this one is being
+                # charged too. Never pick one silently; someone refunds one of them.
+                # (Over a stopped plan, a renewal is applied: it's the one still paid for.)
+                await _record(conn, event, now)
+                log.error(
+                    "Payment event %s renews a second subscription for user %s: needs a"
+                    " person to look at it",
+                    event.event_id,
+                    event.user_id,
+                )
+                return "ignored"
             await _record(conn, event, now)
             changed = row is None or row["plan"] != plan.id
             new_period = row is None or row["period_start"] != event.period_start
@@ -178,11 +225,18 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
             return "applied"
 
         # payment_failed and subscription_ended change the paid plan the person has.
-        if row is None or row["provider"] != event.provider:
-            # Nothing of the company's to change yet: it may have sent this before the
-            # "started" event. Not recorded, so its next delivery is applied.
+        if row is None:
+            # Nothing to change yet: the company may have sent this before the "started"
+            # event. Not recorded, so its next delivery is applied.
+            return "retry"
+        if row["provider"] != event.provider and event.occurred_at > row["last_event_at"]:
+            # On Try It (ours): news newer than the company's last word must be about a
+            # new subscription whose "started" hasn't arrived yet, so wait for it. Try It
+            # keeps the stopped paid plan's last_event_at, so that plan's late news isn't.
             return "retry"
         if not _same_subscription(row, event):
+            # About a plan the person no longer has: one that was replaced, or one that
+            # had stopped before they started Try It.
             await _record(conn, event, now)
             return "ignored"  # about a subscription that was replaced
         if event.occurred_at < row["last_event_at"]:
@@ -236,6 +290,9 @@ async def start_try_it(db: Database, user_id: int, *, now: int) -> TryItResult:
             " campaign_cap = EXCLUDED.campaign_cap, period_start = EXCLUDED.period_start,"
             " period_end = EXCLUDED.period_end, grace_ends_at = NULL, lapsed_at = NULL,"
             " plan_changed_at = EXCLUDED.plan_changed_at, provider = EXCLUDED.provider,"
+            # The stopped plan's company ids go: no billing page for Try It, and its late
+            # events are then about a plan the person no longer has.
+            " provider_customer_id = NULL, provider_subscription_id = NULL,"
             # last_event_at is the payment company's clock: Try It leaves it alone.
             " updated_at = EXCLUDED.updated_at"
             # Only over a plan that has stopped (the lock makes this certain, this says it).
@@ -250,9 +307,3 @@ async def start_try_it(db: Database, user_id: int, *, now: int) -> TryItResult:
             },
         )
     return TryItResult(True, "started")
-
-
-async def has_used_try_it(db: Database, user_id: int) -> bool:
-    async with db.user(user_id) as conn:
-        cur = await conn.execute("SELECT 1 FROM try_it_used WHERE user_id = %s", (user_id,))
-        return await cur.fetchone() is not None
