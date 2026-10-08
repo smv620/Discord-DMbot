@@ -749,6 +749,31 @@ class SaveAndResume(SessionTests):
         self.assertEqual(text.count("In the voice channel"), 1)
         self.assertNotIn("Frostmaiden", text)  # campaign names stay out of logs
 
+    async def test_a_voice_warning_tells_the_dm_once_and_listening_goes_on(self) -> None:
+        # #631: ears couldn't hear one person; the DM is told, not too often.
+        from dmbot.ears.protocol import Status
+
+        await self.start()
+        await self.bot._on_ears_message(Status("joined", guild_id=GUILD))
+        posted = AsyncMock(return_value=True)
+        self.bot.post = posted  # type: ignore[method-assign]
+        warning = Status("warning", guild_id=GUILD, detail="kept failing", user_id=PLAYER)
+        with self.assertLogs("dmbot.bot", level="WARNING") as logs:
+            await self.bot._on_ears_message(warning)
+            await self.bot._on_ears_message(warning)  # again at once: not told twice
+        told = [c.args for c in posted.await_args_list if "words just now" in c.args[1]]
+        self.assertEqual(len(told), 1)
+        self.assertEqual(told[0][0], SCREEN)
+        self.assertIn("If this happens again, ask them to leave the voice channel", told[0][1])
+        self.assertIn(f"Voice warning for user {PLAYER}", "\n".join(logs.output))
+        self.assertTrue(self.bot.tables[GUILD].listening)  # the session goes on
+        # Five minutes later it's said again.
+        table = self.bot.tables[GUILD]
+        table.voice_lost_told[PLAYER] -= 301
+        await self.bot._on_ears_message(warning)
+        told = [c.args for c in posted.await_args_list if "words just now" in c.args[1]]
+        self.assertEqual(len(told), 2)
+
     async def test_failed_recording_notice_is_a_warning(self) -> None:
         from dmbot.ears.protocol import Status
 

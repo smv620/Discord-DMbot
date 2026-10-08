@@ -78,6 +78,18 @@ class ControlMessages(unittest.TestCase):
             parse_ears_message('{"type":"status","state":"joined","guildId":"5","channelId":"6"}'),
             Status("joined", 5, 6),
         )
+        # #631: one speaker's audio kept failing; whose, by ID.
+        self.assertEqual(
+            parse_ears_message(
+                '{"type":"status","state":"warning","guildId":"5","userId":"7","detail":"x"}'
+            ),
+            Status("warning", 5, None, "x", 7),
+        )
+        # A userId means nothing on the other states.
+        self.assertEqual(
+            parse_ears_message('{"type":"status","state":"left","guildId":"5","userId":"7"}'),
+            Status("left", 5),
+        )
         self.assertEqual(
             parse_ears_message(
                 '{"type":"speaking","guildId":"1","userId":"2","event":"end","timestampMs":9}'
@@ -105,6 +117,8 @@ class ControlMessages(unittest.TestCase):
             '{"type":"hello","version":2,"secret":"s","shardCount":2,"shardIds":[1,1]}',
             '{"type":"hello","version":2,"secret":"s","shardCount":2,"shardIds":["1"]}',
             '{"type":"status","state":"dancing"}',
+            '{"type":"status","state":"warning","guildId":"5"}',
+            '{"type":"status","state":"warning","guildId":"5","userId":"x"}',
             '{"type":"speaking","guildId":"1","userId":"x","event":"end","timestampMs":1}',
             '{"type":"speaking","guildId":"1","userId":"2","event":"later","timestampMs":1}',
             '{"type":"health","guildId":"1","userId":"2","framesReceived":-1,"framesExpected":1}',
