@@ -33,9 +33,9 @@ export interface HelloMessage {
 }
 
 /**
- * "warning": a problem with one speaker's audio that the session survives (#631: ears
- * gave up re-listening after repeated receive errors). Carries their userId. The others
- * are about the connection.
+ * "warning": a problem with one speaker's audio that the session survives: ears gave up
+ * re-listening after repeated failures (#631, #645), or they keep sending but none of it
+ * can be heard. Carries their userId. The others are about the connection.
  */
 export type EarsState = "ready" | "joined" | "left" | "error" | "warning";
 

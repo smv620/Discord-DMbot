@@ -109,7 +109,10 @@ export class UtteranceTracker {
   /** Finish the utterance and return its health, or null if nothing arrived or was lost. */
   finish(): UtteranceReport | null {
     const open = this.segmentStart !== null && this.lastAt !== null;
-    if (!open && this.expected === 0) return null;
+    if (!open && this.expected === 0) {
+      this.lostAt = null;
+      return null;
+    }
     const segment =
       this.segmentStart !== null && this.lastAt !== null ? span(this.segmentStart, this.lastAt) : 0;
     const framesExpected = Math.max(1, this.expected + segment);

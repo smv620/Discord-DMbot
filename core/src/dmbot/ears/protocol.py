@@ -43,8 +43,9 @@ class Hello:
 
 @dataclass(frozen=True, slots=True)
 class Status:
-    """ears' state. "warning": one speaker's audio kept failing and ears stopped listening
-    to them until they next speak (#631); `user_id` says whose. The session goes on."""
+    """ears' state. "warning": one speaker's audio kept failing (ears gave up re-listening
+    until they next speak, or they keep sending but none of it can be heard; #631, #645);
+    `user_id` says whose. The session goes on."""
 
     state: Literal["ready", "joined", "left", "error", "warning"]
     guild_id: int | None = None
