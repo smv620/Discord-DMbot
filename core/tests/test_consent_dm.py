@@ -28,10 +28,13 @@ TOO_FAST = discord.HTTPException(MagicMock(status=400), "Opening DMs too fast")
 
 async def cancel_late_lookups(bot: Any) -> None:
     """Stop recorded()'s lookups left running, even ones slow to take the cancel."""
-    for _ in range(2):
-        for task in list(bot._lookups.values()):
+    tasks = list(bot._lookups.values())
+    for _ in range(2):  # the second lands in the slow cleanup
+        for task in tasks:
             task.cancel()
         await asyncio.sleep(0)
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.sleep(0)  # the done-callbacks run on the next turn
     assert not bot._lookups
 
 
