@@ -341,11 +341,19 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     )
     await conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(here, role))
     await conn.execute(WEB_ROLE_POLICIES)  # constants: several statements, no parameters
+    # Only tables that exist yet: a database brought up to an older migration (a test of a
+    # backfill, say) doesn't have the newer tables the list names. Each gets its rights
+    # once its own migration has run, since this runs after every migration.
+    cur = await conn.execute("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
+    existing = {r["tablename"] for r in await cur.fetchall()}
     for privileges, tables in WEB_ROLE_GRANTS:
+        present = [t for t in tables if t in existing]
+        if not present:
+            continue
         await conn.execute(
             sql.SQL("GRANT {} ON {} TO {}").format(
                 sql.SQL(privileges),  # constants from schema.py, never input
-                sql.SQL(", ").join(sql.Identifier(t) for t in tables),
+                sql.SQL(", ").join(sql.Identifier(t) for t in present),
                 role,
             )
         )
