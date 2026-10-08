@@ -100,6 +100,9 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                 )
 
         # The person's own installs, in the same transaction (one connection per /me).
+        # The last server's setting is cleared first, so only the installer rule applies:
+        # otherwise that server's installs row would be visible here too.
+        await conn.execute("SELECT set_config('dmbot.guild_id', '', true)")
         await conn.execute(
             "SELECT set_config('dmbot.user_id', %s, true)", (str(int(session.user_id)),)
         )

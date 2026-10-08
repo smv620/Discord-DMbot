@@ -11,7 +11,9 @@ Rules:
   USER_ISOLATED_TABLES. `installs` is listed there too, though it is keyed by server:
   it's visible to its server and to the person who installed DMbot (see its policies).
 - The `dmbot.*` settings that open these doors (server, person, install server, plan
-  writer, cleanup) are set only by dmbot.db.Database. The database enforces each door's
+  writer, cleanup) are set by dmbot.db.Database, plus two one-statement switches inside
+  a transaction it opened: dmbot.web.me (server by server for /me, then the person) and
+  dmbot.entitlements.read (the person, for one read). The database enforces each door's
   limits, but which code may open which door is a Python boundary: only dmbot.web opens
   Database.plan_writer() (tests/test_entitlements_writer.py checks).
 - Exception: a *routing* table may skip row-level security if it holds nothing but
@@ -690,6 +692,12 @@ WEB_SESSION_NAME = """
 INSTALLS_LEFT = """
     -- When DMbot left the server (kicked or the server deleted); NULL while it's there.
     -- Rows are never deleted on leave, so who added DMbot is kept if it comes back (#469).
+    -- This replaces 0011's "only the bot removes a row": nobody removes one now.
+    --
+    -- `via` says how the installer was identified (#497): 'site' once Discord confirmed
+    -- the install to the website for the signed-in person; 'link' for a plain join, kept
+    -- when "Link this server" fills the installer in. The bot usually writes its 'link'
+    -- row before the website's callback arrives, so 'site' overwrites it.
     --
     -- How each side writes a row (the contract, #469):
     -- - The bot, when it joins a server (Database.guild):

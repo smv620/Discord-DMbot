@@ -232,11 +232,12 @@ def create_app(
         return guild_id
 
     @app.get("/install")
-    async def install_start(signed: Signed, server_id: str = "") -> Response:
+    async def install_start(request: Request, server_id: str = "") -> Response:
         """Sends the browser to Discord to add DMbot to one server the person manages.
-        A plain link (GET): the website navigates here; the answer is a redirect."""
-        session, _token = signed
+        A plain link (GET): the website navigates here, so every answer is a redirect
+        back to the account page, never raw JSON."""
         try:
+            session, _token = await current_session(request)
             fresh(session)
             guild_id = managed(session, server_id)
         except HTTPException as exc:
@@ -297,8 +298,11 @@ def create_app(
             # whoever approved on Discord must be the person signed in here.
             token, added_to = await discord.exchange_install(code, settings.install_redirect_uri)
             approver = await discord.user(token)
-            if added_to != guild_id or approver.id != session.user_id:
+            if added_to != guild_id:
                 return failed
+            if approver.id != session.user_id:
+                # Discord was signed in as someone else: DMbot joined, but not as theirs.
+                return back("other_account")
             result = await record_install(db, session.user_id, guild_id, now=clock())
         except DiscordError as exc:
             log.warning("Install failed: %s", exc)
@@ -321,7 +325,7 @@ def create_app(
         session, _token = signed
         fresh(session)
         guild_id = managed(session, server_id)
-        result = await link_install(db, session.user_id, guild_id, now=clock())
+        result = await link_install(db, session.user_id, guild_id)
         if result != "linked":
             raise HTTPException(status_code=409, detail=result)
         return Response(status_code=204)

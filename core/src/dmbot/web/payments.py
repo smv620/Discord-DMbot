@@ -9,6 +9,16 @@ all card details; DMbot never sees them. DMbot only:
 Each company plugs in behind `PaymentProvider`, turning its own events into `PaymentEvent`.
 `FakeProvider` is for tests and local work; a real one is added once the owner has chosen
 and there is a sandbox account.
+
+What every real adapter must do (#497):
+- Compare signatures as bytes (`hmac.compare_digest` on bytes), never str against str: a
+  header with non-ASCII text must be a refusal, not a crash. FakeProvider.verify shows how.
+- A change the company schedules for the next billing date (a downgrade at renewal) is
+  sent as `subscription_started` only when it takes effect, at the renewal.
+- `occurred_at` is when the change happened at the company, never when it was delivered:
+  it orders late deliveries and becomes the plan's change time.
+- The person's email goes to the company server-side (its API call), never in the
+  checkout address the browser is sent to.
 """
 
 from __future__ import annotations
@@ -16,12 +26,16 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol
 from urllib.parse import urlencode
 
+from dmbot import plans
 from dmbot.plans import Plan, PlanId
+
+log = logging.getLogger(__name__)
 
 EventKind = Literal[
     "subscription_started",  # a new paid plan, or a plan change (a new plan id)
@@ -61,7 +75,10 @@ class PaymentProvider(Protocol):
         plan: Plan,
         first_month_cents: int | None,
         return_url: str,
-    ) -> str: ...
+    ) -> str:
+        """The company's checkout page for this plan. `email` prefills it and is sent to
+        the company server-side only, never put in the returned address."""
+        ...
 
     async def billing_url(self, *, customer_id: str, return_url: str) -> str: ...
 
@@ -115,8 +132,11 @@ class FakeProvider:
         self.cancelled.append(subscription_id)
 
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:
-        given = headers.get(self.SIGNATURE_HEADER, "")
-        return hmac.compare_digest(self.sign(body), given)
+        try:
+            given = headers.get(self.SIGNATURE_HEADER, "").encode("latin-1")
+        except UnicodeEncodeError:
+            return False  # not a signature we could have made
+        return hmac.compare_digest(self.sign(body).encode("ascii"), given)
 
     def parse(self, body: bytes) -> PaymentEvent | None:
         raw = json.loads(body)
@@ -130,6 +150,8 @@ class FakeProvider:
             "subscription_ended",
             "extra_hours_bought",
         ):
+            # Kinds are the company's own words, not personal data; cut short anyway.
+            log.info("Payment event of a kind DMbot doesn't use: %.40r", kind)
             return None
         return PaymentEvent(
             provider=self.name,
@@ -158,8 +180,6 @@ def _whole(value: object) -> int | None:
 
 def paid_plan_ids() -> tuple[PlanId, ...]:
     """Plans that can be bought now (a price, and not free)."""
-    from dmbot import plans
-
     loaded = plans.load()
     return tuple(
         p for p in loaded.order if (price := loaded.by_id[p].price_cents) is not None and price > 0

@@ -54,20 +54,23 @@ async def record_install(db: Database, user_id: int, guild_id: int, *, now: int)
         return "recorded" if await cur.fetchone() is not None else "already_linked"
 
 
-async def link_install(db: Database, user_id: int, guild_id: int, *, now: int) -> str:
+async def link_install(db: Database, user_id: int, guild_id: int) -> str:
     """Fill in who added DMbot to a server it joined through a plain link. Returns
-    "linked", "already_linked" (someone else did), or "not_installed"."""
+    "linked", "already_linked" (someone else did), or "not_installed" (DMbot isn't
+    there, or has left)."""
     async with db.user(user_id, install_guild=guild_id) as conn:
         cur = await conn.execute(
-            "SELECT installed_by_user_id FROM installs WHERE guild_id = %s", (guild_id,)
+            "SELECT installed_by_user_id FROM installs WHERE guild_id = %s AND left_at IS NULL",
+            (guild_id,),
         )
         row = await cur.fetchone()
         if row is None:
-            return "not_installed"  # the bot records its joins; it hasn't joined here
+            return "not_installed"  # the bot records its joins; it isn't in this server
         # One statement decides, so two people linking at once can't both win.
         cur = await conn.execute(
             "UPDATE installs SET installed_by_user_id = %s"
-            " WHERE guild_id = %s AND (installed_by_user_id IS NULL OR installed_by_user_id = %s)",
+            " WHERE guild_id = %s AND left_at IS NULL"
+            "   AND (installed_by_user_id IS NULL OR installed_by_user_id = %s)",
             (user_id, guild_id, user_id),
         )
     return "linked" if cur.rowcount == 1 else "already_linked"

@@ -176,7 +176,8 @@ class Payments(DatabaseTest):
         self.assertEqual(row["n"], 0)  # so a fixed replay can still be applied
 
     async def test_events_for_people_who_never_signed_in_are_ignored(self) -> None:
-        response = await self.start_table(user_id=424242)
+        with self.assertLogs("dmbot.web.entitlements_writer", "ERROR"):
+            response = await self.start_table(user_id=424242)
         self.assertEqual(response.status_code, 200)
 
     async def test_an_unreadable_or_oversized_body_is_refused(self) -> None:
@@ -226,8 +227,94 @@ class Payments(DatabaseTest):
     async def test_the_company_cannot_stop_try_it(self) -> None:
         await self.post("/plan/try-it")
         response = await self.send(kind="subscription_ended", subscription_id="sub_1")
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200)  # recorded and ignored, never retried
         self.assertEqual((await self.plan()).status, "active")
+
+    async def test_try_it_after_a_stopped_plan_forgets_the_old_subscription(self) -> None:
+        await self.start_table()
+        await self.send(
+            kind="subscription_ended", subscription_id="sub_1", occurred_at=self.now + 1
+        )
+        self.assertEqual((await self.post("/plan/try-it")).status_code, 204)
+        got = await self.plan()
+        self.assertEqual((got.plan, got.status), ("try-it", "active"))
+        # No billing page for Try It, and the old subscription's late news is ignored.
+        portal = await self.post("/billing/portal")
+        self.assertEqual(portal.json(), {"error": "no_paid_plan"})
+        late = await self.send(kind="payment_failed", subscription_id="sub_1")
+        self.assertEqual(late.status_code, 200)
+        self.assertEqual((await self.plan()).status, "active")
+
+    async def test_a_second_subscription_renewing_is_left_for_a_person(self) -> None:
+        await self.start_table(subscription_id="sub_1")
+        with self.assertLogs("dmbot.web.entitlements_writer", "ERROR") as logs:
+            response = await self.start_table(
+                kind="subscription_renewed",
+                plan="guild",
+                subscription_id="sub_2",
+                occurred_at=self.now + 10,
+                period_start=self.now + 30 * DAY,
+                period_end=self.now + 60 * DAY,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("second subscription", logs.output[0])
+        got = await self.plan()
+        self.assertEqual((got.plan, got.period_start), ("table", self.now))
+
+    async def test_an_event_dmbot_doesnt_use_is_accepted_and_changes_nothing(self) -> None:
+        await self.start_table()
+        with self.assertLogs("dmbot.web.payments", "INFO") as logs:
+            response = await self.send(kind="refund", occurred_at=self.now + 5)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("'refund'", logs.output[0])
+        got = await self.plan()
+        self.assertEqual((got.plan, got.status), ("table", "active"))
+
+    async def test_a_signature_with_odd_characters_is_refused_not_a_crash(self) -> None:
+        body = json.dumps({"id": "e", "user_id": ALICE.id, "occurred_at": 1}).encode()
+        for given in ("é" * 64, "\u2603"):
+            self.assertFalse(self.provider.verify(body, {"x-fake-signature": given}))
+        response = await self.client.post(
+            "/webhooks/fake",
+            content=body,
+            headers={b"x-fake-signature": "é".encode("latin-1") * 64},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    async def test_extra_hours_are_not_added_to_try_it(self) -> None:
+        await self.post("/plan/try-it")
+        with self.assertLogs("dmbot.web.entitlements_writer", "ERROR"):
+            response = await self.send(kind="extra_hours_bought")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((await self.plan()).extra_hours, 0)
+
+    async def test_the_same_event_three_times_at_once_is_applied_once(self) -> None:
+        await self.start_table()
+        body = json.dumps(
+            {
+                "id": "evt-3x",
+                "user_id": ALICE.id,
+                "occurred_at": self.now + 5,
+                "kind": "extra_hours_bought",
+            }
+        ).encode()
+        headers = {"x-fake-signature": self.provider.sign(body)}
+        sent = await asyncio.gather(
+            *(self.client.post("/webhooks/fake", content=body, headers=headers) for _ in range(3))
+        )
+        self.assertEqual([r.status_code for r in sent], [200, 200, 200])
+        self.assertEqual((await self.plan()).extra_hours, 10)
+
+    async def test_events_after_an_account_is_deleted_are_a_warning(self) -> None:
+        await self.start_table()
+        async with self.db.user(ALICE.id) as conn:
+            await conn.execute("DELETE FROM web_users WHERE user_id = %s", (ALICE.id,))
+        with self.assertLogs("dmbot.web.entitlements_writer", "WARNING") as logs:
+            response = await self.send(
+                kind="subscription_ended", subscription_id="sub_1", occurred_at=self.now + 1
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([r.levelname for r in logs.records], ["WARNING"])
 
     async def test_a_renewal_ends_the_grace(self) -> None:
         await self.start_table()

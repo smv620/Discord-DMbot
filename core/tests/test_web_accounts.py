@@ -114,8 +114,20 @@ class Accounts(DatabaseTest):
     async def test_whoever_approved_on_discord_must_be_the_person_signed_in(self) -> None:
         self.discord.user_info = DiscordUser(id=31337, name="Someone", email=None)
         done = await self.install(QUILLON.id)
-        self.assertEqual(done.headers["location"], f"{SITE}/account?install=failed")
+        # Its own answer, so the site can say "use the same Discord account".
+        self.assertEqual(done.headers["location"], f"{SITE}/account?install=other_account")
         self.assertEqual((await self.me())["installs"], [])
+
+    async def test_starting_an_install_signed_out_comes_back_to_the_account_page(self) -> None:
+        self.client.cookies.delete("__Host-dmbot_session")
+        start = await self.client.get("/install", params={"server_id": str(QUILLON.id)})
+        self.assertEqual(start.status_code, 302)
+        self.assertEqual(start.headers["location"], f"{SITE}/account?install=signed_out")
+
+    async def test_the_same_person_installing_again_is_recorded(self) -> None:
+        self.assertTrue((await self.install(QUILLON.id)).headers["location"].endswith("=done"))
+        again = await self.install(QUILLON.id)
+        self.assertEqual(again.headers["location"], f"{SITE}/account?install=done")
 
     async def test_a_state_not_matching_this_browsers_cookie_is_refused(self) -> None:
         start = await self.client.get("/install", params={"server_id": str(QUILLON.id)})
@@ -207,6 +219,26 @@ class Accounts(DatabaseTest):
         self.assertEqual(
             (response.status_code, response.json()), (409, {"error": "already_linked"})
         )
+
+    async def test_linking_a_server_dmbot_left_says_its_not_there(self) -> None:
+        await self.joined_by_link(QUILLON.id)
+        async with self.db.guild(QUILLON.id) as conn:
+            await conn.execute("UPDATE installs SET left_at = 1 WHERE guild_id = %s", (QUILLON.id,))
+        response = await self.link(QUILLON.id)
+        self.assertEqual((response.status_code, response.json()), (409, {"error": "not_installed"}))
+
+    async def test_changes_need_the_site_header(self) -> None:
+        await self.joined_by_link(QUILLON.id)
+        for path in (
+            f"/servers/{QUILLON.id}/link",
+            "/account/delete/request",
+            "/account/delete/confirm",
+        ):
+            response = await self.client.post(path)
+            self.assertEqual(
+                (response.status_code, response.json()), (403, {"error": "not_allowed"})
+            )
+        self.assertEqual((await self.me())["installs"], [])
 
     async def test_linking_only_servers_the_person_manages(self) -> None:
         await self.joined_by_link(GORRAK.id)
