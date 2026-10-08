@@ -1,6 +1,6 @@
 # Next test step
 
-**Just one small test.** When it's done, tell dev1 (the server session) what happened. dev1 records it and puts the next test here.
+**Just one small test.** When it's done, tell dev1 what happened. dev1 writes it down and puts the next test here.
 
 ---
 
@@ -12,20 +12,21 @@
 
 ### Before you start
 - Be in your test Discord server, on a steady connection.
-- Tell dev1 you're starting, so it can watch the logs.
+- Tell dev1 you're starting, so it can watch from its side.
 
 ### Steps
 1. Join the voice channel you play in.
-2. Type `/dmbot start` and pick your campaign.
-3. If DMbot sends you a private message asking to record you, press **I consent**.
+2. Type `/dmbot start`. Press **▶ Continue last campaign** (or pick your campaign). If it asks for a voice channel, pick yours. Then press **▶ Start listening**.
+3. DMbot may send you a private message asking to record you. If it does, press **I consent**. No message means you already said yes.
 4. Say this sentence clearly, once: **"The party walks into the tavern and orders three drinks."**
 5. Wait 10 seconds.
-6. Look in the channel named **#dmb-transcript-…**
+6. Look in the channel whose name starts with **dmb-transcript**.
 7. Type `/dmbot stop`.
 
 ### It worked if
-- Within about 10 seconds, a line appears in **#dmb-transcript-…** with your name and (close to) your sentence.
-- After `/dmbot stop`, DMbot says it stopped.
+- Within about 10 seconds, a line appears in the **dmb-transcript** channel with your name and (close to) your sentence.
+
+**If not:** type `/dmbot stop` anyway, then tell dev1 below. Don't try again until dev1 answers.
 
 ### Tell dev1
 - **Worked** or **didn't work**.
