@@ -67,6 +67,14 @@ from dmbot.dm_screen import (
 )
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen.handover import (
+    AcceptOfferButton,
+    DeclineOfferButton,
+    HandoverButton,
+    NotNowButton,
+    TakeOnButton,
+    WithdrawOfferButton,
+)
 from dmbot.dm_screen.name_questions import (
     FixUndoButton,
     NameAnswerUndoButton,
@@ -122,7 +130,7 @@ from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, speech_sent_line
 from dmbot.ui import logic as ui_logic
-from dmbot.ui.dmbot_commands import dmbot_group
+from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
@@ -312,6 +320,23 @@ class DMBotTree(app_commands.CommandTree["DMBot"]):
         set_log_context(guild_id=interaction.guild_id)
         return True
 
+    async def on_error(
+        self, interaction: discord.Interaction[DMBot], error: app_commands.AppCommandError, /
+    ) -> None:
+        # A command that broke after answering first ("thinking…", #537) would leave
+        # that up for good: log it and say so privately, as menus do (#595).
+        if interaction.command is not None and interaction.command._has_any_error_handlers():
+            return  # the command answers its own errors (none do today), as discord.py does
+        command = interaction.command.qualified_name if interaction.command else "a command"
+        if interaction.type is discord.InteractionType.autocomplete:
+            log.warning("Suggestions for /%s failed: %s", command, type(error).__name__)
+            return  # nothing can be said to the person here
+        if isinstance(error, app_commands.CommandNotFound | app_commands.CommandSignatureMismatch):
+            # Their Discord still has the commands from before an update.
+            log.warning("/%s isn't up to date for this person: %s", command, error)
+        cause = error.original if isinstance(error, app_commands.CommandInvokeError) else error
+        await _failed(interaction, cause, f"/{command}")
+
 
 class DMBot(commands.AutoShardedBot):
     """One process serving the shards in `settings.shards` (one shard by default).
@@ -412,6 +437,15 @@ class DMBot(commands.AutoShardedBot):
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
         self.add_dynamic_items(SettingsButton, LevelButton, SettingsVisibilityButton)
+        # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
+        self.add_dynamic_items(
+            HandoverButton,
+            WithdrawOfferButton,
+            AcceptOfferButton,
+            DeclineOfferButton,
+            TakeOnButton,
+            NotNowButton,
+        )
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
         # "Check new names" on the DM screen after a session.
