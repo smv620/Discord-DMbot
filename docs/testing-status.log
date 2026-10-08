@@ -177,7 +177,8 @@ LATEST RESULT: Test C (2026-10-08 18:04), DM alone: PASS
   On 70ac757. ⏹ Stop listening -> Yes, stop ended the session: DMbot left voice and the
   download was offered. The #631 decrypt error came back at the start (after a DAVE
   commit this time) and #641 re-listened: audio 88%. Previous: Test B PASS (16:14).
-  Deployed e299bfc at 18:18. Next: Test D (docs/next-test-step.md), TV on.
+  Deployed e299bfc at 18:18; what to check from it is in the history log
+  ("What to check from the e299bfc deploy"). Next: Test D, TV on.
 
 Open issues from testing
   #671 the audio warning fires on background noise (owner)

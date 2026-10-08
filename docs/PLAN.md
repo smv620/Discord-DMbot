@@ -422,8 +422,29 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   It has a **✅ I consent** button (#33).
 - **Consent carries over** between sessions, per server. In **every session**, a consented
   person gets one short private reminder with the date they consented, plus a
-  **🛑 Stop recording me** button (#33, #34). Rejoining in the same session doesn't send
-  another (built 2026-10-05: once per person per session, not once per join).
+  **⚙️ Menu** button (#33, #34; the menu replaced a red 🛑 button, below). Rejoining in
+  the same session doesn't send another (built 2026-10-05: once per person per session,
+  not once per join).
+- **The ⚙️ Menu, and a warning before stopping** (owner decision, 2026-10-08: the big red
+  🛑 Stop recording me button on every private message was annoying). DMbot's private
+  messages that offered 🛑 (the "you said yes" message, the per-session reminder, the
+  `/consent give` answer) carry one grey **⚙️ Menu** button instead. The menu is about that
+  one server and shows only what applies: **📜 My character sheet** (#723, moved in from
+  its own button), **Stop recording me**, and **Close**. **Stop recording me** first shows
+  one warning: "Stop recording you in <server>? DMbot won't write down anything you say
+  from now on. The campaign's record will have gaps wherever you speak, so its summaries
+  can miss things and plot holes can appear. You can start again any time." with **Yes,
+  stop recording me** (red) and **Keep recording**. Yes stops at once, exactly as before.
+  `/consent revoke` shows the same warning. Rules that keep stopping easy:
+  - one warning, one tap to confirm; never a second ask, a wait, or a reason to give;
+  - plain facts only, no guilt ("you'll ruin the game") and no pressure;
+  - **Keep recording** changes nothing and says nothing more;
+  - a 🛑 button on a message sent before this change shows the warning too;
+  - **No thanks** on the first request stays one tap (nothing is recorded yet).
+  Why: the owner wants a calmer message, and people who stop should know what it costs
+  the campaign. Stopping takes three taps (Menu, Stop, Yes) where saying yes takes one;
+  the owner's legal review found that acceptable (2026-10-08). The warning still stays
+  short and one-time, and the menu button is on every reminder.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
