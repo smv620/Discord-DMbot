@@ -593,7 +593,8 @@ def create_app(
 
     # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty. Its sessions and
     # locks count seconds on their own steady clock (not `clock`, the wall time used for
-    # signed tokens), so a changed system time can't end or extend them.
+    # signed tokens), so a changed system time can't end or extend them. Only the spent
+    # Google states use `clock`, as they mirror the signed sign-in cookie's own life.
     app.include_router(
         admin_api.router(
             settings,

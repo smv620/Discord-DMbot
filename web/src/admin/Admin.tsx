@@ -83,7 +83,9 @@ export default function Admin({ api, search }: Props) {
     } catch (error) {
       setPassword("");
       const kind = error instanceof AdminApiError ? error.kind : "down";
-      setNotice(kind === "wrong" ? text.wrong : kind === "busy" ? text.busy : text.down);
+      const google = view.kind === "out" && view.ways.google;
+      const wrong = google ? text.wrong : text.wrongNoGoogle;
+      setNotice(kind === "wrong" ? wrong : kind === "busy" ? text.busy : text.down);
       setRefused((n) => n + 1);
     } finally {
       setBusy(false);
@@ -148,12 +150,15 @@ export default function Admin({ api, search }: Props) {
     );
   }
   const { ways } = view;
+  // Google's refusal can't point at a password form that isn't there.
+  const shown =
+    notice === text.googleFailed && !ways.password ? text.googleFailedNoPassword : notice;
   return (
     <div class="stack">
       <p>{text.signInLead}</p>
-      {notice && (
-        <p class={notice === text.signedOut ? "ok" : "warn"} role="alert">
-          {notice}
+      {shown && (
+        <p class={shown === text.signedOut ? "ok" : "warn"} role="alert">
+          {shown}
         </p>
       )}
       {/* Only the sign-ins the server has set up: a button that can't work is a dead end. */}

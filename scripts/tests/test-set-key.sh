@@ -229,5 +229,11 @@ run "$key"$'\ny\n' SPEECHMATICS_API_KEY
 check "restart: never for the bake-off key" not_restarted
 check "restart: bake-off key says why" says "no restart is needed"
 
+# DEPLOY.md's "Turn on the admin page" leaves ADMIN_EMAILS to dev1 because of this.
+reset
+run "owner@example.com"$'\n' ADMIN_EMAILS
+check "refuses ADMIN_EMAILS: a setting, not a key" refused
+check "ADMIN_EMAILS refusal changes nothing" unchanged
+
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))

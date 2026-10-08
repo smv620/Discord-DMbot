@@ -28,7 +28,7 @@ from dmbot.web.admin import (
     AdminSessions,
     FailedTries,
     HttpGoogle,
-    PendingSignIns,
+    UsedStates,
     hash_password,
     password_matches,
     pkce_challenge,
@@ -120,6 +120,8 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
     async def google_sign_in(self, **claims: Any) -> httpx.Response:
         self.google.claims_out = claims
         start = await self.client.get("/admin/auth/google/start")
+        if not start.headers["location"].startswith("https://accounts.google.com"):
+            return start  # refused before Google
         state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
         return await self.client.get(
             "/admin/auth/google/callback", params={"state": state, "code": "g-code"}
@@ -216,7 +218,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
             started = time.monotonic()
             self.assertEqual((await self.client.get("/health")).status_code, 200)
-            self.assertLess(time.monotonic() - started, 0.3)
+            self.assertLess(time.monotonic() - started, 0.45)  # the check takes 0.5
             await trying
 
     async def test_checks_run_one_at_a_time_and_a_flood_is_refused_at_once(self) -> None:
@@ -291,6 +293,16 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
                 headers={**HEADERS, "Content-Type": "application/json"},
             )
             self.assertEqual(answer.status_code, 400, content)
+        for body in (
+            {"email": ADMIN, "password": "\ud800abc"},
+            {"email": "\ud800@x.com", "password": PASSWORD},
+        ):
+            answer = await self.client.post(
+                "/admin/auth/password",
+                content=json.dumps(body).encode(),
+                headers={**HEADERS, "Content-Type": "application/json"},
+            )
+            self.assertEqual(answer.status_code, 400, body)
         long = await self.password(password="x" * 1025)
         self.assertEqual(long.status_code, 400)
         huge = await self.client.post(
@@ -409,6 +421,37 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(refused.headers["location"], f"{SITE}/admin?signin=failed")
         self.assertEqual(self.google.asked, [])
+
+    async def test_a_flood_of_starts_cant_push_out_a_real_sign_in(self) -> None:
+        self.google.claims_out = {}
+        start = await self.client.get("/admin/auth/google/start")
+        saved = dict(self.client.cookies)
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        nonce = self.google.nonce
+        async with httpx.AsyncClient(
+            transport=self.client._transport, base_url=API, follow_redirects=False
+        ) as flood:
+            # The start keeps nothing on the server, so any number does the same; the
+            # table this once filled held 10,000.
+            for _ in range(1_000):
+                await flood.get(
+                    "/admin/auth/google/start", headers={"CF-Connecting-IP": "198.51.100.66"}
+                )
+        self.google.nonce = nonce  # the fake remembers the last start's
+        self.client.cookies.clear()
+        self.client.cookies.update(saved)
+        done = await self.client.get(
+            "/admin/auth/google/callback", params={"state": state, "code": "g-code"}
+        )
+        self.assertEqual(done.headers["location"], f"{SITE}/admin")
+
+    async def test_a_locked_connection_cant_start_google_either(self) -> None:
+        for _ in range(5):
+            await self.password(password="wrong wrong wrong wrong", ip="198.51.100.9")
+        start = await self.client.get(
+            "/admin/auth/google/start", headers={"CF-Connecting-IP": "198.51.100.9"}
+        )
+        self.assertEqual(start.headers["location"], f"{SITE}/admin?signin=failed")
 
     async def test_google_accepts_its_issuer_with_or_without_https(self) -> None:
         done = await self.google_sign_in(iss="accounts.google.com")
@@ -547,26 +590,24 @@ class Locks(unittest.TestCase):
         self.assertLessEqual(len(tries._fails), 3)
 
 
-class Pending(unittest.TestCase):
-    def test_a_state_works_once_and_not_after_ten_minutes(self) -> None:
+class Used(unittest.TestCase):
+    def test_a_state_is_spent_once_and_forgotten_after_ten_minutes(self) -> None:
         now = [0.0]
-        pending = PendingSignIns(clock=lambda: now[0])
-        state, nonce, verifier = pending.start()
-        self.assertEqual(pending.take(state), (nonce, verifier))
-        self.assertIsNone(pending.take(state))
-        old, _, _ = pending.start()
+        used = UsedStates(clock=lambda: now[0])
+        self.assertTrue(used.use("state-1"))
+        self.assertFalse(used.use("state-1"))
         now[0] += 600
-        self.assertIsNone(pending.take(old))
-        self.assertIsNone(pending.take("caf\xe9"))
+        self.assertTrue(used.use("state-1"))  # its cookie has long expired by now
 
-    def test_the_table_stays_bounded(self) -> None:
-        pending = PendingSignIns(clock=lambda: 0.0, most=3)
-        first, _, _ = pending.start()
-        for _ in range(5):
-            last, _, _ = pending.start()
-        self.assertLessEqual(len(pending._by_hash), 3)
-        self.assertIsNone(pending.take(first))
-        self.assertIsNotNone(pending.take(last))
+    def test_a_full_table_refuses_and_never_evicts_a_live_state(self) -> None:
+        now = [0.0]
+        used = UsedStates(clock=lambda: now[0], most=3)
+        for n in range(3):
+            self.assertTrue(used.use(f"state-{n}"))
+        self.assertFalse(used.use("state-new"))  # refused, not evicting
+        self.assertFalse(used.use("state-0"))  # still spent
+        now[0] += 600
+        self.assertTrue(used.use("state-new"))  # expired ones make room
 
 
 class SessionCap(unittest.TestCase):

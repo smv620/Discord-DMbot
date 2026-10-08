@@ -30,7 +30,7 @@ from dmbot.web.admin import (
     AdminSessions,
     FailedTries,
     GoogleSignIn,
-    PendingSignIns,
+    UsedStates,
     csrf_ok,
     email_allowed,
     password_matches,
@@ -62,7 +62,7 @@ def router(
     api = APIRouter(prefix="/admin")
     checking = asyncio.Semaphore(1)
     waiting = [0]  # tries queued for `checking`
-    pending = PendingSignIns(clock=clock)
+    used_states = UsedStates(clock=clock)
     prefix = "__Host-" if settings.secure_cookies else ""
     admin_cookie = f"{prefix}dmbot_admin"
     signin_cookie = f"{prefix}dmbot_admin_signin"
@@ -142,6 +142,13 @@ def router(
         given = raw.get("password") if isinstance(raw, dict) else None
         if not isinstance(email, str) or not isinstance(given, str) or len(given) > 1024:
             raise HTTPException(status_code=400, detail="bad_request")
+        try:
+            # JSON can carry a lone surrogate ("\ud800"), which argon2 can't encode: refuse
+            # it here, not as a 500 that skips the try count.
+            email.encode("utf-8")
+            given.encode("utf-8")
+        except UnicodeEncodeError:
+            raise HTTPException(status_code=400, detail="bad_request") from None
         email_key = "email:" + email.strip().lower()[:320]
         address = client_address(request)
         addr_key = "addr:" + rate_key(address)
@@ -182,12 +189,15 @@ def router(
         return response
 
     @api.get("/auth/google/start")
-    async def google_start() -> Response:
+    async def google_start(request: Request) -> Response:
         require_on()
         if google is None:
             # A plain link leads here: answer with the page and its words, not bare JSON.
             return RedirectResponse(f"{admin_page}?signin=off", status_code=302)
-        state, nonce, verifier = pending.start()
+        if tries.locked("addr:" + rate_key(client_address(request))):
+            return RedirectResponse(f"{admin_page}?signin=failed", status_code=302)
+        # Nothing is kept on the server until the callback: a flood of starts costs nothing.
+        state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
         response = RedirectResponse(
             google.authorize_url(
                 state=state,
@@ -198,12 +208,16 @@ def router(
             status_code=302,
         )
         # Lax, not Strict: Google's redirect back is a navigation another site starts.
-        # Holds the state, signed and short-lived, so the callback must come back to the
-        # browser that started it; the nonce and verifier stay in `pending`.
+        # Holds this sign-in's checks, signed, HttpOnly and short-lived, so the callback
+        # must come back to the browser that started it; ':' as tokens can't hold dots.
         response.set_cookie(
             signin_cookie,
             tokens.make(
-                settings.secret_key, "admin-google", state, now=clock(), seconds=SIGN_IN_SECONDS
+                settings.secret_key,
+                "admin-google",
+                f"{state}:{nonce}:{verifier}",
+                now=clock(),
+                seconds=SIGN_IN_SECONDS,
             ),
             max_age=SIGN_IN_SECONDS,
             path="/",
@@ -230,20 +244,20 @@ def router(
         code = request.query_params.get("code", "")
         address = client_address(request)
         addr_key = "addr:" + rate_key(address)
-        # Only this browser's own state is taken out of `pending`, and then it is gone:
-        # whatever happens next, it never works twice.
-        checks = (
-            pending.take(held)
-            if held is not None
-            and code
-            and not tries.locked(addr_key)
-            and secrets.compare_digest(held.encode(), state.encode())
-            else None
-        )
-        if checks is None:
+        parts = held.split(":") if held else []
+        # Spent only once the cookie matches and the connection isn't locked, so a
+        # stranger can't spend (or fill the table with) anyone else's sign-in. From then
+        # on it never works twice, whatever happens next.
+        if (
+            len(parts) != 3
+            or not code
+            or tries.locked(addr_key)
+            or not secrets.compare_digest(parts[0].encode(), state.encode())
+            or not used_states.use(parts[0])
+        ):
             log.warning("Admin Google sign-in refused from %s: bad or expired check", address)
             return failed
-        nonce, verifier = checks
+        _state, nonce, verifier = parts
         try:
             claims = await google.claims(
                 code=code, verifier=verifier, redirect_uri=settings.admin_google_redirect_uri

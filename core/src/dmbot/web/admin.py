@@ -98,7 +98,8 @@ class FailedTries:
 
     Accepted on purpose (#772): anyone who knows the admin email can keep the password
     sign-in locked with 5 tries every 15 minutes. Google sign-in only checks the
-    connection's key, so it still works; don't make it check the email's too."""
+    connection's key, and its start keeps nothing on the server (UsedStates), so a
+    stranger can't block it too; don't make it check the email's key."""
 
     clock: Callable[[], float] = time.monotonic
     # A flood of made-up emails or addresses can't grow either map without end.
@@ -199,43 +200,34 @@ class AdminSessions:
 
 
 @dataclass
-class PendingSignIns:
-    """Google sign-ins started and not back yet: each one's nonce and PKCE verifier, kept by
-    the hash of its state. The callback takes its entry out, so a state and nonce work
-    once: a replayed callback finds nothing. #772 asks for this alongside the TLS answer
-    from Google's token endpoint that lets id_token_claims skip the signature check.
+class UsedStates:
+    """Google sign-ins already spent, by the hash of their state, so a state and nonce
+    work once: a replayed callback is refused (#772). The start route keeps nothing here
+    (the sign-in's checks travel in its signed cookie), so a flood of starts can't push
+    anything out. Only a callback whose cookie matches and whose connection isn't locked
+    is added, and every one that fails counts as a wrong try, so one connection adds at
+    most five in 15 minutes.
 
-    Accepted on purpose: a flood of about 17 starts a second can push the admin's own
-    sign-in out before Google sends them back; the password still works meanwhile."""
+    Wall time, like the signed cookie whose life it mirrors: an entry need only outlast
+    the cookie it guards."""
 
-    clock: Callable[[], float] = time.monotonic
-    # Anyone can start a sign-in, so it's bounded; a full table drops the oldest. At
-    # roughly 200 bytes each, this many is a few megabytes at most.
-    most: int = 10_000
-    _by_hash: dict[str, tuple[str, str, float]] = field(default_factory=dict)
+    clock: Callable[[], float] = time.time
+    most: int = 1000
+    _until: dict[str, float] = field(default_factory=dict)
 
-    def start(self) -> tuple[str, str, str]:
-        """A new sign-in's state, nonce and verifier."""
+    def use(self, state: str) -> bool:
+        """True the first time this state is spent; False if it was, or if the table is
+        full of live entries (refused, never evicting one: that would reopen a replay)."""
         now = self.clock()
-        # Oldest first (every entry lives as long), so only the front is ever stale or
-        # dropped: no pass over the whole table, even while it's full.
-        while self._by_hash and (
-            len(self._by_hash) >= self.most or next(iter(self._by_hash.values()))[2] <= now
-        ):
-            self._by_hash.pop(next(iter(self._by_hash)))
-        state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
-        self._by_hash[_hash(state)] = (nonce, verifier, now + SIGN_IN_SECONDS)
-        return state, nonce, verifier
-
-    def take(self, state: str) -> tuple[str, str] | None:
-        """This sign-in's nonce and verifier, once; None if it's unknown, used or too old."""
-        try:
-            entry = self._by_hash.pop(_hash(state), None)
-        except UnicodeError:
-            return None
-        if entry is None or self.clock() >= entry[2]:
-            return None
-        return entry[0], entry[1]
+        key = hashlib.sha256(state.encode("utf-8", "surrogateescape")).hexdigest()
+        if key in self._until and self._until[key] > now:
+            return False
+        if len(self._until) >= self.most:
+            self._until = {k: t for k, t in self._until.items() if t > now}
+            if len(self._until) >= self.most:
+                return False
+        self._until[key] = now + SIGN_IN_SECONDS
+        return True
 
 
 def csrf_ok(session: AdminSession, sent: str | None) -> bool:

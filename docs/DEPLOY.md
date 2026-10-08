@@ -185,11 +185,27 @@ while DMbot is restarting.
 ### Turn on the admin page
 
 The admin page (`/admin` on the website, never linked) is for giving free access (#772).
-1. With `scripts/set-key` (or a text editor), put your email in `ADMIN_EMAILS` and set `WEB_CLIENT_IP_HEADER` to `CF-Connecting-IP` (behind Cloudflare).
-2. Run `scripts/set-admin-password` yourself, over ssh, and pick a password of 16 characters or more: type it only there, never into a chat.
-3. For Google sign-in too: in Google Cloud, on the OAuth consent screen choose External and Testing and add your admin email as a test user. Then make an OAuth client (Web application) whose redirect address is your `WEB_API_URL` value followed by `/admin/auth/google/callback`, and `scripts/set-key` its `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
-4. Restart the website: `docker compose up -d web-api`, then open your website's `/admin` and sign in.
-5. If the website stops answering, `docker compose logs web-api` says which setting is wrong.
+The owner sets the password and the Google client; dev1 changes `.env` and restarts.
+Your email and the Google Client ID never go in the repository, an issue or a PR.
+
+**You (the owner), on the server:**
+1. Log in with ssh, then `cd Discord-DMbot`.
+2. Type `scripts/set-admin-password`. Pick a password of 16 or more characters (a long
+   sentence works). You won't see it as you type. Type it only there, never into a chat.
+3. Optional, for Google sign-in: in Google Cloud, make an OAuth client (Web application)
+   whose redirect address is the one dev1 gives you, ending in
+   `/admin/auth/google/callback`. Then type `scripts/set-key GOOGLE_CLIENT_SECRET`, paste
+   the Client secret, and answer **No** when it asks to restart.
+4. Tell dev1 "admin password set" (and the Client ID, if you made one) in dev1's own
+   terminal, never in an issue.
+
+**dev1:**
+1. Set `ADMIN_EMAILS` and `GOOGLE_CLIENT_ID` in `.env`. Set `WEB_CLIENT_IP_HEADER` to match
+   how the API is served (`CF-Connecting-IP` behind Cloudflare).
+2. Run `docker compose up -d web-api`.
+3. Check `docker compose logs --tail 20 web-api`, and record it in the testing log.
+4. Before step 3 of the owner's part, tell the owner the exact redirect address
+   (`WEB_API_URL` + `/admin/auth/google/callback`).
 
 ### Logs
 

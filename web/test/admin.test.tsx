@@ -135,6 +135,21 @@ describe("the admin page", () => {
     expect(screen.getByText(text.down)).toBeTruthy();
   });
 
+  it("words refusals for the sign-ins the server has", async () => {
+    const ways = vi.fn(async () => ({ google: false, password: true }));
+    render(<Admin api={stub({ ways })} search="" />);
+    await screen.findByLabelText(text.email);
+    fill(text.email, "owner@example.com");
+    fill(text.password, "a wrong password");
+    fireEvent.click(screen.getByRole("button", { name: text.signIn }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.wrongNoGoogle);
+    cleanup();
+    const googleOnly = vi.fn(async () => ({ google: true, password: false }));
+    render(<Admin api={stub({ ways: googleOnly })} search="?signin=failed" />);
+    await screen.findByRole("link", { name: text.google });
+    expect(screen.getByRole("alert").textContent).toBe(text.googleFailedNoPassword);
+  });
+
   it("ignores a signin= value that isn't one of its own", async () => {
     render(<Admin api={stub()} search="?signin=toString" />);
     await screen.findByLabelText(text.email);
