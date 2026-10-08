@@ -16,6 +16,7 @@ campaign, so they work after a restart. Register with
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import re
@@ -84,14 +85,14 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None = None) -> dis
     return view
 
 
-async def _open_offer(interaction: discord.Interaction, campaign: Campaign) -> HandoverOffer | None:
+async def _open_offer(interaction: discord.Interaction, campaign_id: str) -> HandoverOffer | None:
     """A hand-over offer waiting for an answer, for the card (none if it can't be read)."""
     store = getattr(interaction.client, "campaigns", None)
-    if store is None:
+    if store is None or interaction.guild is None:
         return None
     try:
         offer: HandoverOffer | None = await store.open_offer(
-            campaign.guild_id, campaign.id, int(time.time())
+            interaction.guild.id, campaign_id, int(time.time())
         )
     except Exception:
         log.exception("Couldn't read a hand-over offer for the settings card")
@@ -118,7 +119,7 @@ async def _may(
 async def _redraw(interaction: discord.Interaction, campaign: Campaign) -> None:
     """Show the card as saved now (the press was deferred as an update). If the card
     can't be redrawn (it's too old), the change still is saved: say so."""
-    offer = await _open_offer(interaction, campaign)
+    offer = await _open_offer(interaction, campaign.id)
     try:
         await interaction.edit_original_response(
             content=settings_text(campaign, offer),
@@ -155,10 +156,12 @@ class SettingsButton(
         return cls(match["campaign"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        campaign = await _allowed(interaction, self.campaign_id)
+        # Both at once: Discord waits 3 seconds for the card (#437 review).
+        campaign, offer = await asyncio.gather(
+            _allowed(interaction, self.campaign_id), _open_offer(interaction, self.campaign_id)
+        )
         if campaign is None:
             return
-        offer = await _open_offer(interaction, campaign)
         await interaction.response.send_message(
             settings_text(campaign, offer),
             view=settings_view(campaign, offer),
