@@ -205,7 +205,13 @@ const menu = [
 
   main {
     flex: 1;
-    padding-block: var(--space-8) var(--space-12);
+    padding-block: var(--space-6) var(--space-12);
+  }
+
+  @media (min-width: 48rem) {
+    main {
+      padding-top: var(--space-8);
+    }
   }
 
   .site-footer {

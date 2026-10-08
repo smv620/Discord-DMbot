@@ -22,28 +22,40 @@ import Base from "../layouts/Base.astro";
   <section class="features" aria-label="What DMbot does">
     <article class="surface feature">
       <h2>Writes it down</h2>
-      <p class="muted">What was said at the table, as text, from the players who said yes.</p>
+      <p class="muted">
+        Turns what was said at the table into text. Only players who said yes are recorded.
+      </p>
     </article>
     <article class="surface feature">
-      <h2>Remembers your names</h2>
+      <h2>Remembers who's who</h2>
       <p class="muted">The people and places your table makes up, from one game to the next.</p>
     </article>
     <article class="surface feature">
       <h2>Quiet tips for the DM</h2>
-      <p class="muted">Only the game master sees them. DMbot never makes up the story or decides.</p>
+      <p class="muted">
+        Just for the game master, unless the DM lets players peek. DMbot never makes up the story or
+        decides.
+      </p>
     </article>
   </section>
   <p class="note muted">This page is being written. Check back soon.</p>
 </Base>
 
 <style>
+  /* On a 360 x 640 phone the main button must show without scrolling (#559). */
   .hero {
     max-width: var(--text-width);
-    padding-block: var(--space-8);
+    padding-bottom: var(--space-8);
   }
 
-  .lead {
-    font-size: var(--text-lg);
+  @media (min-width: 48rem) {
+    .hero {
+      padding-top: var(--space-8);
+    }
+
+    .lead {
+      font-size: var(--text-lg);
+    }
   }
 
   .questions {
