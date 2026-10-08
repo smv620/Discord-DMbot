@@ -5,11 +5,17 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Admin from "../src/admin/Admin";
-import { type AdminApi, AdminApiError, type AdminMe, httpAdminApi } from "../src/admin/api";
+import {
+  type AdminApi,
+  AdminApiError,
+  type AdminMe,
+  type GrantsView,
+  httpAdminApi,
+} from "../src/admin/api";
 import { text } from "../src/content/admin";
 
 afterEach(cleanup);
@@ -29,6 +35,9 @@ function stub(over: Partial<AdminApi> = {}): AdminApi {
     signOut: vi.fn(async () => {
       me = null;
     }),
+    grants: vi.fn(async () => ({ free: [], grants: [], log: [] })),
+    give: vi.fn(async () => "grant" as const),
+    revoke: vi.fn(async () => undefined),
     ...over,
   };
 }
@@ -263,5 +272,132 @@ describe("ux follow-ups", () => {
   it("maps a 404 from /admin/me to 'off'", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => new Response(null, { status: 404 }));
     await expect(httpAdminApi("/api", fetcher).me()).rejects.toMatchObject({ kind: "off" });
+  });
+});
+
+describe("free access (#773)", () => {
+  const FRIEND = "123456789012345678";
+  const view = (): GrantsView => ({
+    free: ["100000000000000001"],
+    grants: [
+      {
+        discordId: FRIEND,
+        level: "guild",
+        endsAt: 1_801_440_000, // stops at 2027-02-01 00:00 UTC: the last day is Jan 31
+        note: "playtester",
+        grantedBy: "owner@example.com",
+        grantedAt: 1_800_000_000,
+      },
+    ],
+    log: [{ at: 1_800_000_000, by: "owner@example.com", action: "grant", discordId: FRIEND }],
+  });
+
+  function signedIn(over: Partial<AdminApi> = {}) {
+    const api = stub({ me: vi.fn(async () => ME), grants: vi.fn(async () => view()), ...over });
+    render(<Admin api={api} search="" />);
+    return api;
+  }
+
+  it("lists the free list (not revocable), each grant and the recent changes", async () => {
+    signedIn();
+    const free = (await screen.findByText(text.alwaysFree)).closest("li") as HTMLElement;
+    expect(free.textContent).toContain("100000000000000001");
+    expect(within(free).queryByRole("button")).toBeNull();
+    const row = document.querySelector(`[data-grant="${FRIEND}"]`) as HTMLElement;
+    expect(row.textContent).toContain("Like Guild");
+    expect(row.textContent).toContain(text.until("Jan 31, 2027"));
+    expect(row.textContent).toContain("playtester");
+    expect(row.textContent).toContain(text.addedBy("owner@example.com", "Jan 15, 2027"));
+    expect(
+      screen.getByText(text.logLine("Jan 15, 2027", "owner@example.com", "grant", FRIEND)),
+    ).toBeTruthy();
+  });
+
+  it("adds someone with the CSRF token and says so", async () => {
+    const api = signedIn();
+    await screen.findByLabelText(text.idLabel);
+    fireEvent.input(screen.getByLabelText(text.idLabel), { target: { value: ` ${FRIEND} ` } });
+    fireEvent.change(screen.getByLabelText(text.levelLabel), { target: { value: "unlimited" } });
+    fireEvent.input(screen.getByLabelText(text.noteLabel), { target: { value: "a friend" } });
+    fireEvent.click(screen.getByRole("button", { name: text.add }));
+    expect(await screen.findByText(text.added(FRIEND))).toBeTruthy();
+    expect(api.give).toHaveBeenCalledWith("csrf-1", {
+      discordId: FRIEND,
+      level: "unlimited",
+      endsOn: null,
+      note: "a friend",
+    });
+  });
+
+  it("a refused id says what to fix and goes back to the box", async () => {
+    const give = vi.fn(async () => Promise.reject(new AdminApiError("bad-id")));
+    signedIn({ give });
+    await screen.findByLabelText(text.idLabel);
+    fireEvent.input(screen.getByLabelText(text.idLabel), { target: { value: "12345" } });
+    fireEvent.click(screen.getByRole("button", { name: text.add }));
+    expect(await screen.findByText(text.grantErrors["bad-id"] ?? "")).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText(text.idLabel)));
+  });
+
+  it("revoke asks first, then revokes", async () => {
+    const api = signedIn();
+    const row = (await screen.findByText(FRIEND)).closest("li") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: text.revoke }));
+    expect(row.textContent).toContain(text.confirmRevoke(FRIEND));
+    fireEvent.click(within(row).getByRole("button", { name: text.cancel }));
+    expect(api.revoke).not.toHaveBeenCalled();
+    fireEvent.click(within(row).getByRole("button", { name: text.revoke }));
+    fireEvent.click(within(row).getByRole("button", { name: text.yesRevoke }));
+    expect(await screen.findByText(text.revoked(FRIEND))).toBeTruthy();
+    expect(api.revoke).toHaveBeenCalledWith("csrf-1", FRIEND);
+  });
+
+  it("an ended session goes back to sign-in with the timed-out words", async () => {
+    let signedInNow = true;
+    const grants = vi.fn(async () => {
+      if (!signedInNow) throw new AdminApiError("signed-out");
+      return view();
+    });
+    const give = vi.fn(async () => {
+      signedInNow = false;
+      throw new AdminApiError("signed-out");
+    });
+    const me = vi.fn(async () => (signedInNow ? ME : null));
+    render(<Admin api={stub({ me, grants, give })} search="" />);
+    await screen.findByLabelText(text.idLabel);
+    fireEvent.input(screen.getByLabelText(text.idLabel), { target: { value: FRIEND } });
+    fireEvent.click(screen.getByRole("button", { name: text.add }));
+    expect(await screen.findByText(text.timedOut)).toBeTruthy();
+    expect(await screen.findByLabelText(text.password)).toBeTruthy();
+  });
+
+  it("maps the API's refusals to plain problems", async () => {
+    const answer = (status: number, body?: unknown) =>
+      vi.fn<typeof fetch>(
+        async () =>
+          new Response(body === undefined ? null : JSON.stringify(body), {
+            status,
+            headers: { "Content-Type": "application/json" },
+          }),
+      );
+    const request = { discordId: FRIEND, level: "guild" as const, endsOn: null, note: "" };
+    for (const [code, kind] of [
+      ["bad_id", "bad-id"],
+      ["past_date", "past-date"],
+      ["long_note", "long-note"],
+    ] as const) {
+      await expect(
+        httpAdminApi("/api", answer(400, { error: code })).give("c", request),
+      ).rejects.toMatchObject({ kind });
+    }
+    await expect(
+      httpAdminApi("/api", answer(404, { error: "no_grant" })).revoke("c", FRIEND),
+    ).rejects.toMatchObject({ kind: "no-grant" });
+    await expect(httpAdminApi("/api", answer(401)).grants()).rejects.toMatchObject({
+      kind: "signed-out",
+    });
+    const fetcher = answer(200, { action: "change" });
+    expect(await httpAdminApi("/api", fetcher).give("csrf-9", request)).toBe("change");
+    expect(fetcher.mock.calls[0]?.[1]?.headers).toMatchObject({ "X-Admin-CSRF": "csrf-9" });
   });
 });

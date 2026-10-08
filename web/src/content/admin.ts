@@ -35,7 +35,7 @@ export const text = {
   down: "Can't reach DMbot right now. Try again in a minute. If it keeps happening, tell dev1.",
   tryAgain: "Try again",
   signedInAs: (email: string): string => `Signed in as ${email}.`,
-  comingSoon: "The free access list comes here next.",
+
   signOut: "Sign out",
   signOutFailed:
     "You're still signed in. Can't reach DMbot right now. Try \"Sign out\" again in a minute.",
@@ -44,4 +44,54 @@ export const text = {
   timedOut:
     "You're signed out. That happens after an hour without use, or 12 hours after you signed in. Sign in again.",
   needsScript: "This page needs JavaScript. Turn it on in your browser, then reload the page.",
+
+  // Free access (#773). "Discord user id" is the one technical term: it's what Discord
+  // calls the thing to copy.
+  freeHeading: "Free access",
+  freeLead: "These people use DMbot without paying.",
+  listLoading: "Loading the list…",
+  alwaysFree: "Always free (set on the server)",
+  levels: { guild: "Like Guild", unlimited: "No limits" } as Record<string, string>,
+  noEnd: "No end date",
+  until: (date: string): string => `Until ${date}`,
+  addedBy: (by: string, date: string): string => `Added by ${by} on ${date}`,
+  nobody: "Nobody has free access from this page yet. Add someone below.",
+  revoke: "Revoke",
+  confirmRevoke: (id: string): string => `Revoke free access for ${id}?`,
+  yesRevoke: "Yes, revoke",
+  cancel: "Cancel",
+  revoked: (id: string): string => `Done. ${id} no longer has free access.`,
+  addHeading: "Add someone",
+  addLead: "Adding someone who already has free access changes it.",
+  idLabel: "Discord user id",
+  idHint:
+    "In Discord: Settings, then Advanced, then turn on Developer Mode. Then right-click the person and pick Copy User ID.",
+  levelLabel: "How much",
+  endLabel: "Ends on (optional)",
+  endHint: "Leave it empty so it never ends.",
+  noteLabel: "Note (optional)",
+  noteHint: "Only admins see this. 200 letters at most.",
+  add: "Add",
+  adding: "Adding…",
+  added: (id: string): string => `Done. ${id} has free access.`,
+  changed: (id: string): string => `Done. ${id}'s free access is changed.`,
+  historyHeading: "Recent changes",
+  noHistory: "No changes yet.",
+  logLine: (when: string, by: string, action: string, id: string): string =>
+    `${when}: ${by} ${
+      action === "grant"
+        ? "gave free access to"
+        : action === "change"
+          ? "changed free access for"
+          : "revoked free access for"
+    } ${id}`,
+  grantErrors: {
+    "bad-id":
+      "That isn't a Discord user id: it's 17 to 20 digits. Copy it again in Discord and paste it here.",
+    "bad-level": "Pick Like Guild or No limits.",
+    "bad-date": "Pick the end date again, or leave it empty.",
+    "past-date": "Pick an end date after today, or leave it empty so it never ends.",
+    "long-note": "Keep the note to 200 letters or fewer.",
+    "no-grant": "That person has no free access to revoke. We've updated the list.",
+  } as Record<string, string>,
 } as const;
