@@ -9,6 +9,16 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev2, PR #847 (#677): core only, no migration or setting. The DM can put back a line
+  the off-topic filter left out by mistake. One DM-screen message per session, "🙈 Left
+  out as off-topic", edited in place, with the newest 10 runs and a "Put it back N" button
+  each; it shows at every level, quiet included. Needs the off-topic filter on (the AI key
+  set). Check: say something plainly off-topic and then some game talk until a window is
+  labelled; the DM screen lists the off-topic line with its button; Put it back replies
+  "↩️ Put back N: <name>'s words are back…", the line reads "↩️ Put back: …", and the
+  cleaned download (/transcript) shows the words, not "[…s of off-topic chat skipped]"; a
+  player's press is refused ("Only this campaign's DM"); after /dmbot stop the buttons are
+  gone and the message says "Session over". Core logs no ERROR.
 - dev2, PR #804 (#771 part 1): free access. **Core, migration 0030 and web-api are live
   (23:36).** **Leave DMBOT_FREE_USERS empty until #806 (the account page for covered
   people, #825) is live.** Checked: "Free access list: 0 ids" in the core and web-api logs.
