@@ -691,3 +691,13 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   - The web-api container was NOT started: it's behind COMPOSE_PROFILES=web and needs the
     owner's Discord OAuth secret, WEB_SECRET_KEY, the site addresses and a payment
     provider first. Running: core, ears, postgres.
+
+==============================================================================
+2026-10-08  Server: deploy 509ca21 (dev1, no test run)
+==============================================================================
+  - 02:01 UTC  development @ 509ca21: #509 (Cleaner step 3: Type it… on name questions,
+    #503), #501 (twin: 100 ms lead-in by default; dev tool only). No migrations, no .env
+    changes. Database backed up first (outside the repo; 25 tables); no session was live.
+    Core rebuilt: "Connected to 1 server(s)", "ears connected", no warnings or errors.
+  - The queue's website-API entry (#467 #475 #485 #489) was already done at 01:48
+    (migrations 0013 and 0014 applied, see above); web-api still not started (#498).
