@@ -20,6 +20,13 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   minute per person, counting only pieces long enough to be written down. Check: Test A
   with a TV on gives no ⚠️ (the log line still shows "(audio gaps)"), and every DM line is
   in the transcript. Stage 2 (#699, PR #718) follows.
+- dev3, PR #718 (#699 stage 2): core only. No migration or setting. Deploy with or
+  after #697. When someone's audio rule fires (now under 95% and at least 2 s lost), DMbot
+  reads their lines from that minute first and warns only if they read garbled: by
+  Deepgram's word confidence, else one yes/no to the small AI model (at most once a minute
+  per person). A large loss (under 50%, 10 s) warns at once; no lines at all warns; with
+  no AI key it warns on the audio rule alone. Check: Test A with a TV on gives no ⚠️; the
+  log has "Audio check for user N: ..." lines and, at the end, "Audio checks: ...".
 - CloudDev, PR #657 (#598): names reads never join names to entries (a freshly filled
   campaign's cold names load 1.4 s -> 0.08 s; Check new names' "sounds like" 2.6 s -> 8 ms).
   No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
@@ -62,6 +69,42 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   migration (needs #668's 0022). Deploy: rebuild core.
   Check: ⚙️ Settings shows the owner; Hand over to a test member sends them the
   message; Accept moves the campaign to their plan.
+- CloudDev, PR #712 (#598 item 4): Add many gives one name at most 50 other and 50
+  secret names, and a list at most 5,000 new ones in all; only what the list adds counts.
+  No migration. Deploy: rebuild core. Check: Add many with one name given 51 other names
+  says "Nothing was added. … has more than 50 other names in this list…"; Download all,
+  then upload that file again: nothing is refused.
+- WebDev, PR #710 (#665): the website's "Say hello" page (feedback and questions become
+  GitHub Discussions). Migration 0026 adds the add-only `feedback` table: the bot
+  migrates first (the website's rights come with the migration), then rebuild web-api.
+  Before turning it on: the owner turns on Discussions in the repository and makes two
+  categories named exactly "Feedback" and "Questions". .env: GITHUB_FEEDBACK_TOKEN (a
+  fine-grained token for this repo, Discussions read and write only), plus
+  TURNSTILE_SECRET_KEY and WEB_CLIENT_IP_HEADER=CF-Connecting-IP, both required once the
+  token is set (the API must be reachable only through Cloudflare). Build the site with
+  the matching PUBLIC_TURNSTILE_SITE_KEY. Check: `docker compose logs core` shows 0026;
+  a test message on /hello appears as a discussion holding only the message and date,
+  and the page links to it.
+- CloudDev, PR #630 (#251): PDF and Word files are read in their own short-lived
+  process (dmbot-document) with a 30 s limit and 256 MB of memory, so a slow or broken
+  file can't hold up voice or other servers. No migration or setting. Deploy: rebuild
+  core. Check: 📎 Upload a file with a short PDF still gives the names list; no new
+  warnings in the log; `ps` shows no `dmbot-document` process after the read. Expect one
+  resource-tracker helper process for the life of the bot in `docker compose top core`:
+  it's not a leftover reader.
+- CloudDev, PR #724 (#713): hand-over fixes. **Deploy together with #705** (above): an
+  offer is never refused for "no plan", the offer message is three short paragraphs, and
+  an offer DMbot can't deliver says what happened. No migration. Deploy: rebuild core.
+  Check: Hand over to a test member who has no plan: the offer is sent; their Accept
+  says to pick a plan; No thanks tells the owner.
+- CloudDev, PR #730 (#598): Add many's 5,000 cap message and the DM template say "other
+  and secret names". No migration. Deploy: rebuild core (with #712). Check: 📄 Get the
+  template says "5,000 new other and secret names in all."
+- CloudDev, PR #735 (#580, #734): "Every wizard is an NPC" for a big group takes a few
+  database statements, not thousands, and the name-clash check looks up one name instead
+  of reading every name. No migration. Deploy: rebuild core. Check: after Add many,
+  answer a kind question for a group: it saves at once and Undo puts it back; adding a
+  name that's already known still says so.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram

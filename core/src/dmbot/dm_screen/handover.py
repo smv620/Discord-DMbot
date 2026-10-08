@@ -1,5 +1,5 @@
 """🤝 Hand over a campaign (#437 part 1b, decided on #437 2026-10-08): the campaign's
-owner offers it to another subscriber, and the person offered answers in a private
+owner offers it to another member of the server, and the person offered answers in a private
 message. Ownership moves only when they accept, within 7 days, and only if their plan
 has room for it then. The rules are all in `CampaignStore`; this is the Discord side.
 
@@ -28,7 +28,7 @@ import logging
 import re
 import time
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import discord
 
@@ -62,24 +62,32 @@ OFFER_SENT = (
     "Offer sent to **{name}**. Nothing changes until they accept (they have {days} days). "
     "To take it back: ⚙️ Settings, then **Take back offer**."
 )
+# Keep in step with site_offers.NOT_SENT (the same, for an offer made on the website).
 UNREACHABLE = (
-    "DMbot couldn't send **{name}** a private message (they may have left the server, or "
-    "they don't accept messages from server members). The offer was taken back. Ask them to "
-    "allow messages from this server, then try again."
+    "DMbot couldn't send **{name}** a private message, so the offer was taken back. Check "
+    "they're still in this server, and ask them to allow direct messages from this server's "
+    "members (their privacy settings for this server). Then press 🤝 Hand over again."
 )
 UNREACHABLE_STUCK = (
     "DMbot couldn't send **{name}** a private message, and couldn't take the offer back "
     "either. Take it back yourself: ⚙️ Settings, then **Take back offer**."
 )
+UNREACHABLE_ANSWERED = (
+    "DMbot couldn't send **{name}** a private message, but the offer was already answered "
+    "(on the DMbot website) or taken back meanwhile. ⚙️ Settings shows where it stands."
+)
 OFFER_TEXT = (
-    "🤝 **{owner}** wants to hand you the campaign **{campaign}** (server **{server}**). If "
-    "you accept, it takes room for one campaign on your plan, and every session of it, "
-    "whoever runs it, uses your plan's hours. You become one of its DMs; {owner} stays one. "
-    "Answer by {deadline}."
+    "🤝 **{owner}** is asking you to pay for the campaign **{campaign}** on **{server}** with "
+    "your DMbot plan.\n\n"
+    "Nothing changes unless you tap **Accept**. If you do: every session of it uses your "
+    "plan's hours (whoever runs it), it counts as one of your campaigns, and you're added as "
+    "one of its DMs, so you can see behind the DM screen (spoilers, if you play in it). "
+    "**{owner}** is still one of its DMs.\n\n"
+    "If you don't answer by {deadline}, the offer just ends."
 )
 ACCEPTED = (
-    "✅ You own **{campaign}** now: it uses your plan from now on, and you're one of its "
-    "DMs in **{server}**. You'll see its DM screen when its next session starts."
+    "✅ Done: **{campaign}** uses your plan now, and you're one of its DMs on **{server}**. "
+    "**{owner}** is still one of its DMs. DMbot will let **{owner}** know."
 )
 TOLD_ACCEPTED = "✅ **{name}** accepted: **{campaign}** uses their plan now. You're still a DM."
 NO_FREE_SLOT = (
@@ -93,8 +101,10 @@ ENDED = "This offer has ended: it was answered, taken back, or its {days} days a
 WITHDRAWN = "Offer taken back. **{campaign}** stays yours."
 TOLD_WITHDRAWN = "**{owner}** took back the offer of **{campaign}**. Nothing changed for you."
 NOT_YOUR_OFFER = "Only **{owner}**, who made this offer, can take it back."
-NOT_HERE = "DMbot can't reach that server right now. Try again in a minute."
-SERVER_GONE = "DMbot isn't in that server any more, so this offer can't be answered."
+NOT_HERE = "DMbot can't reach the server right now. Try again in a minute."
+SERVER_GONE = (
+    "DMbot isn't in that server any more, so this offer can't be answered. Nothing changed."
+)
 NOT_A_MEMBER = "You're not in that server any more, so you can't take over its campaign."
 FAILED = "Something broke on DMbot's side, so that didn't work. Try once more."
 TAKE_ON_ASK = (
@@ -104,8 +114,10 @@ TAKE_ON_ASK = (
 )
 TAKEN = "✅ You own **{campaign}** now, so it uses your plan. To hand it over later: ⚙️ Settings."
 TAKE_NO_ROOM = (
-    "You need a DMbot plan with room for another campaign to take it on. You can still "
-    "play: DMbot will ask again next time."
+    "You can still play today: DMbot will ask again next time. To take this campaign on you "
+    "need a DMbot plan with room for one more campaign, and you don't have one right now. "
+    "Pick a plan on the DMbot website (Try It is free) and tap **Take it on** again, or let "
+    "one of the campaign's other DMs take it on (DMbot asks them when they start a session)."
 )
 TAKE_GONE = "Someone already took this campaign on, so nothing changed."
 NOT_NOW = "OK. DMbot will ask again next time you start this campaign."
@@ -120,7 +132,7 @@ def _at(seconds: int) -> datetime:
     return datetime.fromtimestamp(seconds, UTC)
 
 
-def _md(text: str) -> str:
+def md(text: str) -> str:
     return discord.utils.escape_markdown(text)
 
 
@@ -151,7 +163,7 @@ def owner_line(campaign: Campaign, offer: HandoverOffer | None) -> str:
         line = f"• **Owner:** <@{campaign.owner_user_id}>. This campaign uses their plan's hours."
     if offer is not None:
         until = discord.utils.format_dt(_at(offer.expires_at), "f")
-        line += f" Offered to **{_md(offer.to_name)}**; waiting for an answer until {until}."
+        line += f" Offered to **{md(offer.to_name)}**; waiting for an answer until {until}."
     return line
 
 
@@ -207,7 +219,7 @@ class HandoverButton(
             await _say(interaction, NOT_THE_OWNER)
         else:
             await interaction.followup.send(
-                PICK.format(campaign=_md(campaign.name)),
+                PICK.format(campaign=md(campaign.name)),
                 view=PickNewOwner(campaign),
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
@@ -215,9 +227,10 @@ class HandoverButton(
 
 
 class PickNewOwner(discord.ui.View):
-    """Who takes the campaign over: any member of the server. The store checks they
-    have a plan; DMbot checks it can reach them when it delivers the offer. A short-lived
-    menu (not kept over a restart): press 🤝 Hand over again."""
+    """Who takes the campaign over: any member of the server, whatever their plan (the
+    owner never learns whether someone pays; Accept checks it). DMbot checks it can reach
+    them when it delivers the offer. A short-lived menu (not kept over a restart): press
+    🤝 Hand over again."""
 
     def __init__(self, campaign: Campaign) -> None:
         super().__init__(timeout=10 * 60)
@@ -262,15 +275,25 @@ class PickNewOwner(discord.ui.View):
             return
         self.stop()
         if await deliver_offer(guild, self.campaign, offer):
-            text = OFFER_SENT.format(name=_md(name), days=HANDOVER_DAYS)
+            text = OFFER_SENT.format(name=md(name), days=HANDOVER_DAYS)
         else:
+            back: Literal["withdrawn", "gone", "failed"]
             try:
-                await store.withdraw_handover(guild.id, offer.id, interaction.user.id, _now())
-                text = UNREACHABLE.format(name=_md(name))
+                back = await store.withdraw_handover(
+                    guild.id, offer.id, interaction.user.id, _now()
+                )
             except Exception:
                 log.exception("Couldn't take back an offer that couldn't be delivered")
-                text = UNREACHABLE_STUCK.format(name=_md(name))
-        await interaction.edit_original_response(content=text, view=None, allowed_mentions=NO_PINGS)
+                back = "failed"
+            # "gone": answered (on the website) or taken back in the meantime; not ours to
+            # call taken back.
+            template = {
+                "withdrawn": UNREACHABLE,
+                "gone": UNREACHABLE_ANSWERED,
+                "failed": UNREACHABLE_STUCK,
+            }[back]
+            text = template.format(name=md(name))
+        await _end_message(interaction, text)
 
 
 def offer_view(guild_id: int, offer_id: int) -> discord.ui.View:
@@ -280,22 +303,32 @@ def offer_view(guild_id: int, offer_id: int) -> discord.ui.View:
     return view
 
 
-async def deliver_offer(guild: discord.Guild, campaign: Campaign, offer: HandoverOffer) -> bool:
+async def deliver_offer(
+    guild: discord.Guild,
+    campaign: Campaign,
+    offer: HandoverOffer,
+    *,
+    raise_if_discord_fails: bool = False,
+) -> bool:
     """The private message to the person offered. False if they aren't in the server or
-    can't be messaged (the caller then takes the offer back). Never raises."""
+    can't be messaged (the caller then takes the offer back). Never raises, unless
+    `raise_if_discord_fails`: then any other Discord error is raised, so the caller can
+    try again later instead (offers made on the website, #690)."""
     try:
         member = guild.get_member(offer.to_user_id) or await guild.fetch_member(offer.to_user_id)
         await member.send(
             OFFER_TEXT.format(
-                owner=_md(offer.from_name),
-                campaign=_md(campaign.name),
-                server=_md(guild.name),
+                owner=md(offer.from_name),
+                campaign=md(campaign.name),
+                server=md(guild.name),
                 deadline=discord.utils.format_dt(_at(offer.expires_at), "f"),
             ),
             view=offer_view(guild.id, offer.id),
             allowed_mentions=NO_PINGS,
         )
     except discord.HTTPException as exc:  # not a member (404), messages closed (403)…
+        if raise_if_discord_fails and not isinstance(exc, discord.Forbidden | discord.NotFound):
+            raise
         with log_context(guild_id=guild.id, campaign_id=campaign.id):
             log.info("Couldn't deliver a hand-over offer to user %s: %s", offer.to_user_id, exc)
         return False
@@ -318,7 +351,7 @@ async def _offer_guild(interaction: discord.Interaction, guild_id: int) -> disco
         return guild
     try:
         return await interaction.client.fetch_guild(guild_id)
-    except discord.NotFound:
+    except (discord.NotFound, discord.Forbidden):  # 403 once DMbot was removed from it
         await _say(interaction, SERVER_GONE)
     except discord.HTTPException:
         await _say(interaction, NOT_HERE)
@@ -326,9 +359,13 @@ async def _offer_guild(interaction: discord.Interaction, guild_id: int) -> disco
 
 
 async def _end_message(interaction: discord.Interaction, text: str) -> None:
-    """Replace the offer with what happened (its buttons go)."""
-    with contextlib.suppress(discord.HTTPException):
+    """Replace the message with what happened (its buttons go). If it can't be edited,
+    say it in a new private message: what was saved is never left unsaid."""
+    try:
         await interaction.edit_original_response(content=text, view=None, allowed_mentions=NO_PINGS)
+    except discord.HTTPException:
+        with contextlib.suppress(discord.HTTPException):
+            await _say(interaction, text)
 
 
 async def _offer_and_campaign(
@@ -380,7 +417,9 @@ class AcceptOfferButton(
         if offer is None or campaign is None or offer.to_user_id != me:
             await _end_message(interaction, ENDED.format(days=HANDOVER_DAYS))
             return
-        accepted = ACCEPTED.format(campaign=_md(campaign.name), server=_md(guild.name))
+        accepted = ACCEPTED.format(
+            campaign=md(campaign.name), server=md(guild.name), owner=md(offer.from_name)
+        )
         if offer.status == "accepted":  # pressed again: say it again
             await _end_message(interaction, accepted)
             return
@@ -389,8 +428,9 @@ class AcceptOfferButton(
         except discord.NotFound:
             await _say(interaction, NOT_A_MEMBER)
             return
-        except discord.HTTPException:
-            pass  # Discord couldn't say: the store still checks the offer
+        except discord.HTTPException:  # Discord couldn't say: never accept unchecked
+            await _say(interaction, NOT_HERE)
+            return
         result = await store.accept_handover(self.guild_id, self.offer_id, me, now)
         if result == "no_free_slot":
             await _say(interaction, NO_FREE_SLOT.format(days=HANDOVER_DAYS))
@@ -401,7 +441,7 @@ class AcceptOfferButton(
             await _tell_person(
                 guild,
                 offer.from_user_id,
-                TOLD_ACCEPTED.format(name=_md(offer.to_name), campaign=_md(campaign.name)),
+                TOLD_ACCEPTED.format(name=md(offer.to_name), campaign=md(campaign.name)),
             )
 
 
@@ -444,7 +484,7 @@ class DeclineOfferButton(
         if offer is None or offer.to_user_id != me:
             await _end_message(interaction, ENDED.format(days=HANDOVER_DAYS))
             return
-        declined = DECLINED.format(owner=_md(offer.from_name))
+        declined = DECLINED.format(owner=md(offer.from_name))
         if offer.status == "declined":  # pressed again: say it again
             await _end_message(interaction, declined)
             return
@@ -456,7 +496,7 @@ class DeclineOfferButton(
             await _tell_person(
                 guild,
                 offer.from_user_id,
-                TOLD_DECLINED.format(name=_md(offer.to_name), campaign=_md(campaign.name)),
+                TOLD_DECLINED.format(name=md(offer.to_name), campaign=md(campaign.name)),
             )
 
 
@@ -504,7 +544,7 @@ class WithdrawOfferButton(
             await _say(interaction, ENDED.format(days=HANDOVER_DAYS))
             return
         if offer.from_user_id != interaction.user.id:
-            await _say(interaction, NOT_YOUR_OFFER.format(owner=_md(offer.from_name)))
+            await _say(interaction, NOT_YOUR_OFFER.format(owner=md(offer.from_name)))
             return
         if (
             await store.withdraw_handover(self.guild_id, self.offer_id, offer.from_user_id, now)
@@ -519,11 +559,11 @@ class WithdrawOfferButton(
                 content=settings_text(campaign), view=settings_view(campaign),
                 allowed_mentions=NO_PINGS,
             )  # fmt: skip
-        await _say(interaction, WITHDRAWN.format(campaign=_md(campaign.name)))
+        await _say(interaction, WITHDRAWN.format(campaign=md(campaign.name)))
         await _tell_person(
             guild,
             offer.to_user_id,
-            TOLD_WITHDRAWN.format(owner=_md(offer.from_name), campaign=_md(campaign.name)),
+            TOLD_WITHDRAWN.format(owner=md(offer.from_name), campaign=md(campaign.name)),
         )
 
 
@@ -556,7 +596,7 @@ async def ask_to_take_on(interaction: discord.Interaction, campaign_id: str) -> 
         return
     with contextlib.suppress(discord.HTTPException):
         await interaction.followup.send(
-            TAKE_ON_ASK.format(campaign=_md(campaign.name)),
+            TAKE_ON_ASK.format(campaign=md(campaign.name)),
             view=take_on_view(campaign.id),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
@@ -606,7 +646,7 @@ class TakeOnButton(
         elif result == "gone":
             await _end_message(interaction, TAKE_GONE)
         else:
-            await _end_message(interaction, TAKEN.format(campaign=_md(campaign.name)))
+            await _end_message(interaction, TAKEN.format(campaign=md(campaign.name)))
 
 
 class NotNowButton(

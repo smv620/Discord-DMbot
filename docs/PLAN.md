@@ -1471,7 +1471,8 @@ for this call" seam stays, pointing at the operator's keys.
 
 **Plans and pricing (owner decisions, 2026-10-07).** The plan belongs to one Discord user
 (the DM); every campaign has one owner whose hours and campaign count it uses; co-DMs
-need no plan; "Hand over this campaign" moves ownership to another subscriber. Hours are
+need no plan; "Hand over this campaign" offers ownership to another member of the
+server, who needs a working plan only to accept. Hours are
 DMbot's listening time, start to stop, rounded up to the minute, pooled per month, no
 roll-over. Every plan has every feature; only hours and campaigns differ, except that
 Try It has no backups or downloads. The site keeps the words in one place; the bot's
@@ -1515,7 +1516,8 @@ before this get their only DM as owner; one with several DMs
 has no owner until the first `/dmbot start` asks the DM who started it to take it on
 ("Take it on / Not now"; never guessed, since ownership spends someone's hours; once the
 plan checks are live, no owner means no start). A hand-over is an offer, never immediate:
-the new owner (any subscriber who is a member of that Discord server) gets a private
+the new owner (any member of that Discord server; their plan is checked only when they
+accept, and never shown to the owner) gets a private
 message with Accept / No thanks, also shown on their account page; ownership moves only
 on acceptance, and only if they still have a free campaign slot at that moment; the offer
 expires after 7 days and the old owner can withdraw it. On accepting they become a DM of
@@ -1535,7 +1537,18 @@ pick one at the site, then press Accept again; the offer stays open for 7 days")
 the owner sees only that the offer was sent and nothing changes until they accept;**
 the bot checks membership when it delivers the private message and withdraws an offer it
 can't deliver, telling the owner; until the campaign count exists (part 3) "a free slot"
-means "a plan that works". A Try It plan may receive a hand-over if its one slot is free;
+means "a plan that works". *Offers made on the website (#690):* `offer_handover(...,
+delivered=False)` saves the offer with no `delivered_at` and, in the same transaction,
+sends `NOTIFY dmbot_handover_offers, '<server id>:<offer id>'` (IDs only: notifications
+skip row-level security). The bot process that serves that server claims the offer for
+10 minutes (`claimed_at`, set only if it's unsent, unclaimed or its claim lapsed, open
+and unexpired, so it's sent once), sends the same private message as the Discord
+button, then sets `delivered_at`. Only "not in the server" or "doesn't take messages"
+takes the offer back (and tells the owner); any other Discord error lets the claim go
+for a later try, and a claim left by a process that stopped lapses. It sweeps for unsent
+offers each time it starts listening, when a server becomes available or is joined, and
+hourly. Offers made in Discord are saved as delivered. The website's role, when it
+offers, must only be able to insert unsent, unclaimed offers from the signed-in owner. A Try It plan may receive a hand-over if its one slot is free;
 the campaign then follows that plan (so, while on Try It, no backups or downloads). The
 website's database role gets only the narrow extra rights the account page needs, under
 restrictive policies (read and answer offers where the signed-in person is sender or
@@ -1602,7 +1615,10 @@ the message, never in the post, and the form says so. One post per IP per 10 min
 to open issues. The page says, before Send, that the message is posted on GitHub where
 anyone can read and search it; the privacy page lists GitHub and says the "how to reach
 you" detail is kept with the message for a year, seen only by the team, and that a post
-is taken down on request through the same page (decided 2026-10-08 on #710).
+is taken down on request through the same page (decided 2026-10-08 on #710). The
+`feedback` table is add-only (the website's role inserts, never reads; the team reads it
+as the database's administrator), and the website's hourly sweep deletes rows after 12
+months.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's

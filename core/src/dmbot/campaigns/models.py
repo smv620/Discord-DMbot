@@ -79,6 +79,11 @@ class HandoverOffer:
     created_at: int
     status: HandoverStatus
     decided_at: int | None
+    # When DMbot sent the private message; None while an offer made on the website
+    # waits for the bot to send it (#690). claimed_at: when a bot process started sending
+    # it (a claim lapses after CLAIM_SECONDS, so a send cut short is tried again).
+    delivered_at: int | None = None
+    claimed_at: int | None = None
 
     @property
     def expires_at(self) -> int:

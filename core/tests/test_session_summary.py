@@ -17,9 +17,9 @@ class Summary(unittest.TestCase):
     def test_who_spoke_how_long_and_where_the_transcript_is(self) -> None:
         text = summary(
             [
-                Spoke("Mia", 42 * 60, 99, 0.5),
-                Spoke("Sam", 65 * 60, None, 0),
-                Spoke("*Dee*", 30, 82, 5.4),
+                Spoke("Mia", 42 * 60, 99, False),
+                Spoke("Sam", 65 * 60, None, False),
+                Spoke("*Dee*", 30, 82, True),
             ],
             sent=3,
         )
@@ -31,14 +31,16 @@ class Summary(unittest.TestCase):
         )
         self.assertEqual(
             lines[3],
-            "⚠️ \\*Dee\\*'s voice kept cutting out (82% got through), so some of their words "
-            "may be missing.",
+            "⚠️ \\*Dee\\*'s voice cut out at times, so some of their words may be missing "
+            "from the transcript.",
         )
-        self.assertIn("✅ Everything DMbot heard was written down.", text)
+        self.assertNotIn("✅", text)  # no all-clear under Dee's ⚠️
+        clean = summary([Spoke("Mia", 60, 99, False)], sent=0)
+        self.assertIn("✅ Everything DMbot heard was written down.", clean)
         self.assertIn("private message to download the transcript", text)
 
     def test_problems_are_listed_in_plain_words(self) -> None:
-        text = summary([Spoke("Mia", 30, None, 0)], summary_problems(3, 1, caught_up=False))
+        text = summary([Spoke("Mia", 30, None, False)], summary_problems(3, 1, caught_up=False))
         self.assertIn("missed 3 bits of speech. They aren't in the transcript.", text)
         self.assertIn("couldn't write down speech once, so the transcript has gaps", text)
         self.assertIn("The last few words before the stop may not be in the transcript", text)
@@ -54,7 +56,7 @@ class Summary(unittest.TestCase):
         self.assertNotIn("/transcript", text)
 
     def test_a_mention_stays_a_mention(self) -> None:
-        self.assertIn("<@8> 1 min", summary([Spoke("<@8>", 60, None, 0)]))
+        self.assertIn("<@8> 1 min", summary([Spoke("<@8>", 60, None, False)]))
 
 
 class Totals(unittest.TestCase):
@@ -70,29 +72,21 @@ class Totals(unittest.TestCase):
         self.assertIsNone(totals.speakers[9].percent)
 
 
-class NoAlarmOnALittle(unittest.TestCase):
-    """#671: the summary's "kept cutting out" needs real loss, like the live warning."""
+class OnlyFlaggedPeopleCutOut(unittest.TestCase):
+    """#699: the summary says "cut out at times" only for people the DM was warned about
+    (their lines read garbled, or the loss was large)."""
 
-    def test_a_little_loss_is_no_alarm(self) -> None:
-        text = summary([Spoke("Mia", 120, 85, 1.5)], sent=0)
+    def test_a_low_percent_alone_is_no_alarm(self) -> None:
+        text = summary([Spoke("Mia", 120, 60, False)], sent=0)
         self.assertNotIn("cutting out", text)
 
-    def test_dev1s_tv_numbers_say_nothing(self) -> None:
-        # dev1's Test A, a TV in the room: the DM spoke twice; the TV came in patchy.
+    def test_a_flagged_person_is_named(self) -> None:
+        text = summary([Spoke("Mia", 120, 60, True)], sent=0)
+        self.assertIn("Mia's voice cut out at times", text)
+
+    def test_the_percent_counts_only_pieces_worth_writing_down(self) -> None:
+        # dev1's Test A, a TV in the room; and a 0.2 s blip, which doesn't count.
         totals = SessionTotals()
-        for received, expected in ((52, 52), (53, 53), (155, 169), (4, 23)):
+        for received, expected in ((52, 52), (53, 53), (155, 169), (4, 23), (1, 10)):
             totals.add_health(7, received, expected)
-        total = totals.speakers[7]
-        self.assertEqual(total.percent, 88)  # all four count; only 0.66 s lost
-        text = summary([Spoke("Mia", 60, total.percent, total.lost_s)], sent=0)
-        self.assertNotIn("cutting out", text)
-
-    def test_nearly_all_lost_still_counts(self) -> None:
-        # 2 of 500 frames: a long piece, nearly all lost; 10 s lost is the worst case.
-        totals = SessionTotals()
-        totals.add_health(7, 300, 300)
-        totals.add_health(7, 2, 500)
-        total = totals.speakers[7]
-        self.assertEqual(total.percent, 37)
-        text = summary([Spoke("Mia", 60, total.percent, total.lost_s)], sent=0)
-        self.assertIn("Mia's voice kept cutting out (37% got through)", text)
+        self.assertEqual(totals.speakers[7].percent, 88)

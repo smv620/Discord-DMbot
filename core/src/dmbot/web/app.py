@@ -10,7 +10,10 @@ Security rules (CLAUDE.md, #434, #435):
 - Logs carry ids only, never names, emails or tokens.
 """
 
+import contextlib
 import hmac
+import ipaddress
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -22,7 +25,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from dmbot import entitlements, install, plans
 from dmbot.db import Database
-from dmbot.web import entitlements_writer, sessions, tokens
+from dmbot.web import entitlements_writer, feedback, sessions, tokens
 from dmbot.web.accounts import (
     account_email,
     active_subscription,
@@ -33,6 +36,7 @@ from dmbot.web.accounts import (
     record_install,
 )
 from dmbot.web.discord import DiscordError, DiscordOAuth
+from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck, RateLimit
 from dmbot.web.me import build_me
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.sessions import Session
@@ -45,7 +49,18 @@ FRESH_SIGN_IN_SECONDS = 24 * 3600
 DELETE_SIGN_IN_SECONDS = 15 * 60
 STATE_SECONDS = 600
 MAX_WEBHOOK_BYTES = 64 * 1024
+# A feedback form: 2,000 characters (up to 4 bytes each, more once JSON-escaped), a
+# contact and a Turnstile token.
+MAX_FEEDBACK_BYTES = 32 * 1024
 Clock = Callable[[], int]
+
+
+class _Refused(Exception):
+    """An answer to give that keeps the turn used (see send_feedback)."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 def _system_clock() -> int:
@@ -58,9 +73,16 @@ def create_app(
     discord: DiscordOAuth,
     *,
     payments: PaymentProvider | None = None,
+    discussions: Discussions | None = None,
+    human_check: HumanCheck | None = None,
+    feedback_limit: RateLimit | None = None,
     clock: Clock = _system_clock,
 ) -> FastAPI:
-    """`payments` None: no payment company is set up yet; buying answers payments_off."""
+    """`payments` None: no payment company is set up yet; buying answers payments_off.
+    `discussions` None: the "Say hello" forms answer feedback_off. `human_check` None:
+    no Turnstile check (settings allow that only on localhost)."""
+    if feedback_limit is None:
+        feedback_limit = RateLimit()
     app = FastAPI(
         title="DMbot web API",
         docs_url=None,  # no public API browser
@@ -480,5 +502,64 @@ def create_app(
         if outcome == "rejected":
             raise HTTPException(status_code=422, detail="bad_event")
         return Response(status_code=200)
+
+    # The "Say hello" forms (#665): no sign-in needed.
+
+    def client_address(request: Request) -> str:
+        # Behind Cloudflare and Caddy the connection comes from the proxy, so the
+        # visitor's own address is in the header the proxy sets (settings.client_ip_header).
+        # Only that header, and only when it holds a real address.
+        if settings.client_ip_header:
+            forwarded = request.headers.get(settings.client_ip_header, "").strip()
+            with contextlib.suppress(ValueError):
+                return str(ipaddress.ip_address(forwarded))
+        return request.client.host if request.client else "unknown"
+
+    @app.post("/feedback")
+    async def send_feedback(request: Request) -> dict[str, str]:
+        if discussions is None:
+            raise HTTPException(status_code=503, detail="feedback_off")
+        with contextlib.suppress(ValueError):
+            if int(request.headers.get("content-length", "0")) > MAX_FEEDBACK_BYTES:
+                raise HTTPException(status_code=413, detail="too_long")
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_FEEDBACK_BYTES:
+                raise HTTPException(status_code=413, detail="too_long")
+        try:
+            raw = json.loads(body)
+        except (ValueError, RecursionError):  # RecursionError: "[[[[..." nested too deep
+            raw = None
+        message = feedback.read_message(raw)
+        if isinstance(message, str):
+            raise HTTPException(status_code=400, detail=message)
+        address = client_address(request)
+        turn = feedback.rate_key(address)
+        taken = feedback_limit.take(turn)
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        try:
+            if human_check is not None:
+                token = str((raw.get("turnstile") if isinstance(raw, dict) else None) or "")
+                if not await human_check.verify(token, address):
+                    if token:
+                        # A wrong answer uses the turn: otherwise one address could make
+                        # us ask Cloudflare without end. No answer at all costs nothing.
+                        raise _Refused("not_human")
+                    raise HTTPException(status_code=400, detail="not_human")
+            # Once GitHub has the post, the turn is used, whatever happens next.
+            posted = await feedback.post(db, discussions, message, now=clock())
+        except _Refused as refused:
+            raise HTTPException(status_code=400, detail=refused.code) from None
+        except FeedbackError as exc:
+            feedback_limit.give_back(turn)
+            log.warning("Feedback couldn't be posted: %s", exc)
+            raise HTTPException(status_code=502, detail="feedback_unavailable") from exc
+        except BaseException:
+            feedback_limit.give_back(turn)
+            raise
+        log.info("Feedback posted: discussion %s", posted.number)
+        return {"url": posted.url}
 
     return app
