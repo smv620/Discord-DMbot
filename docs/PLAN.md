@@ -1487,6 +1487,28 @@ messages use the same ones.
 | Pro | 217 ("about 50 hours a week"); needs the bigger server | 20 | coming soon |
 | Extra hours | +10 this month | — | $4.99 |
 
+**Free access and the admin page (owner decision, 2026-10-08).** The owner's own Discord
+account never needs a plan: it is listed in the server's settings (`DMBOT_FREE_USERS`, Discord
+ids, never in the repository) and counts as having every feature with no hours or campaign
+cap. The owner can also give other Discord users free access by hand from an admin page on
+the website: a *grant* names the Discord id, a level ("like Guild": 87 hours and 5 campaigns,
+the default, or "no limits"), an optional end date and a short note. Reason for the default:
+every hour spends AI and speech-to-text money, so unlimited access for others is a choice the
+admin makes, not the default. Grants live in their own table, never in `entitlements`, which
+stays the payment company's truth; wherever DMbot asks "does this person's plan work, and
+with what caps", a grant or the free list counts, and the better of a grant and a paid plan
+wins. A grant ends on its end date or when revoked, and the person falls back to whatever
+they pay for. Grants and revocations are logged (who, what, when, ids only). Nobody sees a
+price or a payment button while a grant covers them; the bot and the account page say "Free
+access". Deleting an account deletes its grant.
+**Admin sign-in:** only addresses in `ADMIN_EMAILS` (server settings) may sign in, either with
+Google ("Sign in with Google", verified email only) or with that email and an admin password
+whose hash (argon2id) is in the server settings, never in the database or the repository; a
+helper script sets it. Five wrong tries in 15 minutes lock that address and that connection
+for 15 minutes. The admin session is its own cookie (HttpOnly, Secure, SameSite=Strict), ends
+after an hour idle and 12 hours at most, and every admin form carries a CSRF token. The
+admin page is never linked from the site and tells search engines not to index it.
+
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
 names, later story memory and rules lookups), plus backup, restore and transcript
@@ -1535,6 +1557,10 @@ whether a member pays, so the plan and free-slot check happens only at Accept an
 shown only to the person offered ("you need a DMbot plan with a free campaign slot;
 pick one at the site, then press Accept again; the offer stays open for 7 days"), and
 the owner sees only that the offer was sent and nothing changes until they accept;**
+the campaign's #dm-screen notes an *accepted* offer (whose plan it uses now changed) and
+never a declined one, which under peek or open visibility would tell players who refused
+what; a campaign with no owner shows its DMs "Take it on", not a Hand over button that
+can only refuse (decided 2026-10-08 on #765);
 the bot checks membership when it delivers the private message and withdraws an offer it
 can't deliver, telling the owner; until the campaign count exists (part 3) "a free slot"
 means "a plan that works". *Offers made on the website (#690):* `offer_handover(...,
@@ -1593,6 +1619,14 @@ and stays a later browser extension in the DM's own session; never a password or
 on our side. Order: part A (link, snapshot, hints, unlink, fallback form; one developer,
 no table work), part B with phase 3 (the rules advisor reads the snapshot), part C later
 (the extension).
+*Built, part A first half (#723, dev2):* the `character_sheets` table (one row per player
+character per campaign, its link and snapshot; its own table rather than columns on the
+entity, so a refresh is never in the undo log or the in-memory names), the allow-list
+parser and the one-GET fetch (`dmbot.memory.sheets`), the background refresh at `/dmbot
+start` (kept names at once, fresh ones when read; not again after a restart), and
+backups (`sheet` rows; a restored snapshot goes through the same allow list). Up to 15
+sheet names join the hints right after the characters, taking turns between characters,
+never one that is also a secret name. The buttons and forms come in the second half.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify

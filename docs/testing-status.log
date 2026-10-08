@@ -69,6 +69,17 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   migration (needs #668's 0022). Deploy: rebuild core.
   Check: ⚙️ Settings shows the owner; Hand over to a test member sends them the
   message; Accept moves the campaign to their plan.
+- dev2, PR #704 (#690 part 1): hand-over offers made on the website reach the person
+  through the bot (private Accept / No thanks). Migration 0025 adds delivered_at and
+  claimed_at to the offers table; existing offers count as sent (quick). Deploy with or
+  after #705: rebuild core. Nothing visible until the site's offer route (#625) is on;
+  Discord offers work as before. Check: `docker compose logs core` shows 0025 applied,
+  no "Lost hand-over offer notifications" warnings.
+- dev2, PR #721 (#690 part 2): when an offer's 7 days are up, the owner is told once and
+  the buttons come off the person's message (within the hour). Migration 0027 adds
+  message_id and end_told_at; old offers count as told, so nobody gets a late notice.
+  Deploy with or after #704: rebuild core. Check: 0027 applied; no "Discord failed
+  announcing offer" warnings.
 - CloudDev, PR #712 (#598 item 4): Add many gives one name at most 50 other and 50
   secret names, and a list at most 5,000 new ones in all; only what the list adds counts.
   No migration. Deploy: rebuild core. Check: Add many with one name given 51 other names
