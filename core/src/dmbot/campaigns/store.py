@@ -690,17 +690,22 @@ class CampaignStore:
 
     async def confirm_delivery(
         self, guild_id: int, offer: HandoverOffer, now: int, message_id: int
-    ) -> None:
+    ) -> HandoverOffer | None:
         """The private message went out: the offer is sent. Only while this claim (the
         one in `offer`) still holds: a send that took longer than CLAIM_SECONDS may
         already have been claimed and sent again by someone else, so it can be sent
-        twice (the second Accept just says it's settled)."""
+        twice (the second Accept just says it's settled). Returns the offer as it now
+        stands (None if this claim no longer held): its status may have changed while
+        the message went out (#797)."""
         async with self._db.guild(guild_id) as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 "UPDATE campaign_handover_offers SET delivered_at = %s, message_id = %s"
-                " WHERE guild_id = %s AND id = %s AND delivered_at IS NULL AND claimed_at = %s",
+                " WHERE guild_id = %s AND id = %s AND delivered_at IS NULL AND claimed_at = %s"
+                " RETURNING *",
                 (now, message_id, guild_id, offer.id, offer.claimed_at),
             )
+            row = await cur.fetchone()
+        return None if row is None else _to_offer(row)
 
     async def set_offer_message(self, guild_id: int, offer_id: int, message_id: int) -> None:
         """The private message an offer made in Discord went out in (#690)."""

@@ -336,15 +336,51 @@ class SiteDelivery(HandoverTest):
         self.assertEqual(len(await self.store.undelivered_offers(GUILD, NOW)), 1)
 
 
+class Confirming(HandoverTest):
+    """confirm_delivery says how the offer stands once its message is out (#797)."""
+
+    async def site_offer(self) -> HandoverOffer:
+        return await self.store.offer_handover(
+            GUILD, self.campaign.id, OWNER, BUYER, NOW,
+            from_name="Owner", to_name="Buyer", delivered=False,
+        )  # fmt: skip
+
+    async def test_open_or_taken_back_meanwhile(self) -> None:
+        offer = await self.site_offer()
+        claimed = await self.store.claim_delivery(GUILD, offer.id, NOW)
+        assert claimed is not None
+        await self.store.withdraw_handover(GUILD, offer.id, OWNER, NOW)  # on the site
+        now_it = await self.store.confirm_delivery(GUILD, claimed, NOW + 1, 77)
+        assert now_it is not None
+        self.assertEqual(
+            (now_it.status, now_it.message_id, now_it.delivered_at), ("withdrawn", 77, NOW + 1)
+        )
+
+    async def test_a_lapsed_claim_confirms_nothing(self) -> None:
+        offer = await self.site_offer()
+        first = await self.store.claim_delivery(GUILD, offer.id, NOW)
+        assert first is not None
+        second = await self.store.claim_delivery(GUILD, offer.id, NOW + CLAIM_SECONDS)
+        assert second is not None
+        self.assertIsNone(await self.store.confirm_delivery(GUILD, first, NOW + CLAIM_SECONDS, 1))
+        still = await self.store.confirm_delivery(GUILD, second, NOW + CLAIM_SECONDS, 2)
+        assert still is not None
+        self.assertEqual((still.status, still.message_id), ("open", 2))
+
+
 class Announcing(HandoverTest):
     """An answer on the website tells the bot, which tells the other person (#737)."""
 
-    async def heard(self, decide: Callable[[], Awaitable[object]]) -> list[str]:
+    async def heard(
+        self, decide: Callable[[], Awaitable[object]], *, expect: int | None = None
+    ) -> list[str]:
+        """What was announced. `expect`: stop once that many arrived (instead of waiting
+        out the timeout, about a second each)."""
         listener = await self.db._pool.getconn()
         try:
             await listener.execute("LISTEN dmbot_handover_decided")
             await decide()
-            gen = listener.notifies(timeout=1)
+            gen = listener.notifies(timeout=1, stop_after=expect)
             payloads = [n.payload async for n in gen]
         finally:
             await listener.execute("UNLISTEN *")
@@ -362,7 +398,8 @@ class Announcing(HandoverTest):
                 "withdraw": store.withdraw_handover,
             }[decide]
             payloads = await self.heard(
-                lambda call=call, offer=offer, who=who: call(GUILD, offer, who, NOW, announce=True)  # type: ignore[misc]
+                lambda call=call, offer=offer, who=who: call(GUILD, offer, who, NOW, announce=True),  # type: ignore[misc]
+                expect=1,
             )
             self.assertEqual(payloads, [f"{GUILD}:{offer}"], decide)
             if decide == "accept":  # hand it back, so the next offer can be made
@@ -371,6 +408,25 @@ class Announcing(HandoverTest):
                         "UPDATE campaigns SET owner_user_id = %s WHERE guild_id = %s AND id = %s",
                         (OWNER, GUILD, self.campaign.id),
                     )
+
+    async def test_an_accept_that_does_nothing_announces_nothing(self) -> None:
+        # No room on their plan, not theirs, or past its days: nothing was decided.
+        offer = await self.offer()
+        cases = (
+            lambda: self.store.accept_handover(GUILD, offer, OWNER, NOW, announce=True),  # gone
+            lambda: self.store.accept_handover(
+                GUILD, offer, BUYER, NOW + HANDOVER_SECONDS, announce=True
+            ),  # expired
+        )
+        for decide in cases:
+            self.assertEqual(await self.heard(decide), [])
+
+    async def test_no_room_announces_nothing(self) -> None:
+        offer = await self.offer(to=NO_PLAN)
+        payloads = await self.heard(
+            lambda: self.store.accept_handover(GUILD, offer, NO_PLAN, NOW, announce=True)
+        )
+        self.assertEqual(payloads, [])
 
     async def test_the_bots_own_buttons_announce_nothing(self) -> None:
         offer = await self.offer()

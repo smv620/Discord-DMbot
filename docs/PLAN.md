@@ -1622,8 +1622,14 @@ declining or taking back an offer on the account page sends `NOTIFY dmbot_handov
 (ids only) in the same transaction (`announce=True`; the bot's own buttons tell people
 themselves). The bot process serving that server sends the same private messages the
 Discord buttons send: the owner hears of an accept or a no thanks, and the person's offer
-message says what happened and loses its buttons. One answered while no bot listened
-isn't told (the account page shows it). A Try It plan may receive a hand-over if its one slot is free;
+message says what happened and loses its buttons; an accept also notes #dm-screen, as the
+Discord button does. An offer never sent to the person tells them nothing; a take-back
+whose message can't be changed is told in a new message; one answered while its message
+was still going out has that message changed as soon as it's sent. The bot waits until
+Discord has listed its servers before acting on one, so an answer made while it starts
+isn't lost. One answered while no bot listened isn't told (the account page shows it),
+and a rolling deploy may tell the owner (and note #dm-screen) twice (no told-at mark,
+#797). A Try It plan may receive a hand-over if its one slot is free;
 the campaign then follows that plan (so, while on Try It, no backups or downloads). The
 website's database role gets only the narrow extra rights the account page needs, under
 restrictive policies (read and answer offers where the signed-in person is sender or
