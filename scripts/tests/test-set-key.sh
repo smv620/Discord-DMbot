@@ -9,6 +9,7 @@ compose_file="$(cd "$(dirname "$script")/.." && pwd)/docker-compose.yml"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export DMBOT_ENV_FILE="$work/.env" DMBOT_ENV_EXAMPLE="$work/.env.example"
+export DMBOT_TEST_NO_TERMINAL=1
 
 # The docker stand-in logs every call, and "ps" lists the services in $FAKE_RUNNING.
 export DMBOT_DOCKER="$work/docker" FAKE_LOG="$work/docker.log" FAKE_RUNNING=""
@@ -171,14 +172,6 @@ check "two arguments: never echoed" never_says "$key"
 check "two arguments change nothing" unchanged
 
 reset
-set +e
-out=$(printf '%s\n' "$key" | env -u DMBOT_ENV_FILE "$script" DEEPGRAM_API_KEY 2>&1)
-code=$?
-set -e
-check "no terminal: refused, so the paste can't show" refused
-check "no terminal: says to log in" says "Log in"
-
-reset
 run "old-discord-token"$'\n' DISCORD_TOKEN
 check "same value: says so" says "already has that key"
 check "same value: .env is still made private" mode_is 600
@@ -228,6 +221,17 @@ FAKE_RUNNING=core
 run "$key"$'\ny\n' SPEECHMATICS_API_KEY
 check "restart: never for the bake-off key" not_restarted
 check "restart: bake-off key says why" says "no restart is needed"
+
+# Piped in without the test switch: refused, so the paste can't show, even with
+# DMBOT_ENV_FILE set (#811). The stand-in .env stays set, so a failure can't touch a real one.
+reset
+set +e
+out=$(printf '%s\n' "$key" | DMBOT_TEST_NO_TERMINAL='' "$script" DEEPGRAM_API_KEY 2>&1)
+code=$?
+set -e
+check "no terminal and no test switch is refused" refused
+check "no terminal says to log in first" says "Log in to the server first"
+check "no terminal changes nothing" unchanged
 
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))
