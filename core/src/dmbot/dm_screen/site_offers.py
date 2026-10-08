@@ -40,10 +40,10 @@ SWEEP_EVERY_S = 3600.0
 # To the owner, when an offer they made on the website couldn't be sent. Keep in step
 # with handover.UNREACHABLE (the same, for an offer made in Discord).
 NOT_SENT = (
-    "Your offer of **{campaign}** (server **{server}**) to **{name}** wasn't sent, so DMbot "
-    "took it back. They may have left the server, or they don't accept messages from "
-    "server members. Ask them to allow messages from that server, then offer it again on "
-    "the DMbot website."
+    "DMbot couldn't send **{name}** your offer of **{campaign}** (server **{server}**), so "
+    "it was taken back. Check they're still in that server, and ask them to allow direct "
+    "messages from that server's members (their privacy settings for that server). Then "
+    "offer it again on the DMbot website."
 )
 
 
