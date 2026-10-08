@@ -58,6 +58,11 @@ class FakeReceiver {
     }
   }
 
+  /** The library ends the stream (800 ms since a packet it could decrypt) while they send. */
+  endWhileSending(userId: string): void {
+    this.subscriptions.get(userId)?.push(null);
+  }
+
   /** No more packets (the speaking map's 100 ms ran out), with no stream end. */
   quiet(userId: string): void {
     this.talking.delete(userId);
@@ -577,4 +582,120 @@ test("without it, the connection's debug lines aren't even asked for", () => {
   const debugListeners: ((message: string) => void)[] = [];
   harness(undefined, undefined, { debugListeners });
   assert.equal(debugListeners.length, 0);
+});
+
+// ---- a stream the library ends while they're still sending (#645) -----------------
+
+const ERIN = "1005"; // opted in
+
+test("a stream ended while they're still sending is a failure, not the end of their speech", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 5);
+  mock.timers.tick(780); // their packets stop decrypting, without an error
+  h.receiver.endWhileSending(ALICE);
+  await nextFrame();
+  assert.deepEqual(h.receiver.subscribed, [ALICE, ALICE]); // listened to again at once
+  assert.equal(ends(h.sent), 0);
+  await speak(h, ALICE, 3);
+  await stop(h, ALICE);
+  // 5 heard, the 800 ms with nothing heard lost, 3 heard.
+  assert.deepEqual(health(h.sent), [{ framesReceived: 8, framesExpected: 5 + 40 + 3 }]);
+});
+
+test("consent withdrawn during the wait before a later try: no new subscription", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 1);
+  await fail(h, ALICE); // the first try, at once
+  await fail(h, ALICE); // the second waits RESUBSCRIBE_DELAY_MS
+  h.allowlist.set(GUILD, [CAROL]); // only the list changes: no dropSpeakers
+  mock.timers.tick(RESUBSCRIBE_DELAY_MS);
+  await nextFrame();
+  assert.deepEqual(h.receiver.subscribed, [ALICE, ALICE]);
+  assert.equal(ends(h.sent), 1);
+});
+
+test("two speakers failing at once stay independent", async () => {
+  const h = harness();
+  h.allowlist.set(GUILD, [ALICE, ERIN]);
+  h.session.noteMember(ALICE, false);
+  h.session.noteMember(ERIN, false);
+  h.receiver.packet(ALICE);
+  h.receiver.packet(ERIN);
+  await nextFrame();
+  h.receiver.fail(ALICE);
+  h.receiver.fail(ERIN);
+  await nextFrame();
+  assert.deepEqual(h.receiver.subscribed, [ALICE, ERIN, ALICE, ERIN]);
+  for (let i = 0; i < 3; i++) {
+    h.receiver.packet(ALICE);
+    h.receiver.packet(ERIN);
+    await nextFrame();
+  }
+  await stop(h, ALICE);
+  await stop(h, ERIN);
+  const reports = h.sent.flatMap((m) => (m.type === "health" ? [[m.userId, m.framesReceived]] : []));
+  assert.deepEqual(reports, [
+    [ALICE, 4],
+    [ERIN, 4],
+  ]);
+  assert.equal(h.audio.length, 8); // both heard again
+});
+
+test("a client that sends silence frames through a pause still ends normally", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 5);
+  for (let i = 0; i < 50; i++) {
+    h.receiver.packet(ALICE, SILENCE); // a second of silence frames, every 20 ms
+    await nextFrame();
+  }
+  h.receiver.endWhileSending(ALICE); // the library's 800 ms ran out: silence doesn't reset it
+  await nextFrame();
+  assert.deepEqual(h.receiver.subscribed, [ALICE]); // no re-listen
+  assert.equal(ends(h.sent), 1);
+  assert.deepEqual(warnings(h.sent), []);
+});
+
+test("ends while sending and receive errors share the five tries", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 1);
+  await fail(h, ALICE); // 1: at once
+  await failAndWait(h, ALICE); // 2
+  await failAndWait(h, ALICE); // 3
+  for (let i = 0; i < 2; i++) {
+    // 4 and 5: the library ends the stream while they still send
+    mock.timers.tick(200);
+    h.receiver.endWhileSending(ALICE);
+    await nextFrame();
+    mock.timers.tick(RESUBSCRIBE_DELAY_MS);
+    await nextFrame();
+  }
+  assert.equal(h.receiver.subscribed.length, 6);
+  mock.timers.tick(200);
+  h.receiver.endWhileSending(ALICE); // the sixth: give up
+  await nextFrame();
+  assert.equal(h.receiver.subscribed.length, 6);
+  assert.equal(ends(h.sent), 1);
+  assert.equal(warnings(h.sent).length, 1);
+});
+
+test("after re-listening once, a stream that hears nothing is left to the watchdog", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 5);
+  mock.timers.tick(780);
+  h.receiver.endWhileSending(ALICE);
+  await nextFrame();
+  mock.timers.tick(3_000); // still sending, nothing heard: lost, not re-listened again
+  assert.deepEqual(h.receiver.subscribed, [ALICE, ALICE]);
+  assert.equal(ends(h.sent), 0);
+  h.receiver.quiet(ALICE);
+  mock.timers.tick(1_000);
+  await nextFrame();
+  assert.equal(ends(h.sent), 1);
+  const [report] = health(h.sent);
+  assert.ok(report && report.framesExpected > report.framesReceived + 150);
 });

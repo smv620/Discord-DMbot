@@ -26,8 +26,9 @@ const SILENCE_END_MS = 800;
 export const UNKNOWN_RETRY_MS = 30_000;
 
 /**
- * After a receive error (#631) a speaker is listened to again at once, up to this many
- * times a minute; then ears gives up on them until they next start speaking, and tells core.
+ * After a failure (a receive error, #631, or a stream ended while they still send, #645) a
+ * speaker is listened to again, up to this many times a minute; then ears gives up on them
+ * until they next start speaking, and tells core.
  */
 export const RESUBSCRIBE_LIMIT = 5;
 export const RESUBSCRIBE_WINDOW_MS = 60_000;
@@ -52,6 +53,9 @@ export const WATCHDOG_MS = 1_000;
 /** Lines about failed decrypts come with every packet: at most one is logged this often. */
 export const DECRYPT_LOG_EVERY_MS = 1_000;
 
+/** The voice library's SpeakingMap lets a speaker go this long after their last packet. */
+const SPEAKING_DELAY_MS = 100;
+
 /**
  * Asks Discord whether a user is a bot: true or false, or undefined if they can't be
  * found (treated as a bot: deny by default). Only used for someone the session never
@@ -63,7 +67,7 @@ export type BotLookup = (userId: string) => Promise<boolean | undefined>;
 export type BotPeek = (userId: string) => boolean | undefined;
 
 interface SpeakerPipeline {
-  stream: AudioReceiveStream; // replaced when re-listening after a receive error
+  stream: AudioReceiveStream; // replaced when re-listening after a failure
   decoder: Transform;
   downsampler: Downsampler;
   tracker: UtteranceTracker;
@@ -83,7 +87,11 @@ export interface TableSessionOptions {
   link: Pick<CoreLink, "send" | "sendAudio" | "droppedAudioFrames">;
   peekBot: BotPeek;
   lookUpBot: BotLookup;
-  /** Log per-utterance audio health (user IDs and counts only). */
+  /**
+   * Log per-utterance audio health (user IDs and counts only), and turn on the voice
+   * library's debug events, of which only its encryption (`[NW] [DAVE] `) lines are logged
+   * (see onVoiceDebug).
+   */
   debugAudio?: boolean;
   log: Logger;
   /** Called once when the session ends for any reason. */
@@ -115,7 +123,7 @@ export class TableSession {
   /** People Discord couldn't find, and when to ask again. */
   private readonly unknownUntil = new Map<string, number>();
   private readonly states = new SpeakerStates();
-  /** When each speaker was last listened to again after a receive error. */
+  /** When each speaker was last listened to again after a failure. */
   private readonly retries = new Map<string, number[]>();
   /** When core was last told a speaker's audio kept failing. */
   private readonly warnedAt = new Map<string, number>();
@@ -302,10 +310,21 @@ export class TableSession {
       this.arm(userId, pipeline);
     });
     stream.on("error", (err: Error) => {
-      if (current()) this.onReceiveError(userId, pipeline, err);
+      if (current()) this.onFailure(userId, pipeline, `receive error: ${err.message}`);
     });
     stream.on("end", () => {
-      if (current()) this.endSpeaker(userId, true);
+      if (!current()) return;
+      // The library ends a stream 800 ms after the last packet it could decrypt. If the
+      // speaker is still sending, their packets are being dropped without an error (#645):
+      // that's a failure, not the end of their speech.
+      // Nothing heard for more than the speaking map's 100 ms either: a client that sends
+      // silence frames through a pause is still heard, and ends normally.
+      const unheard = Date.now() - pipeline.accounted > SPEAKING_DELAY_MS;
+      if (unheard && this.connection.receiver.speaking.users.has(userId)) {
+        this.onFailure(userId, pipeline, "the stream ended while they were still sending");
+      } else {
+        this.endSpeaker(userId, true);
+      }
     });
     // Not ended with the stream: one decoder serves a speaker across re-listening.
     stream.pipe(pipeline.decoder, { end: false });
@@ -369,13 +388,13 @@ export class TableSession {
   }
 
   /**
-   * The voice library errored a speaker's stream: their packets wouldn't decrypt (#631)
-   * and it gave up dropping them quietly. They are still sending, so listen again at
+   * A speaker's stream failed: the voice library errored it because their packets
+   * wouldn't decrypt (#631), or ended it while they were still sending (#645). They are still sending, so listen again at
    * once rather than wait for a pause and a new "start", and count the time since the
    * last packet heard as lost. If it keeps happening, stop until they next start speaking
    * and tell core (once a minute), so the DM hears of it.
    */
-  private onReceiveError(userId: string, pipeline: SpeakerPipeline, err: Error): void {
+  private onFailure(userId: string, pipeline: SpeakerPipeline, why: string): void {
     const now = Date.now();
     this.loseSince(pipeline, now);
     const tries = this.retries.get(userId)?.filter((at) => now - at < RESUBSCRIBE_WINDOW_MS) ?? [];
@@ -383,8 +402,8 @@ export class TableSession {
       this.warnCore(
         userId,
         now,
-        `${RESUBSCRIBE_LIMIT} receive errors in a minute (${err.message}); not listening ` +
-          "again until they next start speaking",
+        `${RESUBSCRIBE_LIMIT} failures in a minute (${why}); not listening again until ` +
+          "they next start speaking",
       );
       this.endSpeaker(userId, true);
       return;
@@ -393,15 +412,15 @@ export class TableSession {
     tries.push(now);
     this.retries.set(userId, tries);
     this.options.log.warn(
-      `receive error for user ${userId}: ${err.message}; listening again (${tries.length} of ` +
-        `${RESUBSCRIBE_LIMIT} this minute)`,
+      `user ${userId}: ${why}; listening again (${tries.length} of ${RESUBSCRIBE_LIMIT} ` +
+        "this minute)",
       { guildId: this.guildId },
     );
     const old = pipeline.stream;
     old.unpipe(pipeline.decoder);
     clearTimeout(pipeline.watchdog); // the re-listen accounts for the wait
-    // The receiver forgets the old stream on its "close" (which always follows "error",
-    // though `closed` is already true here); only then can it give a new one.
+    // The receiver forgets the old stream on its "close" (which always follows "error" or
+    // "end", though `closed` may already be true here); only then can it give a new one.
     old.once("close", () => {
       if (delay === 0) {
         this.listenAgain(userId, pipeline);

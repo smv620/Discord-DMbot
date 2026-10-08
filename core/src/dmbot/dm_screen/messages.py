@@ -399,11 +399,11 @@ def joined_recorded_message(name: str) -> str:
 
 
 def voice_lost_message(name: str) -> str:
-    """ears couldn't hear someone (#631) and listens again when they next speak."""
+    """ears couldn't hear someone (#631). No promise of when it hears them again: after
+    giving up it waits for their next speech, while the watchdog keeps listening (#645)."""
     return (
         f"⚠️ DMbot missed some of **{_who(name)}**'s words just now: their voice cut out. "
-        "It hears them again when they next speak. If this happens again, ask them to leave "
-        "the voice channel and join again."
+        "If this happens again, ask them to leave the voice channel and join again."
     )
 
 
