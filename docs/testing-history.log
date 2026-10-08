@@ -738,3 +738,12 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     warnings or errors.
   - Not done, on purpose: the dmbot_web role (needs the owner's password in .env and
     README "Database") and the web-api container. Both wait for go-live (#498).
+
+==============================================================================
+2026-10-08  Server: deploy 4005809 (dev1, no test run)
+==============================================================================
+  - 04:38 UTC  development @ 4005809: #544 (⚙️ Settings on the DM screen: change how
+    much DMbot says any time, #515), #549 (twin: two voices, dev tool, #534). No
+    migrations, no .env changes. Database backed up first (outside the repo; 25 tables);
+    no session was live. Core rebuilt: "Connected to 1 server(s)", "ears connected", no
+    warnings or errors.
