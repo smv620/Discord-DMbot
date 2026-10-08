@@ -122,6 +122,19 @@ describe("the admin page", () => {
     }
   });
 
+  it("still says you're signed out if the page can't load after it", async () => {
+    const api = stub();
+    render(<Admin api={api} search="" />);
+    await screen.findByLabelText(text.email);
+    fill(text.email, "owner@example.com");
+    fill(text.password, "right password here");
+    fireEvent.click(screen.getByRole("button", { name: text.signIn }));
+    fireEvent.click(await screen.findByRole("button", { name: text.signOut }));
+    api.ways = vi.fn(async () => Promise.reject(new AdminApiError("down")));
+    expect(await screen.findByText(text.signedOut)).toBeTruthy();
+    expect(screen.getByText(text.down)).toBeTruthy();
+  });
+
   it("ignores a signin= value that isn't one of its own", async () => {
     render(<Admin api={stub()} search="?signin=toString" />);
     await screen.findByLabelText(text.email);

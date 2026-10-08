@@ -115,6 +115,8 @@ export default function Admin({ api, search }: Props) {
   if (view.kind === "down") {
     return (
       <div class="stack">
+        {/* Kept: "You're signed out" stays true even if the page can't load after it. */}
+        {notice && <p class={notice === text.signedOut ? "ok" : "warn"}>{notice}</p>}
         <p class="warn" role="alert">
           {text.down}
         </p>
@@ -186,6 +188,7 @@ export default function Admin({ api, search }: Props) {
             <button
               type="button"
               class="button secondary"
+              aria-controls="admin-password"
               onClick={() => setShowPassword((shown) => !shown)}
             >
               {showPassword ? text.hidePassword : text.showPassword}

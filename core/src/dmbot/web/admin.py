@@ -202,8 +202,11 @@ class AdminSessions:
 class PendingSignIns:
     """Google sign-ins started and not back yet: each one's nonce and PKCE verifier, kept by
     the hash of its state. The callback takes its entry out, so a state and nonce work
-    once: a replayed callback finds nothing. That is the condition that lets
-    id_token_claims skip the ID token's signature check (#772)."""
+    once: a replayed callback finds nothing. #772 asks for this alongside the TLS answer
+    from Google's token endpoint that lets id_token_claims skip the signature check.
+
+    Accepted on purpose: a flood of about 17 starts a second can push the admin's own
+    sign-in out before Google sends them back; the password still works meanwhile."""
 
     clock: Callable[[], float] = time.monotonic
     # Anyone can start a sign-in, so it's bounded; a full table drops the oldest. At
@@ -214,9 +217,11 @@ class PendingSignIns:
     def start(self) -> tuple[str, str, str]:
         """A new sign-in's state, nonce and verifier."""
         now = self.clock()
-        if len(self._by_hash) >= self.most:
-            self._by_hash = {k: v for k, v in self._by_hash.items() if v[2] > now}
-        while len(self._by_hash) >= self.most:
+        # Oldest first (every entry lives as long), so only the front is ever stale or
+        # dropped: no pass over the whole table, even while it's full.
+        while self._by_hash and (
+            len(self._by_hash) >= self.most or next(iter(self._by_hash.values()))[2] <= now
+        ):
             self._by_hash.pop(next(iter(self._by_hash)))
         state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
         self._by_hash[_hash(state)] = (nonce, verifier, now + SIGN_IN_SECONDS)

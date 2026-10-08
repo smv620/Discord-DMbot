@@ -185,10 +185,11 @@ while DMbot is restarting.
 ### Turn on the admin page
 
 The admin page (`/admin` on the website, never linked) is for giving free access (#772).
-1. Put your email on the `ADMIN_EMAILS` line in `.env`, and set `WEB_CLIENT_IP_HEADER=CF-Connecting-IP`.
-2. Run `scripts/set-admin-password` yourself, over ssh: type the password only there, never into a chat.
-3. For Google sign-in too: in Google Cloud, make an OAuth client (Web application) with the redirect address `WEB_API_URL/admin/auth/google/callback`, set up the consent screen and add your admin email as a test user; then `scripts/set-key` for `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
-4. Restart the website: `docker compose up -d web-api`, then open `/admin` and sign in.
+1. With `scripts/set-key` (or a text editor), put your email in `ADMIN_EMAILS` and set `WEB_CLIENT_IP_HEADER` to `CF-Connecting-IP` (behind Cloudflare).
+2. Run `scripts/set-admin-password` yourself, over ssh, and pick a password of 16 characters or more: type it only there, never into a chat.
+3. For Google sign-in too: in Google Cloud, on the OAuth consent screen choose External and Testing and add your admin email as a test user. Then make an OAuth client (Web application) whose redirect address is your `WEB_API_URL` value followed by `/admin/auth/google/callback`, and `scripts/set-key` its `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+4. Restart the website: `docker compose up -d web-api`, then open your website's `/admin` and sign in.
+5. If the website stops answering, `docker compose logs web-api` says which setting is wrong.
 
 ### Logs
 

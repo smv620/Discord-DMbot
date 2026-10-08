@@ -164,12 +164,12 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         sorted({e.strip().lower() for e in get("ADMIN_EMAILS").split(",") if e.strip()})
     )
     if any("@" not in e for e in admin_emails):
-        raise ConfigError("ADMIN_EMAILS must be email addresses, separated by commas.")
+        raise ConfigError(
+            "ADMIN_EMAILS must be email addresses, separated by commas, like a@x.com,b@y.com."
+        )
     admin_password_hash = get("ADMIN_PASSWORD_HASH")
     if admin_password_hash and decode_hash(admin_password_hash) is None:
-        raise ConfigError(
-            "ADMIN_PASSWORD_HASH isn't one scripts/set-admin-password made. Run it again."
-        )
+        raise ConfigError("ADMIN_PASSWORD_HASH isn't valid. Run scripts/set-admin-password again.")
     if (
         admin_emails
         and not client_ip_header
@@ -189,7 +189,8 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         # Otherwise the page would show a form that refuses every try.
         raise ConfigError(
             "ADMIN_EMAILS is set but there's no way to sign in. Run scripts/set-admin-password,"
-            " or set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."
+            " or set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or empty ADMIN_EMAILS to keep"
+            " the admin page off."
         )
     return WebSettings(
         database_url=get("DATABASE_URL"),
