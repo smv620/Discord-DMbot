@@ -20,8 +20,10 @@ What every real adapter must do (#497):
 - The person's email goes to the company server-side (its API call), never in the
   checkout address the browser is sent to.
 - `cancel` (account deletion) cancels at the end of the period already paid for, never
-  immediately and with no refund or new charge: "Your plan stops at the end of the month
-  you've paid for. You won't be charged again." (web's decision on #435).
+  immediately and with no refund or new charge (docs/PLAN.md, #435). The delete screen
+  says (account.ts `deletePlanStops`): "You won't be charged again. Money you've already
+  paid isn't paid back. If you want to ask about that, do it before you delete (see the
+  Refunds page)." DMbot itself stops at once, so don't promise the rest of the month.
 """
 
 from __future__ import annotations

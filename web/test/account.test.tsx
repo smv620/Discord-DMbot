@@ -243,6 +243,8 @@ describe("actions", () => {
       const { unmount } = render(<Account api={mockApi(scenario)} go={vi.fn()} />);
       fireEvent.click(await screen.findByRole("button", { name: text.deleteStart }));
       expect(screen.queryByText(text.deletePlanStops) !== null).toBe(says);
+      const refunds = screen.queryByRole("link", { name: text.deleteRefundsLink });
+      expect(refunds?.getAttribute("href") ?? null).toBe(says ? "/legal/refunds#stopping" : null);
       unmount();
     }
   });
