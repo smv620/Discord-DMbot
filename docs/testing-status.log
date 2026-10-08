@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (live 70ac757; Test B passed; Test C next)
+Last updated: 2026-10-08 by dev1 (live 70ac757; Test C passed; deploy, then the TV test)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -305,12 +305,12 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     of it can be heard"; the DM screen shows a warning and its audio % drops
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test B (2026-10-08 16:14), DM alone: PASS
+LATEST RESULT: Test C (2026-10-08 18:04), DM alone: PASS
 ------------------------------------------------------------------------------
-  On 70ac757. ⏹ Stop listening asked first; Cancel kept DMbot listening; /dmbot stop
-  ended it. The #631 decrypt error came back at the start (after a DAVE "welcome", not
-  a "commit") and #641 caught it: listened again, ~1 s lost (audio 66%), then 100%.
-  Next: Test C (docs/next-test-step.md), Yes, stop ends the session.
+  On 70ac757. ⏹ Stop listening -> Yes, stop ended the session: DMbot left voice and the
+  download was offered. The #631 decrypt error came back at the start (after a DAVE
+  commit this time) and #641 re-listened: audio 88%. Previous: Test B PASS (16:14).
+  Next: deploy development (owner's go), then the TV test.
 
 Open issues from testing
   #671 the audio warning fires on background noise (owner)

@@ -895,3 +895,15 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     143/143; core "audio 66% (audio gaps)", then 100%. Before #641 the whole sentence
     would have been lost. In the two clean runs DAVE logged "commit", not "welcome":
     posted on #631 as a clue for the upstream report.
+
+==============================================================================
+2026-10-08  Test C: Yes, stop ends the session (owner, alone): PASS
+==============================================================================
+  - 18:04-18:05 UTC on 70ac757, docs/next-test-step.md. Owner: everything worked.
+  - core: session started 18:04:10, ended 18:05:03 (logged as "/dmbot stop by user",
+    the button shares that path); "Listened 0.9 min, sent 0.1 min of speech (13%)";
+    download offered to 1 of 1. ears "left voice (core asked)" at 18:05:03.
+  - The #631 error again: "MLS commit processed (transition id: 0)" at 18:04:15.6,
+    then "receive error ... listening again (1 of 5)" and "(2 of 5)" at 18:04:16.5;
+    health 348/392; core "audio 88% (audio gaps)". So it isn't specific to a DAVE
+    "welcome" (correcting the 16:14 entry's clue); posted on #631.
