@@ -603,7 +603,12 @@ so the docs always show names the way Discord does. For the campaign
   nothing heard) and under 50% received with at least 10 s lost in a minute warn at
   once. Until stage 2 lands, stage 1 warns directly at the DM screen's existing 90%
   (90–94% rarely costs words), not 95%. The end-of-session line keeps the raw numbers
-  for the logs; the summary's "kept cutting out" follows the same rule.
+  for the logs; the summary's "kept cutting out" follows the same rule. *Two more
+  decisions (2026-10-08, #699):* when no check is possible (no AI key, or an engine
+  without confidence and a middling read) the stage-1 rule warns on its own, with the
+  skipped check logged; and a rule that fires while the minute holds no transcript
+  line at all for that person counts as garbled once past the 2 s floor (an empty
+  transcript while someone is clearly talking is the clearest sign there is).
 - **Organized mode:** each campaign gets a category, `📋 Rime of the Frostmaiden`
   (categories keep capitals and emoji), holding its `dmb-` channels. Each channel has a
   pinned "What's this channel?" card saying what it's for and who can see it. This
@@ -1543,6 +1548,33 @@ the one rule. Cost basis for these prices: about $0.30 per table-hour (Deepgram 
 pricing on roughly 36–60 speech-minutes per hour, Claude Haiku for the AI features,
 hosting); to be measured with the twin and run 8 before the promotion to `main`.
 Discord servers cost nothing and are not counted.
+
+**D&D Beyond character sheets (plan, 2026-10-08; phase 7 part A can start now).**
+Each player links their own sheet, privately: the consent message gains a "Link my
+character" button that opens a form for the link, and the DM's "Add a player's
+character" form gets the same optional field. Only `dndbeyond.com/characters/<number>`
+links are accepted and the sheet must be set to Public on D&D Beyond (if it isn't, DMbot
+tells the player how, in three plain steps). The link hangs off the player character
+DMbot already stores (the entity with "played by"); a player can unlink it with a
+button; the campaign's DMs see which characters have a sheet. DMbot keeps a small
+snapshot per character per campaign: name, species, classes and levels, ability scores,
+hit points, armour class, speed, saves, skills, senses, languages, and the *names* of
+spells, features and items; never descriptions or rules text (IP rule), enforced by an
+explicit list of allowed fields in the parser. The snapshot refreshes once at `/dmbot
+start` and on a DM's "Refresh sheets" button (one request per character per session);
+it is deleted with the campaign, goes into backups, and is never shared between
+campaigns even when two campaigns link the same sheet. Uses, in order of value: spell,
+item and feature names into the speech-to-text hints; the rules advisor (phase 3)
+citing the sheet in alerts (DM screen only); a who's-who card per character on the DM
+screen and facts for the story memory. Risk, stated: D&D Beyond has no official API;
+public sheets are read through an unofficial address that may change or close, so DMbot
+never scrapes pages, reads only sheets players made public, fetches rarely, and keeps a
+manual fallback ("Tell DMbot about your character": class, level, key features) so
+nothing else breaks if the feed does. Campaign-level access needs the DM's own login
+and stays a later browser extension in the DM's own session; never a password or cookie
+on our side. Order: part A (link, snapshot, hints, unlink, fallback form; one developer,
+no table work), part B with phase 3 (the rules advisor reads the snapshot), part C later
+(the extension).
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
