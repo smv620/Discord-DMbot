@@ -130,6 +130,14 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   core. Check: right after a restart, type in /dmbot names find: (suggestions appear by
   the second keystroke); make a name secret during a session: it isn't suggested or
   used as a hint after that; no "Couldn't load names" warnings in the log.
+- WebDev, PR #625 (#614): the account page answers hand-over offers (Accept, No thanks,
+  Take back offer) and lists them both ways; the database checks every accept. Migration
+  0023 adds two indexes for open offers (quick). The bot migrates first (the website's
+  new rights come with it), then rebuild web-api and the site. The site's own Hand over
+  button stays hidden until its route lands (#690 follow-up). Check: `docker compose
+  logs core` shows 0023; an offer made in Discord shows on the person's /account with
+  Accept and No thanks; Accept makes them the owner; the owner's row shows "Waiting for
+  ... to say yes" with Take back offer, and never says anything about anyone's plan.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
