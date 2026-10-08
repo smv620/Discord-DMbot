@@ -174,6 +174,10 @@ SHEET_NOTE = (
 MENU_HINT = f"To stop being recorded, press ⚙️ {MENU_LABEL} below."
 # What a reminder from before the menu said; given the menu's words when it's restored.
 OLD_STOP_HINT = "Press 🛑 below to stop any time."
+OLD_SHEET_NOTE = (
+    f"Optional: if you play on D&D Beyond, press {SHEET_LABEL} so DMbot spells your spell "
+    "names better. It doesn't change recording."
+)
 
 
 def _sheet_note(sheets: bool) -> str:
@@ -281,13 +285,20 @@ def with_warning(server: str, text: str) -> str:
     return f"{warning_text(server)}\n\n{text}"
 
 
-def without_warning(server: str, text: str) -> str:
-    """The message's own text back, exactly; an old reminder's 🛑 hint becomes the menu's.
-    Text without the warning (edited, or from elsewhere) stays as it is."""
-    prefix = f"{warning_text(server)}\n\n"
-    if text.startswith(prefix):
-        text = text[len(prefix) :]
-    return text.replace(OLD_STOP_HINT, MENU_HINT)
+# The warning as it starts a lasting message, whatever the server was called then (it may
+# have been renamed since Stop was pressed).
+_HEAD, _TAIL = warning_text("\0").split(_plain("\0"))
+_WARNING_FIRST = re.compile(f"{re.escape(_HEAD)}.+?{re.escape(_TAIL)}\n\n")
+
+
+def without_warning(text: str) -> str:
+    """The message's own text back, exactly; an old reminder's 🛑 hint and sheet note
+    become the menu's. Text without the warning (edited, or from elsewhere) stays as it
+    is."""
+    match = _WARNING_FIRST.match(text)
+    if match:
+        text = text[match.end() :]
+    return text.replace(OLD_STOP_HINT, MENU_HINT).replace(OLD_SHEET_NOTE, SHEET_NOTE)
 
 
 NOTHING_CHANGED = "Nothing changed."
@@ -540,7 +551,7 @@ class StopButton(
             if _lasting(interaction) and message is not None:
                 # First in the message's own text (an embed can be hidden), so Keep
                 # recording can give the text back exactly, even after a restart.
-                content = with_warning(guild.name, without_warning(guild.name, message.content))
+                content = with_warning(guild.name, without_warning(message.content))
                 await interaction.response.edit_message(content=content, view=view)
             else:  # an only-you menu: it becomes the warning
                 await interaction.response.edit_message(content=text, view=view)
@@ -620,10 +631,8 @@ class KeepButton(
             message = interaction.message
             if _lasting(interaction) and message is not None:
                 menu = menu_view(self.guild_id, self.campaign_id)
-                if guild is None:
-                    await interaction.response.edit_message(view=menu)
-                elif recorded:  # the message's own text, as it was
-                    content = without_warning(guild.name, message.content)
+                if guild is None or recorded:  # the message's own text, as it was
+                    content = without_warning(message.content)
                     await interaction.response.edit_message(content=content, view=menu)
                 else:  # a stale warning: they stopped some other way, so say so
                     await interaction.response.edit_message(
@@ -713,12 +722,9 @@ class CloseButton(
     async def callback(self, interaction: discord.Interaction) -> Any:
         message = interaction.message
         if _lasting(interaction) and message is not None:
-            guild = _served_here(interaction, self.guild_id)
-            content = (
-                message.content if guild is None else without_warning(guild.name, message.content)
-            )
             await interaction.response.edit_message(
-                content=content, view=menu_view(self.guild_id, self.campaign_id)
+                content=without_warning(message.content),
+                view=menu_view(self.guild_id, self.campaign_id),
             )
             return
         await interaction.response.defer()

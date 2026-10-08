@@ -265,7 +265,8 @@ HELP_TEXT = (
     "Play on D&D Beyond? Press **⚙️ Menu** in DMbot's private message, then 📜 My character "
     "sheet, so DMbot spells your spell names better.\n"
     "No message from DMbot? Check your Message Requests, or type `/consent give`. "
-    "To stop, press **⚙️ Menu** in DMbot's private message, then **Stop recording me**, or "
+    "To stop, press **⚙️ Menu** in DMbot's private message, then **Stop recording me**, then "
+    "**Yes**, or "
     "type `/consent revoke`."
 )
 

@@ -26,6 +26,14 @@ FORBIDDEN = discord.Forbidden(MagicMock(status=403), "Cannot send messages to th
 TOO_FAST = discord.HTTPException(MagicMock(status=400), "Opening DMs too fast")
 
 
+async def cancel_late_lookups(bot: Any) -> None:
+    """Stop recorded()'s lookups left running, even ones slow to take the cancel."""
+    for _ in range(2):
+        for task in list(bot._late_lookups):
+            task.cancel()
+        await asyncio.sleep(0)
+
+
 class FakeEars:
     def __init__(self) -> None:
         self.sent: list[str] = []
@@ -70,6 +78,20 @@ def test_reminder_is_short_and_shows_the_date() -> None:
     outside = c.reminder_text("Dragon Club", None, 1_760_000_000, cloud=True, company="Deepgram")
     assert "Your voice and Discord name go to Deepgram" in outside
     assert outside.count("\n") == 0 and "in **Dragon Club**" in outside  # no voice: still reads
+
+
+def test_the_warning_comes_off_whatever_the_server_is_called_now() -> None:
+    # #834: renamed between Stop and Keep, or the server isn't served here any more.
+    text = "🎙️ DMbot is recording you."
+    assert c.without_warning(c.with_warning("Old *name*", text)) == text
+    assert c.without_warning(text) == text  # no warning: as it is
+    edited = "Stop recording you? Not the warning.\n\n" + text
+    assert c.without_warning(edited) == edited
+
+
+def test_an_old_reminder_gets_the_menus_words_back() -> None:
+    old = f"🎙️ DMbot is recording you. {c.OLD_STOP_HINT} {c.OLD_SHEET_NOTE}"
+    assert c.without_warning(old) == f"🎙️ DMbot is recording you. {c.MENU_HINT} {c.SHEET_NOTE}"
 
 
 def test_the_sheet_note_only_when_sheets_are_on() -> None:
@@ -263,6 +285,7 @@ class ConsentDMTests(DatabaseTest):
         await self.consent.grant(GUILD, PLAYER)
         await self.joined()
         assert "you said yes on <t:" in self.sent_text(self.player)
+        assert c.SHEET_NOTE not in self.sent_text(self.player)  # sheets off here (#834)
         (menu,) = custom_ids(self.player.send.await_args.kwargs["view"])
         assert re.fullmatch(r"dmbot:consent:menu:1:([0-9a-f]{32}|-)", menu)  # this campaign
 
@@ -564,7 +587,12 @@ class ConsentDMTests(DatabaseTest):
         assert str(PLAYER) in self.allowlists()[-1]
         edit = press.edit_original_response.await_args.kwargs
         assert "You said yes on <t:" in edit["content"]
+        assert c.SHEET_NOTE not in edit["content"]  # sheets off here: no 📜 to point at
         assert custom_ids(edit["view"]) == ["dmbot:consent:menu:1:-"]
+        self.bot.sheets = MagicMock()
+        press = self.button_press(PLAYER)
+        await c.ConsentButton(GUILD).callback(press)
+        assert c.SHEET_NOTE in press.edit_original_response.await_args.kwargs["content"]
 
     async def test_consent_sticks_for_the_next_session(self) -> None:
         await c.ConsentButton(GUILD).callback(self.button_press(PLAYER))
@@ -746,9 +774,50 @@ class ConsentDMTests(DatabaseTest):
         self.consent.stop_now(GUILD, PLAYER)  # as if a fresh process: not in the cache
         with patch("dmbot.bot.RECORDED_CHECK_S", 0.05), self.assertLogs("dmbot.bot", "WARNING"):
             assert await asyncio.wait_for(self.bot.recorded(GUILD, PLAYER), 1)  # unsure: yes
+        await cancel_late_lookups(self.bot)
         self.consent.status = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
         with self.assertLogs("dmbot.bot", "WARNING"):
             assert await self.bot.recorded(GUILD, PLAYER)
+
+    def stalled(self) -> None:
+        """An empty cache (a fresh process) and a database that stalls, and even ignores
+        being cancelled for a while, as psycopg's cleanup does (#834)."""
+
+        async def stall(*_: Any, **__: Any) -> Any:
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                await asyncio.sleep(5)  # cleaning up, slowly
+                raise
+
+        self.bot.consent = ConsentStore(self.db)  # nothing loaded for this server
+        self.bot.consent.status = AsyncMock(side_effect=stall)  # type: ignore[method-assign]
+
+    async def test_a_stalled_database_still_answers_menu_and_keep_in_time(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.stalled()
+        with patch("dmbot.bot.RECORDED_CHECK_S", 0.05), self.assertLogs("dmbot.bot", "WARNING"):
+            menu = self.button_press(PLAYER)
+            await asyncio.wait_for(c.MenuButton(GUILD).callback(menu), 1)
+            keep = self.lasting(self.button_press(PLAYER))
+            await asyncio.wait_for(c.KeepButton(GUILD).callback(keep), 1)
+        assert "dmbot:consent:stop:1:-" in custom_ids(  # unsure: Stop is offered
+            menu.response.send_message.await_args.kwargs["view"]
+        )
+        assert keep.response.edit_message.await_args.kwargs["content"] == self.REMINDER
+        assert self.bot._late_lookups  # left to finish alone, not awaited
+        await cancel_late_lookups(self.bot)
+
+    async def test_a_failing_database_still_offers_stop(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.consent = ConsentStore(self.db)
+        self.bot.consent.status = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
+        menu = self.button_press(PLAYER)
+        with self.assertLogs("dmbot.bot", "WARNING"):
+            await c.MenuButton(GUILD).callback(menu)
+        assert "dmbot:consent:stop:1:-" in custom_ids(
+            menu.response.send_message.await_args.kwargs["view"]
+        )
 
     async def test_setup_registers_the_consent_buttons(self) -> None:
         # So old 🛑 ids, and every menu button, keep working after a restart.

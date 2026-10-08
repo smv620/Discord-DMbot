@@ -432,6 +432,7 @@ class DMBot(commands.AutoShardedBot):
             on_link_change=self._on_ears_link_change,
         )
         self._background: list[asyncio.Task[None]] = []
+        self._late_lookups: set[asyncio.Task[Any]] = set()  # recorded()'s, past their time
         self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
         self._finishing: set[asyncio.Task[None]] = set()  # stopped sessions winding down
         # Stopped sessions still writing down their last words, by server.
@@ -604,14 +605,26 @@ class DMBot(commands.AutoShardedBot):
         counts as recorded, so the way to stop is never hidden."""
         if self.consent.has_consent(guild_id, user_id):
             return True
+        # Not wait_for: that waits for the cancelled query to clean up, which a stalled
+        # database can stretch to 12 s (#834). A late lookup is left to finish alone.
+        lookup = asyncio.create_task(self.consent.status(guild_id, [user_id]))
+        done, _ = await asyncio.wait({lookup}, timeout=RECORDED_CHECK_S)
+        if not done:
+            self._late_lookups.add(lookup)
+            lookup.add_done_callback(self._late_lookup_done)
+            log.warning("Couldn't look up consent in guild %s in time", guild_id)
+            return True
         try:
-            status = await asyncio.wait_for(
-                self.consent.status(guild_id, [user_id]), RECORDED_CHECK_S
-            )
+            status = lookup.result()
         except Exception:
-            log.warning("Couldn't look up consent in guild %s in time", guild_id, exc_info=True)
+            log.warning("Couldn't look up consent in guild %s", guild_id, exc_info=True)
             return True
         return user_id in status.granted
+
+    def _late_lookup_done(self, task: asyncio.Task[Any]) -> None:
+        self._late_lookups.discard(task)
+        if not task.cancelled():
+            task.exception()  # read, so a late failure isn't reported as never retrieved
 
     def stop_recording(self, guild_id: int, user_id: int) -> None:
         """Stop capturing this player now, without waiting for anything.

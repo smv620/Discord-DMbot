@@ -895,6 +895,34 @@ class SaveAndResume(SessionTests):
         self.assertNotIn("view", args.kwargs)
         self.assertFalse(self.consent.has_consent(GUILD, PLAYER))
 
+    async def test_revoke_with_a_stalled_database_still_warns_in_time(self) -> None:
+        # #834: an empty cache and a database that ignores being cancelled for a while.
+        from dmbot.bot import consent_revoke
+        from dmbot.consent_dm import warning_text
+        from tests.test_consent_dm import cancel_late_lookups
+
+        self.guild.name = "Dragon Club"
+        await self.consent.grant(GUILD, PLAYER)
+        bot = await self.restart()  # nothing loaded for this server yet
+
+        async def stall(*_: Any, **__: Any) -> Any:
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                await asyncio.sleep(5)
+                raise
+
+        bot.consent.status = AsyncMock(side_effect=stall)  # type: ignore[method-assign]
+        interaction = self._consent_interaction(PLAYER)
+        interaction.client = bot
+        with patch("dmbot.bot.RECORDED_CHECK_S", 0.05), self.assertLogs("dmbot.bot", "WARNING"):
+            await asyncio.wait_for(consent_revoke.callback(interaction), 1)  # type: ignore[call-arg]
+        args = interaction.response.send_message.await_args
+        self.assertEqual(
+            args.args[0], warning_text(self.guild.name)
+        )  # unsure: warn, never "nothing"
+        await cancel_late_lookups(bot)
+
     async def test_yes_during_a_live_session_stops_capture_at_once(self) -> None:
         # #69, through the #807 path: ears drops them before anything slow.
         from dmbot.consent_dm import StopYesButton
