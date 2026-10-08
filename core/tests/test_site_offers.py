@@ -8,11 +8,14 @@ import contextlib
 import unittest
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, cast
+from unittest import mock
 
 import discord
 
 from dmbot.campaigns import Campaign, offer_notify
 from dmbot.campaigns.models import HandoverOffer
+from dmbot.dm_screen import site_offers
+from dmbot.dm_screen.handover import deliver_offer
 from dmbot.dm_screen.site_offers import NOT_SENT, SiteOffers
 
 GUILD, OTHER_GUILD = 111, 222
@@ -20,7 +23,7 @@ OWNER, BUYER = 7, 9
 NOW = 1_000
 
 
-def offer(offer_id: int = 1, guild_id: int = GUILD) -> HandoverOffer:
+def offer(offer_id: int = 1, guild_id: int = GUILD, claimed_at: int | None = None) -> HandoverOffer:
     return HandoverOffer(
         id=offer_id,
         guild_id=guild_id,
@@ -32,34 +35,55 @@ def offer(offer_id: int = 1, guild_id: int = GUILD) -> HandoverOffer:
         created_at=NOW,
         status="open",
         decided_at=None,
+        claimed_at=claimed_at,
     )
 
 
+def http_error(status: int, cls: type[discord.HTTPException] = discord.HTTPException) -> Any:
+    response = mock.Mock(status=status, reason="nope")
+    return cls(response, "nope")
+
+
 class FakeStore:
+    """Offers waiting per server; a claim holds until confirmed or released."""
+
     def __init__(self, waiting: dict[int, list[int]] | None = None) -> None:
         self.waiting = waiting or {}
         self.claimed: set[tuple[int, int]] = set()
+        self.sent: set[tuple[int, int]] = set()
         self.withdrawn: list[tuple[int, int, int]] = []
-        self.campaign: Any = cast(Any, type("C", (), {"id": "c1", "name": "Frost*maiden"})())
+        self.withdraw_result = "withdrawn"
+        self.campaign: Any = type("C", (), {"id": "c1", "name": "Frost*maiden"})()
         self.fail_reads: set[int] = set()
 
+    def _unsent(self, guild_id: int, offer_id: int) -> bool:
+        key = (guild_id, offer_id)
+        return offer_id in self.waiting.get(guild_id, []) and key not in self.claimed | self.sent
+
     async def claim_delivery(self, guild_id: int, offer_id: int, now: int) -> HandoverOffer | None:
-        if (guild_id, offer_id) in self.claimed or offer_id not in self.waiting.get(guild_id, []):
+        if not self._unsent(guild_id, offer_id):
             return None
         self.claimed.add((guild_id, offer_id))
-        return offer(offer_id, guild_id)
+        return offer(offer_id, guild_id, claimed_at=now)
+
+    async def confirm_delivery(self, guild_id: int, o: HandoverOffer, now: int) -> None:
+        self.claimed.discard((guild_id, o.id))
+        self.sent.add((guild_id, o.id))
+
+    async def release_delivery(self, guild_id: int, o: HandoverOffer) -> None:
+        self.claimed.discard((guild_id, o.id))
 
     async def undelivered_offers(self, guild_id: int, now: int) -> list[int]:
         if guild_id in self.fail_reads:
             raise RuntimeError("database down")
-        return [i for i in self.waiting.get(guild_id, []) if (guild_id, i) not in self.claimed]
+        return [i for i in self.waiting.get(guild_id, []) if self._unsent(guild_id, i)]
 
     async def get(self, guild_id: int, campaign_id: str) -> Campaign | None:
         return cast(Campaign | None, self.campaign)
 
     async def withdraw_handover(self, guild_id: int, offer_id: int, user_id: int, now: int) -> str:
         self.withdrawn.append((guild_id, offer_id, user_id))
-        return "withdrawn"
+        return self.withdraw_result
 
 
 class FakeMember:
@@ -85,20 +109,29 @@ class Harness(unittest.IsolatedAsyncioTestCase):
         self.store = FakeStore({GUILD: [1]})
         self.guilds = {GUILD: FakeGuild(GUILD)}
         self.delivered: list[int] = []
-        self.reachable = True
+        # What delivering does: True (sent), False (can't reach them), or an error.
+        self.outcome: bool | BaseException = True
         self.ready = asyncio.Event()
         self.ready.set()
         self.tasks: list[asyncio.Task[None]] = []
+        self.slept: list[float] = []
+        self.clock = 0.0
 
         async def deliver(guild: discord.Guild, campaign: Campaign, o: HandoverOffer) -> bool:
             self.delivered.append(o.id)
-            return self.reachable
+            if isinstance(self.outcome, BaseException):
+                raise self.outcome
+            return self.outcome
 
         async def wait_until_ready() -> None:
             await self.ready.wait()
 
         def spawn(work: Awaitable[None], name: str) -> None:
             self.tasks.append(asyncio.ensure_future(work))
+
+        async def sleep(seconds: float) -> None:
+            self.slept.append(seconds)
+            await asyncio.sleep(0)
 
         self.offers = SiteOffers(
             self.store,
@@ -107,10 +140,14 @@ class Harness(unittest.IsolatedAsyncioTestCase):
             wait_until_ready=wait_until_ready,
             spawn=spawn,
             deliver=deliver,
+            sleep=sleep,
             now=lambda: NOW,
+            clock=lambda: self.clock,
         )
 
     async def settle(self) -> None:
+        for _ in range(20):
+            await asyncio.sleep(0)
         while self.tasks:
             pending, self.tasks = self.tasks, []
             await asyncio.gather(*pending)
@@ -131,6 +168,7 @@ class Sending(Harness):
         await self.offers.send(GUILD, 1)
         await self.offers.send(GUILD, 1)  # announced again, or the sweep found it too
         self.assertEqual(self.delivered, [1])
+        self.assertEqual(self.store.sent, {(GUILD, 1)})
         self.assertEqual(self.store.withdrawn, [])
 
     async def test_another_process_s_server_is_left_alone(self) -> None:
@@ -140,13 +178,38 @@ class Sending(Harness):
         self.assertEqual(self.store.claimed, set())  # never claimed, so its own bot sends it
 
     async def test_someone_unreachable_gets_the_offer_taken_back_and_the_owner_told(self) -> None:
-        self.reachable = False
+        self.outcome = False
         await self.offers.send(GUILD, 1)
         self.assertEqual(self.store.withdrawn, [(GUILD, 1, OWNER)])
         (note,) = self.guilds[GUILD].owner.sent
         self.assertEqual(
             note, NOT_SENT.format(name="Bea\\_\\*", campaign="Frost\\*maiden", server="The Table")
         )
+        self.assertIn("on the DMbot website", note)  # where to try again
+
+    async def test_an_offer_answered_meanwhile_is_not_reported_as_taken_back(self) -> None:
+        self.outcome = False
+        self.store.withdraw_result = "gone"  # accepted on the site, or expired, meanwhile
+        await self.offers.send(GUILD, 1)
+        self.assertEqual(self.guilds[GUILD].owner.sent, [])
+
+    async def test_a_discord_hiccup_lets_the_claim_go_for_a_later_try(self) -> None:
+        self.outcome = http_error(503)
+        with self.assertLogs("dmbot.dm_screen.site_offers", "WARNING"):
+            await self.offers.send(GUILD, 1)
+        self.assertEqual(self.store.withdrawn, [])  # never taken back for a hiccup
+        self.assertEqual(self.store.claimed, set())
+        self.outcome = True
+        await self.offers.sweep()
+        self.assertEqual(self.delivered, [1, 1])
+        self.assertEqual(self.store.sent, {(GUILD, 1)})
+
+    async def test_a_send_cut_short_lets_the_claim_go(self) -> None:
+        self.outcome = asyncio.CancelledError()  # shutting down mid-send
+        with self.assertRaises(asyncio.CancelledError):
+            await self.offers.send(GUILD, 1)
+        self.assertEqual(self.store.claimed, set())
+        self.assertEqual(self.store.sent, set())
 
     async def test_a_deleted_campaign_sends_nothing(self) -> None:
         self.store.campaign = None
@@ -160,6 +223,30 @@ class Sending(Harness):
         self.store.claim_delivery = broken  # type: ignore[method-assign]
         with self.assertLogs("dmbot.dm_screen.site_offers", "ERROR"):
             await self.offers.send(GUILD, 1)
+
+
+class DeliverOffer(unittest.IsolatedAsyncioTestCase):
+    """The shared private message: only "not there" and "no messages" count as
+    unreachable when the caller can try again."""
+
+    async def outcome(self, error: Any, *, raise_if_discord_fails: bool) -> bool:
+        member = mock.Mock(send=mock.AsyncMock(side_effect=error))
+        guild = mock.Mock(id=GUILD, get_member=mock.Mock(return_value=member))
+        guild.name = "The Table"
+        campaign = mock.Mock(id="c1")
+        campaign.name = "Frost"
+        return await deliver_offer(
+            guild, campaign, offer(), raise_if_discord_fails=raise_if_discord_fails
+        )
+
+    async def test_closed_messages_or_gone_are_unreachable(self) -> None:
+        for error in (http_error(403, discord.Forbidden), http_error(404, discord.NotFound)):
+            self.assertFalse(await self.outcome(error, raise_if_discord_fails=True))
+
+    async def test_other_discord_errors_are_raised_only_when_asked(self) -> None:
+        self.assertFalse(await self.outcome(http_error(503), raise_if_discord_fails=False))
+        with self.assertRaises(discord.HTTPException):
+            await self.outcome(http_error(503), raise_if_discord_fails=True)
 
 
 class Sweeping(Harness):
@@ -180,10 +267,34 @@ class Sweeping(Harness):
         await sweep
         self.assertEqual(self.delivered, [1])
 
+    async def test_sweeps_never_pile_up(self) -> None:
+        self.ready.clear()
+        sweeps = [asyncio.ensure_future(self.offers.sweep()) for _ in range(5)]
+        await asyncio.sleep(0)
+        self.assertEqual(sum(s.done() for s in sweeps), 4)  # one waits, the rest give way
+        self.ready.set()
+        await asyncio.gather(*sweeps)
+        self.assertEqual(self.delivered, [1])
+
+    async def test_one_server_s_sweep(self) -> None:
+        self.guilds[OTHER_GUILD] = FakeGuild(OTHER_GUILD)
+        self.store.waiting = {GUILD: [1], OTHER_GUILD: [2]}
+        await self.offers.sweep_server(OTHER_GUILD)
+        self.assertEqual(self.delivered, [2])
+
+    async def test_every_hour(self) -> None:
+        hourly = asyncio.ensure_future(self.offers.every_hour())
+        await self.settle()
+        hourly.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await hourly
+        self.assertEqual(self.slept[0], site_offers.SWEEP_EVERY_S)
+        self.assertEqual(self.delivered, [1])
+
 
 class Following(Harness):
     async def test_listening_sweeps_then_sends_each_announcement(self) -> None:
-        self.store.waiting = {GUILD: [1, 2]}
+        self.store.waiting = {GUILD: [1, 2], OTHER_GUILD: [5]}
         announced: asyncio.Queue[str] = asyncio.Queue()
 
         async def listen(channel: str, on_listening: Callable[[], None]) -> AsyncGenerator[str]:
@@ -193,23 +304,20 @@ class Following(Harness):
                 yield await announced.get()
 
         follow = asyncio.ensure_future(self.offers.follow(listen))
-        await asyncio.sleep(0)
         await self.settle()
         self.assertEqual(sorted(self.delivered), [1, 2])  # the sweep
         self.store.waiting[GUILD].append(4)
-        announced.put_nowait("not ours")
+        for raw in ("not ours", offer_notify.payload(OTHER_GUILD, 5)):
+            announced.put_nowait(raw)
         announced.put_nowait(offer_notify.payload(GUILD, 4))
-        for _ in range(5):
-            await asyncio.sleep(0)
         await self.settle()
         self.assertEqual(sorted(self.delivered), [1, 2, 4])
         follow.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await follow
 
-    async def test_a_dropped_connection_listens_again_and_sweeps_again(self) -> None:
+    async def test_a_link_that_keeps_dropping_waits_longer_each_time(self) -> None:
         calls = 0
-        slept: list[float] = []
 
         async def listen(channel: str, on_listening: Callable[[], None]) -> AsyncGenerator[str]:
             nonlocal calls
@@ -217,23 +325,20 @@ class Following(Harness):
             if calls == 1:
                 raise OSError("connection refused")  # never connected
             on_listening()
-            if calls == 2:
-                raise OSError("connection lost")
+            if calls in (2, 3):
+                raise OSError("dropped right away")  # connected, but not for long
+            if calls == 4:
+                self.clock += site_offers.STEADY_S  # up for a good while, then dropped
+                raise OSError("dropped later")
             await asyncio.Event().wait()
             yield ""
 
-        async def sleep(seconds: float) -> None:
-            slept.append(seconds)
-
-        self.offers._sleep = sleep
         follow = asyncio.ensure_future(self.offers.follow(listen))
         with self.assertLogs("dmbot.dm_screen.site_offers", "WARNING"):
-            for _ in range(10):
-                await asyncio.sleep(0)
-        await self.settle()
-        self.assertEqual(calls, 3)
-        self.assertEqual(slept, [1.0, 1.0])  # connecting resets the wait
-        self.assertEqual(self.delivered, [1])  # swept twice, sent once
+            await self.settle()
+        self.assertEqual(calls, 5)
+        self.assertEqual(self.slept, [1.0, 5.0, 30.0, 1.0])
+        self.assertEqual(self.delivered, [1])  # swept four times, sent once
         follow.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await follow

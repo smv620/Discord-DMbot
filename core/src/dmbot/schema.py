@@ -511,10 +511,14 @@ HANDOVER_NAMES = """
 
 HANDOVER_DELIVERED = """
     -- When DMbot sent the private message about an offer (#690). An offer made on the
-    -- website is saved with none and announced on dmbot_handover_offers; the bot that
-    -- serves the server claims it (sets this) and then sends the message, so it's sent
-    -- once. Every offer before this was made in Discord and sent there and then.
-    ALTER TABLE campaign_handover_offers ADD COLUMN delivered_at BIGINT;
+    -- website is saved with neither and announced on dmbot_handover_offers. The bot
+    -- that serves the server claims it (claimed_at, for a few minutes: a send cut short
+    -- is tried again once the claim lapses), sends the message, then sets delivered_at,
+    -- so it's sent once. Every offer before this was made in Discord and sent there and
+    -- then. A writer that leaves delivered_at empty gets its offer sent by the bot.
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN delivered_at BIGINT,
+        ADD COLUMN claimed_at   BIGINT;
     UPDATE campaign_handover_offers SET delivered_at = created_at;
     -- The bot's sweep when it starts listening: open offers not sent yet.
     CREATE INDEX campaign_handover_offers_undelivered

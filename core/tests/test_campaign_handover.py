@@ -11,6 +11,7 @@ from typing import Any
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.models import HANDOVER_SECONDS, HandoverOffer
 from dmbot.campaigns.store import (
+    CLAIM_SECONDS,
     NO_OWNER_YET,
     NOT_A_SUBSCRIBER,
     NOT_THE_OWNER,
@@ -197,9 +198,36 @@ class SiteDelivery(HandoverTest):
         self.assertEqual(await self.store.undelivered_offers(GUILD, NOW), [offer.id])
         claimed = await self.store.claim_delivery(GUILD, offer.id, NOW + 5)
         assert claimed is not None
-        self.assertEqual(claimed.delivered_at, NOW + 5)
+        self.assertEqual((claimed.claimed_at, claimed.delivered_at), (NOW + 5, None))
         self.assertIsNone(await self.store.claim_delivery(GUILD, offer.id, NOW + 6))
-        self.assertEqual(await self.store.undelivered_offers(GUILD, NOW), [])
+        self.assertEqual(await self.store.undelivered_offers(GUILD, NOW + 6), [])
+        await self.store.confirm_delivery(GUILD, claimed, NOW + 7)
+        sent = await self.store.get_offer(GUILD, offer.id, NOW + 7)
+        assert sent is not None
+        self.assertEqual(sent.delivered_at, NOW + 7)
+        later = NOW + CLAIM_SECONDS + 60  # a sent offer is never sent again
+        self.assertIsNone(await self.store.claim_delivery(GUILD, offer.id, later))
+        self.assertEqual(await self.store.undelivered_offers(GUILD, later), [])
+
+    async def test_a_failed_send_lets_the_claim_go(self) -> None:
+        offer = await self.site_offer()
+        claimed = await self.store.claim_delivery(GUILD, offer.id, NOW)
+        assert claimed is not None
+        await self.store.release_delivery(GUILD, claimed)
+        self.assertEqual(await self.store.undelivered_offers(GUILD, NOW), [offer.id])
+        self.assertIsNotNone(await self.store.claim_delivery(GUILD, offer.id, NOW + 1))
+
+    async def test_a_claim_left_by_a_stopped_process_lapses(self) -> None:
+        offer = await self.site_offer()
+        first = await self.store.claim_delivery(GUILD, offer.id, NOW)
+        assert first is not None
+        lapsed = NOW + CLAIM_SECONDS
+        self.assertEqual(await self.store.undelivered_offers(GUILD, lapsed - 1), [])
+        self.assertEqual(await self.store.undelivered_offers(GUILD, lapsed), [offer.id])
+        second = await self.store.claim_delivery(GUILD, offer.id, lapsed)
+        assert second is not None
+        await self.store.release_delivery(GUILD, first)  # too late: not the claim any more
+        self.assertIsNone(await self.store.claim_delivery(GUILD, offer.id, lapsed))
 
     async def test_two_claims_at_once_send_it_once(self) -> None:
         offer = await self.site_offer()

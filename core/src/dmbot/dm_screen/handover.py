@@ -280,9 +280,17 @@ def offer_view(guild_id: int, offer_id: int) -> discord.ui.View:
     return view
 
 
-async def deliver_offer(guild: discord.Guild, campaign: Campaign, offer: HandoverOffer) -> bool:
+async def deliver_offer(
+    guild: discord.Guild,
+    campaign: Campaign,
+    offer: HandoverOffer,
+    *,
+    raise_if_discord_fails: bool = False,
+) -> bool:
     """The private message to the person offered. False if they aren't in the server or
-    can't be messaged (the caller then takes the offer back). Never raises."""
+    can't be messaged (the caller then takes the offer back). Never raises, unless
+    `raise_if_discord_fails`: then any other Discord error is raised, so the caller can
+    try again later instead (offers made on the website, #690)."""
     try:
         member = guild.get_member(offer.to_user_id) or await guild.fetch_member(offer.to_user_id)
         await member.send(
@@ -296,6 +304,8 @@ async def deliver_offer(guild: discord.Guild, campaign: Campaign, offer: Handove
             allowed_mentions=NO_PINGS,
         )
     except discord.HTTPException as exc:  # not a member (404), messages closed (403)…
+        if raise_if_discord_fails and not isinstance(exc, discord.Forbidden | discord.NotFound):
+            raise
         with log_context(guild_id=guild.id, campaign_id=campaign.id):
             log.info("Couldn't deliver a hand-over offer to user %s: %s", offer.to_user_id, exc)
         return False
