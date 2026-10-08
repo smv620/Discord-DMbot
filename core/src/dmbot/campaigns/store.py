@@ -696,6 +696,8 @@ class CampaignStore:
                 " ON CONFLICT DO NOTHING",
                 (campaign.id, guild_id, user_id),
             )
+            # Last on purpose: the website's policies (schema, web_accept_handover) allow
+            # the owner and DM writes above only while this offer is still open.
             await self._decide(conn, guild_id, offer_id, "accepted", now)
             return "accepted"
 

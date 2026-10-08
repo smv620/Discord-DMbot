@@ -8,6 +8,10 @@ session's servers and to offers the person sent or was sent (#498, schema polici
 The site names an offer by `<server id>-<offer id>`: the server is needed to read the row
 at all (every server table is scoped by server), and it must be one in the session's own
 Discord list, or the offer is treated as gone.
+
+Accepting relies on that sign-in list, not a live check that the person is still in the
+server: deliberate, since the list is at most a session old and the bot checks
+membership itself when it delivers an offer.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from dmbot.web.sessions import Session
 Answer = Literal["accept", "decline", "withdraw"]
 Outcome = Literal["accepted", "declined", "withdrawn", "no_free_slot", "gone"]
 
-_REF = re.compile(r"(\d{1,20})-(\d{1,20})")
+_REF = re.compile(r"(\d{1,19})-(\d{1,19})")  # BIGINT holds at most 19 digits
 
 
 def offer_ref(guild_id: int, offer_id: int) -> str:

@@ -525,7 +525,7 @@ function OfferRow({
         <ActionButton
           busy={busy}
           kind="secondary"
-          onClick={() => answer(() => api.declineOffer(offer.id), text.declined(offer.personName))}
+          onClick={() => answer(() => api.declineOffer(offer.id), text.declined)}
         >
           {text.decline}
         </ActionButton>
@@ -628,13 +628,13 @@ function CampaignRow({
           </div>
         </>
       )}
-      {campaign.role === "owner" && !offer && people === null && (
+      {api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
         <ActionButton
           busy={busy}
           kind="secondary"
           onClick={() =>
             void run(async () => {
-              setPeople(await api.handoverCandidates(campaign.id));
+              setPeople((await api.handoverCandidates?.(campaign.id)) ?? []);
             }, campaignRefusal)
           }
         >
@@ -651,7 +651,7 @@ function CampaignRow({
             if (!person) return;
             void run(
               async () => {
-                await api.handover(campaign.id, person.id);
+                await api.handover?.(campaign.id, person.id);
                 setPeople(null);
                 await onHandedOver(person);
               },

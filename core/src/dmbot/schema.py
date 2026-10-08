@@ -509,6 +509,15 @@ HANDOVER_NAMES = """
         ALTER COLUMN to_name DROP DEFAULT;
     """
 
+HANDOVER_OFFER_INDEXES = """
+    -- The account page reads a person's open offers on every visit (#614): by who they
+    -- were offered to, and by who offered them.
+    CREATE INDEX campaign_handover_offers_open_to
+        ON campaign_handover_offers (to_user_id) WHERE status = 'open';
+    CREATE INDEX campaign_handover_offers_open_from
+        ON campaign_handover_offers (from_user_id) WHERE status = 'open';
+"""
+
 SHARED_CONFIRMATIONS = f"""
     -- Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule:
     -- "Record who confirmed and when"; #252): one row per confirmation, what it was for
@@ -952,15 +961,6 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
 )
-
-HANDOVER_OFFER_INDEXES = """
-    -- The account page reads a person's open offers on every visit (#614): by who they
-    -- were offered to, and by who offered them.
-    CREATE INDEX campaign_handover_offers_open_to
-        ON campaign_handover_offers (to_user_id) WHERE status = 'open';
-    CREATE INDEX campaign_handover_offers_open_from
-        ON campaign_handover_offers (from_user_id) WHERE status = 'open';
-"""
 
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),

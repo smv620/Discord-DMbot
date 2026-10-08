@@ -114,9 +114,12 @@ export interface AccountApi {
   installUrl(serverId: string): string;
   /** Say you added DMbot to a server it joined through a plain link. */
   linkServer(serverId: string): Promise<void>;
-  /** People who can take over a campaign (they have a plan with room for it). */
-  handoverCandidates(campaignId: string): Promise<Person[]>;
-  handover(campaignId: string, toUserId: string): Promise<void>;
+  /** The campaign's other DMs, who can be offered it (never filtered by plan: the owner
+   * must not learn whether someone pays, #437). Missing until the API has the route
+   * (#704's follow-up); the page then shows no Hand over button. */
+  handoverCandidates?(campaignId: string): Promise<Person[]>;
+  /** Offer a campaign to one of them. Missing until the API has the route, as above. */
+  handover?(campaignId: string, toUserId: string): Promise<void>;
   /** Take a campaign offered to you (needs a free campaign slot now). */
   acceptOffer(offerId: string): Promise<void>;
   /** Say no to a campaign offered to you. */
@@ -203,15 +206,8 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
     },
-    // Hand-over paths are a guess until #437 ships the API: check them against it then.
-    handoverCandidates: async (campaignId) =>
-      (await call("GET", `/campaigns/${encodeURIComponent(campaignId)}/handover-candidates`)) as
-        Person[],
-    handover: async (campaignId, toUserId) => {
-      await call("POST", `/campaigns/${encodeURIComponent(campaignId)}/handover`, {
-        to_user_id: toUserId,
-      });
-    },
+    // No handoverCandidates or handover yet: the API has no route to make an offer from
+    // the site until #704's follow-up, so the Hand over button stays hidden.
     acceptOffer: async (offerId) => {
       await call("POST", `/offers/${encodeURIComponent(offerId)}/accept`);
     },

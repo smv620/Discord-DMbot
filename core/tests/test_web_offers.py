@@ -197,6 +197,38 @@ class WebOffers(DatabaseTest):
                     (ALICE.id + 1, self.campaign.id),
                 )
 
+    async def test_the_role_has_no_other_rights_on_offers_or_campaigns(self) -> None:
+        # The grants (schema.WEB_ROLE_GRANTS) allow only an offer's status and a campaign's
+        # owner to change; everything else is refused before any policy runs.
+        scoped = self.web.as_person(BOB.id, self.bob.id_hash)
+        refused = (
+            (
+                "INSERT INTO campaign_handover_offers (guild_id, campaign_id, from_user_id,"
+                " to_user_id, created_at, from_name, to_name)"
+                " VALUES (%s, %s, %s, %s, %s, 'a', 'b')",
+                (THURSDAY.id, self.campaign.id, ALICE.id, BOB.id, self.now),
+            ),
+            ("UPDATE campaign_handover_offers SET to_user_id = %s", (BOB.id,)),
+            ("UPDATE campaign_handover_offers SET from_user_id = %s", (BOB.id,)),
+            ("UPDATE campaign_handover_offers SET created_at = %s", (self.now,)),
+            ("UPDATE campaigns SET name = %s", ("Mine now",)),
+        )
+        for sql, params in refused:
+            with self.subTest(sql=sql), self.assertRaises(errors.InsufficientPrivilege):
+                async with scoped.guild(THURSDAY.id) as conn:
+                    await conn.execute(sql, params)
+
+    async def test_the_accept_policies_only_narrow(self) -> None:
+        # RESTRICTIVE: ANDed with each table's own policy, never widening what it allows.
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT tablename, permissive FROM pg_policies"
+                " WHERE schemaname = current_schema() AND policyname = 'web_accept_handover'"
+                " ORDER BY tablename"
+            )
+            rows = [(r["tablename"], r["permissive"]) for r in await cur.fetchall()]
+        self.assertEqual(rows, [("campaign_dms", "RESTRICTIVE"), ("campaigns", "RESTRICTIVE")])
+
     async def test_the_api_answers_with_plain_codes(self) -> None:
         discord = FakeDiscord()
         discord.user_info = BOB

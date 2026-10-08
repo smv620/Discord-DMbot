@@ -421,7 +421,7 @@ describe("hand-over offers (#614)", () => {
     const { api } = show("offers");
     await screen.findByText(text.offersHeading);
     fireEvent.click(within(offerRow(ember.id)).getByRole("button", { name: text.decline }));
-    expect(await screen.findByText(text.declined(ember.personName))).toBeTruthy();
+    expect(await screen.findByText(text.declined)).toBeTruthy();
     expect(api.calls).toContain(`decline:${ember.id}`);
   });
 
@@ -429,7 +429,7 @@ describe("hand-over offers (#614)", () => {
     show("offers");
     await screen.findByText(text.offersHeading);
     fireEvent.click(within(offerRow(full.id)).getByRole("button", { name: text.decline }));
-    await screen.findByText(text.declined(full.personName));
+    await screen.findByText(text.declined);
     fireEvent.click(within(offerRow(ember.id)).getByRole("button", { name: text.accept }));
     expect(await screen.findByText(text.accepted(ember.campaignName))).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(text.offersHeading)).toBeNull());
@@ -643,7 +643,7 @@ describe("the HTTP client", () => {
 
   it("maps error codes to plain kinds", async () => {
     const api = httpApi("https://api.example", fakeFetch(409, { error: "no_free_slot" }).fetcher);
-    await expect(api.handover("c1", "u1")).rejects.toMatchObject({ kind: "no-free-slot" });
+    await expect(api.acceptOffer("o1")).rejects.toMatchObject({ kind: "no-free-slot" });
     const expired = httpApi("https://api.example", fakeFetch(403, { error: "confirm_again" }).fetcher);
     await expect(expired.confirmDelete("t")).rejects.toMatchObject({ kind: "confirm-again" });
     const gone = httpApi("https://api.example", fakeFetch(409, { error: "offer_gone" }).fetcher);
@@ -685,8 +685,19 @@ describe("the HTTP client", () => {
   });
 
   it("escapes ids in paths", async () => {
-    const { calls, fetcher } = fakeFetch(200, []);
-    await httpApi("https://api.example", fetcher).handoverCandidates("a/../b");
-    expect(calls[0]?.url).toBe("https://api.example/campaigns/a%2F..%2Fb/handover-candidates");
+    const { calls, fetcher } = fakeFetch(204);
+    await httpApi("https://api.example", fetcher).acceptOffer("a/../b");
+    expect(calls[0]?.url).toBe("https://api.example/offers/a%2F..%2Fb/accept");
+  });
+
+  it("can't make an offer from the site yet, so an owner sees no Hand over (#625)", async () => {
+    expect(httpApi("https://api.example").handover).toBeUndefined();
+    expect(httpApi("https://api.example").handoverCandidates).toBeUndefined();
+    const api = mockApi("table");
+    delete api.handover;
+    delete api.handoverCandidates;
+    render(<Account api={api} go={vi.fn()} />);
+    await screen.findByText("The Brynwater Crossing");
+    expect(screen.queryByRole("button", { name: text.handOver })).toBeNull();
   });
 });

@@ -197,7 +197,9 @@ export const questions: readonly Question[] = [
   {
     question: "Can I give a campaign to someone else?",
     answer:
-      "Yes. In My Account, tap Hand over next to the campaign and pick someone whose plan has room for it. They have 7 days to say yes. Nothing changes until they do; then it uses their hours, not yours.",
+      // In Discord for now: the site's own Hand over waits on its API route (#704's
+      // follow-up). Never "pick someone with room": the owner can't know who pays (#437).
+      "Yes. In Discord, open ⚙️ Settings and tap 🤝 Hand over, then pick who should take it. They have 7 days to say yes. Nothing changes until they do; then it uses their hours, not yours.",
   },
   {
     question: "Can I delete everything?",

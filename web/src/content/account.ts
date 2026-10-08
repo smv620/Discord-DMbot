@@ -140,7 +140,7 @@ export const text = {
     "Only someone who helps run this campaign can take it over, and nobody does yet. Add them as a DM in Discord, then tap Hand over again.",
   handOverConfirm: "Offer it",
   handOverDone: (person: string): string =>
-    `Done. We've asked ${person}. You'll see their answer here and in Discord.`,
+    `Done. We've asked ${person}. You'll see their answer here.`,
   cancel: "Cancel",
 
   // Hand-over offers (#614): an offer waits for the new owner's yes, for 7 days.
@@ -157,7 +157,9 @@ export const text = {
   seeMyPlan: "See my plan",
   accepted: (campaign: string): string =>
     `${campaign} is yours now. You're a DM of it in Discord too.`,
-  declined: (person: string): string => `Done. We'll tell ${person} in Discord.`,
+  // Nothing tells the other person yet when the answer comes from the site (a bot-side
+  // issue), so this promises only what is true.
+  declined: "Done. The offer is closed.",
   offerOutgoing: (person: string, iso: string): string =>
     `Waiting for ${person} to say yes (until ${shortDateTime(iso)}). Nothing changes until they do.`,
   withdraw: "Take back offer",
