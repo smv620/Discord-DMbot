@@ -605,6 +605,7 @@ def create_app(
     app.include_router(
         admin_api.router(
             settings,
+            db=db,
             google=google,
             admin_sessions=admin_sessions or AdminSessions(),
             tries=admin_tries or FailedTries(),

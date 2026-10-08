@@ -35,7 +35,6 @@ export const text = {
   down: "Can't reach DMbot right now. Try again in a minute. If it keeps happening, tell dev1.",
   tryAgain: "Try again",
   signedInAs: (email: string): string => `Signed in as ${email}.`,
-  comingSoon: "The free access list comes here next.",
   signOut: "Sign out",
   signOutFailed:
     "You're still signed in. Can't reach DMbot right now. Try \"Sign out\" again in a minute.",
@@ -44,4 +43,95 @@ export const text = {
   timedOut:
     "You're signed out. That happens after an hour without use, or 12 hours after you signed in. Sign in again.",
   needsScript: "This page needs JavaScript. Turn it on in your browser, then reload the page.",
+
+  // Free access (#773). "Discord user id" is the one technical term: it's what Discord
+  // calls the thing to copy. The error texts are the agreed #804 words (grants.py).
+  freeHeading: "Free access",
+  freeLead:
+    "These people use DMbot without paying. People marked “Always free” are set on the server. Ask dev1 to change those.",
+  listLoading: "Loading the list…",
+  alwaysFree: "Always free (set on the server)",
+  levels: { guild: "Same as Guild", unlimited: "No limits" } as Record<string, string>,
+  noEnd: "No end date",
+  until: (date: string): string => `Until ${date}`,
+  // granted_by and granted_at are rewritten by a change, so "set", not "added".
+  setBy: (by: string, date: string): string => `Set by ${by} on ${date}`,
+  ended: (date: string): string => `Ended ${date}. Tap Change to give it again.`,
+  change: "Change",
+  nobody: "Nobody has free access from this page yet. Add someone below.",
+  revoke: "Revoke",
+  // `who` is the person's name, or a shortened id when they haven't signed in lately.
+  confirmRevoke: (who: string): string => `Revoke free access for ${who}?`,
+  yesRevoke: "Yes, revoke",
+  cancel: "Cancel",
+  revoked: (who: string): string => `Done. ${who} no longer has free access.`,
+  addHeading: "Add someone",
+  addLead: "To change someone's free access, tap Change in the list.",
+  changeHeading: (who: string): string => `Change free access for ${who}`,
+  idLabel: "Discord user ID",
+  idHint:
+    "First turn on Developer Mode in Discord: Settings, then Advanced. Then on a computer, right-click the person. On a phone, tap their name, then the three dots. Pick Copy User ID.",
+  levelLabel: "How much",
+  levelHint: "Same as Guild: the same limits as the Guild plan. No limits: no caps at all.",
+  endLabel: "Last day (optional)",
+  endHint: "They keep free access until the end of this day. Leave it empty so it never ends.",
+  noEndButton: "No end date",
+  noteLabel: "Note (optional)",
+  noteHint: (max: number): string =>
+    `Who this is, or why. Only admins see this. ${max} characters at most.`,
+  add: "Give free access",
+  save: "Save changes",
+  startOver: "Start over",
+  adding: "Saving…",
+  // What was saved, so a slip (the wrong level, a missing date) shows at once: `how` is
+  // "Same as Guild, until Dec 31, 2026" or "No limits, no end date" (see `saved`).
+  added: (who: string, how: string): string => `Done. ${who} has free access: ${how}.`,
+  changed: (who: string, how: string): string =>
+    `Done. Changed free access for ${who}: ${how}.`,
+  historyHeading: "Recent changes",
+  noHistory: "No changes yet.",
+  logLine: (when: string, by: string, action: string, who: string): string =>
+    `${when}: ${by} ${
+      action === "grant"
+        ? "gave free access to"
+        : action === "change"
+          ? "changed free access for"
+          : "revoked free access for"
+    } ${who}`,
+  grantErrors: {
+    "bad-id":
+      "That isn't a Discord account number. In Discord, right-click the person and pick Copy User ID.",
+    "bad-level": "Pick how much: Same as Guild, or No limits.",
+    "no-id": "Paste the person's Discord user ID first.",
+    "bad-date": "That end date didn't work. Pick it from the calendar, or leave it empty.",
+    "past-date": "Pick an end date after today, or leave it empty so it never ends.",
+    "long-note": (max: number): string => `Keep the note to ${max} characters or fewer.`,
+    "bad-note": "The note has a character DMbot can't keep. Type it again with plain letters.",
+    "already-free":
+      "That person is always free (set on the server), so there's nothing to add here.",
+    stale: "That didn't work. Reload this page and try again.",
+    "no-grant": "That person has no free access to revoke. We've updated the list.",
+  } as Record<string, string | ((max: number) => string)>,
 } as const;
+
+/** What a save did, in words: "Same as Guild, until Dec 31, 2026" or "No limits, no end
+ * date". `date` is the already-formatted last day. */
+export function saved(level: string, date: string | null): string {
+  return `${text.levels[level] ?? level}, ${date ? `until ${date}` : "no end date"}`;
+}
+
+/** The longest note, in characters: the same number the API and the database use. */
+export const NOTE_MAX = 200;
+
+/** A grant's note-length refusal and the others as one text. */
+export function grantError(kind: string): string | undefined {
+  const words = text.grantErrors[kind];
+  return typeof words === "function" ? words(NOTE_MAX) : words;
+}
+
+/** Who a row is about: their name, or a shortened id ("1234…5678") if they haven't
+ * signed in lately. The full id stays visible on the list; messages stay short. */
+export function who(name: string | null, discordId: string): string {
+  if (name) return name;
+  return discordId.length > 10 ? `${discordId.slice(0, 4)}…${discordId.slice(-4)}` : discordId;
+}

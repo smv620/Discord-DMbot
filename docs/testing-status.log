@@ -40,6 +40,20 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   ADMIN_EMAILS set and no password hash or Google settings, or a Client secret without
   an ID: `docker compose logs --tail 20 web-api` names the setting. Check: the logs show
   no error; /admin on the site shows the sign-in; record the result with no email.
+- CloudDev, PR #840 (#836): the Cloudflare Tunnel that puts web-api online for the admin
+  sign-in (admin paths only). No migration, no rebuild. Not live until the owner has done
+  his part, so nothing is exposed on deploy. **Order:** (1) the owner follows docs/DEPLOY.md
+  "Put the admin API online" (tunnel `dmbot-api`, `scripts/set-key CLOUDFLARE_TUNNEL_TOKEN`
+  answering No to the restart, a route `api.getdmbot.com` with path `^/admin(/|$)` to
+  `web-api:8080`) and tells dev1 "tunnel ready"; (2) dev1 follows "dev1" there: check
+  WEB_API_URL, WEB_SITE_URL, WEB_CLIENT_IP_HEADER and COMPOSE_PROFILES in .env, run
+  `docker compose up -d web-api` and read its log, then `docker compose up -d cloudflared`.
+  Name only those services: core and ears also changed (they now blank the token), but
+  recreating them restarts the voice part, so let them pick it up at the next deploy.
+  Check from outside: `https://api.getdmbot.com/health` prints 404 (a 200 means the path
+  limit is off: `docker compose stop cloudflared` at once and tell Supervisor);
+  `/admin/auth/ways` answers from DMbot (404 JSON until ADMIN_EMAILS is set, then 200); the
+  cloudflared log says "Registered tunnel connection". Record the result, no token.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
