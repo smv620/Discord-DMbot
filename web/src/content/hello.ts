@@ -36,6 +36,7 @@ export const text = {
   sending: "Sending…",
   sent: "Thanks, we read every message.",
   seePost: "See your message on GitHub",
+  answerOnGitHub: "We'll answer under your message on GitHub.",
   sendAnother: "Send another",
   errors: {
     empty: "Please type your message first.",
@@ -44,7 +45,7 @@ export const text = {
       "We take one message every 10 minutes from each connection. Wait a few minutes, then press send again. Your words are still here.",
     busy: "Lots of people are writing right now. Try again in a few minutes. Your words are still here.",
     "not-human":
-      "We couldn't check that you're a person. Wait for the tick just above the button, then send again. Your words are still here.",
+      "Wait for the tick above, then press send again. Your words are still here.",
     off: "Messages are switched off for now. Please try again later, or open an issue on GitHub (the link is at the bottom of this page).",
     "contact-too-long": `How to reach you is too long. Please keep it to ${MAX_CONTACT} letters or fewer.`,
     failed: "That didn't send. Your words are still here. Please try again later.",
