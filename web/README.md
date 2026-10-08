@@ -70,6 +70,14 @@ PUBLIC_TURNSTILE_SITE_KEY=0x4AAA... npm run build   # empty: no check (local tes
 
 With `PUBLIC_API_BASE=mock` every message pretends to send.
 
+### The admin page
+
+`/admin` (#772) is for the team only: never linked from the site, `noindex, nofollow` in
+the page and in an `X-Robots-Tag` header, and drawn only in the browser (`src/admin/`).
+It signs in with Google or the admin email and password (the web API's `/admin/...`
+routes) and keeps nothing in the browser but the API's HttpOnly cookie. With
+`PUBLIC_API_BASE=mock` any password signs in.
+
 ## Layout
 
 - `src/layouts/Base.astro`: the one layout (head tags, menu, footer with legal links).
