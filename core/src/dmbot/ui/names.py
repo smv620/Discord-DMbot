@@ -253,6 +253,8 @@ class NamesHome(_Menu):
         self.add_item(_Button(self._browse, label="📚 Browse by kind", style=grey, row=1))
         self.add_item(_Button(self._add_many, label="📥 Add many", style=grey, row=1))
         self.add_item(_Button(self._download, label="📤 Download all", style=grey, row=1))
+        # Players' D&D Beyond sheets (#723): read again now, not only at /dmbot start.
+        self.add_item(_Button(self._sheets, label="📜 Refresh sheets", style=grey, row=3))
         if shown:
             self.open = _Select(
                 self._open,
@@ -309,6 +311,13 @@ class NamesHome(_Menu):
 
     async def _check(self, interaction: discord.Interaction) -> None:
         await start_review(interaction, self.campaign_id)
+
+    async def _sheets(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.sheets import refresh_all
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign:
+            await refresh_all(interaction, campaign.id, campaign.guild_id)
 
 
 async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -630,6 +639,12 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
         required=False,
         max_length=400,
     )
+    sheet: discord.ui.TextInput[CharacterForm] = discord.ui.TextInput(
+        label="D&D Beyond link (optional)",
+        placeholder="https://www.dndbeyond.com/characters/12345678",
+        required=False,
+        max_length=200,
+    )
 
     def __init__(self, campaign_id: str, player_id: int, player_name: str) -> None:
         super().__init__(
@@ -658,11 +673,20 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
             await _tell(interaction, f"Couldn't save that: {exc}")
             return
         changed(interaction, campaign)
+        sheet_note = ""
+        if self.sheet.value.strip():
+            from dmbot.ui.sheets import dm_link
+
+            await _answer_first(interaction)  # reading D&D Beyond takes a moment
+            sheet_note = "\n" + await dm_link(
+                interaction, campaign.guild_id, campaign.id, entity.id, self.sheet.value
+            )
         await _tell(
             interaction,
             f"✅ DMbot will remember **{_md(entity.name)}**, played by "
             f"**{_md(self.player_name)}**."
-            + (f" It also listens for: {', '.join(map(_md, others))}." if others else ""),
+            + (f" It also listens for: {', '.join(map(_md, others))}." if others else "")
+            + sheet_note,
         )
 
 

@@ -987,6 +987,34 @@ class MemoryStore:
             if confirm_keys and source != DM:
                 raise ValueError("Only the DM confirms names")
             await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
+            # A character's D&D Beyond sheet (#723) goes with it, unless the kept entry
+            # has its own: then the merged one's is forgotten (nothing could show or
+            # remove it). Not in the change log: undoing the merge leaves it on the kept
+            # entry; if that entry then has no player, the sheet is left out everywhere.
+            # The kept entry's own sheet counts only if it's its player's (a sheet
+            # left from an earlier player is shown nowhere): drop it first, so it can't
+            # beat a visible one.
+            await w.conn.execute(
+                "DELETE FROM character_sheets s USING memory_entities e"
+                " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
+                " AND e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
+                " AND e.id = s.entity_id AND s.player_id IS DISTINCT FROM e.played_by",
+                (guild_id, campaign_id, keep_id),
+            )
+            await w.conn.execute(
+                "DELETE FROM character_sheets"
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"
+                " AND EXISTS (SELECT 1 FROM character_sheets"
+                "  WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s)",
+                (guild_id, campaign_id, gone_id, guild_id, campaign_id, keep_id),
+            )
+            await w.conn.execute(
+                "UPDATE character_sheets SET entity_id = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"
+                " AND NOT EXISTS (SELECT 1 FROM character_sheets"
+                "  WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s)",
+                (keep_id, guild_id, campaign_id, gone_id, guild_id, campaign_id, keep_id),
+            )
             own = await w.select(
                 ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
             )

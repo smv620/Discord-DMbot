@@ -306,9 +306,9 @@ SlotCheck = Callable[[Conn, int, int], Awaitable[bool]]
 
 
 async def plan_works(conn: Conn, user_id: int, now: int) -> bool:
-    """A subscriber: their plan works now (#435)."""
-    plan = await entitlements.read(conn, user_id)
-    return plan is not None and plan.usable(now)
+    """They may run a campaign now: a paid plan that works, a grant or the free list
+    (#435, #771; entitlements.effective)."""
+    return (await entitlements.effective(conn, user_id, now)).works
 
 
 class CampaignStore:

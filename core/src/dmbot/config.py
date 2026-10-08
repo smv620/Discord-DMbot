@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dmbot.ai import DEFAULT_MODEL
+from dmbot.entitlements import parse_free_users
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS
 from dmbot.sharding import ShardConfigError, ShardSettings, parse_shards
 from dmbot.transcription.config import (
@@ -42,6 +43,8 @@ class Settings:
     ai_model: str = DEFAULT_MODEL
     # How long Undo works on campaign memory; older change-log entries are deleted (#164).
     memory_keep_days: int = 30
+    # The owner's own Discord accounts: free access, no caps (#771). Never logged.
+    free_users: frozenset[int] = field(default=frozenset(), repr=False)
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -90,6 +93,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             f'{MAX_KEEP_DAYS}, got "{keep_raw}".'
         )
 
+    try:
+        free_users = parse_free_users(get("DMBOT_FREE_USERS"))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
     return Settings(
         discord_token=get("DISCORD_TOKEN"),
         ears_secret=get("EARS_SHARED_SECRET"),
@@ -105,4 +113,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_key=get("ANTHROPIC_API_KEY"),
         ai_model=get("AI_MODEL") or DEFAULT_MODEL,
         memory_keep_days=keep_days,
+        free_users=free_users,
     )
