@@ -530,7 +530,7 @@ it isn't (it's refreshed at the next `/dmbot start`), so a resumed session may l
 Backups carry the level, and a restore uses the backup's (older backups: Normal).
 | Level | What DMbot posts on its own |
 |---|---|
-| **Quiet** | Only what you ask for, plus warnings and 🙈 Left out as off-topic (so fewer misheard names get fixed) |
+| **Quiet** | Only what you ask for, plus warnings and the 🙈 Left out as off-topic list. Fewer misheard names get fixed. |
 | **Normal** (default) | Also questions and fixes, one at a time: "Did they mean…?" and ✏️ Name fixes to check |
 | **Chatty** | Also what it noticed (reserved: not offered yet; behaves like Normal) |
 
@@ -1441,13 +1441,16 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
   docs/test-scripts/off-topic.md.
 - **Put it back (decided 2026-10-08, Supervisor, #677; why: the DM decides).** A game line
   wrongly labelled off-topic can be undone. The DM screen keeps one message per session,
-  "🙈 Left out as off-topic (tap Put it back if it was game talk)", edited in place, with
-  the newest 10 runs (one person's off-topic lines from one check, in a row). Each run gets
-  one line, `[time] Name: first words…`, and a **Put it back** button with its number.
+  "🙈 Left out as off-topic: kept out of the cleaned transcript. Game talk? Press its Put
+  it back.", edited in place, with the newest 10 runs (one person's off-topic lines from one
+  check, in a row). Each run gets one line, `[time] Name: first words…`, and a **Put it
+  back N** button with its number.
   Pressing it makes those lines game talk again: in the stored transcript (so the cleaned
   download shows them), in lines waiting to be saved, and in the live channel if they were
-  posted in the last ~30 s; they also go to the names scan, once. The line then reads
-  "Put back: [time] Name: first words…". Only the campaign's DM can press it, and the
+  posted in the last ~30 s; they also go to the names scan, once (even if the session
+  is stopped mid-press). The line then reads "↩️ Put back: [time] Name: first words…".
+  With no stored transcript yet for lines already out of the waiting buffer, nothing is
+  said to be back: the DM is asked to try again. Only the campaign's DM can press it, and the
   buttons go when the session ends. It shows at every DM-screen level, quiet included,
   because it's the DM's only chance to undo; one message edited in place never pings.
   Privacy: these lines are table chatter, already in the as-heard file anyone in the

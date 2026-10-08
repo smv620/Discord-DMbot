@@ -1999,7 +1999,9 @@ class DMBot(commands.AutoShardedBot):
                     edits[id(edit[0])] = edit  # the latest content has every change
             # Before any await: a Stop now finds them listed, and takes them down.
             running = self.tables.get(table.guild_id) is table and not table.fix_ended
-            stored = self.transcripts is not None  # else there's no cleaned transcript
+            # Listed only with a transcript store: else there's no cleaned transcript to
+            # put lines back into.
+            stored = self.transcripts is not None
             if hidden and running and stored and table.left_out.add(hidden, checked or lines):
                 self._redraw_left_out(table)
             for message, content in edits.values():
@@ -2346,18 +2348,19 @@ class DMBot(commands.AutoShardedBot):
         self._redraw_left_out(table)
         if not self.consent.has_consent(guild_id, run.speaker):
             return left_out.STOPPED  # stopped meanwhile: nothing about their lines
+        # What the names scan would have had (#52), now: before the channel's awaits, so
+        # a /dmbot stop meanwhile still scans them (it reads these at the end).
+        for line in run.lines:
+            if len(table.heard) < HEARD_MAX:
+                table.heard.append((line.speaker, self._words_now(table, line)))
         name = self.name_of(guild_id, run.speaker)
         who = "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
         if self.tables.get(guild_id) is not table or table.fix_ended:
-            # Stopped meanwhile: the saved lines are right; the channel and the names
-            # scan are being wound down.
+            # Stopped meanwhile: the saved lines are right; the channel is winding down.
             return left_out.done_text(run.number, who, in_channel=None)
         in_channel = await self._show_lines_again(table, run.lines)
         if not self.consent.has_consent(guild_id, run.speaker):
             return left_out.STOPPED
-        for line in run.lines:  # what the names scan would have had (#52)
-            if len(table.heard) < HEARD_MAX:
-                table.heard.append((line.speaker, self._words_now(table, line)))
         return left_out.done_text(run.number, who, in_channel=in_channel)
 
     async def _restore_topics(self, table: Table, lines: list[Waiting]) -> bool:
@@ -2375,8 +2378,13 @@ class DMBot(commands.AutoShardedBot):
                 if not table.unsaved.set_topic(speaker, line.started_ms, GAME)
             ]
             session_id = table.transcript_session_id  # under the lock: a save may set it
-            if not saved or self.transcripts is None or session_id is None:
+            if not saved:
                 return True
+            if self.transcripts is None or session_id is None:
+                # Out of the waiting buffer, but no stored transcript to change: never
+                # say they're back.
+                log.warning("Put it back found no stored transcript for %d lines", len(saved))
+                return False
             try:
                 changed = await asyncio.wait_for(
                     self.transcripts.set_topics(guild_id, session_id, speaker, saved, GAME),

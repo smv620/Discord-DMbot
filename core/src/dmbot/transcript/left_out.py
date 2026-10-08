@@ -4,7 +4,7 @@ filter"; #677). Pure: no Discord, no database.
 A game line wrongly labelled off-topic is left out of the cleaned transcript and the
 names scan. So the DM screen keeps one "🙈 Left out as off-topic" message per session,
 edited in place, with the newest runs (one person's off-topic lines from one check):
-one line and one **Put it back** button each. Putting a run back makes its lines game
+one line and one **Put it back N** button each. Putting a run back makes its lines game
 talk again: saved or waiting to be saved, in the live channel if still recent, and in
 the names scan.
 
@@ -26,20 +26,24 @@ from dmbot.transcript.topics import Waiting
 SHOWN = 10  # runs in the message (the newest); older ones can't be put back here
 WORDS_MAX = 60  # the first words shown for a run
 MESSAGE_MAX = 2000  # Discord's limit for one message
-HEADER = "🙈 **Left out as off-topic** (tap Put it back if it was game talk)"
+HEADER = (
+    "🙈 **Left out as off-topic**: kept out of the cleaned transcript. Game talk? Press "
+    "its Put it back."
+)
 NOTHING = "_Nothing left out right now._"
 PUT_BACK = "Put it back"
 ONLY_DM = "Only this campaign's DM can put these lines back."
 EXPIRED = (
-    "Too late to put these back: the session ended, DMbot restarted, or they're too old. "
-    "They stay skipped "
-    "in the cleaned transcript, but every word is still in 🎙 As heard (type /transcript)."
+    "Too late to put these back (the session ended, DMbot restarted, or the line left the "
+    "list). They stay out of the cleaned transcript; every word is still in 🎙 As heard "
+    "(/transcript)."
 )
 ALREADY = "Those lines are already back."
 STOPPED = "That person stopped being recorded, so their lines can't be put back."
 NOT_SAVED = "Couldn't put those lines back just now. Try again in a moment."
 ENDED = (
-    "_Session over: these stay skipped in the cleaned transcript (every word is in 🎙 As heard)._"
+    "_Session over. Lines not put back stay out of the cleaned transcript; every word is "
+    "still in 🎙 As heard (/transcript)._"
 )
 
 
@@ -48,14 +52,14 @@ def done_text(number: int, who: str, *, in_channel: bool | None) -> str:
     True, the live transcript channel shows the words again; False, it still shows the
     marker (it can only be changed for about 30 s after a line is posted); None, there
     was nothing to change there (no marker, or no channel)."""
-    text = f"↩️ Put back {number} ({who}): those lines are back in the cleaned transcript"
+    text = f"↩️ Put back {number}: {who}'s words are back in the cleaned transcript"
     if in_channel is None:
         return text + "."
     if in_channel:
-        return text + " and the live channel."
+        return text + " and the live transcript channel."
     return (
-        text + ". It's too late to change the live channel, so it still says "
-        '"skipped" there. That\'s expected.'
+        text + '. The live transcript channel still says "off-topic chat skipped" (it can '
+        "only change in the first 30 seconds)."
     )
 
 
@@ -150,7 +154,8 @@ def message_text(
         count = f" ({len(run.lines)} lines)" if len(run.lines) > 1 else ""
         said = f"[{when(run.started_ms)}] {names.get(run.speaker, 'Someone')}{count}: "
         said += escape(_first_words(run))
-        lines.append(f"{run.number}. Put back: {said}" if run.put_back else f"{run.number}. {said}")
+        mark = "↩️ Put back: " if run.put_back else ""
+        lines.append(f"{run.number}. {mark}{said}")
     lines += footer
     kept = len(lines)
     while kept > 1 and len(HEADER) + sum(len(x) + 1 for x in lines[-kept:]) > MESSAGE_MAX:

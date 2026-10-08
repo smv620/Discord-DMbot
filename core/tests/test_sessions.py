@@ -1549,7 +1549,11 @@ class SaveAndResume(SessionTests):
         await self.left_out_line("quiet")  # the DM's only chance to undo
         channel, text, view = self.bot.post_message.await_args.args  # type: ignore[attr-defined]
         self.assertEqual(channel, SCREEN)  # the DM screen, never the transcript channel
-        self.assertIn("🙈 **Left out as off-topic** (tap Put it back if it was game talk)", text)
+        self.assertIn(
+            "🙈 **Left out as off-topic**: kept out of the cleaned transcript. Game talk? Press "
+            "its Put it back.",
+            text,
+        )
         self.assertIn("1. [0:00:00] Someone: my boss called again", text)
         self.assertNotIn("sneak", text)  # kept lines aren't listed
         self.assertEqual([b.item.label for b in view.children], ["Put it back 1"])
@@ -1562,8 +1566,8 @@ class SaveAndResume(SessionTests):
         (run,) = table.left_out.runs
         self.assertNotIn("boss", posted.edit.await_args.kwargs["content"])  # a marker now
         answer = await self.bot.put_back(GUILD, run.id, DM)
-        self.assertIn("Put back 1 (Someone): those lines are back in the cleaned", answer)
-        self.assertIn("and the live channel", answer)
+        self.assertIn("Put back 1: Someone's words are back in the cleaned", answer)
+        self.assertIn("and the live transcript channel", answer)
         topics = {line.text: line.topic for line in table.unsaved._waiting}
         self.assertEqual(topics["my boss called again"], "game")
         channel = posted.edit.await_args.kwargs["content"]
@@ -1578,7 +1582,7 @@ class SaveAndResume(SessionTests):
         self.assertEqual(table.hidden, set())  # a later name Undo may edit it again
         await self.settle()
         drawn = screen.edit.await_args.kwargs
-        self.assertIn("1. Put back: [0:00:00] Someone: my boss called again", drawn["content"])
+        self.assertIn("1. ↩️ Put back: [0:00:00] Someone: my boss called again", drawn["content"])
         self.assertIsNone(drawn["view"])  # nothing left to press
         self.assertIn("already back", await self.bot.put_back(GUILD, run.id, DM))
         self.assertEqual([text for _, text in table.heard], scanned)  # scanned once
@@ -1616,7 +1620,7 @@ class SaveAndResume(SessionTests):
         await self.settle()
         drawn = screen.edit.await_args.kwargs
         self.assertIsNone(drawn["view"])  # the buttons go, and it says why
-        self.assertIn("Session over", drawn["content"])
+        self.assertIn("Session over. Lines not put back stay out", drawn["content"])
         self.assertIn("Too late", await self.bot.put_back(GUILD, run.id, DM))
         self.assertFalse(run.put_back)
         self.assertNotIn("my boss called again", [text for _, text in table.heard])
@@ -1689,6 +1693,53 @@ class SaveAndResume(SessionTests):
         self.assertEqual(posted.edit.await_count, edits)  # their words aren't shown again
         self.assertNotIn("my boss called again", [text for _, text in table.heard])
 
+    async def test_a_stop_while_the_press_waits_for_the_save_lock_changes_nothing(self) -> None:
+        # Stop recording empties their waiting lines; without the check under the lock,
+        # the press would then mark their *stored* rows as game talk again.
+        table, _, _ = await self.left_out_line()
+        (run,) = table.left_out.runs
+        table.transcript_session_id = "s5"
+        store = MagicMock(set_topics=AsyncMock(return_value=1))
+        self.bot.transcripts = store
+        await table.save_lock.acquire()  # a save is under way
+        press = asyncio.create_task(self.bot.put_back(GUILD, run.id, DM))
+        await self.settle()
+        self.bot.stop_recording(GUILD, PLAYER)
+        table.save_lock.release()
+        self.assertIn("stopped being recorded", await press)
+        store.set_topics.assert_not_awaited()
+        self.assertNotIn("my boss called again", [text for _, text in table.heard])
+
+    async def test_no_stored_transcript_yet_is_never_said_to_be_back(self) -> None:
+        table, _, _ = await self.left_out_line()
+        (run,) = table.left_out.runs
+        table.unsaved.take(lambda _: True)  # out of the waiting buffer…
+        table.transcript_session_id = None  # …but no stored transcript to change
+        self.bot.transcripts = MagicMock(set_topics=AsyncMock(return_value=1))
+        with self.assertLogs("dmbot.bot", "WARNING"):
+            answer = await self.bot.put_back(GUILD, run.id, DM)
+        self.assertIn("Try again", answer)
+        self.assertFalse(run.put_back)  # can be pressed again
+
+    async def test_a_session_stop_mid_press_still_scans_the_lines(self) -> None:
+        # /dmbot stop while the press saves: the stored lines are right, and the names
+        # scan at the end still gets them.
+        table, posted, _ = await self.left_out_line()
+        (run,) = table.left_out.runs
+        table.unsaved.take(lambda _: True)
+        table.transcript_session_id = "s5"
+        edits = posted.edit.await_count
+
+        async def stop_meanwhile(*_: Any) -> int:
+            await self.bot.stop_table(GUILD, "test")
+            return 1
+
+        self.bot.transcripts = MagicMock(set_topics=AsyncMock(side_effect=stop_meanwhile))
+        answer = await self.bot.put_back(GUILD, run.id, DM)
+        self.assertTrue(answer.endswith("back in the cleaned transcript."), answer)
+        self.assertIn("my boss called again", [text for _, text in table.heard])
+        self.assertEqual(posted.edit.await_count, edits)  # the channel is winding down
+
     async def test_a_stop_during_the_channel_edits_leaves_the_rest_as_markers(self) -> None:
         # Their run spans two channel messages: a Stop while the first is edited means
         # the second is never edited, and stays a marker.
@@ -1726,7 +1777,7 @@ class SaveAndResume(SessionTests):
             message.at -= 60  # posted a minute ago: too late to edit
         edits = posted.edit.await_count
         answer = await self.bot.put_back(GUILD, run.id, DM)
-        self.assertIn('still says "skipped" there', answer)
+        self.assertIn('still says "off-topic chat skipped"', answer)
         self.assertEqual(posted.edit.await_count, edits)
         topics = {line.text: line.topic for line in table.unsaved._waiting}
         self.assertEqual(topics["my boss called again"], "game")  # the download is right

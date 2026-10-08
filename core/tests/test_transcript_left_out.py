@@ -71,14 +71,12 @@ class MessageTest(unittest.TestCase):
         first, second = notes.add([w(DEE, 4), w(MIA, 9, "pass the chips")])
         names = {DEE: "Dee", MIA: "Mia"}
         text, shown = left_out.message_text(notes.runs, names, when)
-        self.assertTrue(
-            text.startswith("🙈 **Left out as off-topic** (tap Put it back if it was game talk)\n")
-        )
+        self.assertTrue(text.startswith(left_out.HEADER + "\n"))
         self.assertIn("1. [0:00:04] Dee: my boss called again\n", text)
         self.assertEqual(shown, [first, second])
         first.put_back = True
         text, _ = left_out.message_text(notes.runs, names, when)
-        self.assertIn("1. Put back: [0:00:04] Dee: my boss called again", text)
+        self.assertIn("1. ↩️ Put back: [0:00:04] Dee: my boss called again", text)
         self.assertIn("2. [0:00:09] Mia: pass the chips", text)
 
     def test_only_the_first_words_and_never_formatting(self) -> None:
@@ -128,11 +126,14 @@ class MessageTest(unittest.TestCase):
 
     def test_what_a_press_says(self) -> None:
         done = left_out.done_text(3, "Mia", in_channel=True)
-        self.assertTrue(done.startswith("↩️ Put back 3 (Mia): "))
-        self.assertIn("and the live channel.", done)
+        self.assertEqual(
+            done,
+            "↩️ Put back 3: Mia's words are back in the cleaned transcript and the live "
+            "transcript channel.",
+        )
         self.assertTrue(left_out.done_text(3, "Mia", in_channel=None).endswith("transcript."))
         late = left_out.done_text(3, "Mia", in_channel=False)
-        self.assertIn('still says "skipped" there. That\'s expected.', late)
+        self.assertIn('still says "off-topic chat skipped" (it can only change in the', late)
 
     def test_once_the_session_ended_it_says_so(self) -> None:
         notes = left_out.LeftOut()
