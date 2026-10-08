@@ -74,6 +74,7 @@ from dmbot.dm_screen.name_questions import (
     fix_notes_view,
     question_view,
 )
+from dmbot.dm_screen.settings import LevelButton, SettingsButton
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -383,6 +384,7 @@ class DMBot(commands.AutoShardedBot):
         self.tree.add_command(transcript_command)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
+        self.add_dynamic_items(SettingsButton, LevelButton)
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(ConsentButton, DeclineButton, StopButton)
         # "Check new names" on the DM screen after a session.
@@ -646,7 +648,10 @@ class DMBot(commands.AutoShardedBot):
     async def _post_listening(self, table: Table, text: str) -> None:
         """The DM screen's "listening" message, with a Stop listening button (#108). The
         button comes off when the session ends, so old messages can't be pressed."""
-        view = stop_listening_view(table.campaign_id) if table.campaign_id else None
+        view = None
+        if table.campaign_id:
+            view = stop_listening_view(table.campaign_id)
+            view.add_item(SettingsButton(table.campaign_id))  # ⚙️ Settings (#515)
         message = await self.post_message(table.screen_channel_id, text, view)
         if message is None:
             return
@@ -2060,6 +2065,15 @@ class DMBot(commands.AutoShardedBot):
             )
             await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
             return
+
+    async def set_screen_level(self, guild_id: int, campaign_id: str, level: str) -> Campaign:
+        """How much DMbot says in this campaign's DM screen (#504, #515): saved, and a
+        running session (or one still finishing) follows it from its next line."""
+        campaign = await self.campaigns.set_dm_screen_level(guild_id, campaign_id, level)
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if table is not None and table.campaign_id == campaign_id:
+                table.screen_level = campaign.dm_screen_level
+        return campaign
 
     async def _alert_dm(self, guild_id: int, message: str) -> None:
         table = self.tables.get(guild_id)

@@ -6,7 +6,7 @@ questions and fixes, one at a time) or **Chatty** (also what it noticed). Every 
 a level can turn off (questions, fix notes, notices) asks `allows` first, with its kind.
 Alerts (transcription stopped or working again, hours warnings) always post and don't
 ask: the DM needs them to know the bot is working. The level is read when a session
-starts; a later way to change it mid-session must update the running table too.
+starts; ⚙️ Settings changes it mid-session too (`DMBot.set_screen_level`, #515).
 """
 
 from __future__ import annotations

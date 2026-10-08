@@ -474,9 +474,12 @@ channel's chat.
 
 **How much DMbot says (built 2026-10-08, #504).** A campaign setting for the DM screen,
 picked with buttons when creating a campaign (**Quiet / Normal**, sharing the last row
-with Create; Chatty isn't offered until something uses it;
-changing it from the DM screen's settings comes later). Backups carry it, and a restore
-uses the backup's (older backups: Normal).
+with Create; Chatty isn't offered until something uses it) and changed any time with
+**⚙️ Settings** on the DM screen's "Listening" message (built 2026-10-08, #515). Settings
+opens privately, for the campaign's DMs or a server manager: how much DMbot says (one
+tap saves it, and a running session follows it from its next line), who can see the DM
+screen (the help card's buttons), and where saved transcripts are (`/transcript`).
+Backups carry the level, and a restore uses the backup's (older backups: Normal).
 | Level | What DMbot posts on its own |
 |---|---|
 | **Quiet** | Only what you ask for, plus warnings (so fewer misheard names get fixed) |
@@ -486,7 +489,7 @@ uses the backup's (older backups: Normal).
 Every post a level can turn off asks `dmbot.dm_screen.levels.allows` first, with its
 kind: `question`, `fix_note` or `notice`. **Alerts** (speech-to-text stopped or working
 again, hours warnings) always post, at every level. The level is read when a session
-starts, so a later way to change it mid-session must update the running session too. An
+starts, and ⚙️ Settings updates a running session too. An
 unknown kind never shows, so nothing new slips past Quiet. At Quiet a fix from a name
 DMbot only suggested isn't made at all, because such a fix is never silent and there'd
 be no Undo to show (nor in a stopped session still finishing its last lines).
