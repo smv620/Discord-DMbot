@@ -158,6 +158,7 @@ in a volume, so restarts are fast.
 | Status | `docker compose ps` |
 | Update `.env` after an update changes `.env.example` | `scripts/update-env` (add `--check` to only look) |
 | Add or change a key | `scripts/set-key` |
+| Set the admin page's password (#772) | `scripts/set-admin-password` |
 
 Updates never change your `.env`. When one brings a new `.env.example`, run
 `scripts/update-env`. It rebuilds `.env` in the new layout, keeps every value you had, and
@@ -180,6 +181,47 @@ DMbot won't rejoin, and says why in the DM screen, if the voice channel is gone 
 longer allowed in, if the session started more than 16 hours ago, or if it restarted five
 times in a row (to stop a crash loop). `/dmbot stop` always ends a session for good, even
 while DMbot is restarting.
+
+### Turn on the admin page
+
+The admin page (`/admin` on the website, never linked) is for giving free access (#772).
+The owner sets the password and, if wanted, Google sign-in; dev1 adds the other settings
+and restarts the website. Your email and the Google Client ID never go in the repository,
+an issue or a PR.
+
+**You (the owner):**
+0. Tell dev1 you're turning on the admin page. If you want Google sign-in, dev1 gives you
+   a redirect address for step 3.
+1. On the server: log in with ssh, then `cd Discord-DMbot`.
+2. Type `scripts/set-admin-password`. Pick a password of 16 or more characters (a long
+   sentence works). You won't see it as you type. Type it only there, never into a chat.
+   If it shows an error, tell dev1 what it says (never the password).
+3. Optional, for Google sign-in, in the Google Cloud console (Google may call these pages
+   "Google Auth Platform": Branding, Audience, Clients):
+   - The OAuth consent screen (Audience): External, kept in Testing, with the email
+     you'll sign in with as a test user.
+   - Credentials (Clients) → Create credentials → OAuth client ID → Web application. Its
+     redirect address is the one dev1 gave you. Copy the Client ID and Client secret
+     now; Google may not show the secret again.
+   - On the server, type `scripts/set-key GOOGLE_CLIENT_SECRET` and paste the Client
+     secret. If it asks "Restart DMbot now?", press Enter (that means no), and skip its
+     line about docker compose: dev1 restarts the website part.
+4. Tell dev1, in the Claude Code window where dev1 runs (not GitHub): "admin password
+   set", the email you'll sign in with (for Google, that Google account's email), and
+   the Client ID if you made one. Never the password.
+
+**dev1:**
+1. When the owner says they're starting and wants Google sign-in, give them the redirect
+   address: your `WEB_API_URL` value followed by `/admin/auth/google/callback`.
+2. When the owner says it's done, edit `.env` (`nano .env`; set-key only takes keys):
+   set `ADMIN_EMAILS` to the owner's email, `GOOGLE_CLIENT_ID` if the owner gave one, and
+   `WEB_CLIENT_IP_HEADER` to match how the API is served (`CF-Connecting-IP` behind
+   Cloudflare). The website won't start with a Client secret and no Client ID: if you
+   must restart it before the ID arrives, empty `GOOGLE_CLIENT_SECRET` first.
+3. Run `docker compose up -d web-api`, then check `docker compose logs --tail 20 web-api`.
+   An error names the setting to fix: fix it and run both again.
+4. When it's clean, send the owner the full link (`WEB_SITE_URL` + `/admin`) to sign in,
+   and record the result in the testing log (no email).
 
 ### Logs
 

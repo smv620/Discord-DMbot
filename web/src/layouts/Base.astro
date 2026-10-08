@@ -9,9 +9,11 @@ interface Props {
   description: string;
   /** Keep the page out of search results (the signed-in area). */
   noindex?: boolean;
+  /** Also ask search engines not to follow its links (the admin page). */
+  nofollow?: boolean;
 }
 
-const { title, description, noindex = false } = Astro.props;
+const { title, description, noindex = false, nofollow = false } = Astro.props;
 const fullTitle = title === "DMbot" ? title : `${title} · DMbot`;
 // Built pages see their file name ("/pricing.html", "/index.html"); links don't have it.
 const path = Astro.url.pathname.replace(/(\/index)?\.html$/, "") || "/";
@@ -46,7 +48,7 @@ const menu = [
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{fullTitle}</title>
     <meta name="description" content={description} />
-    {noindex && <meta name="robots" content="noindex" />}
+    {noindex && <meta name="robots" content={nofollow ? "noindex, nofollow" : "noindex"} />}
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body>

@@ -100,6 +100,11 @@ services:
       GITHUB_FEEDBACK_REPO: ${GITHUB_FEEDBACK_REPO:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       WEB_CLIENT_IP_HEADER: ${WEB_CLIENT_IP_HEADER:-}
+      # The admin page's sign-in (#772).
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       # Free access (#771): the owner's own Discord ids, as the bot reads them.
       DMBOT_FREE_USERS: ${DMBOT_FREE_USERS:-}
       LOG_FORMAT: ${LOG_FORMAT:-json}
