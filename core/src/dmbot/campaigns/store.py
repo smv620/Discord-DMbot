@@ -288,13 +288,9 @@ NO_OWNER_YET = (
     "This campaign has no owner yet. Run `/dmbot start` and take it on, then you can hand it over."
 )
 OFFER_TO_SELF = "This campaign is already yours. Pick someone else."
-NOT_A_SUBSCRIBER = (
-    "They need a DMbot plan first. Ask them to sign in on the DMbot website and start one "
-    "(Try It is free). Then try again."
-)
 OFFER_WAITING = (
-    "You already offered this campaign to someone. Withdraw that offer first, or wait: it "
-    f"ends after {HANDOVER_DAYS} days."
+    "You already offered this campaign to someone. Take that offer back first (⚙️ Settings, "
+    f"then **Take back offer**), or wait: it ends by itself after {HANDOVER_DAYS} days."
 )
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
@@ -620,11 +616,13 @@ class CampaignStore:
         from_name: str,
         to_name: str,
     ) -> HandoverOffer:
-        """The owner offers the campaign to another subscriber, who accepts or not within
-        7 days. The names are the two people's display names now, kept on the offer for
-        the account page. The bot checks the person offered is in this server when it
-        delivers the offer, and withdraws it if they can't be reached (#437). Raises
-        CampaignError in plain words."""
+        """The owner offers the campaign to another member, who accepts or not within 7
+        days. Never refused for the other person's plan: the owner mustn't learn whether
+        someone pays (#437 point 2, #713); Accept checks their plan has room. The names
+        are the two people's display names now, kept on the offer for the account page.
+        The bot checks the person offered is in this server when it delivers the offer,
+        and withdraws it if they can't be reached (#437). Raises CampaignError in plain
+        words."""
         names = _offer_name(from_name), _offer_name(to_name)
         async with self._db.guild(guild_id) as conn:
             # The campaign lock is what keeps an old owner from offering again while an
@@ -638,8 +636,6 @@ class CampaignStore:
                 raise CampaignError(NOT_THE_OWNER)
             if to_user_id == from_user_id:
                 raise CampaignError(OFFER_TO_SELF)
-            if not await plan_works(conn, to_user_id, now):
-                raise CampaignError(NOT_A_SUBSCRIBER)
             # An open offer past its 7 days no longer counts: mark it, so the new one can
             # be the campaign's one open offer.
             await conn.execute(
