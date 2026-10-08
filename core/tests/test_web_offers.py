@@ -7,6 +7,7 @@ from __future__ import annotations
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
+from psycopg import errors
 
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
@@ -127,6 +128,43 @@ class WebOffers(DatabaseTest):
                 row = await cur.fetchone()
             self.assertEqual(row and row["n"], seen, session.user_id)
 
+    async def test_the_database_allows_the_owner_and_dm_writes_only_with_an_open_offer(
+        self,
+    ) -> None:
+        # Decision 7 on #437: checked by the database, not only by the store's code.
+        scoped = self.web.as_person(BOB.id, self.bob.id_hash)
+
+        async def take_it() -> int:
+            async with scoped.guild(THURSDAY.id) as conn:
+                cur = await conn.execute(
+                    "UPDATE campaigns SET owner_user_id = %s WHERE id = %s",
+                    (BOB.id, self.campaign.id),
+                )
+                return cur.rowcount
+
+        async def join_it() -> None:
+            async with scoped.guild(THURSDAY.id) as conn:
+                await conn.execute(
+                    "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)",
+                    (self.campaign.id, THURSDAY.id, BOB.id),
+                )
+
+        self.assertEqual(
+            await offers.answer(self.web, self.bob, self.ref, "decline", now=self.now), "declined"
+        )
+        self.assertEqual(await take_it(), 0)  # no open offer: the row isn't there to change
+        with self.assertRaises(errors.InsufficientPrivilege):
+            await join_it()
+        self.assertEqual(await self.owner_and_dms(), (ALICE.id, {ALICE.id}))
+        # Nor can it make someone else the owner, even with an offer open to them.
+        await self.store.offer_handover(THURSDAY.id, self.campaign.id, ALICE.id, BOB.id, self.now)
+        with self.assertRaises(errors.InsufficientPrivilege):
+            async with scoped.guild(THURSDAY.id) as conn:
+                await conn.execute(
+                    "UPDATE campaigns SET owner_user_id = %s WHERE id = %s",
+                    (ALICE.id + 1, self.campaign.id),
+                )
+
     async def test_the_api_answers_with_plain_codes(self) -> None:
         discord = FakeDiscord()
         discord.user_info = BOB
@@ -144,8 +182,14 @@ class WebOffers(DatabaseTest):
             state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
             await client.get("/auth/discord/callback", params={"state": state, "code": "good-code"})
             headers = {"X-DMbot-Request": "1"}
+            before = (await client.get("/me")).json()["campaigns"]
+            self.assertEqual(before, [])  # not a DM of it yet
             accepted = await client.post(f"/offers/{self.ref}/accept", headers=headers)
             self.assertEqual(accepted.status_code, 204)
+            after = (await client.get("/me")).json()["campaigns"]
+            self.assertEqual(
+                [(c["name"], c["role"]) for c in after], [(self.campaign.name, "owner")]
+            )
             again = await client.post(f"/offers/{self.ref}/accept", headers=headers)
             self.assertEqual((again.status_code, again.json()), (409, {"error": "offer_gone"}))
             refused = await client.post(f"/offers/{self.ref}/withdraw")  # no site header

@@ -50,7 +50,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                     "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild.id)),)
                 )
                 mine = await conn.execute(
-                    "SELECT c.id, c.name, c.last_played_at FROM campaigns c"
+                    "SELECT c.id, c.name, c.last_played_at, c.owner_user_id FROM campaigns c"
                     " JOIN campaign_dms d ON d.campaign_id = c.id AND d.guild_id = c.guild_id"
                     " WHERE c.guild_id = %s AND d.user_id = %s ORDER BY c.name",
                     (guild.id, session.user_id),
@@ -75,11 +75,12 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                         "name": row["name"],
                         "serverName": guild.name,
                         "lastPlayedAt": _iso_time(row["last_played_at"]),
-                        # Paused campaigns and the campaign owner arrive with #437; until
-                        # then every campaign is active and the person a DM, not owner, so
-                        # nothing can be handed over before ownership exists.
+                        # Paused campaigns arrive with #437 part 2; until then every one
+                        # is active. "owner": it uses this person's plan, and only they
+                        # can hand it over (#437); a campaign with no owner yet (from
+                        # before owners were recorded) is "co-dm" for everyone.
                         "status": "active",
-                        "role": "co-dm",
+                        "role": "owner" if row["owner_user_id"] == session.user_id else "co-dm",
                     }
                 )
             if here is not None:

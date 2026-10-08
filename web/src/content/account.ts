@@ -152,7 +152,9 @@ export const text = {
   offerExpires: (iso: string): string => `Answer by ${shortDateTime(iso)}.`,
   accept: "Accept",
   decline: "No thanks",
-  acceptNoSlot: "You have no free campaign slot. Free one, or pick a bigger plan, then accept.",
+  // Also "your plan stopped" until part 3 splits the two (#437 decision 5).
+  acceptNoSlot:
+    "You have no free campaign slot, or your plan has stopped. Free one, or pick a plan, then accept.",
   seeMyPlan: "See my plan",
   accepted: (campaign: string): string =>
     `${campaign} is yours now. You're a DM of it in Discord too.`,

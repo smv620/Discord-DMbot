@@ -856,6 +856,25 @@ WEB_ROLE_POLICIES = """
         WITH CHECK (guild_id = dmbot_install_guild()
                     AND guild_id = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])
                     AND installed_by_user_id = dmbot_current_user());
+    -- Accepting a hand-over (#614, #437 decision 7): the website may make the signed-in
+    -- person a campaign's owner, and add them as one of its DMs, only while that campaign
+    -- has an open offer to them that is under 7 days old. Checked here, not just in code.
+    -- (The store's campaign lock, SELECT ... FOR UPDATE, passes this UPDATE rule too.)
+    DROP POLICY IF EXISTS web_accept_handover ON campaigns;
+    CREATE POLICY web_accept_handover ON campaigns AS RESTRICTIVE FOR UPDATE TO dmbot_web
+        USING (EXISTS (SELECT 1 FROM campaign_handover_offers o
+                       WHERE o.guild_id = campaigns.guild_id AND o.campaign_id = campaigns.id
+                         AND o.to_user_id = dmbot_current_user() AND o.status = 'open'
+                         AND o.created_at + 7 * 86400 > dmbot_now()))
+        WITH CHECK (owner_user_id = dmbot_current_user());
+    DROP POLICY IF EXISTS web_accept_handover ON campaign_dms;
+    CREATE POLICY web_accept_handover ON campaign_dms AS RESTRICTIVE FOR INSERT TO dmbot_web
+        WITH CHECK (user_id = dmbot_current_user()
+                    AND EXISTS (SELECT 1 FROM campaign_handover_offers o
+                                WHERE o.guild_id = campaign_dms.guild_id
+                                  AND o.campaign_id = campaign_dms.campaign_id
+                                  AND o.to_user_id = dmbot_current_user() AND o.status = 'open'
+                                  AND o.created_at + 7 * 86400 > dmbot_now()));
     -- Hand-over offers (#614): only ones the signed-in person sent or was sent, in the
     -- session's servers. The store's own checks (owner, recipient, 7 days) come on top.
     DROP POLICY IF EXISTS web_session_servers ON campaign_handover_offers;
@@ -883,6 +902,15 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
 )
 
+HANDOVER_OFFER_INDEXES = """
+    -- The account page reads a person's open offers on every visit (#614): by who they
+    -- were offered to, and by who offered them.
+    CREATE INDEX campaign_handover_offers_open_to
+        ON campaign_handover_offers (to_user_id) WHERE status = 'open';
+    CREATE INDEX campaign_handover_offers_open_from
+        ON campaign_handover_offers (from_user_id) WHERE status = 'open';
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -905,6 +933,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0019_shared_confirmations", SHARED_CONFIRMATIONS),
     ("0020_campaign_owner", CAMPAIGN_OWNER),
     ("0021_campaign_handover_offers", HANDOVER_OFFERS),
+    ("0023_handover_offer_indexes", HANDOVER_OFFER_INDEXES),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
