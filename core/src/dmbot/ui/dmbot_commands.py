@@ -160,22 +160,32 @@ async def _replace(interaction: discord.Interaction, text: str, view: _Menu | No
 async def _answer_first(interaction: discord.Interaction, *, in_place: bool = False) -> None:
     """Answer Discord before a step that may be slow (loading a campaign's names, the
     database): it gives up after 3 seconds (#537). `in_place`: the reply will edit the
-    message pressed (_replace); otherwise it's a new private message (_send, _tell)."""
+    message pressed (_replace); otherwise it's a new private message (_send, _tell).
+    A slash command has no message to edit, and its deferred answer would be public
+    unless asked otherwise: always private there (#595)."""
     if interaction.response.is_done():
         return
-    if in_place:
+    if in_place and interaction.type is not discord.InteractionType.application_command:
         await interaction.response.defer()
     else:
         await interaction.response.defer(ephemeral=True, thinking=True)
 
 
-TRY_AGAIN = "DMbot couldn't do that just now. Try again in a moment."
+# Most breaks are a bug that happens again: say once that it's DMbot's side, and that
+# the table can move on (#595 review).
+TRY_AGAIN = (
+    "Something broke on DMbot's side, so that didn't work. Try once more. If it fails "
+    "again, carry on without it for now."
+)
 
 
-async def _failed(interaction: discord.Interaction, error: Exception) -> None:
-    """A button, menu or form broke. Say so: once answered first (_answer_first),
-    Discord would otherwise show "thinking…" or nothing at all, for good."""
-    log.error("A menu step failed", exc_info=error)
+async def _failed(
+    interaction: discord.Interaction, error: Exception, what: str = "A button, menu or form"
+) -> None:
+    """A button, menu, form or command broke. Say so: once answered first
+    (_answer_first), Discord would otherwise show "thinking…" or nothing at all, for
+    good. Every menu (_Menu) and the command tree use this (#595)."""
+    log.error("%s failed", what, exc_info=error)
     with contextlib.suppress(discord.HTTPException):
         await _tell(interaction, TRY_AGAIN)
 

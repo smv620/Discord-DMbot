@@ -244,7 +244,10 @@ than in separate volumes.
 ## Feature notes
 
 **Delivery to the DM.** Discord has no pop-ups. Alerts go to the campaign's private DM
-screen channel (only the DM can see it) and optionally to DMs.
+screen channel (only the DM can see it) and optionally to DMs. When a button, menu, form
+or command breaks, DMbot tells the person who used it, privately, instead of failing
+silently or leaving "thinking…" up for good (#537, #595). DMbot's replies to slash
+commands are only visible to the person who used them.
 
 **Commands (decided 2026-10-04).** Five entry points; everything else is buttons.
 

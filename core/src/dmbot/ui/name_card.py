@@ -68,7 +68,7 @@ from dmbot.ui.names import (
 
 log = logging.getLogger(__name__)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
-TRY_AGAIN = (
+NOTHING_CHANGED = (
     "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
 )
 
@@ -454,6 +454,11 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
         self.entity_id = entity_id
         self.name.default = current[:NAME_LIMIT]
 
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)  # saves, then reloads names
         found = await _current(interaction, self.campaign_id, self.entity_id)
@@ -500,6 +505,11 @@ class AnotherNameForm(discord.ui.Modal, title="Add another name"):
         if not secrets:  # only the campaign's DMs deal in secret names
             self.remove_item(self.secret)
             self.other.required = True
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)  # saves, then reloads names
@@ -719,7 +729,7 @@ class UndoButton(
             return
         except Exception:
             log.exception("Undo of batch %s failed", self.batch)
-            await _replace(interaction, TRY_AGAIN, None)
+            await _replace(interaction, NOTHING_CHANGED, None)
             return
         changed(interaction, campaign)
         note = f"↩️ **{_md(entity.name)}** is back, with its other names and connections."
@@ -1078,7 +1088,7 @@ class SameConfirm(_Menu):
             return
         except Exception:
             log.exception("Joining %s into %s failed", gone_id, keep_id)
-            await _replace(interaction, TRY_AGAIN, None)
+            await _replace(interaction, NOTHING_CHANGED, None)
             return
         changed(interaction, campaign)
         note = f"🔗 Done: **{_md(gone[1])}** is now another name for **{_md(kept[1])}**."

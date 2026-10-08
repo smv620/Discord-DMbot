@@ -98,6 +98,7 @@ class NamesTest(DatabaseTest):
 
         return SimpleNamespace(
             client=self.bot,
+            type=discord.InteractionType.component,
             guild=SimpleNamespace(id=GUILD),
             guild_id=GUILD,
             user=user,
@@ -480,7 +481,7 @@ class NameCards(NamesTest):
         broken = patch.object(self.memory, "merge", side_effect=RuntimeError("database gone"))
         with broken, self.assertLogs("dmbot.ui.name_card", "ERROR"):
             await view._keep_other(it)
-        self.assertEqual(it.response.edited[-1], (name_card.TRY_AGAIN, None))
+        self.assertEqual(it.response.edited[-1], (name_card.NOTHING_CHANGED, None))
 
     async def test_same_as_never_offers_the_name_itself(self) -> None:
         from dmbot.ui import name_card
