@@ -34,10 +34,12 @@ CI runs all of the above on every pull request. Never merge red CI.
     wants to test, for example a live session on the test server.
   - `main`: only code that has passed beta testing and looks ready to deploy. The
     cloud server deploys from here.
-- Never push directly to `development`, `beta`, or `main`. The owner merges, except
-  log-only PRs (see "Testing logs").
+- Never push directly to `development`, `beta`, or `main`. **RepoManager merges** (owner
+  decision, 2026-10-07): a PR merges when CI is green, web's design review approves it
+  and RepoManager's compliance review passes. Log-only PRs are the exception (see
+  "Testing logs").
 - Promotions (`development` → `beta`, `beta` → `main`) are PRs, opened only when the
-  owner asks.
+  owner asks (through web); RepoManager opens and merges them.
 - One concern per PR. Link the GitHub issue it closes.
 - Before opening a PR, run the reviewer agents in `.claude/agents/` (reviewer,
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
@@ -47,7 +49,7 @@ CI runs all of the above on every pull request. Never merge red CI.
 DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude
 sessions work on this repo. **Each one has a name, and its name is its issue label:**
 `session: dev1`, `session: dev2`, `session: dev3`, `session: clouddev`, `session: web`,
-`session: WebDev` (and `session: pycharm` when the owner's PC is used). **Assignments come from the issue
+`session: WebDev`, `session: RepoManager` (and `session: pycharm` when the owner's PC is used). **Assignments come from the issue
 list:** an open issue labelled with your name is yours; take them lowest number first
 unless an issue says otherwise. Say which session you are in every issue and PR. More
 developers can be added by adding a label.
@@ -76,10 +78,22 @@ developers can be added by adding a label.
   API container. It owns the site's words with the ux-critic, never the plan prices or
   rules: those are owner decisions recorded in docs/PLAN.md, and a change to them is a
   question on the issue, not a commit.
-- **web** (the coordinating session, cloud): planning, design decisions, `docs/PLAN.md`
-  and this file, issue hygiene, reviewing every PR before the owner merges, and the code
+- **web** (the Master Web Session, cloud): **the owner's point of contact.** Planning,
+  design decisions, `docs/PLAN.md` and this file, issue hygiene, keeping every
+  developer's queue full, filing follow-ups, a design review of every PR, and the code
   that needs design judgement. Scope questions from any session go in the issue; web
-  answers there.
+  answers there. Web takes owner decisions to RepoManager and RepoManager's reports to
+  the owner. Web and RepoManager supervise the project together.
+- **RepoManager** (Claude Code, its own clone): **runs the repository.** For every PR it
+  checks compliance with this file (hard rules, privacy, IP, isolation, session limits),
+  reviews the code for clear comments and good practice (see "Code standards"), resolves
+  merge conflicts (pushing the fix to the PR's own branch, never to `development`,
+  `beta` or `main`), and merges once CI is green and web's design review approves. A PR
+  that falls short goes back to the owning session as a PR comment with specific fixes,
+  and a follow-up issue when the fix belongs in a later PR. After each batch it reports
+  to web in one comment on the tracking issue #516: what merged, what was sent back, what is
+  blocked and why. It never deploys, never touches the live server, and never changes
+  plan prices or rules.
 - **Handover to a deploy:** when a session's PR is merged and needs to go live, it adds
   one line under "Ready to deploy" in `docs/testing-status.log` (what to deploy, what to
   check) or comments on the PR, then takes its next issue. dev1 deploys, checks, and
@@ -120,9 +134,10 @@ terminal output or Discord screenshots copied to it.
   PyCharm session adds its offline test results the same way. Other sessions read them
   before planning test-related work.
 - Same privacy rule as issues: no tokens, `.env` contents, or players' personal data.
-- **Log-only PRs may be merged by Claude** once CI passes (owner decision, 2026-10-04).
-  A PR counts as log-only when it changes nothing but `docs/testing-status.log` and/or
-  `docs/testing-history.log`. Every other PR is still merged by the owner.
+- **Log-only PRs may be merged by any Claude session** once CI passes (owner decision,
+  2026-10-04). A PR counts as log-only when it changes nothing but
+  `docs/testing-status.log` and/or `docs/testing-history.log`. Every other PR is merged
+  by RepoManager (see "Workflow").
 
 ## Hard rules
 - **Simple enough for a child:** user-facing text uses plain words, never technical terms
@@ -193,6 +208,9 @@ terminal output or Discord screenshots copied to it.
 - **TypeScript:** `strict` mode, ES modules, no `any` without a comment explaining why.
 - **Python:** type hints everywhere (mypy strict), Ruff for lint + format, async
   throughout (discord.py is asyncio). Small modules, one service per package.
+- **Comments explain why, not what:** every module starts with a line on what it is
+  for, and any non-obvious decision (a workaround, a limit, a rule from this file) has a
+  comment saying why. RepoManager checks this on every PR.
 - Tests for every behaviour change. Pure logic (consent, protocol, buffering,
   rule matching) must be unit-testable without Discord or network access.
 - User-facing text (slash command descriptions, alerts, errors) is short, plain, and
