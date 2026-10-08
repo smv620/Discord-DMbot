@@ -155,15 +155,16 @@ export const text = {
   acceptNoSlot:
     "To take this campaign you need a DMbot plan with room for one more campaign. Tap See my plan to pick one, then tap Accept again. The offer stays open until the date above.",
   seeMyPlan: "See my plan",
-  accepted: (campaign: string): string =>
-    `${campaign} is yours now. You're a DM of it in Discord too.`,
-  // Nothing tells the other person yet when the answer comes from the site (a bot-side
-  // issue), so this promises only what is true.
-  declined: "Done. The offer is closed.",
+  // The bot tells the other person in Discord whenever an offer is answered or taken back
+  // on the site (#794, #797), so the words promise it plainly (#798).
+  accepted: (campaign: string, person: string): string =>
+    `${campaign} is yours now. You're a DM of it in Discord too. We'll tell ${person} in Discord.`,
+  declined: (person: string): string => `Done. The offer is closed. We'll tell ${person} in Discord.`,
   offerOutgoing: (person: string, iso: string): string =>
     `Waiting for ${person} to say yes (until ${shortDateTime(iso)}). Nothing changes until they do.`,
   withdraw: "Take back offer",
-  withdrawn: "Done. You took the offer back.",
+  withdrawn: (person: string): string =>
+    `Done. You took the offer back. We'll tell ${person} in Discord.`,
 
   // Servers
   serversHeading: "Add DMbot to a server",

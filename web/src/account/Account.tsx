@@ -518,14 +518,17 @@ function OfferRow({
       <div class="row">
         <ActionButton
           busy={busy}
-          onClick={() => answer(() => api.acceptOffer(offer.id), text.accepted(offer.campaignName))}
+          onClick={() => answer(
+              () => api.acceptOffer(offer.id),
+              text.accepted(offer.campaignName, offer.personName),
+            )}
         >
           {text.accept}
         </ActionButton>
         <ActionButton
           busy={busy}
           kind="secondary"
-          onClick={() => answer(() => api.declineOffer(offer.id), text.declined)}
+          onClick={() => answer(() => api.declineOffer(offer.id), text.declined(offer.personName))}
         >
           {text.decline}
         </ActionButton>
@@ -554,8 +557,8 @@ function CampaignsSection({ me }: { me: Me }) {
               key={c.id}
               campaign={c}
               offer={me.offers.outgoing.find((o) => o.campaignId === c.id) ?? null}
-              onWithdrawn={async () => {
-                setDone(text.withdrawn);
+              onWithdrawn={async (person) => {
+                setDone(text.withdrawn(person));
                 await refresh();
               }}
               onHandedOver={async (person) => {
@@ -579,7 +582,8 @@ function CampaignRow({
   campaign: Campaign;
   /** A hand-over of this campaign you offered and nobody has answered yet. */
   offer: Offer | null;
-  onWithdrawn: () => Promise<void>;
+  /** Gets the name of the person the offer was for, to say they'll be told. */
+  onWithdrawn: (person: string) => Promise<void>;
   onHandedOver: (person: Person) => Promise<void>;
 }) {
   const { api, refresh } = useShared();
@@ -613,7 +617,7 @@ function CampaignRow({
                 void run(
                   async () => {
                     await api.withdrawOffer(offer.id);
-                    await onWithdrawn();
+                    await onWithdrawn(offer.personName);
                   },
                   (error) => {
                     if (error.kind !== "offer-gone") return campaignRefusal(error);
