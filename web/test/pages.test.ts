@@ -187,3 +187,10 @@ describe("no trademarks", () => {
     }
   });
 });
+
+it("keeps the admin page out of search engines and their link-following", async () => {
+  const html = await container.renderToString(page("admin.astro"), {
+    request: new Request("https://dmbot.example/admin"),
+  });
+  expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
+});

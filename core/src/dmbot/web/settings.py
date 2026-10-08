@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from dmbot.config import ConfigError
-from dmbot.web.admin import decode_hash
+from dmbot.web.admin_hash import decode_hash
 
 REQUIRED = (
     "DATABASE_URL",
@@ -170,6 +170,14 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             "ADMIN_PASSWORD_HASH isn't one scripts/set-admin-password made. Run it again."
         )
+    if (
+        admin_emails
+        and not client_ip_header
+        and urlsplit(get("WEB_API_URL")).hostname not in ("localhost", "127.0.0.1")
+    ):
+        # Behind the proxy every visitor has the proxy's address: five wrong tries by
+        # anyone would lock the admin out, by password and by Google.
+        raise ConfigError("WEB_CLIENT_IP_HEADER must be set when ADMIN_EMAILS is.")
     google_client_id = get("GOOGLE_CLIENT_ID")
     google_client_secret = get("GOOGLE_CLIENT_SECRET")
     if bool(google_client_id) != bool(google_client_secret):

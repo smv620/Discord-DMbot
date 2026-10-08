@@ -566,7 +566,9 @@ def create_app(
         log.info("Feedback posted: discussion %s", posted.number)
         return {"url": posted.url}
 
-    # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty.
+    # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty. Its sessions and
+    # locks count seconds on their own steady clock (not `clock`, the wall time used for
+    # signed tokens), so a changed system time can't end or extend them.
     app.include_router(
         admin_api.router(
             settings,

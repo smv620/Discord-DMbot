@@ -79,5 +79,15 @@ run "$good"$'\n'"$good"$'\n'
 check "a hasher error isn't saved as a hash" [ "$code" -ne 0 ]
 check "nothing changes on a hasher error" grep -qx 'ADMIN_PASSWORD_HASH=old' "$DMBOT_ENV_FILE"
 
+reset
+cat >"$DMBOT_HASHER" <<'HASHER'
+#!/usr/bin/env bash
+cat >"$HASHER_SAW"
+echo "JGFyZ29uMmlkJHY9MTkkbT02NTUzNix0PTMscD00JGZha2VzYWx0JGZha2VoYXNo"
+HASHER
+padded="  a padded admin password  "
+run "$padded"$'\n'"$padded"$'\n'
+check "spaces at either end are kept" grep -qx -- "$padded" "$HASHER_SAW"
+
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))

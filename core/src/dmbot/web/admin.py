@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
+import functools
 import hashlib
 import hmac
 import json
@@ -31,6 +32,8 @@ import aiohttp
 from argon2 import PasswordHasher
 from argon2.exceptions import Argon2Error, InvalidHashError
 
+from dmbot.web.admin_hash import decode_hash, encode_hash
+
 IDLE_SECONDS = 3600
 MAX_SECONDS = 12 * 3600
 FAIL_WINDOW = 15 * 60
@@ -44,8 +47,13 @@ GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
 CSRF_HEADER = "X-Admin-CSRF"
 
 _hasher = PasswordHasher()  # argon2id with the library's current recommended costs
-# Checked when no hash is set or the email is wrong, so every try costs the same time.
-_DECOY = _hasher.hash(secrets.token_urlsafe(32))
+
+
+@functools.cache
+def _decoy() -> str:
+    """Checked when no hash is set, so every try costs the same time. Made on first use:
+    hashing takes a moment and memory, which importing this module shouldn't."""
+    return _hasher.hash(secrets.token_urlsafe(32))
 
 
 class AdminError(RuntimeError):
@@ -53,21 +61,6 @@ class AdminError(RuntimeError):
 
 
 # Passwords
-
-
-def encode_hash(argon2_hash: str) -> str:
-    """The form kept in .env: base64, because an argon2 hash is full of `$` signs, which
-    Docker Compose would try to expand when it reads the file."""
-    return base64.urlsafe_b64encode(argon2_hash.encode("ascii")).decode("ascii")
-
-
-def decode_hash(encoded: str) -> str | None:
-    """The argon2id hash from its .env form, or None if it isn't one."""
-    try:
-        raw = base64.urlsafe_b64decode(encoded.encode("ascii")).decode("ascii")
-    except (ValueError, UnicodeError, binascii.Error):
-        return None
-    return raw if raw.startswith("$argon2id$") else None
 
 
 def hash_password(password: str) -> str:
@@ -80,7 +73,7 @@ def hash_password(password: str) -> str:
 def password_matches(encoded_hash: str, password: str) -> bool:
     argon2_hash = decode_hash(encoded_hash) if encoded_hash else None
     try:
-        return _hasher.verify(argon2_hash or _DECOY, password) and argon2_hash is not None
+        return _hasher.verify(argon2_hash or _decoy(), password) and argon2_hash is not None
     except (Argon2Error, InvalidHashError):
         return False
 
@@ -100,10 +93,15 @@ def email_allowed(email: str, allowed: tuple[str, ...]) -> bool:
 @dataclass
 class FailedTries:
     """Five failures in 15 minutes lock a key (an email, a connection) for 15 minutes.
-    In memory: the API is one process, and forgetting on a restart does no harm."""
+    In memory: the API is one process, and forgetting on a restart does no harm.
+
+    Accepted on purpose (#772): anyone who knows the admin email can keep the password
+    sign-in locked with 5 tries every 15 minutes. Google sign-in only checks the
+    connection's key, so it still works; don't make it check the email's too."""
 
     clock: Callable[[], float] = time.monotonic
-    most_keys: int = 10_000  # a flood of made-up emails can't grow this without end
+    # A flood of made-up emails or addresses can't grow either map without end.
+    most_keys: int = 10_000
     _fails: dict[str, list[float]] = field(default_factory=dict)
     _locked: dict[str, float] = field(default_factory=dict)
 
@@ -116,11 +114,23 @@ class FailedTries:
         del self._locked[key]
         return False
 
+    def _prune(self, now: float) -> None:
+        if len(self._locked) >= self.most_keys:
+            self._locked = {k: t for k, t in self._locked.items() if t > now}
+        if len(self._fails) >= self.most_keys:
+            self._fails = {
+                k: ts for k, ts in self._fails.items() if ts and now - ts[-1] < FAIL_WINDOW
+            }
+
     def fail(self, key: str) -> None:
         now = self.clock()
+        self._prune(now)
         recent = [t for t in self._fails.get(key, []) if now - t < FAIL_WINDOW]
         recent.append(now)
         if len(recent) >= FAIL_LIMIT:
+            if key not in self._locked and len(self._locked) >= self.most_keys:
+                # Full of live locks: drop the one ending soonest, never refuse to lock.
+                self._locked.pop(min(self._locked, key=self._locked.__getitem__))
             self._locked[key] = now + LOCK_SECONDS
             self._fails.pop(key, None)
             return
@@ -188,7 +198,10 @@ class AdminSessions:
 
 
 def csrf_ok(session: AdminSession, sent: str | None) -> bool:
-    return sent is not None and hmac.compare_digest(session.csrf, sent)
+    # Bytes: a header can hold any byte, and compare_digest refuses non-ASCII text.
+    return sent is not None and hmac.compare_digest(
+        session.csrf.encode("ascii"), sent.encode("utf-8", "surrogateescape")
+    )
 
 
 # Google
@@ -227,7 +240,7 @@ def verified_email(
         and claims.get("aud") == client_id
         and fresh
         and isinstance(claims.get("nonce"), str)
-        and hmac.compare_digest(claims["nonce"], nonce)
+        and hmac.compare_digest(claims["nonce"].encode("utf-8"), nonce.encode("utf-8"))
         and claims.get("email_verified") is True
         and isinstance(email, str)
         and email_allowed(email, allowed)
@@ -248,6 +261,9 @@ class GoogleSignIn(Protocol):
 class HttpGoogle:
     """Google's OpenID Connect, authorisation-code flow with PKCE; scopes `openid email`."""
 
+    # token_url is for tests only, and must never come from settings: skipping the ID
+    # token's signature check is sound only because the token comes from Google's own
+    # token endpoint over TLS (see id_token_claims).
     def __init__(self, client_id: str, client_secret: str, *, token_url: str = GOOGLE_TOKEN):
         self._client_id = client_id
         self._client_secret = client_secret

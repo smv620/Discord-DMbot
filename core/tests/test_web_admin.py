@@ -9,6 +9,7 @@ import json
 import subprocess
 import sys
 import unittest
+import unittest.mock
 from typing import Any, ClassVar, cast
 from urllib.parse import parse_qs, urlsplit
 
@@ -134,7 +135,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("domain=", cookie)
         self.assertEqual((await self.me()).json()["email"], ADMIN)
 
-    async def test_wrong_email_wrong_password_and_lock_get_the_same_answer(self) -> None:
+    async def test_wrong_email_and_wrong_password_get_the_same_answer(self) -> None:
         wrong_password = await self.password(password="nope nope nope nope")
         wrong_email = await self.password(email="someone@example.com")
         for answer in (wrong_password, wrong_email):
@@ -150,6 +151,56 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         self.ticks += 15 * 60
         self.assertEqual((await self.password(ip="192.0.2.9")).status_code, 204)
 
+    async def test_a_locked_try_skips_the_hash_and_gets_the_same_answer(self) -> None:
+        for n in range(5):
+            await self.password(password="wrong wrong wrong wrong", ip=f"198.51.100.{n}")
+        with unittest.mock.patch("dmbot.web.admin_api.password_matches") as hasher:
+            locked = await self.password(ip="192.0.2.9")
+        hasher.assert_not_called()
+        self.assertEqual((locked.status_code, locked.json()), (401, {"error": "wrong_sign_in"}))
+
+    async def test_a_right_sign_in_clears_the_count(self) -> None:
+        for _ in range(4):
+            await self.password(password="wrong wrong wrong wrong")
+        self.assertEqual((await self.password()).status_code, 204)
+        for _ in range(4):
+            await self.password(password="wrong wrong wrong wrong")
+        self.assertEqual((await self.password()).status_code, 204)  # 4 + 4, never 5 in a row
+
+    async def test_a_locked_connection_cant_use_google_either(self) -> None:
+        for n in range(5):
+            await self.password(email=f"guess{n}@example.com")
+        self.client.headers["CF-Connecting-IP"] = "203.0.113.5"  # the same connection
+        refused = await self.google_sign_in()
+        self.assertEqual(refused.headers["location"], f"{SITE}/admin?signin=failed")
+
+    async def test_signing_in_again_ends_the_old_session(self) -> None:
+        await self.password()
+        old = self.client.cookies.get("__Host-dmbot_admin")
+        await self.password()
+        self.assertNotEqual(self.client.cookies.get("__Host-dmbot_admin"), old)
+        self.client.cookies.set("__Host-dmbot_admin", str(old))
+        self.assertEqual((await self.me()).status_code, 401)
+
+    async def test_a_non_ascii_csrf_header_is_a_plain_refusal(self) -> None:
+        await self.password()
+        response = await self.client.post(
+            "/admin/auth/logout",
+            headers=[
+                (b"X-DMbot-Request", b"1"),
+                (b"Origin", SITE.encode()),
+                (b"X-Admin-CSRF", b"caf\xe9"),
+            ],
+        )
+        self.assertEqual(response.status_code, 403)
+
+    async def test_signing_out_of_an_ended_session_clears_its_cookie(self) -> None:
+        await self.password()
+        self.ticks += 2 * 3600
+        out = await self.client.post("/admin/auth/logout", headers=HEADERS)
+        self.assertEqual(out.status_code, 204)
+        self.assertIn("__host-dmbot_admin=", out.headers["set-cookie"].lower())
+
     async def test_five_wrong_tries_lock_the_connection_too(self) -> None:
         for n in range(5):
             await self.password(email=f"guess{n}@example.com")
@@ -157,9 +208,11 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.password(ip="192.0.2.9")).status_code, 204)
 
     async def test_nothing_secret_is_logged(self) -> None:
-        with self.assertLogs("dmbot.web.admin_api", "INFO") as logs:
+        with self.assertLogs(level="INFO") as logs:
             await self.password(password="a wrong one, longer")
             await self.password()
+            self.google.fail = True
+            await self.google_sign_in()
         text = "\n".join(logs.output)
         for secret in (ADMIN, PASSWORD, "a wrong one", HASH):
             self.assertNotIn(secret, text)
@@ -269,6 +322,21 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await client.get("/admin/auth/google/start")).status_code, 404)
 
 
+class Locks(unittest.TestCase):
+    def test_the_maps_stay_bounded_and_keep_refusing_when_full(self) -> None:
+        now = [0.0]
+        tries = FailedTries(clock=lambda: now[0], most_keys=3)
+        for n in range(10):
+            for _ in range(5):
+                tries.fail(f"addr:{n}")
+            now[0] += 1
+        self.assertLessEqual(len(tries._locked), 3)
+        self.assertTrue(tries.locked("addr:9"))  # the newest lock always holds
+        for n in range(10):
+            tries.fail(f"email:{n}")
+        self.assertLessEqual(len(tries._fails), 3)
+
+
 class Passwords(unittest.TestCase):
     def test_hash_round_trip_and_short_passwords(self) -> None:
         self.assertTrue(password_matches(HASH, PASSWORD))
@@ -287,6 +355,7 @@ class AdminSettings(unittest.TestCase):
         "ADMIN_PASSWORD_HASH": HASH,
         "GOOGLE_CLIENT_ID": CLIENT_ID,
         "GOOGLE_CLIENT_SECRET": "g-secret-1",
+        "WEB_CLIENT_IP_HEADER": "CF-Connecting-IP",
     }
 
     def test_reads_and_hides_the_admin_settings(self) -> None:
@@ -298,6 +367,7 @@ class AdminSettings(unittest.TestCase):
     def test_refuses_bad_admin_settings(self) -> None:
         for change in (
             {"ADMIN_EMAILS": "not-an-email"},
+            {"WEB_CLIENT_IP_HEADER": ""},
             {"ADMIN_PASSWORD_HASH": "plain-password"},
             {"GOOGLE_CLIENT_SECRET": ""},
         ):

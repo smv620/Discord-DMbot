@@ -9,6 +9,7 @@ admin POSTs after sign-in also need the session's CSRF token.
 # No `from __future__ import annotations` here: FastAPI must see the session types inside
 # router() as real objects, or it reads them as query parameters.
 
+import asyncio
 import json
 import logging
 import secrets
@@ -53,6 +54,7 @@ def router(
     clock: Callable[[], int],
 ) -> APIRouter:
     api = APIRouter(prefix="/admin")
+    checking = asyncio.Semaphore(1)
     prefix = "__Host-" if settings.secure_cookies else ""
     admin_cookie = f"{prefix}dmbot_admin"
     signin_cookie = f"{prefix}dmbot_admin_signin"
@@ -89,15 +91,20 @@ def router(
         return session
 
     Admin = Annotated[AdminSession, Depends(current)]
-    AdminPost = Annotated[AdminSession, Depends(require_admin)]
 
     @api.get("/me")
     async def me(session: Admin) -> dict[str, str]:
         return {"email": session.email, "csrf": session.csrf}
 
     @api.post("/auth/logout", status_code=204)
-    async def logout(_session: AdminPost, request: Request) -> Response:
-        admin_sessions.end(request.cookies.get(admin_cookie))
+    async def logout(request: Request) -> Response:
+        require_on()
+        token = request.cookies.get(admin_cookie)
+        # A session that already ended has nothing to protect: just clear its old cookie.
+        # A live one needs its CSRF token, like every admin POST.
+        if admin_sessions.find(token) is not None:
+            require_admin(request)
+        admin_sessions.end(token)
         response = Response(status_code=204)
         response.delete_cookie(admin_cookie, path="/", secure=settings.secure_cookies)
         return response
@@ -121,19 +128,27 @@ def router(
         email_key = "email:" + email.strip().lower()[:320]
         address = client_address(request)
         addr_key = "addr:" + address
-        locked = tries.locked(email_key) or tries.locked(addr_key)
-        # Always check the password, so a locked or unknown email takes as long as a real try.
-        right = password_matches(settings.admin_password_hash, given)
-        if locked or not right or not email_allowed(email, settings.admin_emails):
-            if not locked:
+        # One check at a time, so tries racing each other can't all pass the lock before
+        # any failure counts, and a flood waits its turn instead of using every core.
+        async with checking:
+            # A locked try skips the hash: whether a key is locked is no secret (the page
+            # says so), and hashing for it would let one client keep the API busy.
+            if tries.locked(email_key) or tries.locked(addr_key):
+                log.warning("Admin sign-in refused from %s: locked", address)
+                raise HTTPException(status_code=401, detail=WRONG)
+            # The same hash work for a wrong email as for a wrong password. In a thread:
+            # argon2 takes a tenth of a second, which would stall every other request.
+            right = await asyncio.to_thread(password_matches, settings.admin_password_hash, given)
+            if not right or not email_allowed(email, settings.admin_emails):
                 tries.fail(email_key)
                 tries.fail(addr_key)
-            log.warning("Admin sign-in refused from %s", address)
-            raise HTTPException(status_code=401, detail=WRONG)
-        tries.clear(email_key)
-        tries.clear(addr_key)
+                log.warning("Admin sign-in refused from %s", address)
+                raise HTTPException(status_code=401, detail=WRONG)
+            tries.clear(email_key)
+            tries.clear(addr_key)
         log.info("Admin signed in with the password from %s", address)
         response = Response(status_code=204)
+        admin_sessions.end(request.cookies.get(admin_cookie))  # one session per browser
         set_admin_cookie(response, admin_sessions.start(email.strip().lower()))
         return response
 
@@ -219,6 +234,8 @@ def router(
         log.info("Admin signed in with Google from %s", address)
         done = RedirectResponse(admin_page, status_code=302)
         done.delete_cookie(signin_cookie, path="/", secure=settings.secure_cookies)
+        tries.clear("addr:" + address)
+        admin_sessions.end(request.cookies.get(admin_cookie))  # one session per browser
         set_admin_cookie(done, admin_sessions.start(email))
         return done
 
