@@ -150,8 +150,37 @@ class Merging(SheetTest):
         kept = await self.add("Testa the Bold", type="player_character", played_by=PLAYER)
         await self.sheets.link(GUILD_A, self.c, kept, 999)
         await self.memory.merge(GUILD_A, self.c, kept, self.pc, source="dm", dm_said_same=True)
-        (left,) = await self.sheets.sheets(GUILD_A, self.c)  # the merged one's is hidden
+        (left,) = await self.sheets.sheets(GUILD_A, self.c)
         self.assertEqual((left.entity_id, left.character), (kept, 999))
+        self.assertEqual(await self.count("character_sheets"), 1)  # the merged one's forgotten
+
+
+class PlayersOwn(SheetTest):
+    async def test_a_player_changes_only_a_character_they_play(self) -> None:
+        with self.assertRaises(SheetRefused):
+            await self.sheets.link(GUILD_A, self.c, self.pc, CHARACTER, player=PLAYER + 1)
+        await self.sheets.link(GUILD_A, self.c, self.pc, CHARACTER, player=PLAYER)
+        self.assertIsNone(await self.sheets.sheet(GUILD_A, self.c, self.pc, player=PLAYER + 1))
+        self.assertFalse(await self.sheets.unlink(GUILD_A, self.c, self.pc, player=PLAYER + 1))
+        typed = sheets.typed("Testa", species="Elf", class_name="Bard", level=2, names=[])
+        assert typed is not None
+        with self.assertRaises(SheetRefused):
+            await self.sheets.save(GUILD_A, self.c, self.pc, typed, 5, player=PLAYER + 1)
+        self.assertTrue(await self.sheets.unlink(GUILD_A, self.c, self.pc, player=PLAYER))
+
+    async def test_a_sheet_on_an_entry_with_no_player_is_left_out(self) -> None:
+        await self.linked()
+        async with self.db.guild(GUILD_A) as conn:  # as an undone merge can leave it
+            await conn.execute(
+                "UPDATE memory_entities SET played_by = NULL, type = 'npc'"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (GUILD_A, self.c, self.pc),
+            )
+        self.assertEqual(await self.sheets.sheets(GUILD_A, self.c), [])
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)  # not refused
+        self.assertEqual(await self.count("character_sheets", GUILD_B), 0)
+        self.assertIsNotNone(restored)
 
 
 class Isolation(SheetTest):

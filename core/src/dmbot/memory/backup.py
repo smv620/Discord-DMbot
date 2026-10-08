@@ -235,9 +235,14 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         by_tag[raw["table"]].append(raw)
     _check_terms(by_tag)
     # A sheet belongs to a player character someone plays, as everywhere else (#723).
-    played = {r["id"] for r in by_tag["entity"] if r["played_by"] is not None}
-    if any(r["entity_id"] not in played for r in by_tag["sheet"]):
+    # One left on an entry with no player (an undone merge) is shown nowhere: dropped,
+    # not a reason to refuse the backup. One for an entry not in the file is damage.
+    entities = {r["id"]: r for r in by_tag["entity"]}
+    if any(r["entity_id"] not in entities for r in by_tag["sheet"]):
         raise CampaignError(DAMAGED)
+    by_tag["sheet"] = [
+        r for r in by_tag["sheet"] if entities[r["entity_id"]]["played_by"] is not None
+    ]
     return by_tag
 
 

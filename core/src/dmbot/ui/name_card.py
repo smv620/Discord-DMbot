@@ -350,7 +350,7 @@ class NameCard(_Menu):
         if longer:
             self.add_item(_Button(self._all, label="Show all", style=grey, row=2))
         if sheet:
-            self.add_item(_Button(self._unlink_sheet, label="📜 Unlink sheet", style=grey, row=2))
+            self.add_item(_Button(self._unlink_sheet, label="📜 Forget sheet", style=grey, row=2))
 
     async def _unlink_sheet(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.sheets import dm_unlink

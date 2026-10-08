@@ -48,12 +48,21 @@ class SheetStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def link(self, guild_id: int, campaign_id: str, entity_id: str, character: int) -> None:
+    async def link(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        character: int,
+        *,
+        player: int | None = None,
+    ) -> None:
         """Link a player character to a D&D Beyond sheet. A different link drops the old
-        snapshot (it was another character's)."""
+        snapshot (it was another character's). `player`: only if they play it (the
+        player's own panel; the DM's forms leave it out)."""
         url = sheets.sheet_url(character)
         async with self._db.guild(guild_id) as conn:
-            await self._require_character(conn, guild_id, campaign_id, entity_id)
+            await self._require_character(conn, guild_id, campaign_id, entity_id, player)
             await conn.execute(
                 "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url)"
                 " VALUES (%s, %s, %s, %s)"
@@ -76,6 +85,7 @@ class SheetStore:
         now: int,
         *,
         url: str | None = None,
+        player: int | None = None,
     ) -> bool:
         """Keep a snapshot. One read from a link (`url`) is kept only if the character is
         still linked to that same sheet (it may have been unlinked or relinked while it
@@ -93,7 +103,7 @@ class SheetStore:
                     (Jsonb(cleaned), cleaned["source"], now, guild_id, campaign_id, entity_id, url),
                 )
                 return cur.rowcount == 1
-            await self._require_character(conn, guild_id, campaign_id, entity_id)
+            await self._require_character(conn, guild_id, campaign_id, entity_id, player)
             await conn.execute(
                 "INSERT INTO character_sheets"
                 " (guild_id, campaign_id, entity_id, url, sheet, source, fetched_at)"
@@ -105,19 +115,28 @@ class SheetStore:
             )
             return True
 
-    async def unlink(self, guild_id: int, campaign_id: str, entity_id: str) -> bool:
-        """Forget the character's sheet: its link and its snapshot. False if it had none."""
+    async def unlink(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, player: int | None = None
+    ) -> bool:
+        """Forget the character's sheet: its link and its snapshot. False if it had none
+        (or, with `player`, if they don't play it)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "DELETE FROM character_sheets"
-                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s",
-                (guild_id, campaign_id, entity_id),
+                "DELETE FROM character_sheets s"
+                " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
+                " AND (%s::bigint IS NULL OR EXISTS (SELECT 1 FROM memory_entities e"
+                "  WHERE e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
+                "  AND e.id = s.entity_id AND e.played_by = %s))",
+                (guild_id, campaign_id, entity_id, player, player),
             )
             return cur.rowcount > 0
 
-    async def sheets(self, guild_id: int, campaign_id: str) -> list[CharacterSheet]:
-        """Every sheet in the campaign, with its character's name and player, by name.
-        Characters that were merged away or rejected are left out."""
+    async def sheets(
+        self, guild_id: int, campaign_id: str, *, entity_id: str | None = None
+    ) -> list[CharacterSheet]:
+        """Every sheet in the campaign (or one character's), with its character's name and
+        player, by name. Only characters someone plays: not ones merged away, rejected,
+        or left without a player (an undone merge)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT s.entity_id, e.name, e.played_by, s.url, s.sheet, s.fetched_at"
@@ -125,9 +144,10 @@ class SheetStore:
                 "  ON e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
                 "  AND e.id = s.entity_id"
                 " WHERE s.guild_id = %s AND s.campaign_id = %s"
-                "  AND e.status NOT IN ('merged', 'rejected')"
+                "  AND (%s::text IS NULL OR s.entity_id = %s)"
+                "  AND e.status NOT IN ('merged', 'rejected') AND e.played_by IS NOT NULL"
                 " ORDER BY lower(e.name), s.entity_id",
-                (guild_id, campaign_id),
+                (guild_id, campaign_id, entity_id, entity_id),
             )
             rows = await cur.fetchall()
         return [
@@ -142,12 +162,12 @@ class SheetStore:
             for r in rows
         ]
 
-    async def sheet(self, guild_id: int, campaign_id: str, entity_id: str) -> CharacterSheet | None:
-        """One character's sheet, if it has one."""
-        return next(
-            (s for s in await self.sheets(guild_id, campaign_id) if s.entity_id == entity_id),
-            None,
-        )
+    async def sheet(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, player: int | None = None
+    ) -> CharacterSheet | None:
+        """One character's sheet, if it has one (with `player`: only if they play it)."""
+        found = await self.sheets(guild_id, campaign_id, entity_id=entity_id)
+        return next((s for s in found if player is None or s.played_by == player), None)
 
     async def characters_of(
         self, guild_id: int, user_id: int, campaign_id: str | None = None
@@ -170,7 +190,12 @@ class SheetStore:
         ]
 
     async def _require_character(
-        self, conn: Conn, guild_id: int, campaign_id: str, entity_id: str
+        self,
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        player: int | None = None,
     ) -> None:
         # Only a player character can be "played by" someone (the memory store checks
         # that when it's set), so a player is enough to know it's one.
@@ -180,5 +205,10 @@ class SheetStore:
             (guild_id, campaign_id, entity_id),
         )
         row = await cur.fetchone()
-        if row is None or row["status"] in ("merged", "rejected") or row["played_by"] is None:
+        if (
+            row is None
+            or row["status"] in ("merged", "rejected")
+            or row["played_by"] is None
+            or (player is not None and row["played_by"] != player)
+        ):
             raise SheetRefused(NOT_A_CHARACTER)

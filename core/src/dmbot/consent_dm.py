@@ -152,11 +152,15 @@ def request_text(
     return "\n".join(lines)
 
 
+SHEET_LABEL = "📜 My character sheet"
+
+
 def confirmed_text(server: str, granted_at: int) -> str:
     return (
         f"✅ You said yes on {_date(granted_at)}. DMbot now records you in "
         f"**{_plain(server)}**, this session and later ones. You'll get a short reminder "
-        "each time you play. Press 🛑 below to stop any time."
+        "each time you play. Press 🛑 below to stop any time. Play on D&D Beyond? Press "
+        f"{SHEET_LABEL} so the transcript spells your spells right."
     )
 
 
@@ -441,9 +445,6 @@ def consent_view(guild_id: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(ConsentButton(guild_id))
     return view
-
-
-SHEET_LABEL = "📜 My character sheet"
 
 
 def sheet_button(guild_id: int, campaign_id: str | None) -> discord.ui.Button[Any]:

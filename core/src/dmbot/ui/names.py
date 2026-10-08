@@ -19,7 +19,6 @@ import discord
 from discord import app_commands
 
 from dmbot.campaigns import Campaign
-from dmbot.memory import sheets
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, PROPOSED, REJECTED, Entity, MemoryRuleError, name_key
 from dmbot.memory.scan import Match, near_match_in, sound_keys
@@ -666,12 +665,6 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
         if campaign is None or memory is None:
             return
         others = split_names(self.others.value)
-        character = None
-        if self.sheet.value.strip():
-            character = sheets.character_id(self.sheet.value)
-            if character is None:  # say so before saving anything
-                await _tell(interaction, sheets.NOT_A_LINK)
-                return
         try:
             entity = await save_name(
                 memory, campaign, self.name.value, PC, others, [], played_by=self.player_id
@@ -681,12 +674,12 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
             return
         changed(interaction, campaign)
         sheet_note = ""
-        if character is not None and _bot(interaction).sheets is not None:
-            from dmbot.ui.sheets import link_and_read
+        if self.sheet.value.strip() and _bot(interaction).sheets is not None:
+            from dmbot.ui.sheets import dm_link
 
             await _answer_first(interaction)  # reading D&D Beyond takes a moment
-            sheet_note = "\n" + await link_and_read(
-                _bot(interaction), campaign.guild_id, campaign.id, entity.id, character
+            sheet_note = "\n" + await dm_link(
+                interaction, campaign.guild_id, campaign.id, entity.id, self.sheet.value
             )
         await _tell(
             interaction,

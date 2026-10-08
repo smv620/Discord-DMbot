@@ -259,6 +259,7 @@ class Table:
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
+    sheet_loads: int = 0  # each load of the names counts up; only the newest one is used
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
     vocabulary: Vocabulary = field(default_factory=Vocabulary)
@@ -859,6 +860,8 @@ class DMBot(commands.AutoShardedBot):
         if self.sheets is None or table.campaign_id is None:
             return
         guild_id, campaign_id = table.guild_id, table.campaign_id
+        table.sheet_loads += 1
+        mine = table.sheet_loads
 
         def current() -> bool:  # stopped (or started again) meanwhile: leave it be
             return self.tables.get(guild_id) is table
@@ -866,22 +869,29 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
             try:
                 kept = await self.sheets.sheets(guild_id, campaign_id)
-                table.sheet_hints = tuple(sheet_hint_names(kept))
+                if table.sheet_loads == mine:  # a later change already loaded newer ones
+                    table.sheet_hints = tuple(sheet_hint_names(kept))
                 if refresh and current():
                     now = int(time.time())
                     found = await refresh_sheets(
                         self.sheets, guild_id, campaign_id, now, found=kept, still_wanted=current
                     )
+                    if table.sheet_loads != mine:
+                        # Changed meanwhile: load again, with what was just read too.
+                        self.sheets_changed(guild_id, campaign_id)
+                        return
                     table.sheet_hints = tuple(sheet_hint_names(found))
                     linked = sum(s.url is not None for s in found)
                     if found:
-                        # Spell, feature and item names only (game words, at most 15):
-                        # never a link or a character's name.
+                        # Only names read from D&D Beyond (game words, at most 15): never
+                        # what a player typed, a link or a character's name.
+                        read = sheet_hint_names([s for s in found if s.url is not None])
                         log.info(
-                            "Character sheets: %d linked, %d names in the hints: %s",
+                            "Character sheets: %d linked, %d names in the hints; from D&D "
+                            "Beyond: %s",
                             linked,
                             len(table.sheet_hints),
-                            ", ".join(table.sheet_hints) or "none",
+                            ", ".join(read) or "none",
                         )
             except Exception as exc:  # never the text: it can quote a row (links, names)
                 log.error("Couldn't load the campaign's character sheets (%s)", type(exc).__name__)

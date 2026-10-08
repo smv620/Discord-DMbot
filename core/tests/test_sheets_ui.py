@@ -73,7 +73,9 @@ class Words(unittest.TestCase):
         self.assertIn("read <t:1700000000:R>", linked)
         self.assertIn("Test Species · Test Class 3 / Second Class 2", linked)
         self.assertIn("not read yet", ui.sheet_status(sheet(read=False), link=True))
-        self.assertIn("typed in", ui.sheet_status(sheet(url=None), link=True))
+        self.assertIn(
+            "told DMbot about this character", ui.sheet_status(sheet(url=None), link=True)
+        )
 
     def test_the_link_only_for_whoever_may_see_it(self) -> None:
         line = ui.card_line(sheet(), link=False)
@@ -101,7 +103,7 @@ class Button(unittest.IsolatedAsyncioTestCase):
     async def test_one_character_opens_its_panel(self) -> None:
         it = interaction([TESTA])
         await ui.MySheetButton(GUILD, CAMPAIGN).callback(it)
-        it.client.sheets.characters_of.assert_awaited_once_with(GUILD, PLAYER, CAMPAIGN)
+        it.client.sheets.characters_of.assert_any_await(GUILD, PLAYER, CAMPAIGN)
         self.assertIn("**Testa** (Frost\\*maiden): no sheet yet", said(it))
         labels = [b.label for b in sent_view(it).children]
         self.assertEqual(labels, [ui.LINK_LABEL, ui.TELL_LABEL])  # nothing to unlink yet
@@ -117,13 +119,68 @@ class Button(unittest.IsolatedAsyncioTestCase):
         it = interaction([TESTA], sheet())
         await ui.MySheetButton(GUILD).callback(it)
         panel = sent_view(it)
-        self.assertEqual(panel.children[-1].label, ui.UNLINK_LABEL)
+        self.assertEqual(panel.children[-1].label, ui.FORGET_LABEL)
         press = interaction([TESTA])
         press.client = it.client
         with patch.object(ui, "_bot", return_value=MagicMock(sheets=it.client.sheets)) as bot:
-            await panel._unlink(press)
-        it.client.sheets.unlink.assert_awaited_once_with(GUILD, CAMPAIGN, ENTITY)
+            await panel._forget(press)
+        it.client.sheets.unlink.assert_awaited_once_with(GUILD, CAMPAIGN, ENTITY, player=PLAYER)
         bot.return_value.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)
+
+
+class Guards(unittest.IsolatedAsyncioTestCase):
+    async def test_someone_who_left_the_server_can_change_nothing(self) -> None:
+        it = interaction([TESTA])
+        it.client.get_guild.return_value.get_member.return_value = None
+        it.client.get_guild.return_value.fetch_member = AsyncMock(
+            side_effect=discord.NotFound(MagicMock(status=404), "gone")
+        )
+        await ui.MySheetButton(GUILD).callback(it)
+        self.assertEqual(said(it), ui.NOT_A_MEMBER)
+        it.client.sheets.characters_of.assert_not_awaited()
+
+    async def test_a_character_given_to_someone_else_meanwhile(self) -> None:
+        it = interaction([])  # no longer theirs when the panel is drawn
+        await ui.show_panel(it, GUILD, TESTA)
+        self.assertEqual(said(it), ui.NOT_YOURS)
+        it.client.sheets.sheet.assert_not_awaited()
+
+
+class LinkAndRead(unittest.IsolatedAsyncioTestCase):
+    async def test_a_link_changed_while_read(self) -> None:
+        bot = MagicMock(sheets=interaction([TESTA]).client.sheets)
+        bot.sheets.save = AsyncMock(return_value=False)
+        with patch.object(sheets, "fetch", AsyncMock(return_value=sheets.parse(answer()))):
+            said_now = await ui.link_and_read(bot, GUILD, CAMPAIGN, ENTITY, 42)
+        self.assertEqual(said_now, ui.LINK_CHANGED)
+        bot.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)
+
+    async def test_a_failed_read_still_updates_a_running_session(self) -> None:
+        bot = MagicMock(sheets=interaction([TESTA]).client.sheets)
+        with patch.object(sheets, "fetch", AsyncMock(side_effect=sheets.SheetError("down"))):
+            said_now = await ui.link_and_read(bot, GUILD, CAMPAIGN, ENTITY, 42)
+        self.assertEqual(said_now, ui.LINKED_UNREAD)
+        bot.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)  # the old names went
+
+    async def test_the_dms_bad_link_keeps_the_character(self) -> None:
+        it = interaction([TESTA])
+        self.assertEqual(await ui.dm_link(it, GUILD, CAMPAIGN, ENTITY, "my sheet"), ui.DM_BAD_LINK)
+        it.client.sheets.link.assert_not_awaited()
+
+    async def test_the_dms_link_failing_after_the_save_never_raises(self) -> None:
+        it = interaction([TESTA])
+        it.client.sheets.link = AsyncMock(side_effect=RuntimeError("database down"))
+        with self.assertLogs("dmbot.ui.sheets", "ERROR"):
+            said_now = await ui.dm_link(it, GUILD, CAMPAIGN, ENTITY, URL)
+        self.assertEqual(said_now, ui.DM_NOT_LINKED)
+
+
+class Cooldowns(unittest.TestCase):
+    def test_old_entries_are_dropped(self) -> None:
+        last: dict[Any, float] = {n: -1000.0 for n in range(ui._COOLDOWNS_KEPT)}
+        self.assertFalse(ui._too_soon(last, "new", 20))
+        self.assertEqual(list(last), ["new"])
+        self.assertTrue(ui._too_soon(last, "new", 20))
 
 
 class Linking(unittest.IsolatedAsyncioTestCase):
@@ -146,7 +203,7 @@ class Linking(unittest.IsolatedAsyncioTestCase):
         it.client.sheets_changed = MagicMock()
         with patch.object(sheets, "fetch", AsyncMock(return_value=sheets.parse(answer()))):
             await self.form("https://www.dndbeyond.com/characters/42/abc").on_submit(it)
-        it.client.sheets.link.assert_awaited_once_with(GUILD, CAMPAIGN, ENTITY, 42)
+        it.client.sheets.link.assert_awaited_once_with(GUILD, CAMPAIGN, ENTITY, 42, player=PLAYER)
         self.assertIn("✅ Linked. DMbot read **Testa Placeholder**'s sheet", said(it))
         it.client.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)
 
@@ -187,7 +244,13 @@ class Typing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["source"], "typed")
         self.assertEqual(sheets.who(snapshot), "Elf · Wizard 5")
         self.assertEqual(snapshot["features"], ["Misty Step", "Shield"])
-        self.assertIn(ui.TYPED_SAVED, said(it))
+        self.assertIn("The transcript will spell those names right", said(it))
+
+    async def test_names_left_out_are_counted(self) -> None:
+        it = interaction([TESTA])
+        it.client.sheets_changed = MagicMock()
+        await self.form("5", ", ".join(f"Name {i}" for i in range(25))).on_submit(it)
+        self.assertIn("5 left out", said(it))
 
 
 class Refreshing(unittest.IsolatedAsyncioTestCase):
@@ -201,6 +264,15 @@ class Refreshing(unittest.IsolatedAsyncioTestCase):
             again = interaction([TESTA], sheet())
             await ui.refresh_all(again, CAMPAIGN, GUILD)
         self.assertEqual(said(again), ui.REFRESH_WAIT)
+
+    async def test_says_which_couldnt_be_read(self) -> None:
+        it = interaction([TESTA], sheet())
+        it.client.sheets_changed = MagicMock()
+        old = sheet()  # read long ago: this refresh couldn't read it
+        with patch("dmbot.memory.sheet_refresh.refresh", AsyncMock(return_value=[old])):
+            await ui.refresh_all(it, CAMPAIGN, GUILD)
+        self.assertIn("Read 0 of 1 sheets. Couldn't read: **Testa**", said(it))
+        it.client.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)
 
     async def test_nothing_linked(self) -> None:
         it = interaction([TESTA], sheet(url=None))

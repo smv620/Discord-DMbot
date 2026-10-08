@@ -62,7 +62,8 @@ NOT_A_LINK = (
 )
 NOT_PUBLIC = (
     "DMbot can't read that sheet yet. On D&D Beyond, open the character, press Edit, then "
-    "Settings, and set Character Privacy to Public. Then press Link my character again."
+    "Settings, and set Character Privacy to Public. Then press **Link my D&D Beyond sheet** "
+    "again."
 )
 
 

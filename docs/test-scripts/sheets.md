@@ -31,7 +31,7 @@ the gaps (pick ones with unusual names), with a two-count stop between lines:
 ## What to check
 
 - The transcript writes the three names as on the sheet (not as everyday words).
-- Unlink (📜 My character sheet, then **Unlink**), stop and start again: the log line
+- Forget the sheet (📜 My character sheet, then **Forget sheet**), stop and start again: the log line
   says `0 linked` and those names are gone from the hints.
 
 Not yet in the session twin: replaying with a linked sheet needs the replay tool to load

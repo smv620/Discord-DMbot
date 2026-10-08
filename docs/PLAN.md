@@ -1604,11 +1604,14 @@ never one that is also a secret name. *Second half:* one **📜 My character she
 on the player's consent confirmation and each session's reminder opens a private panel
 for their character (picking one if they play several in the server): Link my D&D Beyond
 sheet (read at once; "set to Public" if refused), Tell DMbot about my character (the
-typed fallback), Unlink. The DM's "Add a player's character" form takes an optional
+typed fallback), Forget sheet. The DM's "Add a player's character" form takes an optional
 link; a player character's card shows "📜 Sheet: linked to D&D Beyond, read …" (the
-address only to the campaign's DMs) with 📜 Unlink sheet; the names panel's 📜 Refresh
+address only to the campaign's DMs) with 📜 Forget sheet; the names panel's 📜 Refresh
 sheets reads them all again (at most once a minute per campaign). A merge moves the
-sheet to the kept character unless it has its own.
+sheet to the kept character unless it has its own (then the merged one's is
+forgotten). The panel and forms act only while that person still plays the character
+and is still in the server. The log lists only names read from D&D Beyond, never typed
+ones.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
