@@ -71,7 +71,7 @@ class FakeStore:
         return offer(offer_id, guild_id, claimed_at=now)
 
     async def confirm_delivery(
-        self, guild_id: int, o: HandoverOffer, now: int, message_id: int | None = None
+        self, guild_id: int, o: HandoverOffer, now: int, message_id: int
     ) -> None:
         self.claimed.discard((guild_id, o.id))
         self.sent.add((guild_id, o.id))
@@ -381,6 +381,29 @@ class Expiring(Harness):
         guild.owner.send = real_send  # type: ignore[method-assign]
         await self.offers.end_expired(GUILD)
         self.assertEqual(guild.owner.sent, [self.told()])
+
+    async def test_a_database_hiccup_before_the_claim_leaves_it_for_the_next_sweep(
+        self,
+    ) -> None:
+        self.store.to_end = [self.ended()]
+        real_get = self.store.get
+
+        async def down(guild_id: int, campaign_id: str) -> Campaign | None:
+            raise RuntimeError("database down")
+
+        async def release_down(guild_id: int, offer_id: int, told_at: int) -> None:
+            raise RuntimeError("database down")  # so letting go would fail too
+
+        real_release = self.store.release_end_notice
+        self.store.get = down  # type: ignore[method-assign]
+        self.store.release_end_notice = release_down  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.dm_screen.site_offers", "ERROR"):
+            await self.offers.end_expired(GUILD)
+        self.assertEqual(self.store.told, set())  # never claimed in the first place
+        self.store.get = real_get  # type: ignore[method-assign]
+        self.store.release_end_notice = real_release  # type: ignore[method-assign]
+        await self.offers.end_expired(GUILD)
+        self.assertEqual(self.guilds[GUILD].owner.sent, [self.told()])
 
     async def test_a_deleted_campaign_counts_as_told(self) -> None:
         self.store.to_end = [self.ended()]
