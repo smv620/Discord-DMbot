@@ -14,6 +14,7 @@ dependencies = [
     "websockets>=13,<17",
     "python-dotenv>=1.0",
     "psycopg[binary]>=3.2",
+    "argon2-cffi>=23.1",  # the admin password's hash (#772)
     "psycopg-pool>=3.2",
     "pypdf>=6.1",  # reading a PDF's text for a names list (6.x limits decompression)
     # The website's API (python -m dmbot.web, #435): its own container, same image.
