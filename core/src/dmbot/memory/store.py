@@ -339,24 +339,27 @@ class MemoryStore:
 
     async def confirmed_name_for(self, guild_id: int, campaign_id: str, key: str) -> str | None:
         """The confirmed entry already called `key` by a name everyone may know (not a
-        secret one), if any: its name. Two look-ups by key and ID, never every name of the
+        secret one), if any: its name. Look-ups by key and by ID, never every name of the
         campaign (#580); like `aliases`, the first such name by its ID."""
+        # No ORDER BY and one ID at a time: a campaign with no table statistics yet got
+        # plans that read every name, or every entry, of the campaign instead (#580 perf).
+        # The few rows are sorted here (IDs are lowercase hex, so the same order).
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             cur = await scope.conn.execute(
-                "SELECT entity_id FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
-                " AND key = %s AND status = 'confirmed' AND NOT secret ORDER BY id",
+                "SELECT id, entity_id FROM memory_aliases WHERE guild_id = %s"
+                " AND campaign_id = %s AND key = %s AND status = 'confirmed' AND NOT secret",
                 (*scope.ids, key),
             )
-            ids = [str(r["entity_id"]) for r in await cur.fetchall()]
-            if not ids:
-                return None
-            cur = await scope.conn.execute(
-                "SELECT id, name FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
-                " AND status = 'confirmed' AND id = ANY(%s)",
-                (*scope.ids, ids),
-            )
-            names = {str(r["id"]): str(r["name"]) for r in await cur.fetchall()}
-        return next((names[i] for i in ids if i in names), None)
+            rows = sorted((str(r["id"]), str(r["entity_id"])) for r in await cur.fetchall())
+            for entity_id in dict.fromkeys(e for _, e in rows):
+                cur = await scope.conn.execute(
+                    "SELECT name FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                    " AND id = %s AND status = 'confirmed'",
+                    (*scope.ids, entity_id),
+                )
+                if row := await cur.fetchone():
+                    return str(row["name"])
+        return None
 
     async def sound_alikes(
         self, guild_id: int, campaign_id: str, codes: Sequence[str], *, limit: int = 500
@@ -841,12 +844,13 @@ class MemoryStore:
                 [sorted(set(entity_ids))],
             )
             ids = [row["id"] for row in confirmed]
-            await w.update_where(
-                ALIASES,
-                {"status": CONFIRMED},
-                " AND status = 'proposed' AND entity_id = ANY(%s)",
-                [ids],
-            )
+            if ids:
+                await w.update_where(
+                    ALIASES,
+                    {"status": CONFIRMED},
+                    " AND status = 'proposed' AND entity_id = ANY(%s)",
+                    [ids],
+                )
             return Written(len(ids), w.batch)
 
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:

@@ -1381,12 +1381,18 @@ class Lists(MemoryTest):
                 NewName("Belleros", "npc", CONFIRMED, ("Bell",), ("the Stranger",)),
                 NewName("Kesh", "npc", PROPOSED),
                 NewName("Ulfgar", "npc", CONFIRMED),
+                NewName("Bel", "npc", CONFIRMED),
             ],
             source="dm",
         )
-        ulfgar = written.value[2]
-        assert ulfgar is not None
+        belleros, _, ulfgar, bel = written.value
+        assert belleros is not None and ulfgar is not None and bel is not None
         await self.memory.set_entity_status(GUILD_A, self.c, ulfgar, REJECTED, source="dm")
+        old = await self.memory.add_alias(
+            GUILD_A, self.c, belleros, "Old Bell", kind="nickname", status=CONFIRMED, source="dm"
+        )
+        await self.memory.update_alias(GUILD_A, self.c, old.value.id, status=REJECTED, source="dm")
+        await self.memory.merge(GUILD_A, self.c, belleros, bel, source="dm", dm_said_same=True)
 
         async def named(text: str) -> str | None:
             return await self.memory.confirmed_name_for(GUILD_A, self.c, name_key(text))
@@ -1396,7 +1402,27 @@ class Lists(MemoryTest):
         self.assertIsNone(await named("the stranger"))  # a secret name: no clash shown
         self.assertIsNone(await named("Kesh"))  # only suggested
         self.assertIsNone(await named("Ulfgar"))  # removed
+        self.assertIsNone(await named("Old Bell"))  # a name the DM took back
+        self.assertEqual(await named("Bel"), "Belleros")  # merged: the one it became
         self.assertIsNone(await named("Auril"))
+
+        # On a campaign with no table statistics yet, each look-up still goes by the key
+        # index and the full entry ID, never a read of the whole campaign (#580 perf).
+        plans: list[str] = []
+        real = AsyncConnection.execute
+
+        async def explained(conn: Any, query: Any, params: Any = None, **kw: Any) -> Any:
+            if str(query).startswith("SELECT") and "memory_" in str(query):
+                cur = await real(conn, "EXPLAIN " + str(query), params)
+                plans.append("\n".join(str(next(iter(r.values()))) for r in await cur.fetchall()))
+            return await real(conn, query, params, **kw)
+
+        with patch.object(AsyncConnection, "execute", explained):
+            self.assertEqual(await named("bell"), "Belleros")
+        by_key = [p for p in plans if "memory_aliases" in p]
+        self.assertTrue(by_key and all("memory_aliases_by_key" in p for p in by_key), plans)
+        by_id = [p for p in plans if "memory_entities" in p]
+        self.assertTrue(by_id and all("Index Cond" in p and "id =" in p for p in by_id), plans)
 
     async def test_a_big_group_gets_its_kind_in_a_few_statements(self) -> None:
         """ "Every wizard is an NPC" for 150 names, each with names of its own, takes a few
@@ -1422,15 +1448,23 @@ class Lists(MemoryTest):
             return await real(conn, *args, **kw)
 
         with patch.object(AsyncConnection, "execute", counting):
-            done = await self.memory.confirm_kinds(GUILD_A, self.c, ids, "npc", source="dm")
-        self.assertEqual(done.value, 150)
+            done = await self.memory.confirm_kinds(
+                GUILD_A, self.c, [*ids, ids[0]], "npc", source="dm"
+            )
+        self.assertEqual(done.value, 150)  # a name given twice counts once
         self.assertLess(statements, 40)  # was 2,557 (13 now)
         names = await self.memory.aliases(GUILD_A, self.c, include_secret=True)
         self.assertEqual(len(names), 600)
         self.assertTrue(all(a.status == CONFIRMED for a in names))
         confirmed = await self.memory.entities(GUILD_A, self.c, statuses=[CONFIRMED])
         self.assertEqual({e.type for e in confirmed}, {"npc"})
-        self.assertIsNotNone(done.batch)  # one change
+        assert done.batch is not None  # one change, and Undo puts it all back
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        names = await self.memory.aliases(GUILD_A, self.c, include_secret=True)
+        self.assertTrue(all(a.status == PROPOSED for a in names))
+        back = await self.memory.entities(GUILD_A, self.c, statuses=[PROPOSED])
+        self.assertEqual(len(back), 150)
+        self.assertEqual({e.type for e in back}, {"concept"})
 
     async def save_list(
         self, size: int, first: int = 0, more: Sequence[Any] = ()
