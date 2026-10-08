@@ -191,6 +191,16 @@ does that safely: the server only calls out to Cloudflare, so no new door is ope
 and Cloudflare looks after the secure padlock (HTTPS). Only the admin pages go through.
 The pages customers will use stay closed until #498.
 
+**You (the owner), for Discord sign-in (once, only if dev1 says the website's Discord
+sign-in isn't set; the API won't start without it):**
+- Open https://discord.com/developers/applications, then your app, then OAuth2, then Client
+  information. Tell dev1 the **Client ID** (it is not secret). Press **Reset Secret**, copy
+  the new secret, and on the server type `scripts/set-key DISCORD_CLIENT_SECRET` and paste it
+  (press Enter, meaning No, if it asks to restart).
+- **Never press Bot, then Reset Token.** That is the bot's own token: resetting it logs the
+  bot out of Discord until it is changed on the server. If you are unsure which page you
+  are on, stop and ask dev1.
+
 **You (the owner), in Cloudflare:**
 1. Go to https://one.dash.cloudflare.com, then Networks, then Tunnels (newer screens:
    Networks, then Connectors, then Cloudflare Tunnels), then Create a tunnel. Pick
@@ -207,7 +217,8 @@ The pages customers will use stay closed until #498.
    Cancel or the back arrow. It stays grey because nothing is connected until dev1 starts
    the tunnel. You should now see `dmbot-api` in your list of tunnels, marked Inactive or
    Down. That is right, and the tunnel is already saved. If it isn't in the list, tell dev1.
-3. Add the route. Go to Networks, then Tunnels (or Connectors, then Cloudflare Tunnels), then
+3. Add the route. Go to https://one.dash.cloudflare.com, then Networks, then Tunnels (or
+   Connectors, then Cloudflare Tunnels), then
    `dmbot-api`, then "Published application routes" (older screens call it "Public
    Hostname"), then Add, and fill in:
    - Subdomain: `api`
@@ -224,7 +235,8 @@ The pages customers will use stay closed until #498.
 
 **You (the owner), on the server, once dev1 says the update is in:**
 
-4. Copy the token again from the tunnel's page in Cloudflare (step 1 says where). Open your
+4. Copy the token again from the tunnel's page in Cloudflare (open
+   https://one.dash.cloudflare.com, then Networks, then Tunnels, then `dmbot-api`). Open your
    server connection (ssh) as for the earlier steps, `cd Discord-DMbot`, type this and press
    Enter:
 
@@ -305,8 +317,9 @@ an issue or a PR.
 2. Type `scripts/set-admin-password`. Pick a password of 16 or more characters (a long
    sentence works). You won't see it as you type. Type it only there, never into a chat.
    If it shows an error, tell dev1 what it says (never the password).
-3. Optional, for Google sign-in, in the Google Cloud console (Google may call these pages
-   "Google Auth Platform": Branding, Audience, Clients):
+3. Optional, for Google sign-in, in the Google Cloud console
+   (https://console.cloud.google.com/auth/clients; Google may call these pages "Google Auth
+   Platform": Branding, Audience, Clients):
    - The OAuth consent screen (Audience): External, kept in Testing, with the email
      you'll sign in with as a test user.
    - Credentials (Clients) → Create credentials → OAuth client ID → Web application. Its
