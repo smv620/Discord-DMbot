@@ -146,7 +146,7 @@ export const labels = {
   comingSoon: "Coming soon",
   plansRegion: "Plans. Scroll sideways to see them all.",
   morePlansHeading: "Bigger tables and extra hours",
-  faqHeading: "Questions",
+  faqHeading: "Questions and answers",
   swipeHint: "Swipe to see every plan.",
   everyPlanHas: features,
   tryItHeading: "New here? Try it free.",
