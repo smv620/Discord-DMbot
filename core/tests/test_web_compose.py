@@ -103,9 +103,7 @@ class CloudflareTunnel(unittest.TestCase):
         self.assertNotRegex(service_block("web-api"), PORTS, "web-api must not publish a port")
 
     def test_the_tunnel_publishes_no_port(self) -> None:
-        self.assertNotRegex(
-            service_block("cloudflared"), r"^    ports:", "the tunnel only calls out"
-        )
+        self.assertNotRegex(service_block("cloudflared"), PORTS, "the tunnel only calls out")
 
     def test_the_tunnel_image_is_pinned(self) -> None:
         image = re.search(r"^    image: (\S+)", service_block("cloudflared"), re.M)

@@ -129,11 +129,12 @@ services:
 
   # The way in to web-api from the internet (#836): a Cloudflare Tunnel. cloudflared only
   # makes an outbound connection to Cloudflare, so the server opens no inbound port and
-  # Cloudflare keeps the certificate. It is the only way in from outside to web-api, which is
-  # why WEB_CLIENT_IP_HEADER=CF-Connecting-IP can be trusted. (core and ears share the private
-  # network and are our own code, so they could reach web-api; nothing outside can.) Which paths go through is set in
-  # Cloudflare (the public hostname's path), not here: see "Put the admin API online" in
-  # docs/DEPLOY.md. Stop it with `docker compose stop cloudflared` to close the way in.
+  # Cloudflare keeps the certificate. It is the only way in from outside to web-api, which
+  # is why WEB_CLIENT_IP_HEADER=CF-Connecting-IP can be trusted. (core and ears share the
+  # private network and are our own code, so they could reach web-api; nothing outside can.)
+  # Which paths go through is set in Cloudflare (the public hostname's path), not here: see
+  # "Put the admin API online" in docs/DEPLOY.md. Stop it with `docker compose stop
+  # cloudflared` to close the way in.
   cloudflared:
     profiles: ["web"]
     image: cloudflare/cloudflared:2026.10.0   # pinned: no surprise upgrades; bump on purpose
