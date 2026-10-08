@@ -7,7 +7,8 @@ import { Allowlist } from "../src/consent.js";
 import { Logger } from "../src/log.js";
 import type { EarsMessage } from "../src/protocol.js";
 import {
-  RESUBSCRIBE_DELAY_MS,
+  RESUBSCRIBE_DELAYS_MS,
+  RESUBSCRIBE_LIMIT,
   TableSession,
   UNKNOWN_RETRY_MS,
   WATCHDOG_MS,
@@ -396,19 +397,90 @@ test("after a decrypt error ears listens again at once, and counts what was lost
   assert.deepEqual(warnings(h.sent), []);
 });
 
-/** A later try: ears waits RESUBSCRIBE_DELAY_MS before listening again. */
+/** The longest wait before a later try. */
+const LONGEST_WAIT_MS = Math.max(...RESUBSCRIBE_DELAYS_MS);
+
+/** A later try: ears waits before listening again (at most LONGEST_WAIT_MS). */
 async function failAndWait(h: Harness, userId: string): Promise<void> {
   await fail(h, userId);
-  mock.timers.tick(RESUBSCRIBE_DELAY_MS);
+  mock.timers.tick(LONGEST_WAIT_MS);
   await nextFrame();
 }
+
+test("errors back to back at the first packet cost a tenth of a second, not a second (#761)", async () => {
+  // dev1's Test B: after an MLS welcome at transition 0, the DM's first packets errored
+  // twice within a millisecond. The second try used to wait a full second.
+  const lines: string[] = [];
+  const h = harness(undefined, undefined, { logLines: lines });
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 1);
+  await fail(h, ALICE); // the first try: at once
+  await fail(h, ALICE); // the next packet errors too: the second try waits briefly
+  assert.deepEqual(h.receiver.subscribed, [ALICE, ALICE]);
+  mock.timers.tick(100 - 21); // nextFrame moved the clock 20 ms already
+  assert.deepEqual(h.receiver.subscribed, [ALICE, ALICE]); // not early
+  mock.timers.tick(1);
+  assert.deepEqual(h.receiver.subscribed, [ALICE, ALICE, ALICE]);
+  await nextFrame();
+  await speak(h, ALICE, 10); // their packets decrypt again
+  await stop(h, ALICE);
+  const [report] = health(h.sent);
+  assert.ok(report);
+  assert.equal(report.framesReceived, 11);
+  // About 160 ms lost (the 100 ms wait and the two failed packets); a full second before.
+  assert.ok(report.framesExpected - report.framesReceived <= 10, `lost: ${JSON.stringify(report)}`);
+  const said = lines.join("\n");
+  assert.match(said, /listening again at once \(1 of 5 this minute\)/);
+  assert.match(said, /listening again in 100 ms \(2 of 5 this minute\)/);
+});
+
+test("each try waits its step, then ears gives up after about 4 s of failing", async () => {
+  assert.equal(RESUBSCRIBE_DELAYS_MS.length, RESUBSCRIBE_LIMIT);
+  const lines: string[] = [];
+  const h = harness(undefined, undefined, { logLines: lines });
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 1);
+  const started = Date.now();
+  for (const [i, delay] of RESUBSCRIBE_DELAYS_MS.entries()) {
+    h.receiver.fail(ALICE); // every new stream fails on its first packet
+    await new Promise((resolve) => setImmediate(resolve));
+    if (delay > 0) {
+      mock.timers.tick(delay - 1);
+      assert.equal(h.receiver.subscribed.length, i + 1, `try ${i + 1} came early`);
+      mock.timers.tick(1);
+    }
+    assert.equal(h.receiver.subscribed.length, i + 2, `try ${i + 1}`);
+  }
+  assert.equal(Date.now() - started, 4_000);
+  h.receiver.fail(ALICE); // the sixth error: give up
+  await nextFrame();
+  assert.equal(h.receiver.subscribed.length, 6);
+  assert.equal(warnings(h.sent).length, 1);
+  const said = lines.join("\n");
+  assert.match(said, /listening again in 300 ms \(3 of 5 this minute\)/);
+  assert.match(said, /listening again in 2100 ms \(5 of 5 this minute\)/);
+});
+
+test("a packet heard starts the waits over; the minute's limit still counts", async () => {
+  const lines: string[] = [];
+  const h = harness(undefined, undefined, { logLines: lines });
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 1);
+  await fail(h, ALICE); // 1: at once
+  await fail(h, ALICE); // 2: in 100 ms
+  mock.timers.tick(100);
+  await speak(h, ALICE, 3); // heard again
+  await fail(h, ALICE); // a new burst: 3, at once
+  const said = lines.join("\n");
+  assert.match(said, /listening again at once \(3 of 5 this minute\)/);
+});
 
 test("five errors in a minute: ears stops listening to them and tells core, once", async () => {
   const h = harness();
   h.session.noteMember(ALICE, false);
   await speak(h, ALICE, 1);
   await fail(h, ALICE); // the first try is at once
-  for (let i = 0; i < 4; i++) await failAndWait(h, ALICE); // the others a second apart
+  for (let i = 0; i < 4; i++) await failAndWait(h, ALICE); // the others after a wait
   assert.equal(h.receiver.subscribed.length, 6); // the first, and 5 tries
   await fail(h, ALICE); // the sixth error: give up
   assert.equal(h.receiver.subscribed.length, 6);
@@ -608,9 +680,9 @@ test("consent withdrawn during the wait before a later try: no new subscription"
   h.session.noteMember(ALICE, false);
   await speak(h, ALICE, 1);
   await fail(h, ALICE); // the first try, at once
-  await fail(h, ALICE); // the second waits RESUBSCRIBE_DELAY_MS
+  await fail(h, ALICE); // the second waits a little
   h.allowlist.set(GUILD, [CAROL]); // only the list changes: no dropSpeakers
-  mock.timers.tick(RESUBSCRIBE_DELAY_MS);
+  mock.timers.tick(LONGEST_WAIT_MS);
   await nextFrame();
   assert.deepEqual(h.receiver.subscribed, [ALICE, ALICE]);
   assert.equal(ends(h.sent), 1);
@@ -670,7 +742,7 @@ test("ends while sending and receive errors share the five tries", async () => {
     mock.timers.tick(200);
     h.receiver.endWhileSending(ALICE);
     await nextFrame();
-    mock.timers.tick(RESUBSCRIBE_DELAY_MS);
+    mock.timers.tick(LONGEST_WAIT_MS);
     await nextFrame();
   }
   assert.equal(h.receiver.subscribed.length, 6);
