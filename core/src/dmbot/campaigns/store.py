@@ -779,12 +779,14 @@ class CampaignStore:
         return self._db.listen(channel, on_listening)
 
     async def accept_handover(
-        self, guild_id: int, offer_id: int, user_id: int, now: int
+        self, guild_id: int, offer_id: int, user_id: int, now: int, *, announce: bool = False
     ) -> AcceptResult:
         """The person offered takes the campaign: it uses their plan from now, and they
         become one of its DMs (the old owner stays one). "gone" if the offer isn't
         theirs, was answered or withdrawn, expired, or the campaign changed owner since;
-        "no_free_slot" if their plan has no room now (checked now, not when offered)."""
+        "no_free_slot" if their plan has no room now (checked now, not when offered).
+        `announce`: answered on the website, so the bot is told, when this commits, to
+        tell the owner in Discord (#737)."""
         async with self._db.guild(guild_id) as conn:
             offer = await self._offer(conn, guild_id, offer_id)
             if offer is None or offer.to_user_id != user_id:
@@ -815,20 +817,27 @@ class CampaignStore:
             # Last on purpose: the website's policies (schema, web_accept_handover) allow
             # the owner and DM writes above only while this offer is still open.
             await self._decide(conn, guild_id, offer_id, "accepted", now)
+            if announce:
+                await offer_notify.send(conn, guild_id, offer_id, offer_notify.DECIDED)
             return "accepted"
 
     async def decline_handover(
-        self, guild_id: int, offer_id: int, user_id: int, now: int
+        self, guild_id: int, offer_id: int, user_id: int, now: int, *, announce: bool = False
     ) -> Literal["declined", "gone"]:
-        """The person offered says no thanks."""
-        closed = await self._close_offer(guild_id, offer_id, user_id, now, "declined")
+        """The person offered says no thanks (`announce`: see accept_handover)."""
+        closed = await self._close_offer(
+            guild_id, offer_id, user_id, now, "declined", announce=announce
+        )
         return "declined" if closed else "gone"
 
     async def withdraw_handover(
-        self, guild_id: int, offer_id: int, user_id: int, now: int
+        self, guild_id: int, offer_id: int, user_id: int, now: int, *, announce: bool = False
     ) -> Literal["withdrawn", "gone"]:
-        """The owner takes the offer back before it's answered."""
-        closed = await self._close_offer(guild_id, offer_id, user_id, now, "withdrawn")
+        """The owner takes the offer back before it's answered (`announce`: see
+        accept_handover; then the person offered is told)."""
+        closed = await self._close_offer(
+            guild_id, offer_id, user_id, now, "withdrawn", announce=announce
+        )
         return "withdrawn" if closed else "gone"
 
     async def get_offer(self, guild_id: int, offer_id: int, now: int) -> HandoverOffer | None:
@@ -875,6 +884,8 @@ class CampaignStore:
         user_id: int,
         now: int,
         status: Literal["declined", "withdrawn"],
+        *,
+        announce: bool = False,
     ) -> bool:
         """Decline (the person offered) or withdraw (the owner who offered). False if
         it isn't theirs to close or isn't open any more."""
@@ -887,6 +898,8 @@ class CampaignStore:
             if who != user_id or not offer.is_open(now):
                 return False
             await self._decide(conn, guild_id, offer_id, status, now)
+            if announce:
+                await offer_notify.send(conn, guild_id, offer_id, offer_notify.DECIDED)
             return True
 
     async def _offer(

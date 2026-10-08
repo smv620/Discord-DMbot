@@ -44,8 +44,9 @@ async def answer(db: Database, session: Session, ref: str, what: Answer, *, now:
     if guild_id not in {g.id for g in session.guilds}:
         return "gone"
     store = CampaignStore(db.as_person(session.user_id, session.id_hash), clock=lambda: now)
+    # announce: the bot tells the other person in Discord (#737).
     if what == "accept":
-        return await store.accept_handover(guild_id, offer_id, session.user_id, now)
+        return await store.accept_handover(guild_id, offer_id, session.user_id, now, announce=True)
     if what == "decline":
-        return await store.decline_handover(guild_id, offer_id, session.user_id, now)
-    return await store.withdraw_handover(guild_id, offer_id, session.user_id, now)
+        return await store.decline_handover(guild_id, offer_id, session.user_id, now, announce=True)
+    return await store.withdraw_handover(guild_id, offer_id, session.user_id, now, announce=True)
