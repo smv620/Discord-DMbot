@@ -51,6 +51,18 @@ export interface Person {
   name: string;
 }
 
+/** A campaign hand-over waiting for an answer (#614, #437). It ends after 7 days. */
+export interface Offer {
+  id: string;
+  campaignId: string;
+  campaignName: string;
+  serverName: string;
+  /** Incoming: who offers it. Outgoing: who it's offered to. */
+  personName: string;
+  /** ISO date and time the offer ends if nobody answers. */
+  expiresAt: string;
+}
+
 export interface Me {
   user: Person;
   plan: MyPlan | null;
@@ -58,6 +70,8 @@ export interface Me {
   servers: Server[];
   // The API also sends `installs` (servers this person added DMbot to); the servers list
   // already says "You added DMbot here", so the page doesn't use it (#497).
+  /** Hand-overs offered to you, and the ones you offered (#614). */
+  offers: { incoming: Offer[]; outgoing: Offer[] };
 }
 
 /** Why a call failed, in a form the page can turn into plain words. */
@@ -72,6 +86,7 @@ export type ApiErrorKind =
   | "payments-off" // the payment company isn't set up yet
   | "already-linked" // someone else already said they added DMbot to this server
   | "not-installed" // DMbot isn't in that server yet
+  | "offer-gone" // the hand-over offer ended, expired or was answered already
   | "confirm-again" // the delete confirmation ran out (10 minutes) or belongs elsewhere
   | "no-paid-plan" // the billing page needs a paid plan
   | "server"; // anything else
@@ -102,6 +117,12 @@ export interface AccountApi {
   /** People who can take over a campaign (they have a plan with room for it). */
   handoverCandidates(campaignId: string): Promise<Person[]>;
   handover(campaignId: string, toUserId: string): Promise<void>;
+  /** Take a campaign offered to you (needs a free campaign slot now). */
+  acceptOffer(offerId: string): Promise<void>;
+  /** Say no to a campaign offered to you. */
+  declineOffer(offerId: string): Promise<void>;
+  /** Take back a hand-over you offered. */
+  withdrawOffer(offerId: string): Promise<void>;
   /** Step 1 of deleting the account: returns a short-lived token for step 2. */
   requestDelete(): Promise<string>;
   /** Step 2: delete the account and its data now. */
@@ -120,6 +141,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_installed: "not-installed",
   confirm_again: "confirm-again",
   no_paid_plan: "no-paid-plan",
+  offer_gone: "offer-gone",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
@@ -189,6 +211,15 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       await call("POST", `/campaigns/${encodeURIComponent(campaignId)}/handover`, {
         to_user_id: toUserId,
       });
+    },
+    acceptOffer: async (offerId) => {
+      await call("POST", `/offers/${encodeURIComponent(offerId)}/accept`);
+    },
+    declineOffer: async (offerId) => {
+      await call("POST", `/offers/${encodeURIComponent(offerId)}/decline`);
+    },
+    withdrawOffer: async (offerId) => {
+      await call("POST", `/offers/${encodeURIComponent(offerId)}/withdraw`);
     },
     requestDelete: async () =>
       ((await call("POST", "/account/delete/request")) as { confirm_token: string })

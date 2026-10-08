@@ -2,12 +2,18 @@
 // @vitest-environment happy-dom
 // The account page (#434): every state from fixture data, every button, and the rule that
 // tokens never go in URLs or browser storage.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Account from "../src/account/Account";
 import { ApiError, httpApi } from "../src/account/api";
-import { candidates, mockApi, type Scenario } from "../src/account/mock";
+import {
+  candidates,
+  incomingOffers,
+  mockApi,
+  outgoingOffer,
+  type Scenario,
+} from "../src/account/mock";
 import { isSafeRedirect } from "../src/account/redirect";
 import { hoursLeftLine, hoursUsedLine, text } from "../src/content/account";
 
@@ -369,6 +375,109 @@ describe("actions", () => {
   });
 });
 
+describe("hand-over offers (#614)", () => {
+  const [ember, full] = incomingOffers as [(typeof incomingOffers)[0], (typeof incomingOffers)[0]];
+  const offerRow = (id: string) => document.querySelector(`[data-offer="${id}"]`) as HTMLElement;
+
+  it("shows no offers section when nobody offered you anything", async () => {
+    show("table");
+    await screen.findByText("The Brynwater Crossing");
+    expect(screen.queryByText(text.offersHeading)).toBeNull();
+  });
+
+  it("shows an offer with who, what and where, and Accept and No thanks", async () => {
+    show("offers");
+    expect(await screen.findByText(text.offersHeading)).toBeTruthy();
+    const row = offerRow(ember.id);
+    expect(row.textContent).toContain(
+      text.offerIncoming(ember.personName, ember.campaignName, ember.serverName),
+    );
+    expect(row.querySelectorAll("button")).toHaveLength(2);
+  });
+
+  it("Accept makes the campaign yours", async () => {
+    const { api } = show("offers");
+    await screen.findByText(text.offersHeading);
+    fireEvent.click(within(offerRow(ember.id)).getByRole("button", { name: text.accept }));
+    expect(await screen.findByText(text.accepted(ember.campaignName))).toBeTruthy();
+    expect(api.calls).toContain(`accept:${ember.id}`);
+    await waitFor(() => expect(offerRow(ember.id)).toBeNull());
+    expect(document.querySelector(`[data-campaign="${ember.campaignId}"]`)).toBeTruthy();
+  });
+
+  it("Accept without a free slot says what to do, with a link to the plan", async () => {
+    show("offers");
+    await screen.findByText(text.offersHeading);
+    fireEvent.click(within(offerRow(full.id)).getByRole("button", { name: text.accept }));
+    expect((await within(offerRow(full.id)).findByRole("alert")).textContent).toBe(
+      text.acceptNoSlot,
+    );
+    const link = within(offerRow(full.id)).getByRole("link", { name: text.seeMyPlan });
+    expect(link.getAttribute("href")).toBe("#plan");
+    expect(document.getElementById("plan")).toBeTruthy();
+  });
+
+  it("No thanks ends the offer", async () => {
+    const { api } = show("offers");
+    await screen.findByText(text.offersHeading);
+    fireEvent.click(within(offerRow(ember.id)).getByRole("button", { name: text.decline }));
+    expect(await screen.findByText(text.declined(ember.personName))).toBeTruthy();
+    expect(api.calls).toContain(`decline:${ember.id}`);
+  });
+
+  it("the answer stays on screen when the last offer goes", async () => {
+    show("offers");
+    await screen.findByText(text.offersHeading);
+    fireEvent.click(within(offerRow(full.id)).getByRole("button", { name: text.decline }));
+    await screen.findByText(text.declined(full.personName));
+    fireEvent.click(within(offerRow(ember.id)).getByRole("button", { name: text.accept }));
+    expect(await screen.findByText(text.accepted(ember.campaignName))).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText(text.offersHeading)).toBeNull());
+    expect(screen.getByText(text.accepted(ember.campaignName))).toBeTruthy();
+  });
+
+  it("Withdraw on an offer that already ended shows what's true now", async () => {
+    const api = mockApi("offers");
+    api.withdrawOffer = () => Promise.reject(new ApiError("offer-gone"));
+    render(<Account api={api} go={vi.fn()} />);
+    await screen.findByText(text.offersHeading);
+    const before = api.calls.filter((c) => c === "me").length;
+    const row = document.querySelector(
+      `[data-campaign="${outgoingOffer.campaignId}"]`,
+    ) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: text.withdraw }));
+    await waitFor(() => expect(api.calls.filter((c) => c === "me").length).toBe(before + 1));
+  });
+
+  it("an offer you made shows on its campaign with Withdraw, instead of Hand over", async () => {
+    const { api } = show("offers");
+    await screen.findByText(text.offersHeading);
+    const row = document.querySelector(
+      `[data-campaign="${outgoingOffer.campaignId}"]`,
+    ) as HTMLElement;
+    expect(row.textContent).toContain(
+      text.offerOutgoing(outgoingOffer.personName, outgoingOffer.expiresAt),
+    );
+    expect(within(row).queryByRole("button", { name: text.handOver })).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: text.withdraw }));
+    expect(await screen.findByText(text.withdrawn)).toBeTruthy();
+    expect(api.calls).toContain(`withdraw:${outgoingOffer.id}`);
+  });
+
+  it("an offer that already ended reloads the page instead of failing quietly", async () => {
+    const api = mockApi("offers");
+    api.acceptOffer = () => Promise.reject(new ApiError("offer-gone"));
+    render(<Account api={api} go={vi.fn()} />);
+    await screen.findByText(text.offersHeading);
+    const before = api.calls.filter((c) => c === "me").length;
+    fireEvent.click(within(offerRow(ember.id)).getByRole("button", { name: text.accept }));
+    expect((await within(offerRow(ember.id)).findByRole("alert")).textContent).toBe(
+      text.errors["offer-gone"],
+    );
+    await waitFor(() => expect(api.calls.filter((c) => c === "me").length).toBe(before + 1));
+  });
+});
+
 describe("safety", () => {
   it("does an action once, however fast the taps", async () => {
     const api = mockApi("no-plan");
@@ -537,11 +646,27 @@ describe("the HTTP client", () => {
     await expect(api.handover("c1", "u1")).rejects.toMatchObject({ kind: "no-free-slot" });
     const expired = httpApi("https://api.example", fakeFetch(403, { error: "confirm_again" }).fetcher);
     await expect(expired.confirmDelete("t")).rejects.toMatchObject({ kind: "confirm-again" });
+    const gone = httpApi("https://api.example", fakeFetch(409, { error: "offer_gone" }).fetcher);
+    await expect(gone.acceptOffer("o1")).rejects.toMatchObject({ kind: "offer-gone" });
     const noPlan = httpApi("https://api.example", fakeFetch(409, { error: "no_paid_plan" }).fetcher);
     await expect(noPlan.billingPortalUrl()).rejects.toMatchObject({ kind: "no-paid-plan" });
     const down = httpApi("https://api.example", (() =>
       Promise.reject(new TypeError("offline"))) as unknown as typeof fetch);
     await expect(down.me()).rejects.toMatchObject({ kind: "network" });
+  });
+
+  it("answers a hand-over offer at its own address, nothing in the body", async () => {
+    const { calls, fetcher } = fakeFetch(204);
+    const api = httpApi("https://api.example", fetcher);
+    await api.acceptOffer("o/1");
+    await api.declineOffer("o1");
+    await api.withdrawOffer("o1");
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://api.example/offers/o%2F1/accept",
+      "https://api.example/offers/o1/decline",
+      "https://api.example/offers/o1/withdraw",
+    ]);
+    expect(calls.every((c) => c.init.method === "POST" && c.init.body === undefined)).toBe(true);
   });
 
   it("sends the delete token in the body, not the URL", async () => {

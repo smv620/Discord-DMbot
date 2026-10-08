@@ -6,7 +6,7 @@
  * The names are our own invented cast (docs/test-scripts/), never real people.
  */
 import type { PlanId } from "../content/pricing";
-import type { AccountApi, Campaign, Me, Person } from "./api";
+import type { AccountApi, Campaign, Me, Offer, Person } from "./api";
 import { ApiError } from "./api";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -20,6 +20,7 @@ export const scenarios = [
   "table",
   "grace",
   "lapsed",
+  "offers",
   "down",
 ] as const;
 export type Scenario = (typeof scenarios)[number];
@@ -87,8 +88,37 @@ export const candidates: Person[] = [
   { id: "100000000000000003", name: "Mirelle" },
 ];
 
+/** Hand-overs for the "offers" scenario (#614). "offer-full" is refused: no free slot. */
+export const incomingOffers: Offer[] = [
+  {
+    id: "offer-ember",
+    campaignId: "cmp-ember",
+    campaignName: "Embers of Caldry",
+    serverName: "Quillon's Corner",
+    personName: "Oskar Vane",
+    expiresAt: "2026-10-14T18:00:00Z",
+  },
+  {
+    id: "offer-full",
+    campaignId: "cmp-tidewatch",
+    campaignName: "Tidewatch",
+    serverName: "Brynwater Players",
+    personName: "Mirelle",
+    expiresAt: "2026-10-12T18:00:00Z",
+  },
+];
+
+export const outgoingOffer: Offer = {
+  id: "offer-ashen",
+  campaignId: "cmp-ashen",
+  campaignName: "Ashen Crown",
+  serverName: "Gorrak's Hall",
+  personName: "Mirelle",
+  expiresAt: "2026-10-13T18:00:00Z",
+};
+
 export function scenarioMe(scenario: Scenario): Me | null {
-  const base = { user, campaigns, servers };
+  const base = { user, campaigns, servers, offers: { incoming: [], outgoing: [] } };
   switch (scenario) {
     case "signed-out":
     case "down":
@@ -141,6 +171,19 @@ export function scenarioMe(scenario: Scenario): Me | null {
           hoursUsed: 0,
           hoursCap: 18,
           renewsOn: null,
+          graceEndsOn: null,
+        },
+      };
+    case "offers":
+      return {
+        ...base,
+        offers: { incoming: incomingOffers, outgoing: [outgoingOffer] },
+        plan: {
+          id: "two-tables",
+          status: "active",
+          hoursUsed: 6,
+          hoursCap: 43,
+          renewsOn: "2026-10-14",
           graceEndsOn: null,
         },
       };
@@ -214,6 +257,42 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`handover:${campaignId}:${toUserId}`);
       const now = signedIn();
       me = { ...now, campaigns: now.campaigns.filter((c) => c.id !== campaignId) };
+    },
+    async acceptOffer(offerId: string) {
+      calls.push(`accept:${offerId}`);
+      const now = signedIn();
+      if (offerId === "offer-full") throw new ApiError("no-free-slot");
+      const offer = now.offers.incoming.find((o) => o.id === offerId);
+      if (!offer) throw new ApiError("offer-gone");
+      const taken: Campaign = {
+        id: offer.campaignId,
+        name: offer.campaignName,
+        serverName: offer.serverName,
+        lastPlayedAt: null,
+        status: "active",
+        role: "owner",
+      };
+      me = {
+        ...now,
+        campaigns: [...now.campaigns, taken],
+        offers: { ...now.offers, incoming: now.offers.incoming.filter((o) => o.id !== offerId) },
+      };
+    },
+    async declineOffer(offerId: string) {
+      calls.push(`decline:${offerId}`);
+      const now = signedIn();
+      me = {
+        ...now,
+        offers: { ...now.offers, incoming: now.offers.incoming.filter((o) => o.id !== offerId) },
+      };
+    },
+    async withdrawOffer(offerId: string) {
+      calls.push(`withdraw:${offerId}`);
+      const now = signedIn();
+      me = {
+        ...now,
+        offers: { ...now.offers, outgoing: now.offers.outgoing.filter((o) => o.id !== offerId) },
+      };
     },
     async requestDelete() {
       calls.push("requestDelete");

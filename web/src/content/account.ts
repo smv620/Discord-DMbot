@@ -6,6 +6,16 @@ import { byId, data, formatPeriod, formatPrice, type PlanId } from "./pricing";
 const extra = `${data.extraHours.hours} hours for ${formatPrice(data.extraHours.priceCents)}`;
 
 /** "Oct 14", in the reader's own language and time zone. */
+/** A day and a time, for deadlines that end partway through a day ("Oct 14, 3:00 PM"). */
+export function shortDateTime(iso: string, locale?: string): string {
+  return new Date(iso).toLocaleString(locale, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function shortDate(iso: string, locale?: string): string {
   return new Date(iso).toLocaleDateString(locale, {
     month: "short",
@@ -72,6 +82,7 @@ export const text = {
     "not-installed": "DMbot isn't in this server yet. Tap Add DMbot first.",
     "not-allowed": "That didn't work. Reload this page and try again.",
     "no-free-slot": noFreeSlot,
+    "offer-gone": "That offer has ended. We've updated this page.",
     "confirm-again": "That took too long. Tap Start deleting again.",
     "no-paid-plan":
       "Your plan has changed since this page opened, so we've updated it. If nothing looks different, write to us for help.",
@@ -133,6 +144,23 @@ export const text = {
     `Done. ${campaign} now belongs to ${person}.`,
   noFreeSlot,
   cancel: "Cancel",
+
+  // Hand-over offers (#614): an offer waits for the new owner's yes, for 7 days.
+  offersHeading: "Campaigns offered to you",
+  offerIncoming: (person: string, campaign: string, server: string): string =>
+    `${person} wants to hand you the campaign ${campaign} in ${server}. It would use one of your campaign slots and your plan's hours.`,
+  offerExpires: (iso: string): string => `Answer by ${shortDateTime(iso)}.`,
+  accept: "Accept",
+  decline: "No thanks",
+  acceptNoSlot: "You have no free campaign slot. Free one, or pick a bigger plan, then accept.",
+  seeMyPlan: "See my plan",
+  accepted: (campaign: string): string =>
+    `${campaign} is yours now. You're a DM of it in Discord too.`,
+  declined: (person: string): string => `Done. We'll tell ${person} in Discord.`,
+  offerOutgoing: (person: string, iso: string): string =>
+    `Hand-over offered to ${person}, expires ${shortDateTime(iso)}.`,
+  withdraw: "Withdraw",
+  withdrawn: "Done. The offer is withdrawn.",
 
   // Servers
   serversHeading: "Add DMbot to a server",
