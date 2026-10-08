@@ -6,6 +6,7 @@ Error messages in `CampaignError` are shown to DMs, so they use plain words (CLA
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 # Rulesets a DM can pick, with the plain label shown in pickers.
@@ -37,8 +38,16 @@ DM_SCREEN_LEVELS_OFFERED = (QUIET, NORMAL)
 DEFAULT_DM_SCREEN_LEVEL = NORMAL
 
 # What a DM confirmed the right to use shared material for (CLAUDE.md, IP rule; #252).
+# The database checks the same list (schema.SHARED_CONFIRMATIONS): a new purpose needs a
+# migration too (a test compares them).
 NAMES_LIST, SHARED_STORY, RULEBOOK = "names_list", "shared_story", "rulebook"
 CONFIRMATION_PURPOSES = (NAMES_LIST, SHARED_STORY, RULEBOOK)
+
+
+def fingerprint(text: str) -> str:
+    """Tells shared documents apart without keeping them: SHA-256 of the text."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
 
 DEFAULT_TARGET = "2024"
 DEFAULT_FALLBACK = "2014"

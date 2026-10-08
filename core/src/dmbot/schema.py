@@ -471,6 +471,8 @@ SHARED_CONFIRMATIONS = f"""
         purpose      TEXT NOT NULL CHECK (purpose IN ('names_list', 'shared_story', 'rulebook')),
         fingerprint  TEXT NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{{64}}$'),
         confirmed_at BIGINT NOT NULL,
+        -- Read from a backup file, not pressed here (anyone may restore one).
+        restored     BOOLEAN NOT NULL DEFAULT false,
         PRIMARY KEY (guild_id, campaign_id, id)
     );
     """ + _isolate("shared_confirmations")

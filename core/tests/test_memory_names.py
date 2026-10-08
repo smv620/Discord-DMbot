@@ -877,7 +877,7 @@ class Lists(NamesTest):
         await offer._read(it)
         # #252: who confirmed the right to use it, when, and what for, kept with the
         # campaign; a fingerprint of the text, never the text or the file's name.
-        from dmbot.campaigns.store import fingerprint
+        from dmbot.campaigns.models import fingerprint
 
         (row,) = await store.confirmations(GUILD, self.campaign.id)
         self.assertEqual(
@@ -885,6 +885,8 @@ class Lists(NamesTest):
             (str(MANAGER), "names_list", fingerprint(upload.text)),
         )
         self.assertNotIn("npcs", str(row))
+        elsewhere = await store.create(GUILD, "Strahd", DM)
+        self.assertEqual(await store.confirmations(GUILD, elsewhere.id), [])  # this one only
         system, sent = fake.complete.call_args.args
         self.assertIn("<document>", sent)
         self.assertIn("Leave out disguises", system)
@@ -896,6 +898,21 @@ class Lists(NamesTest):
         await preview["view"]._add(it)
         self.assertIn("Added 2 names", it.followup.send.call_args.args[0])
         self.assertIn("Ulfgar", await self.names())
+
+    async def test_nothing_is_recorded_without_the_press(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
+        for way_out in ("_cancel", "_as_is"):
+            with self.subTest(way_out=way_out):
+                it = self.it()
+                await name_lists.take_list(it, self.campaign.id, upload)
+                offer = it.response.sent[0][1]["view"]
+                it = self.it()
+                await getattr(offer, way_out)(it)
+        self.assertEqual(await self.bot.campaigns.confirmations(GUILD, self.campaign.id), [])
 
     async def test_no_ai_reading_without_a_saved_confirmation(self) -> None:
         from dmbot.ui import name_lists

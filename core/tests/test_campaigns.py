@@ -10,6 +10,7 @@ from psycopg import errors as pg_errors
 from psycopg import sql
 
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
+from dmbot.campaigns.models import fingerprint
 from dmbot.campaigns.store import EXPORT_FORMAT, EXPORT_VERSION
 from dmbot.db import Conn
 from tests.pg import DatabaseTest
@@ -510,47 +511,72 @@ class SharedConfirmations(StoreTest):
     """Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule;
     #252)."""
 
-    async def test_recorded_with_a_fingerprint_only(self) -> None:
-        from dmbot.campaigns.store import fingerprint
+    async def record(self, c: Campaign, text: str = "x", user: int = DM) -> None:
+        await self.store.record_confirmation(GUILD_A, c.id, user, "names_list", fingerprint(text))
+        self.clock.tick()
 
+    async def test_recorded_with_a_fingerprint_only(self) -> None:
         c = await self.make("A")
-        await self.store.record_confirmation(GUILD_A, c.id, DM, "names_list", "Ulfgar lives.")
+        now = int(self.clock())
+        await self.record(c, "Ulfgar lives.")
         (row,) = await self.store.confirmations(GUILD_A, c.id)
         self.assertEqual(
-            (row["user"], row["purpose"], row["fingerprint"], row["at"]),
-            (str(DM), "names_list", fingerprint("Ulfgar lives."), int(self.clock())),
+            (row["user"], row["purpose"], row["fingerprint"], row["at"], row["restored"]),
+            (str(DM), "names_list", fingerprint("Ulfgar lives."), now, False),
         )
         self.assertNotIn("Ulfgar", str(row))  # never the text
         with self.assertRaises(ValueError):
-            await self.store.record_confirmation(GUILD_A, c.id, DM, "anything", "x")
+            await self.store.record_confirmation(GUILD_A, c.id, DM, "anything", "0" * 64)
+        with self.assertRaises(ValueError):  # a fingerprint, never the text itself
+            await self.store.record_confirmation(GUILD_A, c.id, DM, "names_list", "Ulfgar")
 
     async def test_another_server_or_campaign_sees_none(self) -> None:
         c = await self.make("A")
         other = await self.make("B")
-        await self.store.record_confirmation(GUILD_A, c.id, DM, "names_list", "x")
+        await self.record(c)
         self.assertEqual(await self.store.confirmations(GUILD_A, other.id), [])
         with self.assertRaisesRegex(CampaignError, "doesn't exist in this server"):
             await self.store.confirmations(GUILD_B, c.id)
         with self.assertRaisesRegex(CampaignError, "doesn't exist in this server"):
-            await self.store.record_confirmation(GUILD_B, c.id, DM, "names_list", "x")
+            await self.store.record_confirmation(GUILD_B, c.id, DM, "names_list", "0" * 64)
 
-    async def test_backups_carry_them_and_a_damaged_one_is_refused(self) -> None:
+    async def test_backups_carry_them_marked_restored(self) -> None:
         c = await self.make("A")
-        await self.store.record_confirmation(GUILD_A, c.id, DM, "names_list", "x")
+        await self.record(c)
         backup = await self.store.export(GUILD_A, c.id)
         (saved,) = backup["sections"]["confirmations"]
         restored = await self.store.import_backup(GUILD_B, backup, DM2)
-        self.assertEqual(await self.store.confirmations(GUILD_B, restored.id), [saved])
-        for field, bad in [("user", "x"), ("purpose", "other"), ("fingerprint", "abc"),
-                           ("at", True), ("id", "")]:  # fmt: skip
-            with self.subTest(field=field):
-                damaged = json.loads(json.dumps(backup))
-                damaged["sections"]["confirmations"][0][field] = bad
-                with self.assertRaisesRegex(CampaignError, "damaged"):
-                    await self.store.import_backup(GUILD_B, damaged, DM)
+        (row,) = await self.store.confirmations(GUILD_B, restored.id)
+        self.assertEqual(row, {**saved, "restored": True})  # what the file says
+        # Replacing a campaign: its own confirmations give way to the backup's.
+        await self.record(c, "a newer document")
+        replaced = await self.store.import_backup(GUILD_A, backup, DM, replace_campaign_id=c.id)
+        rows = await self.store.confirmations(GUILD_A, replaced.id)
+        self.assertEqual([r["fingerprint"] for r in rows], [saved["fingerprint"]])
         old = json.loads(json.dumps(backup))
         del old["sections"]["confirmations"]  # made before #252
-        await self.store.import_backup(GUILD_B, old, DM)
+        restored = await self.store.import_backup(GUILD_B, old, DM)
+        self.assertEqual(await self.store.confirmations(GUILD_B, restored.id), [])
+
+    async def test_a_damaged_confirmation_is_refused(self) -> None:
+        c = await self.make("A")
+        await self.record(c)
+        backup = await self.store.export(GUILD_A, c.id)
+        bad: list[tuple[str | None, Any]] = [
+            ("user", "x"), ("user", 7), ("purpose", "other"), ("fingerprint", "abc"),
+            ("fingerprint", "A" * 64), ("fingerprint", "a" * 63), ("at", True), ("at", -1),
+            ("id", ""), ("id", "a-b"), (None, "x"),
+        ]  # fmt: skip
+        for field, value in bad:
+            with self.subTest(field=field, value=value):
+                damaged = json.loads(json.dumps(backup))
+                rows = damaged["sections"]["confirmations"]
+                if field is None:
+                    rows[0] = value  # not even a row
+                else:
+                    rows[0][field] = value
+                with self.assertRaisesRegex(CampaignError, "damaged"):
+                    await self.store.import_backup(GUILD_B, damaged, DM)
 
 
 class DeleteAndChildRows(StoreTest):
@@ -566,7 +592,7 @@ class DeleteAndChildRows(StoreTest):
     async def test_delete_removes_everything(self) -> None:
         c = await self.make("A")
         await self.store.set_optional_rule(GUILD_A, c.id, "xge-sleep", False)
-        await self.store.record_confirmation(GUILD_A, c.id, DM, "names_list", "x")
+        await self.store.record_confirmation(GUILD_A, c.id, DM, "names_list", "0" * 64)
         await self.store.delete(GUILD_A, c.id)
         self.assertIsNone(await self.store.get(GUILD_A, c.id))
         for table in ("campaign_dms", "campaign_optional_rules", "shared_confirmations"):

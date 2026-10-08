@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import gzip
-import hashlib
 import json
 import logging
 import re
@@ -150,20 +149,19 @@ class _DMSection:
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}")
 
 
-def fingerprint(text: str) -> str:
-    """Tells shared documents apart without keeping them: SHA-256 of the text."""
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
 class _ConfirmationsSection:
     """Who confirmed the right to use shared material, and when (#252): part of the
-    campaign's history, so it travels with its backups."""
+    campaign's history, so it travels with its backups. Rows read from a backup file are
+    marked `restored`: anyone in the server may restore one, so they say what the file
+    says, not what DMbot saw pressed. Rows are checked before the restore's transaction
+    opens (`check`, #164)."""
 
     name = "confirmations"
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
-            "SELECT id, user_id, purpose, fingerprint, confirmed_at FROM shared_confirmations"
+            "SELECT id, user_id, purpose, fingerprint, confirmed_at, restored"
+            " FROM shared_confirmations"
             " WHERE guild_id = %s AND campaign_id = %s ORDER BY confirmed_at, id",
             (guild_id, campaign_id),
         )
@@ -174,12 +172,14 @@ class _ConfirmationsSection:
                 "purpose": r["purpose"],
                 "fingerprint": r["fingerprint"],
                 "at": int(r["confirmed_at"]),
+                "restored": bool(r["restored"]),
             }
             for r in await cur.fetchall()
         ]
 
-    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: list[Any]) -> None:
-        values: list[tuple[str, int, str, int, str, str, int]] = []
+    def check(self, rows: list[Any]) -> list[tuple[str, int, str, str, int]]:
+        """Every field from the untrusted file, checked (in a worker thread)."""
+        values: list[tuple[str, int, str, str, int]] = []
         for row in rows:
             got = row if isinstance(row, dict) else {}
             rid, user, purpose = got.get("id"), got.get("user"), got.get("purpose")
@@ -199,13 +199,16 @@ class _ConfirmationsSection:
             ):
                 raise CampaignError("This backup file is damaged (bad confirmation).")
             assert isinstance(user, str) and isinstance(purpose, str)
-            values.append((campaign_id, guild_id, rid, int(user), purpose, fp, at))
+            values.append((rid, int(user), purpose, fp, at))
+        return values
+
+    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: list[Any]) -> None:
         async with conn.cursor() as cur:
             await cur.executemany(
                 "INSERT INTO shared_confirmations (campaign_id, guild_id, id, user_id, purpose,"
-                " fingerprint, confirmed_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"
-                " ON CONFLICT DO NOTHING",
-                values,
+                " fingerprint, confirmed_at, restored)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, true) ON CONFLICT DO NOTHING",
+                [(campaign_id, guild_id, *row) for row in rows],
             )
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
@@ -278,13 +281,15 @@ class CampaignStore:
         self.register_section(_ConfirmationsSection())
 
     async def record_confirmation(
-        self, guild_id: int, campaign_id: str, user_id: int, purpose: str, text: str
+        self, guild_id: int, campaign_id: str, user_id: int, purpose: str, fingerprint: str
     ) -> None:
         """Who confirmed the right to use shared material, when, and what for (CLAUDE.md,
         IP rule: "Record who confirmed and when"; #252). Only a fingerprint of the text
-        is kept, never the text or its file's name."""
+        (`models.fingerprint`) is kept, never the text or its file's name."""
         if purpose not in CONFIRMATION_PURPOSES:
             raise ValueError(f"Unknown purpose {purpose!r}")
+        if not _FINGERPRINT.fullmatch(fingerprint):
+            raise ValueError("A fingerprint is 64 hex characters (models.fingerprint)")
         async with self._db.guild(guild_id) as conn:
             await self._require(conn, guild_id, campaign_id)
             await conn.execute(
@@ -296,7 +301,7 @@ class CampaignStore:
                     uuid.uuid4().hex,
                     user_id,
                     purpose,
-                    fingerprint(text),
+                    fingerprint,
                     int(self._clock()),
                 ),
             )

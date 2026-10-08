@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import io
 import logging
 import re
@@ -23,7 +22,7 @@ import discord
 from dmbot import fetch
 from dmbot.ai import AIError, AnthropicClient, Reply
 from dmbot.campaigns import Campaign
-from dmbot.campaigns.models import NAMES_LIST
+from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
     CONFIRMED,
@@ -653,22 +652,23 @@ class AIOffer(_Menu):
             # The IP rule (CLAUDE.md): who confirmed the right to use it, and when. The
             # file's name stays out of the log and the record (it may hold names); a
             # fingerprint tells documents apart.
+            document = fingerprint(self.upload.text)
             log.info(
                 "Shared material confirmed for AI reading: user=%s campaign=%s doc=%s",
                 interaction.user.id,
                 campaign.id,
-                hashlib.sha256(self.upload.text.encode()).hexdigest()[:12],
+                document[:12],
             )
             # A lasting record, kept with the campaign (#252). Before the AI reads
             # anything: if it can't be saved, nothing is read.
             await _bot(interaction).campaigns.record_confirmation(
-                guild, campaign.id, interaction.user.id, NAMES_LIST, self.upload.text
+                guild, campaign.id, interaction.user.id, NAMES_LIST, document
             )
             secrets = sees_secrets(campaign, interaction.user.id)
             async with asyncio.timeout(AI_TIME_LIMIT_S):
                 listed, cut = await ai_names_list(ai, self.upload.text, secrets=secrets)
             await show_ai_list(interaction, campaign, self.upload, listed, cut, secrets=secrets)
-        except AIError as exc:
+        except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
         except TimeoutError:
