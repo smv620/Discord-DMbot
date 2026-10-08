@@ -286,7 +286,8 @@ _SETTABLE = frozenset(
 # Hand-over (#437 part 1b): plain words for the person who tried.
 NOT_THE_OWNER = "Only the campaign's owner can hand it over. Ask them to do it."
 NO_OWNER_YET = (
-    "This campaign has no owner yet. Run `/dmbot start` and take it on, then you can hand it over."
+    "This campaign has no owner yet. Whoever runs `/dmbot start` next will be asked to take it "
+    "on (their plan pays for its hours)."
 )
 OFFER_TO_SELF = "This campaign is already yours. Pick someone else."
 OFFER_WAITING = (
