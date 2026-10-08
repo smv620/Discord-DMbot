@@ -264,7 +264,9 @@ function ForgetInstallResult() {
 /** The message for coming back from adding DMbot (?install=done etc.), or null. */
 function installResult(search: string): string | null {
   const result = new URLSearchParams(search).get("install");
-  return result === null ? null : (text.install[result] ?? text.install["failed"] ?? null);
+  // Signed in again since (another tab, a reload): nothing true left to say about it.
+  if (result === null || result === "signed_out") return null;
+  return text.install[result] ?? text.install["failed"] ?? null;
 }
 
 /** Show the ?install= result once: take it out of the address so a reload doesn't repeat it. */

@@ -74,7 +74,7 @@ export const text = {
     "no-free-slot": noFreeSlot,
     "confirm-again": "That took too long. Tap Start deleting again.",
     "no-paid-plan":
-      "Your plan has changed since this page opened. Pick a plan below. If you still see Change plan, write to us for help.",
+      "Your plan has changed since this page opened, so we've updated it. If nothing looks different, write to us for help.",
   } as Record<string, string>,
   install: {
     done: "Done! DMbot is in your server. In Discord, type /dmbot start to begin.",

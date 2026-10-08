@@ -269,6 +269,22 @@ describe("actions", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(text.notTheDm);
   });
 
+  it("says it's the DM's to do when handing over is refused", async () => {
+    const api = mockApi("table");
+    api.handover = () => Promise.reject(new ApiError("not-allowed"));
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click((await screen.findAllByRole("button", { name: text.handOver }))[0]!);
+    fireEvent.click(await screen.findByRole("radio", { name: candidates[0]!.name }));
+    fireEvent.click(screen.getByRole("button", { name: text.handOverConfirm }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.notTheDm);
+  });
+
+  it("says nothing stale about an install once signed in again", async () => {
+    show("table", "?install=signed_out");
+    await screen.findByText(text.greeting("Belleros"));
+    expect(screen.queryByText(text.install["failed"] ?? "")).toBeNull();
+  });
+
   it("doesn't blame the campaign's DM for account actions", async () => {
     const api = mockApi("table");
     api.billingPortalUrl = () => Promise.reject(new ApiError("not-allowed"));
@@ -301,7 +317,8 @@ describe("actions", () => {
     fireEvent.click(screen.getByRole("button", { name: text.deleteNext }));
     fireEvent.click(await screen.findByRole("button", { name: text.deleteConfirm }));
     expect(await screen.findByText(text.errors["confirm-again"] ?? "")).toBeTruthy();
-    expect(screen.getByRole("button", { name: text.deleteStart })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: text.deleteStart }));
+    expect(screen.queryByText(text.errors["confirm-again"] ?? "")).toBeNull(); // old news
   });
 
   it("can back out of deleting", async () => {
