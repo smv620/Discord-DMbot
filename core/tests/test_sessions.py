@@ -20,6 +20,8 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.consent_dm import ALREADY_RECORDED
 from dmbot.dm_screen import DMScreenError
+from dmbot.memory import sheets
+from dmbot.memory.sheet_store import CharacterSheet
 from dmbot.sessions import SessionStore
 from dmbot.transcript import questions as name_questions
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
@@ -364,6 +366,84 @@ class SaveAndResume(SessionTests):
             await self.bot.stop_session(GUILD, DM, False)
         self.assertIsNone(await self.sessions.get(GUILD))
         self.assertIn(f"Saved session removed: /dmbot stop by user {DM}", logs.output[-1])
+
+    async def test_reading_sheets_never_delays_the_start(self) -> None:
+        # #723: the kept sheets' names at once; the slow read of each link afterwards.
+        kept = sheets.clean({"v": 1, "source": "typed", "name": "Testa", "spells": ["Old Spell"]})
+        fresh = sheets.clean({"v": 1, "source": "typed", "name": "Testa", "spells": ["New Spell"]})
+        sheet = CharacterSheet("0" * 32, "Testa", PLAYER, "u", kept, 1)
+        store = MagicMock(sheets=AsyncMock(return_value=[sheet]))
+        self.bot.sheets = store
+        reading, done = asyncio.Event(), asyncio.Event()
+        refreshed: list[bool] = []
+
+        async def slow_refresh(*_: Any, **__: Any) -> list[CharacterSheet]:
+            reading.set()
+            await done.wait()  # D&D Beyond is slow today
+            refreshed.append(True)
+            return [dataclasses.replace(sheet, sheet=fresh)]
+
+        with patch("dmbot.bot.refresh_sheets", slow_refresh):
+            ok, _ = await asyncio.wait_for(self.start(), 2)
+            self.assertTrue(ok)  # started without waiting for the sheets
+            await asyncio.wait_for(reading.wait(), 2)
+            table = self.bot.tables[GUILD]
+            self.assertEqual(table.sheet_hints, ("Old Spell",))
+            done.set()
+            for _ in range(20):
+                await asyncio.sleep(0)
+        self.assertEqual((refreshed, table.sheet_hints), ([True], ("New Spell",)))
+
+    async def test_stopping_stops_reading_sheets(self) -> None:
+        sheet = CharacterSheet("0" * 32, "Testa", PLAYER, "u", None, None)
+        self.bot.sheets = MagicMock(sheets=AsyncMock(return_value=[sheet]))
+        reading = asyncio.Event()
+
+        async def endless_refresh(*_: Any, **__: Any) -> list[CharacterSheet]:
+            reading.set()
+            await asyncio.Event().wait()
+            return []
+
+        with patch("dmbot.bot.refresh_sheets", endless_refresh):
+            await self.start()
+            await asyncio.wait_for(reading.wait(), 2)
+            task = self.bot.tables[GUILD].sheet_task
+            assert task is not None
+            await self.bot.stop_session(GUILD, DM, False)
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+        self.assertTrue(task.cancelled())
+
+    async def test_after_a_restart_sheets_are_not_read_again(self) -> None:
+        kept = sheets.clean({"v": 1, "source": "typed", "name": "Testa", "spells": ["Old Spell"]})
+        sheet = CharacterSheet("0" * 32, "Testa", PLAYER, "u", kept, 1)
+        self.bot.sheets = MagicMock(sheets=AsyncMock(return_value=[sheet]))
+        await self.start()
+        first = self.bot.tables[GUILD].sheet_task  # the first start's own read: let it finish
+        assert first is not None
+        await asyncio.wait_for(first, 2)
+        table = self.bot.tables.pop(GUILD)  # as if picked up again after a restart
+        table.resumed, table.sheet_hints = True, ()
+        refresh = AsyncMock()
+        with patch("dmbot.bot.refresh_sheets", refresh):
+            await self.bot.start_table(table)
+            task = table.sheet_task
+            assert task is not None
+            await asyncio.wait_for(task, 2)
+        refresh.assert_not_awaited()
+        self.assertEqual(table.sheet_hints, ("Old Spell",))
+
+    async def test_a_sheet_store_failure_logs_only_its_kind(self) -> None:
+        await self.start()
+        table = self.bot.tables[GUILD]
+        table.sheet_hints = ()
+        broken = RuntimeError("DETAIL: Failing row contains (https://www.dndbeyond.com/...)")
+        self.bot.sheets = MagicMock(sheets=AsyncMock(side_effect=broken))
+        with self.assertLogs("dmbot.bot", "ERROR") as logs:
+            await self.bot._sheet_hints(table, refresh=True)
+        self.assertNotIn("dndbeyond", "\n".join(logs.output))
+        self.assertIn("RuntimeError", logs.output[0])
+        self.assertEqual(table.sheet_hints, ())
 
     async def test_stopping_a_session_that_wasnt_saved_is_a_warning(self) -> None:
         await self.start()
