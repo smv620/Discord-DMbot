@@ -419,6 +419,9 @@ class SaveAndResume(SessionTests):
         sheet = CharacterSheet("0" * 32, "Testa", PLAYER, "u", kept, 1)
         self.bot.sheets = MagicMock(sheets=AsyncMock(return_value=[sheet]))
         await self.start()
+        first = self.bot.tables[GUILD].sheet_task  # the first start's own read: let it finish
+        assert first is not None
+        await asyncio.wait_for(first, 2)
         table = self.bot.tables.pop(GUILD)  # as if picked up again after a restart
         table.resumed, table.sheet_hints = True, ()
         refresh = AsyncMock()
