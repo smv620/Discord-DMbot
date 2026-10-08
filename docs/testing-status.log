@@ -9,7 +9,13 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+Core only, no migration. Check:
+  - #617 (dev2, #554): ⏹ Stop listening asks first ("Stop listening and end the
+    session for …?" [Yes, stop] [Cancel], private, 60 s); Cancel keeps listening; a
+    player is refused at once; "Yes, stop" shows "Stopping…"; /dmbot stop stops at once.
+  - #622 (dev2, #88): /dmbot stop and Restore answer before waiting (no "This
+    interaction failed" when a start is setting up the DM screen); a restore always
+    ends with its outcome, never a stuck "Restoring…".
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
