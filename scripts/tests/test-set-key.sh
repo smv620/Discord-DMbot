@@ -233,5 +233,11 @@ check "no terminal and no test switch is refused" refused
 check "no terminal says to log in first" says "Log in to the server first"
 check "no terminal changes nothing" unchanged
 
+# DEPLOY.md's "Turn on the admin page" leaves ADMIN_EMAILS to dev1 because of this.
+reset
+run "owner@example.com"$'\n' ADMIN_EMAILS
+check "refuses ADMIN_EMAILS: a setting, not a key" refused
+check "ADMIN_EMAILS refusal changes nothing" unchanged
+
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))
