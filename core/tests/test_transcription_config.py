@@ -37,6 +37,8 @@ class TranscriptionConfigTests(unittest.TestCase):
         self.assertNotIn("dg-secret", source)
         self.assertEqual(load_transcription_settings({}).source, "whisper-local small local")
         self.assertEqual(load_transcription_settings({"TRANSCRIBER": "none"}).source, "")
+        empty = TranscriptionSettings(engine="whisper-local", whisper_model="")
+        self.assertEqual(empty.source, "whisper-local custom local")  # never a blank word
         # A local model folder: only its last part, never the server's folders.
         folder = {"WHISPER_MODEL": "/home/ubuntu/models/my large v3"}
         self.assertEqual(

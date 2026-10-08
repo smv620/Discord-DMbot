@@ -741,6 +741,70 @@ class WorkerPool(unittest.IsolatedAsyncioTestCase):
         await self.stop(task)
         self.assertNotIn(2, [g for g, _ in engine.order])  # never sent to be written
 
+    async def test_a_stalled_alert_post_never_holds_up_other_tables(self) -> None:
+        # The engine is down for everyone. Server 1's "stopped" post hangs in Discord
+        # while server 2 fails too: server 2 is still told, soon (#499, #505).
+        engine = FakeTranscriber()
+        engine.fail = True
+        p = self.make(engine, workers=2)
+        never = asyncio.Event()
+        posted: list[int] = []
+
+        async def alert(guild_id: int, message: str) -> None:
+            posted.append(guild_id)
+            if guild_id == 1:
+                await never.wait()  # Discord hangs on this one
+
+        p._alert = alert
+        for at in range(FAILURES_BEFORE_ALERT):
+            p.enqueue(self.clip(1, at * 1000))
+        task = asyncio.create_task(p.run())
+        with (
+            mock.patch("dmbot.transcription.pipeline.ALERT_POST_TIMEOUT_S", 0.3),
+            self.assertLogs("dmbot.transcription.pipeline", "WARNING") as logs,
+        ):
+            await self.wait_for(lambda: posted == [1])  # stalled, holding the lock
+            p.enqueue(self.clip(2, 0))  # server 2 fails meanwhile
+            started = asyncio.get_running_loop().time()
+            await self.wait_for(lambda: 2 in posted)
+            waited = asyncio.get_running_loop().time() - started
+            p.enqueue(self.clip(1, 9000))  # server 1 fails again: not told twice
+            await self.wait_for(lambda: p.backlog == 0 and not p._writing)
+        await self.stop(task)
+        self.assertLess(waited, 1.0)  # about one post's time, not forever
+        self.assertEqual(posted, [1, 2])  # each told once
+        self.assertEqual(p._told_stopped, {1, 2})  # the post that timed out still counts
+        self.assertIn("took too long", "\n".join(logs.output))
+
+    async def test_a_turn_for_a_server_with_no_queue_is_a_warning(self) -> None:
+        p = self.make(FakeTranscriber(), workers=1)
+        p._turns.put_nowait(9)  # no queue for server 9
+        p.enqueue(self.clip(1, 0))
+        task = asyncio.create_task(p.run())
+        with self.assertLogs("dmbot.transcription.pipeline", "WARNING") as logs:
+            await self.wait_for(lambda: len(self.delivered) == 1)  # the worker carries on
+        await self.stop(task)
+        self.assertIn("empty turn", "\n".join(logs.output))
+        self.assertNotIn("Traceback", "\n".join(logs.output))
+
+    async def test_two_tables_one_told_and_one_starting_mid_outage(self) -> None:
+        engine = FakeTranscriber()
+        engine.fail = True
+        p = self.make(engine, workers=1)
+        told: list[int] = []
+
+        async def alert(guild_id: int, message: str) -> None:
+            told.append(guild_id)
+
+        p._alert = alert
+        for _ in range(FAILURES_BEFORE_ALERT):
+            await p.process(self.clip(1, 0))
+        self.assertEqual(told, [1])
+        p.session_started(2)  # a new table, mid-outage
+        await p.process(self.clip(2, 0))
+        await p.process(self.clip(1, 0))  # the first table fails again
+        self.assertEqual(told, [1, 2])  # the new one is told; the first not twice
+
     async def test_the_backlog_warning_is_per_server(self) -> None:
         alerts: list[int] = []
 
