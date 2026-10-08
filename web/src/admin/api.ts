@@ -11,7 +11,7 @@ export interface AdminMe {
 }
 
 /** Why something failed, in a form the page turns into plain words. */
-export type AdminProblem = "wrong" | "down";
+export type AdminProblem = "wrong" | "down" | "off";
 
 export class AdminApiError extends Error {
   constructor(readonly kind: AdminProblem) {
@@ -49,6 +49,8 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
     async me() {
       const response = await call("/admin/me");
       if (response.status === 401) return null;
+      // No admin routes at all: ADMIN_EMAILS is empty on the server.
+      if (response.status === 404) throw new AdminApiError("off");
       if (!response.ok) throw new AdminApiError("down");
       return (await response.json()) as AdminMe;
     },

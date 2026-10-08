@@ -204,6 +204,16 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(no_cookie.headers["location"], f"{SITE}/admin?signin=failed")
         self.assertEqual(self.google.asked, [])
 
+    async def test_without_google_set_up_the_button_leads_back_with_words(self) -> None:
+        app = create_app(
+            settings(admin_emails=(ADMIN,)), cast(Database, None), FakeDiscord(), google=None
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+        ) as client:
+            answer = await client.get("/admin/auth/google/start")
+        self.assertEqual(answer.headers["location"], f"{SITE}/admin?signin=off")
+
     async def test_google_failing_is_a_plain_refusal(self) -> None:
         self.google.fail = True
         refused = await self.google_sign_in()

@@ -17,11 +17,16 @@ export const text = {
   wrong:
     "That didn't work. Check the email and password. After 5 wrong tries, wait 15 minutes before trying again.",
   googleFailed:
-    "Google sign-in didn't work. Use the Google account with the admin email, or sign in with the password.",
+    "Google sign-in didn't work. Use the Google account with the admin email, or sign in with the password below. After 5 wrong tries, wait 15 minutes before trying again.",
+  googleOff: "Google sign-in isn't set up on the server. Sign in with your email and password below.",
+  off: "The admin page is switched off. Put your email in ADMIN_EMAILS on the server, restart the website API, then reload this page.",
   down: "Can't reach DMbot right now. Try again in a minute.",
   tryAgain: "Try again",
   signedInAs: (email: string): string => `Signed in as ${email}.`,
   comingSoon: "The free access list comes here next.",
   signOut: "Sign out",
+  signOutFailed:
+    "You're still signed in. Can't reach DMbot right now. Try Sign out again in a minute.",
   signedOut: "You're signed out.",
+  needsScript: "This page needs JavaScript. Turn it on in your browser, then reload the page.",
 } as const;

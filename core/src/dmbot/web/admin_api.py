@@ -141,7 +141,8 @@ def router(
     async def google_start() -> Response:
         require_on()
         if google is None:
-            raise HTTPException(status_code=404, detail="not_found")
+            # A plain link leads here: answer with the page and its words, not bare JSON.
+            return RedirectResponse(f"{admin_page}?signin=off", status_code=302)
         state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
         response = RedirectResponse(
             google.authorize_url(

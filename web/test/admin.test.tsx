@@ -142,3 +142,29 @@ describe("the page is never linked from the site", () => {
     expect(linking).toEqual([]);
   });
 });
+
+describe("ux follow-ups", () => {
+  it("a failed sign-out says you're still signed in", async () => {
+    const api = stub({ signOut: vi.fn(async () => Promise.reject(new AdminApiError("down"))) });
+    api.me = vi.fn(async () => ME);
+    render(<Admin api={api} search="" />);
+    fireEvent.click(await screen.findByRole("button", { name: text.signOut }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.signOutFailed);
+  });
+
+  it("says how to switch the page on when the server has it off", async () => {
+    const me = vi.fn(async () => Promise.reject(new AdminApiError("off")));
+    render(<Admin api={stub({ me })} search="" />);
+    expect((await screen.findByRole("alert")).textContent).toBe(text.off);
+  });
+
+  it("says when Google sign-in isn't set up", async () => {
+    render(<Admin api={stub()} search="?signin=off" />);
+    expect((await screen.findByRole("alert")).textContent).toBe(text.googleOff);
+  });
+
+  it("maps a 404 from /admin/me to 'off'", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(null, { status: 404 }));
+    await expect(httpAdminApi("/api", fetcher).me()).rejects.toMatchObject({ kind: "off" });
+  });
+});
