@@ -23,7 +23,7 @@ HEALTH_WARN_PERCENT = 95
 # The DM screen's ⚠️ means "DMbot is missing what people say" (#671), so it counts only
 # speech worth writing down, over enough of it to matter: per person, over the last
 # DM_WINDOW_S, under HEALTH_WARN_PERCENT got through AND at least DM_WARN_LOST_S lost. A
-# piece shorter than gets transcribed (a blip, a cough) counts in neither column; a short
+# piece shorter than what gets transcribed (a blip, a cough) counts in neither column; a short
 # answer ("yes", 0.3-0.6 s) counts, so one patchy "yes" never alarms but answers that keep
 # breaking up add up. A TV's patchy bursts stay quiet through the 2 s floor. The window
 # is timed from when health arrives: if transcription falls a minute behind, older gaps

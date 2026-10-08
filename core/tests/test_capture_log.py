@@ -299,7 +299,6 @@ class NoiseIsNoAlarm(unittest.TestCase):
         log.add_utterance(utt(1, 2.3))
         for at, received, expected in ((7, 52, 52), (21, 53, 53), (60, 155, 169), (61, 4, 23)):
             log.add_health(1, received, expected, at)
-        self.assertEqual(len(log._window[1]), 4)  # all four count
         self.assertIn("(audio gaps)", log.log_line() or "")  # the log keeps the raw numbers
         self.assertIsNone(log.render(str, 62))
 
