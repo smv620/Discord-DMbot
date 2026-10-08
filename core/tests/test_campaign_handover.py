@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from dmbot.campaigns import CampaignError, CampaignStore
@@ -333,6 +334,55 @@ class SiteDelivery(HandoverTest):
         with self.assertRaises(CampaignError):  # one open offer at a time
             await self.site_offer()
         self.assertEqual(len(await self.store.undelivered_offers(GUILD, NOW)), 1)
+
+
+class Announcing(HandoverTest):
+    """An answer on the website tells the bot, which tells the other person (#737)."""
+
+    async def heard(self, decide: Callable[[], Awaitable[object]]) -> list[str]:
+        listener = await self.db._pool.getconn()
+        try:
+            await listener.execute("LISTEN dmbot_handover_decided")
+            await decide()
+            gen = listener.notifies(timeout=1)
+            payloads = [n.payload async for n in gen]
+        finally:
+            await listener.execute("UNLISTEN *")
+            await self.db._pool.putconn(listener)
+        return payloads
+
+    async def test_each_answer_on_the_site_is_announced_with_ids_only(self) -> None:
+        for decide in ("accept", "decline", "withdraw"):
+            offer = await self.offer()
+            store = self.store
+            who = OWNER if decide == "withdraw" else BUYER
+            call = {
+                "accept": store.accept_handover,
+                "decline": store.decline_handover,
+                "withdraw": store.withdraw_handover,
+            }[decide]
+            payloads = await self.heard(
+                lambda call=call, offer=offer, who=who: call(GUILD, offer, who, NOW, announce=True)  # type: ignore[misc]
+            )
+            self.assertEqual(payloads, [f"{GUILD}:{offer}"], decide)
+            if decide == "accept":  # hand it back, so the next offer can be made
+                async with self.db.guild(GUILD) as conn:
+                    await conn.execute(
+                        "UPDATE campaigns SET owner_user_id = %s WHERE guild_id = %s AND id = %s",
+                        (OWNER, GUILD, self.campaign.id),
+                    )
+
+    async def test_the_bots_own_buttons_announce_nothing(self) -> None:
+        offer = await self.offer()
+        payloads = await self.heard(lambda: self.store.decline_handover(GUILD, offer, BUYER, NOW))
+        self.assertEqual(payloads, [])
+
+    async def test_a_refused_answer_announces_nothing(self) -> None:
+        offer = await self.offer()
+        payloads = await self.heard(
+            lambda: self.store.decline_handover(GUILD, offer, OWNER, NOW, announce=True)
+        )
+        self.assertEqual(payloads, [])  # not theirs to decline
 
 
 class Ending(HandoverTest):

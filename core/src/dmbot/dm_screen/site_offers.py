@@ -29,10 +29,15 @@ import discord
 from dmbot.campaigns import Campaign, offer_notify
 from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
 from dmbot.dm_screen.handover import (
+    ACCEPTED,
+    DECLINED,
     NO_PINGS,
     OFFER_EXPIRED,
+    TOLD_ACCEPTED,
+    TOLD_DECLINED,
     TOLD_EXPIRED,
     TOLD_EXPIRED_UNSENT,
+    TOLD_WITHDRAWN,
     deliver_offer,
     md,
 )
@@ -66,6 +71,8 @@ class OfferStore(Protocol):
     ) -> None: ...
 
     async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]: ...
+
+    async def get_offer(self, guild_id: int, offer_id: int, now: int) -> HandoverOffer | None: ...
 
     async def claim_end_notice(self, guild_id: int, offer_id: int, now: int) -> bool: ...
 
@@ -126,26 +133,49 @@ class SiteOffers:
     async def follow(self, listen: Listen) -> None:
         """Send offers as they're announced, until cancelled. Every time the listener is
         (re)connected, a sweep sends what was announced while it wasn't listening."""
+        await self._follow(
+            listen,
+            offer_notify.CHANNEL,
+            lambda: self._spawn(self.sweep(), "offer-sweep"),
+            lambda ids: self._spawn(self.send(*ids), "site-offer"),
+        )
+
+    async def follow_decided(self, listen: Listen) -> None:
+        """Tell the other person when an offer is answered or taken back on the website
+        (#737), until cancelled. One announced while nobody listened isn't told: the
+        account page shows it either way."""
+        await self._follow(
+            listen,
+            offer_notify.DECIDED,
+            lambda: None,
+            lambda ids: self._spawn(self.decided(*ids), "site-decision"),
+        )
+
+    async def _follow(
+        self,
+        listen: Listen,
+        channel: str,
+        on_connect: Callable[[], object],
+        act: Callable[[tuple[int, int]], object],
+    ) -> None:
         failures = 0
         connected_at: float | None = None
 
         def on_listening() -> None:
             nonlocal connected_at
             connected_at = self._clock()
-            self._spawn(self.sweep(), "offer-sweep")
+            on_connect()
 
         while True:
             connected_at = None
             try:
                 # Closed straight away when cancelled, so its connection closes too.
-                async with contextlib.aclosing(
-                    listen(offer_notify.CHANNEL, on_listening)
-                ) as stream:
+                async with contextlib.aclosing(listen(channel, on_listening)) as stream:
                     async for raw in stream:
                         ids = offer_notify.parse(raw)
                         # Every process hears every announcement: act only on ours.
                         if ids is not None and self._get_guild(ids[0]) is not None:
-                            self._spawn(self.send(*ids), "site-offer")
+                            act(ids)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # the connection dropped; carry on without crashing
@@ -155,6 +185,32 @@ class SiteOffers:
             delay = RECONNECT_DELAY_S[min(failures, len(RECONNECT_DELAY_S) - 1)]
             failures += 1
             await self._sleep(delay)
+
+    async def decided(self, guild_id: int, offer_id: int) -> None:
+        """An offer answered or taken back on the website: the same private messages the
+        Discord buttons send. Accepted or declined: the owner hears, and the person's
+        offer message says what they chose. Taken back: the person's offer message says
+        so, unless it was never sent (then they never knew of it). Never raises; each
+        message is best effort. No claim: while two processes both serve the server (a
+        rolling deploy), the owner could hear twice."""
+        guild = self._get_guild(guild_id)
+        if guild is None:
+            return
+        with log_context(guild_id=guild_id):
+            try:
+                offer = await self._store.get_offer(guild_id, offer_id, self._now())
+                campaign = (
+                    None if offer is None else await self._store.get(guild_id, offer.campaign_id)
+                )
+                if offer is None or campaign is None:
+                    return
+                await _tell_decision(guild, offer, campaign)
+            except Exception as exc:
+                log.error(
+                    "Couldn't tell about a website answer to offer %s (%s)",
+                    offer_id,
+                    type(exc).__name__,
+                )
 
     async def every_hour(self) -> None:
         """A sweep every hour, until cancelled: catches a claim that lapsed (a process
@@ -273,6 +329,42 @@ class SiteOffers:
         )
         if result == "withdrawn":  # not if it was answered or expired meanwhile
             await _tell_owner(guild, offer, campaign)
+
+
+async def _tell_decision(guild: discord.Guild, offer: HandoverOffer, campaign: Campaign) -> None:
+    owner, person = md(offer.from_name), md(offer.to_name)
+    name = md(campaign.name)
+    if offer.status == "accepted":
+        to_owner: str | None = TOLD_ACCEPTED.format(name=person, campaign=name)
+        to_person = ACCEPTED.format(campaign=name, server=md(guild.name), owner=owner)
+    elif offer.status == "declined":
+        to_owner = TOLD_DECLINED.format(name=person, campaign=name)
+        to_person = DECLINED.format(owner=owner)
+    elif offer.status == "withdrawn":
+        to_owner = None
+        to_person = TOLD_WITHDRAWN.format(owner=owner, campaign=name)
+    else:  # still open, or ended another way: nothing to tell
+        return
+    if to_owner is not None:
+        with contextlib.suppress(discord.HTTPException):
+            member = await _member(guild, offer.from_user_id)
+            await member.send(to_owner, allowed_mentions=NO_PINGS)
+    if offer.delivered_at is None:  # never sent to them: nothing of theirs to change
+        return
+    with contextlib.suppress(discord.HTTPException):
+        member = await _member(guild, offer.to_user_id)
+        if offer.message_id is not None:  # the offer message: its buttons go
+            try:
+                channel = member.dm_channel or await member.create_dm()
+                await channel.get_partial_message(offer.message_id).edit(
+                    content=to_person, view=None, allowed_mentions=NO_PINGS
+                )
+                return
+            except discord.HTTPException:  # deleted, say: tell them in a new one instead
+                if offer.status != "withdrawn":
+                    return  # they chose it themselves; the site told them
+        if offer.status == "withdrawn":  # no message to change: tell them anyway
+            await member.send(to_person, allowed_mentions=NO_PINGS)
 
 
 async def _member(guild: discord.Guild, user_id: int) -> discord.Member:

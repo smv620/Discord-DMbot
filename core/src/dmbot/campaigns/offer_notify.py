@@ -13,6 +13,8 @@ if TYPE_CHECKING:  # keeps this module free of the database driver
     from dmbot.db import Conn
 
 CHANNEL = "dmbot_handover_offers"
+# An offer answered or taken back on the website: the bot tells the other person (#737).
+DECIDED = "dmbot_handover_decided"
 
 
 def payload(guild_id: int, offer_id: int) -> str:
@@ -30,6 +32,6 @@ def parse(raw: str) -> tuple[int, int] | None:
     return guild_id, offer_id
 
 
-async def send(conn: Conn, guild_id: int, offer_id: int) -> None:
+async def send(conn: Conn, guild_id: int, offer_id: int, channel: str = CHANNEL) -> None:
     """Queue the notification; Postgres delivers it when the transaction commits."""
-    await conn.execute("SELECT pg_notify(%s, %s)", (CHANNEL, payload(guild_id, offer_id)))
+    await conn.execute("SELECT pg_notify(%s, %s)", (channel, payload(guild_id, offer_id)))
