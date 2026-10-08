@@ -856,6 +856,14 @@ WEB_ROLE_POLICIES = """
         WITH CHECK (guild_id = dmbot_install_guild()
                     AND guild_id = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])
                     AND installed_by_user_id = dmbot_current_user());
+    -- Hand-over offers (#614): only ones the signed-in person sent or was sent, in the
+    -- session's servers. The store's own checks (owner, recipient, 7 days) come on top.
+    DROP POLICY IF EXISTS web_session_servers ON campaign_handover_offers;
+    CREATE POLICY web_session_servers ON campaign_handover_offers AS RESTRICTIVE TO dmbot_web
+        USING (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[])
+               AND dmbot_current_user() IN (from_user_id, to_user_id))
+        WITH CHECK (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[])
+                    AND dmbot_current_user() IN (from_user_id, to_user_id));
     """
 
 # What the website's role may touch at all: its own tables, and only reads of the two
@@ -863,7 +871,13 @@ WEB_ROLE_POLICIES = """
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
 # opened to it by accident: it has to be added here.
 WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("SELECT", ("schema_migrations", "campaigns", "campaign_dms")),
+    ("SELECT", ("schema_migrations",)),
+    # Accepting a hand-over (#614) makes the person the owner and one of the DMs; the
+    # store locks the campaign row first (FOR UPDATE needs an UPDATE right), and answering
+    # changes only an offer's status.
+    ("SELECT, UPDATE (owner_user_id)", ("campaigns",)),
+    ("SELECT, INSERT", ("campaign_dms",)),
+    ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),

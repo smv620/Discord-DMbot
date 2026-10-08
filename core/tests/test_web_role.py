@@ -149,7 +149,10 @@ class WebRole(DatabaseTest):
             rows = await cur.fetchall()
             self.assertEqual(
                 [(r["tablename"], list(r["roles"])) for r in rows],
-                [(t, [schema.WEB_ROLE]) for t in ("campaign_dms", "campaigns", "installs")],
+                [
+                    (t, [schema.WEB_ROLE])
+                    for t in ("campaign_dms", "campaign_handover_offers", "campaigns", "installs")
+                ],
             )
             # The bot's plans never call the web role's functions (no cost on the live path).
             async with self.db.guild(THURSDAY.id) as bot:
