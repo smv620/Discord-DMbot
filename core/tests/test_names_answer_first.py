@@ -227,6 +227,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         views: list[Any] = [
             name_card.PickForm(CAMPAIGN.id, BELL, name_card.SAME, "Same as"),
             name_card.FindForm(CAMPAIGN.id),
+            *self.saving_forms(),
             name_lists.KindQuestions(CAMPAIGN.id, [("wizard", [BELL])]),
             name_lists.NearQuestions(CAMPAIGN.id, []),
             dmbot_commands.Welcome(),  # any menu in the bot, not only the names ones
@@ -241,6 +242,27 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
                         await view.on_error(it, RuntimeError("boom"), MagicMock())
                 self.assertEqual(it.response.sent_kw["text"], dmbot_commands.TRY_AGAIN)
                 self.assertTrue(it.response.sent_kw["ephemeral"])
+
+    @staticmethod
+    def saving_forms() -> list[discord.ui.Modal]:
+        """The forms that answer first, then save (#595 review)."""
+        return [
+            name_card.FixSpellingForm(CAMPAIGN.id, BELL, "Belleros"),
+            name_card.AnotherNameForm(CAMPAIGN.id, BELL, "Belleros", secrets=True),
+            names.AddNameForm(CAMPAIGN.id, secrets=True),
+            names.CharacterForm(CAMPAIGN.id, 5, "Ann"),
+        ]
+
+    async def test_a_form_that_breaks_after_answering_says_so(self) -> None:
+        # Answered first, then the save broke: without on_error the form just closes.
+        for form in self.saving_forms():
+            with self.subTest(type(form).__name__):
+                it = self.it()
+                await it.response.defer()
+                with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+                    await form.on_error(it, ConnectionError("database away"))
+                self.assertEqual(it.followup.send.await_args.args[0], dmbot_commands.TRY_AGAIN)
+                self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])
 
     async def test_a_slash_command_that_breaks_after_answering_says_so(self) -> None:
         self.bot.memory.entities = AsyncMock(side_effect=ConnectionError("database away"))

@@ -454,6 +454,11 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
         self.entity_id = entity_id
         self.name.default = current[:NAME_LIMIT]
 
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)  # saves, then reloads names
         found = await _current(interaction, self.campaign_id, self.entity_id)
@@ -500,6 +505,11 @@ class AnotherNameForm(discord.ui.Modal, title="Add another name"):
         if not secrets:  # only the campaign's DMs deal in secret names
             self.remove_item(self.secret)
             self.other.required = True
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)  # saves, then reloads names

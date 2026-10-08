@@ -592,6 +592,12 @@ so the docs always show names the way Discord does. For the campaign
   (audio gaps, speech-to-text falling behind), the start and stop messages, and the
   end-of-session summary (#109). The 15-second capture checks leave it; audio health
   shows only as a warning when there's a problem, and in the summary.
+  **The audio warning counts only speech worth writing down (decided 2026-10-08, #671,
+  owner's request after a TV in the room set it off):** pieces shorter than the
+  transcription minimum never count; among the rest the ⚠️ needs both under 95%
+  received and at least 2 s lost in a rolling 60 s window per speaker. The #631
+  failure (a speaker sending while nothing is heard) stays an immediate warning from
+  ears' watchdog. The end-of-session line keeps the raw numbers for the logs.
 - **Organized mode:** each campaign gets a category, `📋 Rime of the Frostmaiden`
   (categories keep capitals and emoji), holding its `dmb-` channels. Each channel has a
   pinned "What's this channel?" card saying what it's for and who can see it. This
@@ -898,7 +904,11 @@ names panel nor the speech-to-text hints can be a fixed list.
     names (a form holds 4,000 characters) or upload a file (UTF-8, up to 256 KB and
     2,000 lines; each name up to 100 characters; at most 20 other names and 20 secret
     names on a line, decided 2026-10-08 on #598 so a worst-case file stays bounded, a
-    line over it being refused with its number and "split them"). **Names only:** lines with
+    line over it being refused with its number and "split them"; and, decided the same
+    day on #598 because the per-line cap alone leaves one name able to gather tens of
+    thousands of other names across lines, **at most 50 other names and 50 secret
+    names per name and 5,000 other and secret names per upload**, counting only what
+    the upload adds so a Download all file always uploads again). **Names only:** lines with
     descriptions or other columns are refused as unclear, and DMbot never offers
     ready-made sourcebook name lists (IP rule). It writes only into the chosen
     campaign, through the normal memory rules (checks, change log), **saved in one go**
@@ -1349,9 +1359,11 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
 "Transcript format"); table talk and anything unsure stay.
 *Decided 2026-10-08 (Supervisor, #52, dev2's questions):*
 - **Consent says the words go to an AI company, once for the whole product.** The consent
-  request and the per-session reminder gain: "DMbot's helper reads that text to give your
-  DM notes. For that, the text goes to an AI company (Anthropic). It isn't used to train
-  their AI." That bumps `TERMS_VERSION` (to 3), so everyone who said yes is asked again,
+  request and the per-session reminder gain: "DMbot's helper reads that text, with who
+  said it, to give your DM notes. For that, the text goes to an AI company (Anthropic).
+  It isn't used to train their AI." ("with who said it" added 2026-10-08 on dev2's
+  question: the AI sees speaker and character names; still version 3 while 3 is not
+  deployed, else 4.) That bumps `TERMS_VERSION` (to 3), so everyone who said yes is asked again,
   and nobody is recorded until they agree to the new wording; the filter never needs a
   per-person check of its own. Reason: every helper that reads the transcript (rules
   advisor, names, this filter, story memory) sends text to the AI, so the consent covers
@@ -1540,6 +1552,14 @@ Squeezy, owner's choice) with its customer portal for plan changes; the API is F
 the provider's webhook. No D&D or Wizards trademarks or art: "for 5e-compatible tabletop
 games". Terms, privacy and refund pages before launch. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
+**Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
+Feedback and Ask a question, posted by the web API as GitHub Discussions in this
+repository (categories Feedback and Questions; a discussions-only token from the
+environment) so the owner can subscribe; no email sending yet. The public post holds
+the message and date only; an optional "how to reach you" stays in the database with
+the message, never in the post, and the form says so. One post per IP per 10 minutes,
+2,000 characters, Turnstile. The page links to the repository and invites developers
+to open issues.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's
