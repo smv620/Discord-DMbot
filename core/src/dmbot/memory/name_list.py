@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from dmbot.memory.models import NAME_MAX, name_key
 
@@ -95,7 +95,10 @@ def header(*, secrets: bool) -> str:
         "### - Names only: no descriptions or notes. Each name is up to 100 characters.",
         "### - Player's characters: add them with Add a player's character instead.",
         "### - Lines starting with # are notes. DMbot skips them, so you can leave these.",
-        "### - Names DMbot already knows are skipped. Up to 2,000 lines per file.",
+        "### - A name DMbot already knows gets any new other names from its line.",
+        "###   Spelled almost like a known name? DMbot asks if they're the same.",
+        "###   A different kind than DMbot has? DMbot keeps its kind and asks you.",
+        "###   DMbot never joins or changes names on its own. Up to 2,000 lines.",
         "### - If a line doesn't fit, DMbot tells you, and lets you add the rest or have its",
         "###   AI tidy the list.",
         "###",
@@ -186,7 +189,7 @@ def parse(text: str, *, secrets: bool) -> Parsed:
     """The names in a list. `secrets`: whether this person may add secret names (the
     campaign's DMs); otherwise a line with secret names is refused, never half-saved."""
     out = Parsed()
-    seen: set[str] = set()
+    seen: dict[str, int] = {}  # name key → its line's place in out.lines
     for number, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip().lstrip("﻿")
         if not line or line.startswith("#"):
@@ -215,10 +218,24 @@ def parse(text: str, *, secrets: bool) -> Parsed:
             )  # fmt: skip
             continue
         key = name_key(name)
-        if key in seen:
+        if key in seen:  # the same name again: keep the first line, with every other name
             out.repeated += 1
+            first = out.lines[seen[key]]
+            said = {name_key(first.name), *map(name_key, first.others + first.secrets)}
+            more = _without(others, said)
+            said |= set(map(name_key, more))
+            word = " ".join(cells[1].split())
+            later = kind_of(word)
+            # A kind given later counts when the first line gave none (or "other").
+            if first.kind in (None, "concept") and later not in (None, "concept"):
+                first = replace(first, kind=later, kind_word=word)
+            out.lines[seen[key]] = replace(
+                first,
+                others=first.others + tuple(more),
+                secrets=first.secrets + tuple(_without(hidden, said)),
+            )
             continue
-        seen.add(key)
+        seen[key] = len(out.lines)
         word = " ".join(cells[1].split())
         others, hidden = _without(others, {key}), _without(hidden, {key, *map(name_key, others)})
         out.lines.append(ListLine(number, name, kind_of(word), word, tuple(others), tuple(hidden)))

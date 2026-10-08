@@ -1,0 +1,35 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="DMbot"
+  description="DMbot listens to your table in Discord and quietly helps the game master. For 5e-compatible tabletop games."
+>
+  <section class="hero">
+    <h1>Your table talks. DMbot listens and helps the game master (DM).</h1>
+    <p class="lead muted">
+      It writes down what was said, remembers the names your table makes up, and gives the game
+      master quiet tips. It never makes up the story and never decides. Only players who say yes
+      are recorded. For 5e-compatible tabletop games.
+    </p>
+    <a class="button" href="/install">Add DMbot to Discord</a>
+    <p class="note muted">This page is being written. Check back soon.</p>
+  </section>
+</Base>
+
+<style>
+  .hero {
+    max-width: var(--text-width);
+    padding-block: var(--space-8);
+  }
+
+  .lead {
+    font-size: var(--text-lg);
+  }
+
+  .note {
+    margin-top: var(--space-8);
+    font-size: var(--text-sm);
+  }
+</style>

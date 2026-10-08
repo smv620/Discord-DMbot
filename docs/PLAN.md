@@ -597,6 +597,18 @@ campaign's DMs or a server manager; anyone else is told how to stop recording
 themselves). Only the newest listening message has the button, it comes off when the
 session ends, and it works after a restart. The help card says how to stop too.
 
+**Writing speech down for several tables: built (2026-10-07, #173).** Each Discord
+server has its own queue of speech (64 pieces; 256 across all servers bound memory when
+the engine is down for everyone). `TRANSCRIBE_WORKERS` workers take turns between servers:
+3 by default with Deepgram or cloud, and exactly 1 with local Whisper (one model on the
+CPU; more would only wait). A server's speech is written one piece at a time and in
+order, so its lines never swap, while a slow table can't hold up the others. When
+writing stops, every table with speech waiting is told, and told again once it's steady
+(3 answers in a row, or an answer and 30 s without a failure; #470), so a flapping
+engine doesn't churn the DM screen. A table whose session starts during an outage is
+told too. Deepgram's "wait" (Retry-After) is looked at again after each wait.
+Each table's status shows its own backlog and delay.
+
 **End of a session: built (2026-10-06, #109).** When the DM stops DMbot:
 - Nothing said before the stop is lost: speech still being heard is closed off and
   queued, and the session stays "ending" until its own queued speech is written down
@@ -641,7 +653,9 @@ building:
   (`frostmaiden-session-7-as-heard.txt`): a short header, then
   `[0:42:10] (Mia) {Cerric}: …` per line (#53; no `{…}` for someone who plays no
   character, such as the DM, until speaker tagging). The file says it's what DMbot wrote down, with no fixes, and that some words
-  may be misheard. While DMbot is still recording that session it warns first
+  may be misheard, and which speech-to-text wrote it ("Speech to text: Deepgram, an
+  online service (model nova-3)"; #173). Each session stores its engines as "engine model host" (more than
+  one if a resumed session switched); the endpoint's host stays in the database. While DMbot is still recording that session it warns first
   ([Download anyway] [Cancel]), in different words for the DM and players. Replies
   are deferred first, since building a file can take more than Discord's 3 seconds.
 - When a session ends, the DM(s) and everyone recorded get a private message with one
@@ -720,8 +734,28 @@ remembers Belleros is Cerric's mentor"), never "graph", "entity" or "ontology".
   the rule that they record only DM-confirmed facts.
 - **Where names come from:** names the DM adds, characters, the DM's answers to "Did they
   mean…?", Undo presses, the Transcript Cleaner's reports, and an after-session scan of
-  the raw transcript (skipping lines labeled off-topic) that proposes new names for the DM
-  to confirm.
+  the cleaned transcript (skipping lines labeled off-topic) that proposes new names for
+  the DM to confirm.
+- **Names heard during play (#394):** the scan reads the cleaned line, so a known name
+  misheard and fixed live is never suggested as new. **Exact matches are never
+  suggested; near matches come with the match pre-filled; DMbot never merges by sound
+  on its own.**
+  - **Near:** sounds like a confirmed name and is spelled at least 0.8 alike (one word:
+    0.9, as in the Cleaner); never a secret name; when two known names fit about as
+    well, it's offered as new. It's worked out when the DM opens the review (one small
+    query for names sharing its sound codes), never saved: names can change, or be made
+    secret, after the session. The saved note is only "Heard 3 times".
+  - **The review** then reads "📝 **Rothgr** · heard 3 times / Sounds like **Hrothgar**.
+    The same, or new?" with **✅ It's Hrothgar** · **➕ New name** · **🔗 Another known
+    name…** on the first row and **🚫 Not a name** · **⏳ Later** on the second (so a
+    phone never cuts the labels; the same two rows without a match). "It's" merges it
+    as an other name in one change (with the usual guards), so one undo takes it all
+    back.
+  - **Near-duplicates heard in one session** ("Oskar Vane" and "Vane") are one question,
+    grouped before the cap of 10. The shorter is shown ("Also heard as **Vane**: saved
+    with it."), and confirmed or turned down with it; every note names all of them. A word that fits two names ("Lord" in "Lord Neverember" and
+    "Lord Dagult") stays its own question; one-word names fold only at 0.9.
+  - **No auto-accept setting.** Nothing is added until the DM presses a button.
 - **Keeping it tidy (entity resolution):**
   - Nicknames grow: when "Bell" keeps standing for Belleros, EntityBot proposes the alias.
   - Merges: two proposed entities merge automatically only on strong evidence; proposed +
@@ -832,10 +866,15 @@ names panel nor the speech-to-text hints can be a fixed list.
     (`Frostmaiden | god | Auril` when Auril is known as the Frostmaiden) changes nothing
     and says so. A close spelling (likeness 0.9, or the same sound at 0.8; one-word
     names 0.9 only) is saved as a proposed name and asked about after the import, in one
-    grouped message ("Aurill → Auril?" Same name / Different / Skip, with "Same for
-    all"); unanswered ones wait in Check new names. A kind that differs on an exact match
+    grouped message ("Aurill → Auril?" Same / Different / Remove, with "Same for all"
+    and "Different for all"); unanswered ones wait in Check new names. Matching is
+    bounded: a sound shared by more than 64 known names (`CROWDED`) isn't compared name
+    by name, and such a line lands in Check new names unchecked, the safe direction. A kind that differs on an exact match
     is asked the same way, and kept as DMbot has it when ignored. Repeated lines in one
     list pool their other names. Non-DMs matching a secret name see no hint of it.
+    Both kinds of question come as their own messages right under the summary, since
+    one message holds only five rows of buttons; the summary keeps the kind menus and
+    Undo, which also takes back the other names added to known names.
     The download is a file, sent privately:
     "This file includes secret names. Don't share it with players." A campaign holds
     up to about 10,000 names.
@@ -862,8 +901,12 @@ names panel nor the speech-to-text hints can be a fixed list.
   taken from the front, so the order is what matters. **Never secret names, and a
   match on a secret name adds nothing:** saying "the hooded stranger" must not pull
   Belleros, or anything connected to Belleros, into the hints.
-  1. **Always:** the players' characters and the players' display names (players call
-     each other by name), each capped at a few nicknames.
+  1. **Always:** the players' characters and the display names of the people who agreed
+     **and are in the table's voice channel** (players call each other by name), each
+     capped at a few nicknames. People who agreed but aren't there go **last**, after
+     every campaign name, so a big server's members never crowd out the scene (#173).
+     Who's there is looked at every 5 seconds per server; anyone who stops being
+     recorded is gone from the very next clip's hints.
   2. **The scene:** confirmed names said in about the last 10 minutes, newest and most
      said first. Each written-down line, only after the per-line consent check, is
      matched against the campaign's non-secret names (exact names, other names and
@@ -1077,7 +1120,7 @@ reads the campaign memory and never changes it.
     channel. The question leads with what was heard: "❓ **Mia said "Bell or us"**: did
     they mean… [Belleros] [Bellamy] [Type it…] [Keep as heard]". At most 3 options.
     **Keep as heard** saves a "don't change this" rule, like Undo.
-  - **Not flooding the DM screen:** medium fixes go into one "✏️ Name fixes this scene"
+  - **Not flooding the DM screen:** medium fixes go into one "✏️ Name fixes to check"
     message that is edited in place, one line and one Undo each. At most one question is
     open at a time, with a cooldown, and only for names that come up again or matter to
     the scene. Unanswered questions expire quietly (the line stays as heard) and move to
@@ -1149,8 +1192,8 @@ consent check just made still holds:
 - **Stored:** `heard` as before, `text` cleaned. The live transcript channel shows the
   cleaned line; downloads are still "as heard", now labelled
   `[0:42:10] (Mia) {Cerric}: …` with each player's confirmed character. The
-  after-session scan still reads what was heard; scene hints and heard counts read the
-  cleaned line.
+  after-session scan reads the cleaned line too (#394), as do scene hints and heard
+  counts.
 - **Measured offline (synthetic names, one vowel changed):** fixed back 92% at 50 names,
   56% at 500, 31% at 5,000, since in a big campaign more names sound alike and those are
   left alone. Safe, but to check on real campaign data (PyCharm session). About 5 ms per
@@ -1158,7 +1201,7 @@ consent check just made still holds:
 - **Next:** Undo notes for medium fixes (proposed names), re-checking earlier lines
   after a correction, then off-topic hiding (#52).
 
-**Transcript Cleaner step 2, in progress (2026-10-07, #296).**
+**Transcript Cleaner step 2: built (2026-10-07, #296).**
 - **"Did they mean…?":**
   - **When:** a word that sounds like two or three confirmed names stays as heard, and
     the DM screen asks: "❓ **DMbot heard Mia say "Marin".** Did they mean… Not sure?
@@ -1199,7 +1242,30 @@ consent check just made still holds:
     **🎙 As heard** under it.
   - **The files:** each says which version it is and how to get the other. Files are
     built off the event loop. "Both" must fit Discord's limit together.
-- **Undo notes for medium fixes:** waiting for a decision on where they go (#296).
+- **Fixes with Undo (decided 2026-10-07 on #296):**
+  - **Which fixes:** a misheard word that sounds like a name DMbot only *suggested*
+    (spelled at least 0.9 alike, never secret, not next to a secret name) is fixed,
+    but never silently.
+  - **Where they show:** only in the DM screen, in one "✏️ Name fixes to check" message
+    edited in place: "DMbot changed these words in the transcript but isn't sure.
+    Wrong? Press its Undo to put back what was heard." One numbered line and one
+    **↩️ Undo N** each (the newest 10, fewer if the names are very long). A fix keeps its number for the whole session,
+    so a number never changes meaning while the DM aims at it. A burst of fixes is one
+    edit, and if the message is deleted a new one is posted. Nothing about these
+    guesses ever goes in the transcript channel.
+  - **Undo** (DM-only) puts the heard words back in that line, and in any other place
+    in the line with the same words: the stored line (waiting for a save in progress),
+    a line waiting to be posted, and the channel message if it was posted in the last
+    ~30 s. It saves a "keep as heard" rule, and the private reply names the words:
+    "↩️ Undone. "Beleros" stays as heard: DMbot won't change it to Belleros again in
+    this campaign." **↪️ Allow again** under it takes the rule back.
+  - **Consent:** if the speaker stops being recorded, their lines leave the message.
+    Undo only touches their words while they're still recorded.
+  - **When it closes:** at the session's end the list stays but the Undo buttons go.
+    After a restart, a press says it can't be undone any more.
+- **Later:** unanswered "Did they mean…?" questions (they expire quietly at the
+  session's end, the line staying as heard) go to the after-session report once it
+  exists.
 
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled

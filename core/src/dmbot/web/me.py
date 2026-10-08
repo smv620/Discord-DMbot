@@ -35,7 +35,6 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
     plan = await entitlements.get(db, session.user_id)
     campaigns: list[dict[str, Any]] = []
     servers: list[dict[str, Any]] = []
-    names = {g.id: g.name for g in session.guilds}
 
     async with db.unscoped() as conn:
         # One batch (a pipeline), not hundreds of round trips. Each server's statements
@@ -70,7 +69,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                     {
                         "id": row["id"],
                         "name": row["name"],
-                        "serverName": names.get(guild.id, ""),
+                        "serverName": guild.name,
                         "lastPlayedAt": _iso_time(row["last_played_at"]),
                         # Paused campaigns and the campaign owner arrive with #437; until
                         # then every campaign is active and the person a DM, not owner, so

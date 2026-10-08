@@ -34,6 +34,9 @@ services:
       DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
       POSTGRES_ADMIN_PASSWORD: ""   # only the postgres service needs these
       DMBOT_DB_PASSWORD: ""
+      DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
+      WEB_SECRET_KEY: ""
+      PAYMENT_WEBHOOK_SECRET: ""
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,6 +59,9 @@ services:
       CLOUD_STT_API_KEY: ""    # speech-to-text keys are core's (and the bake-off's) only
       SPEECHMATICS_API_KEY: ""
       DEEPGRAM_API_KEY: ""
+      DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
+      WEB_SECRET_KEY: ""
+      PAYMENT_WEBHOOK_SECRET: ""
     depends_on:
       - core
     restart: unless-stopped

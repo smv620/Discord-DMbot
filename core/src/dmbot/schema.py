@@ -472,6 +472,13 @@ def _setting(name: str, setting: str, kind: str) -> str:
     """
 
 
+TRANSCRIPT_ENGINES = """
+    -- Which speech-to-text wrote each session down (#173): "engine model host", one
+    -- per engine used (a session resumed after a restart may switch). Not secret: no
+    -- keys, only the engine, its model and the endpoint's host.
+    ALTER TABLE transcript_sessions ADD COLUMN engines TEXT[] NOT NULL DEFAULT '{}';
+    """
+
 WEB_ACCOUNTS = (
     _setting("dmbot_current_user", "dmbot.user_id", "BIGINT")
     + _setting("dmbot_current_session", "dmbot.session", "TEXT")
@@ -687,7 +694,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0009_transcripts", TRANSCRIPTS),
     ("0010_memory_heard", MEMORY_HEARD),
     ("0011_web_accounts", WEB_ACCOUNTS),
-    ("0012_web_session_name", WEB_SESSION_NAME),
+    ("0012_transcript_engines", TRANSCRIPT_ENGINES),
+    ("0013_web_session_name", WEB_SESSION_NAME),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

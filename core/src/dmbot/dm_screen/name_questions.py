@@ -22,7 +22,7 @@ from typing import Any
 import discord
 
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
-from dmbot.transcript import questions
+from dmbot.transcript import fix_notes, questions
 from dmbot.transcript.cleaner import MAX_OPTIONS
 
 log = logging.getLogger(__name__)
@@ -173,3 +173,83 @@ def undo_view(campaign_id: str, batch: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(NameAnswerUndoButton(campaign_id, batch))
     return view
+
+
+class FixUndoButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:fixundo:(?P<guild>[0-9]{1,20}):(?P<note>[0-9a-f]{8})",
+):
+    """Undo one name fix in the "✏️ Name fixes to check" message (#296). The notes
+    live with the running session, so after a restart, or once it ended, a press says
+    so. Only the campaign's DMs may press it; the bot does the rest
+    (`DMBot.undo_fix`)."""
+
+    def __init__(self, guild_id: int, note_id: str, label: str = "Undo") -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                emoji="↩️",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:fixundo:{guild_id}:{note_id}",
+            )
+        )
+        self.guild_id = guild_id
+        self.note_id = note_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> FixUndoButton:
+        return cls(int(match["guild"]), match["note"], getattr(item, "label", None) or "Undo")
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        bot: Any = interaction.client
+        if interaction.guild_id != self.guild_id or not hasattr(bot, "undo_fix"):
+            await _tell(interaction, fix_notes.EXPIRED)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            answer, allow = await bot.undo_fix(self.guild_id, self.note_id, interaction.user.id)
+        except Exception:
+            log.exception("Couldn't undo a name fix")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        extra: dict[str, Any] = {}
+        if allow is not None:  # a press by mistake can be taken back
+            extra["view"] = AllowAgain(self.guild_id, *allow)
+        await interaction.followup.send(answer, ephemeral=True, allowed_mentions=NO_PINGS, **extra)
+
+
+class AllowAgain(discord.ui.View):
+    """Under the private "Undone" reply: takes back the keep-as-heard rule it saved."""
+
+    def __init__(self, guild_id: int, campaign_id: str, batch: int) -> None:
+        super().__init__(timeout=600)
+        self.guild_id, self.campaign_id, self.batch = guild_id, campaign_id, batch
+        button: discord.ui.Button[AllowAgain] = discord.ui.Button(
+            label=fix_notes.ALLOW_AGAIN, emoji="↪️", style=discord.ButtonStyle.secondary
+        )
+        button.callback = self._allow  # type: ignore[method-assign]
+        self.add_item(button)
+
+    async def _allow(self, interaction: discord.Interaction) -> None:
+        bot: Any = interaction.client
+        try:
+            answer = await bot.allow_fix_again(
+                self.guild_id, self.campaign_id, self.batch, interaction.user.id
+            )
+        except Exception:
+            log.exception("Couldn't take back a keep-as-heard rule")
+            await _tell(interaction, FAILED)
+            return
+        self.stop()
+        await interaction.response.edit_message(content=answer, view=None)
+
+
+def fix_notes_view(guild_id: int, notes: list[fix_notes.Note]) -> discord.ui.View | None:
+    """One Undo per fix not undone yet, with the fix's number for the whole session."""
+    view = discord.ui.View(timeout=None)
+    for note in notes:
+        if not note.undone:
+            view.add_item(FixUndoButton(guild_id, note.id, f"Undo {note.number}"))
+    return view if view.children else None
