@@ -256,7 +256,9 @@ terminal output or Discord screenshots copied to it.
   #704, 2026-10-08): migrations run unscoped and every server table has forced RLS, so a
   plain `UPDATE` silently matches nothing. Wrap it (`CREATE POLICY migrate_backfill … USING
   (true) WITH CHECK (true); UPDATE …; DROP POLICY …`) and prove it with a test that migrates
-  a table holding rows.
+  a table holding rows. Open **every** table the statement reads, not only the one it
+  writes (a `FROM` or join on a hidden table matches nothing; found in #781's 0029, whose
+  backfill would have deleted every row it meant to fill).
 - **Database-backed tests run only where Postgres is:** core's session and store tests
   are skipped when no database is available, so a green local `pytest` proves little
   for that code. Read the CI core job on the PR's head commit before writing "tests
