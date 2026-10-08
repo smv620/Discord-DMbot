@@ -122,9 +122,20 @@ def help_card(campaign_name: str, visibility: str) -> str:
     return "\n".join(lines)
 
 
+def level_changed(level: str) -> str:
+    """In the DM screen when someone changes how much DMbot says (#553)."""
+    icon = "🔇" if level == "quiet" else "🔔"
+    return f"{icon} How much DMbot says: {level.capitalize()}."
+
+
+def peekers_lose_access(visibility: str, *, was: str) -> bool:
+    """Players who were peeking can't see the screen anymore."""
+    return was == "peek" and visibility == "private"
+
+
 def visibility_changed(visibility: str, *, was: str) -> str:
     text = f"Done. **Who can see the DM screen:** {WHO_CAN_SEE[visibility]}"
-    if was == "peek" and visibility == "private":
+    if peekers_lose_access(visibility, was=was):
         text += " Players who were peeking can't see it anymore."
     return text
 

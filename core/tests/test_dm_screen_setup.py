@@ -230,9 +230,18 @@ class SetupTests(DatabaseTest):
         message.delete = AsyncMock()
         return message
 
-    def current_card(self, *, pinned: bool) -> Any:
+    def current_card(self, *, pinned: bool, buttons: list[str] | None = None) -> Any:
+        """The card as DMbot posts it now: the same words and buttons."""
+        from types import SimpleNamespace
+
+        from dmbot.dm_screen import card_view
+
         text = messages.help_card("Frostmaiden", self.campaign.dm_screen_visibility)
-        return self.bot_message(text, pinned=pinned)
+        card = self.bot_message(text, pinned=pinned)
+        current: list[Any] = list(card_view(self.campaign).children)
+        ids = buttons if buttons is not None else [i.custom_id for i in current]
+        card.components = [SimpleNamespace(children=[SimpleNamespace(custom_id=i) for i in ids])]
+        return card
 
     def new_card_pin_fails(self, exc: discord.HTTPException) -> None:
         self.new.send.return_value.pin = AsyncMock(side_effect=exc)
@@ -311,6 +320,16 @@ class SetupTests(DatabaseTest):
         result = await setup_dm_screen(self.guild, self.campaign.id, self.store)
         self.new.send.assert_not_called()
         assert result.warning == messages.CANT_PIN
+
+    async def test_a_card_missing_a_new_button_is_posted_again(self) -> None:
+        # #553: the same words, but from before ⚙️ Settings: compared by buttons too.
+        ids = [f"dmbot:vis:{self.campaign.id}:{v}" for v in ("private", "peek", "open")]
+        card = self.current_card(pinned=True, buttons=ids)
+        await self.with_screen(card)
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        card.delete.assert_awaited_once()
+        sent = self.new.send.await_args.kwargs["view"]
+        assert f"dmbot:settings:{self.campaign.id}" in [i.custom_id for i in sent.children]
 
     async def test_a_pinned_current_card_is_left_alone(self) -> None:
         card = self.current_card(pinned=True)

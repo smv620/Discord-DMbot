@@ -8,11 +8,13 @@ import discord
 
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.campaigns.models import CampaignError
-from dmbot.dm_screen import card_view
+from dmbot.dm_screen import VisibilityButton, card_view, messages
+from dmbot.dm_screen import buttons as buttons_module
 from dmbot.dm_screen import settings as settings_module
 from dmbot.dm_screen.settings import (
     FAILED,
     GONE,
+    LOAD_FAILED,
     ONLY_DM,
     SAVED,
     LevelButton,
@@ -118,7 +120,7 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
         it.client.campaigns.get.side_effect = RuntimeError("database down")
         with self.assertLogs("dmbot.dm_screen.buttons", "ERROR"):  # the one shared check
             await SettingsButton(CAMPAIGN).callback(it)
-        self.assertEqual(it.response.send_message.await_args.args[0], FAILED)
+        self.assertEqual(it.response.send_message.await_args.args[0], LOAD_FAILED)  # not "save"
 
     async def test_a_card_too_old_to_redraw_still_says_saved(self) -> None:
         it = press(DM, found=campaign())
@@ -133,7 +135,12 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
             it.client.set_screen_level.return_value = campaign("quiet")
             await LevelButton(CAMPAIGN, "quiet").callback(it)
             it.response.defer.assert_awaited_once()  # saving may take a moment
-            it.client.set_screen_level.assert_awaited_once_with(GUILD, CAMPAIGN, "quiet")
+            it.client.set_screen_level.assert_awaited_once_with(
+                GUILD,
+                CAMPAIGN,
+                "quiet",
+                was="normal",  # the level the DM saw: noted if new
+            )
             content = it.edit_original_response.await_args.kwargs["content"]
             self.assertIn("**How much DMbot says:** Quiet.", content)
 
@@ -165,7 +172,7 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
             patch.object(settings_module, "save_visibility", AsyncMock(return_value=saved)) as save,
         ):
             await SettingsVisibilityButton(CAMPAIGN, "private").callback(it)
-        save.assert_awaited_once_with(it, *allowed, "private")
+        save.assert_awaited_once_with(it, *allowed, "private", quiet=True)
         it.response.defer.assert_awaited_once()
         kwargs = it.edit_original_response.await_args.kwargs
         self.assertIn("**Who can see the DM screen:** Only the DM.", kwargs["content"])
@@ -178,6 +185,83 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
             await SettingsVisibilityButton(CAMPAIGN, "open").callback(it)
         it.response.defer.assert_not_awaited()
         it.edit_original_response.assert_not_awaited()
+
+
+class SettingsWordsTest(unittest.IsolatedAsyncioTestCase):
+    """#553: one set of words on the card, true on every path."""
+
+    def test_the_card_says_what_cant_be_changed_and_what_follows(self) -> None:
+        text = settings_text(campaign())
+        self.assertIn("`/transcript`. (This can't be changed.)", text)
+        self.assertIn("If DMbot is listening now, it follows the change from now on.", text)
+        self.assertNotIn("next line", text)
+        self.assertEqual(LOAD_FAILED, "Sorry, something went wrong. Please try again.")
+
+    def test_the_level_buttons_follow_the_levels_offered(self) -> None:
+        from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED
+
+        template = LevelButton.__discord_ui_compiled_template__
+        for level in DM_SCREEN_LEVELS_OFFERED:
+            self.assertIsNotNone(template.fullmatch(f"dmbot:level:{CAMPAIGN}:{level}"))
+        self.assertIsNone(template.fullmatch(f"dmbot:level:{CAMPAIGN}:chatty"))
+
+    def test_a_level_change_note_for_the_dm_screen(self) -> None:
+        self.assertEqual(messages.level_changed("quiet"), "🔇 How much DMbot says: Quiet.")
+        self.assertEqual(messages.level_changed("normal"), "🔔 How much DMbot says: Normal.")
+
+    async def test_a_player_on_the_visibility_row_gets_the_cards_words(self) -> None:
+        it = press(PLAYER, found=campaign())
+        await SettingsVisibilityButton(CAMPAIGN, "open").callback(it)
+        self.assertEqual(it.response.send_message.await_args.args[0], ONLY_DM)
+        it.response.defer.assert_not_awaited()
+
+    async def visibility_tap(self, was: str, to: str, warning: str | None) -> Any:
+        """An unpatched settings-card visibility tap, with only the saving mocked."""
+        it = press(DM, found=campaign(vis=was))
+        result = MagicMock(campaign=campaign(vis=to), warning=warning)
+        result.channel.send = AsyncMock()
+        it.client.after_screen_change = AsyncMock()
+        it.order = MagicMock()  # the calls, in order
+        it.order.attach_mock(it.response.defer, "defer")
+        it.order.attach_mock(it.followup.send, "send")
+        it.order.attach_mock(it.edit_original_response, "edit")
+        with patch.object(buttons_module, "setup_dm_screen", AsyncMock(return_value=result)):
+            await SettingsVisibilityButton(CAMPAIGN, to).callback(it)
+        return it
+
+    async def test_a_plain_visibility_change_is_one_redraw_and_no_pop_up(self) -> None:
+        it = await self.visibility_tap("peek", "open", None)
+        it.response.defer.assert_awaited_once()
+        it.followup.send.assert_not_awaited()  # the redrawn card is the confirmation
+        it.edit_original_response.assert_awaited_once()
+
+    async def test_a_visibility_change_with_news_still_says_it(self) -> None:
+        it = await self.visibility_tap("peek", "private", None)
+        self.assertIn("Players who were peeking", it.followup.send.await_args.args[0])
+        # One tap, in this order: defer, the news, then the card redrawn.
+        self.assertEqual([c[0] for c in it.order.mock_calls], ["defer", "send", "edit"])
+        it = await self.visibility_tap("private", "open", "⚠️ A player could already see it.")
+        self.assertIn("⚠️ A player could already see it.", it.followup.send.await_args.args[0])
+        it.edit_original_response.assert_awaited_once()
+
+
+class HelpCardVisibilityTest(unittest.IsolatedAsyncioTestCase):
+    """The help card's own buttons, after sharing their check and save with Settings."""
+
+    async def test_a_player_is_refused_without_a_defer(self) -> None:
+        it = press(PLAYER, found=campaign())
+        await VisibilityButton(CAMPAIGN, "open").callback(it)
+        self.assertEqual(it.response.send_message.await_args.args[0], messages.NOT_THE_DM)
+        it.response.defer.assert_not_awaited()
+
+    async def test_the_dm_gets_done(self) -> None:
+        it = press(DM, found=campaign())
+        result = MagicMock(campaign=campaign(vis="open"), warning=None)
+        it.client.after_screen_change = AsyncMock()
+        with patch.object(buttons_module, "setup_dm_screen", AsyncMock(return_value=result)):
+            await VisibilityButton(CAMPAIGN, "open").callback(it)
+        it.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
+        self.assertIn("Done.", it.followup.send.await_args.args[0])
 
 
 if __name__ == "__main__":

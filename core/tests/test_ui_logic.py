@@ -160,10 +160,9 @@ class MenuChoices(unittest.TestCase):
         self.assertIn("always show", quiet)
         self.assertTrue(quiet.startswith("• **Quiet** — how much DMbot says"), quiet)
         self.assertNotIn("recommended", quiet)
-        self.assertIn(
-            "**Normal** (recommended) — how much DMbot says",
-            settings_summary("2024", "2014", True, "peek", "normal")[-1],
-        )
+        normal = settings_summary("2024", "2014", True, "peek", "normal")[-1]
+        self.assertIn("**Normal** (recommended) — how much DMbot says", normal)
+        self.assertIn("press ⚙️ Settings on the pinned card in your DM screen", normal)
 
     def test_campaign_names_are_cut_for_a_phone(self) -> None:
         from dmbot.ui.logic import NAME_LABEL_MAX, name_label
