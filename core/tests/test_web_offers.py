@@ -9,11 +9,13 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 from psycopg import errors
 
+from dmbot.campaigns.models import HandoverOffer
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
 from dmbot.web import entitlements_writer, offers, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild, DiscordUser
+from dmbot.web.me import build_me
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
@@ -39,9 +41,7 @@ class WebOffers(DatabaseTest):
         self.bob = await self.sign_in(BOB, [THURSDAY, GORRAK])
         started = await entitlements_writer.start_try_it(self.web, BOB.id, now=self.now)
         self.assertTrue(started.started)
-        offer = await self.store.offer_handover(
-            THURSDAY.id, self.campaign.id, ALICE.id, BOB.id, self.now
-        )
+        offer = await self.offer()
         self.ref = offers.offer_ref(THURSDAY.id, offer.id)
 
     async def asyncTearDown(self) -> None:
@@ -54,6 +54,17 @@ class WebOffers(DatabaseTest):
         assert found is not None
         return found
 
+    async def offer(self) -> HandoverOffer:
+        return await self.store.offer_handover(
+            THURSDAY.id,
+            self.campaign.id,
+            ALICE.id,
+            BOB.id,
+            self.now,
+            from_name=ALICE.name,
+            to_name=BOB.name,
+        )
+
     async def owner_and_dms(self) -> tuple[int | None, set[int]]:
         campaign = await self.store.get(THURSDAY.id, self.campaign.id)
         assert campaign is not None
@@ -65,6 +76,29 @@ class WebOffers(DatabaseTest):
         owner, dms = await self.owner_and_dms()
         self.assertEqual(owner, BOB.id)
         self.assertEqual(dms, {ALICE.id, BOB.id})  # the old owner stays a DM
+
+    async def test_the_account_page_lists_open_offers_both_ways(self) -> None:
+        expected = {
+            "id": self.ref,
+            "campaignId": self.campaign.id,
+            "campaignName": "The Brynwater Crossing",
+            "serverName": THURSDAY.name,
+            "expiresAt": "2027-01-22T08:00:00Z",
+        }
+        bob = (await build_me(self.web, self.bob, now=self.now))["offers"]
+        self.assertEqual(
+            bob, {"incoming": [{**expected, "personName": ALICE.name}], "outgoing": []}
+        )
+        alice = (await build_me(self.web, self.alice, now=self.now))["offers"]
+        self.assertEqual(
+            alice, {"incoming": [], "outgoing": [{**expected, "personName": BOB.name}]}
+        )
+        # Gone once it's past 7 days, or for someone signed in without that server.
+        later = await build_me(self.web, self.bob, now=self.now + 7 * DAY)
+        self.assertEqual(later["offers"], {"incoming": [], "outgoing": []})
+        elsewhere = await self.sign_in(BOB, [GORRAK])
+        outside = await build_me(self.web, elsewhere, now=self.now)
+        self.assertEqual(outside["offers"], {"incoming": [], "outgoing": []})
 
     async def test_only_the_person_offered_can_accept(self) -> None:
         self.assertEqual(
@@ -106,9 +140,7 @@ class WebOffers(DatabaseTest):
         self.assertEqual(
             await offers.answer(self.web, self.bob, self.ref, "accept", now=self.now), "gone"
         )
-        again = await self.store.offer_handover(
-            THURSDAY.id, self.campaign.id, ALICE.id, BOB.id, self.now
-        )
+        again = await self.offer()
         ref = offers.offer_ref(THURSDAY.id, again.id)
         self.assertEqual(
             await offers.answer(self.web, self.bob, ref, "withdraw", now=self.now), "gone"
@@ -157,7 +189,7 @@ class WebOffers(DatabaseTest):
             await join_it()
         self.assertEqual(await self.owner_and_dms(), (ALICE.id, {ALICE.id}))
         # Nor can it make someone else the owner, even with an offer open to them.
-        await self.store.offer_handover(THURSDAY.id, self.campaign.id, ALICE.id, BOB.id, self.now)
+        await self.offer()
         with self.assertRaises(errors.InsufficientPrivilege):
             async with scoped.guild(THURSDAY.id) as conn:
                 await conn.execute(
