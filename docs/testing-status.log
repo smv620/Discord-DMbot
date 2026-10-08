@@ -9,7 +9,11 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- CloudDev, PR #584 (#537): names menus answer Discord first, then load names, so
+  Browse by kind no longer times out on a big campaign. Deploy: rebuild core. Check: in
+  the 147-name campaign, /dmbot names -> Browse by kind and a name's card answer at once
+  (no "didn't respond in time"); copy a few `Built names for campaign ... in N ms
+  (waited W, database D, index I; K names)` lines (timings only) into the history.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
