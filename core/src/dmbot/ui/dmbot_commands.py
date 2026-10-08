@@ -50,6 +50,10 @@ TIMED_OUT = "This menu timed out. Run the command again."
 Handler = Callable[[discord.Interaction], Awaitable[None]]
 
 
+RESTORE_FAILED = "Something went wrong, so nothing was restored. Run `/dmbot restore` again."
+STOP_COMMAND_FAILED = "Something went wrong stopping DMbot. Please try `/dmbot stop` again."
+
+
 class _Button(discord.ui.Button[Any]):
     """A button that runs `handler` when pressed."""
 
@@ -609,6 +613,7 @@ class RestoreChoice(_Menu):
         # Answer first (#88, as #351): the session lock may be held for a few seconds
         # by a /dmbot start setting up the DM screen.
         await _replace(interaction, "Restoring…", None)
+        self.stop()  # its buttons are gone; its timeout mustn't cover the outcome
         # The session lock stops a campaign being replaced while it's starting up.
         async with bot.session_lock(guild.id):
             try:
@@ -617,10 +622,13 @@ class RestoreChoice(_Menu):
                 )
             except Exception:
                 log.exception("Couldn't check whether the campaign is playing")
-                await _replace(interaction, "Something went wrong. Try again in a moment.", None)
+                await _replace(interaction, RESTORE_FAILED, None)
                 return
             if playing:
-                playing_now = "That campaign is playing right now. Use `/dmbot stop` first."
+                playing_now = (
+                    "That campaign is playing right now. Use `/dmbot stop` first, then "
+                    "`/dmbot restore` again."
+                )
                 await _replace(interaction, playing_now, None)
                 return
             try:
@@ -630,7 +638,10 @@ class RestoreChoice(_Menu):
             except CampaignError as exc:
                 await _replace(interaction, str(exc), None)
                 return
-        self.stop()
+            except Exception:
+                log.exception("Restoring a backup failed")
+                await _replace(interaction, RESTORE_FAILED, None)
+                return
         if replace_id is None:
             done = f"✅ Restored **{campaign.name}**."
         else:
@@ -710,9 +721,13 @@ async def dmbot_stop(interaction: discord.Interaction) -> None:
     # Answer first (#88): stopping waits for the session lock, which a /dmbot start
     # setting up the DM screen can hold for a few seconds.
     await interaction.response.defer(ephemeral=True, thinking=True)
-    message = await _bot(interaction).stop_session(
-        guild.id, interaction.user.id, _is_manager(interaction)
-    )
+    try:
+        message = await _bot(interaction).stop_session(
+            guild.id, interaction.user.id, _is_manager(interaction)
+        )
+    except Exception:  # never leave the DM on "thinking…"
+        log.exception("/dmbot stop failed")
+        message = STOP_COMMAND_FAILED
     await _tell(interaction, message)
 
 
