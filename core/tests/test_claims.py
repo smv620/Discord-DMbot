@@ -288,7 +288,8 @@ class CommandLineTests(unittest.TestCase):
     def test_free_by_default(self) -> None:
         code, out, _ = self.run_main()
         self.assertEqual(code, 0)
-        self.assertIn("estimate for claude-haiku-4-5-20251001: at most", out)
+        self.assertIn("estimate for claude-haiku-4-5-20251001: about", out)
+        self.assertIn("(a guess at 3 characters a token), at most", out)
         self.assertIn("No calls made", out)
 
     def test_without_the_extractor_no_call_even_with_a_key(self) -> None:
@@ -320,13 +321,15 @@ class CommandLineTests(unittest.TestCase):
         code, _, err = self.run_main("--extractor", "anthropic", *two, "--max-usd", "0.05", env=KEY)
         self.assertEqual(code, 2)  # each under, together over
         self.assertIn("is over $0.05", err)
-        # The estimate was wrong (a model that bills far more): stopped after the first run.
+        # The estimate was wrong (a model that bills far more): stopped after one call.
+        billing = Perfect(tokens=10_000_000)
         code, out, _ = self.run_main(
             "--extractor", "anthropic", "--runs", "3", "--max-usd", "0.5",
-            client=Perfect(tokens=10_000_000), env=KEY,
+            client=billing, env=KEY,
         )  # fmt: skip
         self.assertEqual(code, 0)
-        self.assertIn("stopped: $", out)
+        self.assertIn("stopped part-way: $", out)
+        self.assertEqual(billing.calls, 1)  # overshoot: one call at most
         self.assertNotIn("run 2:", out)
 
     def test_once_the_cap_trips_nothing_more_runs(self) -> None:
@@ -345,7 +348,8 @@ class CommandLineTests(unittest.TestCase):
             client=Perfect(tokens=10_000_000), env=KEY,
         )  # fmt: skip
         self.assertEqual(code, 0)
-        self.assertEqual(out.count("stopped: $"), 1)
+        self.assertEqual(out.count("stopped part-way: $"), 1)
+        self.assertIn("(stopped part-way: 1 of 5 batches) how it was said", out)
         self.assertIn("model: m-one (1 run, pilot set)", out)
         self.assertIn("model: m-two: not run: cap reached", out)
         self.assertNotIn("every call failed", out)
@@ -373,6 +377,30 @@ class CommandLineTests(unittest.TestCase):
         self.assertIn("a 4-hour session, for this draft prompt, if the table talks", logged)
         self.assertNotIn("sk-secret", out + logged)
         self.assertNotIn("Brynwater", logged)  # numbers only
+        self.assertIn("Measurement: story-memory extraction, story-scenes.md", logged)
+
+    def test_a_scenes_file_of_ones_own_isnt_named_in_the_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            own = Path(tmp) / "alice-campaign.md"
+            own.write_text(SCENES.read_text(encoding="utf-8"), encoding="utf-8")
+            history = Path(tmp) / "history.log"
+            self.run_main(
+                "--extractor", "anthropic", "--scenes", str(own), "--log",
+                "--history", str(history), client=Perfect(), env=KEY,
+            )  # fmt: skip
+            logged = history.read_text()
+        self.assertIn("story-memory extraction, a scenes file", logged)
+        self.assertNotIn("alice", logged)
+
+    def test_a_reply_without_usage_is_noted(self) -> None:
+        class Silent(Perfect):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Reply:
+                reply = await super().complete(system, text, max_tokens=max_tokens)
+                return Reply(reply.text, False, 0, 0)
+
+        code, out, _ = self.run_main("--extractor", "anthropic", client=Silent(), env=KEY)
+        self.assertEqual(code, 0)
+        self.assertIn("5 replies say nothing of their usage: not counted against the cap", out)
 
     def test_every_claim_called_the_dms_shows_up_by_kind(self) -> None:
         code, out, _ = self.run_main("--extractor", "anthropic", client=Perfect("dm_said"), env=KEY)

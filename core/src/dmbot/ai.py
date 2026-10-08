@@ -114,7 +114,7 @@ class AnthropicClient:
 
         def count(name: str) -> int:
             value = usage.get(name)
-            return value if isinstance(value, int) else 0
+            return value if type(value) is int else 0  # not a bool
 
         return Reply(
             text,

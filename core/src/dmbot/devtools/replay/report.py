@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import dataclasses
-import datetime as dt
 import statistics
 
+from dmbot.devtools.common import history_entry as history_entry  # re-exported
 from dmbot.devtools.replay.bakeoff import BakeoffScore, bakeoff_record
 from dmbot.devtools.replay.run import Replay
 from dmbot.devtools.replay.score import Score
@@ -173,11 +173,3 @@ def heard_lines(result: Replay) -> list[str]:
         + (h.text or "(no text)")
         for h in result.heard
     ]
-
-
-def history_entry(lines: list[str], *, title: str, today: dt.date | None = None) -> str:
-    """An entry for docs/testing-history.log, in its usual layout."""
-    day = (today or dt.date.today()).isoformat()
-    rule = "=" * 78
-    body = "\n".join(f"  {line}" for line in lines)
-    return f"\n{rule}\n{day}  Twin run: {title}\n{rule}\n{body}\n"
