@@ -14,7 +14,7 @@ from psycopg.conninfo import make_conninfo
 from dmbot import schema
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database, DatabaseError
-from dmbot.web import accounts, sessions
+from dmbot.web import accounts, feedback, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild, DiscordUser
 from dmbot.web.me import build_me
@@ -257,7 +257,9 @@ class WebRole(DatabaseTest):
                 json={"kind": "question", "message": "Hi", "contact": "bel#1"},
                 headers={"X-DMbot-Request": "1"},
             )
-        self.assertEqual(sent.status_code, 204)
+        self.assertEqual(sent.status_code, 200)
+        # Its yearly sweep runs, and leaves this new row alone.
+        self.assertEqual(await feedback.forget_old(self.web), 0)
         # It may add a row (above), never read one: it has no right to.
         with self.assertRaises(errors.InsufficientPrivilege):
             async with self.web.unscoped() as conn:

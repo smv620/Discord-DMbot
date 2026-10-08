@@ -2,16 +2,20 @@
 // @vitest-environment happy-dom
 // The "Say hello" forms (#665) against a stubbed API: what is sent, and what the person
 // is told for every answer.
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { lettersLeft, text } from "../src/content/hello";
-import { httpSend, type Note, type SendResult } from "../src/hello/api";
+import { httpSend, type Note, type Refusal, type SendResult } from "../src/hello/api";
 import HelloForm from "../src/hello/HelloForm";
 
 afterEach(cleanup);
 
-function show(kind: "feedback" | "question", answer: SendResult = "sent") {
+const POST = "https://github.com/smv620/Discord-DMbot/discussions/7";
+const SENT: SendResult = { sent: true, url: POST };
+const no = (why: Refusal): SendResult => ({ sent: false, why });
+
+function show(kind: "feedback" | "question", answer: SendResult = SENT) {
   const send = vi.fn<(note: Note) => Promise<SendResult>>(async () => answer);
   render(<HelloForm kind={kind} send={send} siteKey="" />);
   return send;
@@ -27,7 +31,10 @@ describe("the form", () => {
     type(text.feedback.label, "  Love the rules alerts!  ");
     type(text.feedback.contactLabel, "bel#1");
     fireEvent.click(screen.getByRole("button", { name: text.feedback.send }));
-    expect((await screen.findByRole("status")).textContent).toBe(text.sent);
+    const thanks = await screen.findByRole("status");
+    expect(thanks.textContent).toBe(text.sent);
+    await waitFor(() => expect(document.activeElement).toBe(thanks));
+    expect(screen.getByRole("link", { name: text.seePost }).getAttribute("href")).toBe(POST);
     expect(send).toHaveBeenCalledWith({
       kind: "feedback",
       message: "Love the rules alerts!",
@@ -50,6 +57,9 @@ describe("the form", () => {
     const send = show("feedback");
     fireEvent.click(screen.getByRole("button", { name: text.feedback.send }));
     expect((await screen.findByRole("alert")).textContent).toBe(text.errors.empty);
+    const box = screen.getByLabelText(text.feedback.label);
+    expect(box.getAttribute("aria-invalid")).toBe("true");
+    await waitFor(() => expect(document.activeElement).toBe(box));
     type(text.feedback.label, "a".repeat(2001));
     expect(screen.getByText(lettersLeft(2001))).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: text.feedback.send }));
@@ -57,10 +67,10 @@ describe("the form", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it.each([["slow-down"], ["not-human"], ["failed"]] as const)(
+  it.each([["slow-down"], ["busy"], ["not-human"], ["off"], ["failed"]] as const)(
     "%s: keeps the message and says what to do",
     async (answer) => {
-      show("feedback", answer);
+      show("feedback", no(answer));
       type(text.feedback.label, "Hello");
       fireEvent.click(screen.getByRole("button", { name: text.feedback.send }));
       expect((await screen.findByRole("alert")).textContent).toBe(text.errors[answer]);
@@ -69,6 +79,14 @@ describe("the form", () => {
       );
     },
   );
+
+  it("shows the count only near the limit", () => {
+    show("feedback");
+    type(text.feedback.label, "a".repeat(1799));
+    expect(screen.queryByText(lettersLeft(1799))).toBeNull();
+    type(text.feedback.label, "a".repeat(1800));
+    expect(screen.getByText(lettersLeft(1800))).toBeTruthy();
+  });
 
   it("counts letters left", () => {
     expect(lettersLeft(0)).toBe("2,000 letters left");
@@ -90,8 +108,8 @@ describe("httpSend", () => {
   const note: Note = { kind: "question", message: "Hi", contact: " ", turnstile: "tok" };
 
   it("posts the form with the API's header and no cookie", async () => {
-    const fetcher = stub(204);
-    expect(await httpSend("https://api.example/", fetcher)(note)).toBe("sent");
+    const fetcher = stub(200, { url: POST });
+    expect(await httpSend("https://api.example/", fetcher)(note)).toEqual(SENT);
     const [url, init] = fetcher.mock.calls[0] ?? [];
     expect(url).toBe("https://api.example/feedback");
     expect(init?.method).toBe("POST");
@@ -107,22 +125,23 @@ describe("httpSend", () => {
 
   it.each([
     [429, "slow_down", "slow-down"],
+    [429, "busy", "busy"],
     [400, "too_long", "too-long"],
     [400, "not_human", "not-human"],
     [400, "contact_too_long", "contact-too-long"],
-    [503, "feedback_off", "failed"],
+    [503, "feedback_off", "off"],
     [502, "feedback_unavailable", "failed"],
     [500, undefined, "failed"],
-  ])("%i %s → %s", async (status, error, result) => {
+  ] as const)("%i %s → %s", async (status, error, result) => {
     const fetcher = stub(status, error === undefined ? undefined : { error });
-    expect(await httpSend("/api", fetcher)(note)).toBe(result);
+    expect(await httpSend("/api", fetcher)(note)).toEqual(no(result));
   });
 
   it("a network failure says try later", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => {
       throw new TypeError("offline");
     });
-    expect(await httpSend("/api", fetcher)(note)).toBe("failed");
+    expect(await httpSend("/api", fetcher)(note)).toEqual(no("failed"));
   });
 });
 
@@ -146,7 +165,7 @@ describe("sending twice", () => {
     const button = screen.getByRole("button", { name: text.feedback.send });
     fireEvent.click(button);
     fireEvent.click(button);
-    finish("sent");
+    finish(SENT);
     await screen.findByRole("status");
     expect(send).toHaveBeenCalledTimes(1);
   });
@@ -159,5 +178,18 @@ describe("the person check", () => {
     expect(script()).toBeNull();
     fireEvent.focusIn(screen.getByLabelText(text.feedback.label));
     expect(script()).not.toBeNull();
+  });
+});
+
+describe("the person check failing", () => {
+  it("says so in its place at once, without losing the words", async () => {
+    // happy-dom can't load the script: its error is what a blocked check looks like.
+    render(<HelloForm kind="feedback" send={vi.fn()} siteKey="key" />);
+    type(text.feedback.label, "Hello");
+    fireEvent.focusIn(screen.getByLabelText(text.feedback.label));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.checkFailed);
+    expect((screen.getByLabelText(text.feedback.label) as HTMLTextAreaElement).value).toBe(
+      "Hello",
+    );
   });
 });

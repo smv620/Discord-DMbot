@@ -515,8 +515,8 @@ def create_app(
                 return str(ipaddress.ip_address(forwarded))
         return request.client.host if request.client else "unknown"
 
-    @app.post("/feedback", status_code=204)
-    async def send_feedback(request: Request) -> Response:
+    @app.post("/feedback")
+    async def send_feedback(request: Request) -> dict[str, str]:
         if discussions is None:
             raise HTTPException(status_code=503, detail="feedback_off")
         with contextlib.suppress(ValueError):
@@ -536,8 +536,9 @@ def create_app(
             raise HTTPException(status_code=400, detail=message)
         address = client_address(request)
         turn = feedback.rate_key(address)
-        if not feedback_limit.take(turn):
-            raise HTTPException(status_code=429, detail="slow_down")
+        taken = feedback_limit.take(turn)
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
         try:
             if human_check is not None:
                 token = str((raw.get("turnstile") if isinstance(raw, dict) else None) or "")
@@ -548,7 +549,7 @@ def create_app(
                         raise _Refused("not_human")
                     raise HTTPException(status_code=400, detail="not_human")
             # Once GitHub has the post, the turn is used, whatever happens next.
-            number = await feedback.post(db, discussions, message, now=clock())
+            posted = await feedback.post(db, discussions, message, now=clock())
         except _Refused as refused:
             raise HTTPException(status_code=400, detail=refused.code) from None
         except FeedbackError as exc:
@@ -558,7 +559,7 @@ def create_app(
         except BaseException:
             feedback_limit.give_back(turn)
             raise
-        log.info("Feedback posted: discussion %s", number)
-        return Response(status_code=204)
+        log.info("Feedback posted: discussion %s", posted.number)
+        return {"url": posted.url}
 
     return app

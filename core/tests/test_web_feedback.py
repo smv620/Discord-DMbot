@@ -12,11 +12,13 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from dmbot.config import ConfigError
+from dmbot.web import feedback
 from dmbot.web.app import create_app
 from dmbot.web.feedback import (
     FeedbackError,
     GitHubDiscussions,
     Kind,
+    Posted,
     RateLimit,
     Turnstile,
     discussion_body,
@@ -35,11 +37,12 @@ class FakeDiscussions:
         self.posts: list[tuple[Kind, str, str]] = []
         self.fail = False
 
-    async def create(self, kind: Kind, title: str, body: str) -> int:
+    async def create(self, kind: Kind, title: str, body: str) -> Posted:
         if self.fail:
             raise FeedbackError("GitHub answered 502")
         self.posts.append((kind, title, body))
-        return 100 + len(self.posts)
+        number = 100 + len(self.posts)
+        return Posted(number, f"https://github.com/smv620/Discord-DMbot/discussions/{number}")
 
 
 class FakeHumanCheck:
@@ -97,7 +100,7 @@ class FeedbackRoute(DatabaseTest):
 
     async def test_feedback_becomes_a_discussion_with_only_the_message_and_date(self) -> None:
         response = await self.send(message="  The rules alerts are great.  ", contact="bel#1")
-        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.status_code, 200)
         [(kind, title, body)] = self.github.posts
         self.assertEqual((kind, title), ("feedback", "Feedback from the website"))
         self.assertEqual(
@@ -119,9 +122,35 @@ class FeedbackRoute(DatabaseTest):
             ],
         )
 
+    async def test_the_answer_links_to_the_public_post(self) -> None:
+        sent = await self.send()
+        self.assertEqual(
+            sent.json(), {"url": "https://github.com/smv620/Discord-DMbot/discussions/101"}
+        )
+
+    async def test_a_flood_of_addresses_says_busy(self) -> None:
+        await self.client.aclose()
+        self.make_client(feedback_limit=RateLimit(clock=lambda: self.time, most=1))
+        self.assertEqual((await self.send()).status_code, 200)
+        busy = await self.send(ip="198.51.100.7")
+        self.assertEqual((busy.status_code, busy.json()), (429, {"error": "busy"}))
+
+    async def test_messages_are_kept_for_a_year(self) -> None:
+        await self.send()
+        async with self.db.unscoped() as conn:
+            await conn.execute("ALTER TABLE feedback NO FORCE ROW LEVEL SECURITY")
+            await conn.execute(
+                "INSERT INTO feedback (kind, message, contact, discussion, created_at)"
+                " VALUES ('question', 'old', 'bel#1', 9, extract(epoch FROM now())::BIGINT"
+                " - 366 * 86400)"
+            )
+            await conn.execute("ALTER TABLE feedback FORCE ROW LEVEL SECURITY")
+        self.assertEqual(await feedback.forget_old(self.db), 1)
+        self.assertEqual([r["message"] for r in await self.stored()], ["Loved it!"])
+
     async def test_a_question_goes_to_the_questions_category(self) -> None:
         self.assertEqual(
-            (await self.send(kind="question", message="Does it work?")).status_code, 204
+            (await self.send(kind="question", message="Does it work?")).status_code, 200
         )
         self.assertEqual(self.github.posts[0][:2], ("question", "A question from the website"))
         self.assertIsNone((await self.stored())[0]["contact"])
@@ -135,17 +164,17 @@ class FeedbackRoute(DatabaseTest):
         self.assertEqual(row["n"], 0)
 
     async def test_one_post_per_address_per_ten_minutes(self) -> None:
-        self.assertEqual((await self.send()).status_code, 204)
+        self.assertEqual((await self.send()).status_code, 200)
         again = await self.send()
         self.assertEqual((again.status_code, again.json()), (429, {"error": "slow_down"}))
         # Someone else can still post.
-        self.assertEqual((await self.send(ip="198.51.100.7")).status_code, 204)
+        self.assertEqual((await self.send(ip="198.51.100.7")).status_code, 200)
         self.time += 10 * 60
-        self.assertEqual((await self.send()).status_code, 204)
+        self.assertEqual((await self.send()).status_code, 200)
         self.assertEqual(len(self.github.posts), 3)
 
     async def test_the_message_is_capped_at_2000_characters(self) -> None:
-        self.assertEqual((await self.send(message="a" * 2000)).status_code, 204)
+        self.assertEqual((await self.send(message="a" * 2000)).status_code, 200)
         long = await self.send(ip="198.51.100.7", message="a" * 2001)
         self.assertEqual((long.status_code, long.json()), (400, {"error": "too_long"}))
         self.assertEqual(len(self.github.posts), 1)
@@ -156,12 +185,13 @@ class FeedbackRoute(DatabaseTest):
             ({"kind": "rant"}, "bad_request"),
             ({"message": 5}, "bad_request"),
             ({"contact": "x" * 201}, "contact_too_long"),
+            ({"turnstile": 5}, "bad_request"),
             ({"turnstile": None}, "not_human"),  # no answer: nothing asked, turn kept
         ):
             response = await self.send(**fields)
             self.assertEqual((response.status_code, response.json()), (400, {"error": error}))
         self.assertEqual(self.github.posts, [])
-        self.assertEqual((await self.send()).status_code, 204)
+        self.assertEqual((await self.send()).status_code, 200)
         self.assertEqual(self.human.seen[-1], ("person", "203.0.113.5"))
 
     async def test_a_wrong_person_check_uses_the_turn(self) -> None:
@@ -181,11 +211,11 @@ class FeedbackRoute(DatabaseTest):
         failed = await self.send()
         self.assertEqual(failed.json(), {"error": "feedback_unavailable"})
         self.human.verify = FakeHumanCheck().verify  # type: ignore[method-assign]
-        self.assertEqual((await self.send()).status_code, 204)
+        self.assertEqual((await self.send()).status_code, 200)
 
     async def test_control_and_reordering_characters_are_removed(self) -> None:
         sent = await self.send(message="Hi\x00 there\r\nbye\u202e!", contact="bel\n#1\x07")
-        self.assertEqual(sent.status_code, 204)
+        self.assertEqual(sent.status_code, 200)
         self.assertIn("```text\nHi there\nbye!\n```", self.github.posts[0][2])
         [row] = await self.stored()
         self.assertEqual((row["message"], row["contact"]), ("Hi there\nbye!", "bel #1"))
@@ -196,7 +226,7 @@ class FeedbackRoute(DatabaseTest):
         async with self.db.unscoped() as conn:
             await conn.execute("DROP TABLE feedback")
         with self.assertLogs("dmbot.web.feedback", "ERROR") as logs:
-            self.assertEqual((await self.send(message="secret words")).status_code, 204)
+            self.assertEqual((await self.send(message="secret words")).status_code, 200)
         self.assertNotIn("secret words", "\n".join(logs.output))
         self.assertIn("discussion 101", "\n".join(logs.output))
         # Sending again would only post it twice.
@@ -205,13 +235,13 @@ class FeedbackRoute(DatabaseTest):
 
     async def test_the_address_comes_only_from_a_real_address_in_the_header(self) -> None:
         # The test client's own connection address.
-        self.assertEqual((await self.send(ip="")).status_code, 204)
+        self.assertEqual((await self.send(ip="")).status_code, 200)
         self.assertEqual((await self.send(ip="not-an-address")).status_code, 429)
         self.assertEqual(self.human.seen[-1][1], "127.0.0.1")
         # One IPv6 network is one person, whatever address it picks.
-        self.assertEqual((await self.send(ip="2001:db8:1:2::1")).status_code, 204)
+        self.assertEqual((await self.send(ip="2001:db8:1:2::1")).status_code, 200)
         self.assertEqual((await self.send(ip="2001:db8:1:2::ffff")).status_code, 429)
-        self.assertEqual((await self.send(ip="2001:db8:1:3::1")).status_code, 204)
+        self.assertEqual((await self.send(ip="2001:db8:1:3::1")).status_code, 200)
 
     async def test_without_the_header_setting_the_header_is_ignored(self) -> None:
         await self.client.aclose()
@@ -223,7 +253,7 @@ class FeedbackRoute(DatabaseTest):
             feedback_limit=RateLimit(clock=lambda: self.time),
         )
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API)
-        self.assertEqual((await self.send(ip="203.0.113.5")).status_code, 204)
+        self.assertEqual((await self.send(ip="203.0.113.5")).status_code, 200)
         self.assertEqual((await self.send(ip="198.51.100.7")).status_code, 429)
 
     async def test_deeply_nested_json_is_a_bad_request(self) -> None:
@@ -255,7 +285,7 @@ class FeedbackRoute(DatabaseTest):
         )
         self.assertEqual(await self.stored(), [])
         self.github.fail = False
-        self.assertEqual((await self.send()).status_code, 204)
+        self.assertEqual((await self.send()).status_code, 200)
 
     async def test_without_a_github_token_the_forms_are_off(self) -> None:
         await self.client.aclose()
@@ -266,7 +296,7 @@ class FeedbackRoute(DatabaseTest):
     async def test_without_turnstile_the_form_still_works(self) -> None:
         await self.client.aclose()
         self.make_client(human_check=None)
-        self.assertEqual((await self.send(turnstile=None)).status_code, 204)
+        self.assertEqual((await self.send(turnstile=None)).status_code, 200)
 
     async def test_it_needs_the_websites_header(self) -> None:
         response = await self.client.post("/feedback", json={"kind": "feedback", "message": "hi"})
@@ -280,19 +310,19 @@ class Limits(unittest.TestCase):
 
     def test_forgets_addresses_whose_wait_is_over(self) -> None:
         for n in range(3):
-            self.assertTrue(self.limit.take(f"a{n}"))
+            self.assertEqual(self.limit.take(f"a{n}"), "ok")
             self.time += 100
         self.time = 650  # a0's wait (from 0) is over; a1 (100) and a2 (200) still wait
-        self.assertTrue(self.limit.take("a0"))
+        self.assertEqual(self.limit.take("a0"), "ok")
         self.assertEqual(len(self.limit), 3)
-        self.assertFalse(self.limit.take("a1"))
+        self.assertEqual(self.limit.take("a1"), "wait")
 
     def test_a_flood_of_addresses_waits_for_everyone(self) -> None:
         for n in range(3):
-            self.assertTrue(self.limit.take(f"a{n}"))
-        self.assertFalse(self.limit.take("someone-new"))
+            self.assertEqual(self.limit.take(f"a{n}"), "ok")
+        self.assertEqual(self.limit.take("someone-new"), "busy")
         self.limit.give_back("a0")
-        self.assertTrue(self.limit.take("someone-new"))
+        self.assertEqual(self.limit.take("someone-new"), "ok")
 
 
 class Body(unittest.TestCase):
@@ -341,7 +371,11 @@ class PretendGitHub:
                     }
                 }
             )
-        return web.json_response({"data": {"createDiscussion": {"discussion": {"number": 7}}}})
+        found = {"number": 7, "url": "https://github.com/o/r/discussions/7"}
+        return web.json_response({"data": {"createDiscussion": {"discussion": found}}})
+
+
+POSTED = Posted(7, "https://github.com/o/r/discussions/7")
 
 
 class GitHubClient(unittest.IsolatedAsyncioTestCase):
@@ -358,8 +392,8 @@ class GitHubClient(unittest.IsolatedAsyncioTestCase):
         await self.server.close()
 
     async def test_it_posts_in_the_right_category(self) -> None:
-        self.assertEqual(await self.github.create("question", "T", "B"), 7)
-        self.assertEqual(await self.github.create("feedback", "T2", "B2"), 7)
+        self.assertEqual(await self.github.create("question", "T", "B"), POSTED)
+        self.assertEqual(await self.github.create("feedback", "T2", "B2"), POSTED)
         lookup, first, second = self.pretend.requests  # the ids are looked up once
         self.assertEqual(lookup["variables"], {"owner": "smv620", "name": "Discord-DMbot"})
         self.assertEqual(
@@ -373,7 +407,7 @@ class GitHubClient(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(FeedbackError, "Questions"):
             await self.github.create("question", "T", "B")
         self.pretend.categories = [{"id": "C_q", "name": "Questions"}]
-        self.assertEqual(await self.github.create("question", "T", "B"), 7)
+        self.assertEqual(await self.github.create("question", "T", "B"), POSTED)
 
     async def test_graphql_errors_are_feedback_errors_without_their_text(self) -> None:
         self.pretend.errors = True

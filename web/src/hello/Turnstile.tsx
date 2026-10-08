@@ -42,13 +42,17 @@ interface Props {
   onToken: (token: string) => void;
   /** Change this number to start a fresh check (each token works once). */
   round: number;
+  /** The check couldn't load or run: the form says so in its place. */
+  onFail: () => void;
 }
 
-export default function Turnstile({ siteKey, onToken, round }: Props) {
+export default function Turnstile({ siteKey, onToken, round, onFail }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const widget = useRef<string | null>(null);
   const tokenTo = useRef(onToken);
   tokenTo.current = onToken;
+  const failTo = useRef(onFail);
+  failTo.current = onFail;
 
   useEffect(() => {
     let gone = false;
@@ -62,12 +66,13 @@ export default function Turnstile({ siteKey, onToken, round }: Props) {
           size: box.current.clientWidth < 300 ? "compact" : "normal",
           callback: (token: string) => tokenTo.current(token),
           "expired-callback": () => tokenTo.current(""),
-          "error-callback": () => tokenTo.current(""),
+          "error-callback": () => {
+            tokenTo.current("");
+            failTo.current();
+          },
         });
       })
-      .catch(() => {
-        // The check couldn't load: sending says "couldn't check that you're a person".
-      });
+      .catch(() => failTo.current());
     return () => {
       gone = true;
       if (widget.current) window.turnstile?.remove(widget.current);

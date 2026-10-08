@@ -1591,17 +1591,10 @@ environment) so the owner can subscribe; no email sending yet. The public post h
 the message and date only; an optional "how to reach you" stays in the database with
 the message, never in the post, and the form says so. One post per IP per 10 minutes,
 2,000 characters, Turnstile. The page links to the repository and invites developers
-to open issues.
-
-**"Say hello" forms (#665, 2026-10-08).** The site's `/hello` page has two short forms,
-Feedback and Ask a question, with no sign-in. The web API posts each one as a GitHub
-Discussion in this repository (categories "Feedback" and "Questions", made by hand; the
-token can only write Discussions). The public post holds the message and the date only;
-the optional "how to reach you" box is kept with the message in the `feedback` table,
-which the website's role can only add to and the bot never queries (the team reads it
-as the database's administrator). Abuse limits: one message per address per 10 minutes (kept in memory,
-never stored), 2,000 characters, and Cloudflare Turnstile. No email is sent. The page
-also points developers to GitHub issues.
+to open issues. The `feedback` table is add-only (the website's role inserts, never
+reads; the team reads it as the database's administrator), and the website's hourly
+sweep deletes rows after 12 months; the privacy page says so, and a post is taken down
+on request through the same page.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's

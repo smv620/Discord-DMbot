@@ -17,7 +17,7 @@ from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
 from dmbot.schema import WEB_ROLE
 from dmbot.sharding import ShardSettings
-from dmbot.web import sessions
+from dmbot.web import feedback, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
 from dmbot.web.feedback import GitHubDiscussions, Turnstile
@@ -36,6 +36,13 @@ async def _sweep_expired_sessions(db: Database) -> None:
                 log.info("Removed %d expired sign-in sessions", removed)
         except Exception:
             log.exception("Removing expired sessions failed; trying again later")
+        try:
+            # "Say hello" messages and contacts are kept for a year (privacy page, #665).
+            forgotten = await feedback.forget_old(db)
+            if forgotten:
+                log.info("Removed %d messages older than a year", forgotten)
+        except Exception as exc:
+            log.error("Removing old messages failed (%s); trying again later", type(exc).__name__)
         await asyncio.sleep(CLEANUP_SECONDS)
 
 

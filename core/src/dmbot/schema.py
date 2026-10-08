@@ -586,12 +586,16 @@ FEEDBACK = """
         discussion    INTEGER NOT NULL,  -- the GitHub Discussion's number
         created_at    BIGINT NOT NULL
     );
-    -- Add-only: no policy lets anyone read, change or remove a row (FORCE holds the
-    -- table's owner, the bot's role, too; the bot never queries it, and the website's
-    -- role may only INSERT). The team reads contacts as the database's administrator.
+    -- Add-only: no policy lets anyone read or change a row (FORCE holds the table's
+    -- owner, the bot's role, too; the bot never queries it, and the website's role may
+    -- only INSERT and DELETE). The team reads contacts as the database's administrator.
+    -- Contacts are kept for a year (privacy page, #665): the website's hourly sweep
+    -- deletes older rows with a plain DELETE, which needs no right to read them.
     ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
     ALTER TABLE feedback FORCE ROW LEVEL SECURITY;
     CREATE POLICY add_only ON feedback FOR INSERT WITH CHECK (true);
+    CREATE POLICY forget_after_a_year ON feedback FOR DELETE
+        USING (dmbot_cleanup() = 'old-feedback' AND created_at <= dmbot_now() - 365 * 86400);
     """
 
 WEB_ACCOUNTS = (
@@ -912,7 +916,7 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("schema_migrations", "campaigns", "campaign_dms")),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
-    ("INSERT", ("feedback",)),
+    ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
 )
 

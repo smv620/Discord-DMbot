@@ -47,14 +47,23 @@ GITHUB_GRAPHQL = "https://api.github.com/graphql"
 TURNSTILE_VERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 
+@dataclass(frozen=True)
+class Posted:
+    """A new discussion: its number (stored with the message) and its public address
+    (shown to the sender, so a question without a contact can still find its answer)."""
+
+    number: int
+    url: str
+
+
 class FeedbackError(RuntimeError):
     """GitHub or Turnstile refused or didn't answer. The message holds no user text."""
 
 
 def rate_key(address: str) -> str:
-    """The address the limit counts: a real IP address, and for IPv6 its /64 network,
-    since one IPv6 connection can hand out billions of addresses. Anything that isn't an
-    address (a bad proxy header) is counted as itself."""
+    """The address the limit counts, and for IPv6 its /64 network, since one IPv6
+    connection can hand out billions of addresses. app.client_address only passes real
+    addresses (or the connection's own); anything else is counted as itself."""
     try:
         ip = ipaddress.ip_address(address)
     except ValueError:
@@ -75,8 +84,8 @@ def discussion_body(message: str, day: datetime.date) -> str:
 
 
 class Discussions(Protocol):
-    async def create(self, kind: Kind, title: str, body: str) -> int:
-        """Post a new discussion in the kind's category; returns its number."""
+    async def create(self, kind: Kind, title: str, body: str) -> Posted:
+        """Post a new discussion in the kind's category."""
         ...
 
 
@@ -138,7 +147,7 @@ class GitHubDiscussions:
             self._ids = (str(repo.get("id", "")), ids)
         return self._ids
 
-    async def create(self, kind: Kind, title: str, body: str) -> int:
+    async def create(self, kind: Kind, title: str, body: str) -> Posted:
         repo_id, categories = await self._lookup()
         category = categories.get(CATEGORIES[kind])
         if not repo_id or category is None:
@@ -147,11 +156,12 @@ class GitHubDiscussions:
         data = await self._query(
             "mutation($repo: ID!, $category: ID!, $title: String!, $body: String!) {"
             " createDiscussion(input: {repositoryId: $repo, categoryId: $category,"
-            " title: $title, body: $body}) { discussion { number } } }",
+            " title: $title, body: $body}) { discussion { number url } } }",
             {"repo": repo_id, "category": category, "title": title, "body": body},
         )
         try:
-            return int(data["createDiscussion"]["discussion"]["number"])
+            found = data["createDiscussion"]["discussion"]
+            return Posted(number=int(found["number"]), url=str(found["url"]))
         except (KeyError, TypeError, ValueError) as exc:
             raise FeedbackError("GitHub's answer had no discussion number") from exc
 
@@ -212,8 +222,9 @@ class RateLimit:
     def __len__(self) -> int:
         return len(self._last)
 
-    def take(self, address: str) -> bool:
-        """Claim this address's turn; False if it posted (or is posting) too recently."""
+    def take(self, address: str) -> Literal["ok", "wait", "busy"]:
+        """Claim this address's turn: "wait" if it posted (or is posting) too recently,
+        "busy" if too many addresses are waiting already (a flood)."""
         now = self._clock()
         # Forget addresses whose wait is over, from the oldest, so each call is cheap.
         while self._last:
@@ -221,10 +232,12 @@ class RateLimit:
             if now - self._last[oldest] < self._seconds:
                 break
             del self._last[oldest]
-        if address in self._last or len(self._last) >= self._most:
-            return False
+        if address in self._last:
+            return "wait"
+        if len(self._last) >= self._most:
+            return "busy"
         self._last[address] = now
-        return True
+        return "ok"
 
     def give_back(self, address: str) -> None:
         """The post failed: let the person try again straight away."""
@@ -264,6 +277,8 @@ def read_message(raw: object) -> Message | str:
         return "bad_request"
     if contact is not None and not isinstance(contact, str):
         return "bad_request"
+    if raw.get("turnstile") is not None and not isinstance(raw.get("turnstile"), str):
+        return "bad_request"
     text = _clean(text)
     if not text:
         return "empty"
@@ -275,14 +290,13 @@ def read_message(raw: object) -> Message | str:
     return Message(kind=kind, text=text, contact=contact)
 
 
-async def post(db: Database, discussions: Discussions, message: Message, *, now: int) -> int:
-    """Post the message publicly, then keep it with its contact. Returns the discussion's
-    number. GitHub first: if it fails (FeedbackError), nothing is stored and the person
-    can simply send again. Once the post is up, the person is told it was sent even if
-    storing fails: sending again would only post it twice. The log says which discussion
-    lost its contact."""
+async def post(db: Database, discussions: Discussions, message: Message, *, now: int) -> Posted:
+    """Post the message publicly, then keep it with its contact. GitHub first: if it
+    fails (FeedbackError), nothing is stored and the person can simply send again. Once
+    the post is up, the person is told it was sent even if storing fails: sending again
+    would only post it twice. The log says which discussion lost its contact."""
     day = datetime.datetime.fromtimestamp(now, tz=datetime.UTC).date()
-    number = await discussions.create(
+    posted = await discussions.create(
         message.kind, TITLES[message.kind], discussion_body(message.text, day)
     )
     try:
@@ -291,8 +305,21 @@ async def post(db: Database, discussions: Discussions, message: Message, *, now:
             await conn.execute(
                 "INSERT INTO feedback (kind, message, contact, discussion, created_at)"
                 " VALUES (%s, %s, %s, %s, %s)",
-                (message.kind, message.text, message.contact, number, now),
+                (message.kind, message.text, message.contact, posted.number, now),
             )
-    except Exception:
-        log.exception("Feedback for discussion %s was posted but couldn't be stored", number)
-    return number
+    except Exception as exc:
+        # The error's type only: a database error's text can quote the row, contact and all.
+        log.error(
+            "Feedback for discussion %s was posted but couldn't be stored (%s)",
+            posted.number,
+            type(exc).__name__,
+        )
+    return posted
+
+
+async def forget_old(db: Database) -> int:
+    """Delete messages and contacts kept for over a year (privacy page, #665). The
+    database decides which rows are old: this role may delete them, never read them."""
+    async with db.cleanup("old-feedback") as conn:
+        cur = await conn.execute("DELETE FROM feedback")
+        return cur.rowcount
