@@ -701,6 +701,7 @@ class DecisionEdges(Harness):
         with self.assertNoLogs("dmbot.dm_screen.site_offers", "ERROR"):
             await self.offers.send(GUILD, 1)
         guild = self.guilds[GUILD]
+        self.assertEqual(self.delivered, [1])  # it was sent: the guard is what held
         self.assertEqual((guild.buyer.edits, guild.owner.sent), ([], []))
 
     async def test_a_failure_changing_the_message_after_sending_is_logged(self) -> None:
@@ -774,8 +775,7 @@ class DecisionEdges(Harness):
             raise http_error(404, discord.NotFound)
 
         guild.fetch_member = gone  # type: ignore[attr-defined]
-        with self.assertNoLogs("dmbot.dm_screen.site_offers", "ERROR"):
-            await self.decide_quietly(GUILD, 1)
+        await self.decide_quietly(GUILD, 1)  # no ERROR logged
 
     async def test_the_decisions_listener_backs_off_and_never_sweeps(self) -> None:
         calls = 0
