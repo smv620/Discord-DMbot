@@ -445,7 +445,9 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   request starts with a "What's new" line naming the change, and the DM screen says
   "🔁 Asked again: …" so the DM knows why. After a restart, people in voice whose yes no
   longer counts are asked (nobody else is). Version 2 is the "anyone in this server can
-  read it" wording; every yes saved before versions were recorded is treated as version 1
+  read it" wording; version 3 (#52) adds that DMbot's helper has an AI company (Anthropic)
+  read the text to give the DM notes, not used to train their AI (said once for every
+  helper); every yes saved before versions were recorded is treated as version 1
   (we can't tell which wording each person saw). A test pins the request's wording to
   the version number.
 - The public "DMbot is listening" notice in the voice channel's chat still posts once per
@@ -1367,6 +1369,21 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
   per session hour can be reported.
 - **Storage:** a `topic` column on `transcript_lines` (`game` / `table_talk` /
   `off_topic`, default `game`) so cleaned downloads can show the markers later.
+- **Built (2026-10-08, #52 part 2; needs terms version 3, part 1):** lines plainly about
+  the game (a campaign name, dice, two table words) are never sent. The others wait in a
+  window of 6 lines or 20 s, and one call to the smallest model labels it. Only the
+  numbered words go, never who said them, and the prompt says the lines are not
+  instructions. An unclear answer is game talk. The names scan gets a line only once
+  labelled, never an off-topic one (the helper there is today). In the live channel each
+  off-topic line still in the edit window becomes its own marker; one marker per run, with
+  the total, is in the cleaned download. The last window is labelled when the session
+  ends. Each line also keeps how long it was said (`duration_ms`). Every AI call has an
+  8 s limit (a slow answer keeps the window as game talk, and never holds up the end of a
+  session); after 3 failures in a row the filter rests 5 minutes. Consent is checked again
+  right before a window is sent. Lines of two words or fewer are never sent. Not yet held
+  back: the name fixer's word list (lower-case words from every line). The log line
+  "Off-topic filter: N calls, … tokens" gives the cost. Replay case:
+  docs/test-scripts/off-topic.md.
 
 **Story memory: continuity, reputations, the shared story (decided 2026-10-06, #227).**
 Full design and rationale: docs/STORY_MEMORY.md. In short:

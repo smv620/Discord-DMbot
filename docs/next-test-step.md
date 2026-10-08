@@ -4,30 +4,28 @@
 
 ---
 
-## Test A on a computer: DMbot writes down what one person says
+## Test B: the Stop listening button asks before it stops
 
 **People:** 1 (you, as the DM)
-**Time:** about 3 minutes
-**Why:** it worked on Oct 8 at 07:01, but once before nothing was written down. Trying a computer shows whether the device matters.
+**Time:** about 2 minutes
+**Why:** the ⏹ **Stop listening** button now asks "are you sure?" first, so a slip of the thumb can't end the game. Check that **Cancel** keeps DMbot listening.
 
 ### Before you start
-- Use **a computer** this time (the Discord app or discord.com), not your phone.
-- Be in your test Discord server, on a steady connection.
+- Phone or computer, either is fine.
 - Tell dev1 you're starting, so it can watch from its side.
 
 ### Steps
 1. Join the voice channel you play in.
-2. Type `/dmbot start`. Press **▶ Continue last campaign** (or pick your campaign). If it asks for a voice channel, pick yours. Then press **▶ Start listening**.
-3. DMbot may send you a private message asking to record you. If it does, press **I consent**. No message means you already said yes.
-4. Say this sentence clearly, once: **"The party walks into the tavern and orders three drinks."**
-5. Wait 10 seconds.
-6. Look in the channel whose name starts with **dmb-transcript**.
-7. Type `/dmbot stop`.
+2. Type `/dmbot start`. Press **▶ Continue last campaign** (or pick your campaign), then **▶ Start listening**.
+3. Open the channel whose name starts with **dmb-dm-screen**. Find DMbot's message that says it's listening.
+4. Press **⏹ Stop listening**. A question appears that only you can see: "Stop listening and end the session for …?"
+5. Press **Cancel**.
+6. Type `/dmbot stop`.
 
 ### It worked if
-- Within about 10 seconds, a line appears in the **dmb-transcript** channel with your name and (close to) your sentence.
+- After **Cancel**, DMbot says **"Still listening."** and doesn't end the session.
 
-**If not:** type `/dmbot stop` anyway, then tell dev1 below. Don't try again until dev1 answers. If the DM screen showed a ⚠️ line, copy it for dev1.
+**If not:** type `/dmbot stop` anyway, then tell dev1 below. Don't try again until dev1 answers.
 
 ### Tell dev1
 - **Worked** or **didn't work**.

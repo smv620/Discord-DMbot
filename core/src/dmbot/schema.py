@@ -564,6 +564,16 @@ DM_SCREEN_LEVEL = """
         CHECK (dm_screen_level IN ('quiet', 'normal', 'chatty'));
     """
 
+TRANSCRIPT_TOPICS = """
+    -- The off-topic filter (#52): each line's topic (only off_topic is hidden, in the
+    -- cleaned transcript; the as-heard one keeps everything) and how long it was said,
+    -- for the "[1m 22s of off-topic chat skipped]" marker. Old lines: game, 0 ms.
+    ALTER TABLE transcript_lines
+        ADD COLUMN topic TEXT NOT NULL DEFAULT 'game'
+            CHECK (topic IN ('game', 'table_talk', 'off_topic')),
+        ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0);
+    """
+
 WEB_ACCOUNTS = (
     _setting("dmbot_current_user", "dmbot.user_id", "BIGINT")
     + _setting("dmbot_current_session", "dmbot.session", "TEXT")
@@ -908,6 +918,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0020_campaign_owner", CAMPAIGN_OWNER),
     ("0021_campaign_handover_offers", HANDOVER_OFFERS),
     ("0022_handover_offer_names", HANDOVER_NAMES),
+    ("0024_transcript_topics", TRANSCRIPT_TOPICS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -235,7 +235,9 @@ def transcript_card(campaign_name: str) -> str:
         [
             f"{TRANSCRIPT_CARD_TITLE}{campaign_name}**",
             "Anyone in this server can read this. Only DMbot posts here, not even the DM.",
-            "While DMbot is listening, what people say shows up here a few seconds later.",
+            "While DMbot is listening, what people say shows up here a few seconds later. "
+            "Chat that's clearly not about the game may be shortened to a note like \"[8s of "
+            'off-topic chat skipped]"; every word is still saved in the "As heard" transcript.',
             "**Who is recorded:** only people who said yes in DMbot's private message. "
             "Changed your mind? Press **Stop recording me** in that message, or type "
             "`/consent revoke` here or in any channel. Only you see the answer. What's "
