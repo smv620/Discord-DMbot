@@ -121,6 +121,7 @@ class HintParts:
     recent: tuple[str, ...]  # said in the last session or two, then never said yet
     fill: tuple[str, ...]  # the rest, most said first; long-unsaid ones left out
     guesses: tuple[str, ...]  # suggested names, never secret
+    secret: frozenset[str] = frozenset()  # name keys of secret names: never a hint
 
 
 def prepare(lookup: CampaignLookup, now: float) -> HintParts:
@@ -129,8 +130,10 @@ def prepare(lookup: CampaignLookup, now: float) -> HintParts:
     own = {e.id: name_key(e.name) for e in entities.values()}
     names: dict[str, list[str]] = {}
     guesses: list[str] = []
+    secret: set[str] = set()
     for entry in lookup.names:
         if entry.secret:
+            secret.add(name_key(entry.text))
             continue
         entity = entities.get(entry.entity_id)
         if entry.confirmed and entity is not None and entity.status == CONFIRMED:
@@ -179,6 +182,7 @@ def prepare(lookup: CampaignLookup, now: float) -> HintParts:
         recent=tuple(e.id for e in [*recently, *never]),
         fill=tuple(e.id for e in fill),
         guesses=tuple(sorted(guesses, key=name_key)),
+        secret=frozenset(secret),
     )
 
 
@@ -239,12 +243,15 @@ def scene_hints(
     *,
     people: Iterable[str] = (),
     absent: Iterable[str] = (),
+    sheet: Iterable[str] = (),
     limit: int = MAX_HINTS,
 ) -> list[str]:
     """The hints for the next clip, most useful first, one per name however it's
     written, never a secret name. `parts`: `prepare(lookup)`, made once per change.
     `people`: those at the table (in its voice channel); `absent`: people who agreed but
-    aren't there, last, so a big server's members never crowd out the scene (#173)."""
+    aren't there, last, so a big server's members never crowd out the scene (#173).
+    `sheet`: spell, feature and item names from the players' sheets, right after their
+    characters (#723); a name that is also a secret name is left out."""
     out: dict[str, str] = {}
 
     def entries(entity_ids: Iterable[str]) -> Iterator[str]:
@@ -261,6 +268,7 @@ def scene_hints(
     connected = sorted(pull, key=lambda e: (-pull[e], e))
     tiers: list[Iterable[str]] = [
         entries(parts.characters),
+        (name for name in sheet if name_key(name) not in parts.secret),
         people,
         entries(in_scene),
         entries(connected),

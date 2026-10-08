@@ -1593,6 +1593,14 @@ and stays a later browser extension in the DM's own session; never a password or
 on our side. Order: part A (link, snapshot, hints, unlink, fallback form; one developer,
 no table work), part B with phase 3 (the rules advisor reads the snapshot), part C later
 (the extension).
+*Built, part A first half (#723, dev2):* the `character_sheets` table (one row per player
+character per campaign, its link and snapshot; its own table rather than columns on the
+entity, so a refresh is never in the undo log or the in-memory names), the allow-list
+parser and the one-GET fetch (`dmbot.memory.sheets`), the background refresh at `/dmbot
+start` (kept names at once, fresh ones when read; not again after a restart), and
+backups (`sheet` rows; a restored snapshot goes through the same allow list). Up to 15
+sheet names join the hints right after the characters, taking turns between characters,
+never one that is also a secret name. The buttons and forms come in the second half.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
