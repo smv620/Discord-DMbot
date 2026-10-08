@@ -50,6 +50,11 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   person privately ("Something broke on DMbot's side… Try once more") and logs the
   cause, instead of leaving "thinking…". No migration. Deploy: rebuild core. Check:
   /dmbot names works as before.
+- CloudDev, PR #705 (#437 part 1b): hand over a campaign from Discord. ⚙️ Settings
+  shows the campaign's owner; the owner can 🤝 Hand over to a member, who gets a
+  private Accept / No thanks. No migration (needs #668's 0022). Deploy: rebuild core.
+  Check: ⚙️ Settings shows the owner; Hand over to a test member sends them the
+  message; Accept moves the campaign to their plan.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
