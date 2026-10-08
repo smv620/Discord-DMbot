@@ -33,6 +33,7 @@ class Script:
     name: str  # "dm-only", from the file name
     words: tuple[Word, ...]
     turns: int = 0  # [DM] and [Player] turns
+    order: tuple[str, ...] = ()  # who speaks each turn, in order
 
     @property
     def pauses(self) -> int:
@@ -80,7 +81,8 @@ def parse_script(text: str, name: str = "script") -> Script:
         words.extend(_turn_words(" ".join(lines), speaker, turn_part))
     if not words:
         raise ValueError(f"{name}: no [DM] or [Player] lines found")
-    return Script(name=name, words=tuple(words), turns=len(turns))
+    order = tuple(speaker for speaker, _, _ in turns)
+    return Script(name=name, words=tuple(words), turns=len(turns), order=order)
 
 
 def load_script(path: Path) -> Script:

@@ -1,6 +1,7 @@
 """Replay a recording through core and score it against its script (#299).
 
     python -m dmbot.devtools.replay RECORDING --script SCRIPT.md [--transcriber ENGINE]
+    python -m dmbot.devtools.replay --speakers DM.m4a:1001,PLAYER.m4a:1002 --script ...
 
 The engine and its settings come from the environment, as for the bot (TRANSCRIBER,
 DEEPGRAM_API_KEY, ...); --transcriber overrides TRANSCRIBER. Prints the scored record;
@@ -18,7 +19,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from dmbot.devtools.replay import audio
+from dmbot.devtools.replay import audio, voices
 from dmbot.devtools.replay import names as name_scan
 from dmbot.devtools.replay.bakeoff import (
     Bakeoff,
@@ -27,8 +28,14 @@ from dmbot.devtools.replay.bakeoff import (
     parse_bakeoff,
     score_bakeoff,
 )
-from dmbot.devtools.replay.report import heard_lines, history_entry, record, record_bakeoff
-from dmbot.devtools.replay.run import replay
+from dmbot.devtools.replay.report import (
+    heard_lines,
+    history_entry,
+    record,
+    record_bakeoff,
+    speaker_lines,
+)
+from dmbot.devtools.replay.run import ConsentChange, replay
 from dmbot.devtools.replay.score import score
 from dmbot.devtools.replay.script import Script, parse_script
 from dmbot.transcription.base import TranscriberUnavailable
@@ -130,11 +137,85 @@ def _milliseconds(text: str) -> int:
     return value
 
 
+def _speakers(text: str) -> list[tuple[Path, int]]:
+    """FILE:1001,FILE:1002: the DM's file (1001) and the player's (1002)."""
+    out: list[tuple[Path, int]] = []
+    for item in text.split(","):
+        path, _, speaker = item.rpartition(":")
+        if not path or not speaker.isdecimal() or int(speaker) not in voices.ROLES:
+            raise argparse.ArgumentTypeError(
+                f"needs FILE:{audio.TWIN_SPEAKER} (the DM's) and FILE:{audio.TWIN_PLAYER} "
+                "(the player's), with a comma between"
+            )
+        out.append((Path(path), int(speaker)))
+    if sorted(s for _, s in out) != sorted(voices.ROLES):
+        raise argparse.ArgumentTypeError(
+            f"needs one file for {audio.TWIN_SPEAKER} and one for {audio.TWIN_PLAYER}"
+        )
+    return out
+
+
+_AT = re.compile(r"^(\d+)@(?:(\d+):)?(\d+(?:\.\d+)?)$")
+
+
+def _at(text: str) -> tuple[int, int]:
+    """USER_ID@M:SS (or @SS): who, and when in the replay, in milliseconds."""
+    match = _AT.match(text)
+    if match is None or int(match.group(1)) not in voices.ROLES:
+        raise argparse.ArgumentTypeError(
+            f"needs a speaker and a time, like {audio.TWIN_PLAYER}@0:25"
+        )
+    minutes = int(match.group(2) or 0)
+    if match.group(2) is not None and float(match.group(3)) >= 60:
+        raise argparse.ArgumentTypeError("seconds go up to 59 (1:15, not 0:75)")
+    return int(match.group(1)), round((minutes * 60 + float(match.group(3))) * 1000)
+
+
+def _signed_ms(text: str) -> int:
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("needs a whole number of milliseconds") from None
+
+
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="replay", description="Replay a recording through core and score it."
     )
-    parser.add_argument("recording", type=Path, help="audio file (m4a, mp3, wav, ...)")
+    parser.add_argument("recording", type=Path, nargs="?", help="audio file (m4a, mp3, wav, ...)")
+    parser.add_argument(
+        "--speakers",
+        type=_speakers,
+        help=f"two voices recorded alone instead of one recording: DM.m4a:"
+        f"{audio.TWIN_SPEAKER},PLAYER.m4a:{audio.TWIN_PLAYER} (two-voices.md)",
+    )
+    parser.add_argument(
+        "--stop",
+        type=_at,
+        action="append",
+        default=[],
+        help=f"a speaker presses Stop recording me then, like {audio.TWIN_PLAYER}@0:25",
+    )
+    parser.add_argument(
+        "--agree",
+        type=_at,
+        action="append",
+        default=[],
+        help="a speaker agrees to be recorded only then (the first-time question)",
+    )
+    parser.add_argument(
+        "--turn-quiet-ms",
+        type=_milliseconds,
+        default=voices.TURN_QUIET_MS,
+        help=f"with --speakers: quiet this long ends a turn (default {voices.TURN_QUIET_MS})",
+    )
+    parser.add_argument(
+        "--answer-ms",
+        type=_signed_ms,
+        default=voices.ANSWER_MS,
+        help="with --speakers: the next turn starts this long after one ends; negative "
+        f"talks over its end (default {voices.ANSWER_MS})",
+    )
     parser.add_argument("--script", type=Path, required=True, help="docs/test-scripts/*.md")
     parser.add_argument("--transcriber", choices=ENGINES, help="overrides TRANSCRIBER")
     parser.add_argument("--hint", action="append", default=[], help="a name hint (repeat)")
@@ -181,7 +262,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--commit", help="the commit being replayed (default: GIT_COMMIT, then git)"
     )
     parser.add_argument("--history", type=Path, default=HISTORY, help=argparse.SUPPRESS)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if (args.recording is None) == (args.speakers is None):
+        parser.error("give one recording, or --speakers with two")
+    known = {s for _, s in args.speakers} if args.speakers else {audio.TWIN_SPEAKER}
+    changed = [speaker for speaker, _ in (*args.stop, *args.agree)]
+    for speaker in changed:
+        if speaker not in known:
+            parser.error(f"--stop and --agree: {speaker} isn't speaking in this replay")
+    if len(changed) != len(set(changed)):
+        parser.error("--stop and --agree: one change per speaker")
+    return args
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -220,34 +311,71 @@ async def main_async(args: argparse.Namespace) -> int:
         script: Script | Bakeoff = (
             parse_bakeoff(text) if is_bakeoff(text) else parse_script(text, args.script.stem)
         )
-        pcm = audio.decode(args.recording)
+        files = args.speakers or [(args.recording, audio.TWIN_SPEAKER)]
+        decoded = [(path, speaker, audio.decode(path)) for path, speaker in files]
     except (OSError, ValueError, audio.DecodeError) as exc:
         print(f"replay: {exc}", file=sys.stderr)
         return 2
-    recording_s = audio.seconds(pcm)
-    levels = audio.frame_levels(pcm)
-    silence = args.silence_db if args.silence_db is not None else audio.silence_dbfs_for(levels)
-    pieces = list(
-        audio.pieces(
-            pcm,
-            silence_dbfs=silence,
-            speech_end_ms=args.speech_end_ms,
-            hangover_ms=args.hangover_ms,
-            lead_in_ms=args.lead_in_ms,
-            levels=levels,
+    if isinstance(script, Bakeoff) and (args.stop or args.agree):
+        print("replay: --stop and --agree need a [DM]/[Player] script", file=sys.stderr)
+        return 2
+    if args.speakers and (isinstance(script, Bakeoff) or set(script.order) != set(voices.SPEAKERS)):
+        print("replay: --speakers needs a script with [DM] and [Player] lines", file=sys.stderr)
+        return 2
+    by_role: dict[str, list[audio.Piece]] = {}
+    silences: list[str] = []
+    for _path, speaker, pcm in decoded:
+        levels = audio.frame_levels(pcm)
+        silence = args.silence_db if args.silence_db is not None else audio.silence_dbfs_for(levels)
+        silences.append(f"{silence:.0f} dBFS")
+        by_role[voices.ROLES[speaker]] = list(
+            audio.pieces(
+                pcm,
+                silence_dbfs=silence,
+                speech_end_ms=args.speech_end_ms,
+                hangover_ms=args.hangover_ms,
+                lead_in_ms=args.lead_in_ms,
+                levels=levels,
+            )
         )
-    )
+    if args.speakers:
+        assert isinstance(script, Script)
+        file_names = {voices.ROLES[s]: public_name(path) for path, s, _ in decoded}
+        try:
+            pieces = voices.mix(
+                script.order,
+                by_role,
+                file_names,
+                turn_quiet_ms=args.turn_quiet_ms,
+                answer_ms=args.answer_ms,
+            )
+        except ValueError as exc:
+            print(f"replay: {exc}", file=sys.stderr)
+            return 2
+        recording_s = max((p.end_ms for p in pieces), default=0) / 1000
+    else:
+        pieces = by_role["DM"]
+        recording_s = audio.seconds(decoded[0][2])
+    recording_name = " + ".join(public_name(path) for path, _, _ in decoded)
+    del decoded, by_role, pcm  # a long recording is big: keep only its pieces
+    changes = [ConsentChange(at, speaker, False) for speaker, at in args.stop]
+    changes += [ConsentChange(at, speaker, True) for speaker, at in args.agree]
     # As used: whole 20 ms frames, and quiet as long as speech_end_ms ends a piece.
     lead_in = args.lead_in_ms // audio.FRAME_MS * audio.FRAME_MS
     hangover = min(args.hangover_ms, args.speech_end_ms - audio.FRAME_MS)
     hangover = hangover // audio.FRAME_MS * audio.FRAME_MS
     left_out_s = sum(p.end_ms - p.start_ms - len(p.frames) * audio.FRAME_MS for p in pieces)
     cut = (
-        f"{args.speech_end_ms / 1000:g} s quieter than {silence:.0f} dBFS ends a piece "
+        f"{args.speech_end_ms / 1000:g} s quieter than {' / '.join(silences)} ends a piece "
         f"(lead-in {lead_in} ms, quiet kept inside up to {hangover} ms): "
         f"{len(pieces)} pieces before core's 15 s cut, {left_out_s / 1000:.0f} s of quiet "
         "inside them left out"
     )
+    if args.speakers:
+        cut += (
+            f"; two voices, a turn ends at {args.turn_quiet_ms / 1000:g} s of quiet and the "
+            f"next starts {args.answer_ms} ms later"
+        )
     try:
         known = name_scan.load_known(args.names) if args.names else name_scan.Known.none()
     except (OSError, ValueError) as exc:
@@ -272,18 +400,23 @@ async def main_async(args: argparse.Namespace) -> int:
             realtime=args.realtime,
             outside=settings.sends_audio_out,
             end_delay_ms=args.speech_end_ms,
+            changes=changes,
         )
     except TranscriberUnavailable as exc:
         print(f"replay: the speech-to-text engine can't start: {exc}", file=sys.stderr)
         return 2
     heard = [h.text or "" for h in result.heard]
+    if isinstance(script, Script) and (args.speakers or changes):
+        speakers = speaker_lines(script, result)
+    else:
+        speakers = []
     details: list[str] = []
     if isinstance(script, Bakeoff):
         names = score_bakeoff(script, heard)
         details = misheard(names)
         lines = record_bakeoff(
             name=args.script.stem,
-            recording=public_name(args.recording),
+            recording=recording_name,
             engine=describe(settings),
             commit=commit(args.commit),
             result=result,
@@ -294,7 +427,7 @@ async def main_async(args: argparse.Namespace) -> int:
     else:
         lines = record(
             script=script,
-            recording=public_name(args.recording),
+            recording=recording_name,
             engine=describe(settings),
             commit=commit(args.commit),
             result=result,
@@ -302,6 +435,7 @@ async def main_async(args: argparse.Namespace) -> int:
             cut=cut,
             recording_s=recording_s,
         )
+    lines += speakers
     if cost:
         # What was sent, now it's known: the estimate above also counted pieces too short
         # to send.
@@ -343,7 +477,7 @@ async def main_async(args: argparse.Namespace) -> int:
         print("(Without --realtime every piece is queued at once, so falling-behind")
         print("warnings are the replay's doing, not the engine's.)")
     if args.log:
-        title = f"{args.script.name}, {public_name(args.recording)}, {describe(settings)}"
+        title = f"{args.script.name}, {recording_name}, {describe(settings)}"
         with args.history.open("a", encoding="utf-8") as history:
             history.write(history_entry(lines, title=title))
         print(f"\nAppended to {args.history}")

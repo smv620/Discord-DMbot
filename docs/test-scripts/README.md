@@ -136,6 +136,20 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
   rules words suggested and anything else, with the bot's 10-suggestion limit (what the DM
   sees) and without it (the real recall). Without `--names` there's no scan score: the live
   bot never hints names it doesn't know.
+- **Two voices (#534):** [two-voices.md](two-voices.md) is the DM and Player script recorded
+  by one person as two files, one per voice. Give them with
+  `--speakers two-voices-dm.m4a:1001,two-voices-player.m4a:1002` instead of one recording.
+  The twin finds each file's turns at 5 s of quiet (`--turn-quiet-ms`) and plays them in
+  the script's order as two made-up people. Each turn starts 800 ms after the last one ends
+  (`--answer-ms`; a negative number talks over the end). The record adds each speaker's own
+  score.
+  - `--stop 1002@0:25`: that person presses Stop recording me at 0:25 of the replay. What
+    they say after it must never be written down, and the record checks this.
+  - `--agree 1002@0:25`: they say yes only then (the first-time question), so nothing
+    before it is heard. The times are the replay's, as printed under "heard:".
+  - One of these per person. Without `--realtime`, the twin waits at each one for what was
+    said before it to be written down, which is kinder than a table: live, words still
+    being written down when someone stops are thrown away. Only `--realtime` shows that.
 - Recordings other than 16 kHz mono WAV need `pip install -e ".[twin]"` in `core/`.
 - The engine's settings come from the environment, as for the bot.
 - `--realtime` sends the audio as it was spoken, to time the delay a table would see.
