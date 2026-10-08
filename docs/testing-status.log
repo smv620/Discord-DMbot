@@ -19,6 +19,11 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   methods; the owner can't be removed as a DM. Migration 0021 adds one new, empty table
   (quick). Deploy: rebuild core. Check: `docker compose logs core` shows 0021 applied, no
   new errors. Nothing a DM sees changes until the Discord side ships.
+- CloudDev, PR #657 (#598): names reads never join names to entries (a freshly filled
+  campaign's cold names load 1.4 s -> 0.08 s; Check new names' "sounds like" 2.6 s -> 8 ms).
+  No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
+  names answer as before; the `Built names for campaign` log line shows a small database
+  time.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
