@@ -1,0 +1,42 @@
+### DMbot names list for names-stress.md (#534): every name the campaign knows.
+### Not on it, on purpose: Cedric, Rothgard, Ravenmoor, Zephyra, Valzaren, Isolda (the new
+### names the script says next to their known look-alikes).
+### Live: upload to a NEW campaign with /dmbot names -> Add many (see names-stress.md).
+Mara | NPC
+Marin | NPC
+Kael | NPC
+Kaelen | NPC
+Orrin | NPC
+Orrick | NPC
+Tamsin | NPC
+Tamsa | NPC
+Gorrak | NPC
+Gorran | NPC
+Ilvaris | NPC
+Ilvara | NPC
+Saelith | NPC
+Saelin | NPC
+Nyxara | NPC
+Nyxa | creature
+Oskar Vane | NPC | Vane
+Hale | NPC
+Wren | NPC
+Knight | NPC
+Reed | NPC
+Quillon | NPC
+Cerric | NPC
+Hrothgar | NPC
+Dravenmoor | place
+Zephyrine | NPC
+Vhalzimar | NPC
+Ysolde | NPC
+Belleros | NPC | Bell
+Mirelle | NPC
+Brynwater | place
+Thornewick | place
+Sorrowmere | place
+Elowen | NPC
+Varrow | god
+Lirael | NPC
+Ka'zeth | NPC
+Ashen Crown | group

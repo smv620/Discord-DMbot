@@ -99,12 +99,16 @@ def _short(text: str) -> str:
     return text if len(text) <= NAME_MAX else text[: NAME_MAX - 1].rstrip() + "…"
 
 
-def done_text(heard: str, written: str) -> str:
-    """After an Undo (both already escaped): what it put back and what it learned."""
-    return (
+def done_text(heard: str, written: str, *, line_kept: bool = False) -> str:
+    """After an Undo (both already escaped): what it put back and what it learned.
+    `line_kept`: the line itself couldn't be put back (saving failed, or it's too old)."""
+    text = (
         f'↩️ Undone. "{heard}" stays as heard: DMbot won\'t change it to **{written}** '
         "again in this campaign."
     )
+    if line_kept:
+        text += f" That line couldn't be put back, so it still says **{written}**."
+    return text
 
 
 @dataclass(slots=True)

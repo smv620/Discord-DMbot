@@ -16,11 +16,26 @@ const fullTitle = title === "DMbot" ? title : `${title} · DMbot`;
 // Built pages see their file name ("/pricing.html", "/index.html"); links don't have it.
 const path = Astro.url.pathname.replace(/(\/index)?\.html$/, "") || "/";
 
+// Each item is a button-shaped link with a small icon (#558), so it looks clickable. The
+// icons are our own simple line drawings (24 x 24, drawn with currentColor) and hidden
+// from screen readers: the words are the label.
 const menu = [
-  { href: "/pricing", label: "Prices" },
-  { href: "/pricing#questions", label: "Q&A" },
-  { href: "/install", label: "Add to Discord" },
-  { href: "/account", label: "My Account" },
+  { href: "/pricing", label: "Prices", icon: "M3 12V4h8l10 10-8 8L3 12Zm5-4.5h.01" },
+  {
+    href: "/pricing#questions",
+    label: "Q&A",
+    icon: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm-2.5-11.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14m0 3h.01",
+  },
+  {
+    href: "/install",
+    label: "Add to Discord",
+    icon: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-13v8m-4-4h8",
+  },
+  {
+    href: "/account",
+    label: "My Account",
+    icon: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 9a8 8 0 0 1 16 0",
+  },
 ];
 ---
 
@@ -45,6 +60,21 @@ const menu = [
               menu.map((item) => (
                 <li>
                   <a href={item.href} aria-current={path === item.href ? "page" : undefined}>
+                    <svg
+                      class="icon"
+                      viewBox="0 0 24 24"
+                      width="18"
+                      height="18"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path d={item.icon} />
+                    </svg>
                     {item.label}
                   </a>
                 </li>
@@ -121,17 +151,39 @@ const menu = [
     gap: var(--space-1) var(--space-4);
   }
 
+  nav ul {
+    gap: var(--space-2);
+  }
+
+  /* Menu items look like buttons: a border, a soft fill and an icon (#558). */
   nav a {
     display: inline-flex;
     align-items: center;
+    gap: var(--space-2);
     min-height: var(--tap);
+    padding-inline: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
     color: var(--text);
+    font-weight: 600;
     text-decoration: none;
   }
 
+  nav a:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
   nav a[aria-current="page"] {
-    font-weight: 700;
-    text-decoration: underline;
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 -3px 0 var(--accent);
+  }
+
+  .icon {
+    flex: none;
+    color: var(--accent);
   }
 
   main {
