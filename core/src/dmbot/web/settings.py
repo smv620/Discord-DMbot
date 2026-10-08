@@ -177,11 +177,20 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     ):
         # Behind the proxy every visitor has the proxy's address: five wrong tries by
         # anyone would lock the admin out, by password and by Google.
-        raise ConfigError("WEB_CLIENT_IP_HEADER must be set when ADMIN_EMAILS is.")
+        raise ConfigError(
+            "WEB_CLIENT_IP_HEADER must be set when ADMIN_EMAILS is. Behind Cloudflare, set it"
+            " to CF-Connecting-IP."
+        )
     google_client_id = get("GOOGLE_CLIENT_ID")
     google_client_secret = get("GOOGLE_CLIENT_SECRET")
     if bool(google_client_id) != bool(google_client_secret):
         raise ConfigError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET go together: set both.")
+    if admin_emails and not admin_password_hash and not google_client_id:
+        # Otherwise the page would show a form that refuses every try.
+        raise ConfigError(
+            "ADMIN_EMAILS is set but there's no way to sign in. Run scripts/set-admin-password,"
+            " or set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."
+        )
     return WebSettings(
         database_url=get("DATABASE_URL"),
         discord_client_id=get("DISCORD_CLIENT_ID"),

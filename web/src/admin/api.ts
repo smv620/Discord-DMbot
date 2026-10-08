@@ -11,7 +11,7 @@ export interface AdminMe {
 }
 
 /** Why something failed, in a form the page turns into plain words. */
-export type AdminProblem = "wrong" | "down" | "off";
+export type AdminProblem = "wrong" | "busy" | "down" | "off";
 
 export class AdminApiError extends Error {
   constructor(readonly kind: AdminProblem) {
@@ -20,9 +20,16 @@ export class AdminApiError extends Error {
   }
 }
 
+/** Which sign-ins the server has set up. */
+export interface AdminWays {
+  google: boolean;
+  password: boolean;
+}
+
 export interface AdminApi {
   /** Who is signed in, or null. */
   me(): Promise<AdminMe | null>;
+  ways(): Promise<AdminWays>;
   /** Where "Sign in with Google" goes: the API, which sends the browser on to Google. */
   googleUrl(): string;
   signIn(email: string, password: string): Promise<void>;
@@ -54,6 +61,12 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       if (!response.ok) throw new AdminApiError("down");
       return (await response.json()) as AdminMe;
     },
+    async ways() {
+      const response = await call("/admin/auth/ways");
+      if (response.status === 404) throw new AdminApiError("off");
+      if (!response.ok) throw new AdminApiError("down");
+      return (await response.json()) as AdminWays;
+    },
     googleUrl: () => `${root}/admin/auth/google/start`,
     async signIn(email, password) {
       const response = await call("/admin/auth/password", {
@@ -62,6 +75,8 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
         body: JSON.stringify({ email, password }),
       });
       if (response.status === 401 || response.status === 400) throw new AdminApiError("wrong");
+      // Too many tries at once: not the owner's password's fault.
+      if (response.status === 503) throw new AdminApiError("busy");
       if (!response.ok) throw new AdminApiError("down");
     },
     async signOut(csrf) {
@@ -80,6 +95,7 @@ export function pretendAdminApi(): AdminApi {
   let me: AdminMe | null = null;
   return {
     me: async () => me,
+    ways: async () => ({ google: true, password: true }),
     googleUrl: () => "#demo-google",
     signIn: async (email) => {
       me = { email, csrf: "pretend" };

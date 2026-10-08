@@ -12,6 +12,7 @@ import sys
 import time
 import unittest
 import unittest.mock
+from pathlib import Path
 from typing import Any, ClassVar, cast
 from urllib.parse import parse_qs, urlsplit
 
@@ -21,11 +22,13 @@ from aiohttp.test_utils import TestServer
 
 from dmbot.config import ConfigError
 from dmbot.db import Database
+from dmbot.web import tokens
 from dmbot.web.admin import (
     AdminError,
     AdminSessions,
     FailedTries,
     HttpGoogle,
+    PendingSignIns,
     hash_password,
     password_matches,
     pkce_challenge,
@@ -217,11 +220,12 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             await trying
 
     async def test_checks_run_one_at_a_time_and_a_flood_is_refused_at_once(self) -> None:
-        running = [0, 0]  # now, most at once
+        running = [0, 0, 0]  # now, most at once, hashes in all
 
         def slow(_hash: str, _password: str) -> bool:
             running[0] += 1
-            running[1] = max(running)
+            running[1] = max(running[:2])
+            running[2] += 1
             time.sleep(0.05)
             running[0] -= 1
             return False
@@ -231,7 +235,31 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
                 *(self.password(ip=f"2001:db8:{n}::1") for n in range(12))
             )
         self.assertEqual(running[1], 1)
-        self.assertTrue(all(a.status_code == 401 for a in answers))
+        self.assertLess(running[2], 12)  # the flood's tail isn't hashed
+        codes = [a.status_code for a in answers]
+        self.assertEqual(set(codes), {401, 503})
+        # Too many at once says "busy", never that the password is wrong.
+        busy = next(a for a in answers if a.status_code == 503)
+        self.assertEqual(busy.json(), {"error": "busy"})
+
+    async def test_a_wrong_email_costs_the_same_hash_as_a_wrong_password(self) -> None:
+        checked: list[str] = []
+
+        def counted(_hash: str, password: str) -> bool:
+            checked.append(password)
+            return password_matches(_hash, password)
+
+        with unittest.mock.patch("dmbot.web.admin_api.password_matches", counted):
+            await self.password(email="someone@example.com")
+            await self.password(password="wrong wrong wrong wrong")
+        self.assertEqual(len(checked), 2)
+
+    async def test_google_still_works_while_the_email_is_locked(self) -> None:
+        for _ in range(5):
+            await self.password(password="wrong wrong wrong wrong", ip="198.51.100.7")
+        self.assertEqual((await self.password(ip="198.51.100.8")).status_code, 401)
+        done = await self.google_sign_in()
+        self.assertEqual(done.headers["location"], f"{SITE}/admin")
 
     async def test_old_failures_fall_out_and_a_lock_isnt_stretched(self) -> None:
         for _ in range(4):
@@ -355,6 +383,52 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(asked["redirect_uri"], f"{API}/admin/auth/google/callback")
         self.assertEqual(pkce_challenge(asked["verifier"]), self.google.challenge)
 
+    async def test_a_google_sign_in_works_once(self) -> None:
+        self.google.claims_out = {}
+        start = await self.client.get("/admin/auth/google/start")
+        saved = dict(self.client.cookies)
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        callback = {"state": state, "code": "g-code"}
+        done = await self.client.get("/admin/auth/google/callback", params=callback)
+        self.assertEqual(done.headers["location"], f"{SITE}/admin")
+        self.client.cookies.clear()
+        self.client.cookies.update(saved)
+        again = await self.client.get("/admin/auth/google/callback", params=callback)
+        self.assertEqual(again.headers["location"], f"{SITE}/admin?signin=failed")
+        self.assertEqual(len(self.google.asked), 1)
+        self.assertEqual((await self.me()).status_code, 401)
+
+    async def test_a_sign_in_cookie_signed_with_another_key_is_refused(self) -> None:
+        start = await self.client.get("/admin/auth/google/start")
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        self.client.cookies.clear()
+        forged = tokens.make(b"another key", "admin-google", state, now=self.now, seconds=600)
+        self.client.cookies.set("__Host-dmbot_admin_signin", forged)
+        refused = await self.client.get(
+            "/admin/auth/google/callback", params={"state": state, "code": "g-code"}
+        )
+        self.assertEqual(refused.headers["location"], f"{SITE}/admin?signin=failed")
+        self.assertEqual(self.google.asked, [])
+
+    async def test_google_accepts_its_issuer_with_or_without_https(self) -> None:
+        done = await self.google_sign_in(iss="accounts.google.com")
+        self.assertEqual(done.headers["location"], f"{SITE}/admin")
+
+    async def test_the_page_learns_which_sign_ins_are_set_up(self) -> None:
+        both = await self.client.get("/admin/auth/ways")
+        self.assertEqual(both.json(), {"google": True, "password": True})
+        app = create_app(
+            settings(admin_emails=(ADMIN,), admin_password_hash=HASH),
+            cast(Database, None),
+            FakeDiscord(),
+            google=None,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API
+        ) as client:
+            only = await client.get("/admin/auth/ways")
+        self.assertEqual(only.json(), {"google": False, "password": True})
+
     async def test_google_refuses_other_unverified_or_mismatched_sign_ins(self) -> None:
         for claims in (
             {"email": "someone@example.com"},
@@ -445,8 +519,17 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url=API
         ) as client:
-            self.assertEqual((await client.get("/admin/me")).status_code, 404)
-            self.assertEqual((await client.get("/admin/auth/google/start")).status_code, 404)
+            for path in ("/admin/me", "/admin/auth/ways", "/admin/auth/google/start"):
+                self.assertEqual((await client.get(path)).status_code, 404, path)
+            callback = await client.get(
+                "/admin/auth/google/callback", params={"state": "s", "code": "c"}
+            )
+            self.assertEqual(callback.status_code, 404)
+            for path in ("/admin/auth/password", "/admin/auth/logout"):
+                answer = await client.post(
+                    path, json={"email": ADMIN, "password": PASSWORD}, headers=HEADERS
+                )
+                self.assertEqual(answer.status_code, 404, path)
 
 
 class Locks(unittest.TestCase):
@@ -462,6 +545,28 @@ class Locks(unittest.TestCase):
         for n in range(10):
             tries.fail(f"email:{n}")
         self.assertLessEqual(len(tries._fails), 3)
+
+
+class Pending(unittest.TestCase):
+    def test_a_state_works_once_and_not_after_ten_minutes(self) -> None:
+        now = [0.0]
+        pending = PendingSignIns(clock=lambda: now[0])
+        state, nonce, verifier = pending.start()
+        self.assertEqual(pending.take(state), (nonce, verifier))
+        self.assertIsNone(pending.take(state))
+        old, _, _ = pending.start()
+        now[0] += 600
+        self.assertIsNone(pending.take(old))
+        self.assertIsNone(pending.take("caf\xe9"))
+
+    def test_the_table_stays_bounded(self) -> None:
+        pending = PendingSignIns(clock=lambda: 0.0, most=3)
+        first, _, _ = pending.start()
+        for _ in range(5):
+            last, _, _ = pending.start()
+        self.assertLessEqual(len(pending._by_hash), 3)
+        self.assertIsNone(pending.take(first))
+        self.assertIsNotNone(pending.take(last))
 
 
 class SessionCap(unittest.TestCase):
@@ -506,6 +611,10 @@ class AdminSettings(unittest.TestCase):
             {"WEB_CLIENT_IP_HEADER": ""},
             {"ADMIN_PASSWORD_HASH": "plain-password"},
             {"GOOGLE_CLIENT_SECRET": ""},
+            # Damaged: the right start, but not a whole argon2id hash.
+            {"ADMIN_PASSWORD_HASH": base64.urlsafe_b64encode(b"$argon2id$x").decode()},
+            # No way in at all.
+            {"ADMIN_PASSWORD_HASH": "", "GOOGLE_CLIENT_ID": "", "GOOGLE_CLIENT_SECRET": ""},
         ):
             with self.subTest(change=change), self.assertRaises(ConfigError):
                 load_web_settings({**self.ENV, **change})
@@ -546,6 +655,15 @@ class GoogleClient(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(AdminError) as caught:
             await self.google.claims(code="bad", verifier="v" * 43, redirect_uri="https://x/cb")
         self.assertNotIn("g-secret", str(caught.exception))
+
+    def test_the_server_only_ever_asks_googles_own_token_endpoint(self) -> None:
+        # Skipping the ID token's signature check is sound only for this exact address.
+        self.assertEqual(
+            HttpGoogle(CLIENT_ID, "s")._token_url, "https://oauth2.googleapis.com/token"
+        )
+        main = (Path(__file__).parents[1] / "src/dmbot/web/__main__.py").read_text()
+        self.assertIn("HttpGoogle(settings.google_client_id, settings.google_client_secret)", main)
+        self.assertNotIn("token_url", main)
 
     def test_the_authorize_link_asks_only_for_openid_email_with_pkce(self) -> None:
         url = self.google.authorize_url(state="s", nonce="n", challenge="c", redirect_uri="r")

@@ -8,7 +8,7 @@ import Base from "../layouts/Base.astro";
 
 <Base title={text.title} description={text.description} noindex nofollow>
   <div class="admin">
-    <h1>{text.heading}</h1>
+    <h1 id="admin-heading" tabindex="-1">{text.heading}</h1>
     <noscript><p>{text.needsScript}</p></noscript>
     <AdminIsland client:only="preact" />
   </div>

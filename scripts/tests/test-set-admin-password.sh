@@ -8,6 +8,7 @@ script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/set-admin-password"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export DMBOT_ENV_FILE="$work/.env" DMBOT_ENV_EXAMPLE="$work/.env.example"
+export DMBOT_TEST_NO_TERMINAL=1
 
 # The hasher stand-in records what it was given and prints a fixed, hash-like value.
 export DMBOT_HASHER="$work/hasher" HASHER_SAW="$work/saw"
@@ -88,6 +89,16 @@ HASHER
 padded="  a padded admin password  "
 run "$padded"$'\n'"$padded"$'\n'
 check "spaces at either end are kept" grep -qx -- "$padded" "$HASHER_SAW"
+
+reset
+set +e
+out=$(printf '%s\n%s\n' "$good" "$good" | DMBOT_TEST_NO_TERMINAL='' "$script" 2>&1)
+code=$?
+set -e
+check "piped in without the test switch is refused" [ "$code" -ne 0 ]
+check "the refusal says never to paste it into a chat" grep -q "Never paste it into a chat" <<<"$out"
+check "nothing changes without a terminal" grep -qx 'ADMIN_PASSWORD_HASH=old' "$DMBOT_ENV_FILE"
+check "the hasher isn't asked without a terminal" [ ! -e "$HASHER_SAW" ]
 
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))

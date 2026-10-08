@@ -24,11 +24,13 @@ from dmbot.web import tokens
 from dmbot.web.admin import (
     CSRF_HEADER,
     MAX_SECONDS,
+    SIGN_IN_SECONDS,
     AdminError,
     AdminSession,
     AdminSessions,
     FailedTries,
     GoogleSignIn,
+    PendingSignIns,
     csrf_ok,
     email_allowed,
     password_matches,
@@ -40,11 +42,11 @@ from dmbot.web.settings import WebSettings
 
 log = logging.getLogger(__name__)
 
-SIGN_IN_SECONDS = 600
 MAX_BODY = 4 * 1024
 # The same answer for a wrong email, a wrong password and a locked try (#772).
 WRONG = "wrong_sign_in"
-# Password tries waiting for the one before them; more than this is a flood.
+# Password tries waiting for the one before them; more than this is a flood, answered
+# "busy" (not WRONG: the owner's own try in a flood mustn't say their password is wrong).
 MAX_WAITING = 8
 
 
@@ -60,6 +62,7 @@ def router(
     api = APIRouter(prefix="/admin")
     checking = asyncio.Semaphore(1)
     waiting = [0]  # tries queued for `checking`
+    pending = PendingSignIns(clock=clock)
     prefix = "__Host-" if settings.secure_cookies else ""
     admin_cookie = f"{prefix}dmbot_admin"
     signin_cookie = f"{prefix}dmbot_admin_signin"
@@ -100,6 +103,12 @@ def router(
     @api.get("/me")
     async def me(session: Admin) -> dict[str, str]:
         return {"email": session.email, "csrf": session.csrf}
+
+    @api.get("/auth/ways")
+    async def ways() -> dict[str, bool]:
+        """Which sign-ins are set up, so the page shows only the ones that work."""
+        require_on()
+        return {"google": google is not None, "password": bool(settings.admin_password_hash)}
 
     @api.post("/auth/logout", status_code=204)
     async def logout(request: Request) -> Response:
@@ -142,7 +151,7 @@ def router(
         # behind it until the page gives up.
         if waiting[0] >= MAX_WAITING:
             log.warning("Admin sign-in refused from %s: too many at once", address)
-            raise HTTPException(status_code=401, detail=WRONG)
+            raise HTTPException(status_code=503, detail="busy")
         waiting[0] += 1
         try:
             await checking.acquire()
@@ -178,7 +187,7 @@ def router(
         if google is None:
             # A plain link leads here: answer with the page and its words, not bare JSON.
             return RedirectResponse(f"{admin_page}?signin=off", status_code=302)
-        state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
+        state, nonce, verifier = pending.start()
         response = RedirectResponse(
             google.authorize_url(
                 state=state,
@@ -189,15 +198,12 @@ def router(
             status_code=302,
         )
         # Lax, not Strict: Google's redirect back is a navigation another site starts.
-        # Holds this sign-in's checks, signed and short-lived; ':' as tokens can't hold dots.
+        # Holds the state, signed and short-lived, so the callback must come back to the
+        # browser that started it; the nonce and verifier stay in `pending`.
         response.set_cookie(
             signin_cookie,
             tokens.make(
-                settings.secret_key,
-                "admin-google",
-                f"{state}:{nonce}:{verifier}",
-                now=clock(),
-                seconds=SIGN_IN_SECONDS,
+                settings.secret_key, "admin-google", state, now=clock(), seconds=SIGN_IN_SECONDS
             ),
             max_age=SIGN_IN_SECONDS,
             path="/",
@@ -220,20 +226,24 @@ def router(
             request.cookies.get(signin_cookie, ""),
             now=clock(),
         )
-        parts = held.split(":") if held else []
         state = request.query_params.get("state", "")
         code = request.query_params.get("code", "")
         address = client_address(request)
         addr_key = "addr:" + rate_key(address)
-        if (
-            len(parts) != 3
-            or not code
-            or tries.locked(addr_key)
-            or not secrets.compare_digest(parts[0].encode(), state.encode())
-        ):
+        # Only this browser's own state is taken out of `pending`, and then it is gone:
+        # whatever happens next, it never works twice.
+        checks = (
+            pending.take(held)
+            if held is not None
+            and code
+            and not tries.locked(addr_key)
+            and secrets.compare_digest(held.encode(), state.encode())
+            else None
+        )
+        if checks is None:
             log.warning("Admin Google sign-in refused from %s: bad or expired check", address)
             return failed
-        _state, nonce, verifier = parts
+        nonce, verifier = checks
         try:
             claims = await google.claims(
                 code=code, verifier=verifier, redirect_uri=settings.admin_google_redirect_uri

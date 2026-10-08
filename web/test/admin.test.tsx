@@ -20,6 +20,7 @@ function stub(over: Partial<AdminApi> = {}): AdminApi {
   let me: AdminMe | null = null;
   return {
     me: vi.fn(async () => me),
+    ways: vi.fn(async () => ({ google: true, password: true })),
     googleUrl: () => "https://api.example/admin/auth/google/start",
     signIn: vi.fn(async (_email: string, password: string) => {
       if (password !== "right password here") throw new AdminApiError("wrong");
@@ -68,6 +69,65 @@ describe("the admin page", () => {
     expect((screen.getByLabelText(text.password) as HTMLInputElement).value).toBe("");
   });
 
+  it("a flood says busy, not that the password is wrong, and focus goes back to it", async () => {
+    const signIn = vi.fn(async () => {
+      throw new AdminApiError("busy");
+    });
+    render(<Admin api={stub({ signIn })} search="" />);
+    await screen.findByLabelText(text.email);
+    fill(text.email, "owner@example.com");
+    fill(text.password, "right password here");
+    fireEvent.click(screen.getByRole("button", { name: text.signIn }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.busy);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText(text.password)));
+  });
+
+  it("shows the password on request, and hides it again", async () => {
+    render(<Admin api={stub()} search="" />);
+    const box = await screen.findByLabelText(text.password);
+    fireEvent.click(screen.getByRole("button", { name: text.showPassword }));
+    expect(box.getAttribute("type")).toBe("text");
+    fireEvent.click(screen.getByRole("button", { name: text.hidePassword }));
+    expect(box.getAttribute("type")).toBe("password");
+  });
+
+  it("shows only the sign-ins the server has set up", async () => {
+    const ways = vi.fn(async () => ({ google: false, password: true }));
+    render(<Admin api={stub({ ways })} search="" />);
+    await screen.findByLabelText(text.email);
+    expect(screen.queryByRole("link", { name: text.google })).toBeNull();
+    expect(screen.queryByText(text.or)).toBeNull();
+    cleanup();
+    const googleOnly = vi.fn(async () => ({ google: true, password: false }));
+    render(<Admin api={stub({ ways: googleOnly })} search="" />);
+    await screen.findByRole("link", { name: text.google });
+    expect(screen.queryByLabelText(text.password)).toBeNull();
+  });
+
+  it("moves focus to the heading after signing in", async () => {
+    const heading = document.createElement("h1");
+    heading.id = "admin-heading";
+    heading.tabIndex = -1;
+    document.body.append(heading);
+    try {
+      render(<Admin api={stub()} search="" />);
+      await screen.findByLabelText(text.email);
+      fill(text.email, "owner@example.com");
+      fill(text.password, "right password here");
+      fireEvent.click(screen.getByRole("button", { name: text.signIn }));
+      await screen.findByText(text.signedInAs(ME.email));
+      await waitFor(() => expect(document.activeElement).toBe(heading));
+    } finally {
+      heading.remove();
+    }
+  });
+
+  it("ignores a signin= value that isn't one of its own", async () => {
+    render(<Admin api={stub()} search="?signin=toString" />);
+    await screen.findByLabelText(text.email);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("says when Google's sign-in came back refused", async () => {
     render(<Admin api={stub()} search="?signin=failed" />);
     expect((await screen.findByRole("alert")).textContent).toBe(text.googleFailed);
@@ -114,9 +174,18 @@ describe("httpAdminApi", () => {
     await expect(httpAdminApi("/api", fake(401)).signIn("a", "b")).rejects.toMatchObject({
       kind: "wrong",
     });
+    await expect(httpAdminApi("/api", fake(503)).signIn("a", "b")).rejects.toMatchObject({
+      kind: "busy",
+    });
     await expect(httpAdminApi("/api", fake(500)).signIn("a", "b")).rejects.toMatchObject({
       kind: "down",
     });
+  });
+
+  it("asks which sign-ins are set up", async () => {
+    const ways = { google: false, password: true };
+    expect(await httpAdminApi("/api", fake(200, ways)).ways()).toEqual(ways);
+    await expect(httpAdminApi("/api", fake(404)).ways()).rejects.toMatchObject({ kind: "off" });
   });
 
   it("signs out with the CSRF token in a header", async () => {

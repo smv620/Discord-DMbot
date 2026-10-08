@@ -40,6 +40,7 @@ FAIL_WINDOW = 15 * 60
 FAIL_LIMIT = 5
 LOCK_SECONDS = 15 * 60
 MAX_SESSIONS = 20  # one admin; a few browsers at most
+SIGN_IN_SECONDS = 600  # to finish a Google sign-in
 MIN_PASSWORD = 16
 GOOGLE_AUTHORIZE = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
@@ -195,6 +196,41 @@ class AdminSessions:
         if token:
             with contextlib.suppress(UnicodeError):
                 self._by_hash.pop(_hash(token), None)
+
+
+@dataclass
+class PendingSignIns:
+    """Google sign-ins started and not back yet: each one's nonce and PKCE verifier, kept by
+    the hash of its state. The callback takes its entry out, so a state and nonce work
+    once: a replayed callback finds nothing. That is the condition that lets
+    id_token_claims skip the ID token's signature check (#772)."""
+
+    clock: Callable[[], float] = time.monotonic
+    # Anyone can start a sign-in, so it's bounded; a full table drops the oldest. At
+    # roughly 200 bytes each, this many is a few megabytes at most.
+    most: int = 10_000
+    _by_hash: dict[str, tuple[str, str, float]] = field(default_factory=dict)
+
+    def start(self) -> tuple[str, str, str]:
+        """A new sign-in's state, nonce and verifier."""
+        now = self.clock()
+        if len(self._by_hash) >= self.most:
+            self._by_hash = {k: v for k, v in self._by_hash.items() if v[2] > now}
+        while len(self._by_hash) >= self.most:
+            self._by_hash.pop(next(iter(self._by_hash)))
+        state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
+        self._by_hash[_hash(state)] = (nonce, verifier, now + SIGN_IN_SECONDS)
+        return state, nonce, verifier
+
+    def take(self, state: str) -> tuple[str, str] | None:
+        """This sign-in's nonce and verifier, once; None if it's unknown, used or too old."""
+        try:
+            entry = self._by_hash.pop(_hash(state), None)
+        except UnicodeError:
+            return None
+        if entry is None or self.clock() >= entry[2]:
+            return None
+        return entry[0], entry[1]
 
 
 def csrf_ok(session: AdminSession, sent: str | None) -> bool:
