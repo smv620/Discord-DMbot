@@ -80,6 +80,9 @@ class Campaign:
     transcript_channel_id: int | None = None
     # How much DMbot says in the DM screen (#504): quiet, normal or chatty.
     dm_screen_level: str = DEFAULT_DM_SCREEN_LEVEL
+    # Whose plan the campaign uses (#437): its creator or restorer; None for campaigns
+    # from before owners were recorded.
+    owner_user_id: int | None = None
 
     @property
     def last_active_at(self) -> int:
