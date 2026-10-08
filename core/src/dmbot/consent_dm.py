@@ -348,7 +348,8 @@ class ConsentButton(
                 await interaction.followup.send(GRANT_FAILED, ephemeral=True)
                 return
             await interaction.edit_original_response(
-                content=confirmed_text(guild.name, granted_at), view=stop_view(self.guild_id)
+                content=confirmed_text(guild.name, granted_at),
+                view=stop_view(self.guild_id, sheet=True),
             )
 
 
@@ -442,9 +443,28 @@ def consent_view(guild_id: int) -> discord.ui.View:
     return view
 
 
-def stop_view(guild_id: int) -> discord.ui.View:
+SHEET_LABEL = "📜 My character sheet"
+
+
+def sheet_button(guild_id: int, campaign_id: str | None) -> discord.ui.Button[Any]:
+    """The player's 📜 My character sheet (handled by dmbot.ui.sheets.MySheetButton, by
+    its id): link a D&D Beyond sheet for their character (#723)."""
+    return discord.ui.Button(
+        label=SHEET_LABEL,
+        style=discord.ButtonStyle.secondary,
+        custom_id=f"dmbot:sheet:{int(guild_id)}:{campaign_id or '-'}",
+    )
+
+
+def stop_view(
+    guild_id: int, *, sheet: bool = False, campaign_id: str | None = None
+) -> discord.ui.View:
+    """🛑 Stop, and with `sheet` the player's sheet button (for `campaign_id`, or any of
+    the server's campaigns)."""
     view = discord.ui.View(timeout=None)
     view.add_item(StopButton(guild_id))
+    if sheet:
+        view.add_item(sheet_button(guild_id, campaign_id))
     return view
 
 

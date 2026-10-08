@@ -34,6 +34,16 @@ class CharacterSheet:
         return None if self.url is None else sheets.character_id(self.url)
 
 
+@dataclass(frozen=True, slots=True)
+class PlayerCharacter:
+    """A character someone plays, in one campaign of a server."""
+
+    campaign_id: str
+    campaign_name: str
+    entity_id: str
+    name: str
+
+
 class SheetStore:
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -130,6 +140,33 @@ class SheetStore:
                 fetched_at=row_int(r, "fetched_at"),
             )
             for r in rows
+        ]
+
+    async def sheet(self, guild_id: int, campaign_id: str, entity_id: str) -> CharacterSheet | None:
+        """One character's sheet, if it has one."""
+        return next(
+            (s for s in await self.sheets(guild_id, campaign_id) if s.entity_id == entity_id),
+            None,
+        )
+
+    async def characters_of(
+        self, guild_id: int, user_id: int, campaign_id: str | None = None
+    ) -> list[PlayerCharacter]:
+        """The characters this person plays in this server (or in one campaign of it),
+        by campaign and name: what their "My character sheet" button can link."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT e.campaign_id, c.name AS campaign_name, e.id, e.name"
+                " FROM memory_entities e JOIN campaigns c"
+                "  ON c.guild_id = e.guild_id AND c.id = e.campaign_id"
+                " WHERE e.guild_id = %s AND e.played_by = %s AND e.status = 'confirmed'"
+                "  AND (%s::text IS NULL OR e.campaign_id = %s)"
+                " ORDER BY lower(c.name), lower(e.name), e.id",
+                (guild_id, user_id, campaign_id, campaign_id),
+            )
+            rows = await cur.fetchall()
+        return [
+            PlayerCharacter(r["campaign_id"], r["campaign_name"], r["id"], r["name"]) for r in rows
         ]
 
     async def _require_character(

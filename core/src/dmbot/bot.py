@@ -141,6 +141,7 @@ from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
+from dmbot.ui.sheets import MySheetButton
 from dmbot.ui.transcripts import DownloadButton, download_view, ended_text, transcript_command
 
 log = logging.getLogger(__name__)
@@ -480,6 +481,8 @@ class DMBot(commands.AutoShardedBot):
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
         self.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton, FixUndoButton)
+        # A player's 📜 My character sheet, in their private messages (#723).
+        self.add_dynamic_items(MySheetButton)
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -721,7 +724,7 @@ class DMBot(commands.AutoShardedBot):
                 server = member.guild.name
                 if granted is not None and self.consent.has_consent(gid, member.id):
                     text = reminder_text(server, voice_name, granted, cloud=cloud, company=company)
-                    view = stop_view(gid)
+                    view = stop_view(gid, sheet=True, campaign_id=table.campaign_id)
                 else:
                     text = request_text(
                         server,
@@ -843,6 +846,13 @@ class DMBot(commands.AutoShardedBot):
         )
         return sent
 
+    def sheets_changed(self, guild_id: int, campaign_id: str) -> None:
+        """A sheet was linked, read, typed or unlinked: a session running for that
+        campaign uses the new names from its next clip on (#723)."""
+        table = self.tables.get(guild_id)
+        if table is not None and table.campaign_id == campaign_id:
+            self._track(self._sheet_hints(table, refresh=False), "sheets")
+
     async def _sheet_hints(self, table: Table, *, refresh: bool) -> None:
         """Hints from the campaign's sheets: the kept ones at once, then, if `refresh`,
         again once each linked sheet has been read (#723)."""
@@ -865,10 +875,13 @@ class DMBot(commands.AutoShardedBot):
                     table.sheet_hints = tuple(sheet_hint_names(found))
                     linked = sum(s.url is not None for s in found)
                     if found:
+                        # Spell, feature and item names only (game words, at most 15):
+                        # never a link or a character's name.
                         log.info(
-                            "Character sheets: %d linked, %d names in the hints",
+                            "Character sheets: %d linked, %d names in the hints: %s",
                             linked,
                             len(table.sheet_hints),
+                            ", ".join(table.sheet_hints) or "none",
                         )
             except Exception as exc:  # never the text: it can quote a row (links, names)
                 log.error("Couldn't load the campaign's character sheets (%s)", type(exc).__name__)
@@ -2987,7 +3000,9 @@ async def consent_give(interaction: discord.Interaction) -> None:
     # fresh process whose cache hasn't loaded this server yet.
     if granted is not None:
         await interaction.followup.send(
-            confirmed_text(guild.name, granted), view=stop_view(guild.id), ephemeral=True
+            confirmed_text(guild.name, granted),
+            view=stop_view(guild.id, sheet=True),
+            ephemeral=True,
         )
         return
     table = bot.tables.get(guild.id)

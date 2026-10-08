@@ -1600,7 +1600,15 @@ parser and the one-GET fetch (`dmbot.memory.sheets`), the background refresh at 
 start` (kept names at once, fresh ones when read; not again after a restart), and
 backups (`sheet` rows; a restored snapshot goes through the same allow list). Up to 15
 sheet names join the hints right after the characters, taking turns between characters,
-never one that is also a secret name. The buttons and forms come in the second half.
+never one that is also a secret name. *Second half:* one **📜 My character sheet** button
+on the player's consent confirmation and each session's reminder opens a private panel
+for their character (picking one if they play several in the server): Link my D&D Beyond
+sheet (read at once; "set to Public" if refused), Tell DMbot about my character (the
+typed fallback), Unlink. The DM's "Add a player's character" form takes an optional
+link; a player character's card shows "📜 Sheet: linked to D&D Beyond, read …" (the
+address only to the campaign's DMs) with 📜 Unlink sheet; the names panel's 📜 Refresh
+sheets reads them all again (at most once a minute per campaign). A merge moves the
+sheet to the kept character unless it has its own.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify

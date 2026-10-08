@@ -987,6 +987,16 @@ class MemoryStore:
             if confirm_keys and source != DM:
                 raise ValueError("Only the DM confirms names")
             await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
+            # A character's D&D Beyond sheet (#723) goes with it, unless the kept entry
+            # has its own. Not in the change log: undoing the merge leaves it on the kept
+            # entry, which is still that player's character.
+            await w.conn.execute(
+                "UPDATE character_sheets SET entity_id = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"
+                " AND NOT EXISTS (SELECT 1 FROM character_sheets"
+                "  WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s)",
+                (keep_id, guild_id, campaign_id, gone_id, guild_id, campaign_id, keep_id),
+            )
             own = await w.select(
                 ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
             )

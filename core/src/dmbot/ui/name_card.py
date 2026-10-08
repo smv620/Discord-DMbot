@@ -160,11 +160,13 @@ def card_text(
     *,
     secrets: bool,
     player: str | None = None,
+    sheet: str | None = None,
     full: bool = False,
     limit: int = CARD_MAX,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
-    character). `full`: every entry of each section (Show all), not the first few."""
+    character); `sheet`: its D&D Beyond sheet line (#723). `full`: every entry of each
+    section (Show all), not the first few."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
@@ -180,6 +182,8 @@ def card_text(
     )
     what = f"played by **{_md(player)}**" if player else _kind(entity.type)
     lines = [f"🪪 **{_md(entity.name)}** · {what} · {when}"]
+    if sheet:
+        lines.append(sheet)
     if others:
         lines.append(f"**Also called:** {_more(others, full=full)}")
     if secrets and hidden:
@@ -248,13 +252,28 @@ async def show_card(
         campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=secrets
     )
     entity = names.entities.get(entity_id)
-    player = None
+    player = sheet = None
+    has_sheet = False
     if entity is not None and entity.played_by is not None:
         player = _bot(interaction).name_of(campaign.guild_id, entity.played_by)
+        store = _bot(interaction).sheets
+        if store is not None:
+            from dmbot.ui.sheets import card_line
+
+            found = await store.sheet(campaign.guild_id, campaign.id, entity_id)
+            has_sheet = found is not None
+            sheet = card_line(found, link=secrets)  # the address: the campaign's DMs only
     note = cut(note, NOTE_MAX) if note else None
     limit = CARD_MAX - (len(note) + 2 if note else 0)
     text = card_text(
-        names, entity_id, connections, secrets=secrets, player=player, full=full, limit=limit
+        names,
+        entity_id,
+        connections,
+        secrets=secrets,
+        player=player,
+        sheet=sheet,
+        full=full,
+        limit=limit,
     )
     if text is None or entity is None:
         if replace:  # never leave the message pressed on a step that's over
@@ -263,7 +282,14 @@ async def show_card(
             await _tell(interaction, GONE)
         return
     longer = not full and text != card_text(
-        names, entity_id, connections, secrets=secrets, player=player, full=True, limit=limit
+        names,
+        entity_id,
+        connections,
+        secrets=secrets,
+        player=player,
+        sheet=sheet,
+        full=True,
+        limit=limit,
     )
     own = name_key(entity.name)
     others = any(
@@ -272,7 +298,7 @@ async def show_card(
     )
     if note:
         text = f"{note}\n\n{text}"
-    view = NameCard(campaign.id, entity_id, others=others, longer=longer)
+    view = NameCard(campaign.id, entity_id, others=others, longer=longer, sheet=has_sheet)
     if replace:
         await _replace(interaction, text, view)
     else:
@@ -302,6 +328,7 @@ class NameCard(_Menu):
         *,
         others: bool = False,
         longer: bool = False,
+        sheet: bool = False,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -322,6 +349,21 @@ class NameCard(_Menu):
         self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=2))
         if longer:
             self.add_item(_Button(self._all, label="Show all", style=grey, row=2))
+        if sheet:
+            self.add_item(_Button(self._unlink_sheet, label="📜 Unlink sheet", style=grey, row=2))
+
+    async def _unlink_sheet(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.sheets import dm_unlink
+
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        if found is None:
+            return
+        campaign, name = found
+        self.stop()
+        gone = await dm_unlink(interaction, campaign.guild_id, campaign.id, self.entity_id)
+        note = f"DMbot forgot **{_md(name)}**'s sheet." if gone else None
+        await show_card(interaction, self.campaign_id, self.entity_id, replace=True, note=note)
 
     async def _all(self, interaction: discord.Interaction) -> None:
         self.stop()

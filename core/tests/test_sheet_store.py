@@ -115,6 +115,45 @@ class Size(SheetTest):
         self.assertTrue(await self.sheets.save(GUILD_A, self.c, self.pc, biggest, 5))
 
 
+class Finding(SheetTest):
+    async def test_a_players_characters_in_the_server_or_one_campaign(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Another", DM)).id
+        pc2 = await self.add("Testa Two", campaign=other, type="player_character", played_by=PLAYER)
+        await self.add("Someone", type="player_character", played_by=PLAYER + 1)
+        found = await self.sheets.characters_of(GUILD_A, PLAYER)
+        self.assertEqual(
+            [(c.campaign_name, c.name) for c in found],
+            [("Another", "Testa Two"), ("Frozen Wastes", "Testa")],
+        )
+        (only,) = await self.sheets.characters_of(GUILD_A, PLAYER, other)
+        self.assertEqual(only.entity_id, pc2)
+        self.assertEqual(await self.sheets.characters_of(GUILD_B, PLAYER), [])
+
+    async def test_one_characters_sheet(self) -> None:
+        self.assertIsNone(await self.sheets.sheet(GUILD_A, self.c, self.pc))
+        await self.linked()
+        found = await self.sheets.sheet(GUILD_A, self.c, self.pc)
+        assert found is not None
+        self.assertEqual(found.character, CHARACTER)
+
+
+class Merging(SheetTest):
+    async def test_a_sheet_goes_with_the_character_it_was_merged_into(self) -> None:
+        await self.linked()
+        kept = await self.add("Testa the Bold", type="player_character", played_by=PLAYER)
+        await self.memory.merge(GUILD_A, self.c, kept, self.pc, source="dm", dm_said_same=True)
+        (moved,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertEqual((moved.entity_id, moved.character), (kept, CHARACTER))
+
+    async def test_the_kept_characters_own_sheet_stays(self) -> None:
+        await self.linked()
+        kept = await self.add("Testa the Bold", type="player_character", played_by=PLAYER)
+        await self.sheets.link(GUILD_A, self.c, kept, 999)
+        await self.memory.merge(GUILD_A, self.c, kept, self.pc, source="dm", dm_said_same=True)
+        (left,) = await self.sheets.sheets(GUILD_A, self.c)  # the merged one's is hidden
+        self.assertEqual((left.entity_id, left.character), (kept, 999))
+
+
 class Isolation(SheetTest):
     async def test_the_same_link_in_two_campaigns_is_two_sheets(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Other", DM)).id
