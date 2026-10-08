@@ -68,7 +68,7 @@ from dmbot.ui.names import (
 
 log = logging.getLogger(__name__)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
-TRY_AGAIN = (
+NOTHING_CHANGED = (
     "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
 )
 
@@ -719,7 +719,7 @@ class UndoButton(
             return
         except Exception:
             log.exception("Undo of batch %s failed", self.batch)
-            await _replace(interaction, TRY_AGAIN, None)
+            await _replace(interaction, NOTHING_CHANGED, None)
             return
         changed(interaction, campaign)
         note = f"↩️ **{_md(entity.name)}** is back, with its other names and connections."
@@ -1078,7 +1078,7 @@ class SameConfirm(_Menu):
             return
         except Exception:
             log.exception("Joining %s into %s failed", gone_id, keep_id)
-            await _replace(interaction, TRY_AGAIN, None)
+            await _replace(interaction, NOTHING_CHANGED, None)
             return
         changed(interaction, campaign)
         note = f"🔗 Done: **{_md(gone[1])}** is now another name for **{_md(kept[1])}**."

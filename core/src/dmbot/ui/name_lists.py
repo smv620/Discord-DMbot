@@ -1061,7 +1061,8 @@ class KindQuestions(discord.ui.View):
             self.add_item(KindSelect(self, word, ids, row))
 
     def text(self) -> str:
-        return _fit("\n".join([self.summary or "", *self.notes]).split("\n"))
+        lines = [self.summary, *self.notes] if self.summary else self.notes
+        return _fit("\n".join(lines).split("\n"))
 
     async def on_error(
         self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]
@@ -1076,7 +1077,9 @@ class KindQuestions(discord.ui.View):
             self.summary = interaction.message.content if interaction.message else ""
         self.busy = True
         try:
-            await interaction.response.edit_message(  # at once: saving many takes a while
+            # At once, before the campaign is even read: saving many takes a while and
+            # Discord waits 3 s (#537). If it can't be used, the menus come back below.
+            await interaction.response.edit_message(
                 content=_fit(self.text().split("\n"), 1990 - len(SAVING)) + SAVING, view=None,
                 allowed_mentions=NO_PINGS,
             )  # fmt: skip
@@ -1105,10 +1108,15 @@ class KindQuestions(discord.ui.View):
             self.busy = False
             if not self.children:
                 self.stop()
-            await interaction.edit_original_response(
-                content=self.text(), view=self if self.children else None,
-                allowed_mentions=NO_PINGS,
-            )  # fmt: skip
+            # A failed redraw is logged, never raised: it mustn't hide the original
+            # error on its way to on_error (#595).
+            try:
+                await interaction.edit_original_response(
+                    content=self.text(), view=self if self.children else None,
+                    allowed_mentions=NO_PINGS,
+                )  # fmt: skip
+            except discord.HTTPException:
+                log.warning("Couldn't redraw the kind questions", exc_info=True)
 
 
 # ---- after 📥 Add many: names that look like known ones, kinds that differ (#369) -------
@@ -1184,10 +1192,13 @@ class _Questions(discord.ui.View):
             self.build()
             if self.done():
                 self.stop()
-            await interaction.edit_original_response(
-                content=self.text(), view=None if self.done() else self,
-                allowed_mentions=NO_PINGS,
-            )  # fmt: skip
+            try:  # logged, never raised: keeps the original error (#595)
+                await interaction.edit_original_response(
+                    content=self.text(), view=None if self.done() else self,
+                    allowed_mentions=NO_PINGS,
+                )  # fmt: skip
+            except discord.HTTPException:
+                log.warning("Couldn't redraw the questions", exc_info=True)
 
 
 @dataclass(slots=True)

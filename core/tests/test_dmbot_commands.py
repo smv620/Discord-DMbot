@@ -140,6 +140,22 @@ class CommandTests(DatabaseTest):
         await cmds.dmbot_restore.callback(it, attachment(json.dumps(data).encode()))  # type: ignore[call-arg]
         self.assertIsInstance(it.followup.send.call_args.kwargs["view"], cmds.RestoreChoice)
 
+    async def test_a_restore_that_breaks_says_nothing_was_changed(self) -> None:
+        mine = await self.campaigns.create(GUILD, "Mine", DM)
+        view = cmds.RestoreChoice(await self.campaigns.export(GUILD, mine.id), "Mine", [])
+        it = fake_interaction(self.bot)
+        broken = AsyncMock(side_effect=RuntimeError("database away"))
+        with (
+            patch.object(self.bot.campaigns, "import_backup", broken),
+            self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"),
+        ):
+            await view.restore(it, None)
+        told = [text for text, _ in it.response.sent] + [
+            c.args[0] for c in it.followup.send.call_args_list
+        ]
+        self.assertEqual(told[-1], cmds.RESTORE_FAILED)
+        self.assertEqual([c.name for c in await self.campaigns.list_campaigns(GUILD)], ["Mine"])
+
     async def test_a_backup_too_big_to_send_says_so(self) -> None:
         await self.campaigns.create(GUILD, "Huge_*one*", DM)
         limits = (
