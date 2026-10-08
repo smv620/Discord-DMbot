@@ -43,6 +43,9 @@ FAILURES_BEFORE_ALERT = 3
 # doesn't churn the DM screen.
 SUCCESSES_BEFORE_ALL_CLEAR = 3
 ALL_CLEAR_AFTER_S = 30.0
+# An alert post that takes longer than this is given up on (#499): it's sent under the
+# alerts lock, so a stalled post to one server must not stop the others' clips.
+ALERT_POST_TIMEOUT_S = 10.0
 LOG_EVERY_NTH_FAILURE = 50
 # Time budget per clip: generous for real work, short enough that the table doesn't
 # lose minutes of text to one stuck clip.
@@ -207,7 +210,7 @@ class TranscriptionPipeline:
 
     async def _take_turn(self) -> None:
         guild = await self._turns.get()
-        queue = self._queues[guild]
+        queue = self._queues.get(guild)
         if not queue:  # can't happen: a turn is only queued with a clip waiting
             log.warning("An empty turn for a server; skipping it")
         else:
@@ -240,7 +243,10 @@ class TranscriptionPipeline:
         """Post an alert; a problem posting is logged, never passed on (it would lose the
         clip being delivered, or leave other tables untold)."""
         try:
-            await self._alert(guild_id, text)
+            async with asyncio.timeout(ALERT_POST_TIMEOUT_S):
+                await self._alert(guild_id, text)
+        except TimeoutError:
+            log.warning("Posting an alert to the DM screen took too long; gave up")
         except Exception:
             log.exception("Couldn't post an alert to the DM screen")
 
@@ -359,8 +365,9 @@ class TranscriptionPipeline:
                 "who said yes, but no words are being written down. Whoever hosts "
                 "DMbot should check its log. DMbot keeps trying."
             )
-        for guild in sorted(busy):
-            await self._tell(guild, text)
+        # Side by side: the lock is held for one post's time (at most
+        # ALERT_POST_TIMEOUT_S), not one per server.
+        await asyncio.gather(*(self._tell(guild, text) for guild in sorted(busy)))
         self._told_stopped |= busy  # after sending: "working again" never comes first
 
     async def _on_success(self, guild_id: int) -> None:
@@ -382,8 +389,8 @@ class TranscriptionPipeline:
                 return  # a failure came in while waiting: not steady after all
             told, self._told_stopped = self._told_stopped, set()
             self._ok_streak, self._ok_since = 0, None
-            for guild in sorted(told):
-                await self._tell(guild, "✅ Writing things down is working again.")
+            back = "✅ Writing things down is working again."
+            await asyncio.gather(*(self._tell(guild, back) for guild in sorted(told)))
 
     async def _check_backlog(self, guild_id: int) -> None:
         depth = self.backlog_of(guild_id)

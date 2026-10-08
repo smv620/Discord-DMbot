@@ -103,7 +103,8 @@ _ENGINE_WORDS = {
 def written_by(engines: Sequence[str]) -> str:
     """Which speech-to-text wrote it down, in plain words: "Deepgram, an online service
     (model nova-3)". The endpoint's host stays in the database: the file is for
-    everyone in the server. A switch back and forth is kept; a repeat isn't."""
+    everyone in the server. The store keeps each engine once, in the order first used
+    (it skips one the session already has), so a switch back shows only once."""
     words: list[str] = []
     for source in engines:
         engine, _, rest = source.partition(" ")

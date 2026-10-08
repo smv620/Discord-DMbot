@@ -2,6 +2,7 @@
 
 import asyncio
 import unittest
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -275,6 +276,33 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
         release.set()
         self.assertEqual(await first, "Welcome to Bryn Shander.")
         self.assertEqual(self.t._busy_until, window)  # still waiting it out
+
+    async def test_told_to_wait_again_and_again_counts_as_skipped_not_failed(self) -> None:
+        from dmbot.transcription.pipeline import TranscriptionPipeline
+
+        async def wait(seconds: float) -> None:
+            await asyncio.sleep(0.02)  # real time passes for the pipeline's budget
+            self.now[0] += seconds
+            self.t._busy_until = self.now[0] + 1.0  # another worker: wait some more
+
+        self.t._busy_until = self.now[0] + 1.0
+        consent = SimpleNamespace(has_consent=lambda g, u: True)
+
+        async def no_hints(utterance: Utterance) -> list[str]:
+            return []
+
+        async def no_alert(guild_id: int, message: str) -> None:
+            return None
+
+        p = TranscriptionPipeline(
+            self.t, consent, is_active=lambda u: True, hints=no_hints,
+            deliver=lambda u, t: None, alert=no_alert, budget_s=lambda d: 0.2,
+        )  # fmt: skip
+        one_second = Utterance(1, 2, 0, 0, bytes(32000))  # long enough to be written down
+        with patch.object(dg, "_sleep", wait):
+            await p.process(one_second)
+        self.assertEqual((p.skipped, p.total_failures), (1, 0))  # "couldn't keep up"
+        self.assertEqual(self.hits, 0)  # never asked Deepgram while told to wait
 
     async def test_a_refusal_with_retry_after_sets_no_wait(self) -> None:
         self.reply = (401, {"err_msg": "Invalid credentials"})

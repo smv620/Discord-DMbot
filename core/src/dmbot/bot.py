@@ -14,7 +14,7 @@ import logging
 import signal
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, cast
@@ -400,9 +400,9 @@ class DMBot(commands.AutoShardedBot):
             await self.tree.sync()
         await self.ears.start()
         self._background = [
-            asyncio.create_task(self.pipeline.run(), name="transcribe"),
-            asyncio.create_task(self._idle_sweeper(), name="idle-sweep"),
-            asyncio.create_task(self._summary_poster(), name="summaries"),
+            self._watched(self.pipeline.run(), "transcribe"),
+            self._watched(self._idle_sweeper(), "idle-sweep"),
+            self._watched(self._summary_poster(), "summaries"),
             *(
                 [asyncio.create_task(self.lookup.follow(self.memory.listen), name="names")]
                 if self.lookup is not None and self.memory is not None
@@ -531,6 +531,21 @@ class DMBot(commands.AutoShardedBot):
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
+
+    @staticmethod
+    def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
+        """A background task that must run as long as DMbot does: if it ever ends
+        without being cancelled, that's logged at ERROR (#499)."""
+        task = asyncio.create_task(work, name=name)
+
+        def ended(done: asyncio.Task[None]) -> None:
+            if done.cancelled():
+                return
+            problem = done.exception()
+            log.error("The %s task stopped: %r", name, problem or "it returned")
+
+        task.add_done_callback(ended)
+        return task
 
     def _track(self, work: Awaitable[Any], name: str) -> None:
         """Run `work` in the background; close() cancels it. Failures are logged."""
@@ -761,6 +776,9 @@ class DMBot(commands.AutoShardedBot):
                     ending.remove(table)
                 if not ending:
                     self._ending.pop(gid, None)
+                    if gid not in self.tables:  # no new session meanwhile: keep nothing
+                        # After the drain: the last clips' hints refill it until then.
+                        self._hint_people_cache.pop(gid, None)
                 self.pipeline.missed_in.pop(session, None)
                 self.pipeline.failed_in.pop(session, None)
 
