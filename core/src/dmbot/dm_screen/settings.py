@@ -42,9 +42,9 @@ NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 SETTINGS_LABEL = "Settings"
 ONLY_DM = "Only this campaign's DM (or a server manager) can open or change its settings."
-GONE = "I can't find this campaign anymore. It may have been deleted. To start one: `/dmbot start`."
+GONE = messages.DM_CAMPAIGN_GONE
 FAILED = "Sorry, that didn't save. Please try again."
-LOAD_FAILED = "Sorry, something went wrong. Please try again."
+LOAD_FAILED = messages.LOAD_FAILED
 SAVED = "Saved. Press ⚙️ Settings again to see your settings."
 
 
@@ -73,16 +73,27 @@ def settings_text(campaign: Campaign, offer: HandoverOffer | None = None) -> str
     )
 
 
-def settings_view(campaign: Campaign, offer: HandoverOffer | None = None) -> discord.ui.View:
+def settings_view(
+    campaign: Campaign, offer: HandoverOffer | None = None, viewer: int | None = None
+) -> discord.ui.View:
+    """The card's buttons. `viewer`: who it's for (it's private), so only the owner gets
+    the hand-over button."""
     view = discord.ui.View(timeout=None)
     for level in DM_SCREEN_LEVELS_OFFERED:
         view.add_item(LevelButton(campaign.id, level, current=level == campaign.dm_screen_level))
     for visibility in messages.VISIBILITY_BUTTONS:
         current = visibility == campaign.dm_screen_visibility
         view.add_item(SettingsVisibilityButton(campaign.id, visibility, current=current))
-    for item in handover.owner_buttons(campaign, offer):
+    for item in handover.owner_buttons(campaign, offer, viewer):
         view.add_item(item)
     return view
+
+
+def _card(campaign: Campaign, viewer: int) -> tuple[str, discord.ui.View]:
+    return settings_text(campaign), settings_view(campaign, viewer=viewer)
+
+
+handover.use_settings_card(_card)  # it redraws this card after an offer is taken back
 
 
 async def _open_offer(interaction: discord.Interaction, campaign_id: str) -> HandoverOffer | None:
@@ -123,7 +134,7 @@ async def _redraw(interaction: discord.Interaction, campaign: Campaign) -> None:
     try:
         await interaction.edit_original_response(
             content=settings_text(campaign, offer),
-            view=settings_view(campaign, offer),
+            view=settings_view(campaign, offer, interaction.user.id),
             allowed_mentions=NO_PINGS,
         )
     except discord.HTTPException:
@@ -164,7 +175,7 @@ class SettingsButton(
             return
         await interaction.response.send_message(
             settings_text(campaign, offer),
-            view=settings_view(campaign, offer),
+            view=settings_view(campaign, offer, interaction.user.id),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )

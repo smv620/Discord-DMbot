@@ -11,6 +11,13 @@ from dmbot import install
 from dmbot.dm_screen.rules import Exposure
 from dmbot.transcript.export import duration
 
+# Shared by ⚙️ Settings and its hand-over buttons (a DM's screens), so both say the same.
+# CAMPAIGN_GONE below is the players' version.
+DM_CAMPAIGN_GONE = (
+    "DMbot can't find this campaign anymore. It may have been deleted. To start a new one: "
+    "`/dmbot start`."
+)
+LOAD_FAILED = "Sorry, something went wrong. Please try again."
 PEEK_LABEL = "Peek behind the DM screen"
 HIDE_LABEL = "Hide the DM screen from me"
 YES_LABEL = "Yes, show me"

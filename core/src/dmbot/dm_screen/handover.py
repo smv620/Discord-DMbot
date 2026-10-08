@@ -27,14 +27,16 @@ import contextlib
 import logging
 import re
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import discord
 
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
 from dmbot.campaigns.store import NO_OWNER_YET, NOT_THE_OWNER
+from dmbot.dm_screen.messages import DM_CAMPAIGN_GONE, LOAD_FAILED
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
@@ -60,7 +62,11 @@ PICK_PLACEHOLDER = "Pick who takes it over"
 NOT_A_PERSON = "That's a bot. Pick a person."
 OFFER_SENT = (
     "Offer sent to **{name}**. Nothing changes until they accept (they have {days} days). "
-    "To take it back: ⚙️ Settings, then **Take back offer**."
+    "DMbot will send you a private message with their answer. To take it back: "
+    "⚙️ Settings, then **Take back offer**."
+)
+MENU_TIMED_OUT = (
+    "This menu timed out, so no offer was sent. To try again: ⚙️ Settings, then 🤝 Hand over."
 )
 # Keep in step with site_offers.NOT_SENT (the same, for an offer made on the website).
 UNREACHABLE = (
@@ -89,15 +95,21 @@ ACCEPTED = (
     "✅ Done: **{campaign}** uses your plan now, and you're one of its DMs on **{server}**. "
     "**{owner}** is still one of its DMs. DMbot will let **{owner}** know."
 )
-TOLD_ACCEPTED = "✅ **{name}** accepted: **{campaign}** uses their plan now. You're still a DM."
+TOLD_ACCEPTED = (
+    "✅ **{name}** accepted: **{campaign}** uses their plan now. You're still one of its DMs; "
+    "nothing else changes."
+)
 NO_FREE_SLOT = (
-    "Your plan has no room for another campaign, or it has stopped. Make room or pick a "
-    "plan on the DMbot website, then tap **Accept** again (the offer lasts {days} days from "
-    "when it was sent)."
+    "Your DMbot plan isn't working right now (it may have ended), or it has no room for "
+    "another campaign. Fix that on the DMbot website, then tap **Accept** again before "
+    "{deadline}."
 )
 DECLINED = "You said no thanks. Nothing changed. DMbot will let **{owner}** know."
 TOLD_DECLINED = "**{name}** said no thanks to **{campaign}**. It stays yours."
-ENDED = "This offer has ended: it was answered, taken back, or its {days} days are up."
+ENDED = (
+    "This offer has ended: it was answered, taken back, or its {days} days are up. If you "
+    "still want it, ask the campaign's owner to offer it again."
+)
 WITHDRAWN = "Offer taken back. **{campaign}** stays yours."
 TOLD_WITHDRAWN = "**{owner}** took back the offer of **{campaign}**. Nothing changed for you."
 NOT_YOUR_OFFER = "Only **{owner}**, who made this offer, can take it back."
@@ -105,12 +117,24 @@ NOT_HERE = "DMbot can't reach the server right now. Try again in a minute."
 SERVER_GONE = (
     "DMbot isn't in that server any more, so this offer can't be answered. Nothing changed."
 )
-NOT_A_MEMBER = "You're not in that server any more, so you can't take over its campaign."
-FAILED = "Something broke on DMbot's side, so that didn't work. Try once more."
+NOT_A_MEMBER = (
+    "You're not in that server any more, so you can't take over its campaign. Rejoin it, "
+    "then tap **Accept** again before the deadline."
+)
+# Posted in the campaign's #dm-screen too: the owner's private messages may be off.
+# Players may read #dm-screen (peek or open): say only what changed, the plan.
+SCREEN_ACCEPTED = (
+    "🤝 **{name}** accepted: **{campaign}** now uses their DMbot plan. Nothing else changed: "
+    "same DMs, same notes."
+)
+SCREEN_DECLINED = (
+    "🤝 **{name}** said no thanks to **{campaign}**. Nothing changed: it stays on the same plan."
+)
 TAKE_ON_ASK = (
-    "**{campaign}** needs an owner: the DM whose plan pays for its hours. Use your plan for "
-    "it? Every session of it will use your hours. Nothing else changes, and you can hand it "
-    "over later."
+    "Use your plan for **{campaign}**? It has no owner yet (the DM whose plan pays for its "
+    "hours). Any of its DMs can take it on. If you do, every session of it uses your hours; "
+    "nothing else changes, and you can hand it over later. **Not now** changes nothing and "
+    "the session runs anyway."
 )
 TAKEN = "✅ You own **{campaign}** now, so it uses your plan. To hand it over later: ⚙️ Settings."
 TAKE_NO_ROOM = (
@@ -121,7 +145,17 @@ TAKE_NO_ROOM = (
 )
 TAKE_GONE = "Someone already took this campaign on, so nothing changed."
 NOT_NOW = "OK. DMbot will ask again next time you start this campaign."
-ENDED_CAMPAIGN = "DMbot can't find this campaign any more. It may have been deleted."
+ENDED_CAMPAIGN = DM_CAMPAIGN_GONE  # one voice with ⚙️ Settings
+FAILED = LOAD_FAILED
+# How ⚙️ Settings draws its card, for redrawing it after an offer is taken back. Set by
+# settings.py (which imports this module, so it can't be imported from here).
+Card = Callable[[Campaign, int], tuple[str, discord.ui.View]]  # campaign, who's looking
+_settings_card: Card | None = None
+
+
+def use_settings_card(card: Card) -> None:
+    global _settings_card
+    _settings_card = card
 
 
 def _now() -> int:
@@ -137,7 +171,8 @@ def md(text: str) -> str:
 
 
 def _store(interaction: discord.Interaction) -> CampaignStore:
-    return cast(CampaignStore, interaction.client.campaigns)  # type: ignore[attr-defined]
+    store: CampaignStore = interaction.client.campaigns  # type: ignore[attr-defined]
+    return store
 
 
 async def _say(interaction: discord.Interaction, text: str) -> None:
@@ -158,7 +193,10 @@ async def _broke(interaction: discord.Interaction, what: str) -> None:
 def owner_line(campaign: Campaign, offer: HandoverOffer | None) -> str:
     """For the ⚙️ Settings card: whose plan the campaign uses, and any offer waiting."""
     if campaign.owner_user_id is None:
-        line = "• **Owner:** none yet. Run `/dmbot start` and take it on, so it uses your plan."
+        line = (
+            "• **Owner:** none yet. Whoever runs `/dmbot start` next will be asked to take it "
+            "on (their plan pays for its hours)."
+        )
     else:
         line = f"• **Owner:** <@{campaign.owner_user_id}>. This campaign uses their plan's hours."
     if offer is not None:
@@ -167,11 +205,17 @@ def owner_line(campaign: Campaign, offer: HandoverOffer | None) -> str:
     return line
 
 
-def owner_buttons(campaign: Campaign, offer: HandoverOffer | None) -> list[discord.ui.Item[Any]]:
-    """The card's hand-over button: take back a waiting offer, or hand over."""
+def owner_buttons(
+    campaign: Campaign, offer: HandoverOffer | None, viewer: int | None = None
+) -> list[discord.ui.Item[Any]]:
+    """The card's hand-over button: take back a waiting offer, or hand over. Only for the
+    owner when the card knows who's looking (`viewer`); with no owner yet, Hand over
+    stays, to say how a campaign gets one."""
     if offer is not None:
-        return [WithdrawOfferButton(campaign.guild_id, offer.id)]
-    return [HandoverButton(campaign.id)]
+        mine = viewer is None or viewer == offer.from_user_id
+        return [WithdrawOfferButton(campaign.guild_id, offer.id)] if mine else []
+    owner = campaign.owner_user_id
+    return [HandoverButton(campaign.id)] if viewer in (None, owner) or owner is None else []
 
 
 class HandoverButton(
@@ -218,11 +262,13 @@ class HandoverButton(
         elif campaign.owner_user_id != interaction.user.id:
             await _say(interaction, NOT_THE_OWNER)
         else:
-            await interaction.followup.send(
+            picker = PickNewOwner(campaign)
+            picker.message = await interaction.followup.send(
                 PICK.format(campaign=md(campaign.name)),
-                view=PickNewOwner(campaign),
+                view=picker,
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
+                wait=True,
             )
 
 
@@ -235,11 +281,18 @@ class PickNewOwner(discord.ui.View):
     def __init__(self, campaign: Campaign) -> None:
         super().__init__(timeout=10 * 60)
         self.campaign = campaign
+        self.message: discord.WebhookMessage | None = None  # to clear it when it times out
         self.pick: discord.ui.UserSelect[PickNewOwner] = discord.ui.UserSelect(
             placeholder=PICK_PLACEHOLDER, min_values=1, max_values=1
         )
         self.pick.callback = self._picked  # type: ignore[method-assign]
         self.add_item(self.pick)
+
+    async def on_timeout(self) -> None:
+        """A menu past its time no longer answers: never leave it looking live."""
+        if self.message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await self.message.edit(content=MENU_TIMED_OUT, view=None)
 
     async def on_error(
         self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]
@@ -343,6 +396,19 @@ async def _tell_person(guild: discord.Guild, user_id: int, text: str) -> None:
         await member.send(text, allowed_mentions=NO_PINGS)
 
 
+async def _tell_screen(interaction: discord.Interaction, campaign: Campaign, text: str) -> None:
+    """The outcome in the campaign's #dm-screen as well (best effort: the answer stands
+    either way). Only from a process that serves the server: another one has no copy of
+    the channel, and the private message to the owner still says it."""
+    post = getattr(interaction.client, "post", None)
+    if campaign.dm_screen_channel_id is None or post is None:
+        return
+    try:
+        await post(campaign.dm_screen_channel_id, text)  # logs a Discord failure itself
+    except Exception:
+        log.warning("Couldn't note a hand-over answer on the DM screen", exc_info=True)
+
+
 async def _offer_guild(interaction: discord.Interaction, guild_id: int) -> discord.Guild | None:
     """The server an answer in a private message is about (after answering Discord). Not
     cached here when another process serves it: looked up from Discord instead."""
@@ -423,6 +489,9 @@ class AcceptOfferButton(
         if offer.status == "accepted":  # pressed again: say it again
             await _end_message(interaction, accepted)
             return
+        if not offer.is_open(now):  # taken back, declined or out of time: nothing to check
+            await _end_message(interaction, ENDED.format(days=HANDOVER_DAYS))
+            return
         try:
             await guild.fetch_member(me)  # no members intent: ask Discord
         except discord.NotFound:
@@ -433,16 +502,18 @@ class AcceptOfferButton(
             return
         result = await store.accept_handover(self.guild_id, self.offer_id, me, now)
         if result == "no_free_slot":
-            await _say(interaction, NO_FREE_SLOT.format(days=HANDOVER_DAYS))
+            deadline = discord.utils.format_dt(_at(offer.expires_at), "f")
+            await _say(interaction, NO_FREE_SLOT.format(deadline=deadline))
         elif result == "gone":
-            await _end_message(interaction, ENDED.format(days=HANDOVER_DAYS))
+            # Pressed twice at once: the other press may have accepted it just now.
+            again = await store.get_offer(self.guild_id, self.offer_id, _now())
+            done = again is not None and again.status == "accepted" and again.to_user_id == me
+            await _end_message(interaction, accepted if done else ENDED.format(days=HANDOVER_DAYS))
         else:
             await _end_message(interaction, accepted)
-            await _tell_person(
-                guild,
-                offer.from_user_id,
-                TOLD_ACCEPTED.format(name=md(offer.to_name), campaign=md(campaign.name)),
-            )
+            names = {"name": md(offer.to_name), "campaign": md(campaign.name)}
+            await _tell_person(guild, offer.from_user_id, TOLD_ACCEPTED.format(**names))
+            await _tell_screen(interaction, campaign, SCREEN_ACCEPTED.format(**names))
 
 
 class DeclineOfferButton(
@@ -488,16 +559,20 @@ class DeclineOfferButton(
         if offer.status == "declined":  # pressed again: say it again
             await _end_message(interaction, declined)
             return
-        if await store.decline_handover(self.guild_id, self.offer_id, me, now) == "gone":
+        if not offer.is_open(now):
             await _end_message(interaction, ENDED.format(days=HANDOVER_DAYS))
+            return
+        if await store.decline_handover(self.guild_id, self.offer_id, me, now) == "gone":
+            # Pressed twice at once: the other press may have declined it just now.
+            again = await store.get_offer(self.guild_id, self.offer_id, _now())
+            done = again is not None and again.status == "declined" and again.to_user_id == me
+            await _end_message(interaction, declined if done else ENDED.format(days=HANDOVER_DAYS))
             return
         await _end_message(interaction, declined)
         if campaign is not None:
-            await _tell_person(
-                guild,
-                offer.from_user_id,
-                TOLD_DECLINED.format(name=md(offer.to_name), campaign=md(campaign.name)),
-            )
+            names = {"name": md(offer.to_name), "campaign": md(campaign.name)}
+            await _tell_person(guild, offer.from_user_id, TOLD_DECLINED.format(**names))
+            await _tell_screen(interaction, campaign, SCREEN_DECLINED.format(**names))
 
 
 class WithdrawOfferButton(
@@ -541,7 +616,7 @@ class WithdrawOfferButton(
         now = _now()
         offer, campaign = await _offer_and_campaign(store, self.guild_id, self.offer_id, now)
         if offer is None or campaign is None or not offer.is_open(now):
-            await _say(interaction, ENDED.format(days=HANDOVER_DAYS))
+            await self._ended(interaction, campaign)
             return
         if offer.from_user_id != interaction.user.id:
             await _say(interaction, NOT_YOUR_OFFER.format(owner=md(offer.from_name)))
@@ -550,21 +625,34 @@ class WithdrawOfferButton(
             await store.withdraw_handover(self.guild_id, self.offer_id, offer.from_user_id, now)
             == "gone"
         ):
-            await _say(interaction, ENDED.format(days=HANDOVER_DAYS))
+            await self._ended(interaction, campaign)
             return
-        from dmbot.dm_screen.settings import settings_text, settings_view  # it imports this
-
-        with contextlib.suppress(discord.HTTPException):
-            await interaction.edit_original_response(
-                content=settings_text(campaign), view=settings_view(campaign),
-                allowed_mentions=NO_PINGS,
-            )  # fmt: skip
+        await _redraw_card(interaction, campaign)
         await _say(interaction, WITHDRAWN.format(campaign=md(campaign.name)))
         await _tell_person(
             guild,
             offer.to_user_id,
             TOLD_WITHDRAWN.format(owner=md(offer.from_name), campaign=md(campaign.name)),
         )
+
+    async def _ended(self, interaction: discord.Interaction, campaign: Campaign | None) -> None:
+        """The offer ended meanwhile: say so, and redraw the card without its stale
+        button (it may have been answered, so the campaign is read again)."""
+        if campaign is not None:
+            fresh = await _store(interaction).get(self.guild_id, campaign.id)
+            if fresh is not None:
+                await _redraw_card(interaction, fresh)
+        await _say(interaction, ENDED.format(days=HANDOVER_DAYS))
+
+
+async def _redraw_card(interaction: discord.Interaction, campaign: Campaign) -> None:
+    """⚙️ Settings as the campaign is now, with no offer waiting (best effort)."""
+    if _settings_card is None:  # settings.py sets it on import: a bug if it's missing
+        log.warning("No ⚙️ Settings card to redraw after a hand-over offer")
+        return
+    text, view = _settings_card(campaign, interaction.user.id)
+    with contextlib.suppress(discord.HTTPException):
+        await interaction.edit_original_response(content=text, view=view, allowed_mentions=NO_PINGS)
 
 
 # ---- /dmbot start on a campaign with no owner yet --------------------------------------
@@ -640,11 +728,17 @@ class TakeOnButton(
         if campaign is None:
             await _end_message(interaction, ENDED_CAMPAIGN)
             return
-        result = await store.take_ownership(guild.id, self.campaign_id, interaction.user.id, _now())
+        me = interaction.user.id
+        result = await store.take_ownership(guild.id, self.campaign_id, me, _now())
         if result == "no_free_slot":
             await _say(interaction, TAKE_NO_ROOM)
         elif result == "gone":
-            await _end_message(interaction, TAKE_GONE)
+            # Pressed again (or twice at once): say "yours" only if it really is.
+            fresh = await store.get(guild.id, self.campaign_id)
+            mine = fresh is not None and fresh.owner_user_id == me
+            await _end_message(
+                interaction, TAKEN.format(campaign=md(campaign.name)) if mine else TAKE_GONE
+            )
         else:
             await _end_message(interaction, TAKEN.format(campaign=md(campaign.name)))
 
