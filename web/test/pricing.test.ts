@@ -180,7 +180,7 @@ describe("the words match the numbers", () => {
       /tap Hand over next to the campaign.*room for it/,
     );
     expect(answer("Can I delete everything?")).toMatch(
-      /^Yes, from My account\. Your account and the campaigns you run go straight away\./,
+      /^Yes, from My Account\. Your account and the campaigns you run go straight away\./,
     );
   });
 });
