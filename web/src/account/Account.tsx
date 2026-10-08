@@ -655,7 +655,12 @@ function CampaignRow({
                 setPeople(null);
                 await onHandedOver(person);
               },
-              (error) => (error.kind === "no-free-slot" ? text.noFreeSlot : campaignRefusal(error)),
+              // Never a plan message: the owner must not learn whether someone pays (#437).
+              // The API no longer refuses an offer for that; an old one gets the plain line.
+              (error) =>
+                error.kind === "no-free-slot"
+                  ? (text.errors["not-allowed"] ?? null)
+                  : campaignRefusal(error),
             );
           }}
         >

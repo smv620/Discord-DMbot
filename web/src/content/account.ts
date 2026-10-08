@@ -50,9 +50,6 @@ export function hoursLeftLine(
 
 export const planName = (id: PlanId): string => byId[id].name;
 
-const noFreeSlot =
-  "Their plan is full. Ask them to move to a bigger plan, or pick someone else.";
-
 export const text = {
   heading: "My Account",
   loading: "Loading your account…",
@@ -81,7 +78,9 @@ export const text = {
       "Someone else already said they added DMbot here. If that's wrong, ask your server's owner for help.",
     "not-installed": "DMbot isn't in this server yet. Tap Add DMbot first.",
     "not-allowed": "That didn't work. Reload this page and try again.",
-    "no-free-slot": noFreeSlot,
+    // Only ever the person offered: an offer is never refused for "no plan" (#437).
+    "no-free-slot":
+      "You need a DMbot plan with room for one more campaign. Tap See my plan, then tap Accept again.",
     "offer-gone": "That offer has ended. We've updated this page.",
     "confirm-again": "That took too long. Tap Start deleting again.",
     "no-paid-plan":
@@ -136,32 +135,31 @@ export const text = {
   // Hand over
   handOverQuestion: (campaign: string): string => `Who should take over ${campaign}?`,
   handOverNote:
-    "Nothing changes until they say yes. They have 7 days. If they do, they become the DM and it uses their hours, not yours.",
+    "Nothing changes until they say yes. They have 7 days to answer. If they say yes, it uses their hours, not yours, and you stay on as a DM.",
   handOverNobody:
-    "Nobody can take it yet. Ask the person to sign in here and start a plan (Try It is free). Then tap Hand over again.",
+    "Only someone who helps run this campaign can take it over, and nobody does yet. Add them as a DM in Discord, then tap Hand over again.",
   handOverConfirm: "Offer it",
   handOverDone: (person: string): string =>
     `Done. We've asked ${person}. You'll see their answer here and in Discord.`,
-  noFreeSlot,
   cancel: "Cancel",
 
   // Hand-over offers (#614): an offer waits for the new owner's yes, for 7 days.
   offersHeading: "Campaigns offered to you",
   offerIncoming: (person: string, campaign: string, server: string): string =>
-    `${person} wants to hand you the campaign ${campaign} in ${server}. It would use one of your campaign slots and your plan's hours.`,
+    `${person} wants to hand you ${campaign} in ${server}. If you accept, it uses one of your campaign slots and your plan's hours, and ${person} stays on as a DM. Tap Accept or No thanks.`,
   offerExpires: (iso: string): string => `Answer by ${shortDateTime(iso)}.`,
   accept: "Accept",
   decline: "No thanks",
   // Shown only to the person offered: the plan check happens at Accept, never when the
   // offer is made, so the owner never learns whether someone pays (#437, PLAN).
   acceptNoSlot:
-    "To take this campaign you need a DMbot plan with a free campaign slot. Pick a plan or free a slot, then press Accept again. The offer stays open until the date above.",
+    "To take this campaign you need a DMbot plan with room for one more campaign. Tap See my plan to pick one, then tap Accept again. The offer stays open until the date above.",
   seeMyPlan: "See my plan",
   accepted: (campaign: string): string =>
     `${campaign} is yours now. You're a DM of it in Discord too.`,
   declined: (person: string): string => `Done. We'll tell ${person} in Discord.`,
   offerOutgoing: (person: string, iso: string): string =>
-    `Hand-over offered to ${person}, expires ${shortDateTime(iso)}.`,
+    `Waiting for ${person} to say yes (until ${shortDateTime(iso)}). Nothing changes until they do.`,
   withdraw: "Take back offer",
   withdrawn: "Done. You took the offer back.",
 

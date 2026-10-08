@@ -226,7 +226,7 @@ describe("actions", () => {
     expect(screen.queryByRole("button", { name: text.handOverConfirm })).toBeNull();
   });
 
-  it("explains a full plan when a hand-over is refused", async () => {
+  it("never tells the owner about the other person's plan", async () => {
     const api = mockApi("table");
     api.handover = () => Promise.reject(new ApiError("no-free-slot"));
     render(<Account api={api} go={vi.fn()} />);
@@ -235,7 +235,8 @@ describe("actions", () => {
     fireEvent.click(row.querySelector("button") as HTMLButtonElement);
     fireEvent.click(await screen.findByLabelText("Mirelle"));
     fireEvent.click(screen.getByRole("button", { name: text.handOverConfirm }));
-    expect((await screen.findByRole("alert")).textContent).toBe(text.noFreeSlot);
+    const alert = (await screen.findByRole("alert")).textContent ?? "";
+    expect(alert).not.toMatch(/plan/i);
   });
 
   it("tells a paying person they won't be charged again when deleting", async () => {

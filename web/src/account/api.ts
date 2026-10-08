@@ -78,7 +78,7 @@ export interface Me {
 export type ApiErrorKind =
   | "network" // couldn't reach the API
   | "signed-out" // the session ended
-  | "no-free-slot" // hand-over: that person's plan is full
+  | "no-free-slot" // accepting a hand-over: you have no free campaign slot
   | "not-allowed" // not your campaign, or not allowed right now
   | "sign-in-again" // acting for a server or deleting needs a sign-in from the last day
   | "try-it-used" // Try It was used before
