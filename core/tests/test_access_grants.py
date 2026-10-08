@@ -9,11 +9,13 @@ from psycopg import errors
 
 from dmbot import entitlements
 from dmbot.campaigns.store import plan_works
+from dmbot.db import Database
 from dmbot.web import accounts, grants, sessions
 from dmbot.web.me import build_me
-from tests.pg import DatabaseTest
+from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 from tests.test_web_api import ALICE, THURSDAY
+from tests.test_web_role import ensure_web_role, web_url
 
 OWNER, FRIEND, PAYER = 11, 22, 33
 ADMIN = "admin@example.invalid"
@@ -85,7 +87,30 @@ class Writing(AccessTest):
                 )
 
 
+class Checks(AccessTest):
+    async def test_a_bad_id_or_admin_is_refused_in_plain_words(self) -> None:
+        for user in (0, -1, 2**63):
+            with self.assertRaises(grants.GrantError):
+                await grants.give(self.db, ADMIN, user, "guild", ends_at=None, note="", now=NOW)
+        with self.assertRaises(grants.GrantError):
+            await grants.give(self.db, "", FRIEND, "guild", ends_at=None, note="", now=NOW)
+        with self.assertRaises(grants.GrantError):
+            await grants.revoke(self.db, "", FRIEND, now=NOW)
+
+    async def test_the_person_setting_is_put_back_after_reading(self) -> None:
+        async with self.db.user(OWNER) as conn:
+            await entitlements.effective(conn, FRIEND, NOW)
+            cur = await conn.execute("SELECT current_setting('dmbot.user_id', true) AS who")
+            self.assertEqual((await cur.fetchone() or {})["who"], str(OWNER))
+
+
 class Rules(AccessTest):
+    async def test_a_guild_grant_and_a_bigger_paid_plan(self) -> None:
+        await self.give_plan(PAYER, plan="pro", hours_cap=500, campaign_cap=50)
+        await grants.give(self.db, ADMIN, PAYER, "guild", ends_at=None, note="", now=NOW)
+        access = await self.access(PAYER)
+        self.assertEqual((access.kind, access.hours_cap, access.campaign_cap), ("grant", 500, 50))
+
     async def test_the_free_list_needs_no_plan(self) -> None:
         self.assertFalse(await self.works(OWNER))
         entitlements.configure_free_users({OWNER})
@@ -155,3 +180,34 @@ class AccountPage(AccessTest):
         self.assertEqual((await self.me())["access"], {"kind": "paid"})
         entitlements.configure_free_users({ALICE.id})
         self.assertEqual((await self.me())["access"], {"kind": "free"})
+
+
+class WebRole(AccessTest):
+    """The website's own database role, as the internet-facing API connects."""
+
+    async def asyncSetUp(self) -> None:
+        if not SUPERUSER_URL:
+            if REQUIRE_DB:
+                self.fail("DMBOT_TEST_SUPERUSER_URL is needed to test the website's role")
+            self.skipTest("set DMBOT_TEST_SUPERUSER_URL to test the website's role")
+        await ensure_web_role()
+        await super().asyncSetUp()
+        self.web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
+        self.addAsyncCleanup(self.web.close)
+
+    async def test_no_grant_without_the_door_and_never_anothers(self) -> None:
+        await grants.give(self.web, ADMIN, FRIEND, "guild", ends_at=None, note="", now=NOW)
+        with self.assertRaises(errors.InsufficientPrivilege):
+            async with self.web.user(PAYER) as conn:
+                await conn.execute(
+                    "INSERT INTO access_grants (discord_user_id, level, granted_by, granted_at)"
+                    " VALUES (%s, 'unlimited', 'someone', 0)",
+                    (PAYER,),
+                )
+        async with self.web.user(PAYER) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM access_grants")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+            cur = await conn.execute(
+                "DELETE FROM access_grants WHERE discord_user_id = %s", (FRIEND,)
+            )
+            self.assertEqual(cur.rowcount, 0)  # never another person's

@@ -92,7 +92,8 @@ async def active_subscription(db: Database, user_id: int) -> tuple[str, str] | N
 
 async def delete_person(db: Database, user_id: int) -> None:
     """Delete the account: the person, their plan and sessions go (the database cascades),
-    and so does any free access they were given;
+    and so does any free access they were given (the grants log keeps the Discord id and
+    what was done, for the admin);
     installs keep the server but lose the person. What's kept: the Discord id in
     try_it_used (one free trial per person) and payment events with the Discord id and the
     subscription id (so a replayed payment can't apply twice, and a cancelled subscription's

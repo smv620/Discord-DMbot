@@ -167,10 +167,14 @@ async def effective(conn: Conn, user_id: int, now: int) -> Access:
     return access_for(user_id, plan, grant, now)
 
 
-async def access(db: Database, user_id: int, now: int) -> Access:
-    """effective() in its own transaction (the account page)."""
+async def plan_and_access(
+    db: Database, user_id: int, now: int
+) -> tuple[Entitlement | None, Access]:
+    """The paid plan and what the person may do, from one read (the account page)."""
     async with db.user(user_id) as conn:
-        return await effective(conn, user_id, now)
+        plan = await _read_plan(conn, user_id)
+        grant = None if user_id in _free_users else await _read_grant(conn, user_id)
+    return plan, access_for(user_id, plan, grant, now)
 
 
 async def get(db: Database, user_id: int) -> Entitlement | None:

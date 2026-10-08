@@ -34,8 +34,7 @@ def _iso_date(seconds: int | None) -> str | None:
 
 
 async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any]:
-    plan = await entitlements.get(db, session.user_id)
-    access = await entitlements.access(db, session.user_id, now)
+    plan, access = await entitlements.plan_and_access(db, session.user_id, now)
     campaigns: list[dict[str, Any]] = []
     servers: list[dict[str, Any]] = []
     incoming: list[dict[str, Any]] = []

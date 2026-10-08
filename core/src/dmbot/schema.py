@@ -1033,7 +1033,11 @@ ACCESS_GRANTS = (
         revoked_at      BIGINT
     );
     -- A person reads (and, deleting their account, deletes) only their own grant; the
-    -- grant writer reads and writes any.
+    -- grant writer reads and writes any. A person's own row holds granted_by (the admin's
+    -- email) and the note too: code reading it for them (entitlements) selects only the
+    -- level and dates, and neither may ever reach /me. The website's role can set
+    -- dmbot.grant_writer itself (as it can dmbot.plan_writer): which code opens that door
+    -- is a Python boundary (tests/test_access.py), and part 2's admin sign-in guards it.
     ALTER TABLE access_grants ENABLE ROW LEVEL SECURITY;
     ALTER TABLE access_grants FORCE ROW LEVEL SECURITY;
     CREATE POLICY own_read ON access_grants FOR SELECT
@@ -1143,6 +1147,7 @@ USER_ISOLATED_TABLES = (
     "installs",
     # Keyed by Discord account (#771): the person's own grant, or the grant writer.
     "access_grants",
+    # Not per person: only the grant writer adds or reads a row (#771).
     "access_log",
 )
 # Add-only: no policy allows reading a row; the team reads them as the database's

@@ -53,6 +53,8 @@ async def give(
     grant given again starts afresh."""
     if not 0 < discord_user_id < 2**63:
         raise GrantError("That isn't a Discord account number.")
+    if not 3 <= len(admin_email) <= 320:
+        raise GrantError("Sign in again: DMbot doesn't know which admin you are.")
     if level not in GRANT_LEVELS:
         raise GrantError("Pick a level: like Guild, or no limits.")
     if ends_at is not None and ends_at <= now:
@@ -61,8 +63,14 @@ async def give(
     if len(note) > NOTE_MAX:
         raise GrantError(f"Keep the note to {NOTE_MAX} characters.")
     async with db.grant_writer() as conn:
+        # One change per person at a time: a row lock can't cover a grant not made yet,
+        # so two gives at once would both log "grant".
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"dmbot.grant_writer:{int(discord_user_id)}",),
+        )
         cur = await conn.execute(
-            "SELECT revoked_at FROM access_grants WHERE discord_user_id = %s FOR UPDATE",
+            "SELECT revoked_at FROM access_grants WHERE discord_user_id = %s",
             (discord_user_id,),
         )
         before = await cur.fetchone()
@@ -85,6 +93,8 @@ async def give(
 
 async def revoke(db: Database, admin_email: str, discord_user_id: int, *, now: int) -> bool:
     """End someone's free access now. False if they had none."""
+    if not 3 <= len(admin_email) <= 320:
+        raise GrantError("Sign in again: DMbot doesn't know which admin you are.")
     async with db.grant_writer() as conn:
         cur = await conn.execute(
             "UPDATE access_grants SET revoked_at = %s"

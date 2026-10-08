@@ -61,6 +61,10 @@ class FreeList(unittest.TestCase):
 
 
 class Grants(unittest.TestCase):
+    def setUp(self) -> None:
+        entitlements.configure_free_users(())  # nobody on the list here
+        self.addCleanup(entitlements.configure_free_users, ())
+
     def test_like_guild_gives_guilds_caps(self) -> None:
         guild = plans.load().by_id["guild"]
         access = access_for(FRIEND, None, Grant(FRIEND, "guild", None, None), NOW)

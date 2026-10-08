@@ -459,7 +459,10 @@ def create_app(
         if plan_id not in paid_plan_ids():
             raise HTTPException(status_code=400, detail="unknown_plan")
         plan = plans.load().by_id[plan_id]
-        current = await entitlements.get(db, session.user_id)
+        current, access = await entitlements.plan_and_access(db, session.user_id, clock())
+        if access.kind in ("free", "grant"):
+            # Free access covers them: never a price or a payment (#771).
+            raise HTTPException(status_code=409, detail="has_free_access")
         if current is not None and current.plan != "try-it" and current.status != "lapsed":
             # A paid plan is working: change it on the billing page, never a second
             # subscription (or a second first-month offer).
