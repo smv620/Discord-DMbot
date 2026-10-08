@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (live 70ac757; Test A passed on a computer; Test B next)
+Last updated: 2026-10-08 by dev1 (live 70ac757; Test B passed; Test C next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -267,13 +267,12 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     of it can be heard"; the DM screen shows a warning and its audio % drops
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test A on a computer (2026-10-08 07:27), DM alone: PASS
+LATEST RESULT: Test B (2026-10-08 16:14), DM alone: PASS
 ------------------------------------------------------------------------------
-  On 70ac757. Everything the DM said near the computer was written down; DAVE ready
-  2 s after joining, before the DM spoke. A TV in the room set off the DM screen's ⚠️
-  (pieces at 155/169 and 4/23 packets, audio 82%): a false alarm, owner wants it less
-  sensitive (#671). Test A series done: 05:43 FAIL (#631), 07:01 PASS, 07:27 PASS.
-  Next: Test B (docs/next-test-step.md), the Stop listening button asks first.
+  On 70ac757. ⏹ Stop listening asked first; Cancel kept DMbot listening; /dmbot stop
+  ended it. The #631 decrypt error came back at the start (after a DAVE "welcome", not
+  a "commit") and #641 caught it: listened again, ~1 s lost (audio 66%), then 100%.
+  Next: Test C (docs/next-test-step.md), Yes, stop ends the session.
 
 Open issues from testing
   #671 the audio warning fires on background noise (owner)

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from typing import Any
 
 from dmbot.campaigns import CampaignError, CampaignStore
@@ -210,6 +211,39 @@ class Backfill(DatabaseTest):
             self.assertEqual((await cur.fetchone() or {})["n"], 0)
 
 
+class ExpiryBackfill(DatabaseTest):
+    async def test_offers_closed_or_past_their_days_before_0027_count_as_told(self) -> None:
+        before = [m for m in MIGRATIONS if m[0] < "0027"]
+        await self.db.close()  # start again from a schema as it was before 0027
+        await drop_schema(TEST_URL, self.schema)
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        store = CampaignStore(self.db, clock=lambda: NOW)
+        ids = {}
+        for name, status, created in (
+            ("closed", "declined", NOW),
+            ("lapsed", "open", NOW),  # long past its days (NOW is 1970)
+            ("fresh", "open", int(time.time())),
+        ):
+            campaign = await store.create(GUILD, name, OWNER)
+            async with self.db.guild(GUILD) as conn:
+                cur = await conn.execute(
+                    "INSERT INTO campaign_handover_offers (guild_id, campaign_id,"
+                    " from_user_id, to_user_id, from_name, to_name, created_at, status)"
+                    " VALUES (%s, %s, %s, %s, 'Owner', 'Buyer', %s, %s) RETURNING id",
+                    (GUILD, campaign.id, OWNER, BUYER, created, status),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                ids[name] = int(row["id"])
+        await self.db.migrate()
+        told = {}
+        for name, offer_id in ids.items():
+            offer = await store.get_offer(GUILD, offer_id, NOW)
+            assert offer is not None
+            told[name] = offer.end_told_at is not None
+        self.assertEqual(told, {"closed": True, "lapsed": True, "fresh": False})
+
+
 class SiteDelivery(HandoverTest):
     """Offers made on the website wait for the bot to send them (#690)."""
 
@@ -299,6 +333,69 @@ class SiteDelivery(HandoverTest):
         with self.assertRaises(CampaignError):  # one open offer at a time
             await self.site_offer()
         self.assertEqual(len(await self.store.undelivered_offers(GUILD, NOW)), 1)
+
+
+class Ending(HandoverTest):
+    """An offer whose days are up is announced once (#690)."""
+
+    async def test_an_offer_past_its_days_is_ended_and_announced_once(self) -> None:
+        offer = await self.make_offer(GUILD, self.campaign.id, OWNER, BUYER, NOW)
+        await self.store.set_offer_message(GUILD, offer.id, 4242)
+        self.assertEqual(await self.store.offers_to_end(GUILD, NOW + HANDOVER_SECONDS - 1), [])
+        later = NOW + HANDOVER_SECONDS
+        (ended,) = await self.store.offers_to_end(GUILD, later)
+        self.assertEqual((ended.id, ended.status, ended.decided_at), (offer.id, "expired", later))
+        self.assertEqual((ended.message_id, ended.end_told_at), (4242, None))
+        self.assertTrue(await self.store.claim_end_notice(GUILD, offer.id, later))
+        self.assertFalse(await self.store.claim_end_notice(GUILD, offer.id, later))  # once
+        self.assertEqual(await self.store.offers_to_end(GUILD, later + 1), [])
+
+    async def test_a_notice_that_failed_is_tried_again(self) -> None:
+        offer = await self.offer()
+        later = NOW + HANDOVER_SECONDS
+        await self.store.offers_to_end(GUILD, later)
+        self.assertTrue(await self.store.claim_end_notice(GUILD, offer, later))
+        await self.store.release_end_notice(GUILD, offer, later + 1)  # not that claim: kept
+        self.assertEqual(await self.store.offers_to_end(GUILD, later), [])
+        await self.store.release_end_notice(GUILD, offer, later)
+        self.assertEqual([o.id for o in await self.store.offers_to_end(GUILD, later)], [offer])
+
+    async def test_an_offer_accepted_just_in_time_is_never_announced(self) -> None:
+        offer = await self.offer()
+        just_in_time = NOW + HANDOVER_SECONDS - 1
+        self.assertEqual(
+            await self.store.accept_handover(GUILD, offer, BUYER, just_in_time), "accepted"
+        )
+        self.assertEqual(await self.store.offers_to_end(GUILD, NOW + HANDOVER_SECONDS), [])
+
+    async def test_one_marked_expired_quietly_is_still_announced(self) -> None:
+        old = await self.offer()
+        later = NOW + HANDOVER_SECONDS
+        await self.make_offer(GUILD, self.campaign.id, OWNER, CO_DM, later)  # expires `old`
+        # (the new one is still open: only `old` has ended)
+        self.assertEqual([o.id for o in await self.store.offers_to_end(GUILD, later)], [old])
+
+    async def test_answered_or_taken_back_offers_are_never_announced(self) -> None:
+        offer = await self.offer()
+        await self.store.decline_handover(GUILD, offer, BUYER, NOW)
+        self.assertEqual(await self.store.offers_to_end(GUILD, NOW + HANDOVER_SECONDS), [])
+
+    async def test_another_server_never_ends_it(self) -> None:
+        await self.offer()
+        self.assertEqual(await self.store.offers_to_end(OTHER_GUILD, NOW + HANDOVER_SECONDS), [])
+        self.assertEqual(len(await self.store.offers_to_end(GUILD, NOW + HANDOVER_SECONDS)), 1)
+
+    async def test_a_site_offer_keeps_the_message_it_was_sent_in(self) -> None:
+        offer = await self.store.offer_handover(
+            GUILD, self.campaign.id, OWNER, BUYER, NOW,
+            from_name="Owner", to_name="Buyer", delivered=False,
+        )  # fmt: skip
+        claimed = await self.store.claim_delivery(GUILD, offer.id, NOW)
+        assert claimed is not None
+        await self.store.confirm_delivery(GUILD, claimed, NOW, 99)
+        sent = await self.store.get_offer(GUILD, offer.id, NOW)
+        assert sent is not None
+        self.assertEqual((sent.delivered_at, sent.message_id), (NOW, 99))
 
 
 class Answering(HandoverTest):
