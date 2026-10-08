@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import unittest
 from collections.abc import AsyncGenerator, Callable
+from unittest.mock import patch
 
 from dmbot.devtools.stt_bakeoff.data import NAMES
 from dmbot.memory import notify
@@ -328,11 +329,54 @@ class Cache(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await waiting)  # never a CancelledError for the type-ahead
 
     async def test_a_load_that_keeps_failing_is_logged_once_a_minute(self) -> None:
+        from dmbot.memory import lookup
+
+        now = [1000.0]
         self.source.fail = True
-        with self.assertLogs("dmbot.memory.lookup", "WARNING") as logs:
+        with (
+            patch.object(lookup, "_clock", lambda: now[0]),
+            self.assertLogs("dmbot.memory.lookup", "WARNING") as logs,
+        ):
             for _ in range(5):  # every clip of a session asks
                 self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))
-        self.assertEqual(len(logs.output), 1)
+            self.assertEqual(len(logs.output), 1)
+            now[0] += lookup.FAIL_LOG_S  # a minute on: said again
+            self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))
+        self.assertEqual(len(logs.output), 2)
+
+    async def test_a_change_just_after_the_load_is_never_handed_over(self) -> None:
+        # The load finished, then the DM made a name secret before the waiter resumed:
+        # the waiter must not get the copy from before the change (#760 review).
+        self.source.gate = asyncio.Event()
+        waiter = asyncio.create_task(self.cache.get_within(1, "camp", 5.0))
+        await asyncio.sleep(0)
+        (task,) = self.cache._loading.values()
+
+        def change(_: object) -> None:  # runs as the load ends, before the waiter resumes
+            self.source.version = 2
+            self.cache.mark_stale(1, "camp")
+
+        task.add_done_callback(change)
+        self.source.gate.set()
+        got = await waiter
+        self.assertTrue(got is None or got.version == 2, got and got.version)
+        self.source.gate = None
+        self.assertEqual((await self.cache.get(1, "camp")).version, 2)
+        self.assertEqual(self.source.calls, 2)  # loaded again
+
+    async def test_a_cancelled_waiter_is_cancelled_and_the_load_carries_on(self) -> None:
+        self.source.gate = asyncio.Event()
+        waiter = asyncio.create_task(self.cache.get_within(1, "camp", 5.0))
+        await asyncio.sleep(0)
+        (task,) = self.cache._loading.values()
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+        self.assertFalse(task.done())  # the next keystroke still finds it loading
+        self.source.gate.set()
+        await self.loads_done()
+        ready = await self.cache.get_within(1, "camp", 0)
+        self.assertEqual(ready and ready.version, 1)
 
     async def test_dropping_a_campaign_stops_its_load(self) -> None:
         self.source.gate = asyncio.Event()

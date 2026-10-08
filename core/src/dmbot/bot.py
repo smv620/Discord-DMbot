@@ -2414,6 +2414,7 @@ class DMBot(commands.AutoShardedBot):
             found = await self.lookup.get_within(guild_id, table.campaign_id, HINTS_WAIT_S)
             if found is None:  # still loading, or failed (logged by the cache)
                 table.name_lookup = None  # never fix names from an old copy
+                table.hint_parts = None
                 return [*people, *absent]
             lookup = found
             if table.hint_parts is None or table.hint_parts.version != lookup.version:

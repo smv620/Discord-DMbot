@@ -191,7 +191,9 @@ class LookupSource(Protocol):
 # once it's listening (see Database.listen).
 Listen = Callable[[str, Callable[[], None]], AsyncGenerator[str, None]]
 Sleep = Callable[[float], Awaitable[None]]
+# A bound, so a DM editing names in a burst can't keep a reader loading forever.
 _LOADS_PER_ASK = 3
+_clock = time.monotonic  # tests move it on
 FAIL_LOG_S = 60.0  # a load that keeps failing (database away) is logged once a minute
 
 
@@ -285,7 +287,7 @@ class LookupCache:
             self._loading[key] = task
             task.add_done_callback(lambda done: self._loaded(key, done))
         try:
-            return await asyncio.wait_for(asyncio.shield(task), seconds)
+            await asyncio.wait_for(asyncio.shield(task), seconds)
         except TimeoutError:
             return None
         except Exception:  # logged by _loaded, for everyone who waited
@@ -295,6 +297,10 @@ class LookupCache:
             if not task.cancelled() or (current is not None and current.cancelling()):
                 raise  # this caller was cancelled
             return None  # only the load was (drop(): the campaign isn't wanted any more)
+        # From the slot, not the load's result: a change may have landed between the load
+        # finishing and this waiter resuming (a name the DM just made secret).
+        slot = self._slots.get(key)
+        return slot.current() if slot is not None else None
 
     def _loaded(self, key: tuple[int, str], task: asyncio.Task[CampaignLookup]) -> None:
         if self._loading.get(key) is task:
@@ -302,7 +308,7 @@ class LookupCache:
         if not task.cancelled() and (error := task.exception()) is not None:
             # Said here, whoever was waiting (the next ask tries again); at most once a
             # minute per campaign, as every clip of a session asks.
-            now = time.monotonic()
+            now = _clock()
             if now - self._failed_at.get(key, -FAIL_LOG_S) >= FAIL_LOG_S:
                 self._failed_at[key] = now
                 log.warning("Couldn't load names for campaign %s: %r", key[1], error)
@@ -335,6 +341,7 @@ class LookupCache:
         gone = set(campaign_ids)
         for key in [k for k in self._slots if k[1] in gone]:
             del self._slots[key]
+            self._failed_at.pop(key, None)  # a campaign restored with this id starts afresh
         for key in [k for k in self._loading if k[1] in gone]:
             self._loading.pop(key).cancel()  # a deleted campaign's names: not wanted
 
