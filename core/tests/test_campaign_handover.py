@@ -9,8 +9,9 @@ import re
 from typing import Any
 
 from dmbot.campaigns import CampaignError, CampaignStore
-from dmbot.campaigns.models import HANDOVER_SECONDS
+from dmbot.campaigns.models import HANDOVER_SECONDS, HandoverOffer
 from dmbot.campaigns.store import (
+    NO_OWNER_YET,
     NOT_A_SUBSCRIBER,
     NOT_THE_OWNER,
     OFFER_TO_SELF,
@@ -45,14 +46,21 @@ class HandoverTest(DatabaseTest):
         async with self.db.plan_writer(user_id) as conn:
             await conn.execute(INSERT_PLAN, {**PLAN_ROW, **WORKS, **values, "user_id": user_id})
 
+    async def make_offer(
+        self, guild: int, campaign_id: str, by: int, to: int, now: int
+    ) -> HandoverOffer:
+        return await self.store.offer_handover(
+            guild, campaign_id, by, to, now, from_name=f"Person {by}", to_name=f"Person {to}"
+        )
+
     async def offer(self, to: int = BUYER, now: int = NOW) -> int:
-        offer = await self.store.offer_handover(GUILD, self.campaign.id, OWNER, to, now)
+        offer = await self.make_offer(GUILD, self.campaign.id, OWNER, to, now)
         return offer.id
 
 
 class Offering(HandoverTest):
     async def test_the_owner_offers_and_the_buyer_accepts(self) -> None:
-        offer = await self.store.offer_handover(GUILD, self.campaign.id, OWNER, BUYER, NOW)
+        offer = await self.make_offer(GUILD, self.campaign.id, OWNER, BUYER, NOW)
         self.assertEqual((offer.status, offer.expires_at), ("open", NOW + HANDOVER_SECONDS))
         self.assertEqual(await self.store.open_offer(GUILD, self.campaign.id, NOW), offer)
         self.assertEqual(await self.store.accept_handover(GUILD, offer.id, BUYER, NOW), "accepted")
@@ -77,7 +85,7 @@ class Offering(HandoverTest):
                 self.subTest(by=by, to=to),
                 self.assertRaisesRegex(CampaignError, re.escape(words)),
             ):
-                await self.store.offer_handover(GUILD, self.campaign.id, by, to, NOW)
+                await self.make_offer(GUILD, self.campaign.id, by, to, NOW)
 
     async def test_a_lapsed_plan_is_not_a_subscriber(self) -> None:
         await self.give_plan(NO_PLAN, status="lapsed", lapsed_at=500)
@@ -98,8 +106,8 @@ class Offering(HandoverTest):
 
     async def test_two_offers_at_once_make_one(self) -> None:
         results = await asyncio.gather(
-            self.store.offer_handover(GUILD, self.campaign.id, OWNER, BUYER, NOW),
-            self.store.offer_handover(GUILD, self.campaign.id, OWNER, CO_DM, NOW),
+            self.make_offer(GUILD, self.campaign.id, OWNER, BUYER, NOW),
+            self.make_offer(GUILD, self.campaign.id, OWNER, CO_DM, NOW),
             return_exceptions=True,
         )
         refused = [r for r in results if isinstance(r, Exception)]
@@ -107,12 +115,51 @@ class Offering(HandoverTest):
         self.assertIsInstance(refused[0], CampaignError)
         self.assertEqual(str(refused[0]), OFFER_WAITING)
 
+    async def test_the_offer_keeps_both_names_as_they_were(self) -> None:
+        offer = await self.store.offer_handover(
+            GUILD, self.campaign.id, OWNER, BUYER, NOW, from_name=" Oskar  the  Bold ",
+            to_name="M" * 150,
+        )  # fmt: skip
+        self.assertEqual((offer.from_name, offer.to_name), ("Oskar the Bold", "M" * 100))
+        again = await self.store.get_offer(GUILD, offer.id, NOW)
+        assert again is not None
+        self.assertEqual(again.from_name, "Oskar the Bold")
+        with self.assertRaises(ValueError):  # never stored without a name
+            await self.store.offer_handover(
+                GUILD, self.campaign.id, OWNER, BUYER, NOW, from_name="  ", to_name="Mirelle"
+            )
+
+    async def test_a_campaign_with_no_owner_yet_cannot_be_offered(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = NULL WHERE guild_id = %s AND id = %s",
+                (GUILD, self.campaign.id),
+            )
+        with self.assertRaisesRegex(CampaignError, re.escape(NO_OWNER_YET)):
+            await self.offer()
+        with self.assertRaisesRegex(CampaignError, re.escape(NO_OWNER_YET)):
+            await self.offer(to=OWNER)  # not "already yours": nobody owns it
+
+    async def test_the_old_owner_cannot_offer_again_while_an_accept_commits(self) -> None:
+        """What the campaign lock guards (#652): the old offer is no longer open once
+        accepted, so only the lock stops the old owner offering again meanwhile."""
+        first = await self.offer()
+        results = await asyncio.gather(
+            self.store.accept_handover(GUILD, first, BUYER, NOW),
+            self.make_offer(GUILD, self.campaign.id, OWNER, CO_DM, NOW),
+            return_exceptions=True,
+        )
+        self.assertEqual(results[0], "accepted")
+        self.assertIsInstance(results[1], CampaignError)
+        self.assertIn(str(results[1]), (NOT_THE_OWNER, OFFER_WAITING))
+        self.assertIsNone(await self.store.open_offer(GUILD, self.campaign.id, NOW))
+
     async def test_offers_stay_in_their_server(self) -> None:
         offer = await self.offer()
         self.assertIsNone(await self.store.get_offer(OTHER_GUILD, offer, NOW))
         self.assertEqual(await self.store.accept_handover(OTHER_GUILD, offer, BUYER, NOW), "gone")
         with self.assertRaises(CampaignError):  # not a campaign of that server
-            await self.store.offer_handover(OTHER_GUILD, self.campaign.id, OWNER, BUYER, NOW)
+            await self.make_offer(OTHER_GUILD, self.campaign.id, OWNER, BUYER, NOW)
 
     async def test_deleting_the_campaign_deletes_its_offers(self) -> None:
         offer = await self.offer()
