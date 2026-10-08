@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (core 45c0bcc live; web-api still off; Test D next)
+Last updated: 2026-10-08 by dev1 (core b445072, web-api and tunnel live; Test D, TV on, next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,18 +9,6 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- dev3, PR #821 (#807): core only. No migration or setting; the consent terms version is
-  unchanged (nobody is asked again). DMbot's private messages now carry a grey ⚙️ Menu
-  instead of the red 🛑; stopping shows one warning first. #843 (#834, follow-ups,
-  below) goes with it. Check: a player's new reminder shows ⚙️ Menu; on it, Menu →
-  Stop recording me puts the warning first in the message's text → Yes leaves the
-  message reading "🛑 Stopped" and the DM screen shows the usual "said stop" line; Keep
-  recording and Close give the reminder back unchanged; /consent revoke warns first.
-- dev3, PR #843 (#834): core only, no migration. Deploy with #821 (same rebuild). With
-  the database slow or failing, ⚙️ Menu, Keep recording and /consent revoke still answer
-  at once and offer Stop or the warning (no "This interaction failed"); a warning comes
-  off the reminder even after a server rename. Check: the #821 checks still hold; core
-  logs no "Task exception was never retrieved".
 - dev2, PR #847 (#677): core only, no migration or setting. The DM can put back a line
   the off-topic filter left out by mistake. One DM-screen message per session, "🙈 Left
   out as off-topic", edited in place, with the newest 10 runs and a "Put it back N" button
@@ -31,16 +19,13 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   cleaned download (/transcript) shows the words, not "[…s of off-topic chat skipped]"; a
   player's press is refused ("Only this campaign's DM"); after /dmbot stop the buttons are
   gone and the message says "Session over". Core logs no ERROR.
-- dev2, PR #804 (#771 part 1): free access. **Core and migration 0030 are live (core
-  45c0bcc, 22:02); only web-api waits (it stays off).** **Leave
-  DMBOT_FREE_USERS empty until #806 (the account page for covered people) is live.** A
-  bot-only check is fine meanwhile: set the owner's id, restart core only (not web-api),
-  and accepting a hand-over without a plan works. Checked: 0030 applied; core logs "Free
-  access list: 0 ids".
+- dev2, PR #804 (#771 part 1): free access. **Core, migration 0030 and web-api are live
+  (23:36).** **Leave DMBOT_FREE_USERS empty until #806 (the account page for covered
+  people, #825) is live.** Checked: "Free access list: 0 ids" in the core and web-api logs.
 - WebDev, PR #829 (#773): the admin page's free access list (/admin, signed in): who has
   it (by name where they signed in lately), give, change and revoke, recent changes.
-  No migration. Deploy: rebuild web-api and the site, with #786's admin sign-in (turn
-  both on together with the owner: docs/DEPLOY.md "Turn on the admin page"). Every
+  No migration. The admin API is live (web-api, 23:36, behind the tunnel); the
+  admin PAGE needs dev.getdmbot.com, which doesn't exist yet (owner/Supervisor to set up). Every
   change goes through the grant writer and is logged in access_log. **Order: #825's
   account page must be live before DMBOT_FREE_USERS is set or anyone is given free
   access.** Check: signed in as the admin, /admin shows the list ("Always free" for ids
@@ -54,36 +39,6 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   plan is still paid for, and the privacy page now lists the free access record. **It must
   be live before DMBOT_FREE_USERS is set on the server or anyone is given free access
   (#773).** Check: with no free access nothing on /account looks different.
-- WebDev, PR #786 (#772): the admin page's sign-in (Google or admin email + password).
-  No migration. Deploy: rebuild web-api (new setting names; nothing changes until
-  ADMIN_EMAILS is set, and the admin routes answer 404 while it is empty). Turn it on
-  only with the owner, following docs/DEPLOY.md "Turn on the admin page": the owner
-  types scripts/set-admin-password and (for Google) scripts/set-key GOOGLE_CLIENT_SECRET
-  himself; dev1 gives the owner the redirect address (WEB_API_URL +
-  /admin/auth/google/callback), then sets ADMIN_EMAILS (the owner's email),
-  GOOGLE_CLIENT_ID if given, and WEB_CLIENT_IP_HEADER=CF-Connecting-IP (required with
-  ADMIN_EMAILS), and runs `docker compose up -d web-api`. The API refuses to start with
-  ADMIN_EMAILS set and no password hash or Google settings, or a Client secret without
-  an ID: `docker compose logs --tail 20 web-api` names the setting. Check: the logs show
-  no error; /admin on the site shows the sign-in; record the result with no email.
-- CloudDev, PR #840 (#836), steps corrected by PR #854 (#853): the Cloudflare Tunnel that
-  puts web-api online for the admin sign-in (admin paths only). No migration, no rebuild.
-  Nothing is exposed until the owner has set the token and made the route. **Order, as in
-  docs/DEPLOY.md "Put the admin API online" once #854 is merged:** (0) dev1: `git pull`,
-  `scripts/update-env`, confirm `scripts/set-key` lists CLOUDFLARE_TUNNEL_TOKEN, then tell
-  the owner the update is in; (1) the owner, in Cloudflare: create tunnel `dmbot-api`, copy
-  only the `eyJ` token and run nothing, Cancel out (Continue stays grey: normal), then add
-  the route `api.getdmbot.com`, path `^/admin(/|$)`, HTTP `web-api:8080`; (2) the owner, on
-  the server: `scripts/set-key CLOUDFLARE_TUNNEL_TOKEN` (answer No to a restart), then tells
-  dev1 "tunnel ready"; (3) dev1: WEB_API_URL, WEB_SITE_URL, WEB_CLIENT_IP_HEADER and
-  COMPOSE_PROFILES in .env, `docker compose up -d web-api` and read its log, then
-  `docker compose up -d cloudflared`. Name only those services: core and ears changed too
-  (they blank the token), but recreating them restarts the voice part, so let them pick it
-  up at the next deploy. Check from outside: `https://api.getdmbot.com/health` prints 404 (a
-  200 means the path limit is off: `docker compose stop cloudflared` at once and tell
-  Supervisor); `/admin/auth/ways` answers from DMbot (404 JSON until ADMIN_EMAILS is set,
-  then 200); the cloudflared log says "Registered tunnel connection". Record the result, no
-  token.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram

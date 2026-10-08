@@ -1094,3 +1094,71 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     "Character sheets: 1 linked, N names in the hints; from D&D Beyond: ..."; #817: an
     answer to a hand-over offer made on the website is told in Discord, and no new errors
     ("Lost notifications on dmbot_handover_decided" only if the database drops).
+
+==============================================================================
+2026-10-08  Server: web go-live of the admin API, and core b445072 (dev1, owner's go)
+==============================================================================
+  - 23:30-23:37 UTC  The owner gave the go (and the Cloudflare route, the secrets and the
+    sign-in settings were set by the owner with scripts/set-key and scripts/set-admin-password).
+    Order followed (docs/DEPLOY.md "Put the admin API online", Supervisor's check order):
+    1. no session live; database backed up first ("pre-web", 31 tables); .env copied first
+       (.env.backup-...-before-web, secrets: owner to delete once happy);
+    2. plain settings written into .env by a script that prints no values (COMPOSE_PROFILES
+       gains web; WEB_CLIENT_IP_HEADER, WEB_API_URL, WEB_SITE_URL, DISCORD_CLIENT_ID,
+       GOOGLE_CLIENT_ID, ADMIN_EMAILS) and DMBOT_WEB_DB_PASSWORD generated and written unseen;
+    3. `docker compose up -d postgres` (recreated, data kept), then the dmbot_web user was
+       created with 02-dmbot-web.sh ("CREATE ROLE");
+    4. `docker compose up -d --no-build core` (the b445072 build: #821 and #843, the ⚙️ Menu
+       change; no migration; the role's rights are given at start): "Connected to 1
+       server(s)", "ears connected", no errors; ears untouched (still the e299bfc build);
+    5. `docker compose up -d --no-build web-api`: clean start, "Free access list: 0 ids",
+       healthy;
+    6. `docker compose up -d --no-build cloudflared`: "Registered tunnel connection" x4.
+  - Checks from outside: https://api.getdmbot.com/health 404 (the path limit works);
+    /me, /auth/discord/login, /billing, /webhooks 404; /admin/auth/ways 200 with
+    {google: true, password: true}.
+  - Not working yet: dev.getdmbot.com (where the admin page is meant to be served) doesn't
+    resolve, so there is no page to sign in on. Asked the Supervisor on #833.
+  - Checks still to do for the ⚙️ Menu change (kept from the queue, one small test each):
+  - dev3, PR #821 (#807): core only. No migration or setting; the consent terms version is
+    unchanged (nobody is asked again). DMbot's private messages now carry a grey ⚙️ Menu
+    instead of the red 🛑; stopping shows one warning first. #843 (#834, follow-ups,
+    below) goes with it. Check: a player's new reminder shows ⚙️ Menu; on it, Menu →
+    Stop recording me puts the warning first in the message's text → Yes leaves the
+    message reading "🛑 Stopped" and the DM screen shows the usual "said stop" line; Keep
+    recording and Close give the reminder back unchanged; /consent revoke warns first.
+  - dev3, PR #843 (#834): core only, no migration. Deploy with #821 (same rebuild). With
+    the database slow or failing, ⚙️ Menu, Keep recording and /consent revoke still answer
+    at once and offer Stop or the warning (no "This interaction failed"); a warning comes
+    off the reminder even after a server rename. Check: the #821 checks still hold; core
+    logs no "Task exception was never retrieved".
+  - WebDev, PR #786 (#772): the admin page's sign-in (Google or admin email + password).
+    No migration. Deploy: rebuild web-api (new setting names; nothing changes until
+    ADMIN_EMAILS is set, and the admin routes answer 404 while it is empty). Turn it on
+    only with the owner, following docs/DEPLOY.md "Turn on the admin page": the owner
+    types scripts/set-admin-password and (for Google) scripts/set-key GOOGLE_CLIENT_SECRET
+    himself; dev1 gives the owner the redirect address (WEB_API_URL +
+    /admin/auth/google/callback), then sets ADMIN_EMAILS (the owner's email),
+    GOOGLE_CLIENT_ID if given, and WEB_CLIENT_IP_HEADER=CF-Connecting-IP (required with
+    ADMIN_EMAILS), and runs `docker compose up -d web-api`. The API refuses to start with
+    ADMIN_EMAILS set and no password hash or Google settings, or a Client secret without
+    an ID: `docker compose logs --tail 20 web-api` names the setting. Check: the logs show
+    no error; /admin on the site shows the sign-in; record the result with no email.
+  - CloudDev, PR #840 (#836), steps corrected by PR #854 (#853): the Cloudflare Tunnel that
+    puts web-api online for the admin sign-in (admin paths only). No migration, no rebuild.
+    Nothing is exposed until the owner has set the token and made the route. **Order, as in
+    docs/DEPLOY.md "Put the admin API online" once #854 is merged:** (0) dev1: `git pull`,
+    `scripts/update-env`, confirm `scripts/set-key` lists CLOUDFLARE_TUNNEL_TOKEN, then tell
+    the owner the update is in; (1) the owner, in Cloudflare: create tunnel `dmbot-api`, copy
+    only the `eyJ` token and run nothing, Cancel out (Continue stays grey: normal), then add
+    the route `api.getdmbot.com`, path `^/admin(/|$)`, HTTP `web-api:8080`; (2) the owner, on
+    the server: `scripts/set-key CLOUDFLARE_TUNNEL_TOKEN` (answer No to a restart), then tells
+    dev1 "tunnel ready"; (3) dev1: WEB_API_URL, WEB_SITE_URL, WEB_CLIENT_IP_HEADER and
+    COMPOSE_PROFILES in .env, `docker compose up -d web-api` and read its log, then
+    `docker compose up -d cloudflared`. Name only those services: core and ears changed too
+    (they blank the token), but recreating them restarts the voice part, so let them pick it
+    up at the next deploy. Check from outside: `https://api.getdmbot.com/health` prints 404 (a
+    200 means the path limit is off: `docker compose stop cloudflared` at once and tell
+    Supervisor); `/admin/auth/ways` answers from DMbot (404 JSON until ADMIN_EMAILS is set,
+    then 200); the cloudflared log says "Registered tunnel connection". Record the result, no
+    token.
