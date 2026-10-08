@@ -244,7 +244,10 @@ than in separate volumes.
 ## Feature notes
 
 **Delivery to the DM.** Discord has no pop-ups. Alerts go to the campaign's private DM
-screen channel (only the DM can see it) and optionally to DMs.
+screen channel (only the DM can see it) and optionally to DMs. When a button, menu, form
+or command breaks, DMbot tells the person who used it, privately, instead of failing
+silently or leaving "thinking…" up for good (#537, #595). DMbot's replies to slash
+commands are only visible to the person who used them.
 
 **Commands (decided 2026-10-04).** Five entry points; everything else is buttons.
 
@@ -443,8 +446,8 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   "🔁 Asked again: …" so the DM knows why. After a restart, people in voice whose yes no
   longer counts are asked (nobody else is). Version 2 is the "anyone in this server can
   read it" wording; version 3 (#52) adds that DMbot's helper has an AI company (Anthropic)
-  read the text to give the DM notes, not used to train their AI (said once for every
-  helper); every yes saved before versions were recorded is treated as version 1
+  read the text, with who said it, to give the DM notes, not used to train their AI (said
+  once for every helper); every yes saved before versions were recorded is treated as version 1
   (we can't tell which wording each person saw). A test pins the request's wording to
   the version number.
 - The public "DMbot is listening" notice in the voice channel's chat still posts once per
@@ -589,6 +592,18 @@ so the docs always show names the way Discord does. For the campaign
   (audio gaps, speech-to-text falling behind), the start and stop messages, and the
   end-of-session summary (#109). The 15-second capture checks leave it; audio health
   shows only as a warning when there's a problem, and in the summary.
+  **The audio warning checks the transcript before it warns (owner decision 2026-10-08,
+  #671, after a TV in the room set it off; #697 stage 1, #699 stage 2):** pieces shorter
+  than the transcription minimum (by length as ears measured them, so a short answer
+  that breaks up still counts) never count; among the rest, under 95% received and at
+  least 2 s lost in a rolling 60 s window per speaker is the *trigger*: it starts a
+  check of that speaker's lines in the window (the engine's per-word confidence first,
+  else one small AI call per speaker per minute on the cleaned text), and the ⚠️ shows
+  only if they read garbled. Large losses skip the check: the #631 watchdog (sending,
+  nothing heard) and under 50% received with at least 10 s lost in a minute warn at
+  once. Until stage 2 lands, stage 1 warns directly at the DM screen's existing 90%
+  (90–94% rarely costs words), not 95%. The end-of-session line keeps the raw numbers
+  for the logs; the summary's "kept cutting out" follows the same rule.
 - **Organized mode:** each campaign gets a category, `📋 Rime of the Frostmaiden`
   (categories keep capitals and emoji), holding its `dmb-` channels. Each channel has a
   pinned "What's this channel?" card saying what it's for and who can see it. This
@@ -895,7 +910,11 @@ names panel nor the speech-to-text hints can be a fixed list.
     names (a form holds 4,000 characters) or upload a file (UTF-8, up to 256 KB and
     2,000 lines; each name up to 100 characters; at most 20 other names and 20 secret
     names on a line, decided 2026-10-08 on #598 so a worst-case file stays bounded, a
-    line over it being refused with its number and "split them"). **Names only:** lines with
+    line over it being refused with its number and "split them"; and, decided the same
+    day on #598 because the per-line cap alone leaves one name able to gather tens of
+    thousands of other names across lines, **at most 50 other names and 50 secret
+    names per name and 5,000 other and secret names per upload**, counting only what
+    the upload adds so a Download all file always uploads again). **Names only:** lines with
     descriptions or other columns are refused as unclear, and DMbot never offers
     ready-made sourcebook name lists (IP rule). It writes only into the chosen
     campaign, through the normal memory rules (checks, change log), **saved in one go**
@@ -1346,9 +1365,11 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
 "Transcript format"); table talk and anything unsure stay.
 *Decided 2026-10-08 (Supervisor, #52, dev2's questions):*
 - **Consent says the words go to an AI company, once for the whole product.** The consent
-  request and the per-session reminder gain: "DMbot's helper reads that text to give your
-  DM notes. For that, the text goes to an AI company (Anthropic). It isn't used to train
-  their AI." That bumps `TERMS_VERSION` (to 3), so everyone who said yes is asked again,
+  request and the per-session reminder gain: "DMbot's helper reads that text, with who
+  said it, to give your DM notes. For that, the text goes to an AI company (Anthropic).
+  It isn't used to train their AI." ("with who said it" added 2026-10-08 on dev2's
+  question: the AI sees speaker and character names; still version 3 while 3 is not
+  deployed, else 4.) That bumps `TERMS_VERSION` (to 3), so everyone who said yes is asked again,
   and nobody is recorded until they agree to the new wording; the filter never needs a
   per-person check of its own. Reason: every helper that reads the transcript (rules
   advisor, names, this filter, story memory) sends text to the AI, so the consent covers
@@ -1366,6 +1387,21 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
   per session hour can be reported.
 - **Storage:** a `topic` column on `transcript_lines` (`game` / `table_talk` /
   `off_topic`, default `game`) so cleaned downloads can show the markers later.
+- **Built (2026-10-08, #52 part 2; needs terms version 3, part 1):** lines plainly about
+  the game (a campaign name, dice, two table words) are never sent. The others wait in a
+  window of 6 lines or 20 s, and one call to the smallest model labels it. Only the
+  numbered words go, never who said them, and the prompt says the lines are not
+  instructions. An unclear answer is game talk. The names scan gets a line only once
+  labelled, never an off-topic one (the helper there is today). In the live channel each
+  off-topic line still in the edit window becomes its own marker; one marker per run, with
+  the total, is in the cleaned download. The last window is labelled when the session
+  ends. Each line also keeps how long it was said (`duration_ms`). Every AI call has an
+  8 s limit (a slow answer keeps the window as game talk, and never holds up the end of a
+  session); after 3 failures in a row the filter rests 5 minutes. Consent is checked again
+  right before a window is sent. Lines of two words or fewer are never sent. Not yet held
+  back: the name fixer's word list (lower-case words from every line). The log line
+  "Off-topic filter: N calls, … tokens" gives the cost. Replay case:
+  docs/test-scripts/off-topic.md.
 
 **Story memory: continuity, reputations, the shared story (decided 2026-10-06, #227).**
 Full design and rationale: docs/STORY_MEMORY.md. In short:
@@ -1511,6 +1547,14 @@ Squeezy, owner's choice) with its customer portal for plan changes; the API is F
 the provider's webhook. No D&D or Wizards trademarks or art: "for 5e-compatible tabletop
 games". Terms, privacy and refund pages before launch. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
+**Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
+Feedback and Ask a question, posted by the web API as GitHub Discussions in this
+repository (categories Feedback and Questions; a discussions-only token from the
+environment) so the owner can subscribe; no email sending yet. The public post holds
+the message and date only; an optional "how to reach you" stays in the database with
+the message, never in the post, and the form says so. One post per IP per 10 minutes,
+2,000 characters, Turnstile. The page links to the repository and invites developers
+to open issues.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's

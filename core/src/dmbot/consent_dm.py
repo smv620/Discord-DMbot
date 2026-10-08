@@ -92,17 +92,19 @@ def _date(timestamp: int) -> str:
 # Says what changed in the current consent.TERMS_VERSION; rewrite it when that goes up.
 # It explains rather than adds terms, so it isn't part of the pinned wording.
 RENEWED = (
-    "**What's new:** DMbot's helper now sends the text of what you say to an AI company "
-    "(Anthropic) to give your DM notes. It isn't used to train their AI. You agreed before "
-    "this change, so DMbot is asking you again. It won't record you until you say yes."
+    "**What's new:** DMbot's helper now sends the text of what you say, with who said it, "
+    "to an AI company (Anthropic) to give your DM notes. It isn't used to train their AI. "
+    "You agreed before this change, so DMbot is asking you again. It won't record you "
+    "until you say yes."
 )
 # The AI that reads the text, said once for every helper (#52; TERMS_VERSION 3).
 AI_NOTE = (
-    "DMbot's helper reads that text to give your DM notes. For that, the text goes to an AI "
-    "company (Anthropic). It isn't used to train their AI."
+    "DMbot's helper reads that text, with who said it, to give your DM notes. For that, the "
+    "text goes to an AI company (Anthropic). It isn't used to train their AI."
 )
 AI_SHORT = (
-    "Anthropic's AI reads the text to give your DM notes. The text isn't used to train their AI."
+    "An AI company (Anthropic) reads the text, with who said it, to give your DM notes. "
+    "It isn't used to train their AI."
 )
 
 

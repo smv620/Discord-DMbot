@@ -9,11 +9,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import discord
 
+from dmbot.bot import DMBotTree
 from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup, LookupData
-from dmbot.memory.models import CONFIRMED, Alias, Entity, name_key
+from dmbot.memory.models import CONFIRMED, Alias, Entity, MemoryRuleError, name_key
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui import dmbot_commands, name_card, name_lists, names
+from dmbot.ui import dmbot_commands, logic, name_card, name_lists, names
 
 GUILD, DM = 1, 7
 DISCORD_WAITS_S = 3
@@ -59,6 +60,7 @@ class Response:
         self.clock = clock
         self.done = False
         self.defer_kw: dict[str, Any] | None = None
+        self.sent_kw: dict[str, Any] | None = None
         self.content: str | None = None
 
     def is_done(self) -> bool:
@@ -73,8 +75,9 @@ class Response:
         self._once("defer")
         self.defer_kw = kw
 
-    async def send_message(self, *_: Any, **__: Any) -> None:
+    async def send_message(self, *args: Any, **kw: Any) -> None:
         self._once("send_message")
+        self.sent_kw = {"text": args[0] if args else None, **kw}
 
     async def edit_message(self, *, content: str = "", **_: Any) -> None:
         self._once("edit_message")
@@ -122,14 +125,16 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
             name_of=lambda *_: "Ann",
         )
 
-    def it(self) -> Any:
-        """A new press, on a fresh clock."""
+    def it(self, kind: discord.InteractionType = discord.InteractionType.component) -> Any:
+        """A new press (or a slash command), on a fresh clock."""
         self.clock.now, self.clock.answered_at, self.clock.calls = 0.0, None, []
         user = MagicMock(spec=discord.Member)
         user.id = DM
         user.guild_permissions = discord.Permissions.none()
         return SimpleNamespace(
             client=self.bot,
+            type=kind,
+            command=None,
             guild=SimpleNamespace(id=GUILD),
             guild_id=GUILD,
             user=user,
@@ -216,6 +221,81 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
             await view.on_error(it, RuntimeError("boom"), view.children[0])
         self.assertEqual(it.followup.send.await_args.args[0], dmbot_commands.TRY_AGAIN)
+        self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])  # never public
+
+    async def test_every_form_and_question_says_so_too(self) -> None:
+        views: list[Any] = [
+            name_card.PickForm(CAMPAIGN.id, BELL, name_card.SAME, "Same as"),
+            name_card.FindForm(CAMPAIGN.id),
+            *self.saving_forms(),
+            name_lists.KindQuestions(CAMPAIGN.id, [("wizard", [BELL])]),
+            name_lists.NearQuestions(CAMPAIGN.id, []),
+            dmbot_commands.Welcome(),  # any menu in the bot, not only the names ones
+        ]
+        for view in views:
+            with self.subTest(type(view).__name__):
+                it = self.it()  # broke before answering: a private message, not a followup
+                with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+                    if isinstance(view, discord.ui.Modal):
+                        await view.on_error(it, RuntimeError("boom"))
+                    else:
+                        await view.on_error(it, RuntimeError("boom"), MagicMock())
+                self.assertEqual(it.response.sent_kw["text"], dmbot_commands.TRY_AGAIN)
+                self.assertTrue(it.response.sent_kw["ephemeral"])
+
+    @staticmethod
+    def saving_forms() -> list[discord.ui.Modal]:
+        """The forms that answer first, then save (#595 review)."""
+        return [
+            name_card.FixSpellingForm(CAMPAIGN.id, BELL, "Belleros"),
+            name_card.AnotherNameForm(CAMPAIGN.id, BELL, "Belleros", secrets=True),
+            names.AddNameForm(CAMPAIGN.id, secrets=True),
+            names.CharacterForm(CAMPAIGN.id, 5, "Ann"),
+        ]
+
+    async def test_a_form_that_breaks_after_answering_says_so(self) -> None:
+        # Answered first, then the save broke: without on_error the form just closes.
+        for form in self.saving_forms():
+            with self.subTest(type(form).__name__):
+                it = self.it()
+                await it.response.defer()
+                with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+                    await form.on_error(it, ConnectionError("database away"))
+                self.assertEqual(it.followup.send.await_args.args[0], dmbot_commands.TRY_AGAIN)
+                self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])
+
+    async def test_a_slash_command_that_breaks_after_answering_says_so(self) -> None:
+        self.bot.memory.entities = AsyncMock(side_effect=ConnectionError("database away"))
+        it = self.it(discord.InteractionType.application_command)
+        with self.assertRaises(ConnectionError) as caught:
+            await names.show_home(it, CAMPAIGN.id)  # /dmbot names
+        error = discord.app_commands.CommandInvokeError(MagicMock(), caught.exception)
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR") as logs:
+            await DMBotTree.on_error(MagicMock(), it, error)
+        record = logs.records[0]
+        assert record.exc_info is not None
+        self.assertIs(record.exc_info[1], caught.exception)  # the cause, not the wrapper
+        self.assertEqual(it.followup.send.await_args.args[0], dmbot_commands.TRY_AGAIN)
+        self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])
+
+    async def test_any_other_command_error_says_so_privately(self) -> None:
+        it = self.it(discord.InteractionType.application_command)
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR") as logs:
+            await DMBotTree.on_error(MagicMock(), it, discord.app_commands.CheckFailure("x"))
+        self.assertIn("CheckFailure", "\n".join(logs.output))
+        self.assertEqual(it.response.sent_kw["text"], dmbot_commands.TRY_AGAIN)
+        self.assertTrue(it.response.sent_kw["ephemeral"])
+
+    async def test_broken_suggestions_are_only_logged(self) -> None:
+        it = self.it(discord.InteractionType.autocomplete)
+        with self.assertLogs("dmbot.bot", "WARNING"):
+            await DMBotTree.on_error(MagicMock(), it, discord.app_commands.CommandNotFound("x", []))
+        self.assertEqual(self.clock.calls, [])  # nothing answered: Discord would refuse
+
+    async def test_a_slash_command_is_always_answered_privately(self) -> None:
+        it = self.it(discord.InteractionType.application_command)
+        await name_card.show_card(it, CAMPAIGN.id, BELL, replace=True)  # no message to edit
+        self.assertEqual(it.response.defer_kw, NEW)
 
     async def test_kind_question_answers_before_saving(self) -> None:
         questions = name_lists.KindQuestions(CAMPAIGN.id, [("wizard", [BELL, ULF])])
@@ -230,6 +310,52 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         final = it.edit_original_response.await_args.kwargs
         self.assertIn("2 names set to", final["content"])
         self.assertIsNone(final["view"])  # nothing left to ask
+
+    async def pick_wizard(self, it: Any) -> name_lists.KindQuestions:
+        questions = name_lists.KindQuestions(CAMPAIGN.id, [("wizard", [BELL]), ("orc", [ULF])])
+        select = questions.children[0]
+        assert isinstance(select, name_lists.KindSelect)
+        select._values = ["npc"]
+        await questions.picked(select, it)
+        return questions
+
+    async def test_a_kind_question_with_no_campaign_puts_the_menu_back(self) -> None:
+        self.bot.campaigns.get = AsyncMock(return_value=None)
+        it = self.it()
+        questions = await self.pick_wizard(it)
+        self.assertEqual(it.followup.send.await_args.args[0], logic.NO_CAMPAIGN_ACCESS)
+        self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])
+        self.assertIs(it.edit_original_response.await_args.kwargs["view"], questions)
+
+    async def test_a_refused_kind_question_says_why_and_puts_the_menu_back(self) -> None:
+        self.bot.memory.confirm_kinds = AsyncMock(side_effect=MemoryRuleError("No."))
+        it = self.it()
+        questions = await self.pick_wizard(it)
+        self.assertEqual(it.followup.send.await_args.args[0], "Couldn't change them. No.")
+        self.assertIs(it.edit_original_response.await_args.kwargs["view"], questions)
+
+    async def test_answers_without_a_summary_start_at_the_first_line(self) -> None:
+        it = self.it()
+        it.message = None  # nothing above the questions
+        await self.pick_wizard(it)
+        content = it.edit_original_response.await_args.kwargs["content"]
+        self.assertTrue(content.startswith("✅ Every **wizard**"))
+
+    async def test_a_failed_redraw_never_hides_why_the_save_failed(self) -> None:
+        self.bot.memory.confirm_kinds = AsyncMock(side_effect=RuntimeError("database away"))
+        it = self.it()
+        gone = discord.HTTPException(MagicMock(status=404), "gone")
+        it.edit_original_response = AsyncMock(side_effect=gone)
+        with self.assertRaises(RuntimeError), self.assertLogs("dmbot.ui.name_lists", "WARNING"):
+            await self.pick_wizard(it)  # on to on_error with the real cause
+
+    async def test_a_failed_redraw_after_saving_is_logged(self) -> None:
+        it = self.it()
+        gone = discord.HTTPException(MagicMock(status=404), "gone")
+        it.edit_original_response = AsyncMock(side_effect=gone)
+        with self.assertLogs("dmbot.ui.name_lists", "WARNING") as logs:
+            await self.pick_wizard(it)  # saved: no "Try again", but never silent
+        self.assertIn("Couldn't redraw", logs.output[0])
 
     async def test_kind_questions_keep_every_answer(self) -> None:
         asked = [("wizard", [BELL]), ("goblin", [ULF])]

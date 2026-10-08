@@ -20,10 +20,36 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
   names answer as before; the `Built names for campaign` log line shows a small database
   time.
+- CloudDev, PR #689 (#598 item 3): Add many takes at most 20 other and 20 secret names
+  on a line; a list with one name on many lines reads in under 2 s (was about 50 s, on
+  the event loop). No migration. Deploy: rebuild core. Check: Add many with a line of 21
+  other names says "line N: more than 20 other names. Put the rest on a new line...";
+  Download all, then upload that file again: nothing is refused.
+- dev2, PR #670 (#52 part 1): the consent request and the per-session reminder say an
+  AI (Anthropic) reads the text, with who said it, to give the DM notes; terms version
+  2 -> 3. No migration. Deploy together with dev2's #52 wording PR (it adds "with who
+  said it"), and with or before #678: rebuild core. Tell the table first: after the deploy,
+  everyone who said yes before is asked again and isn't recorded until they say yes.
+  Check: a player who agreed before gets the new request with a "What's new" note;
+  after they say yes, recording works as before.
+- dev2, PR #678 (#52 part 2): the off-topic filter. Clearly off-topic chat becomes
+  "[1m 22s of off-topic chat skipped]" in the cleaned transcript and the live channel;
+  As heard keeps every word. Migration 0024 adds topic and duration columns to
+  transcript_lines (defaults, quick). Needs #670 (terms version 3) live first or in the
+  same deploy. Deploy: rebuild core. Check: `docker compose logs core` shows 0024 applied;
+  at the end of a session "Off-topic filter: N calls, ... tokens"; replay
+  docs/test-scripts/off-topic.md.
 - CloudDev, PR #659 (#636): /dmbot start says "I haven't started: I can't hear voice
   channels right now…" instead of developer steps when ears is down, and logs it. No
   migration. Deploy: rebuild core. Check: with ears stopped, /dmbot start gives the new
   words and `docker compose logs core` shows "Can't start in server …".
+- CloudDev, PR #668 (#652, #437): hand-over offers keep both people's names. Migration
+  0022 adds two columns to the (still empty) offers table: quick. Deploy: rebuild core.
+  Check: `docker compose logs core` shows 0022 applied, no new errors.
+- CloudDev, PR #637 (#595): a command, button, menu or form that breaks now tells the
+  person privately ("Something broke on DMbot's side… Try once more") and logs the
+  cause, instead of leaving "thinking…". No migration. Deploy: rebuild core. Check:
+  /dmbot names works as before.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram

@@ -18,6 +18,7 @@ import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
 from dmbot.transcript.models import Line, TranscriptSession
+from dmbot.transcript.topics import GAME, Spoken, collapse
 
 UNKNOWN_SPEAKER = "Someone"
 _BRACKETS = str.maketrans("", "", "()[]{}")
@@ -25,14 +26,16 @@ NAME_MAX = 80
 FILE_NAME_MAX = 60
 
 AS_HEARD_NOTE = (
-    "As heard: the words exactly as DMbot heard them, before it fixed any names, so "
-    'some names may be misheard. The "Cleaned" version (/transcript) has the names '
-    "fixed. Only people who agreed were recorded."
+    "As heard: every word exactly as DMbot heard it, off-topic chat included, before it "
+    'fixed any names, so some names may be misheard. The "Cleaned" version (/transcript) '
+    "has the names fixed and leaves out clearly off-topic chat. Only people who agreed "
+    "were recorded."
 )
 CLEANED_NOTE = (
     "Cleaned: DMbot fixed the spelling of names it was sure about; a few may still be "
-    'wrong. For the exact words, download the "As heard" version with /transcript. '
-    "Only people who agreed were recorded."
+    "wrong. Chat clearly not about the game is left out, and a short note says how long "
+    'it was spoken. The "As heard" version (/transcript) still has every word. Only people '
+    "who agreed were recorded."
 )
 HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."
 
@@ -145,16 +148,31 @@ def render(
     playing = characters or {}
     shown: dict[int, tuple[str, str | None]] = {}  # each name cleaned once
     body = []
-    for line in lines:
-        if line.user_id not in shown:
-            character = playing.get(line.user_id)
-            shown[line.user_id] = (
-                clean_name(names.get(line.user_id)),
+    # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
+    # marker with how long it lasted. The as-heard version keeps everything.
+    spoken = [
+        Spoken(
+            line.user_id,
+            line.started_ms,
+            line.duration_ms / 1000,
+            line.text if version == CLEANED else line.heard,
+            line.topic if version == CLEANED else GAME,
+        )
+        for line in lines
+    ]
+    for item in collapse(spoken):
+        if item.speaker not in shown:
+            character = playing.get(item.speaker)
+            shown[item.speaker] = (
+                clean_name(names.get(item.speaker)),
                 clean_name(character) if character else None,
             )
-        when = clock((line.started_ms - start_ms) / 1000)
-        said = line.text if version == CLEANED else line.heard
-        body.append(f"{label(when, *shown[line.user_id])}: {' '.join(said.split())}")
+        when = clock((item.started_ms - start_ms) / 1000)
+        who = label(when, *shown[item.speaker])
+        if item.skipped:  # "[0:12:04] (Mia) [1m 22s of off-topic chat skipped]"
+            body.append(f"{who} {item.text}")
+        else:
+            body.append(f"{who}: {' '.join(item.text.split())}")
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))
     ran = (
         f", ran {duration(session.ended_at - session.started_at)}"
