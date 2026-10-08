@@ -139,6 +139,8 @@ class Run:
 
 def record(model: str, runs: Sequence[Run], price: tuple[float, float]) -> list[str]:
     """Numbers only."""
+    if not runs:
+        return [f"model: {model}: not run: cap reached"]
     lines = [f"model: {model} ({len(runs)} run{'s' if len(runs) != 1 else ''}, pilot set)"]
     for n, run in enumerate(runs, 1):
         result = run.score
@@ -258,24 +260,26 @@ async def main_async(args: argparse.Namespace) -> int:
         return 2
     out = lines[:1]
     spent = 0.0
-    measured = False
+    measured = capped = False
     for model in models:
         runs: list[Run] = []
-        client = AnthropicClient(key, model)
-        try:
-            for _ in range(args.runs):
-                if spent > args.max_usd:  # the estimate was wrong: stop, don't overspend
-                    out.append(f"stopped: ${spent:.2f} spent, over ${args.max_usd:g}")
-                    break
-                run = await measure(client, scenes)
-                runs.append(run)
-                if run.usage is not None:
-                    measured = True
-                    spent += cost.dollars(
-                        prices[model], run.usage.input_tokens, run.usage.output_tokens
-                    )
-        finally:
-            await client.close()
+        if not capped:
+            client = AnthropicClient(key, model)
+            try:
+                for _ in range(args.runs):
+                    if spent > args.max_usd:  # the estimate was wrong: stop, don't overspend
+                        out.append(f"stopped: ${spent:.2f} spent, over ${args.max_usd:g}")
+                        capped = True
+                        break
+                    run = await measure(client, scenes)
+                    runs.append(run)
+                    if run.usage is not None:
+                        measured = True
+                        spent += cost.dollars(
+                            prices[model], run.usage.input_tokens, run.usage.output_tokens
+                        )
+            finally:
+                await client.close()
         out += record(model, runs, prices[model])
     print("\n".join(out[1:]))
     if args.log and measured:

@@ -103,7 +103,7 @@ class ScenesTests(unittest.TestCase):
         self.assertEqual(lines[16].never, [("king",)])  # the injection lines
         self.assertEqual(lines[36].never, [("kael", "dead")])
         self.assertTrue(lines[36].text.startswith("</transcript>"))
-        self.assertEqual(len([a for line in lines for a in line.also]), 7)
+        self.assertEqual(len([a for line in lines for a in line.also]), 8)
         self.assertIn("its bell ringing for evening prayer", lines[0].text)  # wrapped lines join
 
     def test_a_bad_expected_claim_is_refused(self) -> None:
@@ -230,6 +230,22 @@ class ScoreTests(unittest.TestCase):
         )
         self.assertEqual(result.by_kind()["dm_said"], (1, 1))
 
+    def test_a_right_no_on_an_injection_line_is_no_injection(self) -> None:
+        # Line 38 answers the closing-tag injection: "Kael is not dead" is right there.
+        lines = [line for s in load_scenes(SCENES) for line in s.lines if line.number in (37, 38)]
+        result = score(lines, [claim("Kael", "is not", "dead", 38)])
+        self.assertEqual((result.pulled, result.invented, result.injections), (0, 0, 0))
+
+    def test_an_allowed_claim_never_takes_a_later_lines_expected_one(self) -> None:
+        lines = parse_scenes(
+            "## Scene 1: x\n"
+            "1. [DM] Hrothgar the blacksmith waves.\n   - also: Hrothgar | is | blacksmith\n"
+            "2. [DM] He is the town's blacksmith.\n   - dm_said: Hrothgar | is | blacksmith\n"
+        )[0].lines
+        given = [Claim("Hrothgar", "is", "blacksmith", "", (1, 2), "dm_said")]
+        result = score(lines, given)
+        self.assertEqual((result.pulled, result.invented), (1, 0))
+
 
 class CostTests(unittest.TestCase):
     def test_session_costs(self) -> None:
@@ -312,6 +328,27 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("stopped: $", out)
         self.assertNotIn("run 2:", out)
+
+    def test_once_the_cap_trips_nothing_more_runs(self) -> None:
+        two = [
+            "--model",
+            "m-one",
+            "--model",
+            "m-two",
+            "--price",
+            "m-one=1,5",
+            "--price",
+            "m-two=1,5",
+        ]
+        code, out, _ = self.run_main(
+            "--extractor", "anthropic", *two, "--runs", "2", "--max-usd", "0.5",
+            client=Perfect(tokens=10_000_000), env=KEY,
+        )  # fmt: skip
+        self.assertEqual(code, 0)
+        self.assertEqual(out.count("stopped: $"), 1)
+        self.assertIn("model: m-one (1 run, pilot set)", out)
+        self.assertIn("model: m-two: not run: cap reached", out)
+        self.assertNotIn("every call failed", out)
 
     def test_the_estimate_is_at_least_what_is_spent(self) -> None:
         scenes = batches(load_scenes(SCENES), claims_main.BATCH_S)
