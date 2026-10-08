@@ -33,6 +33,7 @@ from dmbot.dm_screen.handover import (
     DECLINED,
     NO_PINGS,
     OFFER_EXPIRED,
+    SCREEN_ACCEPTED,
     TOLD_ACCEPTED,
     TOLD_DECLINED,
     TOLD_EXPIRED,
@@ -68,7 +69,7 @@ class OfferStore(Protocol):
 
     async def confirm_delivery(
         self, guild_id: int, offer: HandoverOffer, now: int, message_id: int
-    ) -> None: ...
+    ) -> HandoverOffer | None: ...
 
     async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]: ...
 
@@ -114,6 +115,7 @@ class SiteOffers:
         wait_until_ready: Callable[[], Awaitable[None]],
         spawn: Callable[[Awaitable[None], str], object],
         deliver: Deliver = _deliver,
+        post: Callable[[int, str], Awaitable[object]] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now: Callable[[], int] = lambda: int(time.time()),
         clock: Callable[[], float] = time.monotonic,
@@ -124,6 +126,7 @@ class SiteOffers:
         self._wait_until_ready = wait_until_ready
         self._spawn = spawn
         self._deliver = deliver
+        self._post = post  # a message in a channel: the #dm-screen note on an accept
         self._sleep = sleep
         self._now = now
         self._clock = clock
@@ -149,6 +152,9 @@ class SiteOffers:
             offer_notify.DECIDED,
             lambda: None,
             lambda ids: self._spawn(self.decided(*ids), "site-decision"),
+            # Not yet: before Discord sends the server list, no server looks like ours,
+            # and a restart has that window every time. decided() waits, then checks.
+            ours_only=False,
         )
 
     async def _follow(
@@ -157,6 +163,8 @@ class SiteOffers:
         channel: str,
         on_connect: Callable[[], object],
         act: Callable[[tuple[int, int]], object],
+        *,
+        ours_only: bool = True,
     ) -> None:
         failures = 0
         connected_at: float | None = None
@@ -174,12 +182,14 @@ class SiteOffers:
                     async for raw in stream:
                         ids = offer_notify.parse(raw)
                         # Every process hears every announcement: act only on ours.
-                        if ids is not None and self._get_guild(ids[0]) is not None:
+                        if ids is not None and (
+                            not ours_only or self._get_guild(ids[0]) is not None
+                        ):
                             act(ids)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # the connection dropped; carry on without crashing
-                log.warning("Lost hand-over offer notifications (%s); will check again", exc)
+                log.warning("Lost notifications on %s (%s); will listen again", channel, exc)
             if connected_at is not None and self._clock() - connected_at >= STEADY_S:
                 failures = 0  # it had been working: start the waits again from the shortest
             delay = RECONNECT_DELAY_S[min(failures, len(RECONNECT_DELAY_S) - 1)]
@@ -192,7 +202,9 @@ class SiteOffers:
         offer message says what they chose. Taken back: the person's offer message says
         so, unless it was never sent (then they never knew of it). Never raises; each
         message is best effort. No claim: while two processes both serve the server (a
-        rolling deploy), the owner could hear twice."""
+        rolling deploy), the owner could hear twice. Waits until Discord has said which
+        servers are this process's (an answer made while the bot starts isn't lost)."""
+        await self._wait_until_ready()
         guild = self._get_guild(guild_id)
         if guild is None:
             return
@@ -205,12 +217,26 @@ class SiteOffers:
                 if offer is None or campaign is None:
                     return
                 await _tell_decision(guild, offer, campaign)
+                if offer.status == "accepted":  # as the Discord Accept button does
+                    await self._screen_note(campaign, offer)
             except Exception as exc:
+                # Only the error's kind: a database error's text can quote the row (names).
                 log.error(
                     "Couldn't tell about a website answer to offer %s (%s)",
                     offer_id,
                     type(exc).__name__,
                 )
+
+    async def _screen_note(self, campaign: Campaign, offer: HandoverOffer) -> None:
+        """The accept noted in the campaign's #dm-screen, as for the Discord button (it
+        changes whose plan the table uses). Best effort."""
+        if self._post is None or campaign.dm_screen_channel_id is None:
+            return
+        names = {"name": md(offer.to_name), "campaign": md(campaign.name)}
+        try:
+            await self._post(campaign.dm_screen_channel_id, SCREEN_ACCEPTED.format(**names))
+        except Exception as exc:
+            log.warning("Couldn't note a website accept on the DM screen (%s)", type(exc).__name__)
 
     async def every_hour(self) -> None:
         """A sweep every hour, until cancelled: catches a claim that lapsed (a process
@@ -321,8 +347,13 @@ class SiteOffers:
                 return
             raise
         if message is not None:
-            await self._store.confirm_delivery(guild.id, offer, self._now(), message.id)
+            now_it = await self._store.confirm_delivery(guild.id, offer, self._now(), message.id)
             log.info("Sent a hand-over offer made on the website (offer %s)", offer.id)
+            if now_it is not None and now_it.status != "open":
+                # Answered or taken back on the website while it was going out: then
+                # decided() saw it unsent and told only the owner. The message just sent
+                # has live buttons: say what happened instead (#797).
+                await _tell_decision(guild, now_it, campaign, tell_owner=False)
             return
         result = await self._store.withdraw_handover(
             guild.id, offer.id, offer.from_user_id, self._now()
@@ -331,7 +362,14 @@ class SiteOffers:
             await _tell_owner(guild, offer, campaign)
 
 
-async def _tell_decision(guild: discord.Guild, offer: HandoverOffer, campaign: Campaign) -> None:
+async def _tell_decision(
+    guild: discord.Guild, offer: HandoverOffer, campaign: Campaign, *, tell_owner: bool = True
+) -> None:
+    """The same words as the Discord buttons. The owner hears of an accept or a no thanks
+    (unless `tell_owner` is off: already told). The person's offer message, if it was ever
+    sent: edited to say what happened (its buttons go); if it can't be edited, a new
+    message only for a take-back (they chose an accept or a no thanks themselves, so the
+    site told them)."""
     owner, person = md(offer.from_name), md(offer.to_name)
     name = md(campaign.name)
     if offer.status == "accepted":
@@ -345,7 +383,7 @@ async def _tell_decision(guild: discord.Guild, offer: HandoverOffer, campaign: C
         to_person = TOLD_WITHDRAWN.format(owner=owner, campaign=name)
     else:  # still open, or ended another way: nothing to tell
         return
-    if to_owner is not None:
+    if to_owner is not None and tell_owner:
         with contextlib.suppress(discord.HTTPException):
             member = await _member(guild, offer.from_user_id)
             await member.send(to_owner, allowed_mentions=NO_PINGS)
