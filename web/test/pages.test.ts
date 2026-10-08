@@ -107,12 +107,21 @@ describe("menu", () => {
     const home = await container.renderToString(page("index.astro"), {
       request: new Request("https://dmbot.example/"),
     });
-    expect(home).toMatch(/<a href="\/pricing#questions"[^>]*>Q&amp;A<\/a>/);
+    expect(home).toMatch(/<a href="\/pricing#questions"[^>]*>(?:(?!<\/a>)[\s\S])*Q&amp;A\s*<\/a>/);
     expect(home).toMatch(/<a href="\/pricing#questions"[^>]*>Questions about plans and hours\? Read/);
     const pricing = await container.renderToString(page("pricing.astro"), {
       request: new Request("https://dmbot.example/pricing"),
     });
     expect(pricing).toMatch(/<section id="questions"/);
+  });
+
+  it("gives every menu item an icon hidden from screen readers", async () => {
+    const html = await container.renderToString(page("index.astro"), {
+      request: new Request("https://dmbot.example/"),
+    });
+    const nav = html.slice(html.indexOf('<nav aria-label="Main"'), html.indexOf("</nav>"));
+    expect(nav.match(/<a /g)).toHaveLength(4);
+    expect(nav.match(/<svg[^>]*aria-hidden="true"/g)).toHaveLength(4);
   });
 
   // A static build renders /pricing as pricing.html, and the page sees that path.
