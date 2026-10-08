@@ -25,7 +25,8 @@ the DM decides.**
    or settings.**
 4. **Cite, don't assert.** Every alert names its source (SRD section, homebrew doc,
    or house rule number) and a confidence level.
-5. **Quiet by default.** Verbosity levels and cooldowns keep the DM from being flooded.
+5. **Quiet by default.** "How much DMbot says" (quiet / normal / chatty) and cooldowns
+   keep the DM from being flooded.
 6. **Least access.** Narrow OAuth scopes, encrypted tokens, and commands to review,
    test, and revoke every access the bot holds.
 
@@ -470,6 +471,24 @@ channel's chat.
 - Granting peek access needs the bot to manage that channel's permissions (Manage
   Channels and Manage Roles); per least privilege it only does this in the DM screen it
   created or was given.
+
+**How much DMbot says (built 2026-10-08, #504).** A campaign setting for the DM screen,
+picked with buttons when creating a campaign (**DMbot says: quiet / normal / chatty**;
+changing it from the DM screen's settings comes later). Backups carry it, and a restore
+uses the backup's (older backups: Normal).
+| Level | What DMbot posts on its own |
+|---|---|
+| **Quiet** | Only what you ask for, plus warnings |
+| **Normal** (default) | Also questions and fixes, one at a time: "Did they mean…?" and ✏️ Name fixes to check |
+| **Chatty** | Also what it noticed (reserved: behaves like Normal until something uses it) |
+
+Every post DMbot makes on its own to the DM screen asks `dmbot.dm_screen.levels.allows`
+first, with its kind: `question`, `fix_note`, `alert` or `notice`. **Alerts**
+(speech-to-text stopped or working again, hours warnings) show at every level. An
+unknown kind never shows, so nothing new slips past Quiet. At Quiet a fix from a name
+DMbot only suggested isn't made at all, because such a fix is never silent and there'd
+be no Undo to show. Continuity warnings (Phase 5a) and rules alerts must pick a kind
+when they land.
 
 **Channel structure (decided 2026-10-04, #85).** Every channel DMbot creates starts with
 `dmb-`, so its channels group together in the sidebar and are clearly bot-managed.
@@ -1124,8 +1143,8 @@ reads the campaign memory and never changes it.
     message that is edited in place, one line and one Undo each. At most one question is
     open at a time, with a cooldown, and only for names that come up again or matter to
     the scene. Unanswered questions expire quietly (the line stays as heard) and move to
-    the after-session report. At the **quiet** verbosity level there are no live
-    questions at all.
+    the after-session report. When **How much DMbot says** is Quiet there are no live
+    questions at all (#504).
   - **Undo says what it learned:** "↩️ Undone. DMbot won't change "Sara" to **Cerric**
     again in this campaign. [Allow again]"
 - **Rolling window:** one utterance at a time (DMbot already splits speech after a ~2 s
@@ -1215,8 +1234,8 @@ consent check just made still holds:
     is asked about at most once per session, and only once it has been heard a second
     time this session or may be a name in the scene (said in the last ~10 minutes, or
     a player's character). A question nobody answers expires after 5 minutes and
-    shrinks to one line (`⌛ Not answered: "Marin" stays as heard.`). When the
-    verbosity setting lands, questions must check it.
+    shrinks to one line (`⌛ Not answered: "Marin" stays as heard.`). Not asked at all
+    when How much DMbot says is Quiet (#504).
   - **Answering:** only the campaign's DMs can answer. A name becomes a fixed spelling
     (`add_correction`, fix, source DM); **Keep** becomes a keep rule. Either way the
     same words are handled silently from the next line, and the message turns into the

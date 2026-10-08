@@ -209,11 +209,14 @@ def clean(
     vocabulary: Vocabulary | None = None,
     people: Iterable[str] = (),
     scene: Collection[str] = (),
+    unsure: bool = True,
 ) -> Cleaned:
     """The line with the names it's sure were misheard fixed, and the fixes made.
     `vocabulary`: what this session's lines said about words (see `Vocabulary`), this
     line not included; `people`: display names of people at the table (and their first
-    words), never changed; `scene`: entries said lately (see `SceneTracker.scene`)."""
+    words), never changed; `scene`: entries said lately (see `SceneTracker.scene`);
+    `unsure`: also fixes from names DMbot only suggested, which the DM screen shows with
+    Undo (False when it won't show them: such a fix is never silent, #504)."""
     words = list(WORD.finditer(heard))
     keys = [name_key(_stem(w.group())) for w in words]
     person_keys = {name_key(p) for p in people} | {
@@ -239,7 +242,7 @@ def clean(
     fixes = [
         fix
         for fix in [*_known_names(lookup, heard, person_keys), *by_sound]
-        if not _near_secret(lookup, words, fix.start, fix.end, near)
+        if (unsure or fix.sure) and not _near_secret(lookup, words, fix.start, fix.end, near)
     ]
     questions = tuple(
         replace(q, context=_around(heard, q.start, q.end))

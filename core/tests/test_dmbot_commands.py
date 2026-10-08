@@ -186,7 +186,13 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
                 1: ["✓ If missing: use 2014", "If missing: skip it"],
                 2: ["✓ Optional rules: on", "Optional rules: off"],
                 3: ["DM screen: only the DM", "✓ DM screen: players peek", "DM screen: everyone"],
-                4: ["▶ Create campaign"],
+                # How much DMbot says shares the last row with Create (5 rows at most).
+                4: [
+                    "DMbot says: quiet",
+                    "✓ DMbot says: normal",
+                    "DMbot says: chatty",
+                    "▶ Create campaign",
+                ],
             },
         )
         children: list[Any] = list(view.children)
@@ -226,7 +232,7 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
     async def test_create_saves_what_was_chosen(self) -> None:
         view = cmds.NewCampaignSettings("Frostmaiden")
         for label in ("Main rules: 2014", "If missing: skip it", "Optional rules: off",
-                      "DM screen: everyone"):  # fmt: skip
+                      "DM screen: everyone", "DMbot says: quiet"):  # fmt: skip
             await self.tap(view, label)
         create = AsyncMock(return_value=SimpleNamespace())
         it: Any = SimpleNamespace(
@@ -243,6 +249,7 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
                 "fallback_ruleset": "none",
                 "optional_rules_default": False,
                 "dm_screen_visibility": "open",
+                "dm_screen_level": "quiet",
             },
         )
 

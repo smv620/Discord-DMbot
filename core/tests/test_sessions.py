@@ -124,6 +124,7 @@ class SessionTests(DatabaseTest):
             (self.campaign.id, VOICE, SCREEN),
         )
         self.assertTrue(table.is_dm(DM))
+        self.assertEqual(table.screen_level, "normal")  # how much DMbot says (#504)
         self.assertTrue(any('"join"' in m for m in self.ears.sent))
         saved = await self.campaigns.get(GUILD, self.campaign.id)
         assert saved is not None
@@ -1232,6 +1233,28 @@ class SaveAndResume(SessionTests):
         memory.add_typed_name.assert_not_awaited()
         self.assertIn("won't change", text)
 
+    async def test_quiet_asks_nothing_and_makes_no_unsure_fixes(self) -> None:
+        # #504: at quiet, no "Did they mean…?" and no "Name fixes to check".
+        from dmbot.transcript.models import TranscriptBuffer
+
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        table.screen_level = "quiet"
+        table.name_lookup = self.two_alike()
+        import time
+
+        table.scene.note(["a" * 32], DM, time.monotonic())
+        table.unsaved = TranscriptBuffer()
+        self.bot.transcripts = object()  # type: ignore[assignment]  # only checked for None
+        self.bot.post_message = AsyncMock()  # type: ignore[method-assign]
+        self.said(table, "then Marin speaks")
+        self.said(table, "then Marin speaks")
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.bot.post_message.assert_not_awaited()
+        self.assertIsNone(table.questions.open)
+        self.assertEqual(table.fix_notes.notes, [])
+
     async def test_keep_as_heard_is_saved(self) -> None:
         table, _, _, memory = await self.asked_about_marin()
         asked = table.questions.open
@@ -1341,8 +1364,9 @@ class SaveAndResume(SessionTests):
         self.assertTrue(done)
         self.assertIsNone(undo)
 
-    async def fixed_from_a_suggestion(self) -> tuple[Any, Any, Any]:
-        """A line where "Hrothgarr" is fixed to the suggested (not confirmed) Hrothgar."""
+    async def fixed_from_a_suggestion(self, level: str = "normal") -> tuple[Any, Any, Any]:
+        """A line where "Hrothgarr" is fixed to the suggested (not confirmed) Hrothgar;
+        `level`: how much DMbot says in the DM screen."""
         from dmbot.memory.lookup import CampaignLookup, LookupData
         from dmbot.memory.models import PROPOSED, Alias, Entity
         from dmbot.transcript.models import TranscriptBuffer
@@ -1380,10 +1404,25 @@ class SaveAndResume(SessionTests):
         memory: Any = MagicMock(add_correction=AsyncMock(return_value=MagicMock(batch=3)))
         self.addCleanup(setattr, self.bot, "memory", self.bot.memory)
         self.bot.memory = memory
+        table.screen_level = level
         self.said(table, "then Hrothgarr roars")
         for _ in range(5):
             await asyncio.sleep(0)
         return table, message, memory
+
+    async def test_quiet_leaves_a_suggested_name_as_heard(self) -> None:
+        # #504: such a fix is never silent, so with no Undo shown it isn't made.
+        table, _, _ = await self.fixed_from_a_suggestion("quiet")
+        self.bot.post_message.assert_not_awaited()  # type: ignore[attr-defined]
+        (line,) = list(table.unsaved._waiting)
+        self.assertEqual(line.text, "then Hrothgarr roars")
+        self.assertEqual(table.fix_notes.notes, [])
+
+    async def test_the_campaigns_level_is_used_when_a_session_starts(self) -> None:
+        await self.campaigns.set_dm_screen_level(GUILD, self.campaign.id, "quiet")
+        ok, message = await self.start()
+        self.assertTrue(ok, message)
+        self.assertEqual(self.bot.tables[GUILD].screen_level, "quiet")
 
     async def test_a_fix_from_a_suggestion_is_shown_with_undo(self) -> None:
         table, _, _ = await self.fixed_from_a_suggestion()

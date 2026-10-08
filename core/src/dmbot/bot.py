@@ -27,6 +27,7 @@ from dmbot import install
 from dmbot.ai import AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL
 from dmbot.capture_log import CaptureLog, SessionTotals
 from dmbot.channel_access import (
     SAME_CHANNEL,
@@ -64,6 +65,7 @@ from dmbot.dm_screen import (
     peek_view,
     stop_listening_view,
 )
+from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen.name_questions import (
     FixUndoButton,
@@ -246,6 +248,7 @@ class Table:
     campaign_id: str | None = None
     campaign_name: str = ""
     dm_user_ids: frozenset[int] = frozenset()
+    screen_level: str = DEFAULT_DM_SCREEN_LEVEL  # how much DMbot says in the DM screen
     resumed: bool = False  # picked up again after a restart
     announce_resume: bool = True  # post "listening again" when voice is back
     # Asked privately about recording (or reminded) this session: at most once each.
@@ -942,6 +945,7 @@ class DMBot(commands.AutoShardedBot):
             campaign_id=campaign.id,
             campaign_name=campaign.name,
             dm_user_ids=campaign.dm_user_ids,
+            screen_level=campaign.dm_screen_level,
             transcript_channel_id=transcript_id,
             started_at=started_at,
         )
@@ -1261,6 +1265,7 @@ class DMBot(commands.AutoShardedBot):
             campaign_id=campaign.id,
             campaign_name=campaign.name,
             dm_user_ids=campaign.dm_user_ids,
+            screen_level=campaign.dm_screen_level,
             resumed=True,
             announce_resume=not recently,
             transcript_channel_id=self._usable_transcript(guild, campaign),
@@ -1508,8 +1513,11 @@ class DMBot(commands.AutoShardedBot):
             cleaned = result.text
             self._offer_question(table, utterance.user_id, utterance.start_ms, text, result)
             running = self.tables.get(table.guild_id) is table  # not one still finishing
-            if running and table.fix_notes.add(
-                utterance.user_id, utterance.start_ms, text, result.fixes
+            shown = screen_levels.allows(table.screen_level, screen_levels.FIX_NOTE)
+            if (
+                running
+                and shown
+                and table.fix_notes.add(utterance.user_id, utterance.start_ms, text, result.fixes)
             ):
                 self._redraw_fix_notes(table)
             named = mentions(table.name_lookup, cleaned)  # once per name per line
@@ -1549,6 +1557,8 @@ class DMBot(commands.AutoShardedBot):
                 vocabulary=table.vocabulary,
                 people=table.people,
                 scene=table.scene.scene(time.monotonic()).keys(),
+                # Not shown with Undo at quiet: then not made at all (never silent).
+                unsure=screen_levels.allows(table.screen_level, screen_levels.FIX_NOTE),
             )
         except Exception:
             now = time.monotonic()
@@ -1569,6 +1579,8 @@ class DMBot(commands.AutoShardedBot):
         answered any more."""
         if self.tables.get(table.guild_id) is not table or table.name_lookup is None:
             return
+        if not screen_levels.allows(table.screen_level, screen_levels.QUESTION):
+            return  # quiet: the words stay as heard
         now = time.monotonic()
         expired = table.questions.expire(now)
         if expired is not None:

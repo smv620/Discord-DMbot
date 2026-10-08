@@ -24,6 +24,15 @@ DM_SCREEN_VISIBILITY: dict[str, str] = {
 }
 DEFAULT_DM_SCREEN_VISIBILITY = "peek"
 
+# How much DMbot says in the DM screen (docs/PLAN.md, "How much DMbot says"; #504).
+QUIET, NORMAL, CHATTY = "quiet", "normal", "chatty"
+DM_SCREEN_LEVELS: dict[str, str] = {
+    QUIET: "Quiet: only what you ask for",
+    NORMAL: "Normal: questions and fixes, one at a time (recommended)",
+    CHATTY: "Chatty: also tells you what it noticed",
+}
+DEFAULT_DM_SCREEN_LEVEL = NORMAL
+
 DEFAULT_TARGET = "2024"
 DEFAULT_FALLBACK = "2014"
 
@@ -53,6 +62,8 @@ class Campaign:
     channel_number: int | None = None
     # The live transcript channel (#124); None until the first session.
     transcript_channel_id: int | None = None
+    # How much DMbot says in the DM screen (#504): quiet, normal or chatty.
+    dm_screen_level: str = DEFAULT_DM_SCREEN_LEVEL
 
     @property
     def last_active_at(self) -> int:
@@ -89,3 +100,8 @@ def check_rulesets(target: str, fallback: str) -> None:
 def check_dm_screen_visibility(value: str) -> None:
     if value not in DM_SCREEN_VISIBILITY:
         raise CampaignError("Please pick who can see the DM screen from the list.")
+
+
+def check_dm_screen_level(value: str) -> None:
+    if value not in DM_SCREEN_LEVELS:
+        raise CampaignError("Please pick how much DMbot says from the list.")

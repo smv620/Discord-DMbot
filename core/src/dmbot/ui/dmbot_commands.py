@@ -19,7 +19,13 @@ import discord
 from discord import app_commands
 
 from dmbot.campaigns import DEFAULT_DM_SCREEN_VISIBILITY, Campaign, CampaignError
-from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET, clean_name, name_key
+from dmbot.campaigns.models import (
+    DEFAULT_DM_SCREEN_LEVEL,
+    DEFAULT_FALLBACK,
+    DEFAULT_TARGET,
+    clean_name,
+    name_key,
+)
 from dmbot.campaigns.store import (
     MAX_BACKUP_BYTES,
     NOT_A_BACKUP,
@@ -271,6 +277,7 @@ class NewCampaignSettings(_Menu):
         self.fallback = DEFAULT_FALLBACK
         self.optional = True
         self.visibility = DEFAULT_DM_SCREEN_VISIBILITY
+        self.level = DEFAULT_DM_SCREEN_LEVEL
         self._build()
 
     def text(self) -> str:
@@ -279,7 +286,9 @@ class NewCampaignSettings(_Menu):
                 f"**New campaign: {self.name}**",
                 "Blue ✓ buttons are chosen (we recommend these). Tap another to change "
                 "it, then press **▶ Create campaign**.",
-                *logic.settings_summary(self.target, self.fallback, self.optional, self.visibility),
+                *logic.settings_summary(
+                    self.target, self.fallback, self.optional, self.visibility, self.level
+                ),
             ]
         )
 
@@ -315,6 +324,8 @@ class NewCampaignSettings(_Menu):
         self._choices(1, fallbacks, self.fallback, "fallback")
         self._choices(2, logic.OPTIONAL_RULES_CHOICES, "on" if self.optional else "off", "optional")
         self._choices(3, logic.visibility_choices(), self.visibility, "visibility")
+        # Discord allows 5 rows: how much DMbot says shares the last one with Create.
+        self._choices(4, logic.level_choices(), self.level, "level")
         self.add_item(
             _Button(
                 self._create,
@@ -339,6 +350,7 @@ class NewCampaignSettings(_Menu):
                 fallback_ruleset=self.fallback,
                 optional_rules_default=self.optional,
                 dm_screen_visibility=self.visibility,
+                dm_screen_level=self.level,
             )
         except CampaignError as exc:
             await _tell(interaction, str(exc))

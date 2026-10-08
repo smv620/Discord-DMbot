@@ -145,7 +145,9 @@ class MenuChoices(unittest.TestCase):
 
         lines = settings_summary("2024", "2014", True, "peek")
         for line, words in zip(
-            lines, ("Main rules", "If missing", "Optional rules", "DM screen"), strict=True
+            lines,
+            ("Main rules", "If missing", "Optional rules", "DM screen", "DMbot says"),
+            strict=True,
         ):
             self.assertTrue(line.startswith(f"• **{words}"), line)
 
