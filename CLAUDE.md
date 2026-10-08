@@ -49,7 +49,8 @@ CI runs all of the above on every pull request. Never merge red CI.
 DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude
 sessions work on this repo. **Each one has a name, and its name is its issue label:**
 `session: dev1`, `session: dev2`, `session: dev3`, `session: CloudDev`, `session: WebDev`,
-`session: RepoManager`, `session: Supervisor` (and `session: pycharm` when the owner's PC is used). **Assignments come from the issue
+`session: RepoManager`, `session: Supervisor` (and `session: pycharm` when the owner's PC is used;
+**pycharm is offline from 2026-10-08 until the owner says otherwise: assign nothing to it**). **Assignments come from the issue
 list:** an open issue labelled with your name is yours; take them lowest number first
 unless an issue says otherwise. Say which session you are in every issue and PR. More
 developers can be added by adding a label.
