@@ -71,8 +71,8 @@ def find_mentions(lookup: CampaignLookup, text: str, *, typed_names: bool = Fals
     other names, or a spelling the DM said means them. A secret name (and any shorter
     name inside it), a name DMbot only suggested, and words the DM said to keep as heard
     don't count. One find per entry per place. `typed_names`: a spelling the DM said
-    means a name they typed, not yet checked in 📝 Check new names, counts too (#503;
-    for fixing the line, not for counting who was named)."""
+    means a name not checked yet in 📝 Check new names (one they typed, #503) counts
+    too: for fixing the line, not for counting who was named."""
     words = list(WORD.finditer(text))
     keys = [name_key(w.group()) for w in words]  # once per word, not per group
     n = len(keys)

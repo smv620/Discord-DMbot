@@ -138,8 +138,9 @@ class WordingTest(unittest.TestCase):
         self.assertIn("Earlier lines stay as heard.", fixed)
         that_line = fixed_text("Marin", "Maren", line_fixed=True)
         self.assertIn("**Maren**, in that line and from now on", that_line)
-        self.assertIn("Older lines stay as heard.", that_line)
-        self.assertNotIn("Earlier", that_line)
+        self.assertIn("Earlier lines stay as heard.", that_line)
+        new = fixed_text("Marin", "Maerin", line_fixed=True, new=True)
+        self.assertIn("**Maerin** is new: it waits in 📝 Check new names.", new)
         self.assertIn('won\'t change "Marin" in this campaign', kept_text("Marin"))
         self.assertEqual(not_answered_text("Marin"), '⌛ Not answered: "Marin" stays as heard.')
         self.assertIn('"Marin" stays as heard again', undone_text("Marin"))
@@ -151,8 +152,14 @@ class WordingTest(unittest.TestCase):
         self.assertEqual(TYPED_MAX, 60)
         self.assertLessEqual(len(questions.TYPE_LABEL), 25)
         self.assertLessEqual(len(questions.FORM_TITLE), 45)
-        self.assertIn("Try again", questions.typed_problem("it has a |"))
-        self.assertIn("everyone in the server can read it", questions.TYPED_SECRET)
+        for typed in ["Mae | rin", "x" * 61, "   ", "a b c d e f g h i", "www.x.com", "Ma\x07rin"]:
+            with self.subTest(typed=typed):
+                self.assertIn("**Type it…** again", questions.typed_problem(typed) or "")
+        self.assertIsNone(questions.typed_problem("Hrothgar the Bold"))
+        self.assertIn("can read the transcript", questions.TYPED_SECRET)
+        late = questions.too_late_text("Maerin")
+        self.assertIn("**Maerin**", late)
+        self.assertIn("/dmbot names", late)
 
     def test_short_enough_for_a_phone(self) -> None:
         self.assertLessEqual(len(option_label("x" * 200)), 25)

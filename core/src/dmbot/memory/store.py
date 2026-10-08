@@ -1190,10 +1190,21 @@ class MemoryStore:
         that way, in one change (one Undo takes back both)."""
         name, heard = clean_text(name), clean_text(heard)
         key = lookup_key(heard)
-        lookup_key(name)  # too long: refused before anything is written
+        typed_key = lookup_key(name)  # too long: refused before anything is written
         async with self._write(guild_id, campaign_id, DM) as w:
             onto = await _load_ontology(w)
             onto.active_type("concept")
+            # Checked here, not only in the session's copy of the names: never a second
+            # copy of a name, and never a secret one written as a new public name.
+            cur = await w.conn.execute(
+                "SELECT 1 FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
+                " AND key = %s AND status <> 'rejected' AND entity_id IN"
+                + _LIVE_ENTITY_IDS
+                + " LIMIT 1",
+                (*w.ids, typed_key, *w.ids),
+            )
+            if await cur.fetchone() is not None:
+                raise MemoryRuleError("That name is already in this campaign.")
             row = await w.insert(
                 ENTITIES,
                 {

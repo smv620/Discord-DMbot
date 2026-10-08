@@ -138,6 +138,19 @@ class MishearingsTest(unittest.TestCase):
         self.assertEqual(result.text, "then Hrothgar swings")
         self.assertEqual(result.fixes[0].how, DM_FIX)
         self.assertEqual(mentions(names, "then Rothgar swings"), set())
+        self.assertEqual(mentions(names, result.text), set())  # what the bot counts
+
+    def test_an_answer_is_never_written_into_a_secret(self) -> None:
+        # #503: the DM's answer goes through the same check as every fix.
+        from dmbot.transcript.cleaner import safe_answer
+
+        names = lookup(more_aliases=(alias(THORIN, "Silas Vane", secret=True),))
+        heard = "then Silas Bane waits"
+        self.assertFalse(safe_answer(names, heard, (), 11, 15, "Vane"))  # makes the secret
+        self.assertTrue(safe_answer(names, heard, (), 11, 15, "Vale"))
+        typed_secret = "the hooded stranger"  # a typed name that is one
+        self.assertFalse(safe_answer(names, "then Marin waits", (), 5, 10, typed_secret))
+        self.assertTrue(safe_answer(names, "then Marin waits", (), 5, 10, "Maren"))
 
     def test_a_typed_name_is_never_written_as_a_secret(self) -> None:
         hidden = entity("j" * 32, "Vessa", "concept", PROPOSED)

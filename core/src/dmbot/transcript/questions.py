@@ -22,6 +22,7 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import Enum
 
+from dmbot.memory import name_list
 from dmbot.memory.models import name_key
 from dmbot.transcript.cleaner import Fix, Question
 
@@ -47,13 +48,29 @@ FORM_TITLE = "Type the name"
 FORM_FIELD = "The name, as it should be written"
 FORM_HINT = "For example: Hrothgar"
 TYPED_SECRET = (
-    "That's a secret name, so DMbot won't write it in the transcript (everyone in the "
-    "server can read it). Pick another answer, or ignore the question."
+    "That's a secret name. Everyone in the server can read the transcript, so DMbot "
+    "won't write it there. Pick another answer, or ignore the question."
 )
 TYPED_TWO = (
-    "Two names are written like that. Pick one of the buttons, or fix the names first: "
-    "`/dmbot names`."
+    "Two names in this campaign are spelled exactly like that, so DMbot can't tell which "
+    "you mean. Pick a button, or give one of them a different spelling in `/dmbot names`."
 )
+TYPED_CANT_CHECK = "DMbot can't check the names right now. Try again in a moment."
+TYPED_REFUSED = (
+    "DMbot couldn't add that name: it may already be one (perhaps a secret one). Pick a "
+    "button, or look it up in `/dmbot names`."
+)
+_AGAIN = "Press **Type it…** again and type just the name."
+TYPED_PROBLEMS = {
+    name_list.EMPTY: "No name was typed. Press **Type it…** again, or ignore the question.",
+    name_list.BAR: f"That has a | sign, which a name can't have. {_AGAIN}",
+    name_list.UNREADABLE: (
+        "That has characters DMbot can't read. Press **Type it…** again and type it in by hand."
+    ),
+    name_list.TOO_LONG: f"That's longer than {TYPED_MAX} characters. {_AGAIN}",
+    name_list.TOO_MANY_WORDS: f"That's more than {name_list.MAX_WORDS} words. {_AGAIN}",
+    name_list.LINK: f"That's a link, not a name. {_AGAIN}",
+}
 
 # Why the open question closed (an answer being saved needs to know).
 ANSWERED, EXPIRED_WHY, STOPPED, ENDED, NOT_POSTED = (
@@ -221,23 +238,37 @@ def keep_label(heard: str) -> str:
     return f'Keep "{_short(heard, LABEL_MAX - 7)}"'
 
 
-def fixed_text(heard: str, name: str, *, line_fixed: bool = False) -> str:
+def fixed_text(heard: str, name: str, *, line_fixed: bool = False, new: bool = False) -> str:
     """After the DM picked or typed a name (both already escaped). `line_fixed`: the line
-    that was asked about was fixed too."""
+    that was asked about was fixed too; `new`: a typed name DMbot didn't know."""
     if line_fixed:
-        return (
+        text = (
             f'✅ Got it: "{_short(heard)}" is now written **{_short(name)}**, in that line '
-            "and from now on in this campaign. Older lines stay as heard."
+            "and from now on in this campaign. Earlier lines stay as heard."
         )
+    else:
+        text = (
+            f'✅ Got it: from now on, "{_short(heard)}" is written **{_short(name)}** in '
+            "this campaign. Earlier lines stay as heard."
+        )
+    if new:
+        text += f"\n**{_short(name)}** is new: it waits in 📝 Check new names."
+    return text
+
+
+def typed_problem(typed: str) -> str | None:
+    """Why a typed name can't be used, in plain words (the names list's rules), or None."""
+    why = name_list.check_name(typed, TYPED_MAX)
+    return TYPED_PROBLEMS[why] if why is not None else None
+
+
+def too_late_text(typed: str) -> str:
+    """A typed answer that arrived after the question closed (`typed` already escaped):
+    what they typed, so it isn't lost."""
     return (
-        f'✅ Got it: from now on, "{_short(heard)}" is written **{_short(name)}** in this '
-        "campaign. Earlier lines stay as heard."
+        "⌛ This question closed before your answer arrived, so the words stay as heard. "
+        f"To add **{_short(typed)}**, use `/dmbot names`."
     )
-
-
-def typed_problem(why: str) -> str:
-    """A typed name that can't be saved (`why` from the names list's rules)."""
-    return f"That can't be saved as a name: {why}. Try again."
 
 
 def kept_text(heard: str) -> str:

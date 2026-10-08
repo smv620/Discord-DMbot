@@ -93,7 +93,6 @@ from dmbot.logs import log_context, set_log_context
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
-from dmbot.memory.name_list import check_name
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import PLAYER_CHARACTER, HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -102,7 +101,14 @@ from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcript import fix_notes
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import stream as transcript_lines
-from dmbot.transcript.cleaner import Cleaned, Vocabulary, clean, own_name, with_ending
+from dmbot.transcript.cleaner import (
+    Cleaned,
+    Vocabulary,
+    clean,
+    own_name,
+    safe_answer,
+    with_ending,
+)
 from dmbot.transcript.models import Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
@@ -126,6 +132,7 @@ TRANSCRIPT_FLUSH_S = 2.0
 TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this often
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
+EDIT_TIMEOUT_S = 5.0  # a transcript message edit, at most (it holds the post lock)
 HINT_PEOPLE_S = 5.0  # who's in the voice channel, for name hints: looked at this often
 HintPeople = tuple[tuple[str, ...], tuple[str, ...]]  # (at the table, agreed but not there)
 TRANSCRIPT_POST_TIMEOUT_S = 10.0  # one stuck post can't hold the others up for long
@@ -1746,8 +1753,12 @@ class DMBot(commands.AutoShardedBot):
                 edit = table.transcript.relabel(speaker, started_ms, text, time.monotonic())
                 if edit is not None:
                     message, content = edit
-                    with contextlib.suppress(discord.HTTPException):
-                        await message.edit(content=content, allowed_mentions=NO_PINGS)
+                    # Bounded: new lines wait for this lock (Discord may be slow).
+                    with contextlib.suppress(discord.HTTPException, TimeoutError):
+                        await asyncio.wait_for(
+                            message.edit(content=content, allowed_mentions=NO_PINGS),
+                            EDIT_TIMEOUT_S,
+                        )
         return found
 
     async def allow_fix_again(
@@ -1777,27 +1788,57 @@ class DMBot(commands.AutoShardedBot):
                 return table
         return None
 
-    def can_type_answer(self, guild_id: int, question_id: str, user_id: int) -> str | None:
-        """Before the "Type it…" form opens: why it can't (closed, or not the DM)."""
+    def can_type_answer(
+        self, guild_id: int, question_id: str, user_id: int
+    ) -> tuple[str | None, str]:
+        """Before the "Type it…" form opens: why it can't (closed, or not the DM), and
+        the words heard, to start the form with (one letter to fix on a phone)."""
         table = self._session_table(guild_id, question_id)
-        if table is None or not table.questions.is_open(question_id):
-            return name_questions.EXPIRED
+        asked = table.questions.open if table is not None else None
+        if table is None or asked is None or asked.id != question_id:
+            return name_questions.EXPIRED, ""
         if not table.is_dm(user_id):
-            return name_questions.ONLY_DM
-        return None
+            return name_questions.ONLY_DM, ""
+        if not self.consent.has_consent(guild_id, asked.speaker):
+            return name_questions.GONE, ""  # their words aren't shown again
+        return None, asked.heard
 
-    def _typed_name(self, table: Table, typed: str) -> tuple[str | None, str] | str:
+    async def _names_now(self, table: Table) -> CampaignLookup | None:
+        """The campaign's names as they are now (a name may have been made secret since
+        the session's copy), or None if they can't be loaded."""
+        if self.lookup is None:
+            return table.name_lookup
+        if table.campaign_id is None:
+            return None
+        try:
+            return await self.lookup.get(table.guild_id, table.campaign_id)
+        except Exception:
+            log.exception("Couldn't load the campaign's names to check an answer")
+            return None
+
+    def _typed_name(
+        self, lookup: CampaignLookup | None, asked: name_questions.Asked, typed: str
+    ) -> tuple[str | None, str] | str:
         """A name the DM typed (#503): (the known name's entry, how it's written), (None,
-        the typed name) for a name DMbot doesn't know yet, or why it can't be used."""
-        if len(typed) > name_questions.TYPED_MAX:
-            why: str | None = f"it's longer than {name_questions.TYPED_MAX} characters"
-        else:
-            why = check_name(typed) if typed else "it's empty"
+        the typed name) for a name DMbot doesn't know yet, or why it can't be used. A
+        secret name, or one that would stand next to a secret in the line, is refused:
+        the transcript is shared with the whole server."""
+        why = name_questions.typed_problem(typed)
         if why is not None:
-            return name_questions.typed_problem(why)
-        lookup = table.name_lookup
+            return why
         if lookup is None:
-            return None, typed
+            return name_questions.TYPED_CANT_CHECK
+        chosen = self._known_typed(lookup, typed)
+        if isinstance(chosen, str):
+            return chosen
+        written = with_ending(asked.heard, chosen[1])
+        if asked.line and not safe_answer(
+            lookup, asked.line, asked.fixes, asked.start, asked.end, written
+        ):
+            return name_questions.TYPED_SECRET
+        return chosen
+
+    def _known_typed(self, lookup: CampaignLookup, typed: str) -> tuple[str | None, str] | str:
         entries = lookup.by_key.get(name_key(typed), ())
         if any(e.secret for e in entries):  # never written in the transcript
             return name_questions.TYPED_SECRET
@@ -1821,17 +1862,26 @@ class DMBot(commands.AutoShardedBot):
         be taken down if its speaker stops being recorded; consent is checked before and
         after every wait. A correction the DM made stays if the speaker later stops
         being recorded: the DM wrote it, and it names no one."""
+        typed = " ".join((typed or "").split()) if pick == name_questions.TYPE else None
+        closed = name_questions.EXPIRED
+        if typed and name_questions.typed_problem(typed) is None:  # what they typed isn't lost
+            closed = name_questions.too_late_text(discord.utils.escape_markdown(typed))
         table = self._session_table(guild_id, question_id)
         if table is None or table.campaign_id is None or self.memory is None:
-            return name_questions.EXPIRED, True, None
+            return closed, True, None
         book = table.questions
-        if not book.is_open(question_id):
-            return name_questions.EXPIRED, True, None
+        if not book.is_open(question_id) or book.open is None:
+            return closed, True, None
         if not table.is_dm(user_id):
             return name_questions.ONLY_DM, False, None
         chosen: tuple[str | None, str] | None = None
-        if pick == name_questions.TYPE:
-            found = self._typed_name(table, " ".join((typed or "").split()))
+        if typed is not None and name_key(typed) == name_key(book.open.heard):
+            pick = name_questions.KEEP  # typed just as heard: keep it
+        elif typed is not None:
+            lookup = await self._names_now(table)
+            if not book.is_open(question_id) or book.open is None:  # closed meanwhile
+                return closed, True, None
+            found = self._typed_name(lookup, book.open, typed)
             if isinstance(found, str):  # can't be used: the question stays open
                 return found, False, None
             chosen = found
@@ -1870,7 +1920,11 @@ class DMBot(commands.AutoShardedBot):
                     guild_id, campaign_id, asked.heard, action=FIX, source=DM, entity_id=entity_id
                 )
                 batch = fixed.batch
-        except MemoryRuleError:  # the name was removed since: asking again won't help
+        except MemoryRuleError:
+            if chosen is not None and chosen[0] is None:  # a typed name it won't add
+                book.failed(question_id)
+                return name_questions.TYPED_REFUSED, False, None
+            # The name was removed since: asking again won't help.
             if book.is_open(question_id):
                 book.close(name_questions.ANSWERED, now())
                 table.question_message = None
@@ -1898,28 +1952,33 @@ class DMBot(commands.AutoShardedBot):
         if not self.consent.has_consent(guild_id, asked.speaker):
             return name_questions.GONE, True, undo
         md = discord.utils.escape_markdown
-        return name_questions.fixed_text(heard, md(name), line_fixed=line_fixed), True, undo
+        new = chosen[0] is None
+        answer = name_questions.fixed_text(heard, md(name), line_fixed=line_fixed, new=new)
+        return answer, True, undo
 
     async def _fix_asked_line(
         self, table: Table, asked: name_questions.Asked, name: str, undo: tuple[str, int] | None
     ) -> bool:
         """Write the answer into the line that was asked about (#503); Undo of the answer
-        puts it back (`answer_undone`). True if the line was found."""
+        puts it back (`answer_undone`). Never if that would put a secret name in the line
+        (checked with the names as they are now). True if the line was found."""
         if not asked.line:
             return False
+        lookup = await self._names_now(table)
         notes, speaker, started = table.fix_notes, asked.speaker, asked.started_ms
         written = with_ending(asked.heard, name)
-        more: tuple[tuple[int, int, str], ...] = ()
-        if undo is not None:
-            fixes = notes.still_fixed(speaker, started, asked.fixes)
-            notes.answered(
-                fix_notes.Answer(
-                    undo[1], speaker, started, asked.line, fixes, asked.start, asked.end, written
-                )
+        fixes = notes.still_fixed(speaker, started, asked.fixes)
+        if lookup is None or not safe_answer(
+            lookup, asked.line, fixes, asked.start, asked.end, written
+        ):
+            return False  # the rule is saved; this line stays as heard
+        batch = undo[1] if undo is not None else None  # None: nothing to undo
+        notes.answered(
+            fix_notes.Answer(
+                batch, speaker, started, asked.line, fixes, asked.start, asked.end, written
             )
-        else:  # nothing to undo: just this once
-            more = ((asked.start, asked.end, written),)
-        text = notes.words_now(speaker, started, asked.line, asked.fixes, more)
+        )
+        text = notes.words_now(speaker, started, asked.line, asked.fixes)
         return await self._rewrite_line(table, speaker, started, text)
 
     async def answer_undone(self, guild_id: int, campaign_id: str, batch: int) -> None:

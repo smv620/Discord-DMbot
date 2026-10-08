@@ -63,11 +63,13 @@ class NameQuestionButton(
             await _tell(interaction, questions.EXPIRED)
             return
         if self.pick == questions.TYPE:
-            why = bot.can_type_answer(self.guild_id, self.question_id, interaction.user.id)
+            why, heard = bot.can_type_answer(self.guild_id, self.question_id, interaction.user.id)
             if why is not None:
                 await _tell(interaction, why)
                 return
-            await interaction.response.send_modal(TypeNameForm(self.guild_id, self.question_id))
+            await interaction.response.send_modal(
+                TypeNameForm(self.guild_id, self.question_id, heard)
+            )
             return
         await interaction.response.defer()  # the answer edits this message
         await _answer(interaction, self.guild_id, self.question_id, self.pick)
@@ -84,9 +86,10 @@ class TypeNameForm(discord.ui.Modal):
         max_length=questions.TYPED_MAX,
     )
 
-    def __init__(self, guild_id: int, question_id: str) -> None:
+    def __init__(self, guild_id: int, question_id: str, heard: str = "") -> None:
         super().__init__(title=questions.FORM_TITLE)
         self.guild_id, self.question_id = guild_id, question_id
+        self.name.default = heard[: questions.TYPED_MAX] or None  # one letter to fix
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()  # the answer edits the question's message
@@ -209,10 +212,10 @@ def question_view(guild_id: int, asked: questions.Asked) -> discord.ui.View:
         view.add_item(
             NameQuestionButton(guild_id, asked.id, str(place), questions.option_label(name))
         )
+    view.add_item(NameQuestionButton(guild_id, asked.id, questions.TYPE, questions.TYPE_LABEL))
     view.add_item(
         NameQuestionButton(guild_id, asked.id, questions.KEEP, questions.keep_label(asked.heard))
     )
-    view.add_item(NameQuestionButton(guild_id, asked.id, questions.TYPE, questions.TYPE_LABEL))
     return view
 
 

@@ -811,6 +811,17 @@ class Undo(MemoryTest):
             lambda: self.memory.add_typed_name(GUILD_A, self.c, "Velka", "Velkka")
         )
 
+    async def test_a_typed_name_already_known_or_secret_is_refused(self) -> None:
+        a = await self.add("Belleros")
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "the Veiled One", kind="title", source="dm", secret=True
+        )
+        before = await self.snapshot()
+        for typed in ["Belleros", "the veiled one"]:
+            with self.subTest(typed=typed), self.assertRaises(MemoryRuleError):
+                await self.memory.add_typed_name(GUILD_A, self.c, "Marin", typed)
+        self.assertEqual(await self.snapshot(), before)  # nothing written
+
     async def test_every_operation_can_be_undone_and_redone(self) -> None:
         a, b, c = await self.add("Belleros"), await self.add("Cerric"), await self.add("Bell")
         bel = (

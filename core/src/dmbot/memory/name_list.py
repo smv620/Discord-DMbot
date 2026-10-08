@@ -174,12 +174,33 @@ def _problem(text: str) -> str | None:
     return None
 
 
-def check_name(text: str) -> str | None:
-    """Why one name can't be saved, with the list's rules (for a name typed on its own,
-    #503), or None if it's fine."""
+# Why one name typed on its own can't be saved (`check_name`).
+EMPTY, BAR, UNREADABLE, TOO_LONG, TOO_MANY_WORDS, LINK = (
+    "empty",
+    "bar",
+    "unreadable",
+    "too long",
+    "too many words",
+    "link",
+)
+
+
+def check_name(text: str, limit: int = NAME_MAX) -> str | None:
+    """Why one name typed on its own can't be saved, with the list's rules (#503): one
+    of EMPTY, BAR, UNREADABLE, TOO_LONG, TOO_MANY_WORDS or LINK; None if it's fine."""
+    if not text.strip():
+        return EMPTY
     if "|" in text:
-        return "it has a |. Type just the name"
-    return _problem(text)
+        return BAR
+    if any(unicodedata.category(c) == "Cc" for c in text):
+        return UNREADABLE
+    if len(text) > limit or len(name_key(text)) > limit:
+        return TOO_LONG
+    if len(text.split()) > MAX_WORDS:
+        return TOO_MANY_WORDS
+    if _LINK.search(text):
+        return LINK
+    return None
 
 
 def kind_of(word: str) -> str | None:

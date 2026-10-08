@@ -1076,6 +1076,65 @@ class SaveAndResume(SessionTests):
         await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
         self.assertIn(f"then {name} speaks", posted.edit.await_args.kwargs["content"])
 
+    async def test_undo_of_an_answer_puts_the_saved_line_back(self) -> None:
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        table.unsaved.take(lambda _: True)  # already saved
+        table.transcript_session_id = "s5"
+        asked = table.questions.open
+        assert asked is not None
+        _, _, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        assert undo is not None
+        await self.bot.answer_undone(GUILD, "another campaign", undo[1])  # not this one
+        saved: Any = self.bot.transcripts
+        self.assertEqual(saved.relabel_line.await_count, 1)
+        await self.bot.answer_undone(GUILD, table.campaign_id, undo[1])
+        self.assertEqual(saved.relabel_line.await_args.args[4], "then Marin speaks")
+
+    async def test_an_answer_already_saved_still_fixes_the_line(self) -> None:
+        table, _, _, memory = await self.asked_about_marin(saving=True)
+        memory.add_correction.return_value = MagicMock(batch=None)  # nothing to undo
+        asked = table.questions.open
+        assert asked is not None
+        _, name = asked.options[0]
+        text, _, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertIsNone(undo)
+        self.assertIn("in that line", text)
+        self.assertEqual(self.waiting_text(table), f"then {name} speaks")
+        self.assertEqual([a.batch for a in table.fix_notes.answers], [None])  # kept
+
+    async def test_someone_who_stops_while_the_answer_saves_keeps_their_line(self) -> None:
+        table, _, _, memory = await self.asked_about_marin(saving=True)
+        table.unsaved.take(lambda _: True)
+        table.transcript_session_id = "s5"
+        asked = table.questions.open
+        assert asked is not None
+
+        async def stop_meanwhile(*_: Any, **__: Any) -> Any:
+            self.bot.stop_recording(GUILD, PLAYER)
+            return MagicMock(batch=7)
+
+        memory.add_correction.side_effect = stop_meanwhile
+        text, _, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertNotIn("Marin", text)
+        saved: Any = self.bot.transcripts
+        saved.relabel_line.assert_not_awaited()  # their line isn't touched
+
+    async def test_an_answer_that_would_write_a_secret_leaves_the_line(self) -> None:
+        from dmbot.memory.models import CONFIRMED, Alias
+
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        # Made secret since the question was asked: "Maren Speaks" is a secret title.
+        hidden = Alias("b" * 16 + "1" * 16, "b" * 32, "Maren Speaks", "maren speaks",
+                       "title", None, True, CONFIRMED, (), "dm", 0)  # fmt: skip
+        table.name_lookup = self.two_alike(hidden)
+        asked = table.questions.open
+        assert asked is not None
+        pick = next(str(i) for i, (_, n) in enumerate(asked.options) if n == "Maren")
+        text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, pick, DM)
+        self.assertTrue(done)  # the rule is saved
+        self.assertNotIn("in that line", text)
+        self.assertEqual(self.waiting_text(table), "then Marin speaks")  # not written
+
     async def test_a_typed_name_dmbot_doesnt_know_becomes_a_new_name(self) -> None:
         table, _, _, memory = await self.asked_about_marin(saving=True)
         memory.add_typed_name = AsyncMock(return_value=MagicMock(batch=42))
@@ -1086,6 +1145,7 @@ class SaveAndResume(SessionTests):
         )
         self.assertTrue(done)
         self.assertIn("**Maerin**", text)
+        self.assertIn("is new: it waits in 📝 Check new names", text)
         memory.add_typed_name.assert_awaited_once_with(GUILD, table.campaign_id, "Marin", "Maerin")
         memory.add_correction.assert_not_awaited()
         self.assertEqual(undo, (table.campaign_id, 42))
@@ -1112,9 +1172,9 @@ class SaveAndResume(SessionTests):
         assert asked is not None
         for typed, expected in [
             ("The Veiled One", name_questions.TYPED_SECRET),
-            ("Maren | NPC", "Type just the name"),
+            ("Maren | NPC", "| sign"),
             ("x" * 61, "longer than 60"),
-            ("   ", "empty"),
+            ("   ", "No name was typed"),
         ]:
             with self.subTest(typed=typed):
                 text, done, _ = await self.bot.answer_name_question(
@@ -1130,13 +1190,47 @@ class SaveAndResume(SessionTests):
         memory.add_typed_name = AsyncMock(return_value=MagicMock(batch=42))
         asked = table.questions.open
         assert asked is not None
-        self.assertEqual(self.bot.can_type_answer(GUILD, asked.id, PLAYER), name_questions.ONLY_DM)
-        self.assertIsNone(self.bot.can_type_answer(GUILD, asked.id, DM))
+        who = self.bot.can_type_answer(GUILD, asked.id, PLAYER)
+        self.assertEqual(who, (name_questions.ONLY_DM, ""))
+        self.assertEqual(self.bot.can_type_answer(GUILD, asked.id, DM), (None, "Marin"))
         self.bot.stop_recording(GUILD, PLAYER)  # while the form was open
         text, _, _ = await self.bot.answer_name_question(GUILD, asked.id, "type", DM, "Maerin")
-        self.assertIn("closed", text)
+        self.assertIn("closed before your answer arrived", text)
+        self.assertNotIn("Marin", text)  # their words aren't shown again
         memory.add_typed_name.assert_not_awaited()
-        self.assertEqual(self.bot.can_type_answer(GUILD, asked.id, DM), name_questions.EXPIRED)
+        self.assertEqual(self.bot.can_type_answer(GUILD, asked.id, DM)[0], name_questions.EXPIRED)
+
+    async def test_a_typed_name_the_store_refuses_leaves_the_question_open(self) -> None:
+        from dmbot.memory.models import MemoryRuleError
+
+        table, _, _, memory = await self.asked_about_marin()
+        memory.add_typed_name = AsyncMock(side_effect=MemoryRuleError("taken"))
+        asked = table.questions.open
+        assert asked is not None
+        text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "type", DM, "Vessa")
+        self.assertEqual((text, done), (name_questions.TYPED_REFUSED, False))
+        self.assertTrue(table.questions.is_open(asked.id))
+
+    async def test_a_typed_name_needs_the_names_checked(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        memory.add_typed_name = AsyncMock()
+        table.name_lookup = None  # couldn't be loaded
+        asked = table.questions.open
+        assert asked is not None
+        text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "type", DM, "Vessa")
+        self.assertEqual((text, done), (name_questions.TYPED_CANT_CHECK, False))
+        memory.add_typed_name.assert_not_awaited()
+
+    async def test_typed_just_as_heard_keeps_it(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        memory.add_typed_name = AsyncMock()
+        asked = table.questions.open
+        assert asked is not None
+        text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "type", DM, "marin")
+        self.assertTrue(done)
+        self.assertEqual(memory.add_correction.await_args.kwargs["action"], "keep")
+        memory.add_typed_name.assert_not_awaited()
+        self.assertIn("won't change", text)
 
     async def test_keep_as_heard_is_saved(self) -> None:
         table, _, _, memory = await self.asked_about_marin()

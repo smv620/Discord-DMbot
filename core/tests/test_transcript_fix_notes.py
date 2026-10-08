@@ -69,6 +69,25 @@ class FixNotesTest(unittest.TestCase):
         self.assertEqual(book.still_fixed(MIA, 1000, fixes()), fixes()[:1])
         self.assertEqual(book.still_fixed(DEE, 1000, fixes()), fixes())  # another line
 
+    def test_answers_and_notes_stay_in_step(self) -> None:
+        book = FixNotes()
+        (first,) = book.add(MIA, 1000, HEARD, fixes()[:1])
+        book.answered(Answer(41, MIA, 1000, HEARD, fixes()[:1], 19, 26, "Bellaros"))
+        book.undo(first.id)  # after the answer: the answer no longer carries that fix
+        book.notes.clear()  # its notes let go
+        answer = book.take_back(41)
+        assert answer is not None
+        self.assertEqual(book.words_now(MIA, 1000, HEARD, answer.fixes), HEARD)
+        # An answer on a line that still has notes outlives the newest-answers limit.
+        book = FixNotes()
+        (note,) = book.add(MIA, 1000, HEARD, fixes()[:1])
+        book.answered(Answer(41, MIA, 1000, HEARD, fixes()[:1], 19, 26, "Bellaros"))
+        for batch in range(ANSWERS_KEPT + 1):
+            book.answered(Answer(100 + batch, DEE, batch, HEARD, (), 5, 14, "Hrothgar"))
+        self.assertEqual(book.line_text(note), "then Hrothgar and Bellaros left")
+        book.answered(Answer(None, MIA, 2000, HEARD, (), 5, 14, "Hrothgar"))  # no Undo
+        self.assertEqual(book.words_now(MIA, 2000, HEARD, ()), "then Hrothgar and Beleros left")
+
     def test_answers_are_let_go_and_go_with_their_speaker(self) -> None:
         book = FixNotes()
         for batch in range(ANSWERS_KEPT + 1):

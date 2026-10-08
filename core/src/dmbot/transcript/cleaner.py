@@ -41,7 +41,7 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field, replace
 
 from dmbot.memory.lookup import CampaignLookup, NameEntry
-from dmbot.memory.models import CONFIRMED, name_key
+from dmbot.memory.models import CONFIRMED, PROPOSED, name_key
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.memory.scene import PLAYER_CHARACTER, WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
@@ -172,12 +172,16 @@ def likeness(a: str, b: str) -> float:
 
 def own_name(lookup: CampaignLookup, entity_id: str, *, typed: bool = False) -> str | None:
     """An entry's own name as written, if it's a confirmed name that isn't secret.
-    `typed`: a name the DM typed for a misheard word counts before it's checked (#503)."""
+    `typed`: a name DMbot only suggested counts too, for a DM's rule pointing at it (a
+    name they typed for a misheard word, #503, not checked yet)."""
     entity = lookup.entities.get(entity_id)
-    if entity is None or (entity.status != CONFIRMED and not typed):
+    if entity is None:
+        return None
+    waiting = typed and entity.status == PROPOSED
+    if entity.status != CONFIRMED and not waiting:
         return None
     for entry in lookup.by_key.get(name_key(entity.name), ()):
-        if entry.entity_id == entity_id and (entry.confirmed or typed) and not entry.secret:
+        if entry.entity_id == entity_id and (entry.confirmed or waiting) and not entry.secret:
             return entry.text
     return None
 
@@ -247,6 +251,23 @@ def clean(
     if near.ran_out:
         log.debug("Secret-name check ran out for a line: %d fix(es) kept", len(fixes))
     return Cleaned(text, tuple(fixes), questions)
+
+
+def safe_answer(
+    lookup: CampaignLookup, heard: str, fixes: tuple[Fix, ...], start: int, end: int, written: str
+) -> bool:
+    """Whether a name the DM picked or typed may be written for heard[start:end] in a
+    line that already has `fixes` (#503): the same check as every fix, on the line as
+    written, so no secret name stands there, or next to it ("Silas" + "Vane")."""
+    answer = Fix(start, end, heard[start:end], written, "", DM_FIX)
+    line = sorted([*(f for f in fixes if f.end <= start or end <= f.start), answer],
+                  key=lambda f: f.start)  # fmt: skip
+    words = list(WORD.finditer(heard))
+    near = _SecretChecks()
+    if _near_secret(lookup, words, start, end, near):
+        return False
+    _, kept = _without_secrets(lookup, heard, line, near)
+    return answer in kept and not near.ran_out
 
 
 def _around(heard: str, start: int, end: int, reach: int = 30) -> str:

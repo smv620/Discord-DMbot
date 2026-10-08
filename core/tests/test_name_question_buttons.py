@@ -39,7 +39,7 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         three = questions.Asked("0a1b2c3d", 8, "Marin", (*ASKED.options, ("d" * 32, "Mara")), 0.0)
         labels = [item.item.label for item in question_view(GUILD, three).children]  # type: ignore[attr-defined]
         self.assertEqual(len(labels), 5)  # one row on a phone: Discord's limit
-        self.assertEqual(labels[-1], "Type it…")
+        self.assertEqual(labels[-2:], ["Type it…", 'Keep "Marin"'])  # writing a name first
         self.assertTrue(all(len(label) <= 25 for label in labels))
         for custom_id in [*ids, undo_view("c" * 32, 99).children[0].item.custom_id]:  # type: ignore[attr-defined]
             with self.subTest(custom_id=custom_id):
@@ -85,7 +85,8 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_type_it_opens_the_form_for_the_dm(self) -> None:
         bot = MagicMock(
-            answer_name_question=AsyncMock(), can_type_answer=MagicMock(return_value=None)
+            answer_name_question=AsyncMock(),
+            can_type_answer=MagicMock(return_value=(None, "Marin")),
         )
         it = interaction(client=bot)
         it.user = MagicMock(id=DM_ID)
@@ -94,12 +95,13 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         form = it.response.send_modal.await_args.args[0]
         self.assertIsInstance(form, TypeNameForm)
         self.assertEqual(form.name.max_length, 60)
+        self.assertEqual(form.name.default, "Marin")  # starts with what was heard
         self.assertLessEqual(len(form.title), 45)  # Discord's limits
         self.assertLessEqual(len(questions.FORM_FIELD), 45)
         bot.answer_name_question.assert_not_awaited()  # nothing saved until it's sent
 
     async def test_type_it_says_why_not_without_a_form(self) -> None:
-        bot = MagicMock(can_type_answer=MagicMock(return_value=questions.ONLY_DM))
+        bot = MagicMock(can_type_answer=MagicMock(return_value=(questions.ONLY_DM, "")))
         it = interaction(client=bot)
         await NameQuestionButton(GUILD, ASKED.id, "type", "Type it…").callback(it)
         self.assertEqual(it.response.send_message.await_args.args[0], questions.ONLY_DM)
@@ -118,7 +120,7 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(it.edit_original_response.await_args.kwargs["content"], "✅ Got it")
 
     async def test_a_typing_mistake_answers_privately(self) -> None:
-        problem = questions.typed_problem("it has a |. Type just the name")
+        problem = questions.typed_problem("Mae | rin")
         bot = MagicMock(answer_name_question=AsyncMock(return_value=(problem, False, None)))
         it = interaction(client=bot)
         form = TypeNameForm(GUILD, ASKED.id)

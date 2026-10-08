@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from dmbot.memory.models import name_key
 from dmbot.transcript.cleaner import Fix
@@ -70,7 +70,7 @@ class Note:
 class Answer:
     """An answer to "Did they mean…?" that fixed the line it was about (#503)."""
 
-    batch: int  # the saved change its Undo takes back
+    batch: int | None  # the saved change its Undo takes back (None: nothing to undo)
     speaker: int
     started_ms: int
     heard: str  # the whole line as heard
@@ -157,6 +157,14 @@ class FixNotes:
         ]
         for n in same:
             n.undone = True
+        # The answers on that line no longer carry it, even once its notes are let go.
+        gone = {n.fix for n in same}
+        self.answers = [
+            replace(a, fixes=tuple(f for f in a.fixes if f not in gone))
+            if a.line == note.line
+            else a
+            for a in self.answers
+        ]
         return same
 
     def line_text(self, note: Note) -> str:
@@ -185,12 +193,17 @@ class FixNotes:
         return rewrite(heard, [*edits, *more])
 
     def answered(self, answer: Answer) -> None:
-        self.answers = [*self.answers, answer][-ANSWERS_KEPT:]
+        """Keep the newest answers, and any on a line that still has notes (its text
+        needs them)."""
+        answers = [*self.answers, answer]
+        lines = {n.line for n in self.notes}
+        newest = answers[-ANSWERS_KEPT:]
+        self.answers = [a for a in answers[:-ANSWERS_KEPT] if a.line in lines] + newest
 
     def take_back(self, batch: int) -> Answer | None:
         """Its Undo was pressed: the answer no longer fixes its line (returned, so the
         line can be put back), or None if it's too old or another session's."""
-        found = next((a for a in self.answers if a.batch == batch), None)
+        found = next((a for a in self.answers if a.batch is not None and a.batch == batch), None)
         if found is not None:
             self.answers.remove(found)
         return found

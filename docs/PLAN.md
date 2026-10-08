@@ -1205,7 +1205,7 @@ consent check just made still holds:
 - **"Did they mean…?":**
   - **When:** a word that sounds like two or three confirmed names stays as heard, and
     the DM screen asks: "❓ **DMbot heard Mia say "Marin".** Did they mean… Not sure?
-    Ignore this and it stays as heard. [Maren] [Marron] [Keep "Marin"]". Each name must
+    Ignore this and it stays as heard. [Maren] [Marron] [Type it…] [Keep "Marin"]". Each name must
     be spelled at least 0.7 alike (0.8 for a player's character), none may be secret or
     only suggested, and the words must not be next to a secret name. No scene is
     needed to ask. A question about a longer run of words never blocks a sure fix of
@@ -1232,22 +1232,28 @@ consent check just made still holds:
     without repeating their words.
   - **When it closes:** questions live with the running session. When it ends, the
     open one is closed; after a restart, a press says it's closed.
-  - **Type it… (built 2026-10-08, #503):** a fourth button opens a form, "The name, as
-    it should be written" (DM only, at most 60 characters, the names list's rules: no
-    `|`, at most 8 words, no links). A name or other name DMbot knows (spelled the same
-    way) means that name, written its own way; a name it doesn't know becomes a new
-    name waiting in 📝 Check new names, with the fix rule, in one change (one Undo takes
-    back both). The DM's rule fixes later lines even before that name is checked; it
-    doesn't count as said until it is. A secret name is refused (the transcript is
-    shared with the whole server), and so is a spelling two names share. A typing
-    mistake answers privately and the question stays open. Consent is checked again
-    when the form is sent.
+  - **Type it… (built 2026-10-08, #503):** a button after the names opens a form, "The
+    name, as it should be written", starting with the words heard (DM only, at most 60
+    characters, the names list's rules: no `|`, at most 8 words, no links). A name or
+    other name DMbot knows (spelled the same way) means that name, written its own way;
+    the words exactly as heard mean Keep; a name it doesn't know becomes a new name
+    waiting in 📝 Check new names, with the fix rule, in one change (one Undo takes back
+    both), and the answer says it's waiting there. Any DM rule pointing at a name not
+    checked yet fixes later lines silently (the DM wrote it, so no fix note); the name
+    doesn't count as said until it's checked. Refused, with the question left open: a
+    secret name, a name that would make or stand next to a secret one in the line, a
+    spelling two names share, and a name already in the campaign (checked again when
+    saving, secret names included). The names are checked as they are now, not the
+    session's copy. A typing mistake answers privately, saying to press Type it… again.
+    An answer that arrives after the question closed repeats the typed name and points
+    to `/dmbot names`. Consent is checked again when the form is sent.
   - **The line that was asked about (built 2026-10-08, #503):** the answer is written
     into that line too: saved, waiting, and in the transcript channel within ~30 s
     (the same paths as a fix's Undo). The answer says "in that line and from now on…
-    Older lines stay as heard." Undo of the answer puts that line back while the
-    session still runs (after a restart only the rule is taken back). Keep changes
-    nothing in the line.
+    Earlier lines stay as heard." Never if it would put a secret name in the line (the
+    same check as every fix, on the line as written): the rule is saved, the line stays
+    as heard. Undo of the answer puts that line back while the session still runs
+    (after a restart only the rule is taken back). Keep changes nothing in the line.
   - **Not yet:** the quiet verbosity level.
 - **Cleaned and both downloads:**
   - **At the end of a session:** the message has **[📄 Cleaned]**, **[🎙 As heard]** and
