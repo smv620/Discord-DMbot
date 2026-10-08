@@ -234,14 +234,15 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
         by_tag[raw["table"]].append(raw)
     _check_terms(by_tag)
-    # A sheet belongs to a player character someone plays, as everywhere else (#723).
-    # One left on an entry with no player (an undone merge) is shown nowhere: dropped,
-    # not a reason to refuse the backup. One for an entry not in the file is damage.
+    # A sheet belongs to the player playing the character, as everywhere else (#723).
+    # One left from another player, or on an entry with no player (an undone merge), is
+    # shown nowhere: dropped, not a reason to refuse the backup. One for an entry not in
+    # the file is damage.
     entities = {r["id"]: r for r in by_tag["entity"]}
     if any(r["entity_id"] not in entities for r in by_tag["sheet"]):
         raise CampaignError(DAMAGED)
     by_tag["sheet"] = [
-        r for r in by_tag["sheet"] if entities[r["entity_id"]]["played_by"] is not None
+        r for r in by_tag["sheet"] if entities[r["entity_id"]]["played_by"] == r["player_id"]
     ]
     return by_tag
 
@@ -251,7 +252,9 @@ def _checked_sheet(raw: dict[str, Any]) -> dict[str, Any]:
     goes through the same allow list as one read from D&D Beyond, so a hand-edited file
     can't store anything else (CLAUDE.md, IP rule)."""
     url, snapshot, source, fetched = raw["url"], raw["sheet"], raw["source"], raw["fetched_at"]
-    if not is_id(raw["entity_id"]):
+    if not is_id(raw["entity_id"]) or not _valid("played_by", raw["player_id"]):
+        raise CampaignError(DAMAGED)
+    if raw["player_id"] is None or raw["player_id"] <= 0:
         raise CampaignError(DAMAGED)
     if url is not None and (
         not isinstance(url, str) or sheets.sheet_url(sheets.character_id(url) or 0) != url

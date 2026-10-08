@@ -254,7 +254,7 @@ class NamesHome(_Menu):
         self.add_item(_Button(self._add_many, label="📥 Add many", style=grey, row=1))
         self.add_item(_Button(self._download, label="📤 Download all", style=grey, row=1))
         # Players' D&D Beyond sheets (#723): read again now, not only at /dmbot start.
-        self.add_item(_Button(self._sheets, label="📜 Refresh sheets", style=grey, row=1))
+        self.add_item(_Button(self._sheets, label="📜 Refresh sheets", style=grey, row=3))
         if shown:
             self.open = _Select(
                 self._open,
@@ -674,7 +674,7 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
             return
         changed(interaction, campaign)
         sheet_note = ""
-        if self.sheet.value.strip() and _bot(interaction).sheets is not None:
+        if self.sheet.value.strip():
             from dmbot.ui.sheets import dm_link
 
             await _answer_first(interaction)  # reading D&D Beyond takes a moment

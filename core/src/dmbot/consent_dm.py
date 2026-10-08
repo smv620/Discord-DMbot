@@ -153,14 +153,19 @@ def request_text(
 
 
 SHEET_LABEL = "📜 My character sheet"
+# Next to the 📜 button (#723). It explains an optional button and adds nothing anyone
+# agrees to, so it doesn't change the terms version (decided on #781).
+SHEET_NOTE = (
+    f"Optional: if you play on D&D Beyond, press {SHEET_LABEL} so DMbot spells your spell "
+    "names better. It doesn't change recording."
+)
 
 
 def confirmed_text(server: str, granted_at: int) -> str:
     return (
         f"✅ You said yes on {_date(granted_at)}. DMbot now records you in "
         f"**{_plain(server)}**, this session and later ones. You'll get a short reminder "
-        "each time you play. Press 🛑 below to stop any time. Play on D&D Beyond? Press "
-        f"{SHEET_LABEL} so the transcript spells your spells right."
+        f"each time you play. Press 🛑 below to stop any time. {SHEET_NOTE}"
     )
 
 
@@ -185,7 +190,7 @@ def reminder_text(
     return (
         f"🎙️ DMbot is recording you in {where}**{_plain(server)}** (you said yes on "
         f"{_date(granted_at)}). Anyone in this server can read the text.{outside} {AI_SHORT} "
-        "Press 🛑 below to stop any time."
+        f"Press 🛑 below to stop any time. {SHEET_NOTE}"
     )
 
 

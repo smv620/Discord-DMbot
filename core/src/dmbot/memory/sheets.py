@@ -61,9 +61,12 @@ NOT_A_LINK = (
     "Beyond and copy the address from the top of the page."
 )
 NOT_PUBLIC = (
-    "DMbot can't read that sheet yet. On D&D Beyond, open the character, press Edit, then "
-    "Settings, and set Character Privacy to Public. Then press **Link my D&D Beyond sheet** "
-    "again."
+    "DMbot can't read that sheet yet. On D&D Beyond:\n"
+    "1. Open the character and press **Edit**.\n"
+    "2. Press **Settings**.\n"
+    "3. Set **Character Privacy** to **Public**.\n"
+    "Then press **Link my D&D Beyond sheet** again, or just wait: DMbot tries again when the "
+    "next session starts."
 )
 
 

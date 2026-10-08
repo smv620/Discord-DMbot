@@ -42,27 +42,39 @@ log = logging.getLogger(__name__)
 
 BUTTON_LABEL = SHEET_LABEL  # the same button, built where the consent messages are
 LINK_LABEL = "Link my D&D Beyond sheet"
-TELL_LABEL = "Tell DMbot about my character"
-FORGET_LABEL = "Forget sheet"
+TELL_LABEL = "Type in my character"
+FORGET_LABEL = "Forget my sheet"
 NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "
     "`/dmbot names`, then **🧑 Add a player's character**."
 )
 NOT_AVAILABLE = "Character sheets aren't available on DMbot right now. Try again later."
+NOT_AVAILABLE_DM = (
+    "The character is saved, but character sheets aren't available on DMbot right now, so "
+    "the link wasn't kept. Ask the player to link it later with 📜 My character sheet."
+)
 NOT_A_MEMBER = "You're not in that server any more, so there's no character to change."
 NOT_YOURS = "That isn't your character any more. Press 📜 My character sheet again."
 PICK = "Which character?"
-ONLY_YOU = "Only you and the campaign's DMs see the link."
-WAIT = "Give it a few seconds, then try again."
-FORGOTTEN = "Done. DMbot forgot **{name}**'s sheet."
+ONLY_YOU = "DMbot shows the link only to you and your DM. It's also in the campaign's backup file."
+WAIT = "Give it 20 seconds, then try again."
+FORGOTTEN = (
+    "Done. DMbot forgot **{name}**'s sheet: the link and what it read. You can link it "
+    "again any time."
+)
 TYPED_SAVED = (
-    "✅ Saved. The transcript will spell {names} right. Linking a D&D Beyond sheet later "
-    "replaces what you typed."
+    "✅ Saved. DMbot now listens for {names}. Linking a D&D Beyond sheet later replaces "
+    "what you typed."
+)
+TYPED_REPLACED = " This replaced your D&D Beyond link."
+TYPED_BAD_LEVEL = (
+    "Nothing was saved: the level is a number from 1 to 20. Press **Type in my character** "
+    "to try again."
 )
 TYPED_DROPPED = " ({n} left out: DMbot keeps up to 20 names of up to 60 letters.)"
 LINKED_READ = (
-    "✅ Linked. DMbot read **{name}**'s sheet{who}. The transcript will spell its spell, "
-    "feature and item names right. DMbot reads the sheet again when each session starts."
+    "✅ Linked. DMbot read **{name}**'s sheet{who}. DMbot now listens for its spell, "
+    "feature and item names, and reads the sheet again when each session starts."
 )
 LINKED_UNREAD = (
     "Linked, but DMbot couldn't reach D&D Beyond just now. It tries again when the next "
@@ -70,11 +82,19 @@ LINKED_UNREAD = (
 )
 LINK_CHANGED = "The sheet was changed while DMbot read it. Press 📜 My character sheet again."
 DM_BAD_LINK = (
-    "That D&D Beyond link didn't look right, so it wasn't linked. Open the character on "
-    "D&D Beyond, copy the address from the top of the page, and link it from the "
-    "character's card or ask the player to (📜 My character sheet)."
+    "The character is saved, but that D&D Beyond link didn't look right, so DMbot didn't "
+    "link it. Ask the player to press 📜 My character sheet in DMbot's private message "
+    "and paste their link."
 )
-DM_NOT_LINKED = "The character is saved, but its sheet couldn't be linked just now."
+DM_NOT_PUBLIC = (
+    "The character is saved and linked, but its sheet isn't set to Public, so DMbot can't "
+    "read it. Ask the player to set it to Public on D&D Beyond. DMbot tries again when the "
+    "next session starts."
+)
+DM_NOT_LINKED = (
+    "The character is saved, but its sheet couldn't be linked just now. Ask the player to "
+    "link it with 📜 My character sheet in DMbot's private message."
+)
 REFRESH_WAIT = "The sheets were read less than a minute ago. Try again in a moment."
 NO_SHEETS = "No player has linked a sheet in this campaign yet."
 LINK_COOLDOWN_S = 20  # per person: each Link reads D&D Beyond once
@@ -117,21 +137,21 @@ def _too_soon(last: dict[Any, float], key: Any, gap: float) -> bool:
 def panel_text(character: PlayerCharacter, sheet: CharacterSheet | None, *, link: bool) -> str:
     """The player's panel."""
     head = f"📜 **{_md(character.name)}** ({_md(character.campaign_name)})"
-    return f"{head}: {sheet_status(sheet, link=link)}\n{ONLY_YOU}"
+    return f"{head}: {sheet_status(sheet, link=link, mine=True)}\n{ONLY_YOU}"
 
 
-def sheet_status(sheet: CharacterSheet | None, *, link: bool) -> str:
-    """ "no sheet yet…" / "linked to D&D Beyond, read 2 days ago · Elf · Bard 3" / "you
-    told DMbot about this character"."""
+def sheet_status(sheet: CharacterSheet | None, *, link: bool, mine: bool = False) -> str:
+    """No sheet yet / linked to D&D Beyond, read 2 days ago · Elf · Bard 3 / told DMbot
+    about this character. `mine`: the player's own panel."""
     if sheet is None:
         return (
-            "no sheet yet. Link it so the transcript spells your spell and feature names "
-            "right. No D&D Beyond? Tell DMbot about your character instead."
+            "no sheet yet. Link it so DMbot listens for your spell and feature names. No D&D "
+            f"Beyond? Press **{TELL_LABEL}** instead."
         )
     who = sheets.who(sheet.sheet) if sheet.sheet else ""
     who = f" · {_md(who)}" if who else ""
     if sheet.url is None:
-        return f"the player told DMbot about this character{who}."
+        return f"{'you' if mine else 'the player'} told DMbot about this character{who}."
     where = f"[D&D Beyond](<{sheet.url}>)" if link else "D&D Beyond"
     if sheet.sheet is None or sheet.fetched_at is None:
         return f"linked to {where}, not read yet (DMbot reads it when a session starts)."
@@ -169,13 +189,15 @@ async def link_and_read(
                 snapshot = await sheets.fetch(character)
             except sheets.SheetError as exc:
                 log.info("A new sheet link for entry %s couldn't be read yet", entity_id)
-                return sheets.NOT_PUBLIC if exc.refused else LINKED_UNREAD
+                if exc.refused:
+                    return DM_NOT_PUBLIC if player is None else sheets.NOT_PUBLIC
+                return LINKED_UNREAD
             now = int(time.time())
             saved = await store.save(guild_id, campaign_id, entity_id, snapshot, now, url=url)
     finally:
         bot.sheets_changed(guild_id, campaign_id)  # a new link drops the old names too
     if not saved:  # forgotten or linked again while it was read
-        return LINK_CHANGED
+        return LINK_CHANGED if player is not None else DM_NOT_LINKED
     who = sheets.who(snapshot)
     return LINKED_READ.format(name=_md(snapshot["name"]), who=f" ({_md(who)})" if who else "")
 
@@ -418,27 +440,34 @@ class TypedForm(discord.ui.Modal, title="Tell DMbot about your character"):
         await _failed(interaction, error)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        level = int(self.level.value) if self.level.value.strip().isdigit() else 0
+        raw = self.level.value.strip()
+        level = int(raw) if raw.isdecimal() else 0
         if not 1 <= level <= sheets.LEVEL_MAX:
-            await _tell(interaction, "The level is a number from 1 to 20.")
+            await _tell(interaction, TYPED_BAD_LEVEL)
             return
         c = self.character
         typed = [n.strip() for n in self.names.value.replace(";", ",").split(",") if n.strip()]
         snapshot = sheets.typed(
-            c.name,
+            logic.shorten(c.name, sheets.NAME_MAX),  # a long character name still fits
             species=self.species.value,
             class_name=self.class_name.value,
             level=level,
             names=typed,
         )
         if snapshot is None:  # can't happen with a name, but never save a bad one
-            await _tell(interaction, "DMbot couldn't keep that. Check the class name.")
+            await _tell(
+                interaction,
+                f"Nothing was saved. Check the class name, then press **{TELL_LABEL}** again.",
+            )
             return
         store = _store(interaction)
         assert store is not None
         await _answer_first(interaction)
         if not await _still_member(interaction, self.guild_id):
             return
+        before = await store.sheet(
+            self.guild_id, c.campaign_id, c.entity_id, player=interaction.user.id
+        )
         try:
             await store.save(
                 self.guild_id,
@@ -454,6 +483,8 @@ class TypedForm(discord.ui.Modal, title="Tell DMbot about your character"):
         _bot(interaction).sheets_changed(self.guild_id, c.campaign_id)
         kept = snapshot["features"]
         said = TYPED_SAVED.format(names="those names" if kept else "your character's details")
+        if before is not None and before.url is not None:
+            said += TYPED_REPLACED
         if len(kept) < len(typed):
             said += TYPED_DROPPED.format(n=len(typed) - len(kept))
         await show_panel(interaction, self.guild_id, c, note=said)
@@ -470,10 +501,12 @@ async def dm_link(
     character = sheets.character_id(raw)
     if character is None:
         return DM_BAD_LINK
+    if _bot(interaction).sheets is None:
+        return NOT_AVAILABLE_DM
     try:
         return await link_and_read(_bot(interaction), guild_id, campaign_id, entity_id, character)
-    except Exception:
-        log.exception("Couldn't link a sheet from Add a player's character")
+    except Exception as exc:  # never the text: it can quote a row
+        log.error("Couldn't link a sheet from Add a player's character (%s)", type(exc).__name__)
         return DM_NOT_LINKED
 
 
@@ -505,11 +538,13 @@ async def refresh_all(interaction: discord.Interaction, campaign_id: str, guild_
     read = len(linked) - len(unread)
     more = (
         f" Couldn't read: {', '.join(f'**{_md(n)}**' for n in unread)} (set to private, or "
-        "D&D Beyond didn't answer). DMbot keeps what it read before."
+        "D&D Beyond didn't answer). DMbot keeps what it read before. Ask those players to "
+        "set their sheet to Public on D&D Beyond."
         if unread
         else ""
     )
-    await _tell(interaction, f"📜 Read {read} of {len(linked)} sheets.{more}")
+    total = f"{len(linked)} sheet" + ("" if len(linked) == 1 else "s")
+    await _tell(interaction, f"📜 Read {read} of {total}.{more}")
 
 
 async def dm_unlink(

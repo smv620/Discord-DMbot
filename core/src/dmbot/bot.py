@@ -848,6 +848,17 @@ class DMBot(commands.AutoShardedBot):
         )
         return sent
 
+    async def _secret_keys(self, guild_id: int, campaign_id: str) -> frozenset[str] | None:
+        """The campaign's secret names, as keys (for leaving them out of a log line), or
+        None if they can't be known just now."""
+        if self.lookup is None:
+            return frozenset()
+        try:
+            lookup = await self.lookup.get(guild_id, campaign_id)
+        except Exception:
+            return None
+        return frozenset(name_key(n.text) for n in lookup.names if n.secret)
+
     def sheets_changed(self, guild_id: int, campaign_id: str) -> None:
         """A sheet was linked, read, typed or unlinked: a session running for that
         campaign uses the new names from its next clip on (#723)."""
@@ -883,17 +894,23 @@ class DMBot(commands.AutoShardedBot):
                         return
                     table.sheet_hints = tuple(sheet_hint_names(found))
                     linked = sum(s.url is not None for s in found)
-                    if found:
-                        # Only names read from D&D Beyond (game words, at most 15): never
-                        # what a player typed, a link or a character's name.
-                        read = sheet_hint_names([s for s in found if s.url is not None])
-                        log.info(
-                            "Character sheets: %d linked, %d names in the hints; from D&D "
-                            "Beyond: %s",
-                            linked,
-                            len(table.sheet_hints),
-                            ", ".join(read) or "none",
+                    # Once a session. Only names read from D&D Beyond (game words, at
+                    # most 15), never one that is also a secret name: never what a player
+                    # typed, a link or a character's name.
+                    secret = await self._secret_keys(guild_id, campaign_id)
+                    read = [
+                        name
+                        for name in sheet_hint_names(
+                            [s for s in found if s.sheet and s.sheet.get("source") == "dndbeyond"]
                         )
+                        if secret is not None and name_key(name) not in secret
+                    ]
+                    log.info(
+                        "Character sheets: %d linked, %d names in the hints; from D&D Beyond: %s",
+                        linked,
+                        len(table.sheet_hints),
+                        ", ".join(read) or "none",
+                    )
             except Exception as exc:  # never the text: it can quote a row (links, names)
                 log.error("Couldn't load the campaign's character sheets (%s)", type(exc).__name__)
 

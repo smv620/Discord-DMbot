@@ -62,18 +62,18 @@ class SheetStore:
         player's own panel; the DM's forms leave it out)."""
         url = sheets.sheet_url(character)
         async with self._db.guild(guild_id) as conn:
-            await self._require_character(conn, guild_id, campaign_id, entity_id, player)
+            plays = await self._require_character(conn, guild_id, campaign_id, entity_id, player)
+            # The snapshot stays only for the same link by the same player.
+            same = "character_sheets.url = EXCLUDED.url AND character_sheets.player_id = %s"
             await conn.execute(
-                "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url)"
-                " VALUES (%s, %s, %s, %s)"
+                "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, player_id)"
+                " VALUES (%s, %s, %s, %s, %s)"
                 " ON CONFLICT (guild_id, campaign_id, entity_id) DO UPDATE SET url = EXCLUDED.url,"
-                " sheet = CASE WHEN character_sheets.url = EXCLUDED.url"
-                "  THEN character_sheets.sheet END,"
-                " source = CASE WHEN character_sheets.url = EXCLUDED.url"
-                "  THEN character_sheets.source END,"
-                " fetched_at = CASE WHEN character_sheets.url = EXCLUDED.url"
-                "  THEN character_sheets.fetched_at END",
-                (guild_id, campaign_id, entity_id, url),
+                " player_id = EXCLUDED.player_id,"
+                f" sheet = CASE WHEN {same} THEN character_sheets.sheet END,"
+                f" source = CASE WHEN {same} THEN character_sheets.source END,"
+                f" fetched_at = CASE WHEN {same} THEN character_sheets.fetched_at END",
+                (guild_id, campaign_id, entity_id, url, plays, plays, plays, plays),
             )
 
     async def save(
@@ -103,15 +103,15 @@ class SheetStore:
                     (Jsonb(cleaned), cleaned["source"], now, guild_id, campaign_id, entity_id, url),
                 )
                 return cur.rowcount == 1
-            await self._require_character(conn, guild_id, campaign_id, entity_id, player)
+            plays = await self._require_character(conn, guild_id, campaign_id, entity_id, player)
             await conn.execute(
                 "INSERT INTO character_sheets"
-                " (guild_id, campaign_id, entity_id, url, sheet, source, fetched_at)"
-                " VALUES (%s, %s, %s, NULL, %s, %s, %s)"
+                " (guild_id, campaign_id, entity_id, url, sheet, source, fetched_at, player_id)"
+                " VALUES (%s, %s, %s, NULL, %s, %s, %s, %s)"
                 " ON CONFLICT (guild_id, campaign_id, entity_id) DO UPDATE SET url = NULL,"
                 " sheet = EXCLUDED.sheet, source = EXCLUDED.source,"
-                " fetched_at = EXCLUDED.fetched_at",
-                (guild_id, campaign_id, entity_id, Jsonb(cleaned), cleaned["source"], now),
+                " fetched_at = EXCLUDED.fetched_at, player_id = EXCLUDED.player_id",
+                (guild_id, campaign_id, entity_id, Jsonb(cleaned), cleaned["source"], now, plays),
             )
             return True
 
@@ -146,6 +146,8 @@ class SheetStore:
                 " WHERE s.guild_id = %s AND s.campaign_id = %s"
                 "  AND (%s::text IS NULL OR s.entity_id = %s)"
                 "  AND e.status NOT IN ('merged', 'rejected') AND e.played_by IS NOT NULL"
+                # Only the sheet of whoever plays it now: never a previous player's.
+                "  AND s.player_id = e.played_by"
                 " ORDER BY lower(e.name), s.entity_id",
                 (guild_id, campaign_id, entity_id, entity_id),
             )
@@ -197,9 +199,10 @@ class SheetStore:
         campaign_id: str,
         entity_id: str,
         player: int | None = None,
-    ) -> None:
-        # Only a player character can be "played by" someone (the memory store checks
-        # that when it's set), so a player is enough to know it's one.
+    ) -> int:
+        """Who plays it (refused unless someone does, and with `player`, them). Only a
+        player character can be "played by" someone (the memory store checks that when
+        it's set), so a player is enough to know it's one."""
         cur = await conn.execute(
             "SELECT played_by, status FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = %s FOR SHARE",
@@ -213,3 +216,4 @@ class SheetStore:
             or (player is not None and row["played_by"] != player)
         ):
             raise SheetRefused(NOT_A_CHARACTER)
+        return int(row["played_by"])

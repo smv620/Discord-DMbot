@@ -433,6 +433,79 @@ class SaveAndResume(SessionTests):
         refresh.assert_not_awaited()
         self.assertEqual(table.sheet_hints, ("Old Spell",))
 
+    def typed_sheet(self, entity: str, *spells: str) -> CharacterSheet:
+        snapshot = sheets.clean(
+            {"v": 1, "source": "typed", "name": "Testa", "spells": list(spells)}
+        )
+        return CharacterSheet(entity, "Testa", PLAYER, None, snapshot, 1)
+
+    async def test_an_older_hints_load_finishing_last_never_wins(self) -> None:
+        await self.start()
+        table = self.bot.tables[GUILD]
+        first = asyncio.Event()
+        calls = 0
+
+        async def sheets_now(*_: Any, **__: Any) -> list[CharacterSheet]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await first.wait()  # the older load is slow
+                return [self.typed_sheet("0" * 32, "Old Spell")]
+            return [self.typed_sheet("0" * 32, "New Spell")]
+
+        self.bot.sheets = MagicMock(sheets=AsyncMock(side_effect=sheets_now))
+        older = asyncio.ensure_future(self.bot._sheet_hints(table, refresh=False))
+        await asyncio.sleep(0)
+        await self.bot._sheet_hints(table, refresh=False)  # the newer one
+        first.set()
+        await older
+        self.assertEqual(table.sheet_hints, ("New Spell",))
+
+    async def test_a_refresh_overlapped_by_a_change_loads_again(self) -> None:
+        await self.start()
+        table = self.bot.tables[GUILD]
+        state = {"now": [self.typed_sheet("0" * 32, "Kept Spell")]}
+        self.bot.sheets = MagicMock(sheets=AsyncMock(side_effect=lambda *a, **k: state["now"]))
+        reading, done = asyncio.Event(), asyncio.Event()
+
+        async def slow_refresh(*_: Any, **__: Any) -> list[CharacterSheet]:
+            reading.set()
+            await done.wait()
+            return [self.typed_sheet("0" * 32, "Read Before The Change")]
+
+        with patch("dmbot.bot.refresh_sheets", slow_refresh):
+            run = asyncio.ensure_future(self.bot._sheet_hints(table, refresh=True))
+            await asyncio.wait_for(reading.wait(), 2)
+            state["now"] = [self.typed_sheet("0" * 32, "After The Change")]
+            assert table.campaign_id is not None
+            self.bot.sheets_changed(GUILD, table.campaign_id)  # e.g. the player typed theirs in
+            done.set()
+            await run
+            for _ in range(20):
+                await asyncio.sleep(0)
+        self.assertEqual(table.sheet_hints, ("After The Change",))
+
+    async def test_the_start_log_line_never_holds_typed_names_links_or_secrets(self) -> None:
+        await self.start()
+        table = self.bot.tables[GUILD]
+        read = sheets.clean(
+            {"v": 1, "source": "dndbeyond", "name": "Testa", "spells": ["Test Spell", "Hidden One"]}
+        )
+        linked = CharacterSheet("0" * 32, "Testa", PLAYER, sheets.sheet_url(42), read, 1)
+        typed = self.typed_sheet("1" * 32, "Typed By A Player")
+        self.bot.sheets = MagicMock(sheets=AsyncMock(return_value=[linked, typed]))
+        self.bot._secret_keys = AsyncMock(return_value=frozenset({"hidden one"}))  # type: ignore[method-assign]
+        with (
+            patch("dmbot.bot.refresh_sheets", AsyncMock(return_value=[linked, typed])),
+            self.assertLogs("dmbot.bot", "INFO") as logs,
+        ):
+            await self.bot._sheet_hints(table, refresh=True)
+        (line,) = [o for o in logs.output if "Character sheets:" in o]
+        self.assertIn("1 linked", line)
+        self.assertIn("Test Spell", line)
+        for never in ("Typed By A Player", "Hidden One", "dndbeyond.com", "Testa"):
+            self.assertNotIn(never, line)
+
     async def test_a_sheet_store_failure_logs_only_its_kind(self) -> None:
         await self.start()
         table = self.bot.tables[GUILD]

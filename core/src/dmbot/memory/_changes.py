@@ -58,7 +58,9 @@ ENTITIES = Table(
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
 SHEETS = Table(
-    "character_sheets", "entity_id", ("entity_id", "url", "sheet", "source", "fetched_at")
+    "character_sheets",
+    "entity_id",
+    ("entity_id", "url", "sheet", "source", "fetched_at", "player_id"),
 )
 ALIASES = Table(
     "memory_aliases",

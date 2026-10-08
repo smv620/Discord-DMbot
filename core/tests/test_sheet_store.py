@@ -93,9 +93,10 @@ class Linking(SheetTest):
         with self.assertRaises(pg_errors.CheckViolation):
             async with self.db.guild(GUILD_A) as conn:
                 await conn.execute(
-                    "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url)"
-                    " VALUES (%s, %s, %s, 'https://evil.example/characters/1')",
-                    (GUILD_A, self.c, self.pc),
+                    "INSERT INTO character_sheets"
+                    " (guild_id, campaign_id, entity_id, url, player_id)"
+                    " VALUES (%s, %s, %s, 'https://evil.example/characters/1', %s)",
+                    (GUILD_A, self.c, self.pc, PLAYER),
                 )
 
 
@@ -181,6 +182,39 @@ class PlayersOwn(SheetTest):
         restored = await self.campaigns.import_backup(GUILD_B, backup, DM)  # not refused
         self.assertEqual(await self.count("character_sheets", GUILD_B), 0)
         self.assertIsNotNone(restored)
+
+
+class ChangingHands(SheetTest):
+    async def reassign(self, to: int | None) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET played_by = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (to, GUILD_A, self.c, self.pc),
+            )
+
+    async def test_the_next_player_never_sees_the_last_ones_sheet(self) -> None:
+        await self.linked()
+        url = sheets.sheet_url(CHARACTER)
+        await self.sheets.save(GUILD_A, self.c, self.pc, self.sheet_data, 5, url=url)
+        await self.reassign(PLAYER + 1)
+        self.assertEqual(await self.sheets.sheets(GUILD_A, self.c), [])
+        self.assertIsNone(await self.sheets.sheet(GUILD_A, self.c, self.pc, player=PLAYER + 1))
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        self.assertEqual(await self.sheets.sheets(GUILD_B, restored.id), [])
+        # The new player links their own: nothing of the last one's stays.
+        await self.sheets.link(GUILD_A, self.c, self.pc, CHARACTER, player=PLAYER + 1)
+        (theirs,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertEqual((theirs.played_by, theirs.sheet), (PLAYER + 1, None))
+
+    async def test_the_same_after_an_undo_then_a_reassignment(self) -> None:
+        await self.linked()
+        await self.reassign(None)  # as an undone merge leaves it
+        await self.reassign(PLAYER + 1)
+        self.assertEqual(await self.sheets.sheets(GUILD_A, self.c), [])
+        await self.reassign(PLAYER)  # back to its own player: theirs again
+        self.assertEqual(len(await self.sheets.sheets(GUILD_A, self.c)), 1)
 
 
 class Isolation(SheetTest):

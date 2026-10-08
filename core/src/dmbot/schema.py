@@ -586,6 +586,23 @@ CHARACTER_SHEETS = f"""
     );
     """ + _isolate("character_sheets")
 
+SHEET_PLAYER = """
+    -- Who linked or typed in a character's sheet (#723 review): the player playing it
+    -- then. A sheet is shown and used only while that same person plays the character,
+    -- so a character given to someone else never shows the last player's link or
+    -- details (whichever way it changed hands, an undo included). Rows from before this
+    -- belong to whoever plays the character now. Migrations run with no server set, so
+    -- row-level security hides every row: the backfill opens the table for itself.
+    ALTER TABLE character_sheets ADD COLUMN player_id BIGINT;
+    CREATE POLICY migrate_backfill ON character_sheets FOR ALL USING (true) WITH CHECK (true);
+    UPDATE character_sheets s SET player_id = e.played_by
+        FROM memory_entities e
+        WHERE e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id AND e.id = s.entity_id;
+    DELETE FROM character_sheets WHERE player_id IS NULL;
+    DROP POLICY migrate_backfill ON character_sheets;
+    ALTER TABLE character_sheets ALTER COLUMN player_id SET NOT NULL;
+    """
+
 SHARED_CONFIRMATIONS = f"""
     -- Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule:
     -- "Record who confirmed and when"; #252): one row per confirmation, what it was for
@@ -1060,6 +1077,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0026_feedback", FEEDBACK),
     ("0027_handover_expiry", HANDOVER_EXPIRY),
     ("0028_character_sheets", CHARACTER_SHEETS),
+    ("0029_sheet_player", SHEET_PLAYER),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
