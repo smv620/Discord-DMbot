@@ -688,7 +688,7 @@ class CampaignStore:
         return None if row is None else _to_offer(row)
 
     async def confirm_delivery(
-        self, guild_id: int, offer: HandoverOffer, now: int, message_id: int | None = None
+        self, guild_id: int, offer: HandoverOffer, now: int, message_id: int
     ) -> None:
         """The private message went out: the offer is sent. Only while this claim (the
         one in `offer`) still holds: a send that took longer than CLAIM_SECONDS may
