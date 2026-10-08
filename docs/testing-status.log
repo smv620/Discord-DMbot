@@ -62,6 +62,11 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   migration (needs #668's 0022). Deploy: rebuild core.
   Check: ⚙️ Settings shows the owner; Hand over to a test member sends them the
   message; Accept moves the campaign to their plan.
+- CloudDev, PR #712 (#598 item 4): Add many gives one name at most 50 other and 50
+  secret names, and a list at most 5,000 new ones in all; only what the list adds counts.
+  No migration. Deploy: rebuild core. Check: Add many with one name given 51 other names
+  says "Nothing was added. … has more than 50 other names in this list…"; Download all,
+  then upload that file again: nothing is refused.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
