@@ -37,8 +37,11 @@ from dmbot.db import Conn, Database
 # consent_dm.RENEWED to say what changed. Version 2: anyone in the server can read and
 # download the transcript (#124, #125, #132). Every yes saved before versions were
 # recorded counts as version 1, even the few given under the version-2 wording on the
-# test server: we can't tell them apart, so asking again is the safe choice.
-TERMS_VERSION = 2
+# test server: we can't tell them apart, so asking again is the safe choice. Version 3:
+# DMbot's helpers have an AI company (Anthropic) read the written-down text to give the
+# DM notes, not used to train their AI (#52; for every helper, not one feature). If a
+# provider or key ever trains on the data, the wording changes and this goes up again.
+TERMS_VERSION = 3
 # How someone said yes: the button in DMbot's private message, or in the reply to
 # /consent give in the server.
 ConsentMethod = Literal["private_message", "consent_command"]

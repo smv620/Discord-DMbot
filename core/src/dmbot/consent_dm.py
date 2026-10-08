@@ -92,10 +92,16 @@ def _date(timestamp: int) -> str:
 # Says what changed in the current consent.TERMS_VERSION; rewrite it when that goes up.
 # It explains rather than adds terms, so it isn't part of the pinned wording.
 RENEWED = (
-    "**What's new:** anyone in this server can read and download the text DMbot writes. "
-    "DMbot is asking everyone who said yes before this was added to choose again. It "
-    "won't record you unless you say yes."
+    "**What's new:** DMbot's helper now has an AI company (Anthropic) read the text to give "
+    "your DM notes. It isn't used to train their AI. DMbot is asking everyone who said yes "
+    "before this was added to choose again. It won't record you unless you say yes."
 )
+# The AI that reads the text, said once for every helper (#52; TERMS_VERSION 3).
+AI_NOTE = (
+    "DMbot's helper reads that text to give your DM notes. For that, the text goes to an AI "
+    "company (Anthropic). It isn't used to train their AI."
+)
+AI_SHORT = "An AI (Anthropic) reads it to give your DM notes; it isn't used to train their AI."
 
 
 def renewed_text(names: list[str]) -> str | None:
@@ -132,7 +138,7 @@ def request_text(
         "decides anything. Your DM does.",
         f"• **{CONSENT_LABEL}:** DMbot records what you say and turns it into text. "
         "Anyone in this server can read and download that text. It stays there even if you "
-        "stop later.",
+        f"stop later. {AI_NOTE}",
         f"• **{DECLINE_LABEL}:** DMbot ignores your voice. You can still play as normal.",
         "DMbot is just for your game. Please don't use it or its text for anything else.",
         "A yes is remembered for this server. If you say no, DMbot asks again next session.",
@@ -170,7 +176,7 @@ def reminder_text(
     outside = f" {outside_note(company)}" if cloud else ""
     return (
         f"🎙️ DMbot is recording you in {where}**{_plain(server)}** (you said yes on "
-        f"{_date(granted_at)}). Anyone in this server can read the text.{outside} "
+        f"{_date(granted_at)}). Anyone in this server can read the text. {AI_SHORT}{outside} "
         "Press 🛑 below to stop any time."
     )
 

@@ -12,8 +12,8 @@ from dmbot.consent_dm import request_text
 # both values here. A pure typo fix may keep the version: update only the fingerprint.
 # The "What's new" note for people asked again (consent_dm.RENEWED) explains a change
 # rather than adding terms, so it isn't part of the fingerprint.
-PINNED_VERSION = 2
-PINNED_FINGERPRINT = "5828adf54f32889ddc06b20a689049fb843e651f9ab606519f562277ce391599"
+PINNED_VERSION = 3
+PINNED_FINGERPRINT = "0a9728eb43153a127ffe9918ef621f9edbc880e3e42028b30d5ab13518514981"
 
 
 def fingerprint() -> str:
@@ -32,6 +32,20 @@ class TermsVersion(unittest.TestCase):
             "The consent request changed. Bump consent.TERMS_VERSION if what people agree "
             "to changed, then update PINNED_VERSION and PINNED_FINGERPRINT.",
         )
+
+    def test_the_request_and_reminder_say_an_ai_reads_the_text(self) -> None:
+        # #52: said once for every helper, in the request and in each session's reminder.
+        from dmbot.consent_dm import reminder_text
+
+        request = request_text("Server", voice=None, dm=None, cloud=False)
+        self.assertIn(
+            "DMbot's helper reads that text to give your DM notes. For that, the text goes "
+            "to an AI company (Anthropic). It isn't used to train their AI.",
+            request,
+        )
+        reminder = reminder_text("Server", "Table", 1_700_000_000)
+        self.assertIn("An AI (Anthropic) reads it to give your DM notes", reminder)
+        self.assertIn("isn't used to train their AI", reminder)
 
     def test_the_request_says_who_can_read_it(self) -> None:
         self.assertIn(
