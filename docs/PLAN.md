@@ -1519,9 +1519,26 @@ admin makes, not the default. Grants live in their own table, never in `entitlem
 stays the payment company's truth; wherever DMbot asks "does this person's plan work, and
 with what caps", a grant or the free list counts, and the better of a grant and a paid plan
 wins. A grant ends on its end date or when revoked, and the person falls back to whatever
-they pay for. Grants and revocations are logged (who, what, when, ids only). Nobody sees a
+they pay for. Grants and revocations are logged (who, what, when: Discord ids and the
+admin's own email). Nobody sees a
 price or a payment button while a grant covers them; the bot and the account page say "Free
-access". Deleting an account deletes its grant.
+access". Deleting an account deletes its grant. *Built, part 1 (#771, dev2):* the free
+list is read at start by the bot and the web API (only its count is logged); grants live
+in `access_grants` (migration 0030; one row per Discord id, no link to `web_users`) with
+an add-only `access_log` (Discord ids, and the admin's own email: the one email it
+holds), both written only through `Database.grant_writer()`, which only `dmbot.web.grants`
+opens (a test checks); the one exception is deleting an account, which deletes the
+person's own grant (`own_delete`). A person reads only their own grant.
+`entitlements.effective()` is the one answer every plan rule asks (`plan_works` today;
+the hours meter and campaign cap when they come). `/me` gains `access: {kind, endsOn?,
+stillPaying?, paidPlan?}` with one kind for people, "free", whether from the list or a
+grant (people see "Free access", never why); `stillPaying` when a paid plan still works
+alongside, so the page can offer to stop paying. Checkout and Try It answer
+`has_free_access` for covered people (a covered person's one trial isn't used up). *The
+hours meter (#437 part 2), decided:* the free list has no meter; a Guild-level grant has
+Guild's hours, its month running from the day the grant started (as a paid plan's runs
+from its billing date), and a grant that ends mid-month just stops; a grant overlapping a
+paid plan uses the larger caps and the paid plan's month.
 **Admin sign-in:** only addresses in `ADMIN_EMAILS` (server settings) may sign in, either with
 Google ("Sign in with Google", verified email only) or with that email and an admin password
 whose hash (argon2id) is in the server settings, never in the database or the repository; a
@@ -1660,7 +1677,21 @@ parser and the one-GET fetch (`dmbot.memory.sheets`), the background refresh at 
 start` (kept names at once, fresh ones when read; not again after a restart), and
 backups (`sheet` rows; a restored snapshot goes through the same allow list). Up to 15
 sheet names join the hints right after the characters, taking turns between characters,
-never one that is also a secret name. The buttons and forms come in the second half.
+never one that is also a secret name. *Second half:* one **📜 My character sheet** button
+on the player's consent confirmation and each session's reminder opens a private panel
+for their character (picking one if they play several in the server): Link my D&D Beyond
+sheet (read at once; "set to Public" if refused), Type in my character (the typed
+fallback), Forget my sheet. A sheet records who linked or typed it (migration 0029) and is
+shown and used only while that person plays the character, so a character given to
+someone else never shows the last player's sheet. The DM's "Add a player's character"
+form takes an optional
+link; a player character's card shows "📜 Sheet: linked to D&D Beyond, read …" (the
+address only to the campaign's DMs) with 📜 Forget sheet; the names panel's 📜 Refresh
+sheets reads them all again (at most once a minute per campaign). A merge moves the
+sheet to the kept character unless it has its own (then the merged one's is
+forgotten). The panel and forms act only while that person still plays the character
+and is still in the server. The log lists only names read from D&D Beyond, never typed
+ones.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify

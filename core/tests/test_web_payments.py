@@ -13,7 +13,7 @@ import httpx
 
 from dmbot import entitlements
 from dmbot.config import ConfigError
-from dmbot.web import accounts, entitlements_writer
+from dmbot.web import accounts, entitlements_writer, grants
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider, PaymentEvent
 from dmbot.web.settings import load_web_settings
@@ -547,6 +547,21 @@ class Payments(DatabaseTest):
             self.assertEqual(
                 (response.status_code, response.json()), (400, {"error": "unknown_plan"})
             )
+
+    async def test_free_access_never_checks_out(self) -> None:
+        # #771: someone the free access covers sees no price and can't pay.
+        admin = "admin@example.invalid"
+        await grants.give(self.db, admin, ALICE.id, "guild", ends_at=None, note="", now=self.now)
+        response = await self.post("/billing/checkout", {"plan": "table"})
+        self.assertEqual(
+            (response.status_code, response.json()), (409, {"error": "has_free_access"})
+        )
+        # Nor uses up their one Try It (#771).
+        trial = await self.post("/plan/try-it")
+        self.assertEqual((trial.status_code, trial.json()), (409, {"error": "has_free_access"}))
+        self.assertIsNone(await entitlements.get(self.db, ALICE.id))
+        await grants.revoke(self.db, "admin@example.invalid", ALICE.id, now=self.now)
+        self.assertEqual((await self.post("/billing/checkout", {"plan": "table"})).status_code, 200)
 
     async def test_the_first_month_of_table_after_try_it_is_discounted_once(self) -> None:
         plain = (await self.post("/billing/checkout", {"plan": "table"})).json()["url"]

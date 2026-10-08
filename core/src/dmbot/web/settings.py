@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from dmbot.config import ConfigError
+from dmbot.entitlements import parse_free_users
 from dmbot.web.admin_hash import decode_hash
 
 REQUIRED = (
@@ -67,6 +68,8 @@ class WebSettings:
     host: str = "0.0.0.0"  # inside its container; nothing is published to the internet
     port: int = 8080
     session_days: int = 30
+    # The owner's own Discord accounts: free access, no caps (#771). Never logged.
+    free_users: frozenset[int] = field(default=frozenset(), repr=False)
 
     @property
     def site_origin(self) -> str:
@@ -193,6 +196,10 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
             " or set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or empty ADMIN_EMAILS to keep"
             " the admin page off."
         )
+    try:
+        free_users = parse_free_users(get("DMBOT_FREE_USERS"))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     return WebSettings(
         database_url=get("DATABASE_URL"),
         discord_client_id=get("DISCORD_CLIENT_ID"),
@@ -203,6 +210,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         host=get("WEB_API_HOST") or "0.0.0.0",
         port=port,
         session_days=session_days,
+        free_users=free_users,
         payment_provider=provider,
         payment_webhook_secret=webhook_secret.encode("utf-8"),
         any_db_role=any_db_role,

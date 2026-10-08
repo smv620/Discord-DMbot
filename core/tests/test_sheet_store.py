@@ -8,11 +8,15 @@ from typing import Any
 
 from psycopg import errors as pg_errors
 
-from dmbot.campaigns import CampaignError
+from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
+from dmbot.db import Database, drop_schema
 from dmbot.memory import sheets
 from dmbot.memory.sheet_refresh import refresh
 from dmbot.memory.sheet_store import SheetRefused, SheetStore
+from dmbot.memory.store import MemoryStore
+from dmbot.schema import MIGRATIONS
+from tests.pg import TEST_URL, DatabaseTest
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, MemoryTest
 from tests.test_sheets import answer
 
@@ -93,9 +97,10 @@ class Linking(SheetTest):
         with self.assertRaises(pg_errors.CheckViolation):
             async with self.db.guild(GUILD_A) as conn:
                 await conn.execute(
-                    "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url)"
-                    " VALUES (%s, %s, %s, 'https://evil.example/characters/1')",
-                    (GUILD_A, self.c, self.pc),
+                    "INSERT INTO character_sheets"
+                    " (guild_id, campaign_id, entity_id, url, player_id)"
+                    " VALUES (%s, %s, %s, 'https://evil.example/characters/1', %s)",
+                    (GUILD_A, self.c, self.pc, PLAYER),
                 )
 
 
@@ -113,6 +118,122 @@ class Size(SheetTest):
         )
         assert biggest is not None
         self.assertTrue(await self.sheets.save(GUILD_A, self.c, self.pc, biggest, 5))
+
+
+class Finding(SheetTest):
+    async def test_a_players_characters_in_the_server_or_one_campaign(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Another", DM)).id
+        pc2 = await self.add("Testa Two", campaign=other, type="player_character", played_by=PLAYER)
+        await self.add("Someone", type="player_character", played_by=PLAYER + 1)
+        found = await self.sheets.characters_of(GUILD_A, PLAYER)
+        self.assertEqual(
+            [(c.campaign_name, c.name) for c in found],
+            [("Another", "Testa Two"), ("Frozen Wastes", "Testa")],
+        )
+        (only,) = await self.sheets.characters_of(GUILD_A, PLAYER, other)
+        self.assertEqual(only.entity_id, pc2)
+        self.assertEqual(await self.sheets.characters_of(GUILD_B, PLAYER), [])
+
+    async def test_one_characters_sheet(self) -> None:
+        self.assertIsNone(await self.sheets.sheet(GUILD_A, self.c, self.pc))
+        await self.linked()
+        found = await self.sheets.sheet(GUILD_A, self.c, self.pc)
+        assert found is not None
+        self.assertEqual(found.character, CHARACTER)
+
+
+class Merging(SheetTest):
+    async def test_a_sheet_goes_with_the_character_it_was_merged_into(self) -> None:
+        await self.linked()
+        kept = await self.add("Testa the Bold", type="player_character", played_by=PLAYER)
+        await self.memory.merge(GUILD_A, self.c, kept, self.pc, source="dm", dm_said_same=True)
+        (moved,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertEqual((moved.entity_id, moved.character), (kept, CHARACTER))
+
+    async def test_a_hidden_sheet_on_the_kept_one_never_beats_a_visible_one(self) -> None:
+        await self.linked()  # the merged one's: visible, its player's
+        kept = await self.add("Testa the Bold", type="player_character", played_by=PLAYER + 1)
+        await self.sheets.link(GUILD_A, self.c, kept, 999)  # a sheet of the other player's
+        async with self.db.guild(GUILD_A) as conn:  # the kept one changes hands, then merges
+            await conn.execute(
+                "UPDATE memory_entities SET played_by = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (PLAYER, GUILD_A, self.c, kept),
+            )
+        await self.memory.merge(GUILD_A, self.c, kept, self.pc, source="dm", dm_said_same=True)
+        (left,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertEqual((left.entity_id, left.character), (kept, CHARACTER))  # the visible one
+
+    async def test_the_kept_characters_own_sheet_stays(self) -> None:
+        await self.linked()
+        kept = await self.add("Testa the Bold", type="player_character", played_by=PLAYER)
+        await self.sheets.link(GUILD_A, self.c, kept, 999)
+        await self.memory.merge(GUILD_A, self.c, kept, self.pc, source="dm", dm_said_same=True)
+        (left,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertEqual((left.entity_id, left.character), (kept, 999))
+        self.assertEqual(await self.count("character_sheets"), 1)  # the merged one's forgotten
+
+
+class PlayersOwn(SheetTest):
+    async def test_a_player_changes_only_a_character_they_play(self) -> None:
+        with self.assertRaises(SheetRefused):
+            await self.sheets.link(GUILD_A, self.c, self.pc, CHARACTER, player=PLAYER + 1)
+        await self.sheets.link(GUILD_A, self.c, self.pc, CHARACTER, player=PLAYER)
+        self.assertIsNone(await self.sheets.sheet(GUILD_A, self.c, self.pc, player=PLAYER + 1))
+        self.assertFalse(await self.sheets.unlink(GUILD_A, self.c, self.pc, player=PLAYER + 1))
+        typed = sheets.typed("Testa", species="Elf", class_name="Bard", level=2, names=[])
+        assert typed is not None
+        with self.assertRaises(SheetRefused):
+            await self.sheets.save(GUILD_A, self.c, self.pc, typed, 5, player=PLAYER + 1)
+        self.assertTrue(await self.sheets.unlink(GUILD_A, self.c, self.pc, player=PLAYER))
+
+    async def test_a_sheet_on_an_entry_with_no_player_is_left_out(self) -> None:
+        await self.linked()
+        async with self.db.guild(GUILD_A) as conn:  # as an undone merge can leave it
+            await conn.execute(
+                "UPDATE memory_entities SET played_by = NULL, type = 'npc'"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (GUILD_A, self.c, self.pc),
+            )
+        self.assertEqual(await self.sheets.sheets(GUILD_A, self.c), [])
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)  # not refused
+        self.assertEqual(await self.count("character_sheets", GUILD_B), 0)
+        self.assertIsNotNone(restored)
+
+
+class ChangingHands(SheetTest):
+    async def reassign(self, to: int | None) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET played_by = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (to, GUILD_A, self.c, self.pc),
+            )
+
+    async def test_the_next_player_never_sees_the_last_ones_sheet(self) -> None:
+        await self.linked()
+        url = sheets.sheet_url(CHARACTER)
+        await self.sheets.save(GUILD_A, self.c, self.pc, self.sheet_data, 5, url=url)
+        await self.reassign(PLAYER + 1)
+        self.assertEqual(await self.sheets.sheets(GUILD_A, self.c), [])
+        self.assertIsNone(await self.sheets.sheet(GUILD_A, self.c, self.pc, player=PLAYER + 1))
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        self.assertEqual(await self.sheets.sheets(GUILD_B, restored.id), [])
+        self.assertEqual(await self.count("character_sheets", GUILD_B), 0)  # not just hidden
+        # The new player links their own: nothing of the last one's stays.
+        await self.sheets.link(GUILD_A, self.c, self.pc, CHARACTER, player=PLAYER + 1)
+        (theirs,) = await self.sheets.sheets(GUILD_A, self.c)
+        self.assertEqual((theirs.played_by, theirs.sheet), (PLAYER + 1, None))
+
+    async def test_the_same_after_an_undo_then_a_reassignment(self) -> None:
+        await self.linked()
+        await self.reassign(None)  # as an undone merge leaves it
+        await self.reassign(PLAYER + 1)
+        self.assertEqual(await self.sheets.sheets(GUILD_A, self.c), [])
+        await self.reassign(PLAYER)  # back to its own player: theirs again
+        self.assertEqual(len(await self.sheets.sheets(GUILD_A, self.c)), 1)
 
 
 class Isolation(SheetTest):
@@ -207,8 +328,47 @@ class Backups(SheetTest):
             {"url": "https://evil.example/characters/1"},
             {"sheet": {"v": 1, "name": "x"}},
             {"source": "typed"},
+            {"player_id": None},
+            {"player_id": 0},
+            {"player_id": "1"},
         ):
             backup = await self.edited(change)
             with self.assertRaises(CampaignError):
                 await self.campaigns.import_backup(GUILD_B, backup, DM)
             await self.sheets.unlink(GUILD_A, self.c, self.pc)
+
+
+class Backfill0029(DatabaseTest):
+    """Migrations run with no server set: 0029's backfill must open every table it
+    reads (character_sheets and memory_entities), or it deletes every sheet."""
+
+    async def test_sheets_from_before_0029_belong_to_whoever_plays_them(self) -> None:
+        before = [m for m in MIGRATIONS if m[0] < "0029"]
+        await self.db.close()  # start again from a schema as it was before 0029
+        await drop_schema(TEST_URL, self.schema)
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        campaigns = CampaignStore(self.db, clock=lambda: 1)
+        memory = MemoryStore(self.db, clock=lambda: 1)
+        c = (await campaigns.create(GUILD_A, "Frozen Wastes", DM)).id
+        played = await memory.add_entity(
+            GUILD_A, c, name="Testa", type="player_character", source="dm", played_by=PLAYER
+        )
+        unplayed = await memory.add_entity(GUILD_A, c, name="Belleros", type="npc", source="dm")
+        async with self.db.guild(GUILD_A) as conn:
+            for entity in (played.value.id, unplayed.value.id):
+                await conn.execute(
+                    "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url)"
+                    " VALUES (%s, %s, %s, %s)",
+                    (GUILD_A, c, entity, sheets.sheet_url(CHARACTER)),
+                )
+        await self.db.migrate()
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT entity_id, player_id FROM character_sheets")
+            rows = {r["entity_id"]: r["player_id"] for r in await cur.fetchall()}
+        self.assertEqual(rows, {played.value.id: PLAYER})  # kept, with its player
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
+                " AND schemaname = current_schema()"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)  # no opening left

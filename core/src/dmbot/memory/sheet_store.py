@@ -34,27 +34,49 @@ class CharacterSheet:
         return None if self.url is None else sheets.character_id(self.url)
 
 
+@dataclass(frozen=True, slots=True)
+class PlayerCharacter:
+    """A character someone plays, in one campaign of a server."""
+
+    campaign_id: str
+    campaign_name: str
+    entity_id: str
+    name: str
+
+
 class SheetStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def link(self, guild_id: int, campaign_id: str, entity_id: str, character: int) -> None:
+    async def link(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        character: int,
+        *,
+        player: int | None = None,
+    ) -> None:
         """Link a player character to a D&D Beyond sheet. A different link drops the old
-        snapshot (it was another character's)."""
+        snapshot (it was another character's). `player`: only if they play it (the
+        player's own panel; the DM's forms leave it out)."""
         url = sheets.sheet_url(character)
         async with self._db.guild(guild_id) as conn:
-            await self._require_character(conn, guild_id, campaign_id, entity_id)
+            plays = await self._require_character(conn, guild_id, campaign_id, entity_id, player)
+            # The snapshot stays only for the same link by the same player.
+            same = (
+                "character_sheets.url = EXCLUDED.url"
+                " AND character_sheets.player_id = EXCLUDED.player_id"
+            )
             await conn.execute(
-                "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url)"
-                " VALUES (%s, %s, %s, %s)"
+                "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, player_id)"
+                " VALUES (%s, %s, %s, %s, %s)"
                 " ON CONFLICT (guild_id, campaign_id, entity_id) DO UPDATE SET url = EXCLUDED.url,"
-                " sheet = CASE WHEN character_sheets.url = EXCLUDED.url"
-                "  THEN character_sheets.sheet END,"
-                " source = CASE WHEN character_sheets.url = EXCLUDED.url"
-                "  THEN character_sheets.source END,"
-                " fetched_at = CASE WHEN character_sheets.url = EXCLUDED.url"
-                "  THEN character_sheets.fetched_at END",
-                (guild_id, campaign_id, entity_id, url),
+                " player_id = EXCLUDED.player_id,"
+                f" sheet = CASE WHEN {same} THEN character_sheets.sheet END,"
+                f" source = CASE WHEN {same} THEN character_sheets.source END,"
+                f" fetched_at = CASE WHEN {same} THEN character_sheets.fetched_at END",
+                (guild_id, campaign_id, entity_id, url, plays),
             )
 
     async def save(
@@ -66,6 +88,7 @@ class SheetStore:
         now: int,
         *,
         url: str | None = None,
+        player: int | None = None,
     ) -> bool:
         """Keep a snapshot. One read from a link (`url`) is kept only if the character is
         still linked to that same sheet (it may have been unlinked or relinked while it
@@ -83,31 +106,40 @@ class SheetStore:
                     (Jsonb(cleaned), cleaned["source"], now, guild_id, campaign_id, entity_id, url),
                 )
                 return cur.rowcount == 1
-            await self._require_character(conn, guild_id, campaign_id, entity_id)
+            plays = await self._require_character(conn, guild_id, campaign_id, entity_id, player)
             await conn.execute(
                 "INSERT INTO character_sheets"
-                " (guild_id, campaign_id, entity_id, url, sheet, source, fetched_at)"
-                " VALUES (%s, %s, %s, NULL, %s, %s, %s)"
+                " (guild_id, campaign_id, entity_id, url, sheet, source, fetched_at, player_id)"
+                " VALUES (%s, %s, %s, NULL, %s, %s, %s, %s)"
                 " ON CONFLICT (guild_id, campaign_id, entity_id) DO UPDATE SET url = NULL,"
                 " sheet = EXCLUDED.sheet, source = EXCLUDED.source,"
-                " fetched_at = EXCLUDED.fetched_at",
-                (guild_id, campaign_id, entity_id, Jsonb(cleaned), cleaned["source"], now),
+                " fetched_at = EXCLUDED.fetched_at, player_id = EXCLUDED.player_id",
+                (guild_id, campaign_id, entity_id, Jsonb(cleaned), cleaned["source"], now, plays),
             )
             return True
 
-    async def unlink(self, guild_id: int, campaign_id: str, entity_id: str) -> bool:
-        """Forget the character's sheet: its link and its snapshot. False if it had none."""
+    async def unlink(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, player: int | None = None
+    ) -> bool:
+        """Forget the character's sheet: its link and its snapshot. False if it had none
+        (or, with `player`, if they don't play it)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "DELETE FROM character_sheets"
-                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s",
-                (guild_id, campaign_id, entity_id),
+                "DELETE FROM character_sheets s"
+                " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
+                " AND (%s::bigint IS NULL OR EXISTS (SELECT 1 FROM memory_entities e"
+                "  WHERE e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
+                "  AND e.id = s.entity_id AND e.played_by = %s))",
+                (guild_id, campaign_id, entity_id, player, player),
             )
             return cur.rowcount > 0
 
-    async def sheets(self, guild_id: int, campaign_id: str) -> list[CharacterSheet]:
-        """Every sheet in the campaign, with its character's name and player, by name.
-        Characters that were merged away or rejected are left out."""
+    async def sheets(
+        self, guild_id: int, campaign_id: str, *, entity_id: str | None = None
+    ) -> list[CharacterSheet]:
+        """Every sheet in the campaign (or one character's), with its character's name and
+        player, by name. Only characters someone plays: not ones merged away, rejected,
+        or left without a player (an undone merge)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT s.entity_id, e.name, e.played_by, s.url, s.sheet, s.fetched_at"
@@ -115,9 +147,12 @@ class SheetStore:
                 "  ON e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
                 "  AND e.id = s.entity_id"
                 " WHERE s.guild_id = %s AND s.campaign_id = %s"
-                "  AND e.status NOT IN ('merged', 'rejected')"
+                "  AND (%s::text IS NULL OR s.entity_id = %s)"
+                "  AND e.status NOT IN ('merged', 'rejected') AND e.played_by IS NOT NULL"
+                # Only the sheet of whoever plays it now: never a previous player's.
+                "  AND s.player_id = e.played_by"
                 " ORDER BY lower(e.name), s.entity_id",
-                (guild_id, campaign_id),
+                (guild_id, campaign_id, entity_id, entity_id),
             )
             rows = await cur.fetchall()
         return [
@@ -132,16 +167,56 @@ class SheetStore:
             for r in rows
         ]
 
+    async def sheet(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, player: int | None = None
+    ) -> CharacterSheet | None:
+        """One character's sheet, if it has one (with `player`: only if they play it)."""
+        found = await self.sheets(guild_id, campaign_id, entity_id=entity_id)
+        return next((s for s in found if player is None or s.played_by == player), None)
+
+    async def characters_of(
+        self, guild_id: int, user_id: int, campaign_id: str | None = None
+    ) -> list[PlayerCharacter]:
+        """The characters this person plays in this server (or in one campaign of it),
+        by campaign and name: what their "My character sheet" button can link."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT e.campaign_id, c.name AS campaign_name, e.id, e.name"
+                " FROM memory_entities e JOIN campaigns c"
+                "  ON c.guild_id = e.guild_id AND c.id = e.campaign_id"
+                " WHERE e.guild_id = %s AND e.played_by = %s"
+                "  AND e.status NOT IN ('merged', 'rejected')"
+                "  AND (%s::text IS NULL OR e.campaign_id = %s)"
+                " ORDER BY lower(c.name), lower(e.name), e.id",
+                (guild_id, user_id, campaign_id, campaign_id),
+            )
+            rows = await cur.fetchall()
+        return [
+            PlayerCharacter(r["campaign_id"], r["campaign_name"], r["id"], r["name"]) for r in rows
+        ]
+
     async def _require_character(
-        self, conn: Conn, guild_id: int, campaign_id: str, entity_id: str
-    ) -> None:
-        # Only a player character can be "played by" someone (the memory store checks
-        # that when it's set), so a player is enough to know it's one.
+        self,
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        player: int | None = None,
+    ) -> int:
+        """Who plays it (refused unless someone does, and with `player`, them). Only a
+        player character can be "played by" someone (the memory store checks that when
+        it's set), so a player is enough to know it's one."""
         cur = await conn.execute(
             "SELECT played_by, status FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = %s FOR SHARE",
             (guild_id, campaign_id, entity_id),
         )
         row = await cur.fetchone()
-        if row is None or row["status"] in ("merged", "rejected") or row["played_by"] is None:
+        if (
+            row is None
+            or row["status"] in ("merged", "rejected")
+            or row["played_by"] is None
+            or (player is not None and row["played_by"] != player)
+        ):
             raise SheetRefused(NOT_A_CHARACTER)
+        return int(row["played_by"])

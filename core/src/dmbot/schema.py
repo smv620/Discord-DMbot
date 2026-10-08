@@ -586,6 +586,27 @@ CHARACTER_SHEETS = f"""
     );
     """ + _isolate("character_sheets")
 
+SHEET_PLAYER = """
+    -- Who linked or typed in a character's sheet (#723 review): the player playing it
+    -- then. A sheet is shown and used only while that same person plays the character,
+    -- so a character given to someone else never shows the last player's link or
+    -- details (whichever way it changed hands, an undo included). Rows from before this
+    -- belong to whoever plays the character now. Migrations run with no server set, so
+    -- row-level security hides every row: the backfill opens the table for itself.
+    ALTER TABLE character_sheets ADD COLUMN player_id BIGINT;
+    -- Open every table the statements read, not only the one they write (CLAUDE.md):
+    -- the UPDATE reads memory_entities too.
+    CREATE POLICY migrate_backfill ON character_sheets FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON memory_entities FOR SELECT USING (true);
+    UPDATE character_sheets s SET player_id = e.played_by
+        FROM memory_entities e
+        WHERE e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id AND e.id = s.entity_id;
+    DELETE FROM character_sheets WHERE player_id IS NULL;
+    DROP POLICY migrate_backfill ON memory_entities;
+    DROP POLICY migrate_backfill ON character_sheets;
+    ALTER TABLE character_sheets ALTER COLUMN player_id SET NOT NULL;
+    """
+
 SHARED_CONFIRMATIONS = f"""
     -- Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule:
     -- "Record who confirmed and when"; #252): one row per confirmation, what it was for
@@ -1013,6 +1034,58 @@ WEB_ROLE_POLICIES = """
                     AND dmbot_current_user() IN (from_user_id, to_user_id));
     """
 
+ACCESS_GRANTS = (
+    _setting("dmbot_grant_writer", "dmbot.grant_writer", "TEXT")
+    + """
+    -- Free access given by hand (#771; docs/PLAN.md, "Free access and the admin page").
+    -- One row per Discord account: no link to web_users, since a grant must work for
+    -- someone who never signed in to the website. "guild": Guild's caps from plans.json;
+    -- "unlimited": no caps. A grant ends at ends_at or when revoked (kept, with
+    -- revoked_at, for the log). entitlements is never written for this.
+    --   dmbot.grant_writer  set only by Database.grant_writer(): the admin page's API,
+    --                       the only code allowed to give, change or revoke a grant
+    CREATE TABLE access_grants (
+        discord_user_id BIGINT PRIMARY KEY CHECK (discord_user_id > 0),
+        level           TEXT NOT NULL CHECK (level IN ('guild', 'unlimited')),
+        ends_at         BIGINT,
+        note            TEXT NOT NULL DEFAULT '' CHECK (char_length(note) <= 200),
+        granted_by      TEXT NOT NULL CHECK (char_length(granted_by) BETWEEN 3 AND 320),
+        granted_at      BIGINT NOT NULL,
+        revoked_at      BIGINT
+    );
+    -- A person reads (and, deleting their account, deletes) only their own grant; the
+    -- grant writer reads and writes any. A person's own row holds granted_by (the admin's
+    -- email) and the note too: code reading it for them (entitlements) selects only the
+    -- level and dates, and neither may ever reach /me. The website's role can set
+    -- dmbot.grant_writer itself (as it can dmbot.plan_writer): which code opens that door
+    -- is a Python boundary (tests/test_access.py), and part 2's admin sign-in guards it.
+    ALTER TABLE access_grants ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE access_grants FORCE ROW LEVEL SECURITY;
+    CREATE POLICY own_read ON access_grants FOR SELECT
+        USING (discord_user_id = dmbot_current_user());
+    CREATE POLICY own_delete ON access_grants FOR DELETE
+        USING (discord_user_id = dmbot_current_user());
+    CREATE POLICY grant_writer ON access_grants FOR ALL
+        USING (dmbot_grant_writer() = 'admin') WITH CHECK (dmbot_grant_writer() = 'admin');
+
+    -- Who gave, changed or revoked a grant, and when (add-only; ids, and the admin's
+    -- own email only here).
+    CREATE TABLE access_log (
+        id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        admin_email     TEXT NOT NULL CHECK (char_length(admin_email) BETWEEN 3 AND 320),
+        action          TEXT NOT NULL CHECK (action IN ('grant', 'change', 'revoke')),
+        discord_user_id BIGINT NOT NULL CHECK (discord_user_id > 0),
+        at              BIGINT NOT NULL
+    );
+    ALTER TABLE access_log ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE access_log FORCE ROW LEVEL SECURITY;
+    CREATE POLICY grant_writer_add ON access_log FOR INSERT
+        WITH CHECK (dmbot_grant_writer() = 'admin');
+    CREATE POLICY grant_writer_read ON access_log FOR SELECT
+        USING (dmbot_grant_writer() = 'admin');
+    """
+)
+
 # What the website's role may touch at all: its own tables, and only reads of the two
 # server tables /me needs. Everything else (consent, transcripts, memory...) is refused
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
@@ -1029,6 +1102,10 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
+    # Free access (#771): the admin page gives, changes and revokes grants (through
+    # Database.grant_writer()); account deletion deletes the person's own.
+    ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
+    ("SELECT, INSERT", ("access_log",)),
 )
 
 MIGRATIONS: tuple[Migration, ...] = (
@@ -1060,6 +1137,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0026_feedback", FEEDBACK),
     ("0027_handover_expiry", HANDOVER_EXPIRY),
     ("0028_character_sheets", CHARACTER_SHEETS),
+    ("0029_sheet_player", SHEET_PLAYER),
+    ("0030_access_grants", ACCESS_GRANTS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -1088,6 +1167,10 @@ USER_ISOLATED_TABLES = (
     "payment_events",
     "web_sessions",
     "installs",
+    # Keyed by Discord account (#771): the person's own grant, or the grant writer.
+    "access_grants",
+    # Not per person: only the grant writer adds or reads a row (#771).
+    "access_log",
 )
 # Add-only: no policy allows reading a row; the team reads them as the database's
 # administrator (#665).

@@ -9,7 +9,14 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- dev2, PR #781 (#723 part A, second half): players link their D&D Beyond sheet with
+  📜 My character sheet (next to 🛑 on the consent confirmation and each reminder), or
+  type their character in; the DM sees it on the character's card and can Refresh
+  sheets. Migration 0029 adds who linked each sheet (quick; 0028's table has no rows
+  yet). Deploy: rebuild core. Check: `docker compose logs core` shows 0029 applied; a
+  player with a public sheet links it (docs/test-scripts/sheets.md) and the next
+  /dmbot start logs "Character sheets: 1 linked, N names in the hints; from D&D Beyond:
+  ...".
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram

@@ -152,11 +152,20 @@ def request_text(
     return "\n".join(lines)
 
 
+SHEET_LABEL = "📜 My character sheet"
+# Next to the 📜 button (#723). It explains an optional button and adds nothing anyone
+# agrees to, so it doesn't change the terms version (decided on #781).
+SHEET_NOTE = (
+    f"Optional: if you play on D&D Beyond, press {SHEET_LABEL} so DMbot spells your spell "
+    "names better. It doesn't change recording."
+)
+
+
 def confirmed_text(server: str, granted_at: int) -> str:
     return (
         f"✅ You said yes on {_date(granted_at)}. DMbot now records you in "
         f"**{_plain(server)}**, this session and later ones. You'll get a short reminder "
-        "each time you play. Press 🛑 below to stop any time."
+        f"each time you play. Press 🛑 below to stop any time. {SHEET_NOTE}"
     )
 
 
@@ -181,7 +190,7 @@ def reminder_text(
     return (
         f"🎙️ DMbot is recording you in {where}**{_plain(server)}** (you said yes on "
         f"{_date(granted_at)}). Anyone in this server can read the text.{outside} {AI_SHORT} "
-        "Press 🛑 below to stop any time."
+        f"Press 🛑 below to stop any time. {SHEET_NOTE}"
     )
 
 
@@ -348,7 +357,8 @@ class ConsentButton(
                 await interaction.followup.send(GRANT_FAILED, ephemeral=True)
                 return
             await interaction.edit_original_response(
-                content=confirmed_text(guild.name, granted_at), view=stop_view(self.guild_id)
+                content=confirmed_text(guild.name, granted_at),
+                view=stop_view(self.guild_id, sheet=True),
             )
 
 
@@ -442,9 +452,25 @@ def consent_view(guild_id: int) -> discord.ui.View:
     return view
 
 
-def stop_view(guild_id: int) -> discord.ui.View:
+def sheet_button(guild_id: int, campaign_id: str | None) -> discord.ui.Button[Any]:
+    """The player's 📜 My character sheet (handled by dmbot.ui.sheets.MySheetButton, by
+    its id): link a D&D Beyond sheet for their character (#723)."""
+    return discord.ui.Button(
+        label=SHEET_LABEL,
+        style=discord.ButtonStyle.secondary,
+        custom_id=f"dmbot:sheet:{int(guild_id)}:{campaign_id or '-'}",
+    )
+
+
+def stop_view(
+    guild_id: int, *, sheet: bool = False, campaign_id: str | None = None
+) -> discord.ui.View:
+    """🛑 Stop, and with `sheet` the player's sheet button (for `campaign_id`, or any of
+    the server's campaigns)."""
     view = discord.ui.View(timeout=None)
     view.add_item(StopButton(guild_id))
+    if sheet:
+        view.add_item(sheet_button(guild_id, campaign_id))
     return view
 
 

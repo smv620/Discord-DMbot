@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import uvicorn
 
+from dmbot import entitlements
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
@@ -81,6 +82,7 @@ async def serve(settings: WebSettings) -> None:
         if settings.turnstile_secret
         else None
     )
+    entitlements.configure_free_users(settings.free_users)  # #771
     app = create_app(
         settings,
         db,

@@ -24,7 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import install
+from dmbot import entitlements, install
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -141,6 +141,7 @@ from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
+from dmbot.ui.sheets import MySheetButton
 from dmbot.ui.transcripts import DownloadButton, download_view, ended_text, transcript_command
 
 log = logging.getLogger(__name__)
@@ -259,6 +260,7 @@ class Table:
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
+    sheet_loads: int = 0  # each load of the names counts up; only the newest one is used
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
     vocabulary: Vocabulary = field(default_factory=Vocabulary)
@@ -481,6 +483,8 @@ class DMBot(commands.AutoShardedBot):
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
         self.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton, FixUndoButton)
+        # A player's 📜 My character sheet, in their private messages (#723).
+        self.add_dynamic_items(MySheetButton)
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -723,7 +727,7 @@ class DMBot(commands.AutoShardedBot):
                 server = member.guild.name
                 if granted is not None and self.consent.has_consent(gid, member.id):
                     text = reminder_text(server, voice_name, granted, cloud=cloud, company=company)
-                    view = stop_view(gid)
+                    view = stop_view(gid, sheet=True, campaign_id=table.campaign_id)
                 else:
                     text = request_text(
                         server,
@@ -845,12 +849,32 @@ class DMBot(commands.AutoShardedBot):
         )
         return sent
 
+    async def _secret_keys(self, guild_id: int, campaign_id: str) -> frozenset[str] | None:
+        """The campaign's secret names, as keys (for leaving them out of a log line), or
+        None if they can't be known just now."""
+        if self.lookup is None:
+            return frozenset()
+        try:
+            lookup = await self.lookup.get(guild_id, campaign_id)
+        except Exception:
+            return None
+        return frozenset(name_key(n.text) for n in lookup.names if n.secret)
+
+    def sheets_changed(self, guild_id: int, campaign_id: str) -> None:
+        """A sheet was linked, read, typed or unlinked: a session running for that
+        campaign uses the new names from its next clip on (#723)."""
+        table = self.tables.get(guild_id)
+        if table is not None and table.campaign_id == campaign_id:
+            self._track(self._sheet_hints(table, refresh=False), "sheets")
+
     async def _sheet_hints(self, table: Table, *, refresh: bool) -> None:
         """Hints from the campaign's sheets: the kept ones at once, then, if `refresh`,
         again once each linked sheet has been read (#723)."""
         if self.sheets is None or table.campaign_id is None:
             return
         guild_id, campaign_id = table.guild_id, table.campaign_id
+        table.sheet_loads += 1
+        mine = table.sheet_loads
 
         def current() -> bool:  # stopped (or started again) meanwhile: leave it be
             return self.tables.get(guild_id) is table
@@ -858,20 +882,38 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
             try:
                 kept = await self.sheets.sheets(guild_id, campaign_id)
-                table.sheet_hints = tuple(sheet_hint_names(kept))
+                if table.sheet_loads == mine:  # a later change already loaded newer ones
+                    table.sheet_hints = tuple(sheet_hint_names(kept))
                 if refresh and current():
                     now = int(time.time())
                     found = await refresh_sheets(
                         self.sheets, guild_id, campaign_id, now, found=kept, still_wanted=current
                     )
-                    table.sheet_hints = tuple(sheet_hint_names(found))
+                    changed_meanwhile = table.sheet_loads != mine
+                    if changed_meanwhile:
+                        # Load again, with what was just read too (the line below still
+                        # goes in the log, once a session).
+                        self.sheets_changed(guild_id, campaign_id)
+                    else:
+                        table.sheet_hints = tuple(sheet_hint_names(found))
                     linked = sum(s.url is not None for s in found)
-                    if found:
-                        log.info(
-                            "Character sheets: %d linked, %d names in the hints",
-                            linked,
-                            len(table.sheet_hints),
+                    # Once a session. Only names read from D&D Beyond (game words, at
+                    # most 15), never one that is also a secret name: never what a player
+                    # typed, a link or a character's name.
+                    secret = await self._secret_keys(guild_id, campaign_id)
+                    read = [
+                        name
+                        for name in sheet_hint_names(
+                            [s for s in found if s.sheet and s.sheet.get("source") == "dndbeyond"]
                         )
+                        if secret is not None and name_key(name) not in secret
+                    ]
+                    log.info(
+                        "Character sheets: %d linked, %d names in the hints; from D&D Beyond: %s",
+                        linked,
+                        len(sheet_hint_names(found)),
+                        ", ".join(read) or "none",
+                    )
             except Exception as exc:  # never the text: it can quote a row (links, names)
                 log.error("Couldn't load the campaign's character sheets (%s)", type(exc).__name__)
 
@@ -2996,7 +3038,9 @@ async def consent_give(interaction: discord.Interaction) -> None:
     # fresh process whose cache hasn't loaded this server yet.
     if granted is not None:
         await interaction.followup.send(
-            confirmed_text(guild.name, granted), view=stop_view(guild.id), ephemeral=True
+            confirmed_text(guild.name, granted),
+            view=stop_view(guild.id, sheet=True),
+            ephemeral=True,
         )
         return
     table = bot.tables.get(guild.id)
@@ -3043,6 +3087,7 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
 
 
 async def run(settings: Settings) -> None:
+    entitlements.configure_free_users(settings.free_users)  # #771
     db = await Database.open(settings.database_url)
     try:
         transcriber = build_transcriber(settings.transcription)
