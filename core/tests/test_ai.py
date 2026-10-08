@@ -61,6 +61,9 @@ class Client(unittest.IsolatedAsyncioTestCase):
         ai, _ = self.client(200, {"content": [], "usage": {"input_tokens": "lots"}})
         reply = await ai.complete("rules", "doc")
         self.assertEqual((reply.input_tokens, reply.output_tokens), (0, 0))
+        ai, _ = self.client(200, {"content": [], "usage": {"input_tokens": True}})  # a bool
+        reply = await ai.complete("rules", "doc")
+        self.assertEqual(reply.input_tokens, 0)
         ai, _ = self.client(200, {"content": [], "usage": None})  # not a crash
         reply = await ai.complete("rules", "doc")
         self.assertEqual((reply.input_tokens, reply.output_tokens), (0, 0))

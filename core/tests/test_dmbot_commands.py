@@ -1,5 +1,6 @@
 """The /dmbot commands' first steps, with fake Discord interactions."""
 
+import asyncio
 import json
 import unittest
 from types import SimpleNamespace
@@ -9,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 
 from dmbot.bot import DMBot
-from dmbot.campaigns import CampaignStore
+from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import MAX_BACKUP_BYTES, encode_backup
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
@@ -140,22 +141,6 @@ class CommandTests(DatabaseTest):
         await cmds.dmbot_restore.callback(it, attachment(json.dumps(data).encode()))  # type: ignore[call-arg]
         self.assertIsInstance(it.followup.send.call_args.kwargs["view"], cmds.RestoreChoice)
 
-    async def test_a_restore_that_breaks_says_nothing_was_changed(self) -> None:
-        mine = await self.campaigns.create(GUILD, "Mine", DM)
-        view = cmds.RestoreChoice(await self.campaigns.export(GUILD, mine.id), "Mine", [])
-        it = fake_interaction(self.bot)
-        broken = AsyncMock(side_effect=RuntimeError("database away"))
-        with (
-            patch.object(self.bot.campaigns, "import_backup", broken),
-            self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"),
-        ):
-            await view.restore(it, None)
-        told = [text for text, _ in it.response.sent] + [
-            c.args[0] for c in it.followup.send.call_args_list
-        ]
-        self.assertEqual(told[-1], cmds.RESTORE_FAILED)
-        self.assertEqual([c.name for c in await self.campaigns.list_campaigns(GUILD)], ["Mine"])
-
     async def test_a_backup_too_big_to_send_says_so(self) -> None:
         await self.campaigns.create(GUILD, "Huge_*one*", DM)
         limits = (
@@ -264,6 +249,111 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
                 "dm_screen_level": "quiet",
             },
         )
+
+
+class AnswerBeforeTheLock(unittest.IsolatedAsyncioTestCase):
+    """#88: /dmbot stop and Restore answer before waiting for the session lock, which a
+    /dmbot start setting up the DM screen can hold for a few seconds."""
+
+    def bot_with_a_held_lock(self) -> tuple[Any, asyncio.Lock]:
+        lock = asyncio.Lock()
+        locked_out = AsyncMock(return_value="✅ Stopped listening.")
+
+        async def stop_session(*_: Any, **__: Any) -> str:
+            async with lock:
+                return str(await locked_out())
+
+        bot = SimpleNamespace(
+            stop_session=stop_session,
+            session_lock=lambda _gid: lock,
+            is_campaign_playing=AsyncMock(return_value=False),
+            campaigns=SimpleNamespace(import_backup=AsyncMock(return_value=MagicMock(name="c"))),
+        )
+        return bot, lock
+
+    async def test_stop_defers_first(self) -> None:
+        bot, lock = self.bot_with_a_held_lock()
+        it = fake_interaction(bot)
+        await lock.acquire()  # a start is setting up the DM screen
+        stopping = asyncio.create_task(cmds.dmbot_stop.callback(it))  # type: ignore[call-arg]
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertTrue(it.response.deferred)  # answered while waiting
+        lock.release()
+        await stopping
+        self.assertIn("Stopped listening", it.followup.send.await_args.args[0])
+
+    async def test_restore_says_restoring_first(self) -> None:
+        bot, lock = self.bot_with_a_held_lock()
+        it = fake_interaction(bot)
+        response = it.response
+
+        async def answered(**_: Any) -> None:
+            response.done = True
+
+        response.edit_message = AsyncMock(side_effect=answered)
+        it.edit_original_response = AsyncMock()
+        choice = cmds.RestoreChoice({}, "Frostmaiden", [])
+        await lock.acquire()
+        restoring = asyncio.create_task(choice.restore(it, None))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertEqual(it.response.edit_message.await_args.kwargs["content"], "Restoring…")
+        bot.campaigns.import_backup.assert_not_awaited()  # still waiting for the lock
+        lock.release()
+        await restoring
+        self.assertIn("Restored", it.edit_original_response.await_args.kwargs["content"])
+
+
+class RestoreEndsWithAnOutcome(unittest.IsolatedAsyncioTestCase):
+    """#88: after "Restoring…", every path ends with the menu saying what happened."""
+
+    async def restore_with(self, **bot_kw: Any) -> str:
+        defaults: dict[str, Any] = {
+            "session_lock": lambda _gid: asyncio.Lock(),
+            "is_campaign_playing": AsyncMock(return_value=False),
+            "campaigns": SimpleNamespace(import_backup=AsyncMock(return_value=MagicMock())),
+        }
+        bot = SimpleNamespace(**{**defaults, **bot_kw})
+        it = fake_interaction(bot)  # type: ignore[arg-type]
+        response = it.response
+
+        async def answered(**_: Any) -> None:
+            response.done = True
+
+        response.edit_message = AsyncMock(side_effect=answered)
+        it.edit_original_response = AsyncMock()
+        choice = cmds.RestoreChoice({}, "Frostmaiden", [])
+        await choice.restore(it, "c" * 32)
+        self.assertTrue(choice.is_finished())  # its timeout won't cover the outcome
+        return str(it.edit_original_response.await_args.kwargs["content"])
+
+    async def test_playing_right_now(self) -> None:
+        text = await self.restore_with(is_campaign_playing=AsyncMock(return_value=True))
+        self.assertIn("playing right now", text)
+        self.assertIn("`/dmbot restore` again", text)
+
+    async def test_a_check_that_fails(self) -> None:
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            text = await self.restore_with(is_campaign_playing=AsyncMock(side_effect=OSError()))
+        self.assertEqual(text, cmds.RESTORE_FAILED)
+
+    async def test_a_damaged_backup(self) -> None:
+        bad = SimpleNamespace(import_backup=AsyncMock(side_effect=CampaignError("damaged")))
+        self.assertEqual(await self.restore_with(campaigns=bad), "damaged")
+
+    async def test_an_unexpected_error(self) -> None:
+        broken = SimpleNamespace(import_backup=AsyncMock(side_effect=RuntimeError("db")))
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            text = await self.restore_with(campaigns=broken)
+        self.assertEqual(text, cmds.RESTORE_FAILED)
+
+    async def test_stop_that_fails_doesnt_hang(self) -> None:
+        bot = SimpleNamespace(stop_session=AsyncMock(side_effect=RuntimeError("bug")))
+        it = fake_interaction(bot)  # type: ignore[arg-type]
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            await cmds.dmbot_stop.callback(it)  # type: ignore[call-arg]
+        self.assertEqual(it.followup.send.await_args.args[0], cmds.STOP_COMMAND_FAILED)
 
 
 class CampaignPickersFitAPhone(unittest.TestCase):

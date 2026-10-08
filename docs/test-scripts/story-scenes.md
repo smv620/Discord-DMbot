@@ -21,7 +21,7 @@ Under each line, what a person would pull from it:
 - `- none`: nothing to pull (table talk, dice, rules).
 - `- also: …`: fine to pull, but not required: neither counted as missed nor as invented.
 - `- never: word, word`: a claim using all these words must not appear (an injection
-  line).
+  line), unless it matches what a line expects or allows.
 
 A secret said aloud is still pulled when the DM takes it back (line 14): DMbot should
 know it was said, so the DM can be warned. A word may have alternatives, `fine/intact`. "party" stands for the player characters:
@@ -171,3 +171,4 @@ kind. Then:
     - never: Kael, dead
 38. [DM] Kael is fine. He's standing right there, laughing at you.
     - dm_said: Kael | is | alive/fine
+    - also: Kael | is not | dead
