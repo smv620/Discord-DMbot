@@ -9,6 +9,13 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev3, PR #821 (#807): core only. No migration or setting; the consent terms version is
+  unchanged (nobody is asked again). DMbot's private messages now carry a grey ⚙️ Menu
+  instead of the red 🛑; stopping shows one warning first. #843 (#834, follow-ups) can
+  ride along once merged. Check: a player's new reminder shows ⚙️ Menu; on it, Menu →
+  Stop recording me puts the warning first in the message's text → Yes leaves the
+  message reading "🛑 Stopped" and the DM screen shows the usual "said stop" line; Keep
+  recording and Close give the reminder back unchanged; /consent revoke warns first.
 - dev2, PR #804 (#771 part 1): free access. **Core and migration 0030 are live (core
   45c0bcc, 22:02); only web-api waits (it stays off).** **Leave
   DMBOT_FREE_USERS empty until #806 (the account page for covered people) is live.** A
