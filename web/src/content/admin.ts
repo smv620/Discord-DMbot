@@ -68,7 +68,7 @@ export const text = {
   addHeading: "Add someone",
   addLead: "To change someone's free access, tap Change in the list.",
   changeHeading: (who: string): string => `Change free access for ${who}`,
-  idLabel: "Discord user id",
+  idLabel: "Discord user ID",
   idHint:
     "First turn on Developer Mode in Discord: Settings, then Advanced. Then on a computer, right-click the person. On a phone, tap their name, then the three dots. Pick Copy User ID.",
   levelLabel: "How much",
@@ -78,13 +78,16 @@ export const text = {
   noEndButton: "No end date",
   noteLabel: "Note (optional)",
   noteHint: (max: number): string =>
-    `Who this is, or why. Only admins see this. ${max} letters at most.`,
+    `Who this is, or why. Only admins see this. ${max} characters at most.`,
   add: "Give free access",
   save: "Save changes",
   startOver: "Start over",
   adding: "Saving…",
-  added: (who: string): string => `Done. ${who} has free access.`,
-  changed: (who: string): string => `Done. ${who}'s free access is changed.`,
+  // What was saved, so a slip (the wrong level, a missing date) shows at once: `how` is
+  // "Same as Guild, until Dec 31, 2026" or "No limits, no end date" (see `saved`).
+  added: (who: string, how: string): string => `Done. ${who} has free access: ${how}.`,
+  changed: (who: string, how: string): string =>
+    `Done. Changed free access for ${who}: ${how}.`,
   historyHeading: "Recent changes",
   noHistory: "No changes yet.",
   logLine: (when: string, by: string, action: string, who: string): string =>
@@ -99,7 +102,7 @@ export const text = {
     "bad-id":
       "That isn't a Discord account number. In Discord, right-click the person and pick Copy User ID.",
     "bad-level": "Pick how much: Same as Guild, or No limits.",
-    "no-id": "Paste the person's Discord user id first.",
+    "no-id": "Paste the person's Discord user ID first.",
     "bad-date": "That end date didn't work. Pick it from the calendar, or leave it empty.",
     "past-date": "Pick an end date after today, or leave it empty so it never ends.",
     "long-note": (max: number): string => `Keep the note to ${max} characters or fewer.`,
@@ -110,6 +113,12 @@ export const text = {
     "no-grant": "That person has no free access to revoke. We've updated the list.",
   } as Record<string, string | ((max: number) => string)>,
 } as const;
+
+/** What a save did, in words: "Same as Guild, until Dec 31, 2026" or "No limits, no end
+ * date". `date` is the already-formatted last day. */
+export function saved(level: string, date: string | null): string {
+  return `${text.levels[level] ?? level}, ${date ? `until ${date}` : "no end date"}`;
+}
 
 /** The longest note, in characters: the same number the API and the database use. */
 export const NOTE_MAX = 200;

@@ -184,8 +184,15 @@ class AdminGrants(DatabaseTest):
         self.assertNotIn("secret note", text)
         self.assertNotIn(ADMIN, text)
 
-    async def test_a_body_that_is_too_big_or_not_an_object_is_refused(self) -> None:
+    async def test_a_body_that_is_too_big_or_not_an_object_or_has_no_level_is_refused(self) -> None:
         csrf = await self.sign_in()
+        for content in (b"[]", b'"text"', b'{"discordId": "' + FRIEND.encode() + b'"}'):
+            answer = await self.client.post(
+                "/admin/grants",
+                content=content,
+                headers={**HEADERS, "X-Admin-CSRF": csrf, "Content-Type": "application/json"},
+            )
+            self.assertEqual(answer.status_code, 400, content)
         huge = await self.client.post(
             "/admin/grants",
             content=b'{"note": "' + b"x" * 5000 + b'"}',

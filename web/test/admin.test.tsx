@@ -16,7 +16,7 @@ import {
   type GrantsView,
   httpAdminApi,
 } from "../src/admin/api";
-import { grantError, NOTE_MAX, text, who } from "../src/content/admin";
+import { grantError, NOTE_MAX, saved, text, who } from "../src/content/admin";
 
 afterEach(cleanup);
 
@@ -344,13 +344,82 @@ describe("free access (#773)", () => {
     fireEvent.click(screen.getByLabelText(text.levels.unlimited ?? ""));
     fireEvent.input(screen.getByLabelText(text.noteLabel), { target: { value: "a friend" } });
     fireEvent.click(screen.getByRole("button", { name: text.add }));
-    expect(await screen.findByText(text.added("Sam"))).toBeTruthy();
+    expect(await screen.findByText(text.added("Sam", "No limits, no end date"))).toBeTruthy();
     expect(api.give).toHaveBeenCalledWith("csrf-1", {
       discordId: LATE,
       level: "unlimited",
       endsOn: null,
       note: "a friend",
     });
+  });
+
+  it("the done message says what was saved: level and end", async () => {
+    const give = vi.fn(async () => ({ action: "change" as const, name: null }));
+    signedIn({ give });
+    await screen.findByLabelText(text.idLabel);
+    fireEvent.input(screen.getByLabelText(text.idLabel), { target: { value: LATE } });
+    fireEvent.input(screen.getByLabelText(text.endLabel), { target: { value: "2099-12-31" } });
+    fireEvent.click(screen.getByRole("button", { name: text.add }));
+    expect(
+      await screen.findByText("Done. Changed free access for 2234…5678: Same as Guild, until Dec 31, 2099."),
+    ).toBeTruthy();
+    expect(saved("unlimited", null)).toBe("No limits, no end date");
+  });
+
+  it("Change on an ended grant leaves the date empty, and Save gives it again", async () => {
+    const past: GrantsView = {
+      ...view(),
+      grants: [{ ...view().grants[0]!, endsAt: 1_000_000_000 }],
+    };
+    const api = signedIn({ grants: vi.fn(async () => past) });
+    const sam = await row(FRIEND);
+    fireEvent.click(within(sam).getByRole("button", { name: text.change }));
+    expect((screen.getByLabelText(text.endLabel) as HTMLInputElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: text.save }));
+    await waitFor(() => expect(api.give).toHaveBeenCalled());
+    expect(api.give).toHaveBeenCalledWith("csrf-1", {
+      discordId: FRIEND,
+      level: "guild",
+      endsOn: null,
+      note: "playtester",
+    });
+  });
+
+  it("a refused end date goes back to the date box", async () => {
+    const give = vi.fn(async () => Promise.reject(new AdminApiError("past-date")));
+    signedIn({ give });
+    await screen.findByLabelText(text.idLabel);
+    fireEvent.input(screen.getByLabelText(text.idLabel), { target: { value: LATE } });
+    fireEvent.click(screen.getByRole("button", { name: text.add }));
+    await screen.findByText(grantError("past-date") ?? "");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText(text.endLabel)));
+  });
+
+  it("revoking someone whose Change form is open clears the form", async () => {
+    signedIn();
+    const sam = await row(FRIEND);
+    fireEvent.click(within(sam).getByRole("button", { name: text.change }));
+    fireEvent.click(within(sam).getByRole("button", { name: text.revoke }));
+    fireEvent.click(within(sam).getByRole("button", { name: text.yesRevoke }));
+    await screen.findByText(text.revoked("Sam"));
+    expect((screen.getByLabelText(text.idLabel) as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("heading", { name: text.addHeading })).toBeTruthy();
+  });
+
+  it("Change focuses the level they have; Start over focuses the id box", async () => {
+    const unlimited: GrantsView = {
+      ...view(),
+      grants: [{ ...view().grants[0]!, level: "unlimited" }],
+    };
+    signedIn({ grants: vi.fn(async () => unlimited) });
+    const sam = await row(FRIEND);
+    fireEvent.click(within(sam).getByRole("button", { name: text.change }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByLabelText(text.levels.unlimited ?? "")),
+    );
+    expect(screen.getByLabelText(text.idLabel).getAttribute("aria-describedby")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: text.startOver }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText(text.idLabel)));
   });
 
   it("the level is two choices, Same as Guild first", async () => {

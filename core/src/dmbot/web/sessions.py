@@ -123,15 +123,19 @@ async def display_names(db: Database, user_ids: Iterable[int], *, now: int) -> d
     """The name each of these people signed in with, for the admin page's list. Each is
     read through that person's own scope (never a wider one), only the newest unexpired
     session's name, and only for the ids asked for. Sessions are all that keep a name, so
-    someone who hasn't signed in for the session's length has none: callers show the id."""
+    someone who hasn't signed in for the session's length has none: callers show the id.
+
+    One transaction per id, so it's for a list that stays small (the admin page's)."""
     names: dict[int, str] = {}
     for user_id in dict.fromkeys(user_ids):
         async with db.user(user_id) as conn:
             cur = await conn.execute(
                 "SELECT display_name FROM web_sessions"
-                " WHERE expires_at > %s AND display_name <> ''"
+                " WHERE user_id = %s AND expires_at > %s AND display_name <> ''"
                 " ORDER BY created_at DESC LIMIT 1",
-                (now,),
+                # user_id twice over: row-level security already limits this to the
+                # person, but a missing policy mustn't put someone else's name by an id.
+                (user_id, now),
             )
             row = await cur.fetchone()
         if row is not None:

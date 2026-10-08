@@ -4,7 +4,7 @@
 // checks every rule again.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { grantError, NOTE_MAX, text, who } from "../content/admin";
+import { grantError, NOTE_MAX, saved, text, who } from "../content/admin";
 import {
   type AdminApi,
   AdminApiError,
@@ -72,7 +72,8 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
   const [note, setNote] = useState("");
   const [problem, setProblem] = useState<AdminProblem | "no-id" | null>(null);
   const idBox = useRef<HTMLInputElement>(null);
-  const levelBox = useRef<HTMLInputElement>(null);
+  const levelRadios = useRef(new Map<string, HTMLInputElement>());
+  const endBox = useRef<HTMLInputElement>(null);
   const formNewsBox = useRef<HTMLParagraphElement>(null);
   const listNewsBox = useRef<HTMLParagraphElement>(null);
   const yesRevoke = useRef<HTMLButtonElement>(null);
@@ -98,6 +99,7 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
   // scrolls to it.
   useEffect(() => {
     if (problem === "bad-id" || problem === "no-id") idBox.current?.focus();
+    else if (problem === "bad-date" || problem === "past-date") endBox.current?.focus();
     else if (formNews) formNewsBox.current?.focus();
   }, [formNews, problem]);
 
@@ -168,8 +170,9 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
     void act(async () => {
       const done = await api.give(csrf, { discordId: id, level, endsOn: endsOn || null, note });
       const name = who(done.name, id);
+      const how = saved(level, endsOn ? day(Date.parse(`${endsOn}T00:00:00Z`) / 1000) : null);
       clearForm();
-      return done.action === "change" ? text.changed(name) : text.added(name);
+      return done.action === "change" ? text.changed(name, how) : text.added(name, how);
     }, setFormNews);
   }
 
@@ -178,12 +181,14 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
     setEditing({ id: g.discordId, who: who(g.name, g.discordId) });
     setDiscordId(g.discordId);
     setLevel(g.level);
-    setEndsOn(g.endsAt === null ? "" : lastDay(g.endsAt));
+    // An ended grant starts with no date: its old last day is past, and "after today" is
+    // what the API accepts.
+    setEndsOn(g.endsAt === null || ended(g) ? "" : lastDay(g.endsAt));
     setNote(g.note);
     setFormNews(null);
     setProblem(null);
-    // Straight to the first thing that can change.
-    setTimeout(() => levelBox.current?.focus(), 0);
+    // Straight to the first thing that can change: the level they have now.
+    setTimeout(() => levelRadios.current.get(g.level)?.focus(), 0);
   }
 
   if (view === "loading") return <p role="status">{text.listLoading}</p>;
@@ -257,6 +262,9 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
                       onClick={() =>
                         void act(async () => {
                           await api.revoke(csrf, g.discordId);
+                          // Their Change form, if open, goes: Save must not quietly give
+                          // the access back.
+                          if (editing?.id === g.discordId) clearForm();
                           return text.revoked(who(g.name, g.discordId));
                         }, setListNews)
                       }
@@ -318,7 +326,7 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
               readOnly={editing !== null}
               value={discordId}
               aria-invalid={problem === "bad-id" || problem === "no-id"}
-              aria-describedby="grant-id-hint"
+              aria-describedby={editing ? undefined : "grant-id-hint"}
               onInput={(e) => setDiscordId(e.currentTarget.value)}
             />
             {!editing && (
@@ -336,7 +344,8 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
                   name="grant-level"
                   value={value}
                   ref={(el) => {
-                    if (value === "guild") levelBox.current = el;
+                    if (el) levelRadios.current.set(value, el);
+                    else levelRadios.current.delete(value);
                   }}
                   checked={level === value}
                   onChange={() => setLevel(value)}
@@ -352,6 +361,7 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
             <label for="grant-end">{text.endLabel}</label>
             <input
               id="grant-end"
+              ref={endBox}
               type="date"
               min={tomorrow()}
               value={endsOn}
@@ -396,7 +406,15 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
               {saving ? text.adding : editing ? text.save : text.add}
             </button>
             {editing && (
-              <button type="button" class="button secondary" disabled={busy} onClick={clearForm}>
+              <button
+                type="button"
+                class="button secondary"
+                disabled={busy}
+                onClick={() => {
+                  clearForm();
+                  setTimeout(() => idBox.current?.focus(), 0);
+                }}
+              >
                 {text.startOver}
               </button>
             )}
