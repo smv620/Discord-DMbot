@@ -83,6 +83,7 @@ export const text = {
       "You need a DMbot plan with room for one more campaign. Tap See my plan, then tap Accept again.",
     "offer-gone": "That offer has ended. We've updated this page.",
     "confirm-again": "That took too long. Tap Start deleting again.",
+    "free-access": "You have free access, so there's nothing to pay. Reload this page.",
     "no-paid-plan":
       "Your plan has changed since this page opened, so we've updated it. If nothing looks different, write to us for help.",
   } as Record<string, string>,
@@ -119,6 +120,12 @@ export const text = {
       ? `Your last payment didn't go through. Fix it by ${shortDate(date)} to keep your plan.`
       : "Your last payment didn't go through. Fix it soon to keep your plan.",
   fixPayment: "Fix my payment",
+  // Free access (#806): never why someone has it.
+  freeAccess: "Free access",
+  freeAccessUntil: (iso: string): string => `Free access until ${shortDate(iso)}`,
+  stillPaying: (plan: string): string =>
+    `You're still paying for ${plan}. Tap Stop paying if you don't need it.`,
+  stopPaying: "Stop paying",
   lapsed: `Your plan has stopped. Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns

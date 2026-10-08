@@ -106,6 +106,31 @@ describe("states", () => {
     await waitFor(() => expect(go).toHaveBeenCalledWith("#demo-billing"));
   });
 
+  it("free access: says so, with no hours, prices or plan buttons", async () => {
+    show("free");
+    expect(await screen.findByText(text.freeAccess)).toBeTruthy();
+    expect(screen.queryByLabelText(text.hoursBarLabel)).toBeNull();
+    expect(screen.queryByRole("button", { name: text.startTryIt })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Choose / })).toBeNull();
+    expect(screen.queryByText(text.pickPlan)).toBeNull();
+    expect(screen.queryByText(text.noPlan)).toBeNull();
+    expect(screen.queryByRole("button", { name: text.stopPaying })).toBeNull();
+  });
+
+  it("free access with an end date shows the date", async () => {
+    show("free-until");
+    expect(await screen.findByText("Free access until Dec 31")).toBeTruthy();
+  });
+
+  it("free access while still paying offers Stop paying, which opens the billing page", async () => {
+    const { go } = show("free-paying");
+    expect(await screen.findByText(text.stillPaying("Table"))).toBeTruthy();
+    expect(screen.queryByLabelText(text.hoursBarLabel)).toBeNull();
+    expect(screen.queryByRole("button", { name: text.changePlan })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: text.stopPaying }));
+    await waitFor(() => expect(go).toHaveBeenCalledWith("#demo-billing"));
+  });
+
   it("lapsed: says the plan stopped and offers plans", async () => {
     show("lapsed");
     expect(await screen.findByText(text.lapsed)).toBeTruthy();
@@ -187,6 +212,29 @@ describe("actions", () => {
     show("table", "?install=sign_in_again");
     expect((await screen.findByRole("alert")).textContent).toBe(text.signInAgain);
     expect(screen.getByRole("link", { name: text.signIn })).toBeTruthy();
+  });
+
+  it("says free access means nothing to pay when checkout refuses", async () => {
+    const api = mockApi("no-plan");
+    api.checkoutUrl = vi.fn(async () => {
+      throw new ApiError("free-access");
+    });
+    render(<Account api={api} go={vi.fn()} search="" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Choose Table" }));
+    expect(await screen.findByText(text.errors["free-access"] ?? "")).toBeTruthy();
+  });
+
+  it("maps the API's has_free_access to free-access", async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ error: "has_free_access" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    await expect(httpApi("/api", fetcher).startTryIt()).rejects.toMatchObject({
+      kind: "free-access",
+    });
   });
 
   it("explains the API's refusals in plain words", async () => {

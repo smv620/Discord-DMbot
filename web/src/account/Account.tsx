@@ -393,6 +393,29 @@ function PlanSection({ me }: { me: Me }) {
     </>
   );
 
+  const access = me.access;
+  if (access?.kind === "free") {
+    // Free access (#806): no hours bar, no prices and no payment buttons, except a way to
+    // stop a paid plan that's still charging. Never why someone has free access.
+    return (
+      <section aria-labelledby="plan-heading" class="panel" id="plan">
+        <h2 id="plan-heading">{text.planHeading}</h2>
+        <Notice message={notice} />
+        <p class="plan-name">
+          {access.endsOn ? text.freeAccessUntil(access.endsOn) : text.freeAccess}
+        </p>
+        {access.stillPaying && (
+          <>
+            <p>{text.stillPaying(access.paidPlan ?? (plan ? planName(plan.id) : "your plan"))}</p>
+            <ActionButton busy={busy} kind="secondary" onClick={portal}>
+              {text.stopPaying}
+            </ActionButton>
+          </>
+        )}
+      </section>
+    );
+  }
+
   return (
     <section aria-labelledby="plan-heading" class="panel" id="plan">
       <h2 id="plan-heading">{text.planHeading}</h2>
