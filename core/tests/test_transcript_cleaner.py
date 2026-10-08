@@ -128,6 +128,26 @@ class MishearingsTest(unittest.TestCase):
         self.assertEqual(result.text, "Cerric draws her bow")
         self.assertEqual(result.fixes[0].how, DM_FIX)
 
+    def test_a_spelling_the_dm_fixed_to_a_name_they_typed(self) -> None:
+        # "Type it…" (#503): the DM's rule points at a name not checked yet; it's used for
+        # the fix, but doesn't count as named (that waits for 📝 Check new names).
+        from dmbot.memory.scene import mentions
+
+        names = lookup(corrections=(correction("Rothgar", GUESS, FIX),))
+        result = clean(names, "then Rothgar swings")
+        self.assertEqual(result.text, "then Hrothgar swings")
+        self.assertEqual(result.fixes[0].how, DM_FIX)
+        self.assertEqual(mentions(names, "then Rothgar swings"), set())
+
+    def test_a_typed_name_is_never_written_as_a_secret(self) -> None:
+        hidden = entity("j" * 32, "Vessa", "concept", PROPOSED)
+        names = lookup(
+            more=(hidden,),
+            more_aliases=(alias("j" * 32, "Vessa", secret=True, status=PROPOSED),),
+            corrections=(correction("Vesa", "j" * 32, FIX),),
+        )
+        self.assertEqual(text("then Vesa smiles", names), "then Vesa smiles")
+
     def test_a_name_is_written_the_way_it_was_said(self) -> None:
         # "Frostwolves" is the tribe's other name: not changed to "Frostwolf tribe"
         self.assertEqual(text("we track the Frostwolfs north"), "we track the Frostwolves north")

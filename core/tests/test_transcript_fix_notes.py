@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.dm_screen.name_questions import FixUndoButton, fix_notes_view
 from dmbot.transcript.cleaner import SOUND, Fix
-from dmbot.transcript.fix_notes import SHOWN, FixNotes, message_text
+from dmbot.transcript.fix_notes import ANSWERS_KEPT, SHOWN, Answer, FixNotes, message_text
 from dmbot.transcript.models import Line, TranscriptBuffer
 from dmbot.transcript.stream import EDIT_WINDOW_S, TranscriptStream
 
@@ -46,6 +46,37 @@ class FixNotesTest(unittest.TestCase):
         first, _ = book.add(MIA, 1000, heard, twice)
         self.assertEqual(len(book.undo(first.id)), 2)
         self.assertEqual(book.line_text(first), heard)
+
+    def test_an_answer_fixes_its_line_alongside_the_fixes(self) -> None:
+        # "then Hrothgarr and Beleros left": Hrothgarr was fixed, Beleros was asked about.
+        book = FixNotes()
+        (first,) = book.add(MIA, 1000, HEARD, fixes()[:1])
+        book.answered(Answer(41, MIA, 1000, HEARD, fixes()[:1], 19, 26, "Bellaros"))
+        self.assertEqual(book.line_text(first), "then Hrothgar and Bellaros left")
+        book.undo(first.id)  # a fix undone later: the answer stays
+        self.assertEqual(book.line_text(first), "then Hrothgarr and Bellaros left")
+        answer = book.take_back(41)  # the answer's Undo: the fix's Undo stays
+        assert answer is not None
+        self.assertEqual(
+            book.words_now(MIA, 1000, HEARD, answer.fixes), "then Hrothgarr and Beleros left"
+        )
+        self.assertIsNone(book.take_back(41))  # once only
+
+    def test_still_fixed_leaves_out_undone_fixes(self) -> None:
+        book = FixNotes()
+        _, second = book.add(MIA, 1000, HEARD, fixes())
+        book.undo(second.id)
+        self.assertEqual(book.still_fixed(MIA, 1000, fixes()), fixes()[:1])
+        self.assertEqual(book.still_fixed(DEE, 1000, fixes()), fixes())  # another line
+
+    def test_answers_are_let_go_and_go_with_their_speaker(self) -> None:
+        book = FixNotes()
+        for batch in range(ANSWERS_KEPT + 1):
+            book.answered(Answer(batch, MIA, batch, HEARD, (), 5, 14, "Hrothgar"))
+        self.assertIsNone(book.take_back(0))  # too old to put back
+        book.answered(Answer(99, DEE, 0, HEARD, (), 5, 14, "Hrothgar"))
+        book.drop_speaker(MIA)
+        self.assertEqual([a.batch for a in book.answers], [99])
 
     def test_the_message_numbers_its_lines_and_shows_what_was_undone(self) -> None:
         book = FixNotes()

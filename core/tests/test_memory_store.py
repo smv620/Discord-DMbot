@@ -798,6 +798,19 @@ class Undo(MemoryTest):
         await self.memory.undo(GUILD_A, self.c, undone.batch)  # redo
         self.assertEqual(await self.snapshot(), after)
 
+    async def test_a_typed_name_and_its_rule_are_one_change(self) -> None:
+        """#503: "Type it…" with a name DMbot didn't know: one Undo takes back both."""
+        written = await self.memory.add_typed_name(GUILD_A, self.c, " Marin ", "Maerin")
+        entity = written.value
+        self.assertEqual((entity.name, entity.type, entity.status), ("Maerin", "concept", PROPOSED))
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        (fix,) = data.corrections
+        self.assertEqual((fix.heard, fix.action, fix.entity_id), ("Marin", "fix", entity.id))
+        self.assertIn(entity.id, [e.id for e in data.entities])  # waiting in Check new names
+        await self.check_undo_and_redo(
+            lambda: self.memory.add_typed_name(GUILD_A, self.c, "Velka", "Velkka")
+        )
+
     async def test_every_operation_can_be_undone_and_redone(self) -> None:
         a, b, c = await self.add("Belleros"), await self.add("Cerric"), await self.add("Bell")
         bel = (

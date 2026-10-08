@@ -1232,8 +1232,23 @@ consent check just made still holds:
     without repeating their words.
   - **When it closes:** questions live with the running session. When it ends, the
     open one is closed; after a restart, a press says it's closed.
-  - **Not yet:** Type it…, fixing the line that was asked about, and the quiet
-    verbosity level.
+  - **Type it… (built 2026-10-08, #503):** a fourth button opens a form, "The name, as
+    it should be written" (DM only, at most 60 characters, the names list's rules: no
+    `|`, at most 8 words, no links). A name or other name DMbot knows (spelled the same
+    way) means that name, written its own way; a name it doesn't know becomes a new
+    name waiting in 📝 Check new names, with the fix rule, in one change (one Undo takes
+    back both). The DM's rule fixes later lines even before that name is checked; it
+    doesn't count as said until it is. A secret name is refused (the transcript is
+    shared with the whole server), and so is a spelling two names share. A typing
+    mistake answers privately and the question stays open. Consent is checked again
+    when the form is sent.
+  - **The line that was asked about (built 2026-10-08, #503):** the answer is written
+    into that line too: saved, waiting, and in the transcript channel within ~30 s
+    (the same paths as a fix's Undo). The answer says "in that line and from now on…
+    Older lines stay as heard." Undo of the answer puts that line back while the
+    session still runs (after a restart only the rule is taken back). Keep changes
+    nothing in the line.
+  - **Not yet:** the quiet verbosity level.
 - **Cleaned and both downloads:**
   - **At the end of a session:** the message has **[📄 Cleaned]**, **[🎙 As heard]** and
     **[📄🎙 Both]**, one line explaining each. Buttons sent before this still give

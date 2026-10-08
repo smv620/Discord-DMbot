@@ -170,13 +170,14 @@ def likeness(a: str, b: str) -> float:
     ).ratio()
 
 
-def own_name(lookup: CampaignLookup, entity_id: str) -> str | None:
-    """An entry's own name as written, if it's a confirmed name that isn't secret."""
+def own_name(lookup: CampaignLookup, entity_id: str, *, typed: bool = False) -> str | None:
+    """An entry's own name as written, if it's a confirmed name that isn't secret.
+    `typed`: a name the DM typed for a misheard word counts before it's checked (#503)."""
     entity = lookup.entities.get(entity_id)
-    if entity is None or entity.status != CONFIRMED:
+    if entity is None or (entity.status != CONFIRMED and not typed):
         return None
     for entry in lookup.by_key.get(name_key(entity.name), ()):
-        if entry.entity_id == entity_id and entry.confirmed and not entry.secret:
+        if entry.entity_id == entity_id and (entry.confirmed or typed) and not entry.secret:
             return entry.text
     return None
 
@@ -318,7 +319,7 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
     a place that could be two different entries is left alone, and so is the name of
     someone at the table (a DM's rule "Sara" → Cerric never renames a player Sara)."""
     by_span: dict[tuple[int, int], list[tuple[str, str]]] = {}
-    for found in find_mentions(lookup, heard):
+    for found in find_mentions(lookup, heard, typed_names=True):
         by_span.setdefault(found.span, []).append((found.entity_id, found.method))
     taken: list[tuple[int, int]] = []
     fixes = []
@@ -340,10 +341,11 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
             written = _respelled(lookup, said)
             how = SPELLING
         else:
-            written = own_name(lookup, entity_id)
+            # A DM's rule: it may point at a name they typed, not checked yet (#503).
+            written = own_name(lookup, entity_id, typed=True)
             how = DM_FIX
-        if written is not None and said != _stem(said) and written == _stem(written):
-            written += said[len(_stem(said)) :]  # keep the "'s": "Bane's dog" → "Vane's dog"
+        if written is not None:
+            written = with_ending(said, written)
         if written is not None and written != said:
             fixes.append(Fix(span[0], span[1], said, written, entity_id, how))
     return fixes
@@ -436,6 +438,13 @@ def _by_sound(
             else:
                 i += 1
     return fixes, questions
+
+
+def with_ending(said: str, written: str) -> str:
+    """A name written for words said, keeping their "'s": "Bane's dog" → "Vane's dog"."""
+    if said != _stem(said) and written == _stem(written):
+        return written + said[len(_stem(said)) :]
+    return written
 
 
 def _stem(word: str) -> str:

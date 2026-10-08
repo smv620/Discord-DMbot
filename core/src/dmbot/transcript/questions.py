@@ -6,6 +6,8 @@ as heard and DMbot asks the DM which one it was, in the DM screen only:
 "❓ **DMbot heard Mia say "Beleros".** Did they mean… [Belleros] [Bellaros]
 [Keep "Beleros"]". The answer is saved for the campaign (a fixed spelling, or "keep as
 heard"), so the same words are handled silently from then on, and it can be undone.
+The DM may also type the name (**Type it…**); the line that was asked about is fixed
+too, and Undo puts it back (#503).
 
 Not flooding the DM screen: at most one question is open at a time, each word is asked
 about at most once per session, and a question nobody answers expires after a few
@@ -21,9 +23,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from dmbot.memory.models import name_key
-from dmbot.transcript.cleaner import Question
+from dmbot.transcript.cleaner import Fix, Question
 
 KEEP = "keep"  # the button choice that keeps the words as heard
+TYPE = "type"  # the button that opens a form to type the name
 QUESTION_TTL_S = 300.0  # an unanswered question expires after this long
 COOLDOWN_S = 150.0  # after a question closes, however it closed, before the next
 LABEL_MAX = 25  # names on buttons: fits a phone (the full name is in the answer)
@@ -38,6 +41,19 @@ GONE = "This question is closed: that person stopped being recorded."
 UNDONE = "↩️ Undone. Those words stay as heard again. DMbot may ask about them next session."
 UNDO_FAILED = "Couldn't undo: that was changed again since."
 UNDO_ONLY_DM = "Only the campaign's DM can undo this."
+TYPE_LABEL = "Type it…"
+TYPED_MAX = 60  # a typed name, at most
+FORM_TITLE = "Type the name"
+FORM_FIELD = "The name, as it should be written"
+FORM_HINT = "For example: Hrothgar"
+TYPED_SECRET = (
+    "That's a secret name, so DMbot won't write it in the transcript (everyone in the "
+    "server can read it). Pick another answer, or ignore the question."
+)
+TYPED_TWO = (
+    "Two names are written like that. Pick one of the buttons, or fix the names first: "
+    "`/dmbot names`."
+)
 
 # Why the open question closed (an answer being saved needs to know).
 ANSWERED, EXPIRED_WHY, STOPPED, ENDED, NOT_POSTED = (
@@ -59,6 +75,13 @@ class Asked:
     options: tuple[tuple[str, str], ...]  # (entity ID, name)
     asked_at: float  # monotonic seconds
     context: str = ""  # the bit of the line around the words
+    # The line it was asked about, to fix it once answered (#503): when it started, all
+    # of it as heard, the fixes made in it, and where the words are (as heard).
+    started_ms: int = 0
+    line: str = ""
+    fixes: tuple[Fix, ...] = ()
+    start: int = 0
+    end: int = 0
 
 
 class Begin(Enum):
@@ -92,9 +115,14 @@ class QuestionBook:
         questions: tuple[Question, ...],
         now: float,
         matters: Collection[str] = (),
+        *,
+        started_ms: int = 0,
+        line: str = "",
+        fixes: tuple[Fix, ...] = (),
     ) -> Asked | None:
         """The question to post now, if any. Every question counts towards "heard a
-        second time" even when none is asked. Call `expire` first."""
+        second time" even when none is asked. Call `expire` first. `started_ms`, `line`
+        and `fixes`: the line the questions are about, so the answer can fix it."""
         keys = []
         for question in questions:
             key = name_key(question.heard)
@@ -117,6 +145,11 @@ class QuestionBook:
                 question.options,
                 now,
                 question.context,
+                started_ms,
+                line,
+                fixes,
+                question.start,
+                question.end,
             )
             return self.open
         return None
@@ -188,12 +221,23 @@ def keep_label(heard: str) -> str:
     return f'Keep "{_short(heard, LABEL_MAX - 7)}"'
 
 
-def fixed_text(heard: str, name: str) -> str:
-    """After the DM picked a name (both already escaped)."""
+def fixed_text(heard: str, name: str, *, line_fixed: bool = False) -> str:
+    """After the DM picked or typed a name (both already escaped). `line_fixed`: the line
+    that was asked about was fixed too."""
+    if line_fixed:
+        return (
+            f'✅ Got it: "{_short(heard)}" is now written **{_short(name)}**, in that line '
+            "and from now on in this campaign. Older lines stay as heard."
+        )
     return (
         f'✅ Got it: from now on, "{_short(heard)}" is written **{_short(name)}** in this '
         "campaign. Earlier lines stay as heard."
     )
+
+
+def typed_problem(why: str) -> str:
+    """A typed name that can't be saved (`why` from the names list's rules)."""
+    return f"That can't be saved as a name: {why}. Try again."
 
 
 def kept_text(heard: str) -> str:

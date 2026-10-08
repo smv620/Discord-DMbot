@@ -1182,6 +1182,47 @@ class MemoryStore:
             )
             return Written(_correction(row), w.batch)
 
+    async def add_typed_name(
+        self, guild_id: int, campaign_id: str, heard: str, name: str
+    ) -> Written[Entity]:
+        """A name the DM typed for words heard, that DMbot didn't know (#503): a new
+        name to check in 📝 Check new names, and the rule that those words are written
+        that way, in one change (one Undo takes back both)."""
+        name, heard = clean_text(name), clean_text(heard)
+        key = lookup_key(heard)
+        lookup_key(name)  # too long: refused before anything is written
+        async with self._write(guild_id, campaign_id, DM) as w:
+            onto = await _load_ontology(w)
+            onto.active_type("concept")
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(),
+                    "type": "concept",
+                    "name": name,
+                    "description": "Typed by the DM for a misheard word",
+                    "status": PROPOSED,
+                    "merged_into": None,
+                    "source": DM,
+                    "created_at": w.now,
+                    "played_by": None,
+                },
+            )
+            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", PROPOSED, False, None))
+            await w.insert(
+                CORRECTIONS,
+                {
+                    "id": new_id(),
+                    "heard": heard,
+                    "heard_key": key,
+                    "entity_id": row["id"],
+                    "action": FIX,
+                    "source": DM,
+                    "created_at": w.now,
+                },
+            )
+            return Written(_entity(row), w.batch)
+
     # ---- extending the rules ----------------------------------------------------------
 
     async def add_type(

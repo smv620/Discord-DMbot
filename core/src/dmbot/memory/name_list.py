@@ -174,6 +174,14 @@ def _problem(text: str) -> str | None:
     return None
 
 
+def check_name(text: str) -> str | None:
+    """Why one name can't be saved, with the list's rules (for a name typed on its own,
+    #503), or None if it's fine."""
+    if "|" in text:
+        return "it has a |. Type just the name"
+    return _problem(text)
+
+
 def kind_of(word: str) -> str | None:
     """A kind in plain words ("Places", "cities", "god") → the memory rules' kind."""
     word = " ".join(word.casefold().split())

@@ -1,9 +1,10 @@
 """The buttons on a "Did they mean…?" question in the DM screen (#296).
 
 Each answer button's ID carries the server, the question and the choice (a name's place
-in the list, or "keep"). Questions live with the running session, so after a restart,
-or once the session ended, a press just says the question is closed. Only the
-campaign's DMs may answer; the bot does the rest (`DMBot.answer_name_question`).
+in the list, "keep", or "type": **Type it…** opens a form for the name, #503).
+Questions live with the running session, so after a restart, or once the session ended,
+a press just says the question is closed. Only the campaign's DMs may answer; the bot
+does the rest (`DMBot.answer_name_question`).
 
 Once answered, the message keeps an **↩️ Undo** button. Its ID carries the campaign and
 the saved change, so it works after a restart; like answering, only the campaign's DMs
@@ -33,14 +34,14 @@ FAILED = "Something went wrong. Try again in a moment."
 
 class NameQuestionButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=r"dmbot:ask:(?P<guild>[0-9]{1,20}):(?P<question>[0-9a-f]{8}):(?P<pick>[0-2]|keep)",
+    template=r"dmbot:ask:(?P<guild>[0-9]{1,20}):(?P<question>[0-9a-f]{8}):(?P<pick>[0-2]|keep|type)",
 ):
     def __init__(self, guild_id: int, question_id: str, pick: str, label: str) -> None:
         super().__init__(
             discord.ui.Button(
                 label=label or "?",
                 style=discord.ButtonStyle.secondary
-                if pick == questions.KEEP
+                if pick in (questions.KEEP, questions.TYPE)
                 else discord.ButtonStyle.primary,
                 custom_id=f"dmbot:ask:{guild_id}:{question_id}:{pick}",
             )
@@ -61,23 +62,63 @@ class NameQuestionButton(
         if interaction.guild_id != self.guild_id or not hasattr(bot, "answer_name_question"):
             await _tell(interaction, questions.EXPIRED)
             return
+        if self.pick == questions.TYPE:
+            why = bot.can_type_answer(self.guild_id, self.question_id, interaction.user.id)
+            if why is not None:
+                await _tell(interaction, why)
+                return
+            await interaction.response.send_modal(TypeNameForm(self.guild_id, self.question_id))
+            return
         await interaction.response.defer()  # the answer edits this message
-        try:
-            answer, done, undo = await bot.answer_name_question(
-                self.guild_id, self.question_id, self.pick, interaction.user.id
-            )
-        except Exception:
-            log.exception("Couldn't save the DM's answer to a name question")
-            await interaction.followup.send(FAILED, ephemeral=True)
-            return
-        if not done:  # still open (someone else pressed, or it's being saved)
-            await interaction.followup.send(answer, ephemeral=True, allowed_mentions=NO_PINGS)
-            return
-        view = undo_view(*undo) if undo is not None else None
-        with contextlib.suppress(discord.HTTPException):
-            await interaction.edit_original_response(
-                content=answer, view=view, allowed_mentions=NO_PINGS
-            )
+        await _answer(interaction, self.guild_id, self.question_id, self.pick)
+
+
+class TypeNameForm(discord.ui.Modal):
+    """**Type it…**: the DM writes the name themselves (#503). The bot checks it with
+    the names list's rules, and checks again that the question is still open, they're
+    the DM, and the speaker is still recorded (the form may sit open a while)."""
+
+    name: discord.ui.TextInput[TypeNameForm] = discord.ui.TextInput(
+        label=questions.FORM_FIELD,
+        placeholder=questions.FORM_HINT,
+        max_length=questions.TYPED_MAX,
+    )
+
+    def __init__(self, guild_id: int, question_id: str) -> None:
+        super().__init__(title=questions.FORM_TITLE)
+        self.guild_id, self.question_id = guild_id, question_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()  # the answer edits the question's message
+        await _answer(interaction, self.guild_id, self.question_id, questions.TYPE, self.name.value)
+
+
+async def _answer(
+    interaction: discord.Interaction,
+    guild_id: int,
+    question_id: str,
+    pick: str,
+    typed: str | None = None,
+) -> None:
+    """Save an answer (already deferred): the question's message becomes the answer, or
+    a private reply says why not."""
+    bot: Any = interaction.client
+    try:
+        answer, done, undo = await bot.answer_name_question(
+            guild_id, question_id, pick, interaction.user.id, typed
+        )
+    except Exception:
+        log.exception("Couldn't save the DM's answer to a name question")
+        await interaction.followup.send(FAILED, ephemeral=True)
+        return
+    if not done:  # still open (a typing mistake, someone else pressed, or being saved)
+        await interaction.followup.send(answer, ephemeral=True, allowed_mentions=NO_PINGS)
+        return
+    view = undo_view(*undo) if undo is not None else None
+    with contextlib.suppress(discord.HTTPException):
+        await interaction.edit_original_response(
+            content=answer, view=view, allowed_mentions=NO_PINGS
+        )
 
 
 class NameAnswerUndoButton(
@@ -138,6 +179,11 @@ class NameAnswerUndoButton(
         lookup = getattr(bot, "lookup", None)
         if lookup is not None:
             lookup.mark_stale(campaign.guild_id, campaign.id)  # the next line sees it
+        if hasattr(bot, "answer_undone"):  # the line it fixed goes back too (#503)
+            try:
+                await bot.answer_undone(campaign.guild_id, campaign.id, self.batch)
+            except Exception:
+                log.exception("Couldn't put a line back after undoing an answer")
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=questions.undone_text(heard), view=None, allowed_mentions=NO_PINGS
@@ -166,6 +212,7 @@ def question_view(guild_id: int, asked: questions.Asked) -> discord.ui.View:
     view.add_item(
         NameQuestionButton(guild_id, asked.id, questions.KEEP, questions.keep_label(asked.heard))
     )
+    view.add_item(NameQuestionButton(guild_id, asked.id, questions.TYPE, questions.TYPE_LABEL))
     return view
 
 

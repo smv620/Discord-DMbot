@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from dmbot.dm_screen.name_questions import (
     NameAnswerUndoButton,
     NameQuestionButton,
+    TypeNameForm,
     question_view,
     undo_view,
 )
@@ -24,6 +25,7 @@ def interaction(guild_id: int = GUILD, client: Any = None) -> Any:
     it.client = client if client is not None else MagicMock()
     it.response.send_message = AsyncMock()
     it.response.defer = AsyncMock()
+    it.response.send_modal = AsyncMock()
     it.followup.send = AsyncMock()
     it.edit_original_response = AsyncMock()
     return it
@@ -33,7 +35,12 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
     def test_ids_survive_a_restart(self) -> None:
         view = question_view(GUILD, ASKED)
         ids = [item.item.custom_id for item in view.children]  # type: ignore[attr-defined]
-        self.assertEqual(len(ids), 3)  # two names and Keep
+        self.assertEqual(len(ids), 4)  # two names, Keep and Type it…
+        three = questions.Asked("0a1b2c3d", 8, "Marin", (*ASKED.options, ("d" * 32, "Mara")), 0.0)
+        labels = [item.item.label for item in question_view(GUILD, three).children]  # type: ignore[attr-defined]
+        self.assertEqual(len(labels), 5)  # one row on a phone: Discord's limit
+        self.assertEqual(labels[-1], "Type it…")
+        self.assertTrue(all(len(label) <= 25 for label in labels))
         for custom_id in [*ids, undo_view("c" * 32, 99).children[0].item.custom_id]:  # type: ignore[attr-defined]
             with self.subTest(custom_id=custom_id):
                 template = (
@@ -76,6 +83,50 @@ class ButtonsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Try again", it.followup.send.await_args.args[0])
         it.edit_original_response.assert_not_awaited()
 
+    async def test_type_it_opens_the_form_for_the_dm(self) -> None:
+        bot = MagicMock(
+            answer_name_question=AsyncMock(), can_type_answer=MagicMock(return_value=None)
+        )
+        it = interaction(client=bot)
+        it.user = MagicMock(id=DM_ID)
+        await NameQuestionButton(GUILD, ASKED.id, "type", "Type it…").callback(it)
+        bot.can_type_answer.assert_called_once_with(GUILD, ASKED.id, DM_ID)
+        form = it.response.send_modal.await_args.args[0]
+        self.assertIsInstance(form, TypeNameForm)
+        self.assertEqual(form.name.max_length, 60)
+        self.assertLessEqual(len(form.title), 45)  # Discord's limits
+        self.assertLessEqual(len(questions.FORM_FIELD), 45)
+        bot.answer_name_question.assert_not_awaited()  # nothing saved until it's sent
+
+    async def test_type_it_says_why_not_without_a_form(self) -> None:
+        bot = MagicMock(can_type_answer=MagicMock(return_value=questions.ONLY_DM))
+        it = interaction(client=bot)
+        await NameQuestionButton(GUILD, ASKED.id, "type", "Type it…").callback(it)
+        self.assertEqual(it.response.send_message.await_args.args[0], questions.ONLY_DM)
+        it.response.send_modal.assert_not_awaited()
+
+    async def test_the_typed_name_is_the_answer(self) -> None:
+        bot = MagicMock(
+            answer_name_question=AsyncMock(return_value=("✅ Got it", True, ("c" * 32, 6)))
+        )
+        it = interaction(client=bot)
+        it.user = MagicMock(id=DM_ID)
+        form = TypeNameForm(GUILD, ASKED.id)
+        form.name._value = "Maerin"
+        await form.on_submit(it)
+        bot.answer_name_question.assert_awaited_once_with(GUILD, ASKED.id, "type", DM_ID, "Maerin")
+        self.assertEqual(it.edit_original_response.await_args.kwargs["content"], "✅ Got it")
+
+    async def test_a_typing_mistake_answers_privately(self) -> None:
+        problem = questions.typed_problem("it has a |. Type just the name")
+        bot = MagicMock(answer_name_question=AsyncMock(return_value=(problem, False, None)))
+        it = interaction(client=bot)
+        form = TypeNameForm(GUILD, ASKED.id)
+        form.name._value = "Mae | rin"
+        await form.on_submit(it)
+        self.assertEqual(it.followup.send.await_args.args[0], problem)
+        it.edit_original_response.assert_not_awaited()  # the question stays
+
 
 class UndoTest(unittest.IsolatedAsyncioTestCase):
     def bot(self, *, undo: Any = None) -> Any:
@@ -84,6 +135,7 @@ class UndoTest(unittest.IsolatedAsyncioTestCase):
             campaigns=MagicMock(get=AsyncMock(return_value=campaign)),
             memory=MagicMock(undo=AsyncMock(side_effect=undo)),
             lookup=MagicMock(),
+            answer_undone=AsyncMock(),
         )
 
     def press(self, bot: Any, user: int) -> Any:
@@ -106,6 +158,7 @@ class UndoTest(unittest.IsolatedAsyncioTestCase):
         await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
         bot.memory.undo.assert_awaited_once_with(GUILD, CAMPAIGN, 5)
         bot.lookup.mark_stale.assert_called_once_with(GUILD, CAMPAIGN)
+        bot.answer_undone.assert_awaited_once_with(GUILD, CAMPAIGN, 5)  # the line goes back
         content = it.edit_original_response.await_args.kwargs["content"]
         self.assertIn('"Marin" stays as heard again', content)
 

@@ -49,6 +49,14 @@ class Reading(unittest.TestCase):
         self.assertEqual(parsed.lines, [])
         self.assertEqual([n for n, _ in parsed.refused], [2, 3, 4, 5])
 
+    def test_one_typed_name_is_checked_with_the_same_rules(self) -> None:
+        from dmbot.memory.name_list import check_name
+
+        self.assertIsNone(check_name("Hrothgar the Bold"))
+        self.assertIn("|", check_name("Hrothgar | NPC") or "")
+        self.assertIn("8 words", check_name("one two three four five six seven eight nine") or "")
+        self.assertIn("link", check_name("www.example.com") or "")
+
     def test_a_link_is_never_a_name(self) -> None:
         text = "\n".join(
             [

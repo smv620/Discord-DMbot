@@ -66,11 +66,13 @@ def group_sizes(lookup: CampaignLookup) -> list[int]:
     return sorted(set(range(1, LONGEST_NAME_WORDS + 1)) | lookup.secret_lengths)
 
 
-def find_mentions(lookup: CampaignLookup, text: str) -> list[Found]:
+def find_mentions(lookup: CampaignLookup, text: str, *, typed_names: bool = False) -> list[Found]:
     """Confirmed entries named in a line, where, and how: their confirmed names and
     other names, or a spelling the DM said means them. A secret name (and any shorter
     name inside it), a name DMbot only suggested, and words the DM said to keep as heard
-    don't count. One find per entry per place."""
+    don't count. One find per entry per place. `typed_names`: a spelling the DM said
+    means a name they typed, not yet checked in 📝 Check new names, counts too (#503;
+    for fixing the line, not for counting who was named)."""
     words = list(WORD.finditer(text))
     keys = [name_key(w.group()) for w in words]  # once per word, not per group
     n = len(keys)
@@ -96,7 +98,9 @@ def find_mentions(lookup: CampaignLookup, text: str) -> list[Found]:
         hits += [(entity_id, "spelling") for entity_id in lookup.fixes.get(key, ())]
         for entity_id, method in hits:
             entity = lookup.entities.get(entity_id)
-            if entity is not None and entity.status == CONFIRMED:
+            if entity is not None and (
+                entity.status == CONFIRMED or (typed_names and method == "spelling")
+            ):
                 found.setdefault((entity_id, *span), Found(entity_id, span, method))
     return list(found.values())
 
