@@ -23,8 +23,9 @@ HEALTH_WARN_PERCENT = 95
 # The DM screen's ⚠️ means "DMbot is missing what people say" (#671), so it counts only
 # speech worth writing down, over enough of it to matter: per person, over the last
 # DM_WINDOW_S, under HEALTH_WARN_PERCENT got through AND at least DM_WARN_LOST_S lost. A
-# piece that brought less audio than gets transcribed and lost little (a TV across the
-# room, a cough) counts in neither column; one that lost a lot always counts. The window
+# piece shorter than gets transcribed (a blip, a cough) counts in neither column; a short
+# answer ("yes", 0.3-0.6 s) counts, so one patchy "yes" never alarms but answers that keep
+# breaking up add up. A TV's patchy bursts stay quiet through the 2 s floor. The window
 # is timed from when health arrives: if transcription falls a minute behind, older gaps
 # leave it before their speech is checked. Then once per person, and again only if it gets clearly
 # worse or after a while: a phone on bad Wi-Fi mustn't bury the notes that need the DM.
@@ -33,8 +34,7 @@ DM_WINDOW_S = 60.0
 DM_WARN_LOST_S = 2.0
 FRAMES_PER_S = 50  # ears' health counts 20 ms frames (ears/src/health.ts FRAME_MS)
 DM_WARN_LOST_FRAMES = int(DM_WARN_LOST_S * FRAMES_PER_S)
-COUNTS_IF_LOST_FRAMES = FRAMES_PER_S  # a piece that lost a second always counts
-MIN_FRAMES = math.ceil(MIN_UTTERANCE_S * FRAMES_PER_S)  # enough audio to be written down
+MIN_FRAMES = math.ceil(MIN_UTTERANCE_S * FRAMES_PER_S)  # long enough to be written down
 # The session summary says someone's voice "kept cutting out" below this, over the pieces
 # that count, and only if at least DM_WARN_LOST_S was lost (90-94% rarely costs real words).
 DM_WARN_PERCENT = 90
@@ -77,9 +77,9 @@ class _SpeakerStats:
 
 
 def counts_for_dm(received: int, expected: int) -> bool:
-    """Whether a piece's health counts towards the DM screen's warning (#671): it brought
-    enough audio to be written down, or lost a lot (nearly all lost is the worst case)."""
-    return received >= MIN_FRAMES or expected - received >= COUNTS_IF_LOST_FRAMES
+    """Whether a piece's health counts towards the DM screen's warning (#671): the piece
+    is long enough to be written down, however much of it was lost."""
+    return expected >= MIN_FRAMES
 
 
 class CaptureLog:

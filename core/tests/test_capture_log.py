@@ -293,10 +293,13 @@ class NoiseIsNoAlarm(unittest.TestCase):
 
     def test_test_as_numbers_say_nothing(self) -> None:
         # dev1's Test A, a TV in the room: two pieces of the DM, then two patchy TV bursts.
+        # The bursts count (both are long enough); the 2 s floor keeps them quiet: 33 frames
+        # lost is 0.66 s.
         log = CaptureLog()
         log.add_utterance(utt(1, 2.3))
         for at, received, expected in ((7, 52, 52), (21, 53, 53), (60, 155, 169), (61, 4, 23)):
             log.add_health(1, received, expected, at)
+        self.assertEqual(len(log._window[1]), 4)  # all four count
         self.assertIn("(audio gaps)", log.log_line() or "")  # the log keeps the raw numbers
         self.assertIsNone(log.render(str, 62))
 
@@ -309,9 +312,19 @@ class NoiseIsNoAlarm(unittest.TestCase):
         pieces = [(0, 270, 345), (70, 270, 345)]  # 1.5 s lost each, 70 s apart
         self.assertIsNone(self.warning(pieces, 71))
 
-    def test_short_bursts_never_count(self) -> None:
-        pieces = [(at, 4, 23) for at in range(0, 50, 5)]  # ten TV bursts: 3.8 s "lost"
+    def test_blips_never_count(self) -> None:
+        pieces = [(at, 1, 12) for at in range(0, 50, 2)]  # 25 blips under 0.25 s: 5.5 s "lost"
         self.assertIsNone(self.warning(pieces, 50))
+
+    def test_short_answers_count_and_add_up(self) -> None:
+        # "yes", "ok": 0.5 s each, half got through. One never alarms; eight in a minute do.
+        log = CaptureLog()
+        texts = []
+        for i in range(8):
+            log.add_utterance(utt(1, 0.25))
+            log.add_health(1, 12, 25, i * 7)
+            texts.append(log.render(str, i * 7))
+        self.assertEqual([t is not None for t in texts], [False] * 7 + [True])  # 8 x 0.26 s
 
     def test_a_little_loss_at_a_low_percent_doesnt(self) -> None:
         self.assertIsNone(self.warning([(0, 30, 100)], 1))  # 70% but only 1.4 s lost
@@ -324,12 +337,11 @@ class NoiseIsNoAlarm(unittest.TestCase):
     def test_nearly_all_lost_warns(self) -> None:
         self.assertIsNotNone(self.warning([(0, 2, 500)], 1))  # 10 s lost, 2 frames heard
 
-    def test_the_boundary_of_enough_to_write_down(self) -> None:
+    def test_the_boundary_of_long_enough_to_write_down(self) -> None:
         log = CaptureLog()
-        for received in (12, 13):
-            log.add_health(1, received, 40, 0)
-        # 12/40 lost 0.56 s with too little heard: out; 13/40 counts.
-        self.assertEqual(sum(1 for _ in log._window.get(1, [])), 1)
+        log.add_health(1, 0, 12, 0)  # 0.24 s: too short
+        log.add_health(1, 0, 13, 0)  # 0.26 s: counts, even with nothing heard
+        self.assertEqual(len(log._window[1]), 1)
 
     def test_checks_every_15_s_warn_once_as_a_minute_fills(self) -> None:
         log = CaptureLog()

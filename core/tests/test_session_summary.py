@@ -83,7 +83,7 @@ class NoAlarmOnALittle(unittest.TestCase):
         for received, expected in ((52, 52), (53, 53), (155, 169), (4, 23)):
             totals.add_health(7, received, expected)
         total = totals.speakers[7]
-        self.assertEqual(total.percent, 94)  # the 4/23 burst doesn't count
+        self.assertEqual(total.percent, 88)  # all four count; only 0.66 s lost
         text = summary([Spoke("Mia", 60, total.percent, total.lost_s)], sent=0)
         self.assertNotIn("cutting out", text)
 
