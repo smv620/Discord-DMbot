@@ -185,6 +185,14 @@ class Database:
             yield conn
 
     @asynccontextmanager
+    async def grant_writer(self) -> AsyncIterator[Conn]:
+        """The only way to give, change or revoke free access (`access_grants`) and to
+        read the grants log: for the admin page's API (dmbot.web, #771). Everything else
+        reads a person's own grant (dmbot.entitlements.effective)."""
+        async with self._with(grant_writer="admin") as conn:
+            yield conn
+
+    @asynccontextmanager
     async def plan_writer(self, user_id: int) -> AsyncIterator[Conn]:
         """The only way to change a person's plan (`entitlements`): for the payment
         webhook and Try It (dmbot.web, #435). Everything else reads plans.

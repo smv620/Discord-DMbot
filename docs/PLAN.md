@@ -1500,7 +1500,13 @@ with what caps", a grant or the free list counts, and the better of a grant and 
 wins. A grant ends on its end date or when revoked, and the person falls back to whatever
 they pay for. Grants and revocations are logged (who, what, when, ids only). Nobody sees a
 price or a payment button while a grant covers them; the bot and the account page say "Free
-access". Deleting an account deletes its grant.
+access". Deleting an account deletes its grant. *Built, part 1 (#771, dev2):* the free
+list is read at start by the bot and the web API (only its count is logged); grants live
+in `access_grants` (migration 0030; one row per Discord id, no link to `web_users`) with
+an add-only `access_log`, both written only through `Database.grant_writer()`, which only
+`dmbot.web.grants` opens (a test checks); a person reads only their own grant.
+`entitlements.effective()` is the one answer every plan rule asks (`plan_works` today;
+the hours meter and campaign cap when they come), and `/me` gains `access: {kind, until?}`.
 **Admin sign-in:** only addresses in `ADMIN_EMAILS` (server settings) may sign in, either with
 Google ("Sign in with Google", verified email only) or with that email and an admin password
 whose hash (argon2id) is in the server settings, never in the database or the repository; a

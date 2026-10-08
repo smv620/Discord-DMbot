@@ -24,7 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import install
+from dmbot import entitlements, install
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -3042,6 +3042,7 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
 
 
 async def run(settings: Settings) -> None:
+    entitlements.configure_free_users(settings.free_users)  # #771
     db = await Database.open(settings.database_url)
     try:
         transcriber = build_transcriber(settings.transcription)

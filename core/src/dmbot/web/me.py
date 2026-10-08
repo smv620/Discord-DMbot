@@ -35,6 +35,7 @@ def _iso_date(seconds: int | None) -> str | None:
 
 async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any]:
     plan = await entitlements.get(db, session.user_id)
+    access = await entitlements.access(db, session.user_id, now)
     campaigns: list[dict[str, Any]] = []
     servers: list[dict[str, Any]] = []
     incoming: list[dict[str, Any]] = []
@@ -166,6 +167,10 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             "renewsOn": _iso_date(plan.period_end),
             "graceEndsOn": _iso_date(plan.grace_ends_at),
         },
+        # Free access (#771): "free" (the owner's list), "grant" (given by the admin, maybe
+        # until a date), "paid" or "none". Covered people see no price or payment button.
+        "access": {"kind": access.kind}
+        | ({"until": access.until} if access.until is not None else {}),
         "campaigns": campaigns,
         "servers": servers,
         "installs": installs,
