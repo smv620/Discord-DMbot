@@ -153,7 +153,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         type=_at,
         action="append",
         default=[],
-        help=f"a speaker presses Stop recording me then, like {audio.TWIN_PLAYER}@0:25",
+        help=f"a speaker stops being recorded then (they press Yes, stop recording me), like "
+        f"{audio.TWIN_PLAYER}@0:25",
     )
     parser.add_argument(
         "--agree",
