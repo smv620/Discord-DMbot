@@ -11,9 +11,10 @@ from typing import Any, cast
 
 import httpx
 
-from dmbot.web import grants
+from dmbot.web import grants, sessions
 from dmbot.web.admin import AdminSessions, FailedTries
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordUser
 from tests.pg import DatabaseTest
 from tests.test_web_admin import ADMIN, HASH, HEADERS, PASSWORD
 from tests.test_web_api import API, FakeDiscord, settings
@@ -41,6 +42,7 @@ class AdminGrants(DatabaseTest):
             admin_tries=FailedTries(clock=lambda: 0.0),
             clock=lambda: self.now,
         )
+        self.app = app
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
         )
@@ -77,17 +79,18 @@ class AdminGrants(DatabaseTest):
     async def test_give_change_and_revoke_are_listed_and_logged(self) -> None:
         csrf = await self.sign_in()
         first = await self.give(csrf, note="  a   playtester ", endsOn="2027-01-31")
-        self.assertEqual(first.json(), {"action": "grant"})
+        self.assertEqual(first.json(), {"action": "grant", "name": None})
         self.now += 60
         changed = await self.give(csrf, level="unlimited", endsOn=None)
-        self.assertEqual(changed.json(), {"action": "change"})
+        self.assertEqual(changed.json(), {"action": "change", "name": None})
         listed = (await self.client.get("/admin/grants")).json()
-        self.assertEqual(listed["free"], [str(ALWAYS)])
+        self.assertEqual(listed["free"], [{"discordId": str(ALWAYS), "name": None}])
         (row,) = listed["grants"]
         self.assertEqual(
             row,
             {
                 "discordId": FRIEND,
+                "name": None,
                 "level": "unlimited",
                 "endsAt": None,
                 "note": "",
@@ -127,6 +130,9 @@ class AdminGrants(DatabaseTest):
             ({"endsOn": "31/01/2027"}, "bad_date"),
             ({"endsOn": "2027-02-30"}, "bad_date"),
             ({"endsOn": "2027-01-14"}, "past_date"),
+            ({"endsOn": "2027-01-15"}, "past_date"),  # today: "after today" means after
+            ({"note": 5}, "bad_note"),
+            ({"level": None}, "bad_level"),
         ]
         for body, code in cases:
             answer = await self.client.post(
@@ -146,13 +152,13 @@ class AdminGrants(DatabaseTest):
     async def test_edges_that_are_fine(self) -> None:
         csrf = await self.sign_in()
         self.assertEqual((await self.client.get("/admin/grants")).status_code, 200)  # no CSRF
-        # 200 letters once spaces are squeezed; and today (UTC) as the last day.
+        # 200 letters once spaces are squeezed; and tomorrow (UTC) as the last day.
         self.assertEqual((await self.give(csrf, note="x" * 200 + "    ")).status_code, 200)
-        self.assertEqual((await self.give(csrf, endsOn="2027-01-15")).status_code, 200)
+        self.assertEqual((await self.give(csrf, endsOn="2027-01-16")).status_code, 200)
 
     async def test_an_ended_grant_still_lists_until_revoked(self) -> None:
         csrf = await self.sign_in()
-        await self.give(csrf, endsOn="2027-01-15")
+        await self.give(csrf, endsOn="2027-01-16")
         self.now += 2 * 86400
         (row,) = (await self.client.get("/admin/grants")).json()["grants"]
         self.assertLess(row["endsAt"], self.now)  # the page marks it "Ended"
@@ -160,7 +166,8 @@ class AdminGrants(DatabaseTest):
 
     async def test_the_free_list_shows_but_cant_be_revoked(self) -> None:
         csrf = await self.sign_in()
-        self.assertEqual((await self.client.get("/admin/grants")).json()["free"], [str(ALWAYS)])
+        free = (await self.client.get("/admin/grants")).json()["free"]
+        self.assertEqual(free, [{"discordId": str(ALWAYS), "name": None}])
         answer = await self.revoke(csrf, str(ALWAYS))
         self.assertEqual((answer.status_code, answer.json()), (404, {"error": "no_grant"}))
         missing = await self.revoke(csrf, OTHER)
@@ -176,3 +183,65 @@ class AdminGrants(DatabaseTest):
         self.assertIn(FRIEND, text)
         self.assertNotIn("secret note", text)
         self.assertNotIn(ADMIN, text)
+
+    async def test_a_body_that_is_too_big_or_not_an_object_is_refused(self) -> None:
+        csrf = await self.sign_in()
+        huge = await self.client.post(
+            "/admin/grants",
+            content=b'{"note": "' + b"x" * 5000 + b'"}',
+            headers={**HEADERS, "X-Admin-CSRF": csrf, "Content-Type": "application/json"},
+        )
+        self.assertEqual(huge.status_code, 413)
+        self.assertEqual(await grants.grants(self.db), [])
+
+    async def test_a_refused_write_leaves_a_grant_and_the_log_alone(self) -> None:
+        csrf = await self.sign_in()
+        await self.give(csrf, note="keep")
+        before = (await grants.grants(self.db), await grants.log_entries(self.db))
+        # No session, then a session with a forged token: nothing changes, either way.
+        other = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url=API)
+        self.addAsyncCleanup(other.aclose)
+        for answer in (
+            await other.post(
+                "/admin/grants", json={"discordId": FRIEND, "level": "unlimited"}, headers=HEADERS
+            ),
+            await other.post(f"/admin/grants/{FRIEND}/revoke", headers=HEADERS),
+            await self.give("forged", level="unlimited", note="changed"),
+            await self.revoke("forged", FRIEND),
+        ):
+            self.assertIn(answer.status_code, (401, 403))
+        self.assertEqual((await grants.grants(self.db), await grants.log_entries(self.db)), before)
+
+    async def test_names_show_for_people_who_signed_in_lately_and_only_those(self) -> None:
+        csrf = await self.sign_in()
+        user = DiscordUser(id=int(FRIEND), name="Sam", email=None)
+        await sessions.sign_in(self.db, user, [], now=NOW - 100, days=30)
+        await sessions.sign_in(
+            self.db,
+            DiscordUser(id=int(OTHER), name="Old", email=None),
+            [],
+            now=NOW - 40 * 86400,
+            days=30,
+        )
+        gave = await self.give(csrf)
+        self.assertEqual(gave.json(), {"action": "grant", "name": "Sam"})
+        await self.give(csrf, discordId=OTHER)  # a session that has expired: no name
+        listed = (await self.client.get("/admin/grants")).json()
+        names = {g["discordId"]: g["name"] for g in listed["grants"]}
+        self.assertEqual(names, {FRIEND: "Sam", OTHER: None})
+        self.assertEqual({e["discordId"]: e["name"] for e in listed["log"]}, names)
+        # Only the ids on the page are looked up: nobody else's name is read.
+        stranger = DiscordUser(id=int(ALWAYS) + 1, name="Stranger", email=None)
+        await sessions.sign_in(self.db, stranger, [], now=NOW - 100, days=30)
+        text = (await self.client.get("/admin/grants")).text
+        self.assertNotIn("Stranger", text)
+
+    async def test_every_grants_route_is_not_there_while_the_admin_page_is_off(self) -> None:
+        app = create_app(settings(), self.db, FakeDiscord())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API
+        ) as client:
+            self.assertEqual((await client.get("/admin/grants")).status_code, 404)
+            for path in ("/admin/grants", f"/admin/grants/{FRIEND}/revoke"):
+                answer = await client.post(path, json={}, headers=HEADERS)
+                self.assertEqual((answer.status_code, answer.json()), (404, {"error": "not_found"}))

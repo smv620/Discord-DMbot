@@ -45,63 +45,84 @@ export const text = {
   needsScript: "This page needs JavaScript. Turn it on in your browser, then reload the page.",
 
   // Free access (#773). "Discord user id" is the one technical term: it's what Discord
-  // calls the thing to copy.
+  // calls the thing to copy. The error texts are the agreed #804 words (grants.py).
   freeHeading: "Free access",
-  freeLead: "These people use DMbot without paying.",
+  freeLead:
+    "These people use DMbot without paying. People marked “Always free” are set on the server. Ask dev1 to change those.",
   listLoading: "Loading the list…",
   alwaysFree: "Always free (set on the server)",
-  levels: { guild: "Like Guild", unlimited: "No limits" } as Record<string, string>,
+  levels: { guild: "Same as Guild", unlimited: "No limits" } as Record<string, string>,
   noEnd: "No end date",
   until: (date: string): string => `Until ${date}`,
   // granted_by and granted_at are rewritten by a change, so "set", not "added".
   setBy: (by: string, date: string): string => `Set by ${by} on ${date}`,
-  ended: (date: string): string => `Ended ${date}`,
+  ended: (date: string): string => `Ended ${date}. Tap Change to give it again.`,
   change: "Change",
   nobody: "Nobody has free access from this page yet. Add someone below.",
   revoke: "Revoke",
-  confirmRevoke: (id: string): string => `Revoke free access for ${id}?`,
+  // `who` is the person's name, or a shortened id when they haven't signed in lately.
+  confirmRevoke: (who: string): string => `Revoke free access for ${who}?`,
   yesRevoke: "Yes, revoke",
   cancel: "Cancel",
-  revoked: (id: string): string => `Done. ${id} no longer has free access.`,
+  revoked: (who: string): string => `Done. ${who} no longer has free access.`,
   addHeading: "Add someone",
-  addLead: "To change someone's free access, add them again with the new details, or tap Change.",
+  addLead: "To change someone's free access, tap Change in the list.",
+  changeHeading: (who: string): string => `Change free access for ${who}`,
   idLabel: "Discord user id",
   idHint:
-    "In Discord: Settings, then Advanced, then turn on Developer Mode. Then right-click the person and pick Copy User ID.",
-  levelLabel: "What they get",
-  levelHint: "Like Guild: the same as paying for Guild. No limits: no caps at all.",
+    "First turn on Developer Mode in Discord: Settings, then Advanced. Then on a computer, right-click the person. On a phone, tap their name, then the three dots. Pick Copy User ID.",
+  levelLabel: "How much",
+  levelHint: "Same as Guild: the same limits as the Guild plan. No limits: no caps at all.",
   endLabel: "Last day (optional)",
-  // Whole days in UTC, as the API stores them.
-  endHint:
-    "Free access works through this day (UTC time). Leave it empty so it never ends.",
+  endHint: "They keep free access until the end of this day. Leave it empty so it never ends.",
+  noEndButton: "No end date",
   noteLabel: "Note (optional)",
-  noteHint: "Who this is, or why. Only admins see this. 200 letters at most.",
-  add: "Add",
-  adding: "Adding…",
-  added: (id: string): string => `Done. ${id} has free access.`,
-  changed: (id: string): string => `Done. ${id}'s free access is changed.`,
+  noteHint: (max: number): string =>
+    `Who this is, or why. Only admins see this. ${max} letters at most.`,
+  add: "Give free access",
+  save: "Save changes",
+  startOver: "Start over",
+  adding: "Saving…",
+  added: (who: string): string => `Done. ${who} has free access.`,
+  changed: (who: string): string => `Done. ${who}'s free access is changed.`,
   historyHeading: "Recent changes",
   noHistory: "No changes yet.",
-  logLine: (when: string, by: string, action: string, id: string): string =>
+  logLine: (when: string, by: string, action: string, who: string): string =>
     `${when}: ${by} ${
       action === "grant"
         ? "gave free access to"
         : action === "change"
           ? "changed free access for"
           : "revoked free access for"
-    } ${id}`,
+    } ${who}`,
   grantErrors: {
     "bad-id":
-      "That isn't a Discord user id: it's 17 to 20 digits. Copy it again in Discord and paste it here.",
-    "bad-level": "Pick Like Guild or No limits.",
+      "That isn't a Discord account number. In Discord, right-click the person and pick Copy User ID.",
+    "bad-level": "Pick how much: Same as Guild, or No limits.",
     "no-id": "Paste the person's Discord user id first.",
     "bad-date": "That end date didn't work. Pick it from the calendar, or leave it empty.",
     "past-date": "Pick an end date after today, or leave it empty so it never ends.",
-    "long-note": "Keep the note to 200 letters or fewer.",
+    "long-note": (max: number): string => `Keep the note to ${max} characters or fewer.`,
     "bad-note": "The note has a character DMbot can't keep. Type it again with plain letters.",
     "already-free":
       "That person is always free (set on the server), so there's nothing to add here.",
     stale: "That didn't work. Reload this page and try again.",
     "no-grant": "That person has no free access to revoke. We've updated the list.",
-  } as Record<string, string>,
+  } as Record<string, string | ((max: number) => string)>,
 } as const;
+
+/** The longest note, in characters: the same number the API and the database use. */
+export const NOTE_MAX = 200;
+
+/** A grant's note-length refusal and the others as one text. */
+export function grantError(kind: string): string | undefined {
+  const words = text.grantErrors[kind];
+  return typeof words === "function" ? words(NOTE_MAX) : words;
+}
+
+/** Who a row is about: their name, or a shortened id ("1234…5678") if they haven't
+ * signed in lately. The full id stays visible on the list; messages stay short. */
+export function who(name: string | null, discordId: string): string {
+  if (name) return name;
+  return discordId.length > 10 ? `${discordId.slice(0, 4)}…${discordId.slice(-4)}` : discordId;
+}

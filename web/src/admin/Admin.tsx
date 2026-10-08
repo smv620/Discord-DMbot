@@ -153,6 +153,7 @@ export default function Admin({ api, search }: Props) {
             setNotice(text.timedOut);
             void load();
           }}
+          onOff={() => void load()}
         />
       </div>
     );

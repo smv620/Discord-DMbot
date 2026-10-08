@@ -17,7 +17,12 @@ Action = Literal["grant", "change", "revoke"]
 
 
 class GrantError(ValueError):
-    """A request the admin can fix; the message is safe to show them."""
+    """A request the admin can fix; the message is safe to show them. `code` names the
+    reason, so the website can word it and focus the right box."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -53,18 +58,21 @@ async def give(
     grant given again starts afresh."""
     if not 0 < discord_user_id < 2**63:
         raise GrantError(
+            "bad_id",
             "That isn't a Discord account number. In Discord, right-click the person and "
-            "pick Copy User ID."
+            "pick Copy User ID.",
         )
     if not 3 <= len(admin_email) <= 320:
-        raise GrantError("Sign in again: DMbot doesn't know which admin you are.")
+        raise GrantError("sign_in_again", "Sign in again: DMbot doesn't know which admin you are.")
     if level not in GRANT_LEVELS:
-        raise GrantError("Pick how much: Same as Guild, or No limits.")
+        raise GrantError("bad_level", "Pick how much: Same as Guild, or No limits.")
     if ends_at is not None and ends_at <= now:
-        raise GrantError("Pick an end date after today, or leave it empty so it never ends.")
+        raise GrantError(
+            "past_date", "Pick an end date after today, or leave it empty so it never ends."
+        )
     note = " ".join(note.split())
     if len(note) > NOTE_MAX:
-        raise GrantError(f"Keep the note to {NOTE_MAX} characters or fewer.")
+        raise GrantError("long_note", f"Keep the note to {NOTE_MAX} characters or fewer.")
     async with db.grant_writer() as conn:
         await _lock(conn, discord_user_id)
         cur = await conn.execute(
@@ -92,7 +100,7 @@ async def give(
 async def revoke(db: Database, admin_email: str, discord_user_id: int, *, now: int) -> bool:
     """End someone's free access now. False if they had none."""
     if not 3 <= len(admin_email) <= 320:
-        raise GrantError("Sign in again: DMbot doesn't know which admin you are.")
+        raise GrantError("sign_in_again", "Sign in again: DMbot doesn't know which admin you are.")
     async with db.grant_writer() as conn:
         await _lock(conn, discord_user_id)
         cur = await conn.execute(
