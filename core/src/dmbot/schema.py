@@ -526,8 +526,8 @@ WEB_ACCOUNTS = (
 
     -- Discord users who have started Try It, so it can be started only once (#435).
     -- Only the plan writer adds a row; nobody changes or removes one, and it stays after
-    -- the account is deleted (it holds nothing but the Discord id and a date), so deleting
-    -- and signing up again doesn't give a second free month.
+    -- the account is deleted (it holds nothing but the Discord id; 0017 dropped the
+    -- date), so deleting and signing up again doesn't give a second free month.
     CREATE TABLE try_it_used (
         user_id  BIGINT PRIMARY KEY,
         used_at  BIGINT NOT NULL
@@ -761,6 +761,19 @@ WEB_ROLE_LIMITS = """
         $fn$;
     """
 
+TRY_IT_BARE_ID = """
+    -- try_it_used outlives a deleted account (one free trial per person), so it keeps
+    -- only the Discord id: no date (web's decision on #435, privacy page).
+    ALTER TABLE try_it_used DROP COLUMN used_at;
+"""
+
+PAYMENT_EVENT_SUBSCRIPTION = """
+    -- Which subscription each recorded payment event was about (#435). Deletion cancels at
+    -- the period's end, so an old subscription's last news can arrive after the person has
+    -- signed up again; knowing it was theirs before lets it be ignored, not retried.
+    ALTER TABLE payment_events ADD COLUMN subscription_id TEXT;
+"""
+
 # The website's role is held to its session's servers by these RESTRICTIVE policies
 # (ANDed with each table's own), made `TO dmbot_web` so the bot's role never runs them
 # and any role that is a member of dmbot_web is held too. Database.migrate (re)makes them
@@ -816,6 +829,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0014_installs_left_at", INSTALLS_LEFT),
     ("0015_dm_screen_level", DM_SCREEN_LEVEL),
     ("0016_web_role_limits", WEB_ROLE_LIMITS),
+    ("0017_try_it_bare_id", TRY_IT_BARE_ID),
+    ("0018_payment_event_subscription", PAYMENT_EVENT_SUBSCRIPTION),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

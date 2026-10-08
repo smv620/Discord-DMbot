@@ -318,7 +318,10 @@ function SignedIn({
       <PlanSection me={me} />
       <CampaignsSection me={me} />
       <ServersSection me={me} />
-      <DeleteSection onDeleted={onDeleted} />
+      <DeleteSection
+        paidPlan={me.plan !== null && me.plan.id !== "try-it" && me.plan.status !== "lapsed"}
+        onDeleted={onDeleted}
+      />
     </div>
   );
 }
@@ -633,7 +636,7 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
   );
 }
 
-function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
+function DeleteSection({ paidPlan, onDeleted }: { paidPlan: boolean; onDeleted: () => void }) {
   const { api } = useShared();
   const { busy, notice, run, clear } = useAction();
   const [step, setStep] = useState<0 | 1 | 2>(0);
@@ -664,6 +667,7 @@ function DeleteSection({ onDeleted }: { onDeleted: () => void }) {
           {text.deleteWarning.map((line) => (
             <p key={line}>{line}</p>
           ))}
+          {paidPlan && <p>{text.deletePlanStops}</p>}
           <a href="#campaigns">{text.deleteHandOverLink}</a>
           <div class="row">
             <ActionButton
