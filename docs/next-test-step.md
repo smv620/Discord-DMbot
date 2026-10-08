@@ -4,13 +4,14 @@
 
 ---
 
-## Test A again: DMbot writes down what one person says
+## Test A on a computer: DMbot writes down what one person says
 
 **People:** 1 (you, as the DM)
 **Time:** about 3 minutes
-**Why:** last time (Oct 8) nothing was written down. This checks whether it happens again. Same test, same device as last time.
+**Why:** it worked on Oct 8 at 07:01, but once before nothing was written down. Trying a computer shows whether the device matters.
 
 ### Before you start
+- Use **a computer** this time (the Discord app or discord.com), not your phone.
 - Be in your test Discord server, on a steady connection.
 - Tell dev1 you're starting, so it can watch from its side.
 
@@ -26,12 +27,11 @@
 ### It worked if
 - Within about 10 seconds, a line appears in the **dmb-transcript** channel with your name and (close to) your sentence.
 
-**If not:** type `/dmbot stop` anyway, then tell dev1 below. Don't try again until dev1 answers.
+**If not:** type `/dmbot stop` anyway, then tell dev1 below. Don't try again until dev1 answers. If the DM screen showed a ⚠️ line, copy it for dev1.
 
 ### Tell dev1
 - **Worked** or **didn't work**.
 - If it didn't: what you saw (or didn't see) at the step where it went wrong.
-- Phone or computer.
 
 ---
 

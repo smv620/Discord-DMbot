@@ -1192,8 +1192,9 @@ reads the campaign memory and never changes it.
   line; re-listen and AI run in parallel within that, so with cloud speech-to-text a line
   shows about 1–2 s after the speaker stops. With local Whisper the extra time relaxes to
   about 2.5 s and re-listen is off. Whatever isn't back in time leaves the safe version
-  showing, and the line is updated when the answer arrives (or the off-topic marker
-  replaces it).
+  showing, and the line is updated when the answer arrives. The off-topic filter is
+  outside this budget: the line is posted at once and edited to the marker if its
+  window comes back off-topic (decided 2026-10-08, see "Off-topic filter").
 - **Re-listen audio:** kept in memory for about 60 s only, in the process that captured
   it (never queued, never in Redis, never logged, never stored). **Consent is re-checked
   right before every re-listen request**, and the audio is dropped at once on revoke.
@@ -1343,9 +1344,29 @@ consent check just made still holds:
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled
 `{non-game_content}` and not analyzed further, which saves cost. In the cleaned
 transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]` (see
-"Transcript format"); table talk and anything unsure stay. A live line waits for the
-filter within the Cleaner's time budget; if the filter is late, the line is posted and
-then edited to the marker.
+"Transcript format"); table talk and anything unsure stay.
+*Decided 2026-10-08 (Supervisor, #52, dev2's questions):*
+- **Consent says the words go to an AI company, once for the whole product.** The consent
+  request and the per-session reminder gain: "DMbot's helper reads that text to give your
+  DM notes. For that, the text goes to an AI company (Anthropic). It isn't used to train
+  their AI." That bumps `TERMS_VERSION` (to 3), so everyone who said yes is asked again,
+  and nobody is recorded until they agree to the new wording; the filter never needs a
+  per-person check of its own. Reason: every helper that reads the transcript (rules
+  advisor, names, this filter, story memory) sends text to the AI, so the consent covers
+  that once rather than per feature. If a provider or key ever trains on the data, the
+  wording changes and the version goes up again. The wording PR lands and deploys before
+  the filter PR.
+- **The live line is posted at once and edited later**, replacing the earlier "wait
+  within the 0.7 s budget": no line waits for an AI round trip. When a window comes back
+  off-topic, the line (or the run of lines) is edited to the marker inside the edit
+  window. Helpers get a line only after its window is labelled; a late or failed filter
+  counts as game talk (when unsure, keep). The raw transcript keeps everything.
+- **Key and cost:** the server's `ANTHROPIC_API_KEY` until #50; no key means the filter
+  is off and nothing is hidden. The smallest model, one call per window (a few
+  utterances or about 20 s), calls and tokens counted into the session's stats so cost
+  per session hour can be reported.
+- **Storage:** a `topic` column on `transcript_lines` (`game` / `table_talk` /
+  `off_topic`, default `game`) so cleaned downloads can show the markers later.
 
 **Story memory: continuity, reputations, the shared story (decided 2026-10-06, #227).**
 Full design and rationale: docs/STORY_MEMORY.md. In short:

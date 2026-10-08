@@ -20,6 +20,10 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
   names answer as before; the `Built names for campaign` log line shows a small database
   time.
+- CloudDev, PR #659 (#636): /dmbot start says "I haven't started: I can't hear voice
+  channels right now…" instead of developer steps when ears is down, and logs it. No
+  migration. Deploy: rebuild core. Check: with ears stopped, /dmbot start gives the new
+  words and `docker compose logs core` shows "Can't start in server …".
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
