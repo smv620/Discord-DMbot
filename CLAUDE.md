@@ -35,21 +35,21 @@ CI runs all of the above on every pull request. Never merge red CI.
   - `main`: only code that has passed beta testing and looks ready to deploy. The
     cloud server deploys from here.
 - Never push directly to `development`, `beta`, or `main`. **RepoManager merges** (owner
-  decision, 2026-10-07): a PR merges when CI is green, web's design review approves it
-  and RepoManager's compliance review passes. Log-only PRs are the exception (see
-  "Testing logs").
+  decision, 2026-10-07): a PR merges when CI is green, Supervisor's design review
+  approves it ("Supervisor review: approved" as a PR comment) and RepoManager's
+  compliance review passes. Log-only PRs are the exception (see "Testing logs").
 - Promotions (`development` → `beta`, `beta` → `main`) are PRs, opened only when the
-  owner asks (through web); RepoManager opens and merges them.
+  owner asks (through Supervisor); RepoManager opens and merges them.
 - One concern per PR. Link the GitHub issue it closes.
 - Before opening a PR, run the reviewer agents in `.claude/agents/` (reviewer,
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
 
-## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-07)
+## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-08)
 DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude
 sessions work on this repo. **Each one has a name, and its name is its issue label:**
-`session: dev1`, `session: dev2`, `session: dev3`, `session: clouddev`, `session: web`,
-`session: WebDev`, `session: RepoManager` (and `session: pycharm` when the owner's PC is used). **Assignments come from the issue
+`session: dev1`, `session: dev2`, `session: dev3`, `session: CloudDev`, `session: WebDev`,
+`session: RepoManager`, `session: Supervisor` (and `session: pycharm` when the owner's PC is used). **Assignments come from the issue
 list:** an open issue labelled with your name is yours; take them lowest number first
 unless an issue says otherwise. Say which session you are in every issue and PR. More
 developers can be added by adding a label.
@@ -78,22 +78,35 @@ developers can be added by adding a label.
   API container. It owns the site's words with the ux-critic, never the plan prices or
   rules: those are owner decisions recorded in docs/PLAN.md, and a change to them is a
   question on the issue, not a commit.
-- **web** (the Master Web Session, cloud): **the owner's point of contact.** Planning,
-  design decisions, `docs/PLAN.md` and this file, issue hygiene, keeping every
-  developer's queue full, filing follow-ups, a design review of every PR, and the code
-  that needs design judgement. Scope questions from any session go in the issue; web
-  answers there. Web takes owner decisions to RepoManager and RepoManager's reports to
-  the owner. Web and RepoManager supervise the project together.
+- **Supervisor** (Claude Code in the cloud; took over from the Master Web Session,
+  `session: web`, on 2026-10-08): **runs the project and is the owner's point of
+  contact.** It owns the architecture, the design, `docs/PLAN.md` and this file, the
+  quality of what gets built and the pace: issue hygiene, keeping every developer's queue
+  full (at least two open issues each, fully specified), filing follow-ups, deciding
+  what is built next and in what order so PRs don't collide, and a design review of
+  every PR, posted as one comment starting "Supervisor review: approved" or
+  "Supervisor review: changes needed" with a numbered list. A send-back says what is
+  wrong, where, why it matters, what to change and how to prove it. Scope questions from
+  any session go in the issue; Supervisor answers there. **Supervisor writes no
+  application code:** anything that needs code becomes an issue for a developer. It
+  never deploys, touches the live server or merges code PRs (log-only PRs excepted).
+  **Nothing waits on the owner except live testing at a table with real people and
+  recordings the owner makes on their own time.** Architecture, design, scope,
+  prices and rules already in `docs/PLAN.md`, changes to this file and merge order are
+  decided by Supervisor, recorded in `docs/PLAN.md` with the date and reason, and
+  reported to the owner, who pushes back if they disagree. Supervisor takes
+  RepoManager's reports (#516) to the owner. Supervisor and RepoManager supervise the
+  project together.
 - **RepoManager** (Claude Code, its own clone): **runs the repository.** For every PR it
   checks compliance with this file (hard rules, privacy, IP, isolation, session limits),
   reviews the code for clear comments and good practice (see "Code standards"), resolves
   merge conflicts (pushing the fix to the PR's own branch, never to `development`,
-  `beta` or `main`), and merges once CI is green and web's design review approves. A PR
-  that falls short goes back to the owning session as a PR comment with specific fixes,
-  and a follow-up issue when the fix belongs in a later PR. After each batch it reports
-  to web in one comment on the tracking issue #516: what merged, what was sent back, what is
-  blocked and why. It never deploys, never touches the live server, and never changes
-  plan prices or rules.
+  `beta` or `main`), and merges once CI is green and Supervisor's design review
+  approves. A PR that falls short goes back to the owning session as a PR comment with
+  specific fixes, and a follow-up issue when the fix belongs in a later PR. After each
+  batch it reports to Supervisor in one comment on the tracking issue #516: what merged,
+  what was sent back, what is blocked and why. It never deploys, never touches the live
+  server, and never changes plan prices or rules.
 - **Handover to a deploy:** when a session's PR is merged and needs to go live, it adds
   one line under "Ready to deploy" in `docs/testing-status.log` (what to deploy, what to
   check) or comments on the PR, then takes its next issue. dev1 deploys, checks, and
@@ -108,7 +121,7 @@ The sessions don't share memory, so **GitHub Issues are the shared log.**
   touching the area you're about to change:
   `gh api "repos/smv620/Discord-DMbot/issues?state=all&per_page=30"`
 - **Every bug you find gets an issue**, opened before or while you fix it. Labels:
-  `bug` plus your session label (`session: dev1`, `session: web`, …). Use the template in
+  `bug` plus your session label (`session: dev1`, `session: Supervisor`, …). Use the template in
   `.github/ISSUE_TEMPLATE/bug.md`: Background (what you were doing), Symptom (exact
   error), Root cause, Fix, Watch for.
 - **Bugs found and fixed within the same piece of work** still get an issue: label it
@@ -213,6 +226,10 @@ terminal output or Discord screenshots copied to it.
   comment saying why. RepoManager checks this on every PR.
 - Tests for every behaviour change. Pure logic (consent, protocol, buffering,
   rule matching) must be unit-testable without Discord or network access.
+- **Database-backed tests run only where Postgres is:** core's session and store tests
+  are skipped when no database is available, so a green local `pytest` proves little
+  for that code. Read the CI core job on the PR's head commit before writing "tests
+  pass" in a PR, or run them locally with Postgres (lesson from #544, 2026-10-08).
 - User-facing text (slash command descriptions, alerts, errors) is short, plain, and
   tells the user what to do next.
 

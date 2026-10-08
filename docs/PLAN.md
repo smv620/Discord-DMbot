@@ -161,6 +161,12 @@ database.
   - **Backups** include everything except the change log (a restored campaign starts
     with a fresh undo history) and mentions, which are most of the size (about 15 MB
     for a long campaign) and are rebuilt as new sessions are transcribed.
+  - **Flags DMbot closes itself get no status of their own (decided 2026-10-08, #347):**
+    Undo of the close reopens the flag (#362), and a clash that comes back is flagged
+    again when the fact is written again, so the realistic case (the DM undoes a
+    rejection, the fact is re-written, a new flag appears) needs no migration. A
+    `closed_by_dmbot` status is added only if a recording or a live session shows a DM
+    missing a returned clash.
   - **Only the DM's word confirms** (`source="dm"`): other sources can only propose, or
     drop a proposal. Saying something already known again only strengthens it (the
     DM's confirmation, or "keep secret"); something the DM rejected stays rejected
