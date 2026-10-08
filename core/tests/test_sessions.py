@@ -1078,7 +1078,7 @@ class SaveAndResume(SessionTests):
         )
         posted.assert_not_awaited()  # all fine: nothing in the DM screen (#134)
         table.capture_log.add_utterance(Utterance(GUILD, PLAYER, 0, 0, bytes(32000)))
-        table.capture_log.add_health(PLAYER, 30, 50)
+        table.capture_log.add_health(PLAYER, 300, 500)  # 4 s lost: enough to warn (#671)
         await self.bot.post_summary(table)
         posted.assert_awaited_once()
         call = posted.await_args

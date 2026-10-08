@@ -915,7 +915,9 @@ class DMBot(commands.AutoShardedBot):
         much, and anything that went wrong. Never anything that was said."""
         gid = table.guild_id
         spoke = [
-            screen_messages.Spoke(self.name_of(gid, user_id), total.seconds, total.percent)
+            screen_messages.Spoke(
+                self.name_of(gid, user_id), total.seconds, total.percent, total.lost_s
+            )
             for user_id, total in table.totals.speakers.items()
             if total.seconds > 0
         ]
@@ -1510,7 +1512,10 @@ class DMBot(commands.AutoShardedBot):
                     self.pipeline.enqueue(utterance)
             elif isinstance(message, Health):
                 table.capture_log.add_health(
-                    message.user_id, message.frames_received, message.frames_expected
+                    message.user_id,
+                    message.frames_received,
+                    message.frames_expected,
+                    time.monotonic(),
                 )
                 table.totals.add_health(
                     message.user_id, message.frames_received, message.frames_expected

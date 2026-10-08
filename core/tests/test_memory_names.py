@@ -1042,6 +1042,29 @@ class Lists(NamesTest):
         (line,) = parse(body, secrets=True).lines
         self.assertEqual((line.name, line.secrets), ("Belleros", ("the stranger",)))
 
+    async def test_too_many_other_names_for_one_name_adds_nothing(self) -> None:
+        from dmbot.memory.name_list import lines_for
+
+        others = [f"Kesh{i}" for i in range(51)]  # on three lines: still one name
+        sent = await self.add_many("\n".join(lines_for("Kesh", "npc", others, [])))
+        self.assertIn("Nothing was added. Kesh has more than 50 other names", sent[0].args[0])
+        self.assertNotIn("Kesh", await self.names())
+
+    async def test_a_campaign_over_the_cap_takes_its_own_download_back(self) -> None:
+        from dmbot.ui import name_lists
+
+        # More than a list may add (saved another way): Download all, then upload it.
+        await ui.save_name(
+            self.memory, self.campaign, "Kesh", "npc", [f"Kesh{i}" for i in range(60)], []
+        )
+        self.fresh()
+        it = self.it()
+        await name_lists.send_download(it, self.campaign.id)
+        body = it.followup.send.call_args.kwargs["file"].fp.getvalue().decode()
+        sent = await self.add_many(body)
+        self.assertNotIn("Nothing was added", sent[0].args[0])
+        self.assertIn("already known", sent[0].args[0])
+
     async def test_browse_by_kind_pages_and_opens_names(self) -> None:
         from dmbot.ui import name_lists
 

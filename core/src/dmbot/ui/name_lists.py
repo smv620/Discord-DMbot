@@ -71,7 +71,7 @@ from dmbot.ui.dmbot_commands import (
     _send,
     _tell,
 )
-from dmbot.ui.list_matches import UNKNOWN_KIND, KindDiffers, Near, plan
+from dmbot.ui.list_matches import UNKNOWN_KIND, KindDiffers, Near, plan, too_many
 from dmbot.ui.names import (
     KIND_SHORT,
     KINDS,
@@ -827,6 +827,9 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
     # exists.
     # Pure CPU, bounded but up to a second or so on a big list: off the event loop.
     p = await asyncio.to_thread(plan, parsed.lines, names, secrets=secrets_ok)
+    if why := too_many(p, names, _md):
+        await _tell(interaction, f"Nothing was added. {why}")
+        return
     new = p.new
     room = MAX_NAMES - len(names.entities)
     if len(new) > room:
