@@ -131,6 +131,17 @@ class Access:
 NO_ACCESS = Access("none", None, 0, 0, False)
 
 
+def _paying(plan: Entitlement | None, now: int) -> str | None:
+    """The name of a plan that works and costs money (not Try It, which is free), for
+    "you're still paying for…" under free access."""
+    if plan is None or not plan.usable(now):
+        return None
+    known = plans.load().get(plan.plan)
+    if known is None or not known.price_cents:
+        return None
+    return known.name
+
+
 def _larger(a: int | None, b: int | None) -> int | None:
     return None if a is None or b is None else max(a, b)
 
@@ -139,11 +150,7 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
     """The rule, pure: free list, then an active grant, then the paid plan; a grant and a
     paid plan together give the larger of each cap."""
     if user_id in _free_users:
-        still = None
-        if plan is not None and plan.usable(now):
-            known = plans.load().get(plan.plan)
-            still = known.name if known else plan.plan
-        return Access("free", FREE_ACCESS, None, None, True, still_paying=still)
+        return Access("free", FREE_ACCESS, None, None, True, still_paying=_paying(plan, now))
     paid = None
     if plan is not None and plan.usable(now):
         known = plans.load().get(plan.plan)
@@ -160,12 +167,16 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
         else:  # "guild": Guild's caps, from plans.json
             guild = plans.load().by_id["guild"]
             hours, campaigns = guild.hours_per_month, guild.campaigns
-        still = None
         if paid is not None:
             hours, campaigns = _larger(hours, paid.hours_cap), _larger(campaigns, paid.campaign_cap)
-            still = paid.plan_name
         return Access(
-            "grant", FREE_ACCESS, hours, campaigns, True, until=grant.ends_at, still_paying=still
+            "grant",
+            FREE_ACCESS,
+            hours,
+            campaigns,
+            True,
+            until=grant.ends_at,
+            still_paying=_paying(plan, now),
         )
     return paid or NO_ACCESS
 
@@ -187,7 +198,7 @@ async def plan_and_access(
     """The paid plan and what the person may do, from one read (the account page)."""
     async with db.user(user_id) as conn:
         plan = await _read_plan(conn, user_id)
-        grant = await _read_grant(conn, user_id)
+        grant = None if user_id in _free_users else await _read_grant(conn, user_id)
     return plan, access_for(user_id, plan, grant, now)
 
 

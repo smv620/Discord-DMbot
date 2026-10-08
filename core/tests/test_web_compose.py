@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 SETTINGS = ROOT / "core" / "src" / "dmbot" / "web" / "settings.py"
@@ -17,8 +18,53 @@ LOCAL_ONLY = {
 }
 
 
+class _Recording(dict[str, str]):
+    """An environment that remembers every name asked for, however it's read."""
+
+    def __init__(self, values: dict[str, str]) -> None:
+        super().__init__(values)
+        self.asked: set[str] = set()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        self.asked.add(key)
+        return super().get(key, default)
+
+    def __getitem__(self, key: str) -> str:
+        self.asked.add(key)
+        return super().__getitem__(key)
+
+    def __contains__(self, key: object) -> bool:
+        if isinstance(key, str):
+            self.asked.add(key)
+        return super().__contains__(key)
+
+
+BASE = {
+    "DATABASE_URL": "postgresql://x",
+    "DISCORD_CLIENT_ID": "1",
+    "DISCORD_CLIENT_SECRET": "s",
+    "WEB_SECRET_KEY": "k" * 40,
+    "WEB_SITE_URL": "https://dmbot.example/",
+    "WEB_API_URL": "https://api.dmbot.example",
+}
+
+
 def read_names() -> set[str]:
-    return set(re.findall(r'get\("([A-Z0-9_]+)"\)', SETTINGS.read_text("utf-8")))
+    """Every name load_web_settings reads: asked for while loading (exact, whatever way
+    it's read), plus any name in the file's text (names read only on some branches)."""
+    from dmbot.web.settings import load_web_settings
+
+    env = _Recording(BASE)
+    load_web_settings(env)
+    in_text = set(re.findall(r'"([A-Z][A-Z0-9_]{2,})"', SETTINGS.read_text("utf-8")))
+    return env.asked | (in_text & _env_like(in_text))
+
+
+def _env_like(names: set[str]) -> set[str]:
+    """Names in the text that are settings, not other constants (they're all read with
+    get() or listed as required in settings.py)."""
+    text = SETTINGS.read_text("utf-8")
+    return {n for n in names if re.search(rf'(get\(|REQUIRED|\(|, )\s*"{n}"', text)}
 
 
 def web_api_names() -> set[str]:

@@ -104,6 +104,12 @@ class Grants(unittest.TestCase):
         )
         entitlements.configure_free_users({PAYER})
         self.assertEqual(access_for(PAYER, paid(), None, NOW).still_paying, "Table")
+        # Try It costs nothing: there's nothing to stop paying for.
+        trial = paid("try-it", 8, 1)
+        self.assertIsNone(access_for(PAYER, trial, None, NOW).still_paying)  # free list
+        entitlements.configure_free_users(())
+        granted = access_for(PAYER, trial, Grant(PAYER, "guild", None, None), NOW)
+        self.assertIsNone(granted.still_paying)  # a grant
 
     def test_a_paid_plan_alone(self) -> None:
         access = access_for(PAYER, paid(), None, NOW)

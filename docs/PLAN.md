@@ -1498,7 +1498,8 @@ admin makes, not the default. Grants live in their own table, never in `entitlem
 stays the payment company's truth; wherever DMbot asks "does this person's plan work, and
 with what caps", a grant or the free list counts, and the better of a grant and a paid plan
 wins. A grant ends on its end date or when revoked, and the person falls back to whatever
-they pay for. Grants and revocations are logged (who, what, when, ids only). Nobody sees a
+they pay for. Grants and revocations are logged (who, what, when: Discord ids and the
+admin's own email). Nobody sees a
 price or a payment button while a grant covers them; the bot and the account page say "Free
 access". Deleting an account deletes its grant. *Built, part 1 (#771, dev2):* the free
 list is read at start by the bot and the web API (only its count is logged); grants live
