@@ -1008,7 +1008,7 @@ class SaveAndResume(SessionTests):
         self.assertIn('say "Marin"** ("…then Marin speaks…")', text)
         labels = [item.item.label for item in view.children]
         self.assertEqual(sorted(labels[:2]), ["Maren", "Marron"])
-        self.assertEqual(labels[2], 'Keep "Marin"')
+        self.assertEqual(labels[2:], ["Type it…", 'Keep "Marin"'])  # #503
         # one open question at a time: a new word isn't asked about yet
         self.said(table, "then Marrin agrees")
         await asyncio.sleep(0)
