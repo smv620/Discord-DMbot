@@ -12,7 +12,7 @@ import discord
 from dmbot.bot import DMBotTree
 from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup, LookupData
-from dmbot.memory.models import CONFIRMED, Alias, Entity, MemoryRuleError, name_key
+from dmbot.memory.models import CONFIRMED, Alias, Entity, MemoryRuleError, Relation, name_key
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import dmbot_commands, logic, name_card, name_lists, names
 
@@ -217,7 +217,8 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
 
     async def test_every_saving_step_answers_before_the_slow_part(self) -> None:
         # #698 (from the #637 review): the steps that gained _answer_first in #537 with
-        # no clock test. Each answers in place, then saves and reloads the names.
+        # no clock test. Each answers in place, then does its slow part (a save, or for
+        # the other names list a read) and edits the answer.
         bell = Alias("d" * 32, BELL, "Bell", "bell", "nickname", None, False, CONFIRMED,
                      sound_codes("Bell"), "dm", 0)  # fmt: skip
         memory = self.bot.memory
@@ -228,6 +229,9 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
         memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
         memory.add_relation = self.slow(SimpleNamespace(value=(None, [])))
+        knows = Relation("r" * 32, BELL, "knows", ULF, "", 1.0, CONFIRMED, "dm", (),
+                         None, None, None, None, False, 0)  # fmt: skip
+        memory.relations = AsyncMock(return_value=[knows])
         player = MagicMock(spec=discord.Member, bot=False, id=5)
 
         def picked(view: Any, select: Any, value: str) -> Any:
@@ -242,29 +246,45 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         change = name_card.KindChange(CAMPAIGN.id, BELL, "Belleros")
         one = name_card.OneName(CAMPAIGN.id, BELL, bell, secrets=True)
         links = name_card.Connect(CAMPAIGN.id, BELL, "Belleros", [("r" * 32, "knows Ulfgar")])
-        steps: dict[str, Any] = {
-            "KindPicker": lambda it: picked(kind, kind.pick, "npc")._picked(it),
-            "NameCard._edit_others": lambda it: name_card.NameCard(
-                CAMPAIGN.id, BELL, others=True, longer=False
-            )._edit_others(it),
-            "FixSpellingForm": fix.on_submit,
-            "AnotherNameForm": more.on_submit,
-            "KindChange._picked": lambda it: picked(change, change.pick, "npc")._picked(it),
-            "KindChange._player_picked": lambda it: change._player_picked(it, player),
-            "OneName._main": one._main,
-            "OneName._secret": one._secret,
-            "OneName._not_this": one._not_this,
-            "Connect._remove_picked": lambda it: picked(
-                links, links.remove, "r" * 32
-            )._remove_picked(it),
-            "connect": lambda it: name_card.connect(it, CAMPAIGN.id, BELL, "knows", ULF),
+        # Each step, and the slow call it must reach (not an early "isn't there" reply).
+        steps: dict[str, tuple[Any, str]] = {
+            "KindPicker": (lambda it: picked(kind, kind.pick, "npc")._picked(it), "add_entity"),
+            "NameCard._edit_others": (
+                lambda it: name_card.NameCard(
+                    CAMPAIGN.id, BELL, others=True, longer=False
+                )._edit_others(it),
+                "aliases",
+            ),
+            "FixSpellingForm": (fix.on_submit, "rename_entity"),
+            "AnotherNameForm": (more.on_submit, "add_alias"),
+            "KindChange._picked": (
+                lambda it: picked(change, change.pick, "npc")._picked(it),
+                "set_entity_type",
+            ),
+            "KindChange._player_picked": (
+                lambda it: change._player_picked(it, player),
+                "confirm_entity",
+            ),
+            "OneName._main": (one._main, "set_main_name"),
+            "OneName._secret": (one._secret, "update_alias"),
+            "OneName._not_this": (one._not_this, "update_alias"),
+            "Connect._remove_picked": (
+                lambda it: picked(links, links.remove, "r" * 32)._remove_picked(it),
+                "update_relation",
+            ),
+            "connect": (
+                lambda it: name_card.connect(it, CAMPAIGN.id, BELL, "knows", ULF),
+                "add_relation",
+            ),
         }
-        for name, step in steps.items():
+        for name, (step, reaches) in steps.items():
             with self.subTest(name):
+                getattr(memory, reaches).reset_mock()
                 it = self.it()
                 with self.assertNoLogs("dmbot", "ERROR"):
                     await step(it)
-                self.assertEqual(self.clock.calls[0], "defer")
+                getattr(memory, reaches).assert_awaited()
+                self.assertEqual(self.clock.calls, ["defer", "edit_original"])
                 self.assertEqual(it.response.defer_kw, IN_PLACE)
                 assert self.clock.answered_at is not None
                 self.assertLess(self.clock.answered_at, DISCORD_WAITS_S)
@@ -437,8 +457,10 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
             await questions.picked(select, it)
         self.assertFalse(questions.busy)
         self.bot.memory.confirm_kinds.assert_not_awaited()
+        self.assertIs(it.edit_original_response.await_args.kwargs["view"], questions)  # back
         with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
             await questions.on_error(it, expired, select)  # nothing raises out
+        self.assertEqual(it.response.sent_kw["text"], dmbot_commands.TRY_AGAIN)
         it = self.it()
         await questions.picked(select, it)  # picked again: saves
         self.bot.memory.confirm_kinds.assert_awaited_once()
@@ -459,8 +481,12 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
                 record = logs.records[0]
                 assert record.exc_info is not None
                 self.assertIsInstance(record.exc_info[1], RuntimeError)
-                sender = it.followup.send if answered else it.response.send_message
+                self.assertEqual(len(logs.records), 1)  # the swallowed one isn't logged too
+                sender, other = (it.followup.send, it.response.send_message)[
+                    :: 1 if answered else -1
+                ]
                 sender.assert_awaited_once()
+                other.assert_not_awaited()
 
     async def test_kind_questions_keep_every_answer(self) -> None:
         asked = [("wizard", [BELL]), ("goblin", [ULF])]
