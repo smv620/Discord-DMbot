@@ -9,7 +9,10 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- CloudDev, PR #644 (#437 part 1b, store half): hand-over offers table and store
+  methods; the owner can't be removed as a DM. Migration 0021 adds one new, empty table
+  (quick). Deploy: rebuild core. Check: `docker compose logs core` shows 0021 applied, no
+  new errors. Nothing a DM sees changes until the Discord side ships.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
