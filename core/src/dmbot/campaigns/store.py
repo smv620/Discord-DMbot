@@ -688,16 +688,66 @@ class CampaignStore:
             row = await cur.fetchone()
         return None if row is None else _to_offer(row)
 
-    async def confirm_delivery(self, guild_id: int, offer: HandoverOffer, now: int) -> None:
+    async def confirm_delivery(
+        self, guild_id: int, offer: HandoverOffer, now: int, message_id: int | None = None
+    ) -> None:
         """The private message went out: the offer is sent. Only while this claim (the
         one in `offer`) still holds: a send that took longer than CLAIM_SECONDS may
         already have been claimed and sent again by someone else, so it can be sent
         twice (the second Accept just says it's settled)."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE campaign_handover_offers SET delivered_at = %s"
+                "UPDATE campaign_handover_offers SET delivered_at = %s, message_id = %s"
                 " WHERE guild_id = %s AND id = %s AND delivered_at IS NULL AND claimed_at = %s",
-                (now, guild_id, offer.id, offer.claimed_at),
+                (now, message_id, guild_id, offer.id, offer.claimed_at),
+            )
+
+    async def set_offer_message(self, guild_id: int, offer_id: int, message_id: int) -> None:
+        """The private message an offer made in Discord went out in (#690)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET message_id = %s"
+                " WHERE guild_id = %s AND id = %s",
+                (message_id, guild_id, offer_id),
+            )
+
+    async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]:
+        """Offers in this server whose 7 days are up and whose owner hasn't been told,
+        oldest first. Open ones past their days are marked expired first (#690). Before
+        telling the owner, `claim_end_notice` each."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET status = 'expired',"
+                " decided_at = created_at + %s"
+                " WHERE guild_id = %s AND status = 'open' AND created_at + %s <= %s",
+                (HANDOVER_SECONDS, guild_id, HANDOVER_SECONDS, now),
+            )
+            cur = await conn.execute(
+                "SELECT * FROM campaign_handover_offers"
+                " WHERE guild_id = %s AND status = 'expired' AND end_told_at IS NULL"
+                " ORDER BY id",
+                (guild_id,),
+            )
+            return [_to_offer(row) for row in await cur.fetchall()]
+
+    async def claim_end_notice(self, guild_id: int, offer_id: int, now: int) -> bool:
+        """Mark an ended offer told, just before telling its owner: False if someone else
+        got there first (so it's told once)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaign_handover_offers SET end_told_at = %s"
+                " WHERE guild_id = %s AND id = %s AND end_told_at IS NULL RETURNING id",
+                (now, guild_id, offer_id),
+            )
+            return await cur.fetchone() is not None
+
+    async def release_end_notice(self, guild_id: int, offer_id: int, told_at: int) -> None:
+        """Telling the owner failed for a moment: the next sweep tries again."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET end_told_at = NULL"
+                " WHERE guild_id = %s AND id = %s AND end_told_at = %s",
+                (guild_id, offer_id, told_at),
             )
 
     async def release_delivery(self, guild_id: int, offer: HandoverOffer) -> None:
@@ -1166,6 +1216,8 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         decided_at=row_int(row, "decided_at"),
         delivered_at=row_int(row, "delivered_at"),
         claimed_at=row_int(row, "claimed_at"),
+        message_id=row_int(row, "message_id"),
+        end_told_at=row_int(row, "end_told_at"),
     )
 
 

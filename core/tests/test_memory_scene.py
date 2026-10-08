@@ -114,6 +114,18 @@ class Hints(unittest.TestCase):
         self.assertLess(hints.index("Bryn Shander"), hints.index("Hrothgar"))  # guesses last
         self.assertNotIn("the hooded stranger", hints)
 
+    def test_sheet_names_come_right_after_the_characters_never_a_secret_one(self) -> None:
+        names = lookup()
+        sheet = ["Test Spell", "The Hooded Stranger", "Test Feat"]  # #723
+        hints = scene_hints(
+            names, prepare(names, NOW), SceneTracker(), 1.0, people=["Mia"], sheet=sheet
+        )
+        self.assertEqual(hints[:4], ["Cerric", "Test Spell", "Test Feat", "Mia"])
+        self.assertNotIn("The Hooded Stranger", hints)  # also a secret name here
+        crowd = [f"Spell {i}" for i in range(100)]
+        hints = scene_hints(names, prepare(names, NOW), SceneTracker(), 1.0, sheet=crowd)
+        self.assertEqual(len(hints), 50)  # within the cap
+
     def test_people_not_at_the_table_come_last(self) -> None:
         names = lookup(link(CHIEF, TRIBE))
         scene = SceneTracker()

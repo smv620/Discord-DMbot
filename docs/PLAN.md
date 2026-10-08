@@ -1548,7 +1548,12 @@ takes the offer back (and tells the owner); any other Discord error lets the cla
 for a later try, and a claim left by a process that stopped lapses. It sweeps for unsent
 offers each time it starts listening, when a server becomes available or is joined, and
 hourly. Offers made in Discord are saved as delivered. The website's role, when it
-offers, must only be able to insert unsent, unclaimed offers from the signed-in owner. A Try It plan may receive a hand-over if its one slot is free;
+offers, must only be able to insert unsent, unclaimed offers from the signed-in owner.
+*When an offer's 7 days are up (#690, part 2):* the same hourly sweep marks it expired
+(also catching ones already marked expired quietly) and announces it once
+(`end_told_at`): the owner hears "they didn't answer within 7 days … the campaign stays
+yours", and the person's private message (`message_id`, kept by both paths) loses its
+buttons. Best effort, at most an hour late. A Try It plan may receive a hand-over if its one slot is free;
 the campaign then follows that plan (so, while on Try It, no backups or downloads). The
 website's database role gets only the narrow extra rights the account page needs, under
 restrictive policies (read and answer offers where the signed-in person is sender or
@@ -1588,6 +1593,14 @@ and stays a later browser extension in the DM's own session; never a password or
 on our side. Order: part A (link, snapshot, hints, unlink, fallback form; one developer,
 no table work), part B with phase 3 (the rules advisor reads the snapshot), part C later
 (the extension).
+*Built, part A first half (#723, dev2):* the `character_sheets` table (one row per player
+character per campaign, its link and snapshot; its own table rather than columns on the
+entity, so a refresh is never in the undo log or the in-memory names), the allow-list
+parser and the one-GET fetch (`dmbot.memory.sheets`), the background refresh at `/dmbot
+start` (kept names at once, fresh ones when read; not again after a restart), and
+backups (`sheet` rows; a restored snapshot goes through the same allow list). Up to 15
+sheet names join the hints right after the characters, taking turns between characters,
+never one that is also a secret name. The buttons and forms come in the second half.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
