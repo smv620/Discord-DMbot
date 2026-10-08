@@ -99,6 +99,22 @@ class Linking(SheetTest):
                 )
 
 
+class Size(SheetTest):
+    async def test_the_biggest_snapshot_clean_allows_fits_the_database(self) -> None:
+        names = ["\u0928" * 55 + str(i) for i in range(100)]  # three bytes a letter
+        biggest = sheets.clean(
+            {
+                "v": 1,
+                "source": "typed",
+                "name": "X",
+                "languages": names,
+                **{k: names for k in ("spells", "features", "feats", "items")},
+            }
+        )
+        assert biggest is not None
+        self.assertTrue(await self.sheets.save(GUILD_A, self.c, self.pc, biggest, 5))
+
+
 class Isolation(SheetTest):
     async def test_the_same_link_in_two_campaigns_is_two_sheets(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Other", DM)).id
@@ -142,7 +158,7 @@ class Refreshing(SheetTest):
         self.assertEqual((calls, found[0].sheet), ([CHARACTER], self.sheet_data))
 
         async def refused(character: int) -> dict[str, Any]:
-            raise sheets.SheetError(sheets.NOT_PUBLIC, public=False)
+            raise sheets.SheetError(sheets.NOT_PUBLIC, refused=True)
 
         with self.assertLogs("dmbot.memory.sheet_refresh", "INFO") as logs:
             found = await refresh(self.sheets, GUILD_A, self.c, 6, fetch=refused)

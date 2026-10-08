@@ -4,11 +4,17 @@ every field that may carry descriptions), never a real character or sourcebook t
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+import time
 import unittest
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+from unittest import mock
+
+import aiohttp
 
 from dmbot.memory import sheets
 from dmbot.memory.sheet_refresh import SHEET_HINTS_MAX
@@ -157,8 +163,35 @@ class Cleaning(unittest.TestCase):
             }
         )
         assert snapshot is not None
-        self.assertLessEqual(len(json.dumps(snapshot).encode()), sheets.SNAPSHOT_MAX_BYTES)
+        stored = json.dumps(snapshot, ensure_ascii=False).encode()  # as Postgres keeps it
+        self.assertLessEqual(len(stored), sheets.SNAPSHOT_MAX_BYTES)
         self.assertGreater(len(snapshot["spells"]), 10)
+
+    def test_a_snapshot_nothing_can_shrink_is_refused_not_looped_on(self) -> None:
+        # The review's case: long non-ASCII languages, every other list empty.
+        languages = ["\u0928" * 59 + str(i) for i in range(100)]
+        long_classes = [{"name": "\u0928" * 60, "level": 1, "subclass": "\u0928" * 60}] * 4
+        started = time.monotonic()
+        snapshot = sheets.clean(
+            {
+                "v": 1,
+                "source": "typed",
+                "name": "X",
+                "languages": languages,
+                "classes": long_classes,
+            }
+        )
+        self.assertLess(time.monotonic() - started, 1)
+        if snapshot is not None:
+            stored = json.dumps(snapshot, ensure_ascii=False).encode()
+            self.assertLessEqual(len(stored), sheets.SNAPSHOT_MAX_BYTES)
+
+    def test_odd_entries_in_a_backup_are_dropped_not_raised(self) -> None:
+        snapshot = sheets.clean(
+            {"v": 1, "source": "typed", "name": "X", "skills": [["arcana"], {"a": 1}, "arcana"]}
+        )
+        assert snapshot is not None
+        self.assertEqual(snapshot["skills"], ["arcana"])
 
     def test_not_a_snapshot(self) -> None:
         bad: object
@@ -245,6 +278,32 @@ class Refreshing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.read, [5, 5])
         self.assertEqual(self.store.saved, ["c" * 32])  # the first failed: its old one stays
 
+    async def test_a_cancelled_refresh_closes_its_session(self) -> None:
+        closed: list[bool] = []
+
+        class Session:
+            async def __aenter__(self) -> Session:
+                return self
+
+            async def __aexit__(self, *_: object) -> None:
+                closed.append(True)
+
+        async def hang(character: int, *, session: Any) -> dict[str, Any]:
+            await asyncio.Event().wait()
+            return {}
+
+        with (
+            mock.patch.object(sheets, "new_session", Session),
+            mock.patch.object(sheets, "fetch", hang),
+        ):
+            run = asyncio.ensure_future(sheet_refresh(self.store, 1, "c", 5))
+            for _ in range(5):
+                await asyncio.sleep(0)
+            run.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await run
+        self.assertEqual(closed, [True])
+
     async def test_a_session_that_ended_stops_reading(self) -> None:
         await sheet_refresh(
             self.store,
@@ -307,8 +366,65 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(sheets.SheetError) as caught:
                 await sheets.fetch(42, session=session)  # type: ignore[arg-type]
-            self.assertFalse(caught.exception.public)
+            self.assertTrue(caught.exception.refused)
             self.assertEqual(str(caught.exception), sheets.NOT_PUBLIC)
+
+    async def test_a_redirect_is_refused(self) -> None:
+        with self.assertRaises(sheets.SheetError) as caught:
+            await sheets.fetch(42, session=FakeSession(302))  # type: ignore[arg-type]
+        self.assertFalse(caught.exception.refused)
+
+    async def test_a_slow_answer_times_out(self) -> None:
+        class Slow(FakeSession):
+            def get(self, url: str, **_: Any) -> Any:
+                outer = self
+
+                class Hang:
+                    async def __aenter__(self) -> FakeResponse:
+                        await asyncio.Event().wait()
+                        return outer.response
+
+                    async def __aexit__(self, *_: object) -> None:
+                        return None
+
+                return Hang()
+
+        with (
+            mock.patch.object(sheets, "FETCH_TIMEOUT_S", 0.05),
+            self.assertRaises(sheets.SheetError),
+        ):
+            await sheets.fetch(42, session=Slow(200))  # type: ignore[arg-type]
+
+    async def test_two_at_a_time_across_the_process(self) -> None:
+        inside, most = 0, 0
+        release = asyncio.Event()
+
+        class Counting(FakeSession):
+            def get(self, url: str, **_: Any) -> Any:
+                outer = self
+
+                class Count:
+                    async def __aenter__(self) -> FakeResponse:
+                        nonlocal inside, most
+                        inside += 1
+                        most = max(most, inside)
+                        await release.wait()
+                        return outer.response
+
+                    async def __aexit__(self, *_: object) -> None:
+                        nonlocal inside
+                        inside -= 1
+
+                return Count()
+
+        body = json.dumps(answer()).encode()
+        session = cast(aiohttp.ClientSession, Counting(200, body))
+        runs = [asyncio.ensure_future(sheets.fetch(n, session=session)) for n in range(5)]
+        for _ in range(10):
+            await asyncio.sleep(0)
+        self.assertEqual(most, sheets.FETCHES_AT_ONCE)
+        release.set()
+        await asyncio.gather(*runs)
 
     async def test_a_body_in_many_pieces_is_read_whole(self) -> None:
         body = json.dumps(answer()).encode()
@@ -334,7 +450,7 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(sheets.SheetError) as caught:
                 await sheets.fetch(42, session=session)  # type: ignore[arg-type]
-            self.assertTrue(caught.exception.public)
+            self.assertFalse(caught.exception.refused)
 
 
 if __name__ == "__main__":

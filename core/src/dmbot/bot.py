@@ -254,6 +254,7 @@ class Table:
     hint_parts: HintParts | None = None
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
+    sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
     vocabulary: Vocabulary = field(default_factory=Vocabulary)
@@ -819,7 +820,9 @@ class DMBot(commands.AutoShardedBot):
             )
         # In the background, never delaying the start: read the players' sheets again
         # (once a session; not again after a restart) and use their names as hints.
-        self._track(self._sheet_hints(table, refresh=not table.resumed), "sheets")
+        table.sheet_task = self._track(
+            self._sheet_hints(table, refresh=not table.resumed), "sheets"
+        )
         return sent
 
     async def _sheet_hints(self, table: Table, *, refresh: bool) -> None:
@@ -859,6 +862,8 @@ class DMBot(commands.AutoShardedBot):
             return None
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
+        if table.sheet_task is not None:  # no more reading sheets for it (#723)
+            table.sheet_task.cancel()
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.

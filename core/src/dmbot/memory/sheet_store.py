@@ -69,7 +69,9 @@ class SheetStore:
     ) -> bool:
         """Keep a snapshot. One read from a link (`url`) is kept only if the character is
         still linked to that same sheet (it may have been unlinked or relinked while it
-        was being read): False then. A typed one (no `url`) replaces any link."""
+        was being read): False then. That UPDATE deliberately doesn't check the entry is
+        still a played character: the row was only made for one, and it goes with the
+        entry. A typed one (no `url`) replaces any link."""
         cleaned = sheets.clean(snapshot)
         if cleaned is None:
             raise SheetRefused("That isn't a character sheet DMbot can keep.")

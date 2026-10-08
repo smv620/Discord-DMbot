@@ -4,11 +4,12 @@ hints (#723). Pure apart from the store and the fetch, which are passed in."""
 from __future__ import annotations
 
 import contextlib
-import functools
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from itertools import zip_longest
 from typing import Any, Protocol
+
+import aiohttp
 
 from dmbot.memory import sheets
 from dmbot.memory.models import name_key
@@ -59,8 +60,7 @@ async def refresh(
         return sheets_now
     async with contextlib.AsyncExitStack() as stack:
         if fetch is None:
-            client = await stack.enter_async_context(sheets.new_session())
-            fetch = functools.partial(sheets.fetch, session=client)
+            fetch = _shared_session(stack)
         for sheet in linked:
             if not still_wanted():
                 break
@@ -81,13 +81,26 @@ async def _refresh_one(
         snapshot = await fetch(sheet.character)
         await store.save(guild_id, campaign_id, sheet.entity_id, snapshot, now, url=sheet.url)
     except sheets.SheetError as exc:
-        reason = "not public" if not exc.public else "unreachable"
+        reason = "not public" if exc.refused else "unreachable"
         log.info("Couldn't refresh the sheet of entry %s (%s)", sheet.entity_id, reason)
     except Exception as exc:
         # Never the exception's text: a database error can quote the row (links, names).
         log.error(
             "Couldn't refresh the sheet of entry %s (%s)", sheet.entity_id, type(exc).__name__
         )
+
+
+def _shared_session(stack: contextlib.AsyncExitStack) -> Fetch:
+    """sheets.fetch over one session for the whole refresh, opened at the first fetch
+    (not before waiting for a permit) and closed with `stack`, cancelled or not."""
+    client: list[aiohttp.ClientSession] = []
+
+    async def fetch(character: int) -> dict[str, Any]:
+        if not client:
+            client.append(await stack.enter_async_context(sheets.new_session()))
+        return await sheets.fetch(character, session=client[0])
+
+    return fetch
 
 
 def hint_names(found: Sequence[CharacterSheet], limit: int = SHEET_HINTS_MAX) -> list[str]:

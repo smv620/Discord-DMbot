@@ -394,6 +394,50 @@ class SaveAndResume(SessionTests):
                 await asyncio.sleep(0)
         self.assertEqual((refreshed, table.sheet_hints), ([True], ("New Spell",)))
 
+    async def test_stopping_stops_reading_sheets(self) -> None:
+        sheet = CharacterSheet("0" * 32, "Testa", PLAYER, "u", None, None)
+        self.bot.sheets = MagicMock(sheets=AsyncMock(return_value=[sheet]))
+        reading = asyncio.Event()
+
+        async def endless_refresh(*_: Any, **__: Any) -> list[CharacterSheet]:
+            reading.set()
+            await asyncio.Event().wait()
+            return []
+
+        with patch("dmbot.bot.refresh_sheets", endless_refresh):
+            await self.start()
+            await asyncio.wait_for(reading.wait(), 2)
+            task = self.bot.tables[GUILD].sheet_task
+            assert task is not None
+            await self.bot.stop_session(GUILD, DM, False)
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+        self.assertTrue(task.cancelled())
+
+    async def test_after_a_restart_sheets_are_not_read_again(self) -> None:
+        kept = sheets.clean({"v": 1, "source": "typed", "name": "Testa", "spells": ["Old Spell"]})
+        sheet = CharacterSheet("0" * 32, "Testa", PLAYER, "u", kept, 1)
+        self.bot.sheets = MagicMock(sheets=AsyncMock(return_value=[sheet]))
+        await self.start()
+        table = self.bot.tables[GUILD]
+        refresh = AsyncMock()
+        with patch("dmbot.bot.refresh_sheets", refresh):
+            await self.bot._sheet_hints(table, refresh=False)  # as start_table does on resume
+        refresh.assert_not_awaited()
+        self.assertEqual(table.sheet_hints, ("Old Spell",))
+
+    async def test_a_sheet_store_failure_logs_only_its_kind(self) -> None:
+        await self.start()
+        table = self.bot.tables[GUILD]
+        table.sheet_hints = ()
+        broken = RuntimeError("DETAIL: Failing row contains (https://www.dndbeyond.com/...)")
+        self.bot.sheets = MagicMock(sheets=AsyncMock(side_effect=broken))
+        with self.assertLogs("dmbot.bot", "ERROR") as logs:
+            await self.bot._sheet_hints(table, refresh=True)
+        self.assertNotIn("dndbeyond", "\n".join(logs.output))
+        self.assertIn("RuntimeError", logs.output[0])
+        self.assertEqual(table.sheet_hints, ())
+
     async def test_stopping_a_session_that_wasnt_saved_is_a_warning(self) -> None:
         await self.start()
         await self.sessions.clear(GUILD, "test")  # the row goes missing, as in #147

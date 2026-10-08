@@ -33,7 +33,7 @@ API = "https://character-service.dndbeyond.com/character/v5/character/{id}"
 USER_AGENT = "DMbot (Discord bot for tabletop games; https://github.com/smv620/Discord-DMbot)"
 FETCH_TIMEOUT_S = 10
 MAX_BYTES = 2 * 1024 * 1024  # a big sheet is a few hundred KB
-FETCHING = asyncio.Semaphore(2)  # sheets read at once, across all servers
+FETCHES_AT_ONCE = 2  # sheets read at once, across all servers
 SNAPSHOT_MAX_BYTES = 32 * 1024  # a kept snapshot (the database allows 64 KB)
 SHEET_URL = "https://www.dndbeyond.com/characters/{id}"
 _LINK = re.compile(
@@ -67,12 +67,12 @@ NOT_PUBLIC = (
 
 
 class SheetError(Exception):
-    """A sheet couldn't be read. `public` is False when D&D Beyond refused (the sheet
-    isn't public, or there's no such character): the player can fix that."""
+    """A sheet couldn't be read. `refused` when D&D Beyond refused (the sheet isn't
+    public, or there's no such character): the player can fix that."""
 
-    def __init__(self, message: str, *, public: bool = True) -> None:
+    def __init__(self, message: str, *, refused: bool = False) -> None:
         super().__init__(message)
-        self.public = public
+        self.refused = refused
 
 
 def character_id(link: str) -> int | None:
@@ -357,15 +357,22 @@ def clean(snapshot: Any) -> dict[str, Any] | None:
         "speed": _int(snapshot.get("speed"), 0, 200),
         "proficiency_bonus": _int(snapshot.get("proficiency_bonus"), 2, 6),
         "saves": [a for a in ABILITIES if a in _list(snapshot.get("saves"))],
-        "skills": sorted(s for s in set(_list(snapshot.get("skills"))) if s in _SKILLS),
+        "skills": sorted(
+            {s for s in _list(snapshot.get("skills")) if isinstance(s, str) and s in _SKILLS}
+        ),
         "senses": senses,
         "languages": _names(_list(snapshot.get("languages"))),
     }
     for key in _NAME_LISTS:
         out[key] = _names(_list(snapshot.get(key)))
-    # Never bigger than SNAPSHOT_MAX_BYTES: the longest name lists lose their last names.
-    while len(json.dumps(out).encode()) > SNAPSHOT_MAX_BYTES:
-        longest = max(_NAME_LISTS, key=lambda k: len(out[k]))
+    # Never bigger than SNAPSHOT_MAX_BYTES as Postgres stores it (UTF-8, not \u escapes):
+    # the longest lists lose their last entries. If nothing is left to trim, it isn't a
+    # sheet DMbot keeps (only a hand-edited file gets here).
+    trimmable = (*_NAME_LISTS, "languages", "classes")
+    while len(json.dumps(out, ensure_ascii=False).encode()) > SNAPSHOT_MAX_BYTES:
+        longest = max(trimmable, key=lambda k: len(out[k]))
+        if not out[longest]:
+            return None
         out[longest] = out[longest][: len(out[longest]) * 3 // 4]
     return out
 
@@ -408,29 +415,44 @@ def who(snapshot: Mapping[str, Any]) -> str:
 # ---- fetching --------------------------------------------------------------------------
 
 
+_fetching: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
+
+
+def _permit() -> asyncio.Semaphore:
+    """The process's FETCHES_AT_ONCE permits, made on first use for the running loop (a
+    semaphore belongs to one loop; tests run many)."""
+    global _fetching
+    loop = asyncio.get_running_loop()
+    if _fetching is None or _fetching[0] is not loop:
+        _fetching = (loop, asyncio.Semaphore(FETCHES_AT_ONCE))
+    return _fetching[1]
+
+
 def new_session() -> aiohttp.ClientSession:
-    """One session for a refresh's sheets (one connection, reused)."""
+    """One session for a refresh's sheets (one connection, reused). No cookies kept: DMbot
+    never holds any D&D Beyond session (CLAUDE.md, D&D Beyond)."""
     return aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=FETCH_TIMEOUT_S),
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        cookie_jar=aiohttp.DummyCookieJar(),
     )
 
 
 async def fetch(character: int, *, session: aiohttp.ClientSession | None = None) -> dict[str, Any]:
-    """The snapshot of a public character: one GET, 10 s at most, two at a time across
-    the process. Raises SheetError (`public=False` if D&D Beyond refused: not public, or
-    no such character)."""
+    """The snapshot of a public character: one GET, 10 s at most including any wait for
+    a permit (FETCHES_AT_ONCE across the process). Raises SheetError (`refused` if D&D
+    Beyond refused: not public, or no such character)."""
     url = API.format(id=int(character))
     own = session is None
     client = session or new_session()
     try:
         async with (
-            FETCHING,
             asyncio.timeout(FETCH_TIMEOUT_S),
+            _permit(),
             client.get(url, allow_redirects=False) as resp,
         ):
             if resp.status in (401, 403, 404):
-                raise SheetError(NOT_PUBLIC, public=False)
+                raise SheetError(NOT_PUBLIC, refused=True)
             if resp.status != 200:
                 raise SheetError(f"D&D Beyond answered {resp.status}")
             body = bytearray()
@@ -438,9 +460,11 @@ async def fetch(character: int, *, session: aiohttp.ClientSession | None = None)
                 body += piece
                 if len(body) > MAX_BYTES:
                     raise SheetError("The sheet was too big to read.")
+        # json.loads holds the GIL even in a thread; the thread helps `parse` only. The
+        # worst stall measured is ~13 ms, once per character per session.
         answer = await asyncio.to_thread(_json, bytes(body))
         if answer.get("success") is False:
-            raise SheetError(NOT_PUBLIC, public=False)
+            raise SheetError(NOT_PUBLIC, refused=True)
         return await asyncio.to_thread(parse, answer)
     except SheetError:
         raise
