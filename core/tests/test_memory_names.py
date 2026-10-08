@@ -930,11 +930,25 @@ class Lists(NamesTest):
             patch.object(
                 self.bot.campaigns, "record_confirmation", AsyncMock(side_effect=OSError("db"))
             ),
-            self.assertLogs("dmbot.ui.name_lists", "ERROR"),
+            self.assertLogs("dmbot.ui.name_lists", "INFO") as logs,
         ):
             await offer._read(it)
         fake.complete.assert_not_called()  # the IP rule: no record, no reading
         self.assertIn("Nothing was added", it.edit_original_response.call_args.kwargs["content"])
+        self.assertFalse(any("confirmed" in line for line in logs.output))  # log agrees
+        # The campaign was deleted meanwhile: its own words, and still no reading.
+        from dmbot.campaigns.models import CampaignError
+
+        it = self.it()
+        await name_lists.take_list(it, self.campaign.id, upload)
+        offer = it.response.sent[0][1]["view"]
+        it = self.it()
+        it.edit_original_response = AsyncMock()
+        gone = CampaignError("That campaign doesn't exist in this server.")
+        with patch.object(self.bot.campaigns, "record_confirmation", AsyncMock(side_effect=gone)):
+            await offer._read(it)
+        fake.complete.assert_not_called()
+        self.assertEqual(it.edit_original_response.call_args.kwargs["content"], str(gone))
 
     async def test_ai_problems_say_nothing_was_added(self) -> None:
         from dmbot.ai import BUSY, AIError

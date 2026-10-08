@@ -653,16 +653,17 @@ class AIOffer(_Menu):
             # file's name stays out of the log and the record (it may hold names); a
             # fingerprint tells documents apart.
             document = fingerprint(self.upload.text)
+            # A lasting record, kept with the campaign (#252). Before the AI reads
+            # anything: if it can't be saved, nothing is read (and nothing is logged as
+            # confirmed, so the log and the record agree).
+            await _bot(interaction).campaigns.record_confirmation(
+                guild, campaign.id, interaction.user.id, NAMES_LIST, document
+            )
             log.info(
                 "Shared material confirmed for AI reading: user=%s campaign=%s doc=%s",
                 interaction.user.id,
                 campaign.id,
                 document[:12],
-            )
-            # A lasting record, kept with the campaign (#252). Before the AI reads
-            # anything: if it can't be saved, nothing is read.
-            await _bot(interaction).campaigns.record_confirmation(
-                guild, campaign.id, interaction.user.id, NAMES_LIST, document
             )
             secrets = sees_secrets(campaign, interaction.user.id)
             async with asyncio.timeout(AI_TIME_LIMIT_S):

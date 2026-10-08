@@ -178,8 +178,10 @@ class _ConfirmationsSection:
         ]
 
     def check(self, rows: list[Any]) -> list[tuple[str, int, str, str, int]]:
-        """Every field from the untrusted file, checked (in a worker thread)."""
+        """Every field from the untrusted file, checked (in a worker thread). A backup is
+        complete, so two rows with one id mean it's damaged, never a row quietly lost."""
         values: list[tuple[str, int, str, str, int]] = []
+        seen: set[str] = set()
         for row in rows:
             got = row if isinstance(row, dict) else {}
             rid, user, purpose = got.get("id"), got.get("user"), got.get("purpose")
@@ -196,8 +198,10 @@ class _ConfirmationsSection:
                 and isinstance(at, int)
                 and not isinstance(at, bool)
                 and 0 <= at <= INT64_MAX
+                and rid not in seen
             ):
                 raise CampaignError("This backup file is damaged (bad confirmation).")
+            seen.add(rid)
             assert isinstance(user, str) and isinstance(purpose, str)
             values.append((rid, int(user), purpose, fp, at))
         return values
@@ -207,7 +211,7 @@ class _ConfirmationsSection:
             await cur.executemany(
                 "INSERT INTO shared_confirmations (campaign_id, guild_id, id, user_id, purpose,"
                 " fingerprint, confirmed_at, restored)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, true) ON CONFLICT DO NOTHING",
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, true)",
                 [(campaign_id, guild_id, *row) for row in rows],
             )
 
@@ -310,7 +314,7 @@ class CampaignStore:
         """This campaign's confirmations, oldest first (as in its backups)."""
         async with self._db.guild(guild_id) as conn:
             await self._require(conn, guild_id, campaign_id)
-            return await _ConfirmationsSection().dump(conn, guild_id, campaign_id)
+            return await self._sections["confirmations"].dump(conn, guild_id, campaign_id)
 
     def register_section(self, section: ExportSection) -> None:
         """Include another feature's per-campaign data in backups and deletes."""

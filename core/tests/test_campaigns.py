@@ -548,6 +548,8 @@ class SharedConfirmations(StoreTest):
         restored = await self.store.import_backup(GUILD_B, backup, DM2)
         (row,) = await self.store.confirmations(GUILD_B, restored.id)
         self.assertEqual(row, {**saved, "restored": True})  # what the file says
+        again = await self.store.export(GUILD_B, restored.id)  # and stays so, copied on
+        self.assertTrue(again["sections"]["confirmations"][0]["restored"])
         # Replacing a campaign: its own confirmations give way to the backup's.
         await self.record(c, "a newer document")
         replaced = await self.store.import_backup(GUILD_A, backup, DM, replace_campaign_id=c.id)
@@ -565,13 +567,15 @@ class SharedConfirmations(StoreTest):
         bad: list[tuple[str | None, Any]] = [
             ("user", "x"), ("user", 7), ("purpose", "other"), ("fingerprint", "abc"),
             ("fingerprint", "A" * 64), ("fingerprint", "a" * 63), ("at", True), ("at", -1),
-            ("id", ""), ("id", "a-b"), (None, "x"),
+            ("id", ""), ("id", "a-b"), (None, "x"), ("twice", None),
         ]  # fmt: skip
         for field, value in bad:
             with self.subTest(field=field, value=value):
                 damaged = json.loads(json.dumps(backup))
                 rows = damaged["sections"]["confirmations"]
-                if field is None:
+                if field == "twice":
+                    rows.append(dict(rows[0]))  # a backup is complete: none quietly lost
+                elif field is None:
                     rows[0] = value  # not even a row
                 else:
                     rows[0][field] = value

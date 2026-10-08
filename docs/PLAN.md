@@ -1055,8 +1055,9 @@ names panel nor the speech-to-text hints can be a fixed list.
     text, never the text or the file's name), before the AI reads anything: if it can't
     be saved, nothing is read. It's deleted with the campaign and carried in its
     backups; rows read from a backup are marked restored (anyone in the server may
-    restore one, so they say what the file says, not what DMbot saw pressed). The Shared story switch (#238) and shared rulebooks (#49) record the same
-    way (`shared_story`, `rulebook`). An empty list, or a list whose only
+    restore one, so they say what the file says, not what DMbot saw pressed). The
+    Shared story switch (#238) and shared rulebooks (#49) record the same way
+    (`shared_story`, `rulebook`). An empty list, or a list whose only
     problem is a secret name from someone who may not add one, never goes to the AI;
   - **a kind DMbot doesn't know is asked once per word** (owner's decision): the summary
     shows a menu for each of up to 4 unknown words ("What is every “wizard” (50)?"), and
