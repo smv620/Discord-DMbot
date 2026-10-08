@@ -923,6 +923,21 @@ class SaveAndResume(SessionTests):
         )  # unsure: warn, never "nothing"
         await cancel_late_lookups(bot)
 
+    async def test_revoke_with_a_failing_database_still_warns(self) -> None:
+        from dmbot.bot import consent_revoke
+        from dmbot.consent_dm import warning_text
+
+        self.guild.name = "Dragon Club"
+        await self.consent.grant(GUILD, PLAYER)
+        bot = await self.restart()  # nothing loaded for this server yet
+        bot.consent.status = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
+        interaction = self._consent_interaction(PLAYER)
+        interaction.client = bot
+        with self.assertLogs("dmbot.bot", "WARNING"):
+            await consent_revoke.callback(interaction)  # type: ignore[call-arg]
+        args = interaction.response.send_message.await_args
+        self.assertEqual(args.args[0], warning_text(self.guild.name))  # never "nothing to stop"
+
     async def test_yes_during_a_live_session_stops_capture_at_once(self) -> None:
         # #69, through the #807 path: ears drops them before anything slow.
         from dmbot.consent_dm import StopYesButton

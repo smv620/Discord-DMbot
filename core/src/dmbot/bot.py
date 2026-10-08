@@ -40,7 +40,7 @@ from dmbot.channel_access import (
     post_problems,
 )
 from dmbot.config import Settings
-from dmbot.consent import ConsentMethod, ConsentStore
+from dmbot.consent import ConsentMethod, ConsentStatus, ConsentStore
 from dmbot.consent_dm import (
     CONSENT_BUTTONS,
     REASK_INTRO,
@@ -434,7 +434,7 @@ class DMBot(commands.AutoShardedBot):
         self._background: list[asyncio.Task[None]] = []
         # recorded()'s database lookups still running, one per person: a press while one
         # runs waits on it rather than starting another (a stalled database would pile up).
-        self._lookups: dict[tuple[int, int], asyncio.Task[Any]] = {}
+        self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
         self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
         self._finishing: set[asyncio.Task[None]] = set()  # stopped sessions winding down
         # Stopped sessions still writing down their last words, by server.
@@ -609,8 +609,9 @@ class DMBot(commands.AutoShardedBot):
         if self.consent.has_consent(guild_id, user_id):
             return True
         # Not wait_for: that waits for the cancelled query to clean up, which a stalled
-        # database can stretch to 12 s (#834). A late lookup is left to finish alone, held
-        # in _lookups (even if this wait is cancelled) until it does.
+        # database can stretch to 12 s (#834). A late lookup is cancelled but not waited
+        # for: its cleanup runs alone, held in _lookups (even if this wait is cancelled)
+        # until it ends, and a press meanwhile joins it.
         key = (guild_id, user_id)
         lookup = self._lookups.get(key)
         if lookup is None:
@@ -619,7 +620,11 @@ class DMBot(commands.AutoShardedBot):
             lookup.add_done_callback(partial(self._lookup_done, key))
         done, _ = await asyncio.wait({lookup}, timeout=RECORDED_CHECK_S)
         if not done:
+            if not lookup.cancelling():  # once: a second cancel would cut its cleanup short
+                lookup.cancel()  # so a stalled connection is let go, not held for minutes
             log.warning("Couldn't look up consent in guild %s in time", guild_id)
+            return True
+        if lookup.cancelled():  # by close(), or an earlier press's timeout
             return True
         try:
             status = lookup.result()
@@ -628,7 +633,10 @@ class DMBot(commands.AutoShardedBot):
             return True
         return user_id in status.granted
 
-    def _lookup_done(self, key: tuple[int, int], task: asyncio.Task[Any]) -> None:
+    def _lookup_done(self, key: tuple[int, int], task: asyncio.Task[ConsentStatus]) -> None:
+        """A recorded() lookup ended: let the next press start a fresh one, and read its
+        failure, since nobody may be waiting for it any more (else asyncio reports "Task
+        exception was never retrieved")."""
         if self._lookups.get(key) is task:
             del self._lookups[key]
         if not task.cancelled():

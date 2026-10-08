@@ -631,7 +631,9 @@ class KeepButton(
             message = interaction.message
             if _lasting(interaction) and message is not None:
                 menu = menu_view(self.guild_id, self.campaign_id)
-                if guild is None or recorded:  # the message's own text, as it was
+                # The message's own text, as it was. For a server not served here it may
+                # still say "recording you": nothing is captured there, so that's safe.
+                if guild is None or recorded:
                     content = without_warning(message.content)
                     await interaction.response.edit_message(content=content, view=menu)
                 else:  # a stale warning: they stopped some other way, so say so

@@ -1,6 +1,7 @@
 """Consent by private message: who is asked, what they see, and what the buttons do."""
 
 import asyncio
+import gc
 import json
 import re
 from types import SimpleNamespace
@@ -843,7 +844,76 @@ class ConsentDMTests(DatabaseTest):
         release.set()
         await asyncio.sleep(0)
         await asyncio.sleep(0)
-        assert lookup.done() and not self.bot._lookups  # gone, its failure read
+        assert lookup.done() and not self.bot._lookups  # gone
+        del lookup
+        with self.assertNoLogs("asyncio", "ERROR"):  # its failure was read: no "never retrieved"
+            gc.collect()
+
+    async def test_a_timed_out_lookup_is_cancelled_and_let_go(self) -> None:
+        # So a stalled connection is given back, not held for minutes (#843).
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.consent = ConsentStore(self.db)
+        cleaned = asyncio.Event()
+
+        async def stall(*_: Any, **__: Any) -> Any:
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                await asyncio.sleep(0.05)  # psycopg's cleanup, quickly here
+                cleaned.set()
+                raise
+
+        self.bot.consent.status = AsyncMock(side_effect=stall)  # type: ignore[method-assign]
+        with patch("dmbot.bot.RECORDED_CHECK_S", 0.01), self.assertLogs("dmbot.bot", "WARNING"):
+            assert await self.bot.recorded(GUILD, PLAYER)
+            (lookup,) = self.bot._lookups.values()
+            assert lookup.cancelling() == 1  # asked to stop, not waited for
+            assert await self.bot.recorded(GUILD, PLAYER)  # a press meanwhile joins it...
+        assert lookup.cancelling() == 1  # ...and doesn't cancel its cleanup again
+        await asyncio.wait_for(cleaned.wait(), 1)
+        await asyncio.sleep(0)
+        assert lookup.cancelled() and not self.bot._lookups
+
+    async def test_a_press_waiting_on_a_cancelled_lookup_gets_stop(self) -> None:
+        # close() cancels lookups a press may be waiting on: Stop, not an error.
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.consent = ConsentStore(self.db)
+
+        async def stall(*_: Any, **__: Any) -> Any:
+            await asyncio.sleep(60)
+
+        self.bot.consent.status = AsyncMock(side_effect=stall)  # type: ignore[method-assign]
+        press = asyncio.create_task(self.bot.recorded(GUILD, PLAYER))
+        await asyncio.sleep(0.01)
+        (lookup,) = self.bot._lookups.values()
+        lookup.cancel()
+        assert await asyncio.wait_for(press, 1)
+
+    async def test_close_cancels_the_lookups(self) -> None:
+        self.bot.consent = ConsentStore(self.db)
+
+        async def stall(*_: Any, **__: Any) -> Any:
+            await asyncio.sleep(60)
+
+        self.bot.consent.status = AsyncMock(side_effect=stall)  # type: ignore[method-assign]
+        press = asyncio.create_task(self.bot.recorded(GUILD, PLAYER))
+        await asyncio.sleep(0.01)
+        (lookup,) = self.bot._lookups.values()
+        self.bot.pipeline.transcriber.close = AsyncMock()  # type: ignore[method-assign]
+        self.bot.ears.stop = AsyncMock()  # type: ignore[method-assign]
+        with patch.object(discord.Client, "close", AsyncMock()):
+            await asyncio.wait_for(self.bot.close(), 5)
+        assert lookup.cancelled()
+        assert await press  # the press still got an answer: Stop
+
+    async def test_keep_with_a_failing_database_never_says_not_recorded(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.consent = ConsentStore(self.db)
+        self.bot.consent.status = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
+        keep = self.lasting(self.button_press(PLAYER), c.with_warning("Dragon Club", self.REMINDER))
+        with self.assertLogs("dmbot.bot", "WARNING"):
+            await c.KeepButton(GUILD).callback(keep)
+        assert keep.response.edit_message.await_args.kwargs["content"] == self.REMINDER
 
     async def test_a_failing_database_still_offers_stop(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
