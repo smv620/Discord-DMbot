@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
-from dmbot.consent_dm import consent_view, request_view, stop_view
+from dmbot.consent_dm import consent_view, options_view, request_view
 from dmbot.memory import sheets
 from dmbot.memory.sheet_store import CharacterSheet, PlayerCharacter, SheetRefused, SheetStore
 from dmbot.ui import sheets as ui
@@ -84,14 +84,16 @@ class Words(unittest.TestCase):
         self.assertIn(URL, ui.card_line(sheet(), link=True) or "")
         self.assertIsNone(ui.card_line(None, link=True))
 
-    def test_the_consent_messages_carry_the_button(self) -> None:
+    def test_the_menu_carries_the_button(self) -> None:
+        # In the ⚙️ Menu now (#807), for that session's campaign or any of the server's.
         for campaign in (None, CAMPAIGN):
-            view = stop_view(GUILD, sheet=True, campaign_id=campaign)
+            view = options_view(GUILD, campaign, recording=True, sheets=True)
             ids = [getattr(i, "custom_id", "") for i in view.children]
             sheet_id = next(i for i in ids if i.startswith("dmbot:sheet:"))
             match = re.fullmatch(ui.MySheetButton.__discord_ui_compiled_template__, sheet_id)
             self.assertIsNotNone(match, sheet_id)
-        self.assertEqual(len(stop_view(GUILD).children), 1)  # just 🛑 where asked
+        off = options_view(GUILD, None, recording=True, sheets=False)
+        self.assertFalse([i for i in off.children if "sheet" in str(getattr(i, "custom_id", ""))])
 
     def test_asking_and_saying_no_never_carry_the_button(self) -> None:
         # The request, and the view after No thanks or 🛑 (consent_view): no 📜.

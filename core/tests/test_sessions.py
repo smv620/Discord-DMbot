@@ -839,38 +839,80 @@ class SaveAndResume(SessionTests):
         self.assertNotIn(GUILD, self.bot.tables)
         self.assertIsNone(await self.sessions.get(GUILD))
 
-    async def test_revoke_reaches_ears_even_without_a_session_here(self) -> None:
+    async def test_revoke_warns_first_and_yes_reaches_ears_without_a_session_here(self) -> None:
         from dmbot.bot import consent_revoke
+        from dmbot.consent_dm import StopYesButton, warning_text
 
+        self.guild.name = "Dragon Club"
         await self.consent.grant(GUILD, PLAYER)
         bot = await self.restart()  # ears may still be in voice from before
+        await bot.consent.consenting(GUILD)
         interaction = SimpleNamespace(
             client=bot,
             guild=self.guild,
+            guild_id=GUILD,
             user=member(PLAYER),
-            response=SimpleNamespace(defer=AsyncMock()),
+            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
             followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(),
         )
         await consent_revoke.callback(interaction)  # type: ignore[arg-type,call-arg]
+        warned = interaction.response.send_message.await_args
+        self.assertEqual(warned.args[0], warning_text(self.guild.name))  # #807: a warning
+        self.assertTrue(warned.kwargs["ephemeral"])
+        self.assertTrue(bot.consent.has_consent(GUILD, PLAYER))  # nothing until Yes
+        self.assertFalse([m for m in self.ears.sent if '"allowlist"' in m])
+
+        await StopYesButton(GUILD).callback(interaction)  # type: ignore[arg-type]
         lists = [json.loads(m) for m in self.ears.sent if '"allowlist"' in m]
         self.assertTrue(lists)
         self.assertNotIn(str(PLAYER), lists[0]["userIds"])
-        reply = interaction.followup.send.await_args
-        self.assertIn(ALREADY_RECORDED, reply.args[0])  # same words as the Stop button
-        self.assertTrue(reply.kwargs["ephemeral"])
+        done = interaction.edit_original_response.await_args.kwargs["content"]
+        self.assertIn(ALREADY_RECORDED, done)  # the same words as from the menu
 
-    async def test_a_revoke_that_cant_be_saved_still_stops_and_says_so(self) -> None:
-        from dmbot.bot import consent_revoke
+    async def test_yes_that_cant_be_saved_still_stops_and_says_so(self) -> None:
+        from dmbot.consent_dm import STOP_YES_LABEL, StopYesButton, revoke_not_saved
 
         await self.consent.grant(GUILD, PLAYER)
         self.consent.revoke = AsyncMock(side_effect=RuntimeError("db down"))  # type: ignore[method-assign]
         interaction = self._consent_interaction(PLAYER)
-        with self.assertLogs("dmbot.bot", "ERROR"):
-            await consent_revoke.callback(interaction)  # type: ignore[call-arg]
-        text = interaction.followup.send.await_args.args[0]
-        self.assertIn("couldn't save this yet", text)
-        self.assertNotIn(ALREADY_RECORDED, text)
+        with self.assertLogs("dmbot.consent_dm", "ERROR"):
+            await StopYesButton(GUILD).callback(interaction)
+        interaction.followup.send.assert_awaited_once_with(
+            revoke_not_saved(STOP_YES_LABEL), ephemeral=True
+        )
         self.assertFalse(self.consent.has_consent(GUILD, PLAYER))
+
+    async def test_revoke_from_someone_not_recorded_says_so_without_a_warning(self) -> None:
+        from dmbot.bot import consent_revoke
+        from dmbot.consent_dm import nothing_to_stop_text
+
+        self.guild.name = "Dragon Club"
+        interaction = self._consent_interaction(PLAYER)
+        await consent_revoke.callback(interaction)  # type: ignore[call-arg]
+        args = interaction.response.send_message.await_args
+        self.assertEqual(args.args[0], nothing_to_stop_text(self.guild.name))
+        self.assertNotIn("view", args.kwargs)
+        self.assertFalse(self.consent.has_consent(GUILD, PLAYER))
+
+    async def test_yes_during_a_live_session_stops_capture_at_once(self) -> None:
+        # #69, through the #807 path: ears drops them before anything slow.
+        from dmbot.consent_dm import StopYesButton
+
+        self.guild.name = "Dragon Club"
+        await self.consent.grant(GUILD, PLAYER)
+        await self.start()
+        interaction = self._consent_interaction(PLAYER)
+
+        async def already_stopped(*_: Any, **__: Any) -> None:
+            self.assertFalse(self.consent.has_consent(GUILD, PLAYER))  # before any await
+
+        interaction.response.defer = AsyncMock(side_effect=already_stopped)
+        await StopYesButton(GUILD).callback(interaction)
+        interaction.response.defer.assert_awaited_once()
+        await asyncio.sleep(0)  # the allowlist goes to ears in its own task
+        last = [json.loads(m) for m in self.ears.sent if '"allowlist"' in m][-1]
+        self.assertNotIn(str(PLAYER), last["userIds"])
 
     async def test_resume_starts_once(self) -> None:
         bot = await self.restart()
@@ -988,9 +1030,11 @@ class SaveAndResume(SessionTests):
         return SimpleNamespace(
             client=self.bot,
             guild=self.guild,
+            guild_id=GUILD,
             user=member(user_id),
             response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
             followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(),
         )
 
     async def test_consent_is_logged_by_id(self) -> None:

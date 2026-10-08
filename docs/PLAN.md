@@ -1572,6 +1572,16 @@ for 15 minutes. The admin session is its own cookie (HttpOnly, Secure, SameSite=
 after an hour idle and 12 hours at most, and every admin form carries a CSRF token. The
 admin page is never linked from the site and tells search engines not to index it.
 
+**The admin page goes online first, alone (decided 2026-10-08, #833).** The web API reaches
+the internet through a Cloudflare Tunnel (`cloudflared` in compose, outbound only, no
+published ports, so `CF-Connecting-IP` can be trusted), and until the customer website
+goes live (#498) the tunnel opens only `^/admin(/|$)`: Discord sign-in, `/me`, billing and
+the webhook stay closed. The admin page is served from the development branch's build at
+`dev.getdmbot.com` (noindex), because `main` is far behind and the admin cookie is only
+sent when the page and `api.getdmbot.com` share a site. When the site goes live,
+`WEB_SITE_URL` becomes `getdmbot.com` and the path limit comes off. Built in #836 (tunnel)
+and #837 (the dev site's API address).
+
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
 names, later story memory and rules lookups), plus backup, restore and transcript
