@@ -2,6 +2,7 @@ DMbot - TESTING STATUS (current testing only)
 =============================================
 Last updated: 2026-10-08 by dev1 (deployed 4005809; web-api not started; ready for run 8)
 
+**For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
 Never put tokens, .env contents or players' personal data here (public repo).
 
