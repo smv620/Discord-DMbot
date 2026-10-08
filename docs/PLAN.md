@@ -161,6 +161,12 @@ database.
   - **Backups** include everything except the change log (a restored campaign starts
     with a fresh undo history) and mentions, which are most of the size (about 15 MB
     for a long campaign) and are rebuilt as new sessions are transcribed.
+  - **Flags DMbot closes itself get no status of their own (decided 2026-10-08, #347):**
+    Undo of the close reopens the flag (#362), and a clash that comes back is flagged
+    again when the fact is written again, so the realistic case (the DM undoes a
+    rejection, the fact is re-written, a new flag appears) needs no migration. A
+    `closed_by_dmbot` status is added only if a recording or a live session shows a DM
+    missing a returned clash.
   - **Only the DM's word confirms** (`source="dm"`): other sources can only propose, or
     drop a proposal. Saying something already known again only strengthens it (the
     DM's confirmation, or "keep secret"); something the DM rejected stays rejected
@@ -1414,7 +1420,14 @@ renewal or a top-up. On a downgrade or lapse the first N campaigns started after
 are active (N = new cap), the rest are paused with their data kept. Retention: 60 days
 after the last session on Try It, 6 months on Table, 1 year on the other plans, and 120
 days after a plan stops paying; the DM is warned at 14 and 3 days; deletion on request is
-immediate. Cost basis for these prices: about $0.30 per table-hour (Deepgram Nova-3 clip
+immediate. **Deleting an account (decided 2026-10-08, #435, #552):** the account and the
+campaigns it owns go at once (that is what delete means); the paid subscription is
+cancelled at the end of the period already paid for, so the person is never charged
+again, and the rest of that period is not paid back unless they ask before deleting (the
+refunds page says so, and so does the delete screen); after deletion DMbot keeps only
+the Discord account number, if that account used Try It (one trial per person), and the
+reference numbers of its payments with the account number (so no payment is counted
+twice). Cost basis for these prices: about $0.30 per table-hour (Deepgram Nova-3 clip
 pricing on roughly 36–60 speech-minutes per hour, Claude Haiku for the AI features,
 hosting); to be measured with the twin and run 8 before the promotion to `main`.
 Discord servers cost nothing and are not counted.
