@@ -250,10 +250,12 @@ class SessionTests(DatabaseTest):
                 await forever
             await asyncio.sleep(0)
 
-    async def test_stopping_drops_the_servers_hint_cache(self) -> None:
+    async def test_the_hint_cache_goes_once_the_last_words_are_written(self) -> None:
         await self.start()
-        self.bot._hint_people_cache[GUILD] = (0.0, frozenset(), None, ((), ()))
         await self.bot.stop_session(GUILD, DM, False)
+        # The stopped session's last clips still ask for hints, which fills it again…
+        self.bot._hint_people_cache[GUILD] = (0.0, frozenset(), None, ((), ()))
+        await asyncio.gather(*self.bot._finishing)  # …until the wind-down is done
         self.assertNotIn(GUILD, self.bot._hint_people_cache)
 
     async def test_status_shows_this_servers_own_backlog(self) -> None:

@@ -365,8 +365,9 @@ class TranscriptionPipeline:
                 "who said yes, but no words are being written down. Whoever hosts "
                 "DMbot should check its log. DMbot keeps trying."
             )
-        for guild in sorted(busy):
-            await self._tell(guild, text)
+        # Side by side: the lock is held for one post's time (at most
+        # ALERT_POST_TIMEOUT_S), not one per server.
+        await asyncio.gather(*(self._tell(guild, text) for guild in sorted(busy)))
         self._told_stopped |= busy  # after sending: "working again" never comes first
 
     async def _on_success(self, guild_id: int) -> None:
@@ -388,8 +389,8 @@ class TranscriptionPipeline:
                 return  # a failure came in while waiting: not steady after all
             told, self._told_stopped = self._told_stopped, set()
             self._ok_streak, self._ok_since = 0, None
-            for guild in sorted(told):
-                await self._tell(guild, "✅ Writing things down is working again.")
+            back = "✅ Writing things down is working again."
+            await asyncio.gather(*(self._tell(guild, back) for guild in sorted(told)))
 
     async def _check_backlog(self, guild_id: int) -> None:
         depth = self.backlog_of(guild_id)

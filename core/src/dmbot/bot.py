@@ -398,8 +398,8 @@ class DMBot(commands.AutoShardedBot):
         await self.ears.start()
         self._background = [
             self._watched(self.pipeline.run(), "transcribe"),
-            asyncio.create_task(self._idle_sweeper(), name="idle-sweep"),
-            asyncio.create_task(self._summary_poster(), name="summaries"),
+            self._watched(self._idle_sweeper(), "idle-sweep"),
+            self._watched(self._summary_poster(), "summaries"),
             *(
                 [asyncio.create_task(self.lookup.follow(self.memory.listen), name="names")]
                 if self.lookup is not None and self.memory is not None
@@ -733,7 +733,6 @@ class DMBot(commands.AutoShardedBot):
             return None
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
-        self._hint_people_cache.pop(guild_id, None)  # nothing kept past the session
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.
@@ -774,6 +773,9 @@ class DMBot(commands.AutoShardedBot):
                     ending.remove(table)
                 if not ending:
                     self._ending.pop(gid, None)
+                    if gid not in self.tables:  # no new session meanwhile: keep nothing
+                        # After the drain: the last clips' hints refill it until then.
+                        self._hint_people_cache.pop(gid, None)
                 self.pipeline.missed_in.pop(session, None)
                 self.pipeline.failed_in.pop(session, None)
 
