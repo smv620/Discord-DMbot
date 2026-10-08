@@ -147,6 +147,7 @@ TRANSCRIPT_FLUSH_S = 2.0
 TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this often
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
+HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
 # The off-topic filter (#52): one call may take this long, or the window is kept as game
 # talk; after this many failures in a row it rests this long.
 TOPIC_CALL_TIMEOUT_S = 8.0
@@ -2375,7 +2376,13 @@ class DMBot(commands.AutoShardedBot):
         if self.lookup is None or table is None or table.campaign_id is None:
             return [*people, *absent]
         try:
-            lookup = await self.lookup.get(guild_id, table.campaign_id)
+            # Never held up for long (every clip of the session waits here): while the
+            # names reload, the clip goes with people-only hints and the load carries on.
+            found = await self.lookup.get_within(guild_id, table.campaign_id, HINTS_WAIT_S)
+            if found is None:  # still loading, or failed (logged by the cache)
+                table.name_lookup = None  # never fix names from an old copy
+                return [*people, *absent]
+            lookup = found
             if table.hint_parts is None or table.hint_parts.version != lookup.version:
                 # Up to ~150 ms for a big campaign: off the event loop, once per change.
                 table.hint_parts = await asyncio.to_thread(prepare_hints, lookup, time.time())

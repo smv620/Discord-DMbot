@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator, Callable
 
 from dmbot.devtools.stt_bakeoff.data import NAMES
 from dmbot.memory import notify
-from dmbot.memory.lookup import CampaignLookup, LookupCache, LookupData
+from dmbot.memory.lookup import CampaignLookup, LookupCache, LookupData, NamesKeepChanging
 from dmbot.memory.models import (
     CONFIRMED,
     FIX,
@@ -298,11 +298,41 @@ class Cache(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))  # waited
             self.assertIsNone(await self.cache.get_within(1, "camp", 0))  # didn't
             await self.loads_done()
-        self.assertEqual(len(logs.output), 2)  # once per load, waited for or not
+        self.assertEqual(len(logs.output), 1)  # once, waited for or not (and once a minute)
         self.assertIn("Couldn't load names for campaign camp", logs.output[0])
         self.source.fail = False
         again = await self.cache.get_within(1, "camp", 1.0)
         self.assertEqual(again and again.version, 1)
+
+    async def test_names_that_keep_changing_never_give_an_old_copy(self) -> None:
+        # A change during every load: no copy at all, rather than one from before the last
+        # change (it may hold a name just made secret).
+        async def lookup_data(guild_id: int, campaign_id: str) -> LookupData:
+            self.source.calls += 1
+            version = self.source.calls
+            self.cache.mark_stale(1, "camp")  # the DM changed a name meanwhile
+            return data(version)
+
+        self.source.lookup_data = lookup_data  # type: ignore[method-assign]
+        with self.assertRaises(NamesKeepChanging):
+            await self.cache.get(1, "camp")
+        self.assertEqual(self.source.calls, 3)
+        with self.assertLogs("dmbot.memory.lookup", "WARNING"):
+            self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))
+
+    async def test_a_type_ahead_waiting_on_a_dropped_campaign_gets_nothing(self) -> None:
+        self.source.gate = asyncio.Event()
+        waiting = asyncio.create_task(self.cache.get_within(1, "camp", 5.0))
+        await asyncio.sleep(0)
+        self.cache.drop(["camp"])  # the session ended, or the campaign was deleted
+        self.assertIsNone(await waiting)  # never a CancelledError for the type-ahead
+
+    async def test_a_load_that_keeps_failing_is_logged_once_a_minute(self) -> None:
+        self.source.fail = True
+        with self.assertLogs("dmbot.memory.lookup", "WARNING") as logs:
+            for _ in range(5):  # every clip of a session asks
+                self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))
+        self.assertEqual(len(logs.output), 1)
 
     async def test_dropping_a_campaign_stops_its_load(self) -> None:
         self.source.gate = asyncio.Event()

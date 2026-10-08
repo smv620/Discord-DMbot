@@ -1751,6 +1751,38 @@ class Hints(NamesTest):
         self.assertIn("Bell", hints)
         self.assertNotIn("the hooded stranger", hints)
 
+    async def test_a_clip_never_waits_long_for_names_or_gets_the_old_ones(self) -> None:
+        # Every clip of a session asks for hints: while the names reload (just after a
+        # change, maybe a name made secret) a clip goes with people only, and soon after
+        # the new names are there (#581 review).
+        from dmbot import bot as bot_module
+
+        await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+        table = make_table(self.campaign.id)
+        self.bot.tables[GUILD] = table
+        self.assertIn("Belleros", await self.bot._name_hints(clip(table)))
+        gate = asyncio.Event()
+        real = self.memory.lookup_data
+
+        async def slow(guild_id: int, campaign_id: str) -> Any:
+            await gate.wait()
+            return await real(guild_id, campaign_id)
+
+        cache = self.bot.lookup
+        assert cache is not None
+        cache.mark_stale(GUILD, self.campaign.id)
+        with (
+            patch.object(self.memory, "lookup_data", slow),
+            patch.object(bot_module, "HINTS_WAIT_S", 0.05),
+        ):
+            hints = await self.bot._name_hints(clip(table))
+            self.assertNotIn("Belleros", hints)  # not from the old copy
+            self.assertIsNone(table.name_lookup)
+            gate.set()
+            await asyncio.gather(*cache._loading.values())
+            self.assertIn("Belleros", await self.bot._name_hints(clip(table)))
+        self.assertIsNotNone(table.name_lookup)
+
     async def test_people_in_the_voice_channel_come_first_and_a_revoke_counts_at_once(
         self,
     ) -> None:
