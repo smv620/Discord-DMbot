@@ -1522,7 +1522,12 @@ when offered, created, status open / accepted / declined / withdrawn / expired) 
 write goes through `CampaignStore` (`offer_handover`, `accept_handover`,
 `decline_handover`, `withdraw_handover`, `take_ownership`), used by the bot and the
 website alike so the rules can't drift; the website may offer only to the campaign's
-other DMs who have a working plan (never a cross-person read of who in a server pays);
+other DMs (never a cross-person read of who in a server pays); **an offer is never
+refused for "no plan" (decided 2026-10-08, #437 point 2): the owner must not learn
+whether a member pays, so the plan and free-slot check happens only at Accept and is
+shown only to the person offered ("you need a DMbot plan with a free campaign slot;
+pick one at the site, then press Accept again; the offer stays open for 7 days"), and
+the owner sees only that the offer was sent and nothing changes until they accept;**
 the bot checks membership when it delivers the private message and withdraws an offer it
 can't deliver, telling the owner; until the campaign count exists (part 3) "a free slot"
 means "a plan that works". A Try It plan may receive a hand-over if its one slot is free;
