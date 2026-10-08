@@ -190,7 +190,9 @@ class SiteOffers:
         """An offer answered or taken back on the website: the same private messages the
         Discord buttons send. Accepted or declined: the owner hears, and the person's
         offer message says what they chose. Taken back: the person's offer message says
-        so. Never raises; each message is best effort."""
+        so, unless it was never sent (then they never knew of it). Never raises; each
+        message is best effort. No claim: while two processes both serve the server (a
+        rolling deploy), the owner could hear twice."""
         guild = self._get_guild(guild_id)
         if guild is None:
             return
@@ -204,7 +206,11 @@ class SiteOffers:
                     return
                 await _tell_decision(guild, offer, campaign)
             except Exception as exc:
-                log.error("Couldn't tell about a website answer (%s)", type(exc).__name__)
+                log.error(
+                    "Couldn't tell about a website answer to offer %s (%s)",
+                    offer_id,
+                    type(exc).__name__,
+                )
 
     async def every_hour(self) -> None:
         """A sweep every hour, until cancelled: catches a claim that lapsed (a process
@@ -343,14 +349,21 @@ async def _tell_decision(guild: discord.Guild, offer: HandoverOffer, campaign: C
         with contextlib.suppress(discord.HTTPException):
             member = await _member(guild, offer.from_user_id)
             await member.send(to_owner, allowed_mentions=NO_PINGS)
+    if offer.delivered_at is None:  # never sent to them: nothing of theirs to change
+        return
     with contextlib.suppress(discord.HTTPException):
         member = await _member(guild, offer.to_user_id)
         if offer.message_id is not None:  # the offer message: its buttons go
-            channel = member.dm_channel or await member.create_dm()
-            await channel.get_partial_message(offer.message_id).edit(
-                content=to_person, view=None, allowed_mentions=NO_PINGS
-            )
-        elif offer.status == "withdrawn":  # no message to edit: tell them anyway
+            try:
+                channel = member.dm_channel or await member.create_dm()
+                await channel.get_partial_message(offer.message_id).edit(
+                    content=to_person, view=None, allowed_mentions=NO_PINGS
+                )
+                return
+            except discord.HTTPException:  # deleted, say: tell them in a new one instead
+                if offer.status != "withdrawn":
+                    return  # they chose it themselves; the site told them
+        if offer.status == "withdrawn":  # no message to change: tell them anyway
             await member.send(to_person, allowed_mentions=NO_PINGS)
 
 

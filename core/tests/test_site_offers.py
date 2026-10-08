@@ -438,13 +438,67 @@ class Expiring(Harness):
 class Decisions(Harness):
     """An offer answered or taken back on the website (#737): the other person hears."""
 
-    def decided(self, status: HandoverStatus, message_id: int | None = 4242) -> None:
+    def decided(
+        self, status: HandoverStatus, message_id: int | None = 4242, *, sent: bool = True
+    ) -> None:
         self.store.offers[(GUILD, 1)] = replace(
             offer(),
             status=status,
             message_id=message_id,
             decided_at=NOW,
+            delivered_at=NOW if sent else None,
         )
+
+    async def test_taken_back_before_it_was_ever_sent_tells_nobody(self) -> None:
+        self.decided("withdrawn", message_id=None, sent=False)
+        await self.offers.decided(GUILD, 1)
+        guild = self.guilds[GUILD]
+        self.assertEqual((guild.buyer.sent, guild.buyer.edits, guild.owner.sent), ([], [], []))
+
+    async def test_a_message_that_cant_be_changed_is_told_anew_when_taken_back(self) -> None:
+        self.decided("withdrawn")
+        guild = self.guilds[GUILD]
+
+        def gone(message_id: int) -> Any:
+            async def edit(**_: Any) -> None:
+                raise http_error(404, discord.NotFound)
+
+            return mock.Mock(edit=edit)
+
+        guild.buyer.get_partial_message = gone  # type: ignore[method-assign]
+        await self.offers.decided(GUILD, 1)
+        self.assertEqual(len(guild.buyer.sent), 1)
+
+    async def test_the_owner_unreachable_still_updates_the_persons_message(self) -> None:
+        self.decided("declined")
+        guild = self.guilds[GUILD]
+
+        async def closed(text: str, **_: Any) -> None:
+            raise http_error(403, discord.Forbidden)
+
+        guild.owner.send = closed  # type: ignore[method-assign]
+        await self.offers.decided(GUILD, 1)
+        self.assertEqual(len(guild.buyer.edits), 1)
+
+    async def test_accepted_with_no_kept_message_sends_the_person_nothing(self) -> None:
+        self.decided("accepted", message_id=None)
+        await self.offers.decided(GUILD, 1)
+        guild = self.guilds[GUILD]
+        self.assertEqual(len(guild.owner.sent), 1)
+        self.assertEqual((guild.buyer.sent, guild.buyer.edits), ([], []))
+
+    async def test_a_deleted_campaign_or_a_failed_read_tells_nobody(self) -> None:
+        self.decided("declined")
+        self.store.campaign = None
+        await self.offers.decided(GUILD, 1)
+        self.assertEqual(self.guilds[GUILD].owner.sent, [])
+
+        async def down(guild_id: int, offer_id: int, now: int) -> HandoverOffer | None:
+            raise RuntimeError("database down")
+
+        self.store.get_offer = down  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.dm_screen.site_offers", "ERROR"):
+            await self.offers.decided(GUILD, 1)
 
     async def test_accepted_tells_the_owner_and_updates_the_persons_message(self) -> None:
         self.decided("accepted")
