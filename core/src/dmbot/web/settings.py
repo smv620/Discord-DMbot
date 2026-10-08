@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from dmbot.config import ConfigError
+from dmbot.web.admin import decode_hash
 
 REQUIRED = (
     "DATABASE_URL",
@@ -52,6 +53,16 @@ class WebSettings:
     # Cloudflare: CF-Connecting-IP). Empty: the connection's own address. Only set it when
     # every request comes through that proxy, or anyone could pick their own address.
     client_ip_header: str = ""
+    # The admin page (#772): the only addresses that may sign in, lower case. Empty: the
+    # admin sign-in is off.
+    admin_emails: tuple[str, ...] = ()
+    # The admin password's argon2id hash, base64 (scripts/set-admin-password writes it).
+    # Empty: only "Sign in with Google" works.
+    admin_password_hash: str = field(default="", repr=False)
+    # Google Cloud console -> APIs & Services -> Credentials -> OAuth client (web). Empty:
+    # only the password works.
+    google_client_id: str = ""
+    google_client_secret: str = field(default="", repr=False)
     host: str = "0.0.0.0"  # inside its container; nothing is published to the internet
     port: int = 8080
     session_days: int = 30
@@ -69,6 +80,10 @@ class WebSettings:
     @property
     def oauth_redirect_uri(self) -> str:
         return f"{self.api_url.rstrip('/')}/auth/discord/callback"
+
+    @property
+    def admin_google_redirect_uri(self) -> str:
+        return f"{self.api_url.rstrip('/')}/admin/auth/google/callback"
 
     @property
     def install_redirect_uri(self) -> str:
@@ -145,6 +160,20 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         # Behind the proxy every visitor has the proxy's address: without the header, one
         # message would use up the whole site's turn for 10 minutes.
         raise ConfigError("WEB_CLIENT_IP_HEADER must be set when GITHUB_FEEDBACK_TOKEN is.")
+    admin_emails = tuple(
+        sorted({e.strip().lower() for e in get("ADMIN_EMAILS").split(",") if e.strip()})
+    )
+    if any("@" not in e for e in admin_emails):
+        raise ConfigError("ADMIN_EMAILS must be email addresses, separated by commas.")
+    admin_password_hash = get("ADMIN_PASSWORD_HASH")
+    if admin_password_hash and decode_hash(admin_password_hash) is None:
+        raise ConfigError(
+            "ADMIN_PASSWORD_HASH isn't one scripts/set-admin-password made. Run it again."
+        )
+    google_client_id = get("GOOGLE_CLIENT_ID")
+    google_client_secret = get("GOOGLE_CLIENT_SECRET")
+    if bool(google_client_id) != bool(google_client_secret):
+        raise ConfigError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET go together: set both.")
     return WebSettings(
         database_url=get("DATABASE_URL"),
         discord_client_id=get("DISCORD_CLIENT_ID"),
@@ -162,4 +191,8 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         feedback_repo=feedback_repo,
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,
+        admin_emails=admin_emails,
+        admin_password_hash=admin_password_hash,
+        google_client_id=google_client_id,
+        google_client_secret=google_client_secret,
     )

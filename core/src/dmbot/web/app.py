@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from dmbot import entitlements, install, plans
 from dmbot.db import Database
-from dmbot.web import entitlements_writer, feedback, sessions, tokens
+from dmbot.web import admin_api, entitlements_writer, feedback, sessions, tokens
 from dmbot.web.accounts import (
     account_email,
     active_subscription,
@@ -35,6 +35,7 @@ from dmbot.web.accounts import (
     link_install,
     record_install,
 )
+from dmbot.web.admin import CSRF_HEADER, AdminSessions, FailedTries, GoogleSignIn
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck, RateLimit
 from dmbot.web.me import build_me
@@ -76,6 +77,9 @@ def create_app(
     discussions: Discussions | None = None,
     human_check: HumanCheck | None = None,
     feedback_limit: RateLimit | None = None,
+    google: GoogleSignIn | None = None,
+    admin_sessions: AdminSessions | None = None,
+    admin_tries: FailedTries | None = None,
     clock: Clock = _system_clock,
 ) -> FastAPI:
     """`payments` None: no payment company is set up yet; buying answers payments_off.
@@ -130,7 +134,7 @@ def create_app(
         allow_origins=[settings.site_origin],  # exactly the website, never echoed back
         allow_credentials=True,
         allow_methods=["GET", "POST"],
-        allow_headers=[REQUEST_HEADER, "Content-Type"],
+        allow_headers=[REQUEST_HEADER, CSRF_HEADER, "Content-Type"],
         max_age=600,
     )
 
@@ -561,5 +565,17 @@ def create_app(
             raise
         log.info("Feedback posted: discussion %s", posted.number)
         return {"url": posted.url}
+
+    # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty.
+    app.include_router(
+        admin_api.router(
+            settings,
+            google=google,
+            admin_sessions=admin_sessions or AdminSessions(),
+            tries=admin_tries or FailedTries(),
+            client_address=client_address,
+            clock=clock,
+        )
+    )
 
     return app

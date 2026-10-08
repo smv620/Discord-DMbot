@@ -158,6 +158,7 @@ in a volume, so restarts are fast.
 | Status | `docker compose ps` |
 | Update `.env` after an update changes `.env.example` | `scripts/update-env` (add `--check` to only look) |
 | Add or change a key | `scripts/set-key` |
+| Set the admin page's password (#772) | `scripts/set-admin-password` |
 
 Updates never change your `.env`. When one brings a new `.env.example`, run
 `scripts/update-env`. It rebuilds `.env` in the new layout, keeps every value you had, and
