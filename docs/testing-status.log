@@ -20,6 +20,13 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   minute per person, counting only pieces long enough to be written down. Check: Test A
   with a TV on gives no ⚠️ (the log line still shows "(audio gaps)"), and every DM line is
   in the transcript. Stage 2 (#699, PR #718) follows.
+- dev3, PR #718 (#699 stage 2): core only. No migration or setting. Deploy with or
+  after #697. When someone's audio rule fires (now under 95% and at least 2 s lost), DMbot
+  reads their lines from that minute first and warns only if they read garbled: by
+  Deepgram's word confidence, else one yes/no to the small AI model (at most once a minute
+  per person). A large loss (under 50%, 10 s) warns at once; no lines at all warns; with
+  no AI key it warns on the audio rule alone. Check: Test A with a TV on gives no ⚠️; the
+  log has "Audio check for user N: ..." lines and, at the end, "Audio checks: ...".
 - CloudDev, PR #657 (#598): names reads never join names to entries (a freshly filled
   campaign's cold names load 1.4 s -> 0.08 s; Check new names' "sounds like" 2.6 s -> 8 ms).
   No migration. Deploy: rebuild core. Check: /dmbot names, Browse by kind and Check new
