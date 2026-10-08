@@ -217,10 +217,14 @@ class ReadDocument(unittest.IsolatedAsyncioTestCase):
                 document_reader.shutdown()
                 with self.assertRaises(DocumentError) as caught:
                     await reading
-            self.assertEqual(str(caught.exception), UNREADABLE)
+            self.assertEqual(str(caught.exception), document_reader.RESTARTING)
             self.assertLess(time.monotonic() - started, 5)  # not the 30 s limit
-            with self.assertLogs(document_reader.log, "ERROR"), self.assertRaises(DocumentError):
+            with (
+                self.assertLogs(document_reader.log, "INFO"),
+                self.assertRaises(DocumentError) as late,
+            ):
                 await read_document("late.pdf", b"%PDF")  # after closing: plain words too
+            self.assertEqual(str(late.exception), document_reader.RESTARTING)
 
     async def queued_behind(self, waiters: ThreadPoolExecutor) -> threading.Event:
         """Keep the only waiter busy, so the next read waits its turn."""
@@ -274,7 +278,7 @@ class ReadDocument(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(DocumentError) as caught:  # not CancelledError
                     await reading
             release.set()
-        self.assertEqual(str(caught.exception), UNREADABLE)
+        self.assertEqual(str(caught.exception), document_reader.RESTARTING)
 
     async def test_a_reader_that_cannot_open_a_pipe_is_plain_words(self) -> None:
         with (

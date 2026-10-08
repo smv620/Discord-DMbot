@@ -39,6 +39,7 @@ IN_A_PROCESS = (".pdf", ".docx")
 MEMORY_BYTES = 256 * 1024 * 1024
 # The longest answer read back: text_of stops at 200,000 characters (up to 4 bytes each).
 MAX_REPLY_BYTES = 1024 * 1024
+RESTARTING = "DMbot is restarting. Try that file again in a minute."
 TOO_SLOW = (
     "That file took too long to read. Split it into smaller files and add them one at a "
     "time, or type the names into the template: 📥 Add many > 📄 Get the template."
@@ -81,7 +82,8 @@ def _child(conn: Connection, parse: Parse, filename: str, raw: bytes) -> None:
     """In the child process. Answers b"ok\\n\\n<text>", b"error\\n<cause>\\n<plain words>"
     or b"failed\\n<error kind>\\n", as plain bytes (never a pickle). A traceback from
     the child itself (not from `parse`) goes to stderr as plain lines."""
-    os.nice(10)  # behind the bot's voice and replies on a small server
+    if hasattr(os, "nice"):  # not on Windows
+        os.nice(10)  # behind the bot's voice and replies on a small server
     os.environ.clear()  # the bot's keys and tokens: nothing here needs them
     logging.getLogger().addHandler(logging.NullHandler())  # the bot logs, not the child
     _limit_memory()
@@ -180,8 +182,11 @@ async def read_document(
             raise
         # Only the read was: DMbot is closing and it never got its turn.
         log.info("Stopped reading a %s file: DMbot is closing", suffix)
-        raise DocumentError(UNREADABLE) from None
+        raise DocumentError(RESTARTING) from None
     except Exception:  # anything else at all (DMbot closing, a bug): plain words
+        if _CLOSING.is_set():  # no more reads once closing: the pool is shut
+            log.info("Stopped reading a %s file: DMbot is closing", suffix)
+            raise DocumentError(RESTARTING) from None
         log.exception("Couldn't read a %s file", suffix)
         raise DocumentError(UNREADABLE) from None
     if kind == "ok":
@@ -197,6 +202,7 @@ async def read_document(
         log.warning("Reading a %s file ended its process", suffix)
     elif kind == "stopped":
         log.info("Stopped reading a %s file: DMbot is closing", suffix)
+        raise DocumentError(RESTARTING)
     else:
         log.warning("Couldn't read a %s file: %s", suffix, cause or kind)
     raise DocumentError(UNREADABLE)
