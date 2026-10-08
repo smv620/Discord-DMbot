@@ -227,6 +227,18 @@ class LinkAndRead(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(said_now, ui.LINKED_UNREAD)
         bot.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)  # the old names went
 
+    async def test_the_dm_hears_their_own_words_when_a_sheet_isnt_public(self) -> None:
+        bot = MagicMock(sheets=interaction([TESTA]).client.sheets)
+        refused = sheets.SheetError(sheets.NOT_PUBLIC, refused=True)
+        with patch.object(sheets, "fetch", AsyncMock(side_effect=refused)):
+            said_now = await ui.link_and_read(bot, GUILD, CAMPAIGN, ENTITY, 42)  # no player
+        self.assertEqual(said_now, ui.DM_NOT_PUBLIC)
+
+    async def test_the_dms_link_while_sheets_are_off(self) -> None:
+        it = interaction([TESTA])
+        it.client.sheets = None
+        self.assertEqual(await ui.dm_link(it, GUILD, CAMPAIGN, ENTITY, URL), ui.NOT_AVAILABLE_DM)
+
     async def test_the_dms_bad_link_keeps_the_character(self) -> None:
         it = interaction([TESTA])
         self.assertEqual(await ui.dm_link(it, GUILD, CAMPAIGN, ENTITY, "my sheet"), ui.DM_BAD_LINK)

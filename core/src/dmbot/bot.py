@@ -889,11 +889,13 @@ class DMBot(commands.AutoShardedBot):
                     found = await refresh_sheets(
                         self.sheets, guild_id, campaign_id, now, found=kept, still_wanted=current
                     )
-                    if table.sheet_loads != mine:
-                        # Changed meanwhile: load again, with what was just read too.
+                    changed_meanwhile = table.sheet_loads != mine
+                    if changed_meanwhile:
+                        # Load again, with what was just read too (the line below still
+                        # goes in the log, once a session).
                         self.sheets_changed(guild_id, campaign_id)
-                        return
-                    table.sheet_hints = tuple(sheet_hint_names(found))
+                    else:
+                        table.sheet_hints = tuple(sheet_hint_names(found))
                     linked = sum(s.url is not None for s in found)
                     # Once a session. Only names read from D&D Beyond (game words, at
                     # most 15), never one that is also a secret name: never what a player
@@ -909,7 +911,7 @@ class DMBot(commands.AutoShardedBot):
                     log.info(
                         "Character sheets: %d linked, %d names in the hints; from D&D Beyond: %s",
                         linked,
-                        len(table.sheet_hints),
+                        len(sheet_hint_names(found)),
                         ", ".join(read) or "none",
                     )
             except Exception as exc:  # never the text: it can quote a row (links, names)

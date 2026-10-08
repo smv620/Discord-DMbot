@@ -484,6 +484,8 @@ class SaveAndResume(SessionTests):
             for _ in range(20):
                 await asyncio.sleep(0)
         self.assertEqual(table.sheet_hints, ("After The Change",))
+        # Loaded at the start, by the change, and again after the refresh: three reads.
+        self.assertGreaterEqual(self.bot.sheets.sheets.await_count, 3)
 
     async def test_the_start_log_line_never_holds_typed_names_links_or_secrets(self) -> None:
         await self.start()
@@ -505,6 +507,18 @@ class SaveAndResume(SessionTests):
         self.assertIn("Test Spell", line)
         for never in ("Typed By A Player", "Hidden One", "dndbeyond.com", "Testa"):
             self.assertNotIn(never, line)
+
+    async def test_the_start_log_line_says_none_are_linked(self) -> None:
+        await self.start()
+        table = self.bot.tables[GUILD]
+        self.bot.sheets = MagicMock(sheets=AsyncMock(return_value=[]))
+        with (
+            patch("dmbot.bot.refresh_sheets", AsyncMock(return_value=[])),
+            self.assertLogs("dmbot.bot", "INFO") as logs,
+        ):
+            await self.bot._sheet_hints(table, refresh=True)
+        (line,) = [o for o in logs.output if "Character sheets:" in o]
+        self.assertIn("0 linked, 0 names in the hints; from D&D Beyond: none", line)
 
     async def test_a_sheet_store_failure_logs_only_its_kind(self) -> None:
         await self.start()

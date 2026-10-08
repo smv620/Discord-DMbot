@@ -991,6 +991,16 @@ class MemoryStore:
             # has its own: then the merged one's is forgotten (nothing could show or
             # remove it). Not in the change log: undoing the merge leaves it on the kept
             # entry; if that entry then has no player, the sheet is left out everywhere.
+            # The kept entry's own sheet counts only if it's its player's (a sheet
+            # left from an earlier player is shown nowhere): drop it first, so it can't
+            # beat a visible one.
+            await w.conn.execute(
+                "DELETE FROM character_sheets s USING memory_entities e"
+                " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
+                " AND e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
+                " AND e.id = s.entity_id AND s.player_id IS DISTINCT FROM e.played_by",
+                (guild_id, campaign_id, keep_id),
+            )
             await w.conn.execute(
                 "DELETE FROM character_sheets"
                 " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"

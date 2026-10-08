@@ -64,7 +64,10 @@ class SheetStore:
         async with self._db.guild(guild_id) as conn:
             plays = await self._require_character(conn, guild_id, campaign_id, entity_id, player)
             # The snapshot stays only for the same link by the same player.
-            same = "character_sheets.url = EXCLUDED.url AND character_sheets.player_id = %s"
+            same = (
+                "character_sheets.url = EXCLUDED.url"
+                " AND character_sheets.player_id = EXCLUDED.player_id"
+            )
             await conn.execute(
                 "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, player_id)"
                 " VALUES (%s, %s, %s, %s, %s)"
@@ -73,7 +76,7 @@ class SheetStore:
                 f" sheet = CASE WHEN {same} THEN character_sheets.sheet END,"
                 f" source = CASE WHEN {same} THEN character_sheets.source END,"
                 f" fetched_at = CASE WHEN {same} THEN character_sheets.fetched_at END",
-                (guild_id, campaign_id, entity_id, url, plays, plays, plays, plays),
+                (guild_id, campaign_id, entity_id, url, plays),
             )
 
     async def save(

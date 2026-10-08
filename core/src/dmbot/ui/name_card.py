@@ -362,7 +362,12 @@ class NameCard(_Menu):
         campaign, name = found
         self.stop()
         gone = await dm_unlink(interaction, campaign.guild_id, campaign.id, self.entity_id)
-        note = f"DMbot forgot **{_md(name)}**'s sheet." if gone else None
+        note = (
+            f"DMbot forgot **{_md(name)}**'s sheet. The player can link it again with 📜 My "
+            "character sheet."
+            if gone
+            else None
+        )
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True, note=note)
 
     async def _all(self, interaction: discord.Interaction) -> None:

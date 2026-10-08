@@ -254,7 +254,7 @@ def _checked_sheet(raw: dict[str, Any]) -> dict[str, Any]:
     url, snapshot, source, fetched = raw["url"], raw["sheet"], raw["source"], raw["fetched_at"]
     if not is_id(raw["entity_id"]) or not _valid("played_by", raw["player_id"]):
         raise CampaignError(DAMAGED)
-    if raw["player_id"] is None or raw["player_id"] <= 0:
+    if raw["player_id"] is None or raw["player_id"] == 0:
         raise CampaignError(DAMAGED)
     if url is not None and (
         not isinstance(url, str) or sheets.sheet_url(sheets.character_id(url) or 0) != url

@@ -57,10 +57,14 @@ NOT_A_MEMBER = "You're not in that server any more, so there's no character to c
 NOT_YOURS = "That isn't your character any more. Press 📜 My character sheet again."
 PICK = "Which character?"
 ONLY_YOU = "DMbot shows the link only to you and your DM. It's also in the campaign's backup file."
-WAIT = "Give it 20 seconds, then try again."
+WAIT = "Wait 20 seconds, then press **Link my D&D Beyond sheet** again."
 FORGOTTEN = (
     "Done. DMbot forgot **{name}**'s sheet: the link and what it read. You can link it "
     "again any time."
+)
+FORGOTTEN_TYPED = (
+    "Done. DMbot forgot what you typed in for **{name}**. You can link a D&D Beyond sheet "
+    "or type it in again any time."
 )
 TYPED_SAVED = (
     "✅ Saved. DMbot now listens for {names}. Linking a D&D Beyond sheet later replaces "
@@ -88,15 +92,18 @@ DM_BAD_LINK = (
 )
 DM_NOT_PUBLIC = (
     "The character is saved and linked, but its sheet isn't set to Public, so DMbot can't "
-    "read it. Ask the player to set it to Public on D&D Beyond. DMbot tries again when the "
-    "next session starts."
+    "read it. Ask the player to set it to Public on D&D Beyond (Edit, then Settings, then "
+    "Character Privacy). DMbot tries again when the next session starts."
 )
 DM_NOT_LINKED = (
     "The character is saved, but its sheet couldn't be linked just now. Ask the player to "
     "link it with 📜 My character sheet in DMbot's private message."
 )
 REFRESH_WAIT = "The sheets were read less than a minute ago. Try again in a moment."
-NO_SHEETS = "No player has linked a sheet in this campaign yet."
+NO_SHEETS = (
+    "No player has linked a sheet in this campaign yet. Players link theirs with 📜 My "
+    "character sheet in DMbot's private message."
+)
 LINK_COOLDOWN_S = 20  # per person: each Link reads D&D Beyond once
 REFRESH_COOLDOWN_S = 60  # per campaign: Refresh sheets (#723)
 _COOLDOWNS_KEPT = 1000  # entries before old ones are dropped
@@ -360,11 +367,12 @@ class SheetPanel(_Menu):
         if not await _still_member(interaction, self.guild_id):
             return
         c = self.character
-        if await store.unlink(
-            self.guild_id, c.campaign_id, c.entity_id, player=interaction.user.id
-        ):
+        mine = interaction.user.id
+        before = await store.sheet(self.guild_id, c.campaign_id, c.entity_id, player=mine)
+        if await store.unlink(self.guild_id, c.campaign_id, c.entity_id, player=mine):
             _bot(interaction).sheets_changed(self.guild_id, c.campaign_id)
-        note = FORGOTTEN.format(name=_md(c.name))
+        typed = before is not None and before.url is None
+        note = (FORGOTTEN_TYPED if typed else FORGOTTEN).format(name=_md(c.name))
         await show_panel(interaction, self.guild_id, c, replace=True, note=note)
 
 
@@ -411,7 +419,7 @@ class LinkForm(discord.ui.Modal, title="Link your D&D Beyond sheet"):
         await show_panel(interaction, self.guild_id, c, note=said)
 
 
-class TypedForm(discord.ui.Modal, title="Tell DMbot about your character"):
+class TypedForm(discord.ui.Modal, title="Type in your character"):
     class_name: discord.ui.TextInput[TypedForm] = discord.ui.TextInput(
         label="Class", placeholder="For example: Wizard", max_length=sheets.NAME_MAX
     )
