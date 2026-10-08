@@ -107,7 +107,7 @@ def test_buttons_carry_the_server() -> None:
     assert custom_ids(c.consent_view(GUILD)) == ["dmbot:consent:yes:1:v3"]
     assert custom_ids(c.warning_view(GUILD)) == [
         "dmbot:consent:stopyes:1",
-        "dmbot:consent:keep:1",
+        "dmbot:consent:keep:1:-",
     ]
 
 
@@ -115,7 +115,7 @@ def test_the_menu_shows_only_what_applies() -> None:
     def ids(**kw: bool) -> list[str]:
         return custom_ids(c.options_view(GUILD, None, **kw))
 
-    sheet, stop, close = "dmbot:sheet:1:-", "dmbot:consent:stop:1", "dmbot:consent:close"
+    sheet, stop, close = "dmbot:sheet:1:-", "dmbot:consent:stop:1:-", "dmbot:consent:close:1:-"
     assert ids(recording=True, sheets=True) == [sheet, stop, close]
     assert ids(recording=True, sheets=False) == [stop, close]
     start = "dmbot:consent:start:1"  # shows the request: never saves a yes by itself
@@ -618,8 +618,67 @@ class ConsentDMTests(DatabaseTest):
         assert not self.consent.has_consent(GUILD, PLAYER)
 
     def menu_message(self, press: Any) -> Any:
+        """On an only-you menu (from the /consent give answer)."""
         press.message = SimpleNamespace(flags=SimpleNamespace(ephemeral=True))
         return press
+
+    def lasting(self, press: Any) -> Any:
+        """On a private message that stays: the session reminder, "you said yes"."""
+        press.message = SimpleNamespace(flags=SimpleNamespace(ephemeral=False))
+        return press
+
+    # ---- on a lasting message, everything happens in place (#807) ----------------
+
+    async def test_on_the_reminder_the_menu_takes_the_buttons_place(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        campaign = "ab" * 16
+        press = self.lasting(self.button_press(PLAYER))
+        await c.MenuButton(GUILD, campaign).callback(press)
+        press.response.send_message.assert_not_called()
+        edit = press.response.edit_message.await_args.kwargs
+        assert set(edit) == {"view"}  # the reminder's text stays
+        assert custom_ids(edit["view"]) == [
+            f"dmbot:consent:stop:1:{campaign}",
+            f"dmbot:consent:close:1:{campaign}",
+        ]
+
+    async def test_on_the_reminder_yes_leaves_it_reading_stopped(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        stop = self.lasting(self.button_press(PLAYER))
+        await c.StopButton(GUILD, "ab" * 16).callback(stop)
+        assert stop.response.edit_message.await_args.kwargs["embed"].description == (
+            c.warning_text(self.guild.name)
+        )
+        yes = self.lasting(self.button_press(PLAYER))
+        await c.StopYesButton(GUILD).callback(yes)
+        assert not self.consent.has_consent(GUILD, PLAYER)
+        edit = yes.edit_original_response.await_args.kwargs  # the reminder's own message
+        assert edit["content"] == c.stopped_text(self.guild.name)
+        assert edit["embeds"] == []  # the warning card goes
+        assert custom_ids(edit["view"]) == ["dmbot:consent:yes:1:v3"]
+
+    async def test_on_the_reminder_keep_and_close_give_it_back_unchanged(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        campaign = "ab" * 16
+        menu = [f"dmbot:consent:menu:1:{campaign}"]
+        keep = self.lasting(self.button_press(PLAYER))
+        await c.KeepButton(GUILD, campaign).callback(keep)
+        edit = keep.response.edit_message.await_args.kwargs
+        assert "content" not in edit and edit["embeds"] == []  # its own text, as it was
+        assert custom_ids(edit["view"]) == menu
+        close = self.lasting(self.button_press(PLAYER))
+        await c.CloseButton(GUILD, campaign).callback(close)
+        edit = close.response.edit_message.await_args.kwargs
+        assert set(edit) == {"view"} and custom_ids(edit["view"]) == menu
+        close.delete_original_response.assert_not_called()  # never deletes the reminder
+        assert self.consent.has_consent(GUILD, PLAYER)
+
+    async def test_on_the_reminder_a_stale_keep_corrects_its_text(self) -> None:
+        press = self.lasting(self.button_press(PLAYER))  # they stopped another way
+        await c.KeepButton(GUILD).callback(press)
+        edit = press.response.edit_message.await_args.kwargs
+        assert edit["content"] == c.not_recorded_text(self.guild.name)  # not "recording you"
+        assert custom_ids(edit["view"]) == ["dmbot:consent:menu:1:-"]
 
     async def test_stop_recording_me_warns_and_records_nothing(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
@@ -630,7 +689,7 @@ class ConsentDMTests(DatabaseTest):
         assert len(self.ears.sent) == sent
         edit = press.response.edit_message.await_args.kwargs  # the menu becomes the warning
         assert edit["content"] == c.warning_text(self.guild.name)
-        assert custom_ids(edit["view"]) == ["dmbot:consent:stopyes:1", "dmbot:consent:keep:1"]
+        assert custom_ids(edit["view"]) == ["dmbot:consent:stopyes:1", "dmbot:consent:keep:1:-"]
 
     async def test_an_old_red_button_warns_and_never_stops_at_once(self) -> None:
         # A 🛑 on a reminder sent before the menu (#807): its id still works, and warns.
@@ -638,12 +697,13 @@ class ConsentDMTests(DatabaseTest):
         match = c.StopButton.__discord_ui_compiled_template__.fullmatch("dmbot:consent:stop:1")
         assert match is not None
         old = await c.StopButton.from_custom_id(MagicMock(), MagicMock(), match)
-        press = self.button_press(PLAYER)  # on the old message, not a menu
+        press = self.lasting(self.button_press(PLAYER))  # on the old reminder itself
         await old.callback(press)
         assert self.consent.has_consent(GUILD, PLAYER)
-        press.response.edit_message.assert_not_called()  # the old message stays
-        args = press.response.send_message.await_args
-        assert args.args[0] == c.warning_text(self.guild.name) and args.kwargs["ephemeral"]
+        edit = press.response.edit_message.await_args.kwargs  # its text stays, warning under
+        assert "content" not in edit
+        assert edit["embed"].description == c.warning_text(self.guild.name)
+        assert custom_ids(edit["view"]) == ["dmbot:consent:stopyes:1", "dmbot:consent:keep:1:-"]
 
     async def test_keep_recording_changes_nothing(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
@@ -670,7 +730,10 @@ class ConsentDMTests(DatabaseTest):
         await c.MenuButton(GUILD).callback(press)
         args = press.response.send_message.await_args
         assert args.args[0] == c.menu_text(self.guild.name) and args.kwargs["ephemeral"]
-        assert custom_ids(args.kwargs["view"]) == ["dmbot:consent:stop:1", "dmbot:consent:close"]
+        assert custom_ids(args.kwargs["view"]) == [
+            "dmbot:consent:stop:1:-",
+            "dmbot:consent:close:1:-",
+        ]
         self.bot.sheets = MagicMock()  # sheets on: 📜 too, for the menu's campaign
         await self.consent.revoke(GUILD, PLAYER)  # and someone who stopped
         campaign = "cd" * 16
@@ -679,7 +742,7 @@ class ConsentDMTests(DatabaseTest):
         assert custom_ids(press.response.send_message.await_args.kwargs["view"]) == [
             f"dmbot:sheet:1:{campaign}",
             "dmbot:consent:start:1",
-            "dmbot:consent:close",
+            f"dmbot:consent:close:1:{campaign}",
         ]
 
     async def test_i_consent_in_the_menu_shows_the_current_request_first(self) -> None:
@@ -704,12 +767,12 @@ class ConsentDMTests(DatabaseTest):
 
     async def test_close_deletes_the_menu(self) -> None:
         press = self.menu_message(self.button_press(PLAYER))
-        await c.CloseButton().callback(press)
+        await c.CloseButton(GUILD).callback(press)
         press.delete_original_response.assert_awaited_once()
         press.delete_original_response.side_effect = discord.HTTPException(
             MagicMock(status=500), "nope"
         )
-        await c.CloseButton().callback(press)  # couldn't delete: collapsed instead
+        await c.CloseButton(GUILD).callback(press)  # couldn't delete: collapsed instead
         press.edit_original_response.assert_awaited_once_with(content=c.MENU_CLOSED, view=None)
 
     async def test_no_thanks_on_an_old_message_stops_a_later_yes(self) -> None:
@@ -829,8 +892,12 @@ class ConsentDMTests(DatabaseTest):
         menu = await c.MenuButton.from_custom_id(MagicMock(), MagicMock(), match)
         assert (menu.guild_id, menu.campaign_id) == (123, campaign)
         assert template.fullmatch(f"dmbot:consent:menu:123:{'x' * 32}") is None
-        close = c.CloseButton.__discord_ui_compiled_template__.fullmatch("dmbot:consent:close")
-        assert close is not None
+        for button in (c.CloseButton, c.KeepButton, c.StopButton):
+            template = button.__discord_ui_compiled_template__
+            match = template.fullmatch(str(button(123, campaign).custom_id))
+            assert match is not None
+            parsed = await button.from_custom_id(MagicMock(), MagicMock(), match)
+            assert (parsed.guild_id, parsed.campaign_id) == (123, campaign)
 
     # ---- /consent give --------------------------------------------------------
 
