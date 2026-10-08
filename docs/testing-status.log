@@ -8,7 +8,13 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued; the web-api container stays off until the owner's go-live, #498)
+- WebDev, #527 (#498): core migration 0016_web_role_limits (two read-only functions;
+  the bot's own reads don't change). Deploy core as usual; check `docker compose logs
+  core` shows it applied and no new errors. The dmbot_web role is optional until
+  go-live: scripts/update-env, put a long random DMBOT_WEB_DB_PASSWORD in .env with an
+  editor (set-key doesn't take it yet, #542), then the three commands in README
+  "Database" (02-dmbot-web.sh, restart core so it grants the role). Web API only, also
+  in development: #520 (#497 findings), #531 (#530). web-api stays off until go-live.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
