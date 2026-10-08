@@ -4,10 +4,11 @@ import asyncio
 import contextlib
 import unittest
 from collections.abc import AsyncGenerator, Callable
+from unittest.mock import patch
 
 from dmbot.devtools.stt_bakeoff.data import NAMES
 from dmbot.memory import notify
-from dmbot.memory.lookup import CampaignLookup, LookupCache, LookupData
+from dmbot.memory.lookup import CampaignLookup, LookupCache, LookupData, NamesKeepChanging
 from dmbot.memory.models import (
     CONFIRMED,
     FIX,
@@ -224,6 +225,21 @@ class Cache(unittest.IsolatedAsyncioTestCase):
         await self.cache.get(1, "camp")
         self.assertEqual(self.source.calls, 2)
 
+    async def test_nobody_gets_the_old_copy_while_it_reloads(self) -> None:
+        # The old copy may hold a name the DM just made secret: wait for the new one.
+        await self.cache.get(1, "camp")
+        self.source.version = 2
+        self.cache.changed(notify.MemoryChanged("camp", 2, names_changed=True))
+        self.source.gate = asyncio.Event()
+        loading = asyncio.create_task(self.cache.get(1, "camp"))
+        await asyncio.sleep(0)
+        reader = asyncio.create_task(self.cache.get(1, "camp"))
+        await asyncio.sleep(0)
+        self.assertFalse(reader.done())
+        self.source.gate.set()
+        self.assertEqual([(await t).version for t in (loading, reader)], [2, 2])
+        self.assertEqual(self.source.calls, 2)
+
     async def test_a_failed_reload_is_tried_again(self) -> None:
         await self.cache.get(1, "camp")
         self.cache.changed(notify.MemoryChanged("camp", 2, names_changed=True))
@@ -233,6 +249,143 @@ class Cache(unittest.IsolatedAsyncioTestCase):
         self.source.fail = False
         self.source.version = 2
         self.assertEqual((await self.cache.get(1, "camp")).version, 2)  # not the old copy
+
+    async def loads_done(self) -> None:
+        """Let loads nobody waits for any more finish."""
+        await asyncio.gather(*self.cache._loading.values(), return_exceptions=True)
+
+    async def test_type_ahead_waits_a_little_and_the_load_carries_on(self) -> None:
+        # #581: a copy ready in time is used; one that isn't gives None at once, and the
+        # load goes on so the next keystroke finds it ready.
+        first = await self.cache.get_within(1, "camp", 1.0)
+        self.assertEqual(first and first.version, 1)
+        self.source.version = 2
+        self.cache.changed(notify.MemoryChanged("camp", 2, names_changed=True))
+        self.source.gate = asyncio.Event()
+        self.assertIsNone(await self.cache.get_within(1, "camp", 0.01))  # never the old one
+        self.assertIsNone(await self.cache.get_within(1, "camp", 0.01))  # same load
+        self.source.gate.set()
+        await self.loads_done()
+        ready = await self.cache.get_within(1, "camp", 0)
+        self.assertEqual((ready and ready.version, self.source.calls), (2, 2))
+
+    async def test_a_change_during_a_load_is_loaded_too(self) -> None:
+        # The load read the names, then the DM made one secret: whoever gets the copy,
+        # by get or by joining the type-ahead's load, gets one from after the change.
+        read: list[int] = []
+
+        async def lookup_data(guild_id: int, campaign_id: str) -> LookupData:
+            read.append(self.source.version)  # what the database said, before the wait
+            if self.source.gate is not None:
+                await self.source.gate.wait()
+            return data(read[-1])
+
+        self.source.lookup_data = lookup_data  # type: ignore[method-assign]
+        self.source.gate = asyncio.Event()
+        self.assertIsNone(await self.cache.get_within(1, "camp", 0))
+        await asyncio.sleep(0)
+        self.source.version = 2
+        self.cache.mark_stale(1, "camp")
+        joined = asyncio.create_task(self.cache.get_within(1, "camp", 5.0))
+        plain = asyncio.create_task(self.cache.get(1, "camp"))
+        self.source.gate.set()
+        got = [await joined, await plain]
+        self.assertEqual([g and g.version for g in got], [2, 2])
+        self.assertEqual(read, [1, 2])
+
+    async def test_a_failed_load_is_logged_once_and_tried_again(self) -> None:
+        self.source.fail = True
+        with self.assertLogs("dmbot.memory.lookup", "WARNING") as logs:
+            self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))  # waited
+            self.assertIsNone(await self.cache.get_within(1, "camp", 0))  # didn't
+            await self.loads_done()
+        self.assertEqual(len(logs.output), 1)  # once, waited for or not (and once a minute)
+        self.assertIn("Couldn't load names for campaign camp", logs.output[0])
+        self.source.fail = False
+        again = await self.cache.get_within(1, "camp", 1.0)
+        self.assertEqual(again and again.version, 1)
+
+    async def test_names_that_keep_changing_never_give_an_old_copy(self) -> None:
+        # A change during every load: no copy at all, rather than one from before the last
+        # change (it may hold a name just made secret).
+        async def lookup_data(guild_id: int, campaign_id: str) -> LookupData:
+            self.source.calls += 1
+            version = self.source.calls
+            self.cache.mark_stale(1, "camp")  # the DM changed a name meanwhile
+            return data(version)
+
+        self.source.lookup_data = lookup_data  # type: ignore[method-assign]
+        with self.assertRaises(NamesKeepChanging):
+            await self.cache.get(1, "camp")
+        self.assertEqual(self.source.calls, 3)
+        with self.assertLogs("dmbot.memory.lookup", "WARNING"):
+            self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))
+
+    async def test_a_type_ahead_waiting_on_a_dropped_campaign_gets_nothing(self) -> None:
+        self.source.gate = asyncio.Event()
+        waiting = asyncio.create_task(self.cache.get_within(1, "camp", 5.0))
+        await asyncio.sleep(0)
+        self.cache.drop(["camp"])  # the session ended, or the campaign was deleted
+        self.assertIsNone(await waiting)  # never a CancelledError for the type-ahead
+
+    async def test_a_load_that_keeps_failing_is_logged_once_a_minute(self) -> None:
+        from dmbot.memory import lookup
+
+        now = [1000.0]
+        self.source.fail = True
+        with (
+            patch.object(lookup, "_clock", lambda: now[0]),
+            self.assertLogs("dmbot.memory.lookup", "WARNING") as logs,
+        ):
+            for _ in range(5):  # every clip of a session asks
+                self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))
+            self.assertEqual(len(logs.output), 1)
+            now[0] += lookup.FAIL_LOG_S  # a minute on: said again
+            self.assertIsNone(await self.cache.get_within(1, "camp", 1.0))
+        self.assertEqual(len(logs.output), 2)
+
+    async def test_a_change_just_after_the_load_is_never_handed_over(self) -> None:
+        # The load finished, then the DM made a name secret before the waiter resumed:
+        # the waiter must not get the copy from before the change (#760 review).
+        self.source.gate = asyncio.Event()
+        waiter = asyncio.create_task(self.cache.get_within(1, "camp", 5.0))
+        await asyncio.sleep(0)
+        (task,) = self.cache._loading.values()
+
+        def change(_: object) -> None:  # runs as the load ends, before the waiter resumes
+            self.source.version = 2
+            self.cache.mark_stale(1, "camp")
+
+        task.add_done_callback(change)
+        self.source.gate.set()
+        got = await waiter
+        self.assertTrue(got is None or got.version == 2, got and got.version)
+        self.source.gate = None
+        self.assertEqual((await self.cache.get(1, "camp")).version, 2)
+        self.assertEqual(self.source.calls, 2)  # loaded again
+
+    async def test_a_cancelled_waiter_is_cancelled_and_the_load_carries_on(self) -> None:
+        self.source.gate = asyncio.Event()
+        waiter = asyncio.create_task(self.cache.get_within(1, "camp", 5.0))
+        await asyncio.sleep(0)
+        (task,) = self.cache._loading.values()
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+        self.assertFalse(task.done())  # the next keystroke still finds it loading
+        self.source.gate.set()
+        await self.loads_done()
+        ready = await self.cache.get_within(1, "camp", 0)
+        self.assertEqual(ready and ready.version, 1)
+
+    async def test_dropping_a_campaign_stops_its_load(self) -> None:
+        self.source.gate = asyncio.Event()
+        self.assertIsNone(await self.cache.get_within(1, "camp", 0))
+        (task,) = self.cache._loading.values()
+        self.cache.drop(["camp"])
+        await asyncio.gather(task, return_exceptions=True)
+        self.assertTrue(task.cancelled())
+        self.assertEqual(self.cache._loading, {})
 
     async def test_drop_frees_copies(self) -> None:
         await self.cache.get(1, "camp")
