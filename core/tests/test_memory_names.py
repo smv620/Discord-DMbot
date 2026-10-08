@@ -581,6 +581,21 @@ class NameCards(NamesTest):
         plain = await name_card.find_typeahead(self.it(MANAGER), "bell")
         self.assertEqual([c.value for c in plain], [self.bell.id])  # the rest, yes
 
+    async def test_the_type_ahead_never_waits_past_discords_limit(self) -> None:
+        # #581: a copy still loading gives nothing this time, and the next keystroke has it.
+        from dmbot.ui import name_card
+
+        cache = self.bot.lookup
+        assert cache is not None
+        cache.mark_all_stale()
+        with patch.object(name_card, "TYPEAHEAD_WAIT_S", 0):
+            self.assertEqual(await name_card.find_typeahead(self.it(), "bell"), [])
+            for _ in range(50):  # the load carries on without anyone waiting
+                if await cache.get_within(self.campaign.guild_id, self.campaign.id, 0.05):
+                    break
+            choices = await name_card.find_typeahead(self.it(), "bell")
+        self.assertEqual([c.value for c in choices], [self.bell.id])
+
 
 class Lists(NamesTest):
     async def asyncSetUp(self) -> None:

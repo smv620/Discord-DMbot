@@ -224,6 +224,21 @@ class Cache(unittest.IsolatedAsyncioTestCase):
         await self.cache.get(1, "camp")
         self.assertEqual(self.source.calls, 2)
 
+    async def test_nobody_gets_the_old_copy_while_it_reloads(self) -> None:
+        # The old copy may hold a name the DM just made secret: wait for the new one.
+        await self.cache.get(1, "camp")
+        self.source.version = 2
+        self.cache.changed(notify.MemoryChanged("camp", 2, names_changed=True))
+        self.source.gate = asyncio.Event()
+        loading = asyncio.create_task(self.cache.get(1, "camp"))
+        await asyncio.sleep(0)
+        reader = asyncio.create_task(self.cache.get(1, "camp"))
+        await asyncio.sleep(0)
+        self.assertFalse(reader.done())
+        self.source.gate.set()
+        self.assertEqual([(await t).version for t in (loading, reader)], [2, 2])
+        self.assertEqual(self.source.calls, 2)
+
     async def test_a_failed_reload_is_tried_again(self) -> None:
         await self.cache.get(1, "camp")
         self.cache.changed(notify.MemoryChanged("camp", 2, names_changed=True))
@@ -233,6 +248,40 @@ class Cache(unittest.IsolatedAsyncioTestCase):
         self.source.fail = False
         self.source.version = 2
         self.assertEqual((await self.cache.get(1, "camp")).version, 2)  # not the old copy
+
+    async def test_type_ahead_waits_a_little_and_the_load_carries_on(self) -> None:
+        # #581: a copy ready in time is used; one that isn't gives None at once, and the
+        # load goes on so the next keystroke finds it ready.
+        first = await self.cache.get_within(1, "camp", 1.0)
+        self.assertEqual(first and first.version, 1)
+        self.source.version = 2
+        self.cache.changed(notify.MemoryChanged("camp", 2, names_changed=True))
+        self.source.gate = asyncio.Event()
+        self.assertIsNone(await self.cache.get_within(1, "camp", 0.01))  # never the old one
+        self.assertIsNone(await self.cache.get_within(1, "camp", 0.01))  # same load
+        self.source.gate.set()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        ready = await self.cache.get_within(1, "camp", 0)
+        self.assertEqual((ready and ready.version, self.source.calls), (2, 2))
+
+    async def test_a_load_nobody_waits_for_says_why_it_failed(self) -> None:
+        self.source.fail = True
+        self.source.gate = asyncio.Event()
+        with self.assertRaises(ConnectionError):  # whoever waits hears it
+            await self.cache.get_within(1, "camp", 1.0)
+        self.source.fail = False
+        self.source.version = 2
+        with self.assertLogs("dmbot.memory.lookup", "WARNING") as logs:
+            self.source.fail = True
+            self.assertIsNone(await self.cache.get_within(1, "camp", 0))
+            for _ in range(5):
+                await asyncio.sleep(0)
+        self.assertIn("Couldn't load names for campaign camp", logs.output[-1])
+        self.source.fail = False
+        self.source.gate = None
+        again = await self.cache.get_within(1, "camp", 1.0)
+        self.assertEqual(again and again.version, 2)
 
     async def test_drop_frees_copies(self) -> None:
         await self.cache.get(1, "camp")
