@@ -1611,12 +1611,14 @@ class SaveAndResume(SessionTests):
     async def test_someone_who_stops_while_undo_waits_isnt_described(self) -> None:
         # #588: Stop recording me while Undo waits for the save lock: no word about
         # their line (it isn't "still" anything; it's being dropped).
-        table, _, _ = await self.fixed_from_a_suggestion()
+        table, _, memory = await self.fixed_from_a_suggestion()
         (note,) = table.fix_notes.notes
         await table.save_lock.acquire()  # a batch being saved
         undo = asyncio.create_task(self.bot.undo_fix(GUILD, note.id, DM))
         for _ in range(5):
             await asyncio.sleep(0)
+        memory.add_correction.assert_awaited_once()  # past the earlier checks…
+        self.assertFalse(undo.done())  # …and waiting for the lock
         await self.consent.revoke(GUILD, PLAYER)
         table.save_lock.release()
         answer, _ = await undo
