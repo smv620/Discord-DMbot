@@ -1390,6 +1390,11 @@ async def typeahead_campaign(interaction: discord.Interaction) -> Campaign | Non
     return mine[0] if len(mine) == 1 else None
 
 
+# How long type-ahead waits for a campaign's names copy that isn't ready: Discord drops an
+# answer after 3 seconds, and the campaign look-up comes first (#581).
+TYPEAHEAD_WAIT_S = 1.5
+
+
 async def find_typeahead(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:
@@ -1400,9 +1405,11 @@ async def find_typeahead(
         cache = _bot(interaction).lookup
         if campaign is None or cache is None:
             return []
-        names = await cache.get(campaign.guild_id, campaign.id)
+        names = await cache.get_within(campaign.guild_id, campaign.id, TYPEAHEAD_WAIT_S)
     except Exception:
         log.exception("Name type-ahead failed")
+        return []
+    if names is None:  # still loading: nothing this time, ready for the next keystroke
         return []
     secrets = sees_secrets(campaign, interaction.user.id)
     if current.strip():
