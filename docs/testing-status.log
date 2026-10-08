@@ -24,6 +24,9 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   channels right now…" instead of developer steps when ears is down, and logs it. No
   migration. Deploy: rebuild core. Check: with ears stopped, /dmbot start gives the new
   words and `docker compose logs core` shows "Can't start in server …".
+- CloudDev, PR #668 (#652, #437): hand-over offers keep both people's names. Migration
+  0022 adds two columns to the (still empty) offers table: quick. Deploy: rebuild core.
+  Check: `docker compose logs core` shows 0022 applied, no new errors.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
