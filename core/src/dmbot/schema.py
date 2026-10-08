@@ -719,39 +719,66 @@ INSTALLS_LEFT = """
         'Write contract: see migration 0014 in core/src/dmbot/schema.py.';
     """
 
-# The website API's own database role (#498). The policies below only ever narrow what it
-# sees; they never change what the bot (role `dmbot`) sees. The role itself is made by
+# The website API's own database role (#498). Its policies only ever narrow what it sees;
+# they never apply to the bot (role `dmbot`). The role itself is made by
 # whoever runs Postgres (deploy/postgres-init/02-dmbot-web.sh, or the README for an
 # existing server), because DMbot's own role can't create roles.
 WEB_ROLE = "dmbot_web"
 
 WEB_ROLE_LIMITS = """
-    -- For the website's role only: a server's rows are visible (or writable) only if that
-    -- server is in the Discord server list of the signed-in session on this request, and
-    -- the session belongs to the signed-in person (#498). So even code that sets
-    -- dmbot.guild_id to some other server sees nothing there. For every other role
-    -- (the bot), this is always true.
-    CREATE FUNCTION dmbot_web_guild_ok(g BIGINT) RETURNS BOOLEAN
+    -- The servers in the signed-in session's own Discord list (#498): the session on this
+    -- request (dmbot.session), belonging to the signed-in person (dmbot.user_id), not
+    -- expired. Empty otherwise. Policies call it as (SELECT ...), so it runs once per
+    -- statement, not per row. The policies themselves are made with the role's rights
+    -- (WEB_ROLE_POLICIES): a policy for a role can only be made once the role exists.
+    CREATE FUNCTION dmbot_web_guilds() RETURNS BIGINT[]
         LANGUAGE sql STABLE
         AS $fn$
-            SELECT current_user <> 'dmbot_web' OR EXISTS (
-                SELECT 1 FROM web_sessions s, jsonb_array_elements(s.guilds) AS e
-                WHERE s.id_hash = dmbot_current_session()
-                  AND s.user_id = dmbot_current_user()
-                  AND s.expires_at > dmbot_now()
-                  AND (e->>'id')::BIGINT = g)
+            SELECT coalesce(array_agg((e->>'id')::BIGINT), '{}')
+            FROM web_sessions s, jsonb_array_elements(s.guilds) AS e
+            WHERE s.id_hash = dmbot_current_session()
+              AND s.user_id = dmbot_current_user()
+              AND s.expires_at > dmbot_now()
         $fn$;
 
-    -- RESTRICTIVE: ANDed with the server policy each table already has.
-    CREATE POLICY web_session_servers ON campaigns AS RESTRICTIVE
-        USING (dmbot_web_guild_ok(guild_id)) WITH CHECK (dmbot_web_guild_ok(guild_id));
-    CREATE POLICY web_session_servers ON campaign_dms AS RESTRICTIVE
-        USING (dmbot_web_guild_ok(guild_id)) WITH CHECK (dmbot_web_guild_ok(guild_id));
-    -- A person's own installs stay visible (the account page lists them) even for a
-    -- server no longer in their list; writing still needs the server in the list.
-    CREATE POLICY web_session_servers ON installs AS RESTRICTIVE
-        USING (dmbot_web_guild_ok(guild_id) OR installed_by_user_id = dmbot_current_user())
-        WITH CHECK (dmbot_web_guild_ok(guild_id));
+    -- The same, only the servers the person could add bots to when they signed in.
+    CREATE FUNCTION dmbot_web_managed_guilds() RETURNS BIGINT[]
+        LANGUAGE sql STABLE
+        AS $fn$
+            SELECT coalesce(array_agg((e->>'id')::BIGINT), '{}')
+            FROM web_sessions s, jsonb_array_elements(s.guilds) AS e
+            WHERE s.id_hash = dmbot_current_session()
+              AND s.user_id = dmbot_current_user()
+              AND s.expires_at > dmbot_now()
+              AND (e->>'manage')::BOOLEAN
+        $fn$;
+    """
+
+# The website's role is held to its session's servers by these RESTRICTIVE policies
+# (ANDed with each table's own), made `TO dmbot_web` so the bot's role never runs them
+# and any role that is a member of dmbot_web is held too. Database.migrate (re)makes them
+# with the grants, whenever the role exists. What they guard against: the API's code
+# setting a server it shouldn't (a bug), not a taken-over API process, which can write
+# its own session row.
+WEB_ROLE_POLICIES = """
+    DROP POLICY IF EXISTS web_session_servers ON campaigns;
+    CREATE POLICY web_session_servers ON campaigns AS RESTRICTIVE TO dmbot_web
+        USING (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+        WITH CHECK (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]));
+    DROP POLICY IF EXISTS web_session_servers ON campaign_dms;
+    CREATE POLICY web_session_servers ON campaign_dms AS RESTRICTIVE TO dmbot_web
+        USING (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+        WITH CHECK (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]));
+    -- Reading: the session's servers, or the person's own installs (the account page lists
+    -- them even after a server leaves their list). Writing: only the one install server,
+    -- only one they manage, and only naming themselves.
+    DROP POLICY IF EXISTS web_session_servers ON installs;
+    CREATE POLICY web_session_servers ON installs AS RESTRICTIVE TO dmbot_web
+        USING (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[])
+               OR installed_by_user_id = dmbot_current_user())
+        WITH CHECK (guild_id = dmbot_install_guild()
+                    AND guild_id = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])
+                    AND installed_by_user_id = dmbot_current_user());
     """
 
 # What the website's role may touch at all: its own tables, and only reads of the two

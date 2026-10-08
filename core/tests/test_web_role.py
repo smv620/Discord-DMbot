@@ -139,8 +139,111 @@ class WebRole(DatabaseTest):
             cur = await conn.execute("SELECT name FROM campaigns")
             self.assertEqual([r["name"] for r in await cur.fetchall()], [self.hidden.name])
 
-    async def test_the_grants_and_the_policy_name_the_same_role(self) -> None:
-        self.assertIn(f"current_user <> '{schema.WEB_ROLE}'", schema.WEB_ROLE_LIMITS)
+    async def test_its_limits_apply_to_it_and_never_to_the_bot(self) -> None:
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT tablename, roles FROM pg_policies"
+                " WHERE schemaname = current_schema() AND policyname = 'web_session_servers'"
+                " ORDER BY tablename"
+            )
+            rows = await cur.fetchall()
+            self.assertEqual(
+                [(r["tablename"], list(r["roles"])) for r in rows],
+                [(t, [schema.WEB_ROLE]) for t in ("campaign_dms", "campaigns", "installs")],
+            )
+            # The bot's plans never call the web role's functions (no cost on the live path).
+            async with self.db.guild(THURSDAY.id) as bot:
+                cur = await bot.execute("EXPLAIN (VERBOSE) SELECT * FROM campaigns")
+                plan = " ".join(str(r["QUERY PLAN"]) for r in await cur.fetchall())
+            self.assertNotIn("dmbot_web", plan)
+
+    async def test_an_expired_session_sees_nothing(self) -> None:
+        session = await self.alice()
+        async with self.db.user(ALICE.id) as conn:
+            await conn.execute(
+                "UPDATE web_sessions SET expires_at = 1 WHERE id_hash = %s",  # past, any clock
+                (session.id_hash,),
+            )
+        self.assertEqual(await self.campaign_names(session, THURSDAY.id), [])
+
+    async def test_campaign_dms_are_held_to_the_list_too(self) -> None:
+        session = await self.alice()
+        for guild, expected in ((THURSDAY.id, 1), (OUTSIDER.id, 0)):
+            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(guild),))
+                cur = await conn.execute("SELECT count(*) AS n FROM campaign_dms")
+                row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], expected, guild)
+
+    async def test_it_writes_installs_only_for_the_install_server_it_manages(self) -> None:
+        session = await self.alice()
+        await self.joined_by_link(QUILLON.id)
+        await self.joined_by_link(GORRAK.id)
+        # Listed but not managed (Alice is only a member of Gorrak's Hall): refused, even
+        # through the server setting rather than the install server.
+        for chosen in ({"guild_id": GORRAK.id}, {"install_guild": GORRAK.id}):
+            with self.assertRaises(errors.InsufficientPrivilege, msg=str(chosen)):
+                async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                    for name, value in chosen.items():
+                        await conn.execute(
+                            "SELECT set_config(%s, %s, true)", (f"dmbot.{name}", str(value))
+                        )
+                    await conn.execute(
+                        "UPDATE installs SET installed_by_user_id = %s WHERE guild_id = %s",
+                        (ALICE.id, GORRAK.id),
+                    )
+        # A server outside her list: its row is invisible to the role, so there's nothing
+        # to link.
+        await self.joined_by_link(OUTSIDER.id)
+        outside = await accounts.link_install(
+            self.web, ALICE.id, OUTSIDER.id, session=session.id_hash
+        )
+        self.assertEqual(outside, "not_installed")
+        linked = await accounts.link_install(
+            self.web, ALICE.id, QUILLON.id, session=session.id_hash
+        )
+        self.assertEqual(linked, "linked")
+
+    async def test_your_own_install_stays_visible_after_the_server_leaves_your_list(
+        self,
+    ) -> None:
+        session = await self.alice()
+        await accounts.record_install(
+            self.web, ALICE.id, QUILLON.id, now=self.now, session=session.id_hash
+        )
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=self.now, days=30)
+        later = await sessions.find(self.web, token, now=self.now)
+        assert later is not None
+        me = await build_me(self.web, later, now=self.now)
+        self.assertEqual([i["serverId"] for i in me["installs"]], [str(QUILLON.id)])
+
+    async def test_a_member_of_the_role_is_held_too(self) -> None:
+        conn = await AsyncConnection.connect(SUPERUSER_URL, autocommit=True)
+        try:
+            cur = await conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'dmbot_web_member'")
+            if await cur.fetchone() is None:
+                await conn.execute(f"CREATE ROLE dmbot_web_member IN ROLE {schema.WEB_ROLE}")
+            async with conn.transaction():
+                await conn.execute(f"SET LOCAL search_path = {self.schema}")
+                await conn.execute("SET LOCAL ROLE dmbot_web_member")
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(OUTSIDER.id),)
+                )
+                cur = await conn.execute("SELECT count(*) FROM campaigns")
+                row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row[0], 0)
+        finally:
+            await conn.close()
+
+    async def joined_by_link(self, guild_id: int) -> None:
+        async with self.db.guild(guild_id) as conn:  # the bot, as it joins
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
+                " VALUES (%s, NULL, 0, 'link')",
+                (guild_id,),
+            )
 
     async def test_the_whole_api_works_as_the_websites_role(self) -> None:
         provider = FakeProvider(b"h" * 32, SITE)
@@ -173,7 +276,16 @@ class WebRole(DatabaseTest):
             self.assertEqual(hook.status_code, 200)
             self.assertEqual((await client.get("/me")).json()["plan"]["id"], "table")
             headers = {"X-DMbot-Request": "1"}
+            # An install of hers, so deleting exercises the installs ON DELETE SET NULL.
+            await self.joined_by_link(QUILLON.id)
+            link = await client.post(f"/servers/{QUILLON.id}/link", headers=headers)
+            self.assertEqual(link.status_code, 204)
             token = (await client.post("/account/delete/request", headers=headers)).json()
             done = await client.post("/account/delete/confirm", headers=headers, json=token)
             self.assertEqual(done.status_code, 204)
+        async with self.db.guild(QUILLON.id) as conn:
+            cur = await conn.execute("SELECT installed_by_user_id FROM installs")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertIsNone(row["installed_by_user_id"])
         self.assertEqual(await sessions.delete_expired(self.web, now=self.now + 90 * 86400), 0)

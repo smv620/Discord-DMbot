@@ -27,7 +27,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from dmbot.schema import MIGRATIONS, WEB_ROLE, WEB_ROLE_GRANTS, Migration
+from dmbot.schema import MIGRATIONS, WEB_ROLE, WEB_ROLE_GRANTS, WEB_ROLE_POLICIES, Migration
 
 log = logging.getLogger(__name__)
 
@@ -302,9 +302,10 @@ class Database:
 
 
 async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
-    """Give the website's role (#498) exactly WEB_ROLE_GRANTS in this schema, if the role
-    exists (it's made outside DMbot): everything is revoked first, so a right taken out
-    of the list is taken away too. Run on every start, in the migration's transaction."""
+    """Give the website's role (#498) exactly WEB_ROLE_GRANTS in this schema, and its
+    limits (WEB_ROLE_POLICIES), if the role exists (it's made outside DMbot): everything
+    is revoked first, so a right taken out of the list is taken away too. Run on every
+    start, in the migration's transaction, so rights and limits appear together."""
     cur = await conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (WEB_ROLE,))
     if await cur.fetchone() is None:
         return
@@ -319,6 +320,7 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
         sql.SQL("REVOKE ALL ON ALL SEQUENCES IN SCHEMA {} FROM {}").format(here, role)
     )
     await conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(here, role))
+    await conn.execute(WEB_ROLE_POLICIES)  # constants: several statements, no parameters
     for privileges, tables in WEB_ROLE_GRANTS:
         await conn.execute(
             sql.SQL("GRANT {} ON {} TO {}").format(
