@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (live 70ac757; Test A passed on a computer; Test B next)
+Last updated: 2026-10-08 by dev1 (live 70ac757; Test B passed; Test C next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -85,6 +85,26 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   the matching PUBLIC_TURNSTILE_SITE_KEY. Check: `docker compose logs core` shows 0026;
   a test message on /hello appears as a discussion holding only the message and date,
   and the page links to it.
+- CloudDev, PR #630 (#251): PDF and Word files are read in their own short-lived
+  process (dmbot-document) with a 30 s limit and 256 MB of memory, so a slow or broken
+  file can't hold up voice or other servers. No migration or setting. Deploy: rebuild
+  core. Check: 📎 Upload a file with a short PDF still gives the names list; no new
+  warnings in the log; `ps` shows no `dmbot-document` process after the read. Expect one
+  resource-tracker helper process for the life of the bot in `docker compose top core`:
+  it's not a leftover reader.
+- CloudDev, PR #724 (#713): hand-over fixes. **Deploy together with #705** (above): an
+  offer is never refused for "no plan", the offer message is three short paragraphs, and
+  an offer DMbot can't deliver says what happened. No migration. Deploy: rebuild core.
+  Check: Hand over to a test member who has no plan: the offer is sent; their Accept
+  says to pick a plan; No thanks tells the owner.
+- CloudDev, PR #730 (#598): Add many's 5,000 cap message and the DM template say "other
+  and secret names". No migration. Deploy: rebuild core (with #712). Check: 📄 Get the
+  template says "5,000 new other and secret names in all."
+- CloudDev, PR #735 (#580, #734): "Every wizard is an NPC" for a big group takes a few
+  database statements, not thousands, and the name-clash check looks up one name instead
+  of reading every name. No migration. Deploy: rebuild core. Check: after Add many,
+  answer a kind question for a group: it saves at once and Undo puts it back; adding a
+  name that's already known still says so.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
@@ -247,13 +267,12 @@ stt-bakeoff.md); one-click install live check (#104, merged in #150).
     of it can be heard"; the DM screen shows a warning and its audio % drops
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test A on a computer (2026-10-08 07:27), DM alone: PASS
+LATEST RESULT: Test B (2026-10-08 16:14), DM alone: PASS
 ------------------------------------------------------------------------------
-  On 70ac757. Everything the DM said near the computer was written down; DAVE ready
-  2 s after joining, before the DM spoke. A TV in the room set off the DM screen's ⚠️
-  (pieces at 155/169 and 4/23 packets, audio 82%): a false alarm, owner wants it less
-  sensitive (#671). Test A series done: 05:43 FAIL (#631), 07:01 PASS, 07:27 PASS.
-  Next: Test B (docs/next-test-step.md), the Stop listening button asks first.
+  On 70ac757. ⏹ Stop listening asked first; Cancel kept DMbot listening; /dmbot stop
+  ended it. The #631 decrypt error came back at the start (after a DAVE "welcome", not
+  a "commit") and #641 caught it: listened again, ~1 s lost (audio 66%), then 100%.
+  Next: Test C (docs/next-test-step.md), Yes, stop ends the session.
 
 Open issues from testing
   #671 the audio warning fires on background noise (owner)
