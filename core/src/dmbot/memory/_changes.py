@@ -246,9 +246,29 @@ class Changes(Scope):
         )
         await self._log(table, row_id, "delete", before, None)
 
-    # ---- many rows in one statement (#164) ------------------------------------------
+    # ---- many rows in one statement (#164, #253) -------------------------------------
     # Each row is still logged on its own, with its before and after values, exactly as
     # update/insert/delete log it, so undo and its tests see the same change log.
+
+    async def insert_many(
+        self, table: Table, rows: Sequence[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Insert many rows in one statement, logged in their order as insert logs each
+        (#253). Every row needs its own key. Returns the rows as written, in order."""
+        if not rows:
+            return []
+        cols = sql.SQL(", ").join(sql.Identifier(c) for c in table.columns)
+        cur = await self.conn.execute(
+            sql.SQL(
+                "INSERT INTO {} (guild_id, campaign_id, {}) SELECT %s, %s, {}"
+                " FROM jsonb_populate_recordset(NULL::{}, %s) RETURNING {}"
+            ).format(sql.Identifier(table.name), cols, cols, sql.Identifier(table.name), cols),
+            (*self.ids, Jsonb([{c: row[c] for c in table.columns} for row in rows])),
+        )
+        written = {r[table.key]: row_of(r, table) for r in await cur.fetchall()}
+        after = [written[row[table.key]] for row in rows]
+        await self._log_many(table, "insert", [(r[table.key], None, r) for r in after])
+        return after
 
     async def update_where(
         self, table: Table, changes: dict[str, Any], where: LiteralString, params: Sequence[Any]

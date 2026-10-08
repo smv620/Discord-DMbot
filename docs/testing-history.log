@@ -761,3 +761,17 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     already matched. Core rebuilt: both migrations applied, "Connected to 1 server(s)",
     "ears connected", no warnings or errors. web-api and the dmbot_web role still wait
     for go-live (#498).
+
+==============================================================================
+2026-10-08  Server: deploy fa87a60 (dev1, no test run)
+==============================================================================
+  - 05:10 UTC  development @ fa87a60: #584 (names menus answer Discord before loading
+    names, #537), #563 (save who confirmed the right to use shared material, #252),
+    #594 (Undo of a name fix re-checks consent after waiting, #588), #583 (web wording,
+    web-api not running), #587 and #593 (twin dev tool), #570 (docs/next-test-step.md).
+  - Migration 0019_shared_confirmations: a new table, nothing changed in old ones. Read
+    before deploying.
+  - Database backed up first ("pre0019", outside the repo; 25 tables); no session was
+    live; .env already matched. Core rebuilt: "Database updated:
+    0019_shared_confirmations", "Connected to 1 server(s)", "ears connected", no
+    warnings or errors. #584's timing check needs someone to open the names menus.

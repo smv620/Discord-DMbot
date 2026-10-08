@@ -63,7 +63,6 @@ from dmbot.dm_screen import (
     VisibilityButton,
     ensure_dm_screen,
     peek_view,
-    stop_listening_view,
 )
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
@@ -653,8 +652,7 @@ class DMBot(commands.AutoShardedBot):
             # ⚙️ Settings first (#515): the common tap isn't next to Stop's edge.
             view = discord.ui.View(timeout=None)
             view.add_item(SettingsButton(table.campaign_id))
-            for item in stop_listening_view(table.campaign_id).children:
-                view.add_item(item)
+            view.add_item(StopListeningButton(table.campaign_id))
         message = await self.post_message(table.screen_channel_id, text, view)
         if message is None:
             return
@@ -2073,13 +2071,25 @@ class DMBot(commands.AutoShardedBot):
             await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
             return
 
-    async def set_screen_level(self, guild_id: int, campaign_id: str, level: str) -> Campaign:
+    async def set_screen_level(
+        self, guild_id: int, campaign_id: str, level: str, *, was: str
+    ) -> Campaign:
         """How much DMbot says in this campaign's DM screen (#504, #515): saved, and a
-        running session (or one still finishing) follows it from its next line."""
+        running session (or one still finishing) follows the change from now on. Under
+        the session lock, so a session starting meanwhile can't miss it (#553). A change
+        from `was` (the level the DM saw) is noted in the DM screen, so a co-DM knows why
+        DMbot went quiet."""
         campaign = await self.campaigns.set_dm_screen_level(guild_id, campaign_id, level)
-        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
-            if table is not None and table.campaign_id == campaign_id:
-                table.screen_level = campaign.dm_screen_level
+        async with self.session_lock(guild_id):
+            for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+                if table is not None and table.campaign_id == campaign_id:
+                    table.screen_level = campaign.dm_screen_level
+        if was != campaign.dm_screen_level and campaign.dm_screen_channel_id is not None:
+            # Always posted: a note about the level, not something the level governs.
+            await self.post(
+                campaign.dm_screen_channel_id,
+                screen_messages.level_changed(campaign.dm_screen_level),
+            )
         return campaign
 
     async def _alert_dm(self, guild_id: int, message: str) -> None:

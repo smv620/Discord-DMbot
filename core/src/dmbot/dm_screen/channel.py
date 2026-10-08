@@ -280,13 +280,21 @@ async def _update_help_card(
             old_cards.append(m)
         elif messages.CANT_PIN in m.content:  # may share a message with another warning
             pin_notes.append(m)
-    if len(old_cards) == 1 and old_cards[0].content == text:
+    view = card_view(campaign)
+    if (
+        len(old_cards) == 1
+        and old_cards[0].content == text
+        and _button_ids(old_cards[0]) == [getattr(i, "custom_id", None) for i in view.children]
+    ):  # the same words and buttons: keep it (a new button alone also re-posts it, #553).
+        # In order: the card's buttons have no explicit rows, so a message lists them as
+        # the view does. A button given a row= later must keep this order, or every
+        # /dmbot start re-posts the card.
         pinned = True if old_cards[0].pinned else await _pin(old_cards[0])
     else:
         for old in old_cards:
             with contextlib.suppress(discord.HTTPException):
                 await old.delete()
-        pinned = await _pin(await channel.send(text, view=card_view(campaign)))
+        pinned = await _pin(await channel.send(text, view=view))
     if pinned:
         for note in pin_notes:
             if note.content == messages.CANT_PIN:  # keep other warnings sent with it
@@ -295,6 +303,15 @@ async def _update_help_card(
     elif pinned is False and not pin_notes:
         return messages.CANT_PIN
     return None
+
+
+def _button_ids(message: discord.Message) -> list[str | None]:
+    """The custom IDs of a message's buttons, in order."""
+    return [
+        getattr(child, "custom_id", None)
+        for row in message.components
+        for child in getattr(row, "children", ())
+    ]
 
 
 async def setup_dm_screen(
