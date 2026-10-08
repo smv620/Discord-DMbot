@@ -18,11 +18,12 @@ no match: they never learn one exists.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, PROPOSED, MoreNames, NewName, name_key
-from dmbot.memory.name_list import PC, ListLine
+from dmbot.memory.name_list import MAX_ADDED, MAX_PER_NAME, PC, ListLine
 from dmbot.memory.sounds import sound_codes
 from dmbot.transcript.cleaner import likeness
 
@@ -135,6 +136,27 @@ def plan(lines: list[ListLine], names: CampaignLookup, *, secrets: bool) -> Plan
     out.more = [MoreNames(e, tuple(o), tuple(s)) for e, (o, s) in more.items() if o or s]
     out.enriched = len(out.more)
     return out
+
+
+def too_many(p: Plan, names: CampaignLookup, quote: Callable[[str], str] = str) -> str | None:
+    """Why a list adds too many other or secret names to save, in plain words; None if
+    it's fine (#598). Counts only what the list adds: a name's lines are already joined
+    here, and names a known name has already are left out."""
+    total = 0
+    for name, others, secrets in (
+        *((n.name, n.others, n.secrets) for n in p.new),
+        *((names.entities[m.entity_id].name, m.others, m.secrets) for m in p.more),
+    ):
+        for word, given in (("other", others), ("secret", secrets)):
+            if len(given) > MAX_PER_NAME:
+                return (
+                    f"{quote(name)} has more than {MAX_PER_NAME} {word} names in this list. "
+                    "Keep the ones people say most."
+                )
+        total += len(others) + len(secrets)
+    if total > MAX_ADDED:
+        return f"This list has more than {MAX_ADDED:,} other names. Split it into two uploads."
+    return None
 
 
 def _fold_known(
