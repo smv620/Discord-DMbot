@@ -35,6 +35,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
     plan = await entitlements.get(db, session.user_id)
     campaigns: list[dict[str, Any]] = []
     servers: list[dict[str, Any]] = []
+    names = {g.id: g.name for g in session.guilds}  # for the installs list below
 
     async with db.unscoped() as conn:
         # One batch (a pipeline), not hundreds of round trips. Each server's statements
