@@ -22,6 +22,7 @@ services:
     restart: unless-stopped
 
   core:
+    image: dmbot-core   # shared with web-api
     build:
       context: ./core
       args:
@@ -33,6 +34,8 @@ services:
       DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
       POSTGRES_ADMIN_PASSWORD: ""   # only the postgres service needs these
       DMBOT_DB_PASSWORD: ""
+      DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
+      WEB_SECRET_KEY: ""
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,8 +58,47 @@ services:
       CLOUD_STT_API_KEY: ""    # speech-to-text keys are core's (and the bake-off's) only
       SPEECHMATICS_API_KEY: ""
       DEEPGRAM_API_KEY: ""
+      DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
+      WEB_SECRET_KEY: ""
     depends_on:
       - core
+    restart: unless-stopped
+
+  # The website's API (#435): Discord sign-in, the account page, payments. Same image as
+  # core, its own process. Off until the Website API settings are in .env: start it with
+  # COMPOSE_PROFILES=web in .env (or `docker compose --profile web up -d`). Listens only on
+  # the private network; Caddy or Cloudflare in front publishes it later.
+  web-api:
+    profiles: ["web"]
+    image: dmbot-core   # the same image as core: built once
+    build:
+      context: ./core
+      args:
+        EXTRAS: ${CORE_EXTRAS:-whisper}
+    command: ["python", "-m", "dmbot.web"]
+    # Only the settings the API needs, listed by name (no env_file): a secret added to
+    # .env later never reaches it by accident. No bot token, voice secret, AI or speech keys.
+    environment:
+      DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      WEB_SECRET_KEY: ${WEB_SECRET_KEY:-}
+      WEB_SITE_URL: ${WEB_SITE_URL:-}
+      WEB_API_URL: ${WEB_API_URL:-}
+      WEB_API_PORT: ${WEB_API_PORT:-8080}
+      WEB_SESSION_DAYS: ${WEB_SESSION_DAYS:-30}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    expose:
+      - "${WEB_API_PORT:-8080}"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('WEB_API_PORT', '8080') + '/health', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

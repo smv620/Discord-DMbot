@@ -16,6 +16,9 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
     "pypdf>=6.1",  # reading a PDF's text for a names list (6.x limits decompression)
+    # The website's API (python -m dmbot.web, #435): its own container, same image.
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +36,7 @@ dev = [
     "pytest>=8",
     "ruff>=0.8",
     "mypy>=1.13",
+    "httpx>=0.27",  # testing the web API in-process
 ]
 
 [project.scripts]

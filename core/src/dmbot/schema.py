@@ -676,6 +676,12 @@ WEB_ACCOUNTS = (
     """
 )
 
+WEB_SESSION_NAME = """
+    -- The Discord name to greet the person with on the account page ("Hi, Belleros."),
+    -- from sign-in, kept with the session only (#434, #435).
+    ALTER TABLE web_sessions ADD COLUMN display_name TEXT NOT NULL DEFAULT '';
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -689,6 +695,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0010_memory_heard", MEMORY_HEARD),
     ("0011_web_accounts", WEB_ACCOUNTS),
     ("0012_transcript_engines", TRANSCRIPT_ENGINES),
+    ("0013_web_session_name", WEB_SESSION_NAME),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

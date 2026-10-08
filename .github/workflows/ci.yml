@@ -151,6 +151,12 @@ jobs:
           out=$(docker run --rm dmbot-core 2>&1); code=$?
           echo "$out"
           test $code -eq 2 && echo "$out" | grep -q "Missing required settings"
+      - name: smoke test web API (same image)
+        run: |
+          set +e
+          out=$(docker run --rm dmbot-core python -m dmbot.web 2>&1); code=$?
+          echo "$out"
+          test $code -eq 2 && echo "$out" | grep -q "Missing required settings"
       - name: smoke test ears image
         run: |
           set +e
