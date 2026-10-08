@@ -67,6 +67,13 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   No migration. Deploy: rebuild core. Check: Add many with one name given 51 other names
   says "Nothing was added. … has more than 50 other names in this list…"; Download all,
   then upload that file again: nothing is refused.
+- CloudDev, PR #630 (#251): PDF and Word files are read in their own short-lived
+  process (dmbot-document) with a 30 s limit and 256 MB of memory, so a slow or broken
+  file can't hold up voice or other servers. No migration or setting. Deploy: rebuild
+  core. Check: 📎 Upload a file with a short PDF still gives the names list; no new
+  warnings in the log; `ps` shows no `dmbot-document` process after the read. Expect one
+  resource-tracker helper process for the life of the bot in `docker compose top core`:
+  it's not a leftover reader.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
