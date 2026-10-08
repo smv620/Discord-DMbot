@@ -8,7 +8,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing queued; web-api and the dmbot_web role wait for the owner's go-live, #498)
+- WebDev, #552 (#435): core migrations 0017_try_it_bare_id (drops try_it_used.used_at)
+  and 0018_payment_event_subscription (adds payment_events.subscription_id). Deploy core
+  as usual; check `docker compose logs core` shows both applied, no new errors. If the
+  web-api container is ever started, start it from the same build: older web API code
+  writes used_at and fails Try It. web-api and the dmbot_web role still wait for go-live
+  (#498).
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
