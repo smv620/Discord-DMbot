@@ -26,13 +26,16 @@ from psycopg import errors as pg_errors
 from psycopg import sql
 
 from dmbot.campaigns.models import (
+    DEFAULT_DM_SCREEN_LEVEL,
     DEFAULT_DM_SCREEN_VISIBILITY,
     DEFAULT_FALLBACK,
     DEFAULT_TARGET,
+    DM_SCREEN_LEVELS,
     DM_SCREEN_VISIBILITY,
     NAME_MAX,
     Campaign,
     CampaignError,
+    check_dm_screen_level,
     check_dm_screen_visibility,
     check_rulesets,
     clean_name,
@@ -187,6 +190,7 @@ _SETTABLE = frozenset(
         "last_played_at",
         "optional_rules_default",
         "dm_screen_visibility",
+        "dm_screen_level",
         "channel_number",
         "transcript_channel_id",
     }
@@ -256,10 +260,12 @@ class CampaignStore:
         fallback_ruleset: str = DEFAULT_FALLBACK,
         optional_rules_default: bool = True,
         dm_screen_visibility: str = DEFAULT_DM_SCREEN_VISIBILITY,
+        dm_screen_level: str = DEFAULT_DM_SCREEN_LEVEL,
     ) -> Campaign:
         clean = clean_name(name)
         check_rulesets(target_ruleset, fallback_ruleset)
         check_dm_screen_visibility(dm_screen_visibility)
+        check_dm_screen_level(dm_screen_level)
         try:
             async with self._db.guild(guild_id) as conn:
                 campaign_id = await self._insert(
@@ -272,6 +278,7 @@ class CampaignStore:
                     int(self._clock()),
                     None,
                     dm_screen_visibility,
+                    dm_screen_level,
                 )
                 await conn.execute(
                     "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)",
@@ -380,6 +387,11 @@ class CampaignStore:
         check_dm_screen_visibility(visibility)
         return await self._set(guild_id, campaign_id, "dm_screen_visibility", visibility)
 
+    async def set_dm_screen_level(self, guild_id: int, campaign_id: str, level: str) -> Campaign:
+        """How much DMbot says in the DM screen: quiet, normal or chatty (#504)."""
+        check_dm_screen_level(level)
+        return await self._set(guild_id, campaign_id, "dm_screen_level", level)
+
     async def set_last_voice_channel(
         self, guild_id: int, campaign_id: str, channel_id: int | None
     ) -> Campaign:
@@ -461,6 +473,7 @@ class CampaignStore:
                 "fallback_ruleset": campaign.fallback_ruleset,
                 "optional_rules_default": campaign.optional_rules_default,
                 "dm_screen_visibility": campaign.dm_screen_visibility,
+                "dm_screen_level": campaign.dm_screen_level,
             },
             "sections": sections,
         }
@@ -517,13 +530,15 @@ class CampaignStore:
                 await conn.execute(
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
-                    " dm_screen_visibility = %s WHERE guild_id = %s AND id = %s",
+                    " dm_screen_visibility = %s, dm_screen_level = %s"
+                    " WHERE guild_id = %s AND id = %s",
                     (
                         info["target_ruleset"],
                         info["fallback_ruleset"],
                         info["optional_rules_default"],
                         info["last_played_at"],
                         info["dm_screen_visibility"],
+                        info["dm_screen_level"],
                         guild_id,
                         campaign_id,
                     ),
@@ -541,6 +556,7 @@ class CampaignStore:
                         info["created_at"],
                         info["last_played_at"],
                         info["dm_screen_visibility"],
+                        info["dm_screen_level"],
                     )
                 except pg_errors.UniqueViolation as exc:
                     # Another restore took the same name a moment ago.
@@ -622,12 +638,13 @@ class CampaignStore:
         created_at: int,
         last_played_at: int | None,
         visibility: str,
+        level: str,
     ) -> str:
         campaign_id = uuid.uuid4().hex
         await conn.execute(
             "INSERT INTO campaigns (id, guild_id, name, name_key, created_at, last_played_at,"
-            " target_ruleset, fallback_ruleset, optional_rules_default, dm_screen_visibility)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " target_ruleset, fallback_ruleset, optional_rules_default, dm_screen_visibility,"
+            " dm_screen_level) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 campaign_id,
                 guild_id,
@@ -639,6 +656,7 @@ class CampaignStore:
                 fallback,
                 optional_default,
                 visibility,
+                level,
             ),
         )
         return campaign_id
@@ -673,6 +691,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         dm_screen_visibility=row["dm_screen_visibility"],
         channel_number=row_int(row, "channel_number"),
         transcript_channel_id=row_int(row, "transcript_channel_id"),
+        dm_screen_level=row["dm_screen_level"],
     )
 
 
@@ -756,6 +775,9 @@ def _validate_backup(
     visibility = campaign.get("dm_screen_visibility", DEFAULT_DM_SCREEN_VISIBILITY)
     if not isinstance(visibility, str) or visibility not in DM_SCREEN_VISIBILITY:
         raise CampaignError(DAMAGED)
+    level = campaign.get("dm_screen_level", DEFAULT_DM_SCREEN_LEVEL)
+    if not isinstance(level, str) or level not in DM_SCREEN_LEVELS:
+        raise CampaignError(DAMAGED)
 
     unknown = set(sections) - known_sections
     if unknown:
@@ -772,5 +794,6 @@ def _validate_backup(
         "fallback_ruleset": fallback,
         "optional_rules_default": optional_default,
         "dm_screen_visibility": visibility,
+        "dm_screen_level": level,
     }
     return info, {name: list(rows) for name, rows in sections.items()}

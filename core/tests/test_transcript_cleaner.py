@@ -161,6 +161,12 @@ class MishearingsTest(unittest.TestCase):
         )
         self.assertEqual(text("then Vesa smiles", names), "then Vesa smiles")
 
+    def test_fixes_from_suggested_names_only_when_shown(self) -> None:
+        # Hrothgar is only suggested: its fix needs the DM screen's Undo (#504).
+        self.assertEqual(text("then Hrothgarr roars"), "then Hrothgar roars")
+        self.assertEqual(text("then Hrothgarr roars", unsure=False), "then Hrothgarr roars")
+        self.assertEqual(text("I think Beleros has it", unsure=False), "I think Belleros has it")
+
     def test_a_name_is_written_the_way_it_was_said(self) -> None:
         # "Frostwolves" is the tribe's other name: not changed to "Frostwolf tribe"
         self.assertEqual(text("we track the Frostwolfs north"), "we track the Frostwolves north")

@@ -466,6 +466,46 @@ class DMScreenVisibility(StoreTest):
         self.assertEqual(replaced.dm_screen_visibility, "peek")
 
 
+class DMScreenLevel(StoreTest):
+    """How much DMbot says in the DM screen (#504)."""
+
+    async def test_default_set_and_change(self) -> None:
+        c = await self.make("A")
+        self.assertEqual(c.dm_screen_level, "normal")
+        c = await self.make("B", dm_screen_level="quiet")
+        self.assertEqual(c.dm_screen_level, "quiet")
+        c = await self.store.set_dm_screen_level(GUILD_A, c.id, "chatty")
+        self.assertEqual(c.dm_screen_level, "chatty")
+        with self.assertRaisesRegex(CampaignError, "how much DMbot says: quiet or normal"):
+            await self.make("C", dm_screen_level="loud")
+        with self.assertRaisesRegex(CampaignError, "doesn't exist in this server"):
+            await self.store.set_dm_screen_level(GUILD_B, c.id, "quiet")
+
+    async def test_backup_round_trip_and_old_backups(self) -> None:
+        c = await self.make("A", dm_screen_level="quiet")
+        backup = await self.store.export(GUILD_A, c.id)
+        self.assertEqual(backup["campaign"]["dm_screen_level"], "quiet")
+        restored = await self.store.import_backup(GUILD_B, backup, DM)
+        self.assertEqual(restored.dm_screen_level, "quiet")
+
+        old = json.loads(json.dumps(backup))
+        del old["campaign"]["dm_screen_level"]  # made before the setting existed
+        self.assertEqual(
+            (await self.store.import_backup(GUILD_B, old, DM)).dm_screen_level, "normal"
+        )
+
+        bad = json.loads(json.dumps(backup))
+        bad["campaign"]["dm_screen_level"] = "shouting"
+        with self.assertRaisesRegex(CampaignError, "damaged"):
+            await self.store.import_backup(GUILD_B, bad, DM)
+
+        replaced = await self.store.import_backup(GUILD_A, backup, DM, replace_campaign_id=c.id)
+        self.assertEqual(replaced.dm_screen_level, "quiet")
+        c = await self.store.set_dm_screen_level(GUILD_A, c.id, "chatty")
+        replaced = await self.store.import_backup(GUILD_A, old, DM, replace_campaign_id=c.id)
+        self.assertEqual(replaced.dm_screen_level, "normal")  # restore keeps the backup's
+
+
 class DeleteAndChildRows(StoreTest):
     async def count(self, guild: int, table: str) -> int:
         async with self.db.guild(guild) as conn:
