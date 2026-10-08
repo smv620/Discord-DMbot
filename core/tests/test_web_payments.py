@@ -13,7 +13,7 @@ import httpx
 
 from dmbot import entitlements
 from dmbot.config import ConfigError
-from dmbot.web import entitlements_writer
+from dmbot.web import accounts, entitlements_writer
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider, PaymentEvent
 from dmbot.web.settings import load_web_settings
@@ -227,8 +227,58 @@ class Payments(DatabaseTest):
     async def test_the_company_cannot_stop_try_it(self) -> None:
         await self.post("/plan/try-it")
         response = await self.send(kind="subscription_ended", subscription_id="sub_1")
-        self.assertEqual(response.status_code, 200)  # recorded and ignored, never retried
+        self.assertEqual(response.status_code, 503)  # a "started" must be on its way
         self.assertEqual((await self.plan()).status, "active")
+
+    async def test_an_end_before_its_start_while_on_try_it_still_stops_the_plan(self) -> None:
+        await self.post("/plan/try-it")
+        ended = await self.send(
+            kind="subscription_ended", subscription_id="sub_1", occurred_at=self.now + 9
+        )
+        self.assertEqual(ended.status_code, 503)  # not recorded: delivered again later
+        await self.start_table(occurred_at=self.now + 5)
+        body = json.dumps(
+            {
+                "id": json.loads(ended.request.content)["id"],  # the same event again
+                "user_id": ALICE.id,
+                "occurred_at": self.now + 9,
+                "kind": "subscription_ended",
+                "subscription_id": "sub_1",
+            }
+        ).encode()
+        again = await self.client.post(
+            "/webhooks/fake", content=body, headers={"x-fake-signature": self.provider.sign(body)}
+        )
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual((await self.plan()).status, "lapsed")
+
+    async def test_a_failure_before_any_plan_is_retried_not_recorded(self) -> None:
+        failed = await self.send(kind="payment_failed", subscription_id="sub_1")
+        self.assertEqual(failed.status_code, 503)
+        async with self.db.user(ALICE.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM payment_events")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_a_renewal_over_a_stopped_duplicate_is_applied(self) -> None:
+        # Two checkout tabs: A then B; support cancels B; A keeps renewing.
+        await self.start_table(subscription_id="sub_A")
+        with self.assertLogs("dmbot.web.entitlements_writer", "WARNING"):
+            await self.start_table(subscription_id="sub_B", occurred_at=self.now + 1)
+        await self.send(
+            kind="subscription_ended", subscription_id="sub_B", occurred_at=self.now + 2
+        )
+        renewed = await self.start_table(
+            kind="subscription_renewed",
+            subscription_id="sub_A",
+            occurred_at=self.now + 30 * DAY,
+            period_start=self.now + 30 * DAY,
+            period_end=self.now + 60 * DAY,
+        )
+        self.assertEqual(renewed.status_code, 200)
+        got = await self.plan()
+        self.assertEqual((got.status, got.period_start), ("active", self.now + 30 * DAY))
 
     async def test_try_it_after_a_stopped_plan_forgets_the_old_subscription(self) -> None:
         await self.start_table()
@@ -307,8 +357,7 @@ class Payments(DatabaseTest):
 
     async def test_events_after_an_account_is_deleted_are_a_warning(self) -> None:
         await self.start_table()
-        async with self.db.user(ALICE.id) as conn:
-            await conn.execute("DELETE FROM web_users WHERE user_id = %s", (ALICE.id,))
+        await accounts.delete_person(self.db, ALICE.id)  # the real deletion path
         with self.assertLogs("dmbot.web.entitlements_writer", "WARNING") as logs:
             response = await self.send(
                 kind="subscription_ended", subscription_id="sub_1", occurred_at=self.now + 1

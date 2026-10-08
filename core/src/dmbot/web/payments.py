@@ -151,7 +151,7 @@ class FakeProvider:
             "extra_hours_bought",
         ):
             # Kinds are the company's own words, not personal data; cut short anyway.
-            log.info("Payment event of a kind DMbot doesn't use: %.40r", kind)
+            log.info("Payment event %.40r of a kind DMbot doesn't use: %.40r", raw.get("id"), kind)
             return None
         return PaymentEvent(
             provider=self.name,

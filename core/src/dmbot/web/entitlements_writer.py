@@ -155,14 +155,24 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
             ):
                 await _record(conn, event, now)  # seen, but older than what's applied
                 return "stale"
-            if (
-                event.kind == "subscription_renewed"
-                and row is not None
+            second = (
+                row is not None
+                and row["status"] != "lapsed"
                 and row["provider"] == event.provider
                 and not _same_subscription(row, event)
-            ):
+            )
+            if second and event.kind == "subscription_started":
+                # Could be a plan change made as a new subscription, so it's applied; but
+                # if the old one keeps renewing, two are being charged.
+                log.warning(
+                    "Payment event %s starts another subscription for user %s while one works",
+                    event.event_id,
+                    event.user_id,
+                )
+            if second and event.kind == "subscription_renewed":
                 # Two subscriptions at once (two checkout tabs, say): this one is being
                 # charged too. Never pick one silently; someone refunds one of them.
+                # (Over a stopped plan, a renewal is applied: it's the one still paid for.)
                 await _record(conn, event, now)
                 log.error(
                     "Payment event %s renews a second subscription for user %s: needs a"
@@ -220,10 +230,14 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
             # Nothing to change yet: the company may have sent this before the "started"
             # event. Not recorded, so its next delivery is applied.
             return "retry"
+        if row["provider"] != event.provider and event.occurred_at > row["last_event_at"]:
+            # On Try It (ours): news newer than the company's last word must be about a
+            # new subscription whose "started" hasn't arrived yet, so wait for it. Try It
+            # keeps the stopped paid plan's last_event_at, so that plan's late news isn't.
+            return "retry"
         if not _same_subscription(row, event):
             # About a plan the person no longer has: one that was replaced, or one that
-            # had stopped before they started Try It. (A failure overtaking its own
-            # "started" while on Try It is lost too; the later "ended" still stops it.)
+            # had stopped before they started Try It.
             await _record(conn, event, now)
             return "ignored"  # about a subscription that was replaced
         if event.occurred_at < row["last_event_at"]:
