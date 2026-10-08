@@ -330,13 +330,19 @@ function SignedIn({
         </p>
       )}
       {me.offers.incoming.length > 0 && (
-        <OffersSection offers={me.offers.incoming} onNews={setOfferNews} />
+        <OffersSection
+          offers={me.offers.incoming}
+          free={me.access?.kind === "free"}
+          onNews={setOfferNews}
+        />
       )}
       <PlanSection me={me} />
       <CampaignsSection me={me} />
       <ServersSection me={me} />
       <DeleteSection
         paidPlan={me.plan !== null && me.plan.id !== "try-it" && me.plan.status !== "lapsed"}
+        free={me.access?.kind === "free"}
+        stillPaying={me.access?.stillPaying === true}
         onDeleted={onDeleted}
       />
     </div>
@@ -376,6 +382,12 @@ function PlanSection({ me }: { me: Me }) {
         return null;
       },
     );
+  // Free access came after this page loaded (#806): show what's true now. Only Choose and
+  // Start Try It can get has_free_access, and both come through here.
+  const outOfDate = (error: ApiError): null => {
+    if (error.kind === "free-access") void refresh();
+    return null;
+  };
   const choices = (title: string) => (
     <>
       <p>{title}</p>
@@ -384,7 +396,7 @@ function PlanSection({ me }: { me: Me }) {
           <ActionButton
             busy={busy}
             kind="secondary"
-            onClick={() => void run(async () => go(await api.checkoutUrl(id)))}
+            onClick={() => void run(async () => go(await api.checkoutUrl(id)), outOfDate)}
           >
             {text.choose(id)}
           </ActionButton>
@@ -392,6 +404,35 @@ function PlanSection({ me }: { me: Me }) {
       />
     </>
   );
+
+  const access = me.access;
+  if (access?.kind === "free") {
+    // The API names the plan with stillPaying; the plan's own name is the backup.
+    const paying = access.paidPlan ?? (plan ? planName(plan.id) : null);
+    // Free access (#806): no hours bar, no prices and no payment buttons, except a way to
+    // stop a paid plan that's still charging. Never why someone has free access.
+    return (
+      <section aria-labelledby="plan-heading" class="panel" id="plan">
+        <h2 id="plan-heading">{text.planHeading}</h2>
+        <Notice message={notice} />
+        <p class="plan-name">
+          {access.endsOn ? text.freeAccessUntil(access.endsOn) : text.freeAccess}
+        </p>
+        <p class="muted small">
+          {text.freeNext}
+          {access.endsOn && !access.stillPaying && ` ${text.freeEnds(access.endsOn)}`}
+        </p>
+        {access.stillPaying && (
+          <>
+            <p>{text.stillPaying(paying, plan?.renewsOn ?? null)}</p>
+            <ActionButton busy={busy} kind="secondary" onClick={portal}>
+              {text.stopPaying}
+            </ActionButton>
+          </>
+        )}
+      </section>
+    );
+  }
 
   return (
     <section aria-labelledby="plan-heading" class="panel" id="plan">
@@ -406,7 +447,7 @@ function PlanSection({ me }: { me: Me }) {
               void run(async () => {
                 await api.startTryIt();
                 await refresh();
-              })
+              }, outOfDate)
             }
           >
             {text.startTryIt}
@@ -461,9 +502,11 @@ function PlanSection({ me }: { me: Me }) {
 /** Campaigns someone wants to hand you (#614). Accept re-checks your free slot on the server. */
 function OffersSection({
   offers,
+  free,
   onNews,
 }: {
   offers: Offer[];
+  free: boolean;
   onNews: (news: { text: string; ok: boolean }) => void;
 }) {
   return (
@@ -471,7 +514,7 @@ function OffersSection({
       <h2 id="offers-heading">{text.offersHeading}</h2>
       <ul class="campaigns">
         {offers.map((o) => (
-          <OfferRow key={o.id} offer={o} onNews={onNews} />
+          <OfferRow key={o.id} offer={o} free={free} onNews={onNews} />
         ))}
       </ul>
     </section>
@@ -480,9 +523,12 @@ function OffersSection({
 
 function OfferRow({
   offer,
+  free,
   onNews,
 }: {
   offer: Offer;
+  /** Free access: no plans to pick, so no "See my plan" (#806). */
+  free: boolean;
   onNews: (news: { text: string; ok: boolean }) => void;
 }) {
   const { api, refresh } = useShared();
@@ -498,8 +544,8 @@ function OfferRow({
       },
       (error) => {
         if (error.kind === "no-free-slot") {
-          setNoSlot(true);
-          return text.acceptNoSlot;
+          setNoSlot(!free);
+          return free ? text.acceptNoSlotFree : text.acceptNoSlot;
         }
         if (error.kind === "offer-gone") {
           // The row goes with the refresh, so the news is shown above the sections.
@@ -518,14 +564,17 @@ function OfferRow({
       <div class="row">
         <ActionButton
           busy={busy}
-          onClick={() => answer(() => api.acceptOffer(offer.id), text.accepted(offer.campaignName))}
+          onClick={() => answer(
+              () => api.acceptOffer(offer.id),
+              text.accepted(offer.campaignName, offer.personName),
+            )}
         >
           {text.accept}
         </ActionButton>
         <ActionButton
           busy={busy}
           kind="secondary"
-          onClick={() => answer(() => api.declineOffer(offer.id), text.declined)}
+          onClick={() => answer(() => api.declineOffer(offer.id), text.declined(offer.personName))}
         >
           {text.decline}
         </ActionButton>
@@ -554,8 +603,8 @@ function CampaignsSection({ me }: { me: Me }) {
               key={c.id}
               campaign={c}
               offer={me.offers.outgoing.find((o) => o.campaignId === c.id) ?? null}
-              onWithdrawn={async () => {
-                setDone(text.withdrawn);
+              onWithdrawn={async (person) => {
+                setDone(text.withdrawn(person));
                 await refresh();
               }}
               onHandedOver={async (person) => {
@@ -579,7 +628,8 @@ function CampaignRow({
   campaign: Campaign;
   /** A hand-over of this campaign you offered and nobody has answered yet. */
   offer: Offer | null;
-  onWithdrawn: () => Promise<void>;
+  /** Gets the name of the person the offer was for, to say they'll be told. */
+  onWithdrawn: (person: string) => Promise<void>;
   onHandedOver: (person: Person) => Promise<void>;
 }) {
   const { api, refresh } = useShared();
@@ -613,7 +663,7 @@ function CampaignRow({
                 void run(
                   async () => {
                     await api.withdrawOffer(offer.id);
-                    await onWithdrawn();
+                    await onWithdrawn(offer.personName);
                   },
                   (error) => {
                     if (error.kind !== "offer-gone") return campaignRefusal(error);
@@ -770,7 +820,18 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
   );
 }
 
-function DeleteSection({ paidPlan, onDeleted }: { paidPlan: boolean; onDeleted: () => void }) {
+function DeleteSection({
+  paidPlan,
+  free,
+  stillPaying,
+  onDeleted,
+}: {
+  paidPlan: boolean;
+  free: boolean;
+  /** Free access while a paid plan is still being paid for. */
+  stillPaying: boolean;
+  onDeleted: () => void;
+}) {
   const { api } = useShared();
   const { busy, notice, run, clear } = useAction();
   const [step, setStep] = useState<0 | 1 | 2>(0);
@@ -798,7 +859,13 @@ function DeleteSection({ paidPlan, onDeleted }: { paidPlan: boolean; onDeleted: 
       )}
       {step === 1 && (
         <>
-          {text.deleteWarning.map((line) => (
+          {(free
+            ? [
+                stillPaying ? text.deleteWarningFreePaying : text.deleteWarningFree,
+                ...text.deleteWarning.slice(1),
+              ]
+            : text.deleteWarning
+          ).map((line) => (
             <p key={line}>{line}</p>
           ))}
           <a href="#campaigns">{text.deleteHandOverLink}</a>

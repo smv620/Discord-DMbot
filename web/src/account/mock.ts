@@ -21,6 +21,9 @@ export const scenarios = [
   "grace",
   "lapsed",
   "offers",
+  "free",
+  "free-until",
+  "free-paying",
   "down",
 ] as const;
 export type Scenario = (typeof scenarios)[number];
@@ -173,6 +176,23 @@ export function scenarioMe(scenario: Scenario): Me | null {
           renewsOn: null,
           graceEndsOn: null,
         },
+      };
+    case "free":
+      return { ...base, plan: null, access: { kind: "free" } };
+    case "free-until":
+      return { ...base, plan: null, access: { kind: "free", endsOn: "2026-12-31" } };
+    case "free-paying":
+      return {
+        ...base,
+        plan: {
+          id: "table",
+          status: "active",
+          hoursUsed: 3,
+          hoursCap: 18,
+          renewsOn: "2026-10-14",
+          graceEndsOn: null,
+        },
+        access: { kind: "free", stillPaying: true, paidPlan: "Table" },
       };
     case "offers":
       return {

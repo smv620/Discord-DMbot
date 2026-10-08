@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from dmbot.config import ConfigError
+from dmbot.entitlements import parse_free_users
+from dmbot.web.admin_hash import decode_hash
 
 REQUIRED = (
     "DATABASE_URL",
@@ -52,9 +54,22 @@ class WebSettings:
     # Cloudflare: CF-Connecting-IP). Empty: the connection's own address. Only set it when
     # every request comes through that proxy, or anyone could pick their own address.
     client_ip_header: str = ""
+    # The admin page (#772): the only addresses that may sign in, lower case. Empty: the
+    # admin sign-in is off.
+    # repr=False: the admin's address stays out of any log that prints the settings.
+    admin_emails: tuple[str, ...] = field(default=(), repr=False)
+    # The admin password's argon2id hash, base64 (scripts/set-admin-password writes it).
+    # Empty: only "Sign in with Google" works.
+    admin_password_hash: str = field(default="", repr=False)
+    # Google Cloud console -> APIs & Services -> Credentials -> OAuth client (web). Empty:
+    # only the password works.
+    google_client_id: str = ""
+    google_client_secret: str = field(default="", repr=False)
     host: str = "0.0.0.0"  # inside its container; nothing is published to the internet
     port: int = 8080
     session_days: int = 30
+    # The owner's own Discord accounts: free access, no caps (#771). Never logged.
+    free_users: frozenset[int] = field(default=frozenset(), repr=False)
 
     @property
     def site_origin(self) -> str:
@@ -69,6 +84,10 @@ class WebSettings:
     @property
     def oauth_redirect_uri(self) -> str:
         return f"{self.api_url.rstrip('/')}/auth/discord/callback"
+
+    @property
+    def admin_google_redirect_uri(self) -> str:
+        return f"{self.api_url.rstrip('/')}/admin/auth/google/callback"
 
     @property
     def install_redirect_uri(self) -> str:
@@ -145,6 +164,42 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         # Behind the proxy every visitor has the proxy's address: without the header, one
         # message would use up the whole site's turn for 10 minutes.
         raise ConfigError("WEB_CLIENT_IP_HEADER must be set when GITHUB_FEEDBACK_TOKEN is.")
+    admin_emails = tuple(
+        sorted({e.strip().lower() for e in get("ADMIN_EMAILS").split(",") if e.strip()})
+    )
+    if any("@" not in e for e in admin_emails):
+        raise ConfigError(
+            "ADMIN_EMAILS must be email addresses, separated by commas, like a@x.com,b@y.com."
+        )
+    admin_password_hash = get("ADMIN_PASSWORD_HASH")
+    if admin_password_hash and decode_hash(admin_password_hash) is None:
+        raise ConfigError("ADMIN_PASSWORD_HASH isn't valid. Run scripts/set-admin-password again.")
+    if (
+        admin_emails
+        and not client_ip_header
+        and urlsplit(get("WEB_API_URL")).hostname not in ("localhost", "127.0.0.1")
+    ):
+        # Behind the proxy every visitor has the proxy's address: five wrong tries by
+        # anyone would lock the admin out, by password and by Google.
+        raise ConfigError(
+            "WEB_CLIENT_IP_HEADER must be set when ADMIN_EMAILS is. Behind Cloudflare, set it"
+            " to CF-Connecting-IP."
+        )
+    google_client_id = get("GOOGLE_CLIENT_ID")
+    google_client_secret = get("GOOGLE_CLIENT_SECRET")
+    if bool(google_client_id) != bool(google_client_secret):
+        raise ConfigError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET go together: set both.")
+    if admin_emails and not admin_password_hash and not google_client_id:
+        # Otherwise the page would show a form that refuses every try.
+        raise ConfigError(
+            "ADMIN_EMAILS is set but there's no way to sign in. Run scripts/set-admin-password,"
+            " or set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or empty ADMIN_EMAILS to keep"
+            " the admin page off."
+        )
+    try:
+        free_users = parse_free_users(get("DMBOT_FREE_USERS"))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     return WebSettings(
         database_url=get("DATABASE_URL"),
         discord_client_id=get("DISCORD_CLIENT_ID"),
@@ -155,6 +210,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         host=get("WEB_API_HOST") or "0.0.0.0",
         port=port,
         session_days=session_days,
+        free_users=free_users,
         payment_provider=provider,
         payment_webhook_secret=webhook_secret.encode("utf-8"),
         any_db_role=any_db_role,
@@ -162,4 +218,8 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         feedback_repo=feedback_repo,
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,
+        admin_emails=admin_emails,
+        admin_password_hash=admin_password_hash,
+        google_client_id=google_client_id,
+        google_client_secret=google_client_secret,
     )

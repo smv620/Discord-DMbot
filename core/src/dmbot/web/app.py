@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from dmbot import entitlements, install, plans
 from dmbot.db import Database
-from dmbot.web import entitlements_writer, feedback, offers, sessions, tokens
+from dmbot.web import admin_api, entitlements_writer, feedback, offers, sessions, tokens
 from dmbot.web.accounts import (
     account_email,
     active_subscription,
@@ -35,6 +35,7 @@ from dmbot.web.accounts import (
     link_install,
     record_install,
 )
+from dmbot.web.admin import CSRF_HEADER, AdminSessions, FailedTries, GoogleSignIn
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck, RateLimit
 from dmbot.web.me import build_me
@@ -76,6 +77,9 @@ def create_app(
     discussions: Discussions | None = None,
     human_check: HumanCheck | None = None,
     feedback_limit: RateLimit | None = None,
+    google: GoogleSignIn | None = None,
+    admin_sessions: AdminSessions | None = None,
+    admin_tries: FailedTries | None = None,
     clock: Clock = _system_clock,
 ) -> FastAPI:
     """`payments` None: no payment company is set up yet; buying answers payments_off.
@@ -130,7 +134,7 @@ def create_app(
         allow_origins=[settings.site_origin],  # exactly the website, never echoed back
         allow_credentials=True,
         allow_methods=["GET", "POST"],
-        allow_headers=[REQUEST_HEADER, "Content-Type"],
+        allow_headers=[REQUEST_HEADER, CSRF_HEADER, "Content-Type"],
         max_age=600,
     )
 
@@ -409,6 +413,10 @@ def create_app(
     @app.post("/plan/try-it", status_code=204)
     async def try_it(signed: Signed) -> Response:
         session, _token = signed
+        _plan, access = await entitlements.plan_and_access(db, session.user_id, clock())
+        if access.kind in ("free", "grant"):
+            # Free access covers them: their one trial isn't used up for nothing (#771).
+            raise HTTPException(status_code=409, detail="has_free_access")
         result = await entitlements_writer.start_try_it(db, session.user_id, now=clock())
         if not result.started:
             # "try_it_used": only once per Discord user; "has_plan": a plan already works.
@@ -459,7 +467,10 @@ def create_app(
         if plan_id not in paid_plan_ids():
             raise HTTPException(status_code=400, detail="unknown_plan")
         plan = plans.load().by_id[plan_id]
-        current = await entitlements.get(db, session.user_id)
+        current, access = await entitlements.plan_and_access(db, session.user_id, clock())
+        if access.kind in ("free", "grant"):
+            # Free access covers them: never a price or a payment (#771).
+            raise HTTPException(status_code=409, detail="has_free_access")
         if current is not None and current.plan != "try-it" and current.status != "lapsed":
             # A paid plan is working: change it on the billing page, never a second
             # subscription (or a second first-month offer).
@@ -586,5 +597,20 @@ def create_app(
             raise
         log.info("Feedback posted: discussion %s", posted.number)
         return {"url": posted.url}
+
+    # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty. Its sessions and
+    # locks count seconds on their own steady clock (not `clock`, the wall time used for
+    # signed tokens), so a changed system time can't end or extend them. Only the spent
+    # Google states use `clock`, as they mirror the signed sign-in cookie's own life.
+    app.include_router(
+        admin_api.router(
+            settings,
+            google=google,
+            admin_sessions=admin_sessions or AdminSessions(),
+            tries=admin_tries or FailedTries(),
+            client_address=client_address,
+            clock=clock,
+        )
+    )
 
     return app

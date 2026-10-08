@@ -12,12 +12,14 @@ from urllib.parse import urlsplit
 
 import uvicorn
 
+from dmbot import entitlements
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
 from dmbot.schema import WEB_ROLE
 from dmbot.sharding import ShardSettings
 from dmbot.web import feedback, sessions
+from dmbot.web.admin import HttpGoogle
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
 from dmbot.web.feedback import GitHubDiscussions, Turnstile
@@ -70,11 +72,17 @@ async def serve(settings: WebSettings) -> None:
         if settings.feedback_token
         else None
     )
+    google = (
+        HttpGoogle(settings.google_client_id, settings.google_client_secret)
+        if settings.google_client_id
+        else None
+    )
     human_check = (
         Turnstile(settings.turnstile_secret, urlsplit(settings.site_url).hostname or "")
         if settings.turnstile_secret
         else None
     )
+    entitlements.configure_free_users(settings.free_users)  # #771
     app = create_app(
         settings,
         db,
@@ -82,6 +90,7 @@ async def serve(settings: WebSettings) -> None:
         payments=payments,
         discussions=discussions,
         human_check=human_check,
+        google=google,
     )
     sweeper = asyncio.create_task(_sweep(db))
     config = uvicorn.Config(
@@ -103,6 +112,8 @@ async def serve(settings: WebSettings) -> None:
             await discussions.close()
         if human_check is not None:
             await human_check.close()
+        if google is not None:
+            await google.close()
         await db.close()
 
 

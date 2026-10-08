@@ -63,9 +63,22 @@ export interface Offer {
   expiresAt: string;
 }
 
+/** Free access (#771, #806): never says why someone has it. */
+export interface Access {
+  kind: "free" | "paid" | "none";
+  /** ISO date free access ends, or missing when it doesn't. */
+  endsOn?: string;
+  /** Free access while a paid plan still works and is still charged. */
+  stillPaying?: boolean;
+  /** That plan's name, as the API words it. */
+  paidPlan?: string;
+}
+
 export interface Me {
   user: Person;
   plan: MyPlan | null;
+  /** Missing from an API older than #804: the site can go live first. */
+  access?: Access;
   campaigns: Campaign[];
   servers: Server[];
   // The API also sends `installs` (servers this person added DMbot to); the servers list
@@ -89,6 +102,7 @@ export type ApiErrorKind =
   | "offer-gone" // the hand-over offer ended, expired or was answered already
   | "confirm-again" // the delete confirmation ran out (10 minutes) or belongs elsewhere
   | "no-paid-plan" // the billing page needs a paid plan
+  | "free-access" // free access: there's nothing to pay for
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -145,6 +159,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   confirm_again: "confirm-again",
   no_paid_plan: "no-paid-plan",
   offer_gone: "offer-gone",
+  has_free_access: "free-access",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */

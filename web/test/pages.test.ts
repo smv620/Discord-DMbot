@@ -32,6 +32,7 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/legal/privacy", "legal/privacy.astro", "Privacy · DMbot", false],
   ["/legal/refunds", "legal/refunds.astro", "Refunds · DMbot", false],
   ["/hello", "hello.astro", "Say hello · DMbot", false],
+  ["/admin", "admin.astro", "Admin · DMbot", true],
   ["/404", "404.astro", "Page not found · DMbot", true],
 ];
 
@@ -76,7 +77,7 @@ describe.each(pages)("page %s", (path, file, title, noindex) => {
     const html = await container.renderToString(page(file), {
       request: new Request(`https://dmbot.example${path}`),
     });
-    expect(html.includes('<meta name="robots" content="noindex"')).toBe(noindex);
+    expect(html.includes('<meta name="robots" content="noindex')).toBe(noindex);
   });
 });
 
@@ -185,4 +186,11 @@ describe("no trademarks", () => {
       expect(text, `found ${pattern}`).not.toMatch(pattern);
     }
   });
+});
+
+it("keeps the admin page out of search engines and their link-following", async () => {
+  const html = await container.renderToString(page("admin.astro"), {
+    request: new Request("https://dmbot.example/admin"),
+  });
+  expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
 });

@@ -83,6 +83,8 @@ export const text = {
       "You need a DMbot plan with room for one more campaign. Tap See my plan, then tap Accept again.",
     "offer-gone": "That offer has ended. We've updated this page.",
     "confirm-again": "That took too long. Tap Start deleting again.",
+    // Only an out-of-date page gets this, so the page updates itself (like no-paid-plan).
+    "free-access": "You have free access, so there's nothing to pay. We've updated this page.",
     "no-paid-plan":
       "Your plan has changed since this page opened, so we've updated it. If nothing looks different, write to us for help.",
   } as Record<string, string>,
@@ -119,6 +121,22 @@ export const text = {
       ? `Your last payment didn't go through. Fix it by ${shortDate(date)} to keep your plan.`
       : "Your last payment didn't go through. Fix it soon to keep your plan.",
   fixPayment: "Fix my payment",
+  // Free access (#806): never why someone has it.
+  freeAccess: "Free access",
+  freeAccessUntil: (iso: string): string => `Free access until ${shortDate(iso)}`,
+  // Not "you're still paying": after Stop paying the plan runs out its period, so that
+  // would become false. The date is the plan's own end (its next renewal if left alone).
+  stillPaying: (plan: string | null, endsOn: string | null): string => {
+    const name = plan ? `Your ${plan} plan` : "Your plan";
+    return endsOn
+      ? `${name} runs until ${shortDate(endsOn)}. Tap Stop paying if you don't need it.`
+      : `${name} is still being paid for. Tap Stop paying if you don't need it.`;
+  },
+  stopPaying: "Stop paying",
+  freeNext: "In Discord, type /dmbot start to play.",
+  // Only without a paid plan: with one, the plan's own date is above, and what happens
+  // after the grant ends depends on whether they stop paying.
+  freeEnds: (iso: string): string => `After ${shortDate(iso)}, pick a plan to keep playing.`,
   lapsed: `Your plan has stopped. Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns
@@ -154,16 +172,20 @@ export const text = {
   // offer is made, so the owner never learns whether someone pays (#437, PLAN).
   acceptNoSlot:
     "To take this campaign you need a DMbot plan with room for one more campaign. Tap See my plan to pick one, then tap Accept again. The offer stays open until the date above.",
+  // Free access has no plans to pick (#806), and never says why someone has it.
+  acceptNoSlotFree:
+    "You have no room for another campaign. Hand one of yours over below, or delete one, then tap Accept again.",
   seeMyPlan: "See my plan",
-  accepted: (campaign: string): string =>
-    `${campaign} is yours now. You're a DM of it in Discord too.`,
-  // Nothing tells the other person yet when the answer comes from the site (a bot-side
-  // issue), so this promises only what is true.
-  declined: "Done. The offer is closed.",
+  // The bot tells the other person in Discord whenever an offer is answered or taken back
+  // on the site (#794, #797), so the words promise it plainly (#798).
+  accepted: (campaign: string, person: string): string =>
+    `${campaign} is yours now. You're a DM of it in Discord too. We'll tell ${person} in Discord.`,
+  declined: (person: string): string => `Done. The offer is closed. We'll tell ${person} in Discord.`,
   offerOutgoing: (person: string, iso: string): string =>
     `Waiting for ${person} to say yes (until ${shortDateTime(iso)}). Nothing changes until they do.`,
   withdraw: "Take back offer",
-  withdrawn: "Done. You took the offer back.",
+  withdrawn: (person: string): string =>
+    `Done. You took the offer back. We'll tell ${person} in Discord.`,
 
   // Servers
   serversHeading: "Add DMbot to a server",
@@ -184,6 +206,12 @@ export const text = {
     "First, hand over or save your campaigns. To save one, type /dmbot backup in Discord.",
     "Backups people already have stay, and so do lines you said in other people's games.",
   ],
+  /** The first warning line for someone with free access (#806): no plan, and it goes too. */
+  deleteWarningFree:
+    "This deletes your account and your free access. Your players lose any campaign you run.",
+  /** The same, while a paid plan is still being paid for: the payments stop too. */
+  deleteWarningFreePaying:
+    "This deletes your account and your free access, and stops your payments. Your players lose any campaign you run.",
   /** Shown with the warning when a paid plan would otherwise renew (#435: cancelled at the
    * end of the paid period). */
   deletePlanStops:

@@ -9,7 +9,42 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- dev2, PR #804 (#771 part 1): free access. Migration 0030 adds access_grants and
+  access_log (new, empty tables). Deploy: rebuild core and web-api. **Leave
+  DMBOT_FREE_USERS empty until #806 (the account page for covered people) is live.** A
+  bot-only check is fine meanwhile: set the owner's id, restart core only (not web-api),
+  and accepting a hand-over without a plan works. Check: 0030 applied; core logs "Free
+  access list: 0 ids" (or 1 with the bot-only check), never the id itself.
+- WebDev, PR #825 (#806): the account page for people with free access. Website only
+  (Cloudflare Pages deploys it): no migration, no API change. It shows "Free access" (or
+  "...until <date>") instead of plans and prices, a "Stop paying" button while a paid
+  plan is still paid for, and the privacy page now lists the free access record. **It must
+  be live before DMBOT_FREE_USERS is set on the server or anyone is given free access
+  (#773).** Check: with no free access nothing on /account looks different.
+- WebDev, PR #786 (#772): the admin page's sign-in (Google or admin email + password).
+  No migration. Deploy: rebuild web-api (new setting names; nothing changes until
+  ADMIN_EMAILS is set, and the admin routes answer 404 while it is empty). Turn it on
+  only with the owner, following docs/DEPLOY.md "Turn on the admin page": the owner
+  types scripts/set-admin-password and (for Google) scripts/set-key GOOGLE_CLIENT_SECRET
+  himself; dev1 gives the owner the redirect address (WEB_API_URL +
+  /admin/auth/google/callback), then sets ADMIN_EMAILS (the owner's email),
+  GOOGLE_CLIENT_ID if given, and WEB_CLIENT_IP_HEADER=CF-Connecting-IP (required with
+  ADMIN_EMAILS), and runs `docker compose up -d web-api`. The API refuses to start with
+  ADMIN_EMAILS set and no password hash or Google settings, or a Client secret without
+  an ID: `docker compose logs --tail 20 web-api` names the setting. Check: the logs show
+  no error; /admin on the site shows the sign-in; record the result with no email.
+- dev2, PR #817 (#797): website answers told in Discord, follow-ups (an answer while the
+  bot starts isn't lost; one made while the offer's message goes out changes it; a
+  website accept notes #dm-screen). No migration. Deploy: rebuild core. Check: no new
+  errors; "Lost notifications on dmbot_handover_decided" only if the database drops.
+- dev2, PR #781 (#723 part A, second half): players link their D&D Beyond sheet with
+  📜 My character sheet (next to 🛑 on the consent confirmation and each reminder), or
+  type their character in; the DM sees it on the character's card and can Refresh
+  sheets. Migration 0029 adds who linked each sheet (quick; 0028's table has no rows
+  yet). Deploy: rebuild core. Check: `docker compose logs core` shows 0029 applied; a
+  player with a public sheet links it (docs/test-scripts/sheets.md) and the next
+  /dmbot start logs "Character sheets: 1 linked, N names in the hints; from D&D Beyond:
+  ...".
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram

@@ -24,7 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import install
+from dmbot import entitlements, install
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -448,6 +448,7 @@ class DMBot(commands.AutoShardedBot):
             guild_ids=lambda: [g.id for g in self.guilds],
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
+            post=self.post,  # the #dm-screen note on an accept made on the website
         )
 
     # ---- lifecycle ---------------------------------------------------------
@@ -3109,6 +3110,7 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
 
 
 async def run(settings: Settings) -> None:
+    entitlements.configure_free_users(settings.free_users)  # #771
     db = await Database.open(settings.database_url)
     try:
         transcriber = build_transcriber(settings.transcription)
