@@ -81,7 +81,8 @@ class HttpDiscord:
 
     def __init__(self, client_id: str, client_secret: str, *, api: str = API) -> None:
         self._client_id = client_id
-        self._client_secret = client_secret
+        # The app's own sign-in for Discord's token calls (client id and secret).
+        self._app_auth = {"Authorization": aiohttp.encode_basic_auth(client_id, client_secret)}
         self._api = api.rstrip("/")
         self._http: aiohttp.ClientSession | None = None
 
@@ -123,7 +124,7 @@ class HttpDiscord:
             "POST",
             f"{self._api}/oauth2/token",
             data={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri},
-            auth=aiohttp.BasicAuth(self._client_id, self._client_secret),
+            headers=self._app_auth,
         )
         if not isinstance(data, dict) or not isinstance(data.get("access_token"), str):
             raise DiscordError("Discord's token answer had no access token")
@@ -153,7 +154,7 @@ class HttpDiscord:
                 "code": code,
                 "redirect_uri": redirect_uri,
             },
-            auth=aiohttp.BasicAuth(self._client_id, self._client_secret),
+            headers=self._app_auth,
         )
         if not isinstance(data, dict) or not isinstance(data.get("access_token"), str):
             raise DiscordError("Discord's token answer had no access token")
@@ -179,5 +180,5 @@ class HttpDiscord:
             "POST",
             f"{self._api}/oauth2/token/revoke",
             data={"token": token, "token_type_hint": "access_token"},
-            auth=aiohttp.BasicAuth(self._client_id, self._client_secret),
+            headers=self._app_auth,
         )

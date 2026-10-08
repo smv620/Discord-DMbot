@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import unittest
+from base64 import b64encode
 from typing import Any
 
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from dmbot.web.discord import DiscordError, HttpDiscord
+
+# The app sign-in Discord expects on its token calls: client id "1", secret "secret".
+APP_AUTH = "Basic " + b64encode(b"1:secret").decode()
 
 
 class PretendDiscord:
@@ -27,11 +31,13 @@ class PretendDiscord:
 
     async def token(self, request: web.Request) -> web.Response:
         form = await request.post()
-        if form.get("code") != "good" or request.headers.get("Authorization") is None:
+        if form.get("code") != "good" or request.headers.get("Authorization") != APP_AUTH:
             return web.json_response({"error": "invalid_grant"}, status=400)
         return web.json_response({"access_token": "tok", "scope": self.scope})
 
     async def revoke(self, request: web.Request) -> web.Response:
+        if request.headers.get("Authorization") != APP_AUTH:
+            return web.json_response({"error": "invalid_client"}, status=401)
         self.revoked.append(str((await request.post()).get("token")))
         return web.Response(status=200)
 
