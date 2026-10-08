@@ -1073,8 +1073,9 @@ class SaveAndResume(SessionTests):
         asked = table.questions.open
         assert asked is not None
         _, name = asked.options[0]
-        await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        text, _, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
         self.assertIn(f"then {name} speaks", posted.edit.await_args.kwargs["content"])
+        self.assertIn("in that line", text)  # nothing saved, but the channel shows it
 
     async def test_undo_of_an_answer_puts_the_saved_line_back(self) -> None:
         table, _, _, _ = await self.asked_about_marin(saving=True)
@@ -1149,6 +1150,33 @@ class SaveAndResume(SessionTests):
         self.assertTrue(done)
         self.assertEqual(undo, (table.campaign_id, 41))
         self.assertIn("That line stays as heard.", text)
+        self.assertEqual(table.fix_notes.answers, [])  # not brought in by a later rewrite
+
+    async def test_a_failure_editing_the_channel_after_the_save_still_says_fixed(self) -> None:
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        posted = MagicMock(edit=AsyncMock(side_effect=OSError("connection reset")))
+
+        async def post(channel_id: int, text: str) -> Any:
+            return "posted", posted
+
+        self.bot._post_transcript = post  # type: ignore[method-assign]
+        await self.bot.flush_transcript(table)
+        asked = table.questions.open
+        assert asked is not None
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            text, _, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertIn("in that line", text)  # the saved line is fixed
+        self.assertIsNotNone(undo)
+
+    async def test_no_line_to_fix_says_nothing_about_it(self) -> None:
+        table, _, _, _ = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        table.questions.open = replace(asked, line="")  # e.g. asked before #503
+        text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        self.assertNotIn("That line", text)
+        self.assertNotIn("in that line", text)
 
     async def test_a_typed_name_dmbot_doesnt_know_becomes_a_new_name(self) -> None:
         table, _, _, memory = await self.asked_about_marin(saving=True)

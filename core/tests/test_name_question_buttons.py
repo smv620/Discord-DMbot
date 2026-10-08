@@ -140,7 +140,7 @@ class UndoTest(unittest.IsolatedAsyncioTestCase):
         )
         await NameAnswerUndoButton(CAMPAIGN, 5).callback(it)
         content = it.edit_original_response.await_args.kwargs["content"]
-        self.assertIn("gone from 📝 Check new names", content)
+        self.assertIn("taken off 📝 Check new names", content)
 
     def bot(self, *, undo: Any = None) -> Any:
         campaign = MagicMock(guild_id=GUILD, id=CAMPAIGN, dm_user_ids=frozenset({DM_ID}))
@@ -174,6 +174,7 @@ class UndoTest(unittest.IsolatedAsyncioTestCase):
         bot.answer_undone.assert_awaited_once_with(GUILD, CAMPAIGN, 5)  # the line goes back
         content = it.edit_original_response.await_args.kwargs["content"]
         self.assertIn('"Marin" stays as heard again', content)
+        self.assertNotIn("Check new names", content)  # no new name was added
 
     async def test_changed_since(self) -> None:
         from dmbot.memory.models import MemoryRuleError

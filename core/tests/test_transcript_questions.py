@@ -162,7 +162,7 @@ class WordingTest(unittest.TestCase):
         self.assertTrue(kept.endswith("Earlier lines stay as heard. That line stays as heard."))
         self.assertNotIn("That line", fixed_text("Marin", "Maren"))
         gone = questions.undone_text("Marin", new_name=True)
-        self.assertIn("The new name is gone from 📝 Check new names too.", gone)
+        self.assertIn("again, and the new name is taken off 📝 Check new names. DMbot may", gone)
         self.assertNotIn("Check new names", questions.undone_text("Marin"))
         late = questions.too_late_text("Maerin")
         self.assertIn("**Maerin**", late)

@@ -290,12 +290,10 @@ def not_answered_text(heard: str) -> str:
 def undone_text(heard: str | None, *, new_name: bool = False) -> str:
     """After Undo of an answer. `new_name`: the answer had added a name DMbot didn't know,
     and the Undo took it out of Check new names too."""
-    text = (
-        UNDONE
-        if not heard
-        else (
-            f'↩️ Undone. "{_short(heard)}" stays as heard again. DMbot may ask about it next '
-            "session."
-        )
+    if not heard:
+        return UNDONE
+    also = ", and the new name is taken off 📝 Check new names" if new_name else ""
+    return (
+        f'↩️ Undone. "{_short(heard)}" stays as heard again{also}. DMbot may ask about it next '
+        "session."
     )
-    return text + (" The new name is gone from 📝 Check new names too." if new_name else "")

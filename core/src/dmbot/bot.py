@@ -1731,21 +1731,26 @@ class DMBot(commands.AutoShardedBot):
     async def _rewrite_line(self, table: Table, speaker: int, started_ms: int, text: str) -> bool:
         """Change a line's words (#296, #503): saved, waiting to be saved, and in the
         transcript channel if it was posted in the last ~30 s. Only while the speaker is
-        still recorded, checked again after every wait. True if the saved or waiting
-        line was found."""
-        guild_id, found = table.guild_id, False
+        still recorded, checked again after every wait. True if the line changed: saved
+        or waiting, or (with no saved copy that failed to change) the channel message. A
+        database error is logged, and the channel is still edited."""
+        guild_id, found, failed, edited = table.guild_id, False, False, False
         # The saved line: hold the save lock, so a batch being saved can't miss this.
         async with table.save_lock:
             if self.consent.has_consent(guild_id, speaker):
                 found = table.unsaved.relabel(speaker, started_ms, text)
                 session_id = table.transcript_session_id
                 if not found and self.transcripts is not None and session_id is not None:
-                    found = bool(
-                        await self.transcripts.relabel_line(
-                            guild_id, session_id, speaker, started_ms, text
+                    try:
+                        found = bool(
+                            await self.transcripts.relabel_line(
+                                guild_id, session_id, speaker, started_ms, text
+                            )
                         )
-                    )
-                    if not found:
+                    except Exception:
+                        failed = True
+                        log.exception("Couldn't change a saved line's words")
+                    if not found and not failed:
                         log.warning("A name change found no saved line to change")
         # The channel: hold its lock, so a message being posted can't miss this either.
         async with table.transcript_lock:
@@ -1753,13 +1758,19 @@ class DMBot(commands.AutoShardedBot):
                 edit = table.transcript.relabel(speaker, started_ms, text, time.monotonic())
                 if edit is not None:
                     message, content = edit
-                    # Bounded: new lines wait for this lock (Discord may be slow).
-                    with contextlib.suppress(discord.HTTPException, TimeoutError):
+                    # Bounded: new lines wait for this lock (Discord may be slow). The saved
+                    # line is already right, so a failure here doesn't change the answer.
+                    try:
                         await asyncio.wait_for(
                             message.edit(content=content, allowed_mentions=NO_PINGS),
                             EDIT_TIMEOUT_S,
                         )
-        return found
+                        edited = True
+                    except (discord.HTTPException, TimeoutError):
+                        pass
+                    except Exception:
+                        log.exception("Couldn't edit a transcript message with a name change")
+        return found or (edited and not failed)
 
     async def allow_fix_again(
         self, guild_id: int, campaign_id: str, batch: int, user_id: int
@@ -1976,17 +1987,22 @@ class DMBot(commands.AutoShardedBot):
         ):
             return False  # the rule is saved; this line stays as heard
         batch = undo[1] if undo is not None else None  # None: nothing to undo
-        notes.answered(
-            fix_notes.Answer(
-                batch, speaker, started, asked.line, fixes, asked.start, asked.end, written
-            )
+        answer = fix_notes.Answer(
+            batch, speaker, started, asked.line, fixes, asked.start, asked.end, written
         )
+        notes.answered(answer)
         text = notes.words_now(speaker, started, asked.line, asked.fixes)
         try:
-            return await self._rewrite_line(table, speaker, started, text)
+            changed = await self._rewrite_line(table, speaker, started, text)
         except Exception:
             log.exception("Couldn't write an answer into the line it was about")
-            return False
+            changed = False
+        if not changed:
+            # The DM is told the line stays as heard: a later rewrite of it (a fix's
+            # Undo) mustn't bring the answer in.
+            with contextlib.suppress(ValueError):
+                notes.answers.remove(answer)
+        return changed
 
     async def answer_undone(self, guild_id: int, campaign_id: str, batch: int) -> None:
         """The DM undid an answer to "Did they mean…?" (the saved change is already taken
