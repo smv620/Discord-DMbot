@@ -8,6 +8,9 @@ words back in that line (stored, waiting, or posted in the last ~30 s) and saves
 "keep as heard" rule, so the same words aren't fixed again; "Allow again" takes the rule
 back.
 
+The same notes keep the answers to "Did they mean…?" that fixed their line (#503), so
+a line's words now are worked out in one place, whichever was changed or undone first.
+
 Each fix keeps its number for the whole session, so a number never changes meaning while
 the DM aims at it. The notes live with the running session, in memory; a speaker who
 stops being recorded has their notes taken down; at the session's end the Undo buttons
@@ -18,12 +21,13 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from dmbot.memory.models import name_key
 from dmbot.transcript.cleaner import Fix
 
 SHOWN = 10  # lines in the message (the newest); older ones are no longer undoable here
+ANSWERS_KEPT = 20  # answers whose line can still be put back by their Undo
 NAME_MAX = 60
 MESSAGE_MAX = 2000  # Discord's limit for one message
 HEADER = (
@@ -62,6 +66,34 @@ class Note:
         return self.speaker, self.started_ms
 
 
+@dataclass(frozen=True, slots=True)
+class Answer:
+    """An answer to "Did they mean…?" that fixed the line it was about (#503)."""
+
+    batch: int | None  # the saved change its Undo takes back (None: nothing to undo)
+    speaker: int
+    started_ms: int
+    heard: str  # the whole line as heard
+    fixes: tuple[Fix, ...]  # the line's other fixes, as they were when answered
+    start: int  # where the words are, as heard
+    end: int
+    written: str
+
+    @property
+    def line(self) -> tuple[int, int]:
+        return self.speaker, self.started_ms
+
+
+def rewrite(heard: str, edits: list[tuple[int, int, str]]) -> str:
+    """The line with these (start, end, written) changes, which never overlap."""
+    out, at = [], 0
+    for start, end, written in sorted(edits):
+        out += [heard[at:start], written]
+        at = end
+    out.append(heard[at:])
+    return "".join(out)
+
+
 def _short(text: str) -> str:
     text = " ".join(text.split())
     return text if len(text) <= NAME_MAX else text[: NAME_MAX - 1].rstrip() + "…"
@@ -81,6 +113,7 @@ class FixNotes:
 
     notes: list[Note] = field(default_factory=list)
     count: int = 0  # numbers handed out this session
+    answers: list[Answer] = field(default_factory=list)  # oldest first
 
     def add(self, speaker: int, started_ms: int, heard: str, fixes: tuple[Fix, ...]) -> list[Note]:
         """A note for each unsure fix in this line (none for sure ones)."""
@@ -124,24 +157,63 @@ class FixNotes:
         ]
         for n in same:
             n.undone = True
+        # The answers on that line no longer carry it, even once its notes are let go.
+        gone = {n.fix for n in same}
+        self.answers = [
+            replace(a, fixes=tuple(f for f in a.fixes if f not in gone))
+            if a.line == note.line
+            else a
+            for a in self.answers
+        ]
         return same
 
     def line_text(self, note: Note) -> str:
-        """That line's words now: its fixes applied, except the ones undone."""
-        undone = {n.index for n in self.notes if n.undone and n.line == note.line}
-        out, at = [], 0
-        for i, fix in enumerate(note.fixes):
-            if i in undone:
-                continue
-            out += [note.heard[at : fix.start], fix.written]
-            at = fix.end
-        out.append(note.heard[at:])
-        return "".join(out)
+        """That line's words now: its fixes applied, except the ones undone, and the
+        answers that fixed it."""
+        return self.words_now(note.speaker, note.started_ms, note.heard, note.fixes)
+
+    def still_fixed(self, speaker: int, started_ms: int, fixes: tuple[Fix, ...]) -> tuple[Fix, ...]:
+        """A line's fixes, without the ones undone."""
+        undone = {n.fix for n in self.notes if n.undone and n.line == (speaker, started_ms)}
+        return tuple(f for f in fixes if f not in undone)
+
+    def words_now(
+        self,
+        speaker: int,
+        started_ms: int,
+        heard: str,
+        fixes: tuple[Fix, ...],
+        more: tuple[tuple[int, int, str], ...] = (),
+    ) -> str:
+        """A line's words now: `fixes` without the ones undone, the answers that fixed
+        it, and `more` (start, end, written) changes."""
+        line = (speaker, started_ms)
+        edits = [(f.start, f.end, f.written) for f in self.still_fixed(speaker, started_ms, fixes)]
+        edits += [(a.start, a.end, a.written) for a in self.answers if a.line == line]
+        return rewrite(heard, [*edits, *more])
+
+    def answered(self, answer: Answer) -> None:
+        """Keep the newest answers, and any on a line that still has notes (its text
+        needs them)."""
+        answers = [*self.answers, answer]
+        lines = {n.line for n in self.notes}
+        newest = answers[-ANSWERS_KEPT:]
+        self.answers = [a for a in answers[:-ANSWERS_KEPT] if a.line in lines] + newest
+
+    def take_back(self, batch: int) -> Answer | None:
+        """Its Undo was pressed: the answer no longer fixes its line (returned, so the
+        line can be put back), or None if it's too old or another session's."""
+        found = next((a for a in self.answers if a.batch is not None and a.batch == batch), None)
+        if found is not None:
+            self.answers.remove(found)
+        return found
 
     def drop_speaker(self, speaker: int) -> bool:
-        """They stopped being recorded: their notes go. True if any did."""
+        """They stopped being recorded: their notes and answers go. True if any notes
+        did."""
         before = len(self.notes)
         self.notes = [n for n in self.notes if n.speaker != speaker]
+        self.answers = [a for a in self.answers if a.speaker != speaker]
         return len(self.notes) != before
 
 

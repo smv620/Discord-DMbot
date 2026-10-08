@@ -41,7 +41,7 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field, replace
 
 from dmbot.memory.lookup import CampaignLookup, NameEntry
-from dmbot.memory.models import CONFIRMED, name_key
+from dmbot.memory.models import CONFIRMED, PROPOSED, name_key
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.memory.scene import PLAYER_CHARACTER, WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
@@ -170,13 +170,18 @@ def likeness(a: str, b: str) -> float:
     ).ratio()
 
 
-def own_name(lookup: CampaignLookup, entity_id: str) -> str | None:
-    """An entry's own name as written, if it's a confirmed name that isn't secret."""
+def own_name(lookup: CampaignLookup, entity_id: str, *, typed: bool = False) -> str | None:
+    """An entry's own name as written, if it's a confirmed name that isn't secret.
+    `typed`: a name DMbot only suggested counts too, for a DM's rule pointing at it (a
+    name they typed for a misheard word, #503, not checked yet)."""
     entity = lookup.entities.get(entity_id)
-    if entity is None or entity.status != CONFIRMED:
+    if entity is None:
+        return None
+    waiting = typed and entity.status == PROPOSED
+    if entity.status != CONFIRMED and not waiting:
         return None
     for entry in lookup.by_key.get(name_key(entity.name), ()):
-        if entry.entity_id == entity_id and entry.confirmed and not entry.secret:
+        if entry.entity_id == entity_id and (entry.confirmed or waiting) and not entry.secret:
             return entry.text
     return None
 
@@ -246,6 +251,23 @@ def clean(
     if near.ran_out:
         log.debug("Secret-name check ran out for a line: %d fix(es) kept", len(fixes))
     return Cleaned(text, tuple(fixes), questions)
+
+
+def safe_answer(
+    lookup: CampaignLookup, heard: str, fixes: tuple[Fix, ...], start: int, end: int, written: str
+) -> bool:
+    """Whether a name the DM picked or typed may be written for heard[start:end] in a
+    line that already has `fixes` (#503): the same check as every fix, on the line as
+    written, so no secret name stands there, or next to it ("Silas" + "Vane")."""
+    answer = Fix(start, end, heard[start:end], written, "", DM_FIX)
+    line = sorted([*(f for f in fixes if f.end <= start or end <= f.start), answer],
+                  key=lambda f: f.start)  # fmt: skip
+    words = list(WORD.finditer(heard))
+    near = _SecretChecks()
+    if _near_secret(lookup, words, start, end, near):
+        return False
+    _, kept = _without_secrets(lookup, heard, line, near)
+    return answer in kept and not near.ran_out
 
 
 def _around(heard: str, start: int, end: int, reach: int = 30) -> str:
@@ -318,7 +340,7 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
     a place that could be two different entries is left alone, and so is the name of
     someone at the table (a DM's rule "Sara" → Cerric never renames a player Sara)."""
     by_span: dict[tuple[int, int], list[tuple[str, str]]] = {}
-    for found in find_mentions(lookup, heard):
+    for found in find_mentions(lookup, heard, typed_names=True):
         by_span.setdefault(found.span, []).append((found.entity_id, found.method))
     taken: list[tuple[int, int]] = []
     fixes = []
@@ -340,10 +362,11 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
             written = _respelled(lookup, said)
             how = SPELLING
         else:
-            written = own_name(lookup, entity_id)
+            # A DM's rule: it may point at a name they typed, not checked yet (#503).
+            written = own_name(lookup, entity_id, typed=True)
             how = DM_FIX
-        if written is not None and said != _stem(said) and written == _stem(written):
-            written += said[len(_stem(said)) :]  # keep the "'s": "Bane's dog" → "Vane's dog"
+        if written is not None:
+            written = with_ending(said, written)
         if written is not None and written != said:
             fixes.append(Fix(span[0], span[1], said, written, entity_id, how))
     return fixes
@@ -436,6 +459,13 @@ def _by_sound(
             else:
                 i += 1
     return fixes, questions
+
+
+def with_ending(said: str, written: str) -> str:
+    """A name written for words said, keeping their "'s": "Bane's dog" → "Vane's dog"."""
+    if said != _stem(said) and written == _stem(written):
+        return written + said[len(_stem(said)) :]
+    return written
 
 
 def _stem(word: str) -> str:
