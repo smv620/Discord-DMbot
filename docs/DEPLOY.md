@@ -188,24 +188,36 @@ The admin page (`/admin` on the website, never linked) is for giving free access
 The owner sets the password and the Google client; dev1 changes `.env` and restarts.
 Your email and the Google Client ID never go in the repository, an issue or a PR.
 
+**Before you start, dev1:** if the owner wants Google sign-in, tell them the redirect
+address: your `WEB_API_URL` value followed by `/admin/auth/google/callback`.
+
 **You (the owner), on the server:**
 1. Log in with ssh, then `cd Discord-DMbot`.
 2. Type `scripts/set-admin-password`. Pick a password of 16 or more characters (a long
    sentence works). You won't see it as you type. Type it only there, never into a chat.
-3. Optional, for Google sign-in: in Google Cloud, make an OAuth client (Web application)
-   whose redirect address is the one dev1 gives you, ending in
-   `/admin/auth/google/callback`. Then type `scripts/set-key GOOGLE_CLIENT_SECRET`, paste
-   the Client secret, and answer **No** when it asks to restart.
-4. Tell dev1 "admin password set" (and the Client ID, if you made one) in dev1's own
-   terminal, never in an issue.
+   If it shows an error you can't fix, tell dev1 what it says (never the password).
+3. Optional, for Google sign-in, in the Google Cloud console:
+   - APIs & Services → OAuth consent screen: choose External, keep it in Testing, and
+     add the email you'll sign in with as a test user.
+   - APIs & Services → Credentials → Create credentials → OAuth client ID → Web
+     application. Its redirect address is the one dev1 gave you. Keep the Client ID and
+     Client secret it shows.
+   - On the server, type `scripts/set-key GOOGLE_CLIENT_SECRET` and paste the Client
+     secret. If it asks "Restart DMbot now?", press Enter (that means no), and skip its
+     line about docker compose: dev1 restarts the website part.
+4. Tell dev1, in the Claude Code window where dev1 runs (not GitHub): "admin password
+   set", the email you'll sign in with (for Google, that Google account's email), and
+   the Client ID if you made one. Never the password.
 
 **dev1:**
-1. Set `ADMIN_EMAILS` and `GOOGLE_CLIENT_ID` in `.env`. Set `WEB_CLIENT_IP_HEADER` to match
-   how the API is served (`CF-Connecting-IP` behind Cloudflare).
+1. Set `ADMIN_EMAILS` to the owner's email. If the owner gave a Client ID, set
+   `GOOGLE_CLIENT_ID`; if not, leave both Google settings empty. Set
+   `WEB_CLIENT_IP_HEADER` to match how the API is served (`CF-Connecting-IP` behind
+   Cloudflare).
 2. Run `docker compose up -d web-api`.
-3. Check `docker compose logs --tail 20 web-api`, and record it in the testing log.
-4. Before step 3 of the owner's part, tell the owner the exact redirect address
-   (`WEB_API_URL` + `/admin/auth/google/callback`).
+3. Check `docker compose logs --tail 20 web-api`. An error names the setting to fix: fix
+   it and repeat step 2. When it's clean, tell the owner to open the website's `/admin`
+   and sign in, and record the result in the testing log (no email).
 
 ### Logs
 

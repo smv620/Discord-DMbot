@@ -98,8 +98,9 @@ class FailedTries:
 
     Accepted on purpose (#772): anyone who knows the admin email can keep the password
     sign-in locked with 5 tries every 15 minutes. Google sign-in only checks the
-    connection's key, and its start keeps nothing on the server (UsedStates), so a
-    stranger can't block it too; don't make it check the email's key."""
+    connection's key, its start keeps nothing on the server, and only successful
+    sign-ins are remembered (UsedStates), so a stranger can't block it too; don't make it
+    check the email's key."""
 
     clock: Callable[[], float] = time.monotonic
     # A flood of made-up emails or addresses can't grow either map without end.
@@ -201,32 +202,34 @@ class AdminSessions:
 
 @dataclass
 class UsedStates:
-    """Google sign-ins already spent, by the hash of their state, so a state and nonce
+    """Google sign-ins that succeeded, by the hash of their state, so a state and nonce
     work once: a replayed callback is refused (#772). The start route keeps nothing here
-    (the sign-in's checks travel in its signed cookie), so a flood of starts can't push
-    anything out. Only a callback whose cookie matches and whose connection isn't locked
-    is added, and every one that fails counts as a wrong try, so one connection adds at
-    most five in 15 minutes.
+    (the sign-in's checks travel in its signed cookie), and only a sign-in Google vouched
+    for as an admin is added, so a stranger can neither fill this nor push anything out.
 
     Wall time, like the signed cookie whose life it mirrors: an entry need only outlast
-    the cookie it guards."""
+    the cookie it guards. Forgotten on a restart, which is accepted: Google's sign-in code
+    is single-use and bound to its PKCE verifier, so a replay still fails there."""
 
     clock: Callable[[], float] = time.time
-    most: int = 1000
+    most: int = 1000  # admin sign-ins in ten minutes: far more than one owner makes
     _until: dict[str, float] = field(default_factory=dict)
 
-    def use(self, state: str) -> bool:
-        """True the first time this state is spent; False if it was, or if the table is
-        full of live entries (refused, never evicting one: that would reopen a replay)."""
+    def spent(self, state: str) -> bool:
+        until = self._until.get(_hash(state))
+        return until is not None and until > self.clock()
+
+    def spend(self, state: str) -> bool:
+        """True the first time; False if it was spent already, or if the table is full of
+        live entries (refused, never evicting one: that would reopen a replay)."""
         now = self.clock()
-        key = hashlib.sha256(state.encode("utf-8", "surrogateescape")).hexdigest()
-        if key in self._until and self._until[key] > now:
+        if self.spent(state):
             return False
         if len(self._until) >= self.most:
             self._until = {k: t for k, t in self._until.items() if t > now}
             if len(self._until) >= self.most:
                 return False
-        self._until[key] = now + SIGN_IN_SECONDS
+        self._until[_hash(state)] = now + SIGN_IN_SECONDS
         return True
 
 

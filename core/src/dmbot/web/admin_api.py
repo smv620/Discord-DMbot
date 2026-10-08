@@ -245,27 +245,25 @@ def router(
         address = client_address(request)
         addr_key = "addr:" + rate_key(address)
         parts = held.split(":") if held else []
-        # Spent only once the cookie matches and the connection isn't locked, so a
-        # stranger can't spend (or fill the table with) anyone else's sign-in. From then
-        # on it never works twice, whatever happens next.
         if (
             len(parts) != 3
             or not code
             or tries.locked(addr_key)
             or not secrets.compare_digest(parts[0].encode(), state.encode())
-            or not used_states.use(parts[0])
+            or used_states.spent(parts[0])
         ):
             log.warning("Admin Google sign-in refused from %s: bad or expired check", address)
             return failed
         _state, nonce, verifier = parts
+        # Counted as a wrong try before asking Google, cleared below if it works: a burst
+        # of callbacks all passing the lock check before any failure counted would
+        # otherwise each cost a call to Google.
+        tries.fail(addr_key)
         try:
             claims = await google.claims(
                 code=code, verifier=verifier, redirect_uri=settings.admin_google_redirect_uri
             )
         except AdminError as exc:
-            # Counts as a wrong try: made-up codes would otherwise cost a call to Google
-            # each, without end.
-            tries.fail(addr_key)
             log.warning("Admin Google sign-in failed: %s", exc)
             return failed
         email = verified_email(
@@ -275,8 +273,9 @@ def router(
             now=clock(),
             allowed=settings.admin_emails,
         )
-        if email is None:
-            tries.fail(addr_key)
+        # Spent here, after Google vouched for an admin and with no await since: a
+        # replay (even one racing this) finds it spent.
+        if email is None or not used_states.spend(parts[0]):
             log.warning("Admin Google sign-in refused from %s: not an admin", address)
             return failed
         log.info("Admin signed in with Google from %s", address)

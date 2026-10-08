@@ -101,6 +101,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             admin_tries=self.tries,
             clock=lambda: self.now,
         )
+        self.app = app
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
         )
@@ -429,7 +430,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
         nonce = self.google.nonce
         async with httpx.AsyncClient(
-            transport=self.client._transport, base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
         ) as flood:
             # The start keeps nothing on the server, so any number does the same; the
             # table this once filled held 10,000.
@@ -443,6 +444,44 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         done = await self.client.get(
             "/admin/auth/google/callback", params={"state": state, "code": "g-code"}
         )
+        self.assertEqual(done.headers["location"], f"{SITE}/admin")
+
+    async def test_a_burst_of_callbacks_asks_google_at_most_five_times(self) -> None:
+        self.google.fail = True
+        starts = []
+        for _ in range(20):
+            start = await self.client.get("/admin/auth/google/start")
+            state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+            starts.append((dict(self.client.cookies), state))
+            self.client.cookies.clear()
+
+        async def callback(cookies: dict[str, str], state: str) -> httpx.Response:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=self.app),
+                base_url=API,
+                cookies=cookies,
+                follow_redirects=False,
+            ) as one:
+                return await one.get(
+                    "/admin/auth/google/callback", params={"state": state, "code": "made-up"}
+                )
+
+        answers = await asyncio.gather(*(callback(c, s) for c, s in starts))
+        self.assertTrue(all("signin=failed" in a.headers["location"] for a in answers))
+        self.assertLessEqual(len(self.google.asked), 5)
+        # The owner's own sign-in from elsewhere still works.
+        self.google.fail = False
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app),
+            base_url=API,
+            headers={"CF-Connecting-IP": "198.51.100.20"},
+            follow_redirects=False,
+        ) as owner:
+            start = await owner.get("/admin/auth/google/start")
+            state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+            done = await owner.get(
+                "/admin/auth/google/callback", params={"state": state, "code": "g-code"}
+            )
         self.assertEqual(done.headers["location"], f"{SITE}/admin")
 
     async def test_a_locked_connection_cant_start_google_either(self) -> None:
@@ -594,20 +633,22 @@ class Used(unittest.TestCase):
     def test_a_state_is_spent_once_and_forgotten_after_ten_minutes(self) -> None:
         now = [0.0]
         used = UsedStates(clock=lambda: now[0])
-        self.assertTrue(used.use("state-1"))
-        self.assertFalse(used.use("state-1"))
+        self.assertFalse(used.spent("state-1"))
+        self.assertTrue(used.spend("state-1"))
+        self.assertTrue(used.spent("state-1"))
+        self.assertFalse(used.spend("state-1"))
         now[0] += 600
-        self.assertTrue(used.use("state-1"))  # its cookie has long expired by now
+        self.assertTrue(used.spend("state-1"))  # its cookie has long expired by now
 
     def test_a_full_table_refuses_and_never_evicts_a_live_state(self) -> None:
         now = [0.0]
         used = UsedStates(clock=lambda: now[0], most=3)
         for n in range(3):
-            self.assertTrue(used.use(f"state-{n}"))
-        self.assertFalse(used.use("state-new"))  # refused, not evicting
-        self.assertFalse(used.use("state-0"))  # still spent
+            self.assertTrue(used.spend(f"state-{n}"))
+        self.assertFalse(used.spend("state-new"))  # refused, not evicting
+        self.assertTrue(used.spent("state-0"))
         now[0] += 600
-        self.assertTrue(used.use("state-new"))  # expired ones make room
+        self.assertTrue(used.spend("state-new"))  # expired ones make room
 
 
 class SessionCap(unittest.TestCase):
