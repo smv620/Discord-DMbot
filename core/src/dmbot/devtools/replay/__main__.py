@@ -118,6 +118,18 @@ def public_name(recording: Path) -> str:
     return recording.name
 
 
+def _milliseconds(text: str) -> int:
+    """A whole number of milliseconds, 0 or more. Raises ArgumentTypeError, which argparse
+    reports as a usage error before anything else runs."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("needs a whole number of milliseconds") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("can't be negative")
+    return value
+
+
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="replay", description="Replay a recording through core and score it."
@@ -151,13 +163,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--lead-in-ms",
-        type=int,
+        type=_milliseconds,
         default=0,
         help="also send this much audio before each piece (default 0)",
     )
     parser.add_argument(
         "--hangover-ms",
-        type=int,
+        type=_milliseconds,
         default=audio.HANGOVER_MS,
         help=f"quiet inside a piece kept up to this long (default {audio.HANGOVER_MS})",
     )
@@ -180,9 +192,6 @@ async def main_async(args: argparse.Namespace) -> int:
         settings = load_transcription_settings(env)
     except TranscriptionConfigError as exc:
         print(f"replay: {exc}", file=sys.stderr)
-        return 2
-    if args.lead_in_ms < 0 or args.hangover_ms < 0:
-        print("replay: --lead-in-ms and --hangover-ms can't be negative", file=sys.stderr)
         return 2
     if args.commit and _commit_id(args.commit) is None:
         print(

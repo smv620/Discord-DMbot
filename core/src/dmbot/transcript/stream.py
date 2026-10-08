@@ -21,6 +21,7 @@ import re
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 MESSAGE_MAX = 2000  # Discord's limit for one message
 LINE_MAX = 1800  # one line, after escaping, leaving room for the speaker's name
@@ -92,11 +93,17 @@ class _Waiting:
     speaker: str = field(default="", compare=False)  # the name shown, to write it again
 
 
+class Editable(Protocol):
+    """A posted message that can be edited (a Discord message)."""
+
+    async def edit(self, *, content: str, allowed_mentions: Any = ...) -> Any: ...
+
+
 @dataclass(slots=True)
 class _Posted:
     """A message already in the channel, kept a little while for late fixes."""
 
-    ref: object  # the Discord message
+    ref: Editable  # the Discord message
     at: float  # monotonic seconds
     items: list[_Waiting]
 
@@ -158,7 +165,7 @@ class TranscriptStream:
         self._built = self._waiting[:count]
         return _cut(text, MESSAGE_MAX), count
 
-    def posted(self, count: int, ref: object | None = None, *, now: float) -> None:
+    def posted(self, count: int, ref: Editable | None = None, *, now: float) -> None:
         """The message `next_message` built went out (`ref`, kept for EDIT_WINDOW_S so a
         late fix can edit it). Exactly those lines leave the queue: a line that started
         earlier may have been queued ahead of them while the message was being sent."""
@@ -172,7 +179,7 @@ class TranscriptStream:
 
     def relabel(
         self, speaker_id: int, started_ms: int, text: str, now: float
-    ) -> tuple[object, str] | None:
+    ) -> tuple[Editable, str] | None:
         """A line's words changed after it was queued (an Undo, #296). Still waiting: it
         goes out with the new words. Posted in the last EDIT_WINDOW_S: the message and
         its new text, to edit it. Older: None (too late for the channel)."""

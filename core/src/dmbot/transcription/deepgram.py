@@ -26,9 +26,12 @@ log = logging.getLogger(__name__)
 
 # Two tries (4 s + a pause of at most 2 s + 4 s) fit inside the pipeline's 10 s minimum
 # budget per clip (#155), so a hung Deepgram shows up as a failure ("isn't working"), not
-# as "couldn't keep up". Replies took 0.12-0.6 s in testing. A refused keyterm list (#209)
-# adds one or two more requests; refusals come back fast, and the budget still cuts off
-# the rare clip that is refused slowly.
+# as "couldn't keep up". A wait for a busy window before the first try adds 2 s or more
+# (more if other clips keep being told to wait): past the pipeline's budget, the clip is
+# cut and counted as skipped.
+# Replies took 0.12-0.6 s in testing. A refused keyterm list (#209) adds one or two more
+# requests; refusals come back fast, and the budget still cuts off the rare clip that is
+# refused slowly.
 REQUEST_TIMEOUT_S = 4
 CONNECT_TIMEOUT_S = 2
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
@@ -205,11 +208,12 @@ class DeepgramTranscriber:
         return None  # pragma: no cover  # the last try is never refused, it raises
 
     async def _wait_if_busy(self) -> None:
-        """Wait out a Retry-After that's still running, or fail at once if it's too long."""
-        left = self._busy_until - _clock()
-        if left > MAX_RETRY_WAIT_S:
-            raise DeepgramError(f"{BUSY} (asked to wait {left:.0f} s more)", for_dm=BUSY)
-        if left > 0:
+        """Wait out a Retry-After that's still running, or fail at once if it's too long.
+        Looked at again after each wait: another worker may have been told to wait
+        longer meanwhile (#470)."""
+        while (left := self._busy_until - _clock()) > 0:
+            if left > MAX_RETRY_WAIT_S:
+                raise DeepgramError(f"{BUSY} (asked to wait {left:.0f} s more)", for_dm=BUSY)
             await _sleep(left)
 
     async def _request(self, body: bytes, terms: list[str], *, fallback: bool) -> str | None:

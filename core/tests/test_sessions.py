@@ -229,6 +229,18 @@ class SessionTests(DatabaseTest):
         for jargon in ("backlog", "frame", "pipeline", "ears", "service"):
             self.assertNotIn(jargon, busy.lower())
 
+    async def test_status_shows_this_servers_own_backlog(self) -> None:
+        from dmbot.audio.segmenter import Utterance
+        from dmbot.ui.logic import WRITING_BEHIND_BACKLOG
+
+        await self.start()
+        other = GUILD + 1  # another server falling behind (#173, #470)
+        for at in range(WRITING_BEHIND_BACKLOG + 1):
+            self.bot.pipeline.enqueue(Utterance(other, PLAYER, at, at + 1000, bytes(3200), 0))
+        mine = "\n".join(await self.bot.status_lines(GUILD))
+        self.assertIn("Writing things down: keeping up", mine)  # not "falling behind"
+        self.assertEqual(self.bot.pipeline.backlog_of(other), WRITING_BEHIND_BACKLOG + 1)
+
     async def test_status_says_writing_is_off_without_transcription(self) -> None:
         # #39: TRANSCRIBER=none must not read as "keeping up".
         self.bot.settings = dataclasses.replace(
@@ -837,10 +849,10 @@ class SaveAndResume(SessionTests):
         await self.bot._on_status(table, Status("joined", guild_id=GUILD))
         sent: list[str] = []
 
-        async def fake_post(channel_id: int, text: str) -> str:
+        async def fake_post(channel_id: int, text: str) -> tuple[str, Any]:
             self.assertEqual(channel_id, TRANSCRIPT)
             sent.append(text)
-            return "posted"
+            return "posted", None
 
         self.bot._post_transcript = fake_post  # type: ignore[method-assign]
         return table, sent
@@ -1291,11 +1303,11 @@ class SaveAndResume(SessionTests):
         table, sent = await self.joined_with_transcript()
         results = iter(["retry", "posted", "posted"])
 
-        async def flaky(channel_id: int, text: str) -> str:
+        async def flaky(channel_id: int, text: str) -> tuple[str, Any]:
             result = next(results)
             if result == "posted":
                 sent.append(text)
-            return result
+            return result, None
 
         self.bot._post_transcript = flaky  # type: ignore[method-assign]
         self.said(table, "hello")
@@ -1309,7 +1321,7 @@ class SaveAndResume(SessionTests):
         channel.send = AsyncMock()
         self.bot.get_channel = MagicMock(return_value=channel)  # type: ignore[method-assign]
         result = await self.bot._post_transcript(5, "**Mia:** hi")
-        self.assertEqual(result[0], "posted")  # with the message, kept for a late fix
+        self.assertEqual(result, ("posted", channel.send.return_value))  # kept for a late fix
         call = channel.send.await_args
         assert call is not None
         self.assertTrue(call.kwargs["silent"])
@@ -1318,7 +1330,7 @@ class SaveAndResume(SessionTests):
     async def test_a_lost_channel_stops_the_transcript_and_tells_the_dm_once(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table, _ = await self.joined_with_transcript()
-        gone = AsyncMock(return_value="gone")
+        gone = AsyncMock(return_value=("gone", None))
         self.bot._post_transcript = gone  # type: ignore[method-assign]
         posted = AsyncMock(return_value=True)
         self.bot.post = posted  # type: ignore[method-assign]

@@ -179,7 +179,7 @@ class FixUndoButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:fixundo:(?P<guild>[0-9]{1,20}):(?P<note>[0-9a-f]{8})",
 ):
-    """Undo one name fix in the "✏️ Name fixes this scene" message (#296). The notes
+    """Undo one name fix in the "✏️ Name fixes to check" message (#296). The notes
     live with the running session, so after a restart, or once it ended, a press says
     so. Only the campaign's DMs may press it; the bot does the rest
     (`DMBot.undo_fix`)."""

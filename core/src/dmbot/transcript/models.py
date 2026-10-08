@@ -19,6 +19,7 @@ class TranscriptSession:
     lines: int = 0
     speakers: tuple[int, ...] = ()
     number: int = 0  # Session 1, 2, … in its campaign (only sessions with lines count)
+    engines: tuple[str, ...] = ()  # "engine model host" of each speech-to-text used
 
 
 @dataclass(frozen=True, slots=True)
