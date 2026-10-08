@@ -32,7 +32,7 @@ DM_SCREEN_LEVELS: dict[str, str] = {
     CHATTY: "the same as Normal for now; later it also tells you what it noticed",
 }
 # The ones offered as buttons: Chatty waits until something uses it (a choice that does
-# nothing, on a setting that can't be changed yet, would be a trap).
+# nothing would be a trap).
 DM_SCREEN_LEVELS_OFFERED = (QUIET, NORMAL)
 DEFAULT_DM_SCREEN_LEVEL = NORMAL
 

@@ -775,8 +775,9 @@ class SaveAndResume(SessionTests):
         self.assertIn("✉️ Not recorded yet: Dee. DMbot is asking privately", text)
         self.assertNotIn("0 player", text)
         # #108: the DM stops with one press; the button comes off at the end.
-        (button,) = call.args[2].children
+        settings, button = call.args[2].children  # Settings first (#515)
         self.assertEqual(button.custom_id, f"dmbot:stop:{self.campaign.id}")
+        self.assertEqual(settings.custom_id, f"dmbot:settings:{self.campaign.id}")  # #515
         await self.bot.stop_table(GUILD, "test")
         await asyncio.gather(*self.bot._finishing)
         listening.edit.assert_awaited_with(view=None)
@@ -823,6 +824,28 @@ class SaveAndResume(SessionTests):
         await StopListeningButton(self.campaign.id).callback(manager)
         self.assertIn("Stopped listening", manager.followup.send.await_args.args[0])
         self.assertNotIn(GUILD, self.bot.tables)
+
+    async def test_settings_change_how_much_dmbot_says_mid_session(self) -> None:
+        # #515: ⚙️ Settings → Quiet saves it and the running session follows at once.
+        from dmbot.dm_screen.settings import LevelButton
+
+        await self.start()
+        player = self.press_stop(member(PLAYER))
+        await LevelButton(self.campaign.id, "quiet").callback(player)
+        self.assertIn("Only this campaign's DM", player.response.send_message.await_args.args[0])
+        self.assertEqual(self.bot.tables[GUILD].screen_level, "normal")
+        dm = self.press_stop(member(DM))
+        dm.edit_original_response = AsyncMock()
+        await LevelButton(self.campaign.id, "quiet").callback(dm)
+        self.assertEqual(self.bot.tables[GUILD].screen_level, "quiet")
+        saved = await self.campaigns.get(GUILD, self.campaign.id)
+        assert saved is not None
+        self.assertEqual(saved.dm_screen_level, "quiet")
+        content = dm.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("**How much DMbot says:** Quiet.", content)
+        other = await self.campaigns.create(GUILD, "Strahd", DM)
+        await self.bot.set_screen_level(GUILD, other.id, "normal")  # another campaign
+        self.assertEqual(self.bot.tables[GUILD].screen_level, "quiet")  # untouched
 
     async def test_people_joining_mid_session_are_shown(self) -> None:
         from dmbot.ears.protocol import Status

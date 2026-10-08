@@ -113,7 +113,10 @@ def help_card(campaign_name: str, visibility: str) -> str:
     ]
     if visibility != "open":
         lines.append("Server owners and admins can always see every channel.")
-    lines.append("**DM:** press a button below to change who can see this.")
+    lines.append(
+        "**DM:** press a button below to change who can see this, or ⚙️ **Settings** for "
+        "how much DMbot says."
+    )
     if visibility == "peek":
         lines.append(f"**Peeking?** Press 🙈 **{HIDE_LABEL}** below to stop.")
     return "\n".join(lines)
