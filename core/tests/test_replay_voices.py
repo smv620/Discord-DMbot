@@ -15,7 +15,7 @@ from dmbot.devtools.replay import __main__ as replay_main
 from dmbot.devtools.replay import audio, voices
 from dmbot.devtools.replay.audio import TWIN_PLAYER, TWIN_SPEAKER, Piece
 from dmbot.devtools.replay.report import clock, speaker_lines
-from dmbot.devtools.replay.run import END_DELAY_MS, TWIN_GUILD, ConsentChange, Heard, Replay, replay
+from dmbot.devtools.replay.run import TWIN_GUILD, ConsentChange, Heard, Replay, replay
 from dmbot.devtools.replay.script import load_script
 from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE, AudioFrame
 
@@ -115,12 +115,41 @@ class MixTests(unittest.TestCase):
     def test_talking_over_someone_never_over_oneself(self) -> None:
         mixed = voices.mix(
             ("DM", "Player", "DM"),
-            {"DM": [piece(0, 2_000), piece(9_000, 1_000)], "Player": [piece(9_000, 200)]},
+            {"DM": [piece(0, 2_000), piece(9_000, 1_000)], "Player": [piece(9_000, 300)]},
             {},
             answer_ms=-1_500,
         )
         self.assertEqual([p.start_ms for p in mixed], [0, 500, 3_000])  # DM waits for itself
         self.assertTrue(all(p.start_ms >= 0 for p in mixed))
+
+    def test_a_lone_bump_is_no_turn(self) -> None:
+        # A tap before the opening quiet, then four turns; a short sound inside a turn stays.
+        pieces = [piece(0, 100), piece(8_100, 600), piece(8_900, 100)]
+        pieces += [piece(16_000 + 8_000 * i, 600) for i in range(3)]
+        found = voices.turns(pieces)
+        self.assertEqual([len(t) for t in found], [2, 1, 1, 1])
+        self.assertEqual(voices.lone_sounds(pieces), 1)
+
+    def test_one_roles_turns_keep_the_quiet_that_ends_a_piece(self) -> None:
+        mixed = voices.mix(
+            ("DM", "Player", "DM"),
+            {"DM": [piece(0, 2_000), piece(9_000, 1_000)], "Player": [piece(9_000, 300)]},
+            {},
+            answer_ms=-1_500,
+            speech_end_ms=2_000,
+        )
+        self.assertGreaterEqual(mixed[2].start_ms, mixed[0].end_ms + 2_000)
+
+    def test_too_many_or_no_turns_are_refused(self) -> None:
+        dm = [piece(0, 500), piece(9_000, 500)]
+        player = [piece(4_000 + 8_000 * i, 500) for i in range(3)]
+        for voice, found in (
+            (player, "3 turns found, but the script has 1"),
+            ([], "0 turns found"),
+        ):
+            with self.assertRaises(ValueError) as caught:
+                voices.mix(("DM", "Player", "DM"), {"DM": dm, "Player": voice}, {})
+            self.assertIn(found, str(caught.exception))
 
     def test_a_turn_count_that_doesnt_match_says_which_file(self) -> None:
         with self.assertRaises(ValueError) as caught:
@@ -209,18 +238,52 @@ class TwoSpeakerReplayTests(unittest.TestCase):
         class Slow(BySpeaker):
             async def transcribe(self, utterance: Utterance, hints: list[str]) -> str | None:
                 self.heard.append(utterance)
-                await asyncio.sleep(0.6)
+                await asyncio.sleep(0.3)
                 return "too late"
 
         engine = Slow({})
-        pieces = [piece(0, 300, TWIN_PLAYER), piece(2_000, 300, TWIN_PLAYER)]
-        # Heard to end at 1.3 s, still being written at the stop at 1.5 s: lost, as live.
-        stop = ConsentChange(1_500, TWIN_PLAYER, False)
-        result = asyncio.run(
-            replay(pieces, engine, realtime=True, changes=[stop], end_delay_ms=END_DELAY_MS)
-        )
+        # 300 ms pieces (long enough to send). The first is heard to end at 0.3 s and
+        # written for 0.3 s: still being written at the stop at 0.45 s, so lost, as live.
+        pieces = [piece(0, 300, TWIN_PLAYER), piece(500, 300, TWIN_PLAYER)]
+        stop = ConsentChange(450, TWIN_PLAYER, False)
+        result = asyncio.run(replay(pieces, engine, realtime=True, changes=[stop], end_delay_ms=0))
         self.assertEqual(result.heard, [])
         self.assertEqual([u.start_ms for u in engine.heard], [0])  # never sent after it
+
+    def test_one_consent_change_per_speaker(self) -> None:
+        pieces = [piece(0, 1_000, TWIN_PLAYER), piece(5_000, 1_000, TWIN_PLAYER)]
+        changes = (
+            ConsentChange(4_000, TWIN_PLAYER, False),
+            ConsentChange(8_000, TWIN_PLAYER, True),
+        )
+        with self.assertRaisesRegex(ValueError, "one consent change"):
+            self.run_replay(pieces, *changes)
+
+    def test_two_people_each_change_once(self) -> None:
+        pieces = [piece(0, 1_000), piece(5_000, 1_000)]
+        pieces += [piece(0, 1_000, TWIN_PLAYER), piece(3_000, 1_000, TWIN_PLAYER)]
+        result, _ = self.run_replay(
+            pieces,
+            ConsentChange(4_000, TWIN_SPEAKER, False),
+            ConsentChange(2_000, TWIN_PLAYER, True),
+        )
+        self.assertEqual(
+            [(h.speaker, h.start_ms) for h in result.heard],
+            [(TWIN_SPEAKER, 0), (TWIN_PLAYER, 3_000)],
+        )
+
+    def test_talking_over_plays_as_two_clips(self) -> None:
+        mixed = voices.mix(
+            ("DM", "Player"),
+            {"DM": [piece(0, 2_000)], "Player": [piece(9_000, 1_000)]},
+            {},
+            answer_ms=-500,
+        )
+        result, _ = self.run_replay(mixed)
+        self.assertEqual(
+            [(h.speaker, h.start_ms) for h in result.heard],
+            [(TWIN_SPEAKER, 0), (TWIN_PLAYER, 1_500)],
+        )
 
     def test_speaker_lines_check_the_consent(self) -> None:
         script = load_script(TWO_VOICES)
@@ -229,6 +292,7 @@ class TwoSpeakerReplayTests(unittest.TestCase):
                 Heard(0, 3_000, "Your story starts", 0.0, 3.0),
                 Heard(4_000, 6_000, "I knock", 0.0, 2.0, TWIN_PLAYER),
                 Heard(30_000, 32_000, "late words", 0.0, 2.0, TWIN_PLAYER),  # after the stop
+                Heard(33_000, 33_200, None, 0.0, 0.2, TWIN_PLAYER),  # captured, no text
             ],
             changes=(ConsentChange(25_000, TWIN_PLAYER, False),),
         )
@@ -236,9 +300,17 @@ class TwoSpeakerReplayTests(unittest.TestCase):
         self.assertTrue(lines[0].startswith("DM (1001): 1 pieces, 3.0 s; part 1:"))
         self.assertTrue(lines[1].startswith("Player (1002): 2 pieces, 4.0 s; part 1:"))
         self.assertEqual(
-            lines[2], "  Player stopped at 0:25: written down after it: 1 pieces (should be 0)"
+            lines[2], "  Player stopped at 0:25: written down after it: 2 pieces (should be 0)"
         )
         self.assertNotIn("late words", "\n".join(lines))
+        agreed = Replay(
+            heard=[Heard(1_000, 2_000, "early", 0.0, 1.0, TWIN_PLAYER)],
+            changes=(ConsentChange(5_000, TWIN_PLAYER, True),),
+        )
+        self.assertIn(
+            "  Player agreed at 0:05: written down before it: 1 pieces (should be 0)",
+            speaker_lines(script, agreed),
+        )
         self.assertEqual(clock(83_500), "1:23")
 
 
@@ -252,16 +324,16 @@ class CommandLineTests(unittest.TestCase):
             w.writeframes(pcm)
         return path
 
-    def voices_wavs(self, folder: Path) -> tuple[Path, Path]:
+    def voices_wavs(self, folder: Path, bump: bool = False) -> tuple[Path, Path]:
         """Four turns each, as the script asks: one's lines, the other's count to ten."""
         turn, wait = tone(600), silence(8_000)
         dm = (turn + wait) * 4
-        player = wait + (turn + wait) * 4
+        player = (tone(100) if bump else b"") + wait + (turn + wait) * 4
         return self.wav(folder, "dm.wav", dm), self.wav(folder, "player.wav", player)
 
-    def run_main(self, *extra: str) -> tuple[int, str, str, BySpeaker]:
+    def run_main(self, *extra: str, bump: bool = False) -> tuple[int, str, str, BySpeaker]:
         with tempfile.TemporaryDirectory() as tmp:
-            dm, player = self.voices_wavs(Path(tmp))
+            dm, player = self.voices_wavs(Path(tmp), bump)
             argv = ["--speakers", f"{dm}:{TWIN_SPEAKER},{player}:{TWIN_PLAYER}"]
             argv += ["--script", str(TWO_VOICES), "--transcriber", "whisper-local", *extra]
             engine = BySpeaker(turn_texts(TWO_VOICES))
@@ -284,6 +356,12 @@ class CommandLineTests(unittest.TestCase):
         self.assertIn("DM (1001): 4 pieces", out)
         self.assertIn("Player (1002): 4 pieces", out)
         self.assertIn("  DM: ", out)  # heard lines say who
+        self.assertEqual([u.user_id for u in engine.heard], [TWIN_SPEAKER, TWIN_PLAYER] * 4)
+
+    def test_a_bump_before_the_opening_quiet_is_left_out(self) -> None:
+        code, out, _, engine = self.run_main(bump=True)
+        self.assertEqual(code, 0)
+        self.assertIn("1 short sound on its own left out", out)
         self.assertEqual([u.user_id for u in engine.heard], [TWIN_SPEAKER, TWIN_PLAYER] * 4)
 
     def test_a_player_who_stops(self) -> None:
@@ -316,10 +394,54 @@ class CommandLineTests(unittest.TestCase):
             (["x.wav", "--stop", "1001@soon"], "like 1002@0:25"),
             (["x.wav", "--stop", "1001@0:75"], "seconds go up to 59"),
             (["x.wav", "--stop", "1001@1", "--agree", "1001@2"], "one change per speaker"),
+            (["--speakers", "a:1001"], "one file for 1001 and one for 1002"),
+            (["--speakers", "a:1001,b:1002,c:1002"], "one file for 1001 and one for 1002"),
+            (["x.wav", "--answer-ms", "abc"], "whole number of milliseconds"),
         ):
             with redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
                 replay_main.parse_args([*argv, "--script", str(TWO_VOICES)])
             self.assertIn(says, err.getvalue(), argv)
+
+    def test_scripts_that_cant_take_these_are_refused(self) -> None:
+        bakeoff, dm_only = str(SCRIPTS / "stt-bakeoff.md"), str(SCRIPTS / "dm-only.md")
+        two = f"a.wav:{TWIN_SPEAKER},b.wav:{TWIN_PLAYER}"
+        for argv, says in (
+            (["x.wav", "--script", bakeoff, "--stop", "1001@1"], "need a [DM]/[Player] script"),
+            (["--speakers", two, "--script", dm_only], "needs a script with [DM] and [Player]"),
+        ):
+            with redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(replay_main.main([*argv, "--transcriber", "whisper-local"]), 2)
+            self.assertIn(says, err.getvalue())
+
+    def test_one_file_is_decoded_at_a_time(self) -> None:
+        # A long recording is big: each is let go before the next is decoded.
+        alive = [0, 0]  # now, most at once
+
+        class Tracked(bytes):
+            def __del__(self) -> None:
+                alive[0] -= 1
+
+        decode = audio.decode
+
+        def tracked_decode(path: Path) -> bytes:
+            alive[0] += 1
+            alive[1] = max(alive)
+            return Tracked(decode(path))
+
+        with patch.object(audio, "decode", tracked_decode):
+            code, _, _, _ = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertEqual(alive, [0, 1])
+
+    def test_a_silent_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dm, _ = self.voices_wavs(Path(tmp))
+            player = self.wav(Path(tmp), "player.wav", silence(20_000))
+            argv = ["--speakers", f"{dm}:{TWIN_SPEAKER},{player}:{TWIN_PLAYER}"]
+            argv += ["--script", str(TWO_VOICES), "--transcriber", "whisper-local"]
+            with redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(replay_main.main(argv), 2)
+        self.assertIn("0 turns found", err.getvalue())
 
     def test_times_read_as_minutes_and_seconds(self) -> None:
         self.assertEqual(replay_main._at("1001@1:02.5"), (1001, 62_500))

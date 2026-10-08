@@ -172,6 +172,7 @@ def _at(text: str) -> tuple[int, int]:
 
 
 def _signed_ms(text: str) -> int:
+    """A whole number of milliseconds, negative allowed (--answer-ms talks over)."""
     try:
         return int(text)
     except ValueError:
@@ -312,8 +313,7 @@ async def main_async(args: argparse.Namespace) -> int:
             parse_bakeoff(text) if is_bakeoff(text) else parse_script(text, args.script.stem)
         )
         files = args.speakers or [(args.recording, audio.TWIN_SPEAKER)]
-        decoded = [(path, speaker, audio.decode(path)) for path, speaker in files]
-    except (OSError, ValueError, audio.DecodeError) as exc:
+    except (OSError, ValueError) as exc:
         print(f"replay: {exc}", file=sys.stderr)
         return 2
     if isinstance(script, Bakeoff) and (args.stop or args.agree):
@@ -324,7 +324,15 @@ async def main_async(args: argparse.Namespace) -> int:
         return 2
     by_role: dict[str, list[audio.Piece]] = {}
     silences: list[str] = []
-    for _path, speaker, pcm in decoded:
+    recording_s = 0.0
+    for path, speaker in files:
+        # One file at a time: a long recording is big, and only its pieces are kept.
+        try:
+            pcm = audio.decode(path)
+        except (OSError, audio.DecodeError) as exc:
+            print(f"replay: {exc}", file=sys.stderr)
+            return 2
+        recording_s = audio.seconds(pcm)
         levels = audio.frame_levels(pcm)
         silence = args.silence_db if args.silence_db is not None else audio.silence_dbfs_for(levels)
         silences.append(f"{silence:.0f} dBFS")
@@ -338,9 +346,11 @@ async def main_async(args: argparse.Namespace) -> int:
                 levels=levels,
             )
         )
+        del pcm, levels
+    lone = 0
     if args.speakers:
         assert isinstance(script, Script)
-        file_names = {voices.ROLES[s]: public_name(path) for path, s, _ in decoded}
+        file_names = {voices.ROLES[s]: public_name(path) for path, s in files}
         try:
             pieces = voices.mix(
                 script.order,
@@ -348,16 +358,17 @@ async def main_async(args: argparse.Namespace) -> int:
                 file_names,
                 turn_quiet_ms=args.turn_quiet_ms,
                 answer_ms=args.answer_ms,
+                speech_end_ms=args.speech_end_ms,
             )
         except ValueError as exc:
             print(f"replay: {exc}", file=sys.stderr)
             return 2
+        lone = sum(voices.lone_sounds(p, args.turn_quiet_ms) for p in by_role.values())
         recording_s = max((p.end_ms for p in pieces), default=0) / 1000
     else:
         pieces = by_role["DM"]
-        recording_s = audio.seconds(decoded[0][2])
-    recording_name = " + ".join(public_name(path) for path, _, _ in decoded)
-    del decoded, by_role, pcm  # a long recording is big: keep only its pieces
+    recording_name = " + ".join(public_name(path) for path, _ in files)
+    del by_role
     changes = [ConsentChange(at, speaker, False) for speaker, at in args.stop]
     changes += [ConsentChange(at, speaker, True) for speaker, at in args.agree]
     # As used: whole 20 ms frames, and quiet as long as speech_end_ms ends a piece.
@@ -376,6 +387,9 @@ async def main_async(args: argparse.Namespace) -> int:
             f"; two voices, a turn ends at {args.turn_quiet_ms / 1000:g} s of quiet and the "
             f"next starts {args.answer_ms} ms later"
         )
+        if lone:
+            alone = "short sound on its own" if lone == 1 else "short sounds on their own"
+            cut += f"; {lone} {alone} left out"
     try:
         known = name_scan.load_known(args.names) if args.names else name_scan.Known.none()
     except (OSError, ValueError) as exc:
