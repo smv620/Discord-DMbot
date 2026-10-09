@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-09 by CloudDev (ready to deploy: #937; earlier by dev1: core and web-api 85cc405 live, ears 21c5ff1; Test D next)
+Last updated: 2026-10-09 by dev2 (ready to deploy: #937, #942; earlier by dev1: core and web-api 85cc405 live, ears 21c5ff1; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -16,6 +16,22 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   `/dmbot restore`, and a transcript download button. With the setting on (go-live only): a
   Try It owner is refused a copy and a transcript in plain words, a player is told to ask the
   owner, and an ended plan is told "Your plan has ended, so DMbot can't <do that>".
+
+- dev2, PR #942 (#931): core with **migration 0035_rules_cards** (a new column
+  `campaigns.rules_cards`, off by default; the migration runs when core starts, so rebuild
+  core; keep the migration list sorted with #944's 0036 if that lands too). No setting. Rules
+  cards from the table: when a spell, condition or creature is named at a live table, a short
+  card goes on the DM screen, if the DM turned it on. A 5-minute live check with the setting
+  on, as a DM: press **Settings** on the DM screen, then **Turn rules cards on** (the card's
+  line says "Rules cards: On"); start listening; say "I cast Fireball": a card on the DM
+  screen with "Heard: …", the source and "You decide", and nothing in the transcript channel;
+  wait a minute; say "the goblin is grappled": the **Goblin Warrior** card appears and takes
+  that minute (the first name not yet shown wins), so a minute later say "it is grappled" for
+  the Grappled card; say "a light in the dark" or "what a nightmare": nothing. Press **Got it**
+  (buttons go), **Read it all** (the full rule, privately), **Ignore** on another card (it says
+  how to stop all cards) and **Override** (the Add a house rule form with Fireball already in
+  "Instead of"). A player pressing a button is refused. Turn it off again with **Turn rules
+  cards off**. Core logs no ERROR.
 
 ------------------------------------------------------------------------------
 LIVE NOW
