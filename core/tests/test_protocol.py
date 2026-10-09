@@ -133,6 +133,10 @@ class ControlMessages(unittest.TestCase):
             '"decryptFailures":-1}',
             '{"type":"health","guildId":"1","userId":"2","framesReceived":1,"framesExpected":1,'
             '"linkDropped":"4"}',
+            '{"type":"health","guildId":"1","userId":"2","framesReceived":1,"framesExpected":1,'
+            '"decodeErrors":true}',
+            '{"type":"health","guildId":"1","userId":"2","framesReceived":1,"framesExpected":1,'
+            '"decryptFailures":2.5}',
             '{"type":"mystery"}',
         ]:
             self.assertIsNone(parse_ears_message(raw), raw)
