@@ -1663,13 +1663,34 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
         )
     for at in range(0, len(files), FILES_PER_MESSAGE):
         batch = files[at : at + FILES_PER_MESSAGE]
-        await interaction.followup.send(
-            intro
-            if at == 0
-            else f"📤 **Files {at + 1} to {at + len(batch)} of {len(files)}** for "
-            f"{_md(campaign.name)}. Upload them the same way, one at a time."
-            + ("\n" + secret_warning.format("these files") if secrets else ""),
-            files=batch,
-            ephemeral=True,
-            allowed_mentions=NO_PINGS,
-        )
+        try:
+            await interaction.followup.send(
+                intro
+                if at == 0
+                else f"📤 **Files {at + 1} to {at + len(batch)} of {len(files)}** for "
+                f"{_md(campaign.name)}. Upload them the same way, one at a time."
+                + ("\n" + secret_warning.format("these files") if secrets else ""),
+                files=batch,
+                ephemeral=True,
+                allowed_mentions=NO_PINGS,
+            )
+        except discord.HTTPException:
+            # Files 1 to `at` arrived; say which didn't, instead of leaving a silent gap.
+            log.warning("A download's files %d to %d didn't send", at + 1, len(files))
+            first = at + 1
+            missing = f"file {first}" if first == len(files) else f"files {first} to {len(files)}"
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.followup.send(
+                    f"⚠️ {missing[0].upper()}{missing[1:]} of {len(files)} didn't arrive. "
+                    "Press 📤 Download all again to get them."
+                    + (
+                        f" Files 1 to {at} are fine."
+                        if at > 1
+                        else " File 1 is fine."
+                        if at
+                        else ""
+                    ),
+                    ephemeral=True,
+                    allowed_mentions=NO_PINGS,
+                )
+            return

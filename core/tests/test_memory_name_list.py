@@ -424,3 +424,39 @@ class BakeoffStoryNames(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DownloadText(unittest.TestCase):
+    def test_a_download_says_how_to_add_it_again_not_to_change_examples(self) -> None:
+        for secrets in (True, False):
+            text = render([OutName("Belleros", "npc", (), ())], campaign="F", secrets=secrets)
+            self.assertIn("To add it again: edit it if you like", text)
+            self.assertIn("Add many > Upload a file", text)
+            self.assertNotIn("change the examples", text)
+            self.assertNotIn("Paste a list", text)  # too long to paste near the limit
+
+    def test_every_file_of_a_big_download_says_so(self) -> None:
+        names = [OutName(f"Name {i:05}", "npc", ("o" * 130,), ()) for i in range(6_000)]
+        for text in render_files(names, campaign="F", secrets=False):
+            self.assertIn("To add it again", text)
+            self.assertNotIn("change the examples", text)
+
+    def test_the_template_still_tells_people_to_change_its_examples(self) -> None:
+        self.assertIn("change the examples to your own names", TEMPLATE)
+
+
+class LineSeparators(unittest.TestCase):
+    def test_a_name_with_a_line_or_paragraph_separator_is_refused(self) -> None:
+        from dmbot.memory.name_list import UNREADABLE, check_name
+
+        for sep in ("\u2028", "\u2029", "\x85", "\x0b"):
+            self.assertEqual(check_name(f"Bel{sep}leros"), UNREADABLE, repr(sep))
+
+    def test_a_name_saved_before_the_rule_is_written_on_one_line(self) -> None:
+        text = render(
+            [OutName("Bel\u2028leros", "npc", ("the\u2029knight",), ("a\u2028b",))],
+            campaign="F",
+            secrets=True,
+        )
+        self.assertEqual(len(text.splitlines()), text.count("\n"))  # no hidden line breaks
+        self.assertIn("Bel leros | NPC | the knight | a b", text)
