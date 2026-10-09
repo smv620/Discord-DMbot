@@ -953,7 +953,7 @@ names panel nor the speech-to-text hints can be a fixed list.
     names per name and 5,000 other and secret names per upload**, counting only what
     the upload adds so a Download all file always uploads again). **A campaign too big
     for one upload (over 2,000 lines or 256 KB) downloads as several files** (decided
-    2026-10-09, #685), numbered `-1`, `-2` and so on: each is within the limits above
+    2026-10-09, #685), numbered 1, 2 and so on (padded so they sort): each is within the limits above
     counting its `#` notes, holds whole names (a name on several lines is never split),
     starts with the instructions so it stands alone, and can be added in any order; the
     ten files Discord takes in a message go ten to a message. **Names only:** lines with

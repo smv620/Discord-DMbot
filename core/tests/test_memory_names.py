@@ -1115,7 +1115,8 @@ class Lists(NamesTest):
         files = sent.kwargs["files"]
         self.assertGreater(len(files), 1)
         self.assertIn(f"All 41 names for {self.campaign.name}", sent.args[0])
-        self.assertIn(f"They are in {len(files)} files", sent.args[0])
+        self.assertIn(f": {len(files)} files.**", sent.args[0])
+        self.assertIn("One file is too small to hold them all", sent.args[0])
         self.assertIn("in any order", sent.args[0])
         self.assertIn("Includes secret names: don't share these files", sent.args[0])
         self.assertEqual(len({f.filename for f in files}), len(files))
@@ -1140,12 +1141,14 @@ class Lists(NamesTest):
             await name_lists.send_download(it, self.campaign.id)
         calls = it.followup.send.call_args_list
         self.assertEqual([len(c.kwargs["files"]) for c in calls], [10, 10, 3])
-        self.assertIn("They are in 23 files", calls[0].args[0])
-        self.assertIn("11 to 20 of 23", calls[1].args[0])
-        self.assertIn("21 to 23 of 23", calls[2].args[0])
+        self.assertIn(": 23 files.**", calls[0].args[0])
+        self.assertIn("Files 11 to 20 of 23", calls[1].args[0])
+        self.assertIn("Files 21 to 23 of 23", calls[2].args[0])
+        self.assertIn("Secret names inside", calls[1].args[0])  # this one is the DM's
         names = [f.filename for c in calls for f in c.kwargs["files"]]
         self.assertEqual(names, sorted(names))  # numbered the same width: they sort in order
-        self.assertTrue(names[0].endswith("-01.txt") and names[-1].endswith("-23.txt"))
+        self.assertTrue(names[0].startswith("names-01-of-23-"))
+        self.assertTrue(names[-1].startswith("names-23-of-23-"))
 
     async def test_browse_by_kind_pages_and_opens_names(self) -> None:
         from dmbot.ui import name_lists

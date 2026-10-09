@@ -382,24 +382,36 @@ def render_files(names: Iterable[OutName], *, campaign: str, secrets: bool) -> l
         lines_for(n.name, KIND_OUT.get(n.kind, "other"), n.others, n.secrets if secrets else ())
         for n in ordered
     ]
+    adds = [len(n.others) + (len(n.secrets) if secrets else 0) for n in ordered]
     prelude = _prelude(campaign=campaign, secrets=secrets)
     joined = "\n".join(prelude)
     base_lines = joined.count("\n") + 1  # the instructions are many lines in one string
-    base_bytes = len(joined.encode("utf-8")) + 1 + _PART_NOTE_BYTES
-    chunks: list[list[str]] = [[]]
-    used_lines, used_bytes = base_lines, base_bytes
-    for group in groups:
-        size = sum(len(line.encode("utf-8")) + 1 for line in group)
-        if chunks[-1] and (
-            used_lines + len(group) > MAX_LINES or used_bytes + size > MAX_FILE_BYTES
-        ):
-            chunks.append([])
-            used_lines, used_bytes = base_lines, base_bytes
-        chunks[-1].extend(group)
-        used_lines += len(group)
-        used_bytes += size
-    if len(chunks) == 1:
+    base_bytes = len(joined.encode("utf-8")) + 1
+
+    def pack(reserve: int) -> list[list[str]]:
+        # A file is full at the upload's line, size or names-added limit (#712), whichever
+        # comes first; a lone name is always accepted (its own size is capped elsewhere).
+        chunks: list[list[str]] = [[]]
+        used_lines, used_bytes, used_adds = base_lines, base_bytes + reserve, 0
+        for group, add in zip(groups, adds, strict=True):
+            size = sum(len(line.encode("utf-8")) + 1 for line in group)
+            if chunks[-1] and (
+                used_lines + len(group) > MAX_LINES
+                or used_bytes + size > MAX_FILE_BYTES
+                or used_adds + add > MAX_ADDED
+            ):
+                chunks.append([])
+                used_lines, used_bytes, used_adds = base_lines, base_bytes + reserve, 0
+            chunks[-1].extend(group)
+            used_lines += len(group)
+            used_bytes += size
+            used_adds += add
+        return chunks
+
+    chunks = pack(0)
+    if len(chunks) == 1:  # fits whole: exactly what render() writes
         return [render(ordered, campaign=campaign, secrets=secrets)]
+    chunks = pack(_PART_NOTE_BYTES)  # the "(file i of n)" note makes each file a little longer
     return [
         "\n".join(
             _prelude(campaign=campaign, secrets=secrets, part=f" (file {i} of {len(chunks)})")

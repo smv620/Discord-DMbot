@@ -1633,15 +1633,18 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
         )
         return
     day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
-    stem = f"names-{_slug(campaign.name)}-{day}"
+    slug = _slug(campaign.name)
     if len(texts) == 1:
-        files = [_file(texts[0], f"{stem}.txt")]
-    else:  # numbered the same width, so they sort in order on a phone or a computer
+        files = [_file(texts[0], f"names-{slug}-{day}.txt")]
+    else:  # the number comes first and is the same width, so it shows and sorts on a phone
         width = len(str(len(texts)))
-        files = [_file(text, f"{stem}-{i:0{width}}.txt") for i, text in enumerate(texts, 1)]
-    warning = "⚠️ Includes secret names: don't share these files with players. " if secrets else ""
+        files = [
+            _file(text, f"names-{i:0{width}}-of-{len(texts)}-{slug}-{day}.txt")
+            for i, text in enumerate(texts, 1)
+        ]
+    secret_warning = "⚠️ Includes secret names: don't share {} with players."
     if len(files) == 1:
-        warning = warning.replace("these files", "this file")
+        warning = secret_warning.format("this file") + " " if secrets else ""
         intro = (
             f"📤 **All {count:,} name{'' if count == 1 else 's'} for {_md(campaign.name)}.** "
             f"{warning}Names still waiting in 📝 Check new names aren't included. Edit it and "
@@ -1650,18 +1653,20 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
         )
     else:
         intro = (
-            f"📤 **All {count:,} names for {_md(campaign.name)}.** {warning}They are in "
-            f"{len(files)} files. Add them one at a time with {UPLOAD}, in any order. Names "
-            "still waiting in 📝 Check new names aren't included. Names DMbot already knows "
-            "aren't added twice; they get any new other names."
+            f"📤 **All {count:,} names for {_md(campaign.name)}: {len(files)} files.**\n"
+            + (secret_warning.format("these files") + "\n" if secrets else "")
+            + f"One file is too small to hold them all. Add each one with {UPLOAD}, in any "
+            "order. Adding one twice does no harm.\n"
+            "Names still waiting in 📝 Check new names aren't included."
         )
     for at in range(0, len(files), FILES_PER_MESSAGE):
         batch = files[at : at + FILES_PER_MESSAGE]
         await interaction.followup.send(
             intro
             if at == 0
-            else f"📤 More files for {_md(campaign.name)}: {at + 1} to {at + len(batch)} of "
-            f"{len(files)}.",
+            else f"📤 Files {at + 1} to {at + len(batch)} of {len(files)} for "
+            f"{_md(campaign.name)}. Add them with {UPLOAD}."
+            + (" ⚠️ Secret names inside." if secrets else ""),
             files=batch,
             ephemeral=True,
             allowed_mentions=NO_PINGS,

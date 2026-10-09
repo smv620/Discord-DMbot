@@ -221,6 +221,34 @@ class BigDownload(unittest.TestCase):
                 seen[line.name] = line.others
         self.assertEqual(seen, {n.name: n.others for n in names})
 
+    def test_a_file_holding_many_other_names_each_stays_under_the_add_cap(self) -> None:
+        names = self.campaign(1900, others=4)  # fits the size limits, but 7,600 adds
+        files = render_files(names, campaign="Frostmaiden", secrets=False)
+        self.assertGreater(len(files), 1)
+        for text in files:
+            parsed = parse(text, secrets=False)
+            self.assertEqual(parsed.refused, [])
+            self.assertLessEqual(sum(len(x.others) for x in parsed.lines), MAX_ADDED)
+
+    def test_no_names_is_one_header_only_file(self) -> None:
+        files = render_files([], campaign="Frostmaiden", secrets=False)
+        self.assertEqual(files, [render([], campaign="Frostmaiden", secrets=False)])
+
+    def test_multibyte_names_are_counted_in_bytes(self) -> None:
+        names = [OutName(f"日本{i:05}", "npc", ("é" * 40,) * 5, ()) for i in range(3000)]
+        files = render_files(names, campaign="Frostmaiden", secrets=False)
+        self.assertGreater(len(files), 1)
+        for text in files:
+            self.assertLessEqual(len(text.encode()), MAX_FILE_BYTES)
+
+    def test_players_files_never_mention_secret_names(self) -> None:
+        names = [OutName(f"Name {i:05}", "npc", ("Nick",), ("Hidden Hood",)) for i in range(4000)]
+        files = render_files(names, campaign="Frostmaiden", secrets=False)
+        self.assertGreater(len(files), 1)
+        for text in files:
+            self.assertNotIn("Hidden Hood", text)
+            self.assertNotIn("secret", text.lower())
+
     def test_a_name_on_several_lines_stays_whole_in_one_file(self) -> None:
         many = tuple(f"Bell {i}" for i in range(45))  # three lines
         names = [OutName(f"Name {i:05}", "npc", (), ()) for i in range(1990)]
