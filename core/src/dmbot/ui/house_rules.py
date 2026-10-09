@@ -1,9 +1,14 @@
 """`/dmbot houserules`: a campaign's house rules, in a private reply (#865).
 
 Anyone in the server may read them. Only the campaign's DMs get the buttons: **Add**,
-and **Edit** and **Remove** for each rule (Remove asks first). With up to four rules, each
-has its own two buttons; with more, a menu picks the rule. A long list is shown in pages.
-Every change goes through `HouseRuleStore`, which checks again that the person is a DM.
+and **Edit** and **Remove** for the rules on the page being shown (Remove asks first).
+When the page shows four rules or fewer, each has its own two buttons; with more, a menu
+picks the rule. A long list is shown in pages, and the DM stays on their page after a
+change. Each rule keeps its own number for good (see `dmbot.rules.house`): the list
+shows it, and the buttons and the menu use it.
+
+Every change goes through `HouseRuleStore`, which checks again that the person is a DM,
+and (for Edit and Remove) that no other DM changed the rule since this one was shown.
 DMbot never writes or decides a house rule: it only keeps what the DM typed.
 """
 
@@ -44,29 +49,26 @@ TEXT_MAX = 1300
 NOTE_MAX = 160
 NAME_MAX = 100
 ENTRY_MAX = 1000  # one rule, after escaping (a rule and its "instead of" are 500 each)
-BUTTON_RULES = 4  # up to this many rules in all: Edit and Remove buttons for each
+BUTTON_RULES = 4  # a page with up to this many rules: Edit and Remove buttons for each
 
 NOT_READY = "House rules aren't available right now. Please try again in a moment."
 NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with `/dmbot start`."
-GONE = "That campaign isn't here any more. Use `/dmbot houserules` to see the list again."
+CAMPAIGN_GONE = "That campaign isn't here any more. Use `/dmbot houserules` to see the list again."
 STALE = "The list changed, so here is the new one. Pick again."
 ALREADY_GONE = "That house rule was already removed. Here is the list now."
-SOMEONE_REMOVED = (
-    "Someone removed that house rule while you were editing, so your change wasn't saved."
-)
+CHANGED_REMOVE = "Another DM changed that house rule, so nothing was removed. Here is the list now."
 MORE_CAMPAIGNS = "_Showing the 25 played most recently._"
-NONE_YET = "No house rules yet."
-ADD_HINT = "Press **Add a house rule** to write the first one."
+NONE_YET_DM = "No house rules yet. Press **Add a house rule** to write the first one."
+NONE_YET_PLAYER = "No house rules yet. Your DM can add them."
 DM_INTRO = (
-    "The rules your table decided on. When one disagrees with the official rules, your "
-    "table's rule is used. Everyone in the server can read this list; only a DM of this "
-    "campaign can change it. You decide: DMbot never makes up a house rule."
+    "Your table's own rules; they beat the book. Everyone in the server can read them, and "
+    "only this campaign's DMs can change them. DMbot never makes up a house rule: you decide."
 )
 READ_INTRO = (
-    "The rules this table decided on. When one disagrees with the official rules, the "
-    "table's rule is used. Everyone in the server can read this list; only a DM of this "
-    "campaign can change it. DMbot never makes up a house rule."
+    "This table's own rules; they beat the book. Only the DM can change them. DMbot never "
+    "makes up a house rule."
 )
+CHANGED_MIND = "Changed your mind? Press **Add a house rule** and paste it."
 
 ADD_LABEL = "➕ Add a house rule"
 NEWER_LABEL = "◀ Newer"
@@ -93,6 +95,12 @@ def _fit(text: str, limit: int) -> str:
     return cut + "…"
 
 
+def _code(text: str) -> str:
+    """Words in a code block, exactly as typed, so they can be copied: nothing in them is
+    read as formatting, and three backticks can't end the block early."""
+    return "```\n" + text.strip().replace("```", "`​``") + "\n```"
+
+
 def entry_words(rule: HouseRule) -> str:
     """A rule without its number: `Crits double the dice (instead of: …)`."""
     text = _md(rule.rule)
@@ -101,14 +109,9 @@ def entry_words(rule: HouseRule) -> str:
     return text
 
 
-def entry_text(number: int, rule: HouseRule) -> str:
-    """One rule as a numbered line: `3. Crits double the dice (instead of: …)`."""
-    return _fit(f"{number}. {entry_words(rule)}", ENTRY_MAX)
-
-
-def short_words(rule: HouseRule) -> str:
-    """A rule's words for a note about it: cut short, never half an escape."""
-    return _fit(_md(rule.rule), 100)
+def entry_text(rule: HouseRule) -> str:
+    """One rule as a line, with its own number: `12. Crits double the dice (instead of: …)`."""
+    return _fit(f"{rule.number}. {entry_words(rule)}", ENTRY_MAX)
 
 
 def pages(rules: list[HouseRule]) -> list[list[int]]:
@@ -117,7 +120,7 @@ def pages(rules: list[HouseRule]) -> list[list[int]]:
     out: list[list[int]] = [[]]
     used = 0
     for place, rule in enumerate(rules):
-        size = len(entry_text(place + 1, rule)) + 1
+        size = len(entry_text(rule)) + 1
         if out[-1] and (len(out[-1]) >= PAGE_RULES or used + size > TEXT_MAX):
             out.append([])
             used = 0
@@ -130,15 +133,15 @@ def list_text(
     campaign: Campaign, rules: list[HouseRule], page: int, *, is_dm: bool, note: str = ""
 ) -> str:
     """The message: what just happened (first, where a phone shows it), the heading, and
-    this page of the numbered list, newest first."""
+    this page of the list, newest first, each rule with its own number."""
     lines = [_fit(note, NOTE_MAX)] if note else []
     lines.append(f"📜 **House rules: {_fit(_md(campaign.name), NAME_MAX)}**")
     lines.append(DM_INTRO if is_dm else READ_INTRO)
     shown = pages(rules)
     if not rules:
-        lines.append(NONE_YET + (" " + ADD_HINT if is_dm else ""))
+        lines.append(NONE_YET_DM if is_dm else NONE_YET_PLAYER)
     for place in shown[page]:
-        lines.append(entry_text(place + 1, rules[place]))
+        lines.append(entry_text(rules[place]))
     if len(shown) > 1:
         lines.append(f"_Page {page + 1} of {len(shown)}. Newest first._")
     return "\n".join(lines)
@@ -187,17 +190,18 @@ async def _redraw(
     interaction: discord.Interaction, campaign: Campaign, *, note: str = "", page: int = 0
 ) -> None:
     """Answer Discord, then draw the list again from the database (after a change, or a
-    page turn), telling what happened."""
+    page turn), on `page`, telling what happened."""
     await _answer_first(interaction, in_place=True)
     current = await _bot(interaction).campaigns.get(campaign.guild_id, campaign.id)
     if current is None:
-        await _tell(interaction, GONE)
+        await _tell(interaction, CAMPAIGN_GONE)
         return
     await show_list(interaction, current, page=page, note=note)
 
 
 class ListMenu(_Menu):
-    """The list's buttons: Add and page turning, and for a DM Edit and Remove."""
+    """The list's buttons: Add and page turning, and for a DM Edit and Remove for the
+    rules on this page only."""
 
     def __init__(
         self, campaign: Campaign, rules: list[HouseRule], page: int, *, is_dm: bool
@@ -213,30 +217,32 @@ class ListMenu(_Menu):
             self.add_item(_Button(self._older, label=OLDER_LABEL))
         if not is_dm or not rules:
             return
-        if len(rules) <= BUTTON_RULES:
-            for place, rule in enumerate(rules):
+        on_page = [rules[place] for place in shown[page]]
+        if len(on_page) <= BUTTON_RULES:
+            for row, rule in enumerate(on_page, start=1):
                 self.add_item(
                     _Button(
-                        partial(open_edit, campaign, rule, place),
-                        label=f"{EDIT_LABEL} {place + 1}",
-                        row=place + 1,
+                        partial(open_edit, campaign, rule, page),
+                        label=f"{EDIT_LABEL} {rule.number}",
+                        row=row,
                     )
                 )
                 self.add_item(
                     _Button(
-                        partial(ask_remove, campaign, rule, place),
-                        label=f"{REMOVE_LABEL} {place + 1}",
+                        partial(ask_remove, campaign, rule, page),
+                        label=f"{REMOVE_LABEL} {rule.number}",
                         style=discord.ButtonStyle.danger,
-                        row=place + 1,
+                        row=row,
                     )
                 )
         else:
             options = [
                 discord.SelectOption(
-                    label=logic.shorten(f"{place + 1}. {rules[place].rule}", logic.PHONE_LABEL_MAX),
-                    value=str(rules[place].id),
+                    label=logic.shorten(f"{rule.number}. {rule.rule}", logic.PHONE_LABEL_MAX),
+                    value=str(rule.number),
+                    description=logic.shorten(rule.rule, logic.DESCRIPTION_MAX),
                 )
-                for place in shown[page]
+                for rule in on_page
             ]
             self.pick = _Select(self._picked, placeholder=PICK_PLACEHOLDER, options=options)
             self.add_item(self.pick)
@@ -252,25 +258,24 @@ class ListMenu(_Menu):
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         wanted = int(self.pick.values[0])
-        place = next((i for i, r in enumerate(self.rules) if r.id == wanted), None)
-        if place is None:  # not on the list any more
-            await _redraw(interaction, self.campaign, note=STALE)
+        rule = next((r for r in self.rules if r.number == wanted), None)
+        if rule is None:  # not on the list any more
+            await _redraw(interaction, self.campaign, note=STALE, page=self.page)
             return
-        rule = self.rules[place]
-        text = f"📜 **House rule {place + 1}**\n{entry_text(place + 1, rule)}"
-        await _show(interaction, text, RuleMenu(self.campaign, rule, place))
+        text = f"📜 **House rule {rule.number}**\n{entry_words(rule)}"
+        await _show(interaction, text, RuleMenu(self.campaign, rule, self.page))
 
 
 class RuleMenu(_Menu):
-    """One rule picked from the menu: Edit, Remove, or back to the list."""
+    """One rule picked from the menu: Edit, Remove, or back to the list (to the same page)."""
 
-    def __init__(self, campaign: Campaign, rule: HouseRule, place: int) -> None:
+    def __init__(self, campaign: Campaign, rule: HouseRule, page: int) -> None:
         super().__init__()
-        self.campaign = campaign
-        self.add_item(_Button(partial(open_edit, campaign, rule, place), label=EDIT_LABEL))
+        self.campaign, self.page = campaign, page
+        self.add_item(_Button(partial(open_edit, campaign, rule, page), label=EDIT_LABEL))
         self.add_item(
             _Button(
-                partial(ask_remove, campaign, rule, place),
+                partial(ask_remove, campaign, rule, page),
                 label=REMOVE_LABEL,
                 style=discord.ButtonStyle.danger,
             )
@@ -278,27 +283,27 @@ class RuleMenu(_Menu):
         self.add_item(_Button(self._back, label=BACK_LABEL))
 
     async def _back(self, interaction: discord.Interaction) -> None:
-        await _redraw(interaction, self.campaign)
+        await _redraw(interaction, self.campaign, page=self.page)
 
 
 async def open_edit(
-    campaign: Campaign, rule: HouseRule, place: int, interaction: discord.Interaction
+    campaign: Campaign, rule: HouseRule, page: int, interaction: discord.Interaction
 ) -> None:
-    await interaction.response.send_modal(EditForm(campaign, rule, place))
+    await interaction.response.send_modal(EditForm(campaign, rule, page))
 
 
 async def ask_remove(
-    campaign: Campaign, rule: HouseRule, place: int, interaction: discord.Interaction
+    campaign: Campaign, rule: HouseRule, page: int, interaction: discord.Interaction
 ) -> None:
     """Never remove at once: say which rule, and that it can't be undone."""
-    text = f"Remove this house rule?\n{entry_text(place + 1, rule)}\nThis can't be undone."
-    await _show(interaction, text, ConfirmRemove(campaign, rule, place))
+    text = f"Remove this house rule?\n{entry_text(rule)}\nThis can't be undone."
+    await _show(interaction, text, ConfirmRemove(campaign, rule, page))
 
 
 class ConfirmRemove(_Menu):
-    def __init__(self, campaign: Campaign, rule: HouseRule, place: int) -> None:
+    def __init__(self, campaign: Campaign, rule: HouseRule, page: int) -> None:
         super().__init__()
-        self.campaign, self.rule, self.place = campaign, rule, place
+        self.campaign, self.rule, self.page = campaign, rule, page
         self.add_item(_Button(self._yes, label=YES_REMOVE_LABEL, style=discord.ButtonStyle.danger))
         self.add_item(_Button(self._keep, label=KEEP_LABEL))
 
@@ -309,22 +314,33 @@ class ConfirmRemove(_Menu):
             await _tell(interaction, NOT_READY)
             return
         c = self.campaign
+        gone: HouseRule | None = None
         try:
             gone = await store.remove(
                 c.guild_id,
                 c.id,
                 interaction.user.id,
-                self.rule.id,
-                unchanged_since=self.rule.updated_at,
+                self.rule.number,
+                unchanged_since=self.rule.version,
             )
         except HouseRuleError as exc:
-            note = ALREADY_GONE if str(exc) == house.GONE else str(exc)
+            note = {house.GONE: ALREADY_GONE, house.CHANGED: CHANGED_REMOVE}.get(str(exc), str(exc))
         else:
-            note = f"🗑 Removed house rule: {short_words(gone)}"
-        await _redraw(interaction, c, note=note)
+            note = f"🗑 Removed house rule {gone.number}."
+        await _redraw(interaction, c, note=note, page=self.page)
+        if gone is not None:  # the words in full, to copy back if it was a mistake
+            await _tell(interaction, removed_words(gone))
 
     async def _keep(self, interaction: discord.Interaction) -> None:
-        await _redraw(interaction, self.campaign)
+        await _redraw(interaction, self.campaign, page=self.page)
+
+
+def removed_words(rule: HouseRule) -> str:
+    """What was removed, whole and as typed, and how to get it back."""
+    text = f"🗑 Removed house rule {rule.number}:\n{_code(rule.rule)}"
+    if rule.supersedes:
+        text += f"\nInstead of:\n{_code(rule.supersedes)}"
+    return f"{text}\n{CHANGED_MIND}"
 
 
 class _RuleForm(discord.ui.Modal):
@@ -332,13 +348,13 @@ class _RuleForm(discord.ui.Modal):
 
     rule: discord.ui.TextInput[_RuleForm] = discord.ui.TextInput(
         label="The rule",
-        placeholder="For example: A natural 20 doubles the damage dice",
+        placeholder="For example: Drinking a potion is a bonus action",
         style=discord.TextStyle.paragraph,
         max_length=RULE_MAX,
     )
     instead: discord.ui.TextInput[_RuleForm] = discord.ui.TextInput(
-        label="Which rule does it change? (optional)",
-        placeholder="Leave empty if this is a new rule, not a change",
+        label="Instead of (optional)",
+        placeholder="The book rule it replaces. Leave empty if it's new.",
         style=discord.TextStyle.paragraph,
         required=False,
         max_length=RULE_MAX,
@@ -347,6 +363,7 @@ class _RuleForm(discord.ui.Modal):
     def __init__(self, campaign: Campaign) -> None:
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign = campaign
+        self.page = 0  # where the list is drawn again after a save
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         set_log_context(guild_id=interaction.guild_id)  # tag this form's logs
@@ -366,12 +383,19 @@ class _RuleForm(discord.ui.Modal):
         try:
             note = await self.save(store, interaction.user.id)
         except HouseRuleError as exc:
-            # The form is closed: give the words back, so they can be pasted again.
-            words = " ".join(self.rule.value.split())
-            said = f"\nYour words, to copy: {_fit(_md(words), 300)}" if words else ""
-            await _tell(interaction, self.refusal(str(exc)) + said)
+            await _tell(interaction, self.refusal(str(exc)) + self.typed())
             return
-        await _redraw(interaction, self.campaign, note=note)
+        await _redraw(interaction, self.campaign, note=note, page=self.page)
+
+    def typed(self) -> str:
+        """The form is closed by the time a refusal comes: give both boxes back, whole
+        and exactly as typed, to copy into the form again."""
+        text = ""
+        if self.rule.value.strip():
+            text += f"\nYour words, to copy:\n{_code(self.rule.value)}"
+        if self.instead.value.strip():
+            text += f"\nInstead of:\n{_code(self.instead.value)}"
+        return text
 
     def refusal(self, message: str) -> str:
         return message
@@ -384,25 +408,50 @@ class AddForm(_RuleForm, title="Add a house rule"):
     async def save(self, store: HouseRuleStore, user_id: int) -> str:
         c = self.campaign
         saved = await store.add(c.guild_id, c.id, user_id, self.rule.value, self.instead.value)
-        return f"➕ Added house rule: {short_words(saved)}"
+        return f"➕ Added house rule {saved.number}."
+
+    def refusal(self, message: str) -> str:
+        if message == house.EMPTY:
+            return f"{message} Press **{ADD_LABEL[2:]}** and type the rule."
+        return message
 
 
 class EditForm(_RuleForm, title="Edit a house rule"):
-    def __init__(self, campaign: Campaign, rule: HouseRule, place: int) -> None:
+    def __init__(self, campaign: Campaign, rule: HouseRule, page: int) -> None:
         super().__init__(campaign)
-        self.existing, self.place = rule, place
+        self.existing, self.page = rule, page
         self.rule.default = rule.rule
         self.instead.default = rule.supersedes
 
     async def save(self, store: HouseRuleStore, user_id: int) -> str:
         c = self.campaign
         changed = await store.edit(
-            c.guild_id, c.id, user_id, self.existing.id, self.rule.value, self.instead.value
+            c.guild_id,
+            c.id,
+            user_id,
+            self.existing.number,
+            self.rule.value,
+            self.instead.value,
+            unchanged_since=self.existing.version,
         )
-        return f"✏️ Changed house rule: {short_words(changed)}"
+        return f"✏️ Changed house rule {changed.number}."
 
     def refusal(self, message: str) -> str:
-        return SOMEONE_REMOVED if message == house.GONE else message
+        n = self.existing.number
+        if message == house.GONE:
+            return (
+                "Another DM removed that house rule while you were editing, so your change "
+                f"wasn't saved. To keep it, press **{ADD_LABEL[2:]}** and paste your words."
+            )
+        if message == house.CHANGED:
+            return (
+                "Another DM changed that house rule while you were editing, so your change "
+                f"wasn't saved. Press **{EDIT_LABEL} {n}** to see their version, then paste "
+                "your words if you still want yours."
+            )
+        if message == house.EMPTY:
+            return f"{message} Press **{EDIT_LABEL} {n}** again and type the rule."
+        return message
 
 
 class CampaignChoice(_Menu):
@@ -429,7 +478,7 @@ class CampaignChoice(_Menu):
     async def _picked(self, interaction: discord.Interaction) -> None:
         campaign = self.campaigns.get(self.pick.values[0])
         if campaign is None:
-            await _tell(interaction, GONE)
+            await _tell(interaction, CAMPAIGN_GONE)
             return
         self.stop()
         await _redraw(interaction, campaign)
@@ -437,7 +486,7 @@ class CampaignChoice(_Menu):
 
 @dmbot_group.command(
     name="houserules",
-    description="See this table's house rules (a DM can add, edit or remove them)",
+    description="See this campaign's house rules (its DM can add, edit or remove them)",
 )
 async def dmbot_house_rules(interaction: discord.Interaction) -> None:
     guild = interaction.guild

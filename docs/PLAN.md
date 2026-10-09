@@ -377,18 +377,29 @@ alerts yet; those build on this.
   changed. At most 200 per campaign. The website's role has no grant on it. It goes in
   backups (a section that validates every field of the untrusted file) and is deleted with
   the campaign. A backup never carries `session_id`, which means nothing in another server.
+- **A rule's number is its own, for good (decided 2026-10-09, Supervisor):** alerts cite
+  "house rule 12", so a number never changes meaning. It is the campaign's next number
+  when the rule is made (`campaigns.house_rules_made` counts them, under the campaign's
+  lock), it is never used again, even after the rule is removed, and backups carry it. A
+  restored copy goes on after its highest number; restoring over a campaign keeps its own
+  count if that is higher. The list shows each rule's own number, newest (highest) first,
+  so it has gaps after a removal; the buttons and the menu use that number.
+- **Two DMs, one rule:** each rule counts its changes (`version`). Edit and Remove say
+  which version the DM was shown; if another DM changed the rule meanwhile, nothing is
+  saved or removed, and the DM is told (Edit gives their words back to paste again).
 - **Who may change them:** only the campaign's DMs, not even server managers: the store
   checks it in the same transaction as the change. Anyone in the server may list them,
   as they may read transcripts.
-- **`/dmbot houserules`** answers privately, newest first, numbered. It opens the campaign
-  being played, else the one campaign the person is a DM of, else the server's only one,
-  else asks which. A DM gets **Add a house rule** (a form: "The rule" and "Which rule does it
-  change? (optional)", shown in the list as "(instead of: …)"), and Edit and Remove for each
-  rule: buttons when there are four or fewer, a menu above that, and pages (what fits in
-  one message, at most ten rules) above that. Remove asks first, shows the rule, and says
-  it can't be undone; if another DM changed that rule meanwhile, nothing is removed and
-  the list is shown again. A refused form gives the DM's words back to copy. Nothing is
-  posted to the DM screen (the list isn't DM-screen content).
+- **`/dmbot houserules`** answers privately, newest first. It opens the campaign being
+  played, else the one campaign the person is a DM of, else the server's only one, else
+  asks which. A DM gets **Add a house rule** (a form: "The rule" and "Instead of
+  (optional)", shown in the list as "(instead of: …)"), and Edit and Remove for the rules
+  on the page shown: buttons when the page shows four or fewer, a menu above that, and pages
+  (what fits in one message, at most ten rules). The DM stays on their page after a change.
+  Remove asks first, shows the rule, and says it can't be undone; after it, the words are
+  given back whole, to paste into **Add a house rule** if it was a mistake. A refused form
+  gives both boxes back, whole and as typed. Nothing is posted to the DM screen (the list
+  isn't DM-screen content).
 - **Replace means replace:** restoring a backup over a campaign replaces its house rules
   with the backup's, as it does everything else; a backup made before this has none.
 - **Wording:** "house rule" only: no "precedence" or "hierarchy" in anything users read.

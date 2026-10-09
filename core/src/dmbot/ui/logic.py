@@ -22,6 +22,7 @@ from dmbot.transcription.config import Engine
 BUTTON_LABEL_MAX = 80
 FILE_MAX = 10 * 1024 * 1024  # the biggest file a bot may send
 OPTION_LABEL_MAX = 100
+DESCRIPTION_MAX = 100  # a menu choice's second line
 SELECT_OPTIONS_MAX = 25
 # What a phone shows of a button or menu choice before cutting it off (#112). Labels
 # DMbot writes itself stay within this. Names people chose (a campaign's) are cut to
