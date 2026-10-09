@@ -48,6 +48,8 @@
   --text-width: 40rem;
   --radius: 0.75rem;
   --shadow: 0 1px 2px rgb(20 30 26 / 0.06), 0 8px 24px rgb(20 30 26 / 0.08);
+  /* How strong the table artwork behind the pages is (see body::before). */
+  --art-opacity: 0.12; /* the picture is dark, so on the light page it is only a faint haze */
   /* The page background (#559): a soft glow of the brand colour at the top, not a flat fill. */
   --page: radial-gradient(70rem 32rem at 50% -8rem, #d9ebe4 0%, transparent 70%),
     linear-gradient(180deg, #f7f5ef 0%, var(--bg) 40rem);
@@ -69,6 +71,7 @@
     --warn-soft: #3a2f12;
     --danger: #f97066;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.35);
+    --art-opacity: 0.65;
     --page: radial-gradient(70rem 32rem at 50% -8rem, #1d3a31 0%, transparent 70%),
       linear-gradient(180deg, #13201c 0%, var(--bg) 40rem);
   }
@@ -98,6 +101,49 @@ body {
   font-size: var(--text-base);
   line-height: var(--leading);
   overflow-wrap: break-word;
+}
+
+/*
+ * The table artwork behind every page, kept quiet so words stay easy to read. It is a fixed
+ * layer (it doesn't scroll or repaint), with its colour cut and its brightest parts capped
+ * inside the files (scripts/make-art.py), so even the lightest pixel at --art-opacity leaves
+ * muted text above 4.5:1. A mask fades it away from the text: the left side on wide screens,
+ * the bottom on phones. Two crops: a wide one for computers and a tall one for phones.
+ * Decorative only, so it lives in CSS and screen readers never see it.
+ * Keep body and html free of position, transform, filter, isolation and z-index: any of them
+ * would put this layer behind the body's own background and hide it.
+ */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  /* The tallest the screen gets, so the layer doesn't resize when a phone's address bar hides. */
+  height: 100vh;
+  height: 100lvh;
+  z-index: -1;
+  pointer-events: none;
+  background: url("/art/table-tall.webp") 78% 0 / cover no-repeat;
+  opacity: var(--art-opacity);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 80%);
+  mask-image: linear-gradient(to bottom, #000 0%, transparent 80%);
+}
+
+@media (min-width: 48rem) {
+  body::before {
+    background: url("/art/table-wide.webp") right top / cover no-repeat;
+    -webkit-mask-image: linear-gradient(to right, transparent 25%, #000 75%);
+    mask-image: linear-gradient(to right, transparent 25%, #000 75%);
+  }
+}
+
+/* No picture for people who asked for less data (few browsers send this yet), high contrast,
+   forced colours, or paper. */
+@media (prefers-reduced-data: reduce), (prefers-contrast: more), (forced-colors: active), print {
+  body::before {
+    display: none;
+  }
 }
 
 img,

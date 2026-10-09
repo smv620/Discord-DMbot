@@ -84,6 +84,15 @@ It signs in with Google or the admin email and password (the web API's `/admin/.
 routes) and keeps nothing in the browser but the API's HttpOnly cookie. With
 `PUBLIC_API_BASE=mock` any password signs in.
 
+### The background artwork
+
+`public/art/table-wide.webp` (computers) and `table-tall.webp` (phones) sit behind every page
+(`body::before` in `src/styles/global.css`, strength in `--art-opacity`). The owner supplied the
+artwork on 2026-10-09; its origin and licence are for the owner to confirm in the PR. The files
+are made by `scripts/make-art.py` (half the colour, brightest parts capped) so words on top stay
+above 4.5:1 contrast. To change the picture, run the script on the new file and check the ratio.
+They are cached for a day (their names have no hash), so a new picture can take a day to show.
+
 ## Layout
 
 - `src/layouts/Base.astro`: the one layout (head tags, menu, footer with legal links).
