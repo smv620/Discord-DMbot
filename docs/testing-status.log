@@ -21,6 +21,9 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   thing, it shows first as "House rule N". As a player (not a DM) `/dmbot rule name:Fireball`
   says only a campaign's DM can look up rules. Nothing appears in the channel or the
   transcript. Core logs no ERROR.
+- #925 (follow-ups to #914's counts): ears AND core together, no migration. Check with
+  DMBOT_DEBUG_AUDIO=1: nothing new on the DM screen; `Capture check:` says "1 decode error"
+  (singular); the counts in `audio user=` lines are as before. No separate test needed.
 
 ------------------------------------------------------------------------------
 LIVE NOW
