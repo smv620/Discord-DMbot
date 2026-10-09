@@ -9,6 +9,38 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev3, PR #877 (#573): core only, no migration or setting. The Transcript Cleaner no
+  longer merges a new name into a known look-alike. (1) With the known name in the same
+  line, a look-alike word stays as heard ("Today Isolde heals the wounded, and Ysolde
+  rests."). (2) A fix by sound is silent only when spelled at least 0.95 alike; closer
+  than the old bars but below that it is made WITH a note and Undo in ✏️ Name fixes to
+  check, and under Quiet it is not made. So **almost every fix by sound is now a note,
+  not a silent fix** (also "Beleros" → Belleros): watch how many notes appear in a
+  session. Same-letters respellings ("Kazeth" → "Ka'zeth") and the DM's own fixes stay
+  silent. (3) A name the DM confirmed is never merged again. Check in the next
+  names-stress test: Isolde and Rothgar next to Ysolde and Hrothgar stay as heard; a
+  lone one is fixed but noted with Undo; real mishearings are still fixed. If the notes
+  pile up, tell dev3: one constant (NEAR_CERTAIN) moves the line.
+- dev2, PR #869 (#865): core with **migration 0031** (a new table `house_rules` and a new
+  column `campaigns.house_rules_made`; the migration runs when core starts, so rebuild
+  core). No setting. `/dmbot houserules`: a campaign's house rules, which everyone in the
+  server can read and only the campaign's DMs can add, edit or remove. Each rule keeps its
+  own number for good. Check, as the DM: the list says "No house rules yet" with an **Add a
+  house rule** button; add two (a form with "The rule" and "Instead of (optional)") and the
+  list shows "2." above "1." and "Each rule keeps its number, even when others are
+  removed."; Remove 1 asks first, then says "Removed house rule 1." and sends the words to
+  copy; add one more and it is **3**, not 1. As a player: the same list, no buttons. In the
+  logs: migration 0031 applied, no error. The website's database role has no access to the
+  table, so web-api needs nothing.
+- dev2, PR #875 (#866): core only, no migration or setting. The rules index: DMbot now
+  ships the System Reference Document 5.2.1's 339 spells and 15 conditions (CC-BY-4.0;
+  the attribution is in the README and core/src/dmbot/rules/data/srd52/ATTRIBUTION.md)
+  and can look them up by name, with a citation. Nothing calls it yet (the rules advisor
+  will), so there is nothing to see in Discord. Check: core starts after the rebuild and
+  logs no error. For dev1, once, after #889 merges (it changes a few line breaks in the
+  data): download the official PDF (its address is in ATTRIBUTION.md) into a folder of its
+  own and run `python -m dmbot.devtools.srd <the PDF>` from core/ in a checkout; `git diff`
+  must show nothing.
 - dev3, PR #872 (#399): core only, no migration or setting. The after-session name scan
   no longer suggests a word of a known name that was said whole ("Oskar" when Oskar Vane
   is known and "Oskar Vane" was said); a lone "Oskar" elsewhere is still suggested. Check

@@ -29,6 +29,7 @@ from dmbot.transcript.cleaner import (
 )
 
 BELLEROS, CERRIC, KAZETH, TOWN, GUESS, TRIBE, THORIN, MAREN, MARRON = (c * 32 for c in "abcdefghi")
+YSOLDE, ISOLDA = "y" * 32, "z" * 32
 MIA, DEE = 8, 9
 # Every entry in the scene: the traps must hold even then.
 EVERYONE = frozenset((BELLEROS, CERRIC, KAZETH, TOWN, GUESS, TRIBE, THORIN, MAREN, MARRON))
@@ -165,7 +166,9 @@ class MishearingsTest(unittest.TestCase):
         # Hrothgar is only suggested: its fix needs the DM screen's Undo (#504).
         self.assertEqual(text("then Hrothgarr roars"), "then Hrothgar roars")
         self.assertEqual(text("then Hrothgarr roars", unsure=False), "then Hrothgarr roars")
-        self.assertEqual(text("I think Beleros has it", unsure=False), "I think Belleros has it")
+        # A near-certain one is silent; a close look-alike is noted, so Quiet leaves it (#573).
+        self.assertEqual(text("I think Beleros has it", unsure=False), "I think Beleros has it")
+        self.assertEqual(text("I think Beleros has it"), "I think Belleros has it")
 
     def test_a_name_is_written_the_way_it_was_said(self) -> None:
         # "Frostwolves" is the tribe's other name: not changed to "Frostwolf tribe"
@@ -235,6 +238,123 @@ class TrapsTest(unittest.TestCase):
         self.assertFalse(fix.sure)
         # less alike than that: left as heard
         self.assertEqual(text("then Hrothgor roars"), "then Hrothgor roars")
+
+    # ---- a look-alike is not always a mishearing (#573) --------------------------
+
+    def ysolde(self, *, isolda: bool = False) -> CampaignLookup:
+        more = [entity(YSOLDE, "Ysolde")]
+        more_aliases = [alias(YSOLDE, "Ysolde")]
+        if isolda:  # the DM confirmed the new name
+            more.append(entity(ISOLDA, "Isolda"))
+            more_aliases.append(alias(ISOLDA, "Isolda"))
+        return lookup(more=tuple(more), more_aliases=tuple(more_aliases))
+
+    def test_a_look_alike_next_to_the_name_it_resembles_is_another_person(self) -> None:
+        # names-stress lines 40-41: Ysolde has a student, heard as "Isolde".
+        everyone = EVERYONE | {YSOLDE}
+        for heard in (
+            "Today Isolde heals the wounded, and Ysolde rests.",
+            "The healer Ysolde has a student called Isolde.",
+        ):
+            result = clean(self.ysolde(), heard, scene=everyone)
+            self.assertEqual((result.text, result.fixes), (heard, ()), heard)
+
+    def test_the_same_line_rule_sees_possessives_and_other_names_of_her(self) -> None:
+        everyone = EVERYONE | {YSOLDE}
+        names = lookup(
+            more=(entity(YSOLDE, "Ysolde"),),
+            more_aliases=(alias(YSOLDE, "Ysolde"), alias(YSOLDE, "Sister Anne")),
+        )
+        for heard in (
+            "Ysolde's student Isolde sings.",  # a possessive, with either apostrophe
+            "Ysolde’s student Isolde sings.",
+            "Sister Anne met Isolde today.",  # another name of the same person
+        ):
+            result = clean(names, heard, scene=everyone)
+            self.assertEqual((result.text, result.fixes), (heard, ()), heard)
+
+    def test_a_secret_name_in_the_line_changes_nothing(self) -> None:
+        names = lookup(
+            more=(entity(YSOLDE, "Ysolde"),),
+            more_aliases=(alias(YSOLDE, "Ysolde"), alias(YSOLDE, "Isolda", secret=True)),
+        )
+        heard = "Today Isolde walks with Ysolde."
+        result = clean(names, heard, scene=EVERYONE | {YSOLDE})
+        self.assertEqual((result.text, result.fixes, result.questions), (heard, (), ()))
+
+    def test_a_question_keeps_asking_while_two_options_are_left(self) -> None:
+        extra = {"i" * 32: "Isolda", "j" * 32: "Isolt", "k" * 32: "Ysolde"}
+        names = lookup(
+            more=tuple(entity(e, n) for e, n in extra.items()),
+            more_aliases=tuple(alias(e, n) for e, n in extra.items()),
+        )
+        everyone = EVERYONE | set(extra)
+        (asked,) = clean(names, "Today I met Isolde in town.", scene=everyone).questions
+        self.assertEqual({n for _, n in asked.options}, {"Isolda", "Ysolde", "Isolt"})
+        # Ysolde is in the line: she is not an option, but two others still are.
+        (left,) = clean(names, "Ysolde and Isolde talk.", scene=everyone).questions
+        self.assertEqual({n for _, n in left.options}, {"Isolda", "Isolt"})
+
+    def test_a_close_look_alike_alone_is_fixed_with_a_note_not_silently(self) -> None:
+        # 0.83 alike: possibly a mishearing, possibly someone new, so the DM can Undo.
+        result = clean(
+            self.ysolde(), "Today I saw Isolde heal the wounded.", scene=EVERYONE | {YSOLDE}
+        )
+        self.assertEqual(result.text, "Today I saw Ysolde heal the wounded.")
+        (fix,) = result.fixes
+        self.assertFalse(fix.sure)
+        self.assertLess(likeness(fix.heard, fix.written), cleaner.NEAR_CERTAIN)
+
+    def test_quiet_leaves_a_close_look_alike_as_heard(self) -> None:
+        # With no notes shown (How much DMbot says: Quiet), a fix that needs Undo isn't made.
+        heard = "Today I saw Isolde heal the wounded."
+        result = clean(self.ysolde(), heard, scene=EVERYONE | {YSOLDE}, unsure=False)
+        self.assertEqual((result.text, result.fixes), (heard, ()))
+
+    def test_only_a_near_identical_spelling_is_fixed_silently(self) -> None:
+        # Pinned from both sides: one wrong letter is silent only in a long name.
+        long = "m" * 32
+        names = lookup(
+            more=(entity(long, "Wolfsbane Highlands Keep"),),
+            more_aliases=(alias(long, "Wolfsbane Highlands Keep"),),
+        )
+        (fix,) = clean(names, "we ride to Wolfsbane Highlands Keap", scene=EVERYONE | {long}).fixes
+        self.assertGreaterEqual(likeness(fix.heard, fix.written), cleaner.NEAR_CERTAIN)  # 0.955
+        self.assertTrue(fix.sure)
+        for said in ("Bryn Shandar", "Brin Shander"):  # 0.91: made, but noted with Undo
+            (fix,) = clean(lookup(), f"we ride to {said}", scene=EVERYONE).fixes
+            self.assertLess(likeness(fix.heard, fix.written), cleaner.NEAR_CERTAIN, said)
+            self.assertEqual((fix.written, fix.sure), ("Bryn Shander", False), said)
+        # The old flagship, one letter short (0.93): noted now, not silent.
+        (fix,) = clean(lookup(), "I think Beleros has the key.", scene=EVERYONE).fixes
+        self.assertEqual((fix.written, fix.sure), ("Belleros", False))
+
+    def test_a_name_the_dm_typed_in_the_line_also_counts_as_said(self) -> None:
+        # Hrothgar is only suggested here, and "Hroth" is the DM's own spelling of him.
+        names = lookup(corrections=(correction("Hroth", GUESS, FIX),))
+        alone = clean(names, "then Hrothgarr roars", scene=EVERYONE)
+        self.assertEqual(alone.text, "then Hrothgar roars")  # fixed with Undo, as always
+        self.assertEqual(alone.fixes[0].how, SOUND)
+        both = clean(names, "then Hroth and Hrothgarr fight", scene=EVERYONE)
+        self.assertEqual(both.text, "then Hrothgar and Hrothgarr fight")  # "Hroth" only
+        self.assertEqual([f.heard for f in both.fixes], ["Hroth"])  # not made into him twice
+
+    def test_a_name_the_dm_confirmed_is_never_merged_again(self) -> None:
+        names = self.ysolde(isolda=True)
+        scene = EVERYONE | {YSOLDE, ISOLDA}
+        heard = "Today Isolda heals the wounded."
+        self.assertEqual(clean(names, heard, scene=scene).text, heard)  # known: untouched
+        # "Isolde" now sounds like two known names: it is asked about, never made Ysolde.
+        result = clean(names, "Today I met Isolde in town.", scene=scene)
+        self.assertEqual(result.text, "Today I met Isolde in town.")
+        (question,) = result.questions
+        self.assertEqual({e for e, _ in question.options}, {YSOLDE, ISOLDA})
+
+    def test_a_question_drops_a_name_the_line_already_says(self) -> None:
+        names = self.ysolde(isolda=True)
+        result = clean(names, "Ysolde and Isolde talk.", scene=EVERYONE | {YSOLDE, ISOLDA})
+        self.assertEqual(result.text, "Ysolde and Isolde talk.")
+        self.assertEqual(result.questions, ())  # only Isolda is left to offer: not asked
 
     def test_two_names_sounding_alike_are_left_alone(self) -> None:
         names = lookup(
