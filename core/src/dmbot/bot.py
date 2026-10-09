@@ -1198,8 +1198,8 @@ class DMBot(commands.AutoShardedBot):
 
     async def plan_refusal(self, guild_id: int, campaign: Campaign, starter_id: int) -> str | None:
         """Why the campaign's owner's plan, hours or campaign count don't allow a start, in
-        plain words for the person starting it, or None (#437). Only when DMBOT_ENFORCE_PLANS is on. Fails
-        open: a database hiccup must never lock a table out of its game."""
+        plain words for the person starting it, or None (#437). Only when DMBOT_ENFORCE_PLANS
+        is on. Fails open: a database hiccup must never lock a table out of its game."""
         if not self.settings.enforce_plans or self.meter is None:
             return None
         owner = campaign.owner_user_id
