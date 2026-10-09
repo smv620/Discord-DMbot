@@ -137,9 +137,7 @@ async def _tell(
             )
     else:
         if view is None:
-            await interaction.response.send_message(
-                text, ephemeral=True, allowed_mentions=NO_PINGS
-            )
+            await interaction.response.send_message(text, ephemeral=True, allowed_mentions=NO_PINGS)
         else:
             await interaction.response.send_message(
                 text, view=view, ephemeral=True, allowed_mentions=NO_PINGS
