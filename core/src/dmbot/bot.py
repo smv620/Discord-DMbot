@@ -115,6 +115,7 @@ from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
+from dmbot.rules.house import HouseRulesSection, HouseRuleStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcript import fix_notes, left_out
 from dmbot.transcript import questions as name_questions
@@ -139,6 +140,7 @@ from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, speech_sent_line
 from dmbot.ui import logic as ui_logic
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
+from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
@@ -395,6 +397,7 @@ class DMBot(commands.AutoShardedBot):
         memory: MemoryStore | None = None,
         transcripts: TranscriptStore | None = None,
         sheets: SheetStore | None = None,
+        house_rules: HouseRuleStore | None = None,
         meter: usage.Meter | None = None,
     ) -> None:
         intents = discord.Intents.none()
@@ -421,6 +424,8 @@ class DMBot(commands.AutoShardedBot):
         self.lookup = LookupCache(memory) if memory is not None else None
         # Players' D&D Beyond sheets, per campaign (#723).
         self.sheets = sheets
+        # A campaign's house rules, for `/dmbot houserules` (#865); None without a database.
+        self.house_rules = house_rules
         # The hours meter (#437 part 2): listening minutes are written here; None records
         # nothing (tests and tools that run no real sessions).
         self.meter = meter
@@ -3472,6 +3477,7 @@ async def run(settings: Settings) -> None:
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
         campaigns = CampaignStore(db)
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
+        campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
         bot = DMBot(
@@ -3483,6 +3489,7 @@ async def run(settings: Settings) -> None:
             MemoryStore(db, keep_days=settings.memory_keep_days),
             TranscriptStore(db),
             SheetStore(db),
+            HouseRuleStore(db),
             usage.Meter(db),
         )
         _close_on_sigterm(bot)
