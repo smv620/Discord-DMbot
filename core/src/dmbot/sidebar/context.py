@@ -7,7 +7,9 @@ index and passes them in, so a test can prove another campaign's data never reac
   entries are sent (never the whole index), each cut short.
 - **House rules:** those that name a matched entry or share a word with the question.
 - **Names:** the confirmed names the question mentions, with a line of what DMbot knows. Secret
-  names are left out: the sidebar's answers can reach the raw transcript (#933).
+  names are left out, and someone with a secret name is given by name only. Why: a reply can
+  reach the raw transcript, which everyone who may read transcripts may read (#933), so a secret
+  name or a description that holds one in a reply would leak it to the players.
 - **The scene:** the caller's last few minutes of cleaned transcript, trimmed again here.
 - **DMbot's own help:** a short reviewed digest (`about_dmbot.md`), only for questions about
   DMbot or Discord. Never the whole PLAN and never fetched at run time.

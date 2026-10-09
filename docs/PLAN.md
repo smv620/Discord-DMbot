@@ -361,7 +361,31 @@ never cut, with a **Read the rest** button. No match: "couldn't find that in the
 private, never in a channel or a transcript; players looking up rules is a later question),
 and **precedence is shown, not decided**: a house rule of that campaign (and no other's) that
 names the thing comes first as "🏠 House rule 12: …", then the book, and the DM decides what
-applies. Not built: alerts from what is said at the table, the AI, shared rulebooks.
+applies. Not built: the AI, shared rulebooks.
+
+**Built: rules cards from the table (#931), the first rules alert.** A campaign setting,
+**🃏 Rules cards**, in ⚙️ Settings (**off by default**; only the campaign's DMs change it; it
+travels in a backup with the campaign's other settings). When on, a live session looks at
+each cleaned line of people who agreed and, when a spell, condition or creature of the
+campaign's rulesets is named (whole names only, plurals count, the longest name first), puts
+a short card on the DM screen only: never in the transcript, never to players; it follows the
+DM screen's visibility like every other post there. The card is the lookup card's top half: a
+house rule that names it first ("🏠 House rule 12: …"), the name, the facts line, the source
+with its tag, and what was heard ("Heard: “casts Fireball”", the confidence every rules alert
+gives), with **✅ Got it**, **🙈 Ignore** (no more cards for that name this session),
+**⚖️ Override** (the Add a house rule form with "Instead of" filled in; the answer is private)
+and **📖 Read it all** (the full lookup card, privately). Names that are everyday words
+(Light, Fly, Shield, Prone, Nightmare, Tough Boss, …) only count after "cast", "casts" or
+"casting" right before a spell, or "is", "are", "was" or "were" right before a condition ("the
+goblin is grappled"); an everyday creature (Wolf, Bat, Guard, Nightmare, …) never gets a card
+from the table (the DM looks it up with 📖); a name the campaign itself uses for a character, NPC
+or place (a PC called Sprite) is skipped; the list is in
+`dmbot.rules.spotter`, and a test checks every word on it is a name in the index. Not noisy:
+one card for each name each session, one card a minute (the rest are dropped, not queued), and
+nothing after `/dmbot stop`. The DM screen's level (Quiet, Normal, Chatty) does not govern
+it: turning the setting on is the DM's own choice and wins, even on Quiet. Names only: no AI, no cost, so no `can_use_ai` check. It never
+decides: the card says what the free rules say. Not built: AI checks of what was ruled, house
+rules proposed by voice, players' lookups.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
@@ -1676,7 +1700,7 @@ table isn't left waiting while the DM looks something up.
 - **Cost:** every answer spends AI tokens, so it goes through `can_use_ai` (#919).
 
 *Built, part 1: the answer engine (#934, CloudDev, 2026-10-09):* `dmbot.sidebar` (no Discord, no
-voice). `bot.sidebar.answer(campaign, question, asker_id=..., scene=...)` returns an `Answer`:
+voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)` returns an `Answer`:
 `text` (short, with its source and "sure"), `in_game`, `refused`, `model`, `prompt_version`,
 `sources` (everything the AI was given, in short words: "SRD 5.2.1 p. 131", "house rule 3",
 "campaign names", "the scene", "DMbot help"), `parts` (a long answer as messages) and `seconds`.
@@ -1892,7 +1916,11 @@ only "<Copies of this campaign aren't available | Transcripts aren't available f
 campaign | Finding names with DMbot's AI isn't available for this campaign | Loading a copy isn't
 available>. Ask the campaign's owner to take a look.", never anything about the plan. A campaign
 with no owner is told "This campaign has no owner yet. One of its DMs needs to press **Take it
-on** on the campaign's card in the DM screen first." A refused Find names answers Discord first,
+on** on the campaign's card in the DM screen first." When the plan has no downloads (#938), the end-of-session private message is not sent to
+players at all (they could not act on it, and a download button would be refused on every
+press): only the owner is messaged, once, "The session for X has ended. Its transcript
+is kept, but this campaign's plan doesn't include downloads." plus the owner's line above; with no owner, the campaign's DMs get the
+no-owner line instead. If the plan check fails the buttons go out as usual. A refused Find names answers Discord first,
 leaves the menu in place (so "Add the lines that fit" still works), does not count against the
 day's reads, and records no right-to-use confirmation, because nothing was read. Only when
 `DMBOT_ENFORCE_PLANS` is on; a database hiccup, or one slower than 2 seconds, lets the action through, like the start check. A campaign with no owner has no plan, so it

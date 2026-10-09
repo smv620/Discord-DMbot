@@ -527,7 +527,7 @@ class Injection(unittest.TestCase):
 
 
 class TheBotsSidebar(unittest.IsolatedAsyncioTestCase):
-    """`DMBot._make_sidebar`: the wiring that decides which campaign's data is read."""
+    """`DMBot._make_sidebar_answers`: the wiring that decides which campaign's data is read."""
 
     def make_bot(self, key: str, **kw: Any) -> Any:
         from dmbot.bot import DMBot
@@ -542,13 +542,13 @@ class TheBotsSidebar(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_no_ai_key_no_sidebar(self) -> None:
-        self.assertIsNone(self.make_bot("").sidebar)
+        self.assertIsNone(self.make_bot("").sidebar_answers)
 
     async def test_the_plan_check_is_the_ai_rule_for_the_asking_campaign_and_person(self) -> None:
         bot = self.make_bot("k")
         bot.plan_gate = AsyncMock(return_value="no")
         c = campaign()
-        self.assertEqual(await bot.sidebar._gate(c, 5), "no")
+        self.assertEqual(await bot.sidebar_answers._gate(c, 5), "no")
         bot.plan_gate.assert_awaited_once_with("ai", GUILD, c, 5)
 
     async def test_house_rules_are_read_for_this_campaign_only(self) -> None:
@@ -556,20 +556,20 @@ class TheBotsSidebar(unittest.IsolatedAsyncioTestCase):
         store.list.return_value = ["rule"]
         bot = self.make_bot("k", house_rules=store)
         c = campaign("b" * 32)
-        self.assertEqual(await bot.sidebar._houses(c), ["rule"])
+        self.assertEqual(await bot.sidebar_answers._houses(c), ["rule"])
         store.list.assert_awaited_once_with(GUILD, "b" * 32)
 
     async def test_without_a_store_or_names_the_sidebar_still_works(self) -> None:
         bot = self.make_bot("k")
-        self.assertEqual(await bot.sidebar._houses(campaign()), [])
-        self.assertIsNone(await bot.sidebar._names(campaign()))
+        self.assertEqual(await bot.sidebar_answers._houses(campaign()), [])
+        self.assertIsNone(await bot.sidebar_answers._names(campaign()))
 
     async def test_names_are_waited_for_only_briefly(self) -> None:
         from dmbot import bot as bot_module
 
         bot = self.make_bot("k", memory=AsyncMock())
         bot.lookup.get_within = AsyncMock(return_value=None)
-        await bot.sidebar._names(campaign("c" * 32))
+        await bot.sidebar_answers._names(campaign("c" * 32))
         bot.lookup.get_within.assert_awaited_once_with(GUILD, "c" * 32, bot_module.NAMES_WAIT_S)
 
 
