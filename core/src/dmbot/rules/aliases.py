@@ -7,8 +7,14 @@ the 2024 entry under either name, and only falls back to a legacy entry when no 
 entry matches any name. Each pair is (older name, the name in the SRD 5.2.1), and every
 current name must be in the data: a test checks that, so a typo here can't hide.
 
-Only renames go here. A rule that kept its name needs no entry, and neither does one
-that was merged into another (that is a question for the rules advisor, not a name).
+Only renames go here, whether or not the rule's text changed with the name (a spell that
+was rewritten and renamed is still the newer version of the same spell, and the older one
+must not be used while this one exists). A rule that kept its name needs no entry, and
+neither does one that was merged into another (that is a question for the rules advisor,
+not a name).
+
+Made by comparing every spell name in the 2014 SRD 5.1 with the 2024 SRD 5.2.1: the two
+renames that remain after the creator names are the last two entries.
 """
 
 from __future__ import annotations
@@ -34,4 +40,6 @@ SPELL_ALIASES: tuple[tuple[str, str], ...] = (
     ("Leomund’s Secret Chest", "Secret Chest"),  # same
     ("Rary’s Telepathic Bond", "Telepathic Bond"),  # same
     ("Leomund’s Tiny Hut", "Tiny Hut"),  # same
+    ("Feeblemind", "Befuddlement"),  # 2014 SRD 5.1 name; 2024 renamed it (and reworked it)
+    ("Branding Smite", "Shining Smite"),  # same: 2024 renamed it (and reworked it)
 )

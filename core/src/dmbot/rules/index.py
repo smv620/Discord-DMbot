@@ -26,13 +26,15 @@ import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.rules import aliases
 
 DATA = Path(__file__).resolve().parent / "data"
-LEGACY = "2014"  # the edition whose content is always tagged legacy
+LEGACY = "2014"  # the edition whose content is always tagged legacy; update when a newer
+# edition ships (then 2024 becomes legacy too, and gets its own tag)
 
 _APOSTROPHES = re.compile(r"[’‘ʼ'`]")
 _NOT_ALNUM = re.compile(r"[^0-9a-z]+")
@@ -66,7 +68,9 @@ class Entry:
     section: str  # "Spell Descriptions"
     page: int
     text: str  # the source's words
-    details: Mapping[str, Any] = field(default_factory=dict)  # a spell's level, school, ...
+    # A spell's level, school, ... Read only: the index is shared, so nobody may change it in
+    # place. Not part of an entry's hash (a mapping isn't hashable).
+    details: Mapping[str, Any] = field(default_factory=dict, hash=False)
 
     @property
     def citation(self) -> str:
@@ -161,7 +165,7 @@ def load_folder(folder: Path) -> list[Entry]:
                     data["section"],
                     int(raw["page"]),
                     raw["text"],
-                    details,
+                    MappingProxyType(details),
                 )
             )
     return entries

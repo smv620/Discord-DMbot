@@ -262,9 +262,64 @@ class OlderNames(unittest.TestCase):
         olds = [normalize(o) for o, _ in aliases.SPELL_ALIASES]
         self.assertEqual(len(olds), len(set(olds)))
 
-    def test_a_2014_name_is_a_name_not_a_legacy_hit(self) -> None:
+    def test_the_two_reworked_renames_find_the_2024_spell(self) -> None:
+        # Renamed in 2024 along with a rewrite: still the newer version of the same spell,
+        # so once the 2014 data is added it must not be answered with the old one.
+        for older, current in (("Feeblemind", "Befuddlement"), ("Branding Smite", "Shining Smite")):
+            hit = index.srd().lookup(older, "2024", "2014", kind="spell")
+            assert hit is not None
+            self.assertEqual((hit.entry.name, hit.tag, hit.renamed), (current, "", True))
+            self.assertIn((older, current), aliases.SPELL_ALIASES)
+
+    def test_a_name_in_neither_edition_is_a_miss_even_with_a_fallback(self) -> None:
         # No 2014 data is shipped yet, so the fallback has nothing: a miss, not a guess.
         self.assertIsNone(index.srd().lookup("Sleet Storm of Ruin", "2024", "2014"))
+
+
+class TheSrdOnly(unittest.TestCase):
+    """Nothing hand-added: spells from other books must never appear here."""
+
+    NOT_IN_THE_SRD = (
+        "Armor of Agathys", "Hunger of Hadar", "Toll the Dead", "Booming Blade",
+        "Mind Sliver", "Tasha’s Bubbling Cauldron", "Green-Flame Blade", "Sword Burst",
+        "Healing Spirit", "Create Bonfire", "Word of Radiance",
+    )  # fmt: skip
+
+    def test_spells_from_other_books_are_absent(self) -> None:
+        for name in self.NOT_IN_THE_SRD:
+            with self.subTest(name):
+                self.assertIsNone(index.srd().lookup(name, "2024", "2014"))
+
+    def test_no_title_carries_a_creators_name(self) -> None:
+        # The possessives that are left are not people (a job, a dragon, a hunter): a title
+        # like "Melf's Acid Arrow" in the data would show up here as an extra.
+        possessive = {e.name for e in index.srd().entries if "’s " in e.name}
+        self.assertEqual(possessive, {"Arcanist’s Magic Aura", "Dragon’s Breath", "Hunter’s Mark"})
+
+    def test_entry_details_cannot_be_changed_in_place(self) -> None:
+        hit = index.srd().lookup("Fireball", "2024", kind="spell")
+        assert hit is not None
+        with self.assertRaises(TypeError):
+            hit.entry.details["level"] = 9  # type: ignore[index]
+        self.assertEqual(hit.entry.details["level"], 3)
+        self.assertIsInstance(hash(hit.entry), int)  # still usable in sets
+
+    def test_the_text_is_the_srds_not_a_garbled_copy(self) -> None:
+        by_name = {e.name: e.text for e in index.srd().entries}
+        self.assertIn("ten 10-foot-by-10-foot panels", by_name["Wall of Stone"])
+        for name in ("Animate Objects", "Find Steed", "Giant Insect", "Summon Dragon"):
+            text = by_name[name]
+            with self.subTest(name):
+                self.assertRegex(text, r"\nStr \d+ [+−]\d+ [+−]\d+ Dex \d+ .* Con \d+ ")
+                self.assertRegex(text, r"\nInt \d+ .* Wis \d+ .* Cha \d+ ")
+                self.assertNotRegex(text, r"\b(dex|con|WiS|chA|int) \d")  # small-capital slips
+        stat = by_name["Find Steed"]
+        self.assertIn(
+            "(the steed has a number of Hit Dice [d10s] equal to the spell’s level)", stat
+        )
+        for name, text in by_name.items():
+            with self.subTest(name):
+                self.assertNotRegex(text, r"[a-z]\d+-(foot|minute|hour|day)", name)  # "by10-foot"
 
 
 class Provenance(unittest.TestCase):

@@ -199,6 +199,47 @@ class CutWords(unittest.TestCase):
         text = self.spell("The zebra-", "fish swims.")
         self.assertTrue(text.startswith("The zebrafish swims."))
 
+    def test_a_hyphen_before_a_number_belongs_to_the_text(self) -> None:
+        # "10-foot-by-" at a line's end, then "10-foot": the hyphen is real.
+        text = self.spell("Ten 10-foot-by-", "10-foot panels.")
+        self.assertTrue(text.startswith("Ten 10-foot-by-10-foot panels."))
+
+    def test_a_stat_block_that_wraps_is_read_as_lines_of_its_own(self) -> None:
+        optima = "Optima-Regular"
+        lines = [
+            *header("Find Steed", "Level 2 Conjuration (Paladin)"),
+            say("You summon a steed."),
+            say("Otherworldly Steed", "GillSans"),
+            say("AC 10 + 1 per spell level", "Optima-Bold"),
+            say("HP 5 + 10 per spell level (the steed has a number of Hit", "Optima-Bold"),
+            say("Dice [d10s] equal to the spell’s level)", optima),
+            say("Immunities Poison, Psychic; Charmed, Exhaustion,", "Optima-Bold"),
+            say("Frightened, Paralyzed, Poisoned", optima),
+            say("Speed 60 ft.", "Optima-Bold"),
+            say("The word steed is in the document.", BODY),
+        ]
+        (spell,) = parse.parse_spells(lines)
+        rows = spell.text.splitlines()
+        self.assertIn("HP 5 + 10 per spell level (the steed has a number of Hit Dice [d10s] "
+                      "equal to the spell’s level)", rows)  # fmt: skip
+        self.assertIn("Immunities Poison, Psychic; Charmed, Exhaustion, Frightened, Paralyzed, "
+                      "Poisoned", rows)  # fmt: skip
+        self.assertIn("Speed 60 ft.", rows)  # a new entry is a new line
+
+    def test_ability_names_set_in_small_capitals_are_written_once(self) -> None:
+        lines = [
+            *header("Giant Insect", "Level 4 Conjuration (Druid)"),
+            say("You summon an insect."),
+            say("MOD SAVE MOD SAVE MOD SAVE", "GillSans"),
+            say("Str 17 +3 +3 dex 13 +1 +1 con 15 +2 +2", "GillSans"),
+            say("int 4 −3 −3 WiS 14 +2 +2 chA 3 −4 −4", "GillSans"),
+            say("The word con and int and dex appear in the text.", BODY),
+        ]
+        (spell,) = parse.parse_spells(lines)
+        self.assertIn("Str 17 +3 +3 Dex 13 +1 +1 Con 15 +2 +2", spell.text)
+        self.assertIn("Int 4 −3 −3 Wis 14 +2 +2 Cha 3 −4 −4", spell.text)
+        self.assertIn("The word con and int and dex appear in the text.", spell.text)  # not scores
+
     def test_a_table_row_that_wraps_is_joined_too(self) -> None:
         lines = [
             *header("Confusion", "Level 4 Enchantment (Bard)"),

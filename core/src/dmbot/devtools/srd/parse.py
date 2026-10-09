@@ -30,6 +30,8 @@ TITLE_FONT = "GillSans-SemiBold"
 SANS_FONT = "GillSans"
 ITALIC_FONT = "Cambria-Italic"
 BODY_FAMILY = "Cambria"
+STAT_FAMILY = "Optima"  # stat blocks inside a spell; a line starting in plain Optima wraps on
+STAT_WRAPPED = "Optima-Regular"
 BOLD_LEAD_INS = ("Cambria-Bold", "Cambria-BoldItalic")
 
 LEVEL_LINE = re.compile(r"^Level (?P<level>\d) (?P<school>[A-Z][a-z]+) \((?P<classes>.+)\)$")
@@ -45,6 +47,9 @@ FIELDS = ("Casting Time", "Range", "Components", "Duration")
 FIELD_LABEL = re.compile(r"^(?P<label>Casting Time|Range|Components?|Duration):\s*(?P<value>.*)$")
 CONDITION_TAG = re.compile(r"^(?P<name>.+?) \[Condition\]$")
 WORD = re.compile(r"[A-Za-z’']+")
+# A stat block's ability scores are set in small capitals, which come out in mixed case
+# ("dex 14", "WiS 3"): the name is written once, as "Dex".
+ABILITY_NAME = re.compile(r"\b(str|dex|con|int|wis|cha)\b(?= \d)", re.IGNORECASE)
 HYPHENATED = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)+")
 
 
@@ -103,6 +108,8 @@ class Mender:
         lead = WORD.findall(right)[:1] or [""]
         whole = (tail[0] + lead[0]).lower()
         hyphenated = f"{tail[0]}-{lead[0]}".lower()
+        if right[:1].isdigit():  # "10-foot-by-" / "10-foot": a number goes with the hyphen
+            return f"{head}-{right}"
         if hyphenated in self.hyphenated and whole not in self.whole:
             return f"{head}-{right}"
         if whole in self.whole or spaced or hyphenated not in self.hyphenated:
@@ -119,11 +126,13 @@ def _paragraphs(lines: Sequence[Line], mender: Mender) -> str:
     indented line, at a bold lead-in ("Audible Alarm."), and wherever the font changes
     (a table, a stat block); those lines each stay on a line of their own."""
     paragraphs: list[str] = []
-    previous_body = False
+    previous_body = previous_stat = False
     for line in lines:
         raw = line.text
         body = line.first_font.startswith(BODY_FAMILY)
-        fresh = (
+        # A stat block line that starts in plain Optima carries on the line before it.
+        wrapped = line.starts_with_font(STAT_WRAPPED) and previous_stat
+        fresh = not wrapped and (
             not paragraphs
             or not body
             or not previous_body
@@ -145,7 +154,12 @@ def _paragraphs(lines: Sequence[Line], mender: Mender) -> str:
         else:
             paragraphs[-1] += " " + text
         previous_body = body
-    return "\n".join(_clean(p) for p in paragraphs if p.strip())
+        previous_stat = line.first_font.startswith(STAT_FAMILY)
+    return "\n".join(ABILITY_NAME.sub(_titled, _clean(p)) for p in paragraphs if p.strip())
+
+
+def _titled(match: re.Match[str]) -> str:
+    return match.group().capitalize()
 
 
 def _fix_title(line: Line) -> str:

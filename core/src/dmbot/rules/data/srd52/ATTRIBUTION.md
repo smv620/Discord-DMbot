@@ -15,9 +15,9 @@ The words are the SRD's. DMbot's own tool (`python -m dmbot.devtools.srd`) took 
 - joined the lines of each paragraph and put back words the print had cut at the end of a line;
 - split the text into entries, and pulled each spell's level, school, classes, casting time, range, components and duration out of its heading lines;
 - recorded the page each entry is on, so DMbot can name it ("SRD 5.2.1, Spell Descriptions, p. 131");
-- read two printing slips as they were meant: the title of Acid Splash is set in small capitals, and Barkskin's line says "Component:" for "Components:".
+- read three printing slips as they were meant: the title of Acid Splash is set in small capitals, Barkskin's line says "Component:" for "Components:", and the ability names in the stat blocks inside spells (set in small capitals, so they come out as "dex" or "WiS") are written once as Str, Dex, Con, Int, Wis and Cha;
 
-Tables and stat blocks inside a spell are kept as plain lines of text.
+Tables and stat blocks inside a spell are kept as plain lines of text, one for each line of a table and each entry of a stat block.
 
 ## Making the files again
 
