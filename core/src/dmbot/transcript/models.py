@@ -37,6 +37,14 @@ class Line:
     # and shown as DMbot). Only in the as-heard download, never the cleaned one.
     sidebar: str = ""
 
+    def __post_init__(self) -> None:
+        if self.sidebar not in ("", SIDEBAR_QUESTION, SIDEBAR_ANSWER):  # not at the database
+            raise ValueError(f"unknown sidebar kind {self.sidebar!r}")
+
+    def is_at(self, user_id: int, started_ms: int) -> bool:
+        """The speech this person began at this moment (never a sidebar line)."""
+        return (self.user_id, self.started_ms) == (user_id, started_ms) and not self.sidebar
+
 
 SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
 

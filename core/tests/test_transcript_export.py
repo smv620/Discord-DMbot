@@ -238,7 +238,7 @@ class DmSidebarLines(unittest.TestCase):
                 "[0:00:20] (Dee): Run!",
             ],
         )
-        self.assertIn("for the DM only", self.render(export.AS_HEARD, True))
+        self.assertIn("only for people the DM allows", self.render(export.AS_HEARD, True))
 
     def test_nobody_else_gets_them(self) -> None:
         text = self.render(export.AS_HEARD, False)
@@ -263,6 +263,12 @@ class DmSidebarLines(unittest.TestCase):
     def test_the_header_says_nothing_about_them_when_there_are_none(self) -> None:
         text = export.render("X", session(), [line(5, MIA, "hi")], {MIA: "Mia"}, with_sidebar=True)
         self.assertNotIn("Sidebar", text)
+
+
+class SidebarKinds(unittest.TestCase):
+    def test_a_made_up_kind_is_refused_before_it_can_fail_a_whole_save(self) -> None:
+        with self.assertRaises(ValueError):
+            Line(1, DM, "x", "x", sidebar="memo")
 
 
 class SidebarLinesInTheBuffer(unittest.TestCase):

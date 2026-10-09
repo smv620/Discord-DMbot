@@ -60,6 +60,9 @@ class StoreTests(DatabaseTest):
             SIDEBAR_ANSWER,
         )
         await self.store.add_lines(GUILD, sid, [asked, answer, line(5, DM, "table speech")])
+        # They are not speech: the session counts one line and one speaker, as without them.
+        (counted,) = await self.store.sessions(GUILD, self.campaign.id)
+        self.assertEqual(counted.lines, 1)
         lines = await self.store.lines(GUILD, sid)
         self.assertEqual(
             [(x.heard, x.sidebar) for x in lines],

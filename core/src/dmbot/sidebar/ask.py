@@ -16,22 +16,24 @@ from dataclasses import dataclass
 
 # Said first, so the DM is clearly stepping out of the game for a moment.
 _LEAD = (
-    r"(?:hold on|hang on|hold up|wait|one (?:sec|second|moment|minute)|just (?:a )?"
-    r"(?:sec|second|moment|minute)|give me (?:a )?(?:sec|second|moment|minute)|sorry|okay|ok|so"
-    r"|um+|uh+)"
+    r"(?:hold on|hang on|hold up|one (?:sec|second|moment|minute)|just (?:a )?"
+    r"(?:sec|second|moment|minute)|give me (?:a )?(?:sec|second|moment|minute))"
 )
-_NEED = (
-    r"(?:i need to|i have to|i've got to|i gotta|i got to|i want to|let me|lemme|i'm going to|i'll)"
-)
+_FILLER = r"(?:sorry|okay|ok|so|um+|uh+|alright|right)"
+_NEED = r"(?:i need to|i have to|i've got to|i gotta|i got to|let me|lemme)"
 _VERB = r"(?P<verb>find(?: out)?|look up|check|look into)"
+# Bounded repeats: a long or garbled line can't make the match slow (it is also cut to
+# MAX_LINE_CHARS first).
+_SEP = r"[\s,.;:!-]{1,6}"
 _REQUEST = re.compile(
-    rf"\b{_LEAD}[\s,.;:!-]+(?:{_LEAD}[\s,.;:!-]+)*{_NEED}\s+{_VERB}\s+(?P<rest>.+)",
+    rf"\b{_LEAD}{_SEP}(?:{_FILLER}{_SEP}){{0,2}}{_NEED}\s{{1,3}}{_VERB}\s{{1,3}}(?P<rest>.+)",
     re.IGNORECASE | re.DOTALL,
 )
 # What follows is about the DM's own things, not the game ("check my notes", "find my dice").
 _NOT_A_LOOKUP = re.compile(r"^(?:my|our|the (?:time|bathroom|snacks?))\b", re.IGNORECASE)
 MIN_WORDS = 2
 MAX_QUESTION_CHARS = 240
+MAX_LINE_CHARS = 600  # a line is cut here before looking: speech never needs more
 ASK_EVERY_S = 60.0  # at most one question a minute from a table
 
 
@@ -52,7 +54,7 @@ def request_in(text: str, *, in_character: bool = False) -> Request | None:
     NPC's or a character's (the Cleaner tagged it so): never a request."""
     if in_character:
         return None
-    found = _REQUEST.search(text)
+    found = _REQUEST.search(text[:MAX_LINE_CHARS])
     if found is None:
         return None
     rest = found.group("rest").strip()

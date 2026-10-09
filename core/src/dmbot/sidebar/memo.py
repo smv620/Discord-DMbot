@@ -1,0 +1,60 @@
+"""Reading a Discord voice message (#935). Pure apart from PyAV decoding bytes in memory.
+
+A voice message is a short Ogg Opus file. It becomes the same 16 kHz mono 16-bit audio the
+table's speech is, so it goes through the same speech-to-text. Nothing is written to disk:
+the audio is dropped as soon as it is transcribed.
+"""
+
+from __future__ import annotations
+
+import io
+from typing import TYPE_CHECKING
+
+from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE
+
+if TYPE_CHECKING:
+    import av
+
+MAX_MEMO_BYTES = 4_000_000  # a few minutes of voice message; far more than a question needs
+MAX_MEMO_S = 90.0
+MIN_MEMO_S = 0.4
+
+
+class MemoError(RuntimeError):
+    """The file can't be read as a voice message. The message is plain words for the DM."""
+
+
+def seconds(pcm: bytes) -> float:
+    return len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+
+
+def decode(data: bytes) -> bytes:
+    """The voice message as 16 kHz mono s16le PCM. Blocking: run it off the event loop."""
+    import av
+
+    if not data or len(data) > MAX_MEMO_BYTES:
+        raise MemoError("That voice message is too long. Keep it under a minute and a half.")
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+    chunks: list[bytes] = []
+    try:
+        with av.open(io.BytesIO(data), "r") as container:
+            if not container.streams.audio:
+                raise MemoError("I couldn't hear anything in that file.")
+            for frame in container.decode(audio=0):
+                chunks.extend(_samples(out) for out in resampler.resample(frame))
+                if sum(map(len, chunks)) > MAX_MEMO_S * SAMPLE_RATE * BYTES_PER_SAMPLE:
+                    raise MemoError(
+                        "That voice message is too long. Keep it under a minute and a half."
+                    )
+        chunks.extend(_samples(out) for out in resampler.resample(None))
+    except av.FFmpegError as exc:
+        raise MemoError("I couldn't read that voice message. Try sending it again.") from exc
+    pcm = b"".join(chunks)
+    if seconds(pcm) < MIN_MEMO_S:
+        raise MemoError("That voice message was too short to hear. Try again.")
+    return pcm
+
+
+def _samples(frame: av.AudioFrame) -> bytes:
+    # A plane's buffer can be padded past the last sample.
+    return bytes(frame.planes[0])[: frame.samples * BYTES_PER_SAMPLE]

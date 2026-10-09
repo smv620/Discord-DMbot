@@ -19,7 +19,10 @@ class RequestInTests(unittest.TestCase):
         for text, question in [
             ("Hang on, I have to look up the grapple rules.", "look up the grapple rules"),
             ("One sec, let me check what a shield spell does", "check what a shield spell does"),
-            ("wait I gotta find out how long a short rest is", "find out how long a short rest is"),
+            (
+                "one sec I gotta find out how long a short rest is",
+                "find out how long a short rest is",
+            ),
             (
                 "Okay, hold on. I need to check the rules for flanking",
                 "check the rules for flanking",
@@ -51,6 +54,10 @@ class RequestInTests(unittest.TestCase):
             "I need to look up",
             "",
             "Let me check, uh, never mind",
+            "Sorry, I'll check the door for traps",  # narration, no hold-on
+            "Wait I'll check what the goblin does",
+            "Okay let me check the map and see",
+            "Wait, I need to find the key in the chest",  # a bare 'wait' is not a lead-in
         ]:
             with self.subTest(text=text):
                 self.assertIsNone(request_in(text))
@@ -65,6 +72,21 @@ class RequestInTests(unittest.TestCase):
         assert found is not None
         self.assertLessEqual(len(found.rest), 240)
         self.assertTrue(found.rest.endswith("word"))
+
+
+class LongLines(unittest.TestCase):
+    def test_garbled_or_endless_lines_are_quick(self) -> None:
+        import time
+
+        for text in [
+            "hold on, " * 3000,
+            "so um uh " * 2000,
+            "hold on " * 3000 + "i need to",
+            "ok. " * 3000 + "i need to find",
+        ]:
+            started = time.perf_counter()
+            request_in(text)
+            self.assertLess(time.perf_counter() - started, 0.05, text[:20])
 
 
 class AskLimiterTests(unittest.TestCase):

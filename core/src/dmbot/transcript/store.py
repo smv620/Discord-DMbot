@@ -87,7 +87,13 @@ class TranscriptStore:
                 " speakers = ARRAY(SELECT DISTINCT u FROM unnest(speakers || %s::bigint[]) AS u"
                 "   ORDER BY u)"
                 " WHERE id = %s",
-                (len(ids), sorted({line.user_id for line in lines}), session_id),
+                # Sidebar lines (#935) are not speech: they don't make a session show up in
+                # /transcript, or list the DM as a speaker.
+                (
+                    sum(not line.sidebar for line in lines),
+                    sorted({line.user_id for line in lines if not line.sidebar}),
+                    session_id,
+                ),
             )
         return ids
 
@@ -151,9 +157,10 @@ class TranscriptStore:
             )
             await conn.execute(
                 "UPDATE transcript_sessions SET"
-                " line_count = (SELECT count(*) FROM transcript_lines WHERE session_id = %s),"
+                " line_count = (SELECT count(*) FROM transcript_lines"
+                "   WHERE session_id = %s AND sidebar IS NULL),"
                 " speakers = ARRAY(SELECT DISTINCT user_id FROM transcript_lines"
-                "   WHERE session_id = %s ORDER BY user_id)"
+                "   WHERE session_id = %s AND sidebar IS NULL ORDER BY user_id)"
                 " WHERE id = %s",
                 (session_id, session_id, session_id),
             )

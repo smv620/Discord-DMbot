@@ -39,7 +39,7 @@ CLEANED_NOTE = (
 )
 SIDEBAR_NOTE = (
     "[DM Sidebar] lines are the DM's quick questions to DMbot and its answers. They are in "
-    "this file for the DM only."
+    "this file only for people the DM allows to read them."
 )
 SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
 HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."
@@ -158,10 +158,13 @@ def render(
     timed: list[tuple[int, str]] = []  # (when it started, the line)
     # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
     # marker with how long it lasted. The as-heard version keeps everything.
-    lines = list(lines)
-    sidebar = [line for line in lines if line.sidebar]
-    lines = [line for line in lines if not line.sidebar]
-    shown_sidebar = sidebar if with_sidebar and version == AS_HEARD else []
+    everything = list(lines)
+    table_lines = [line for line in everything if not line.sidebar]
+    shown_sidebar = (
+        [line for line in everything if line.sidebar]
+        if with_sidebar and version == AS_HEARD
+        else []
+    )
     spoken = [
         Spoken(
             line.user_id,
@@ -170,7 +173,7 @@ def render(
             line.text if version == CLEANED else line.heard,
             line.topic if version == CLEANED else GAME,
         )
-        for line in lines
+        for line in table_lines
     ]
     for item in collapse(spoken):
         if item.speaker not in shown:
