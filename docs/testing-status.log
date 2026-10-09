@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-09 by dev1 (admin page works; first free-access grant made; Test D next)
+Last updated: 2026-10-09 by CloudDev (ready to deploy: #870, #895, #879, #883)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -76,6 +76,26 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   plan is still paid for, and the privacy page now lists the free access record. **It must
   be live before DMBOT_FREE_USERS is set on the server or anyone is given free access
   (#773).** Check: with no free access nothing on /account looks different.
+- CloudDev, PR #870 (#685) and PR #895 (#878): core only, no migration or setting. 📤
+  Download all of a big campaign now comes as several files, each small enough to upload
+  again with 📥 Add many > 📎 Upload a file (any order, a file twice does no harm); the
+  message says how many files and messages. Each downloaded file's own header says how to
+  add it back; if Discord refuses a later message, the DM is told which files didn't arrive
+  and that the earlier ones are fine. Names with line separators are refused. Check: in a
+  test campaign with a few thousand names, 📤 Download all gives several files named
+  names-01-of-NN-..., uploading them one by one adds every name, and the header text in a
+  file mentions "Add many > Upload a file".
+- CloudDev, PR #879 (#164): core only, no migration or setting. Campaign backups are built
+  piece by piece (less memory) and refuse, with a clear message, a copy too big to send in
+  this server (a copy over 10 MB says it needs a boosted server or Nitro). Check: the
+  backup of a normal campaign downloads and loads as before.
+- CloudDev, PR #883 (#437 part 2a): core, **one migration (0032_usage, two tables:
+  session_usage and owner_hours)**; deploying runs it. The hours meter only RECORDS how
+  long DMbot listens (once a minute and at the stop); nothing is refused or warned yet, so
+  nothing should look different at the table. Check: after migrating, start and stop a
+  short session; the logs show no errors from the meter and the session_usage row (read
+  only, as dmbot_ro, numbers only) holds about the minutes listened. Nothing from it goes
+  in a report.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
