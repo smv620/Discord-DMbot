@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-09 by CloudDev (ready to deploy: #870, #895, #879, #883, #894, #897, #909, #911, #905)
+Last updated: 2026-10-09 by dev1 (core 0c2c5ca live; admin page works; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,297 +9,44 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- dev2, PR #905 (#900): core only, no migration or setting. The rules index also holds the
-  SRD's creatures: 330 stat blocks of the 5.2.1 and, as the [Legacy 2014] fallback, 317 of
-  the 5.1, in monsters.json next to the spells (same attribution files). Nothing calls the
-  index yet, so there is nothing to see in Discord. Check: core starts after the rebuild and
-  logs no error. It also fixes five lines of the 5.1 spell data that had cut words ("under
-  stand", "with in range", "automatic ally", "be comes"). For dev1, once, covering #892,
-  #894 and #905 together: download both official PDFs (their addresses are in the two
-  ATTRIBUTION.md files) each into a folder of its own, then from core/ in a checkout run
-  `python -m dmbot.devtools.srd <the PDF>` for the 5.2.1 first and the 5.1 second; `git diff`
-  must show nothing (this also checks "thunder-wave" in the Grappled condition is the PDF's
-  own hyphen).
-- dev2, PR #894 (#873; with #892, #889): core only, no migration or setting. The rules
-  index also holds the 2014 System Reference Document 5.1's 319 spells and 15 conditions
-  (CC-BY-4.0; attribution in the README and core/src/dmbot/rules/data/srd51/ATTRIBUTION.md)
-  as the legacy fallback, tagged [Legacy 2014]; the newer 5.2.1 entry always wins. Nothing
-  calls the index yet, so there is nothing to see in Discord. Check: core starts after the
-  rebuild and logs no error. For dev1, once (this also covers #892): download both official
-  PDFs (their addresses are in the two ATTRIBUTION.md files) each into a folder of its own,
-  build the 5.2.1 data first, then run `python -m dmbot.devtools.srd <the PDF>` from core/ in
-  a checkout for each; `git diff` must show nothing. The 5.1 PDF has one lost word that
-  cannot be recovered (Animal Friendship); ATTRIBUTION.md says so.
-- dev3, PR #877 (#573): core only, no migration or setting. The Transcript Cleaner no
-  longer merges a new name into a known look-alike. (1) With the known name in the same
-  line, a look-alike word stays as heard ("Today Isolde heals the wounded, and Ysolde
-  rests."). (2) A fix by sound is silent only when spelled at least 0.95 alike; closer
-  than the old bars but below that it is made WITH a note and Undo in ✏️ Name fixes to
-  check, and under Quiet it is not made. So **almost every fix by sound is now a note,
-  not a silent fix** (also "Beleros" → Belleros): watch how many notes appear in a
-  session. Same-letters respellings ("Kazeth" → "Ka'zeth") and the DM's own fixes stay
-  silent. (3) A name the DM confirmed is never merged again. Check in the next
-  names-stress test: Isolde and Rothgar next to Ysolde and Hrothgar stay as heard; a
-  lone one is fixed but noted with Undo; real mishearings are still fixed. If the notes
-  pile up, tell dev3: one constant (NEAR_CERTAIN) moves the line.
-- dev2, PR #869 (#865): core with **migration 0031** (a new table `house_rules` and a new
-  column `campaigns.house_rules_made`; the migration runs when core starts, so rebuild
-  core). No setting. `/dmbot houserules`: a campaign's house rules, which everyone in the
-  server can read and only the campaign's DMs can add, edit or remove. Each rule keeps its
-  own number for good. Check, as the DM: the list says "No house rules yet" with an **Add a
-  house rule** button; add two (a form with "The rule" and "Instead of (optional)") and the
-  list shows "2." above "1." and "Each rule keeps its number, even when others are
-  removed."; Remove 1 asks first, then says "Removed house rule 1." and sends the words to
-  copy; add one more and it is **3**, not 1. As a player: the same list, no buttons. In the
-  logs: migration 0031 applied, no error. The website's database role has no access to the
-  table, so web-api needs nothing.
-- dev2, PR #875 (#866): core only, no migration or setting. The rules index: DMbot now
-  ships the System Reference Document 5.2.1's 339 spells and 15 conditions (CC-BY-4.0;
-  the attribution is in the README and core/src/dmbot/rules/data/srd52/ATTRIBUTION.md)
-  and can look them up by name, with a citation. Nothing calls it yet (the rules advisor
-  will), so there is nothing to see in Discord. Check: core starts after the rebuild and
-  logs no error. For dev1, once, after #889 merges (it changes a few line breaks in the
-  data): download the official PDF (its address is in ATTRIBUTION.md) into a folder of its
-  own and run `python -m dmbot.devtools.srd <the PDF>` from core/ in a checkout; `git diff`
-  must show nothing.
-- dev3, PR #872 (#399): core only, no migration or setting. The after-session name scan
-  no longer suggests a word of a known name that was said whole ("Oskar" when Oskar Vane
-  is known and "Oskar Vane" was said); a lone "Oskar" elsewhere is still suggested. Check
-  after a session: "Check new names" doesn't offer the first word of a two-word name the
-  campaign already has.
-- dev2, PR #847 (#677): core only, no migration or setting. The DM can put back a line
-  the off-topic filter left out by mistake. One DM-screen message per session, "🙈 Left
-  out as off-topic", edited in place, with the newest 10 runs and a "Put it back N" button
-  each; it shows at every level, quiet included. Needs the off-topic filter on (the AI key
-  set). Check: say something plainly off-topic and then some game talk until a window is
-  labelled; the DM screen lists the off-topic line with its button; Put it back replies
-  "↩️ Put back N: <name>'s words are back…", the line reads "↩️ Put back: …", and the
-  cleaned download (/transcript) shows the words, not "[…s of off-topic chat skipped]"; a
-  player's press is refused ("Only this campaign's DM"); after /dmbot stop the buttons are
-  gone and the message says "Session over". Core logs no ERROR.
-- dev2, PR #804 (#771 part 1): free access. **Core, migration 0030 and web-api are live
-  (23:36).** **Leave DMBOT_FREE_USERS empty until #806 (the account page for covered
-  people, #825) is live.** Checked: "Free access list: 0 ids" in the core and web-api logs.
-- WebDev, PR #829 (#773): the admin page's free access list (/admin, signed in): who has
-  it (by name where they signed in lately), give, change and revoke, recent changes.
-  No migration. The admin API is live (web-api, 23:36, behind the tunnel); the
-  admin PAGE needs dev.getdmbot.com, which doesn't exist yet (owner/Supervisor to set up). Every
-  change goes through the grant writer and is logged in access_log. **Order: #825's
-  account page must be live before DMBOT_FREE_USERS is set or anyone is given free
-  access.** Check: signed in as the admin, /admin shows the list ("Always free" for ids
-  in DMBOT_FREE_USERS); add a test account (Discord user ID), it starts a session with
-  no plan, then Revoke it; the Recent changes list shows both, and the logs name ids
-  only (never notes or emails). Owner's "done when": his test account starts a session
-  with no plan on the live site.
-- WebDev, PR #825 (#806): the account page for people with free access. Website only
-  (Cloudflare Pages deploys it): no migration, no API change. It shows "Free access" (or
-  "...until <date>") instead of plans and prices, a "Stop paying" button while a paid
-  plan is still paid for, and the privacy page now lists the free access record. **It must
-  be live before DMBOT_FREE_USERS is set on the server or anyone is given free access
-  (#773).** Check: with no free access nothing on /account looks different.
-- CloudDev, PR #870 (#685) and PR #895 (#878): core only, no migration or setting. 📤
-  Download all of a big campaign now comes as several files, each small enough to upload
-  again with 📥 Add many > 📎 Upload a file (any order, a file twice does no harm); the
-  message says how many files and messages. Each downloaded file's own header says how to
-  add it back; if Discord refuses a later message, the DM is told which files didn't arrive
-  and that the earlier ones are fine. Names with line separators are refused. Check: in a
-  test campaign with a few thousand names, 📤 Download all gives several files named
-  names-01-of-NN-..., uploading them one by one adds every name, and the header text in a
-  file mentions "Add many > Upload a file".
-- CloudDev, PR #879 (#164): core only, no migration or setting. Campaign backups are built
-  piece by piece (less memory) and refuse, with a clear message, a copy too big to send in
-  this server (a copy over 10 MB says it needs a boosted server or Nitro). Check: the
-  backup of a normal campaign downloads and loads as before.
-- CloudDev, PR #883 (#437 part 2a): core, **one migration (0032_usage, two tables:
-  session_usage and owner_hours)**; deploying runs it. The hours meter only RECORDS how
-  long DMbot listens (once a minute and at the stop); nothing is refused or warned yet, so
-  nothing should look different at the table. Check: after migrating, start and stop a
-  short session; the logs show no errors from the meter and the session_usage row (read
-  only, as dmbot_ro, numbers only) holds about the minutes listened. Nothing from it goes
-  in a report.
-- CloudDev, PRs #897, #909 and #911 (#437 parts 2b and 2c, #910): core, **one migration
-  (0033_usage_grace, one nullable column on owner_hours)**; deploying runs it. These add the
-  hours checks: a start is refused when the plan has ended or the hours are used up, the
-  DM screen warns at 80% and 90%, and when the hours run out in a session it may finish
-  (up to 2 more hours, once a month), gets a heads-up 15 minutes before the stop, then
-  stops. All of it is behind DMBOT_ENFORCE_PLANS, which stays OFF (the default) until
-  go-live (#498); with it off the meter only records, as before, and nothing changes at the
-  table. Check with it off: after migrating, a short session starts, runs and stops as
-  before and the logs show no meter errors. A live run with the setting on needs a test
-  owner with a 1-hour plan; that belongs with the go-live checks, not now.
+(nothing waiting) Still open on development, not merged: #914 (audio health counts).
 
 ------------------------------------------------------------------------------
-NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
+LIVE NOW
 ------------------------------------------------------------------------------
-Why: run 7 gave the Deepgram baseline with the DM alone. Still open: two speakers, a
-player stopping, a first-time question, and a first live look at PRs #192 (#188),
-#184, #194, #195 (#190), #196, #202, #206 (#107), #207 (#108), #208 (#99), #214
-(scene hints), #220 (heard counts), #223 and #226 (name card), and now #241, #244,
-#249, #262, #270, #276, #283, #284, #288. Nothing blocks it.
-Already confirmed in run 8a: consent carries over, Stop recording me and I consent
-again work at once, the download is offered.
-
-Where: cloud test server, Docker Compose, TRANSCRIBER=deepgram (nova-3),
-DMBOT_DEBUG_AUDIO=1, ANTHROPIC_API_KEY set. Deployed: e299bfc (2026-10-08 18:18 UTC).
-
-Before the test (owner)
-  [ ] Tell the server session how many people (1 = DM only, 2 = DM + player, ...);
-      paste the matching docs/test-scripts/ script into Discord. If development has
-      moved since e299bfc, ask it to redeploy first. Use a steady connection (run 8a
-      on bad Wi-Fi got 26% of the audio)
-  [ ] Someone who has NOT agreed before (ideally a third account) in voice before
-      /dmbot start, for the first-time question
-  [ ] Add Auril and Caer-Dineval with /dmbot names -> Add a name (run 7's two misses)
-  [ ] Everyone presses I consent (private message, or /consent give) BEFORE speaking
-  [ ] At each (( dramatic pause )): mute, count to three, unmute
-
-What to check
-  - #188: the transcript channel is only repaired by a /dmbot start. So start and stop
-    once from another channel first, then type /dmbot start INSIDE #dmb-transcript-...
-    It should work. If it still hangs for the DM (an Administrator), note it
-  - The player's request names Deepgram; capture starts only after their yes
-  - Lines in #dmb-transcript-... a few seconds after speaking, labelled per speaker,
-    no pop-ups (#194); the DM screen stays quiet
-  - Stop recording me -> no more lines from that player
-  - A player peeking at the DM screen can use /consent revoke there (#190)
-  - The DM screen's list of who is recorded changes as people agree or stop (#107)
-  - The Stop listening button ends the session like /dmbot stop (#108)
-  - Name card (#223, #226): /dmbot names, open Auril, try Fix spelling and Edit other
-    names; Remove asks first and Undo brings it back. After the session, its card
-    shows "Last heard" (#220)
-  - Wait for the script's last line in the transcript channel, then /dmbot stop:
-    last words kept and a session summary posted (#202), a download offered (#196),
-    and, if DMbot heard names it doesn't know, "Check new names" (#184)
-  - Score it (docs/test-scripts/README.md): audio from ears lines, pieces of speech,
-    Part 1 of 35 (dm-and-player), Part 2 of 12, whisper, first word after each split
-    pause (#121). Note whether Auril and Caer-Dineval are now right (hints help, they
-    don't guarantee). Compare with run 7 below
-  New since the last deploy (owner, 2026-10-07)
-  - /dmbot names: the overview, Browse by kind, Add many -> Get the template, fill it
-    in, upload it with /dmbot names file: (#244)
-  - Upload a short PDF or Word file of NPC notes, press "Find names": the AI's list is
-    shown before anything is added (#249)
-  - Download all, edit the file, upload it again: nothing duplicated (#244)
-  - /dmbot backup as a player who isn't the DM: a complete copy is sent (#241)
-  - A scene with many names: no Deepgram 400 in the logs, or "Deepgram refused N
-    keyterms" followed by transcript lines still appearing (#262)
-  Deployed 2026-10-07 08:08 (bb55060)
-  - #270: first word after each ((dramatic pause)) not cut: score against run 7
-  - #276: the DM screen's audio % matches the ears audio lines
-  - #283: transcript lines read "(speaker) {character}"; say "Bell Eros" with
-    Belleros known: fixed live. Secret names never appear. Download stays "as heard"
-  - #284, #288 (on a phone): /dmbot start settings are buttons that fit; long
-    campaign names in backup, restore and names menus are cut in the middle
-
-Later: speech-to-text bake-off (#128, docs/STT_BAKEOFF.md: needs 2-4 readers of
-stt-bakeoff.md); one-click install live check (#104, merged in #150).
-  Deployed 2026-10-07 08:36 (ee1bb03)
-  - #293 (dev1, #147): every save/removal of the saved session is logged with its
-    reason. Check: `docker compose logs core | grep -i "session saved\|removed"` after
-    a start, a /dmbot stop and a restart; no WARNING "wasn't saved" on a normal stop.
-  - #302 (CloudDev, #287): /transcript campaign menu fits a phone, "Last played …".
-  - #306 (dev3, #298): someone who opts in mid-session is looked up before they
-    speak. Check: opt in while the table runs, say one sentence at once: ears
-    `audio` received == expected and the first word is kept; after a withdrawal the
-    capture stops at once. DM-screen audio % waits from the latest health report
-    and gives up after ~2 min without speech.
-  - #314 (CloudDev, #49): /dmbot optionalrules. Check as DM: the private list shows
-    4 rules for a 2024 campaign, the menu switches one, the DM screen gets one line,
-    a player running it is refused. Wording polish follows in #320, so don't log
-    string nits.
-  Deployed 2026-10-07 15:22 (a3d12ef)
-  - #329: a consent push logs "N opted out"; /transcript says "No transcripts yet"
-    for a campaign played with transcripts off
-  Deployed 2026-10-07 16:17 (f3d1088)
-  - #338: /dmbot optionalrules on a 2024 campaign lists Spotting a spell and How fast
-    you fall; switching a rule edits the menu in place and notes it in the DM screen
-  - #345: /dmbot backup gives a .dmbot.json.gz; /dmbot restore takes it back, and an
-    older .dmbot.json still restores
-  Deployed 2026-10-07 17:09 (040254f)
-  - #389 (#264): paste the Rime of the Frostmaiden Google Docs link into 📋 Paste a
-    list: "Find the names in the linked page or file?", no name added. 🔗 Paste a
-    link with a public wiki page, then 🤖 Find names: the list is shown before
-    anything is added. 📎 Upload a file from a phone with a short PDF or Word file.
-    A private Google Doc link gives the "set sharing" message. Log: no link, only
-    "Shared material confirmed" with a fingerprint
-  - #380 (#353): editing and removing a name is easy to find from /dmbot names
-  - #408 (#392): the same link checks again (Google Docs come gzipped); 📄 Get the
-    template sits on its own row on a phone
-  - #414 (#393): after ➕ Add a name the saved line comes first, then "Wrong? Fix or
-    remove it…"; card row 1 ends with 🔗 Same as…, row 2 starts with 🧭 Connect to…
-  - #410 (#164): after /dmbot stop the log says "Deleted N change-log row(s) too old to
-    undo": record N and how long it took
-  Deployed 2026-10-07 21:11 (84f1790)
-  - #405 (#394): after a session, a suggested name that sounds like a known one comes
-    with "✅ It's X" / "➕ New name"; a name misheard and fixed live isn't suggested again
-  - #456 (#296): one "✏️ Name fixes to check" message in the DM screen, edited in place,
-    one Undo per line; Undo puts the heard words back (in the channel within 30 s)
-  - #425 (#369): bulk import of docs/test-scripts/bakeoff-story-names-setup.md section
-    B: "📥 Added 22 names · 4 already known · 3 look like known names · 2 kinds differ",
-    then the near-name and kind questions; Undo takes all 22 back
-  - #309 + #464 (#173): 3 workers, one queue per server; status shows this table's own
-    backlog; watch the log for "working again" churn
-  - #436, #410: after /dmbot stop, record the first real N of "Closed N memory flag(s)"
-    and "Deleted N change-log row(s)"
-  Deployed 2026-10-07 23:57 (6895de8)
-  - #482 (#173): name hints put people in the voice channel first (nothing visible;
-    the log shows no change)
-  - #492 (#173): after the session, /transcript download: the header says "Speech to
-    text: Deepgram, an online service (model nova-3)"
-  - #495 (#470): if Deepgram flaps, the DM screen shows at most one "No transcript"
-    and one "working again"
-  - #477 (#471), #487 (#476): no visible change; flags after a session look as before
-  Deployed 2026-10-08 02:01 (509ca21)
-  - #509 (#503): on a "Did they mean…?" question, Type it… opens a form with the heard
-    word; a typed known name fixes the line asked about (and the channel message within
-    30 s); a new name waits in 📝 Check new names; Undo puts the line back
-  Deployed 2026-10-08 03:55 (64d1e90)
-  - #512 (#504): how much DMbot says in the DM screen: quiet / normal / chatty
-    (migration 0015); try each level and check the DM screen says less or more
-  Deployed 2026-10-08 04:05 (46f7d5a)
-  - #505 (#499): if Deepgram fails for several tables, each is told once, quickly
-  - #525 (#515): Type it… follow-ups on name questions
-  Deployed 2026-10-08 04:18 (35095c7)
-  - #543 (#523): after /dmbot stop the log compares listening time with speech sent
-  Deployed 2026-10-08 04:38 (4005809)
-  - #544 (#515): ⚙️ Settings on the DM screen: change how much DMbot says any time
-  Deployed 2026-10-08 04:53 (05aa6c1)
-  - #568 (#525): fixing a name in a line changes all of it or none of it; Undo puts the
-    whole line back
-  Deployed 2026-10-08 05:10 (fa87a60)
-  - #584 (#537): in the 147-name campaign, /dmbot names -> Browse by kind and a name's
-    card answer at once (no "didn't respond in time"); dev1 copies a few "Built names
-    for campaign ... in N ms" timings into the history
-  - #563 (#252): confirming the right to use a pasted names list is remembered (who,
-    when; no text); a backup keeps it
-  Deployed 2026-10-08 05:24 (b4ab397)
-  - #599 (#253): Add many with a long list saves quickly; Undo takes it all back
-  - #601 (#553): ⚙️ Settings on the DM screen shows the level the DM picked
-  Deployed 2026-10-08 05:37 (fba4f77)
-  - #604 (#589): Undo of an answer to a name question says so if its line couldn't be
-    put back
-  Deployed 2026-10-08 06:18 (1a7bf0d)
-  - #617 (#554): ⏹ Stop listening asks first ([Yes, stop] [Cancel], private, 60 s);
-    Cancel keeps listening; a player is refused; /dmbot stop still stops at once
-  - #622 (#88): /dmbot stop and Restore answer at once; a restore always ends with
-    its outcome, never a stuck "Restoring…"
-  Deployed 2026-10-08 06:44 (70ac757, ears and core)
-  - #641 (#631): Test A again, phone then computer. ears logs "dave: …" lines; after a
-    receive error "listening again (n of 5 this minute)"; "is sending audio but none
-    of it can be heard"; the DM screen shows a warning and its audio % drops
+core 0c2c5ca (2026-10-09 16:28 UTC, migrations through 0033), ears e299bfc build, web-api
+and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
+https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
+website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS is empty. The app stays
+private (no install link) until the website launches.
 
 ------------------------------------------------------------------------------
-LATEST RESULT: Test C (2026-10-08 18:04), DM alone: PASS
+NEXT TEST: Test D, no false ⚠️ with a TV on (docs/next-test-step.md)
 ------------------------------------------------------------------------------
-  On 70ac757. ⏹ Stop listening -> Yes, stop ended the session: DMbot left voice and the
-  download was offered. The #631 decrypt error came back at the start (after a DAVE
-  commit this time) and #641 re-listened: audio 88%. Previous: Test B PASS (16:14).
-  Deployed e299bfc at 18:18; what to check from it is in the history log
-  ("What to check from the e299bfc deploy"). Next: Test D, TV on.
+Needs the owner, one person, ~3 minutes. Covers #697 and #718 (the audio warning reads
+the transcript first). Result goes in the history log; then the next small test below.
+
+SMALL TESTS AFTER THAT (one at a time; each one's "Check:" note is in the history log,
+entry "Status log as it stood before it was trimmed"):
+  1. ⚙️ Menu and Stop (#821, #843).   2. House rules (#869): /dmbot houserules.
+  3. Names: Add many, Download all in several files, Check new names (#870, #895, #872).
+  4. Put back an off-topic line (#847); the Transcript Cleaner notes (#877).
+  5. Hand over a campaign from Discord (needs a 2nd account) (#705 and follow-ups).
+  6. Plain words when something breaks (#637); /dmbot start with ears stopped (#659).
+  7. Backup and restore (#879); one PDF (#630); character sheets (#740, #781).
+  8. The hours meter records a session (#883, #909; plans off): numbers only.
+  9. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
+
+------------------------------------------------------------------------------
+LATEST RESULTS
+------------------------------------------------------------------------------
+  Admin page (2026-10-09): Google and password sign-in, give/change/revoke free access
+  all work. Test C (2026-10-08): Yes, stop ends the session, PASS. Test B PASS. Test A
+  passed on a phone and a computer (the #631 decrypt error recurs at times; #641
+  re-listens and loses about a second).
 
 Open issues from testing
-  #671 the audio warning fires on background noise (owner)
-  #631 DAVE decrypt error drops all of a speaker's audio (Test A)
-  #43 DAVE loss after a pause   #45 uncounted losses   #112 menus run off phone screens
-  #120 capture check drops audio counts   #121 start of speech may be cut
-  #264 a link pasted into Add many becomes a name
+  #631 (closed, recurs, see #764)   #43 DAVE loss after a pause   #45 uncounted losses
+  #112 menus run off phone screens  #120 capture check drops audio counts
+  #121 start of speech may be cut   #264 a link pasted into Add many becomes a name
+  Owner's: #833 the getdmbot.com noindex question; #906 no "Generated by" footers.
