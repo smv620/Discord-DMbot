@@ -24,7 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import entitlements, install
+from dmbot import entitlements, hours, install, usage
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -170,6 +170,7 @@ TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel 
 STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be written
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
 IDLE_SWEEP_INTERVAL_S = 1
+METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
 
@@ -310,6 +311,10 @@ class Table:
     heard_counts: Counter[tuple[str, int]] = field(default_factory=Counter)
     # The stored transcript (#41, #125): this session's row, and lines not saved yet.
     started_at: int = 0  # Unix seconds; the same after a restart
+    # Listening minutes already written to the hours meter (#437): the whole session so
+    # far, rounded up, so a restart picks up from the stored number and counts none twice.
+    metered_minutes: int = 0
+    meter_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     listening_from: int = 0  # Unix seconds; since this process took the session on
     after_restart: bool = False  # listening_from is a restart (`resumed` resets on join)
     transcript_session_id: str | None = None  # set at the first save
@@ -381,6 +386,7 @@ class DMBot(commands.AutoShardedBot):
         memory: MemoryStore | None = None,
         transcripts: TranscriptStore | None = None,
         sheets: SheetStore | None = None,
+        meter: usage.Meter | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -406,6 +412,9 @@ class DMBot(commands.AutoShardedBot):
         self.lookup = LookupCache(memory) if memory is not None else None
         # Players' D&D Beyond sheets, per campaign (#723).
         self.sheets = sheets
+        # The hours meter (#437 part 2): listening minutes are written here; None records
+        # nothing (tests and tools that run no real sessions).
+        self.meter = meter
         # AI text calls (a document into a names list); None when no key is set.
         self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None
         # The off-topic filter (#52) always uses the smallest model, whatever AI_MODEL is.
@@ -512,6 +521,7 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self.pipeline.run(), "transcribe"),
             self._watched(self._idle_sweeper(), "idle-sweep"),
             self._watched(self._summary_poster(), "summaries"),
+            self._watched(self._meter_loop(), "hours-meter"),
             *(
                 [asyncio.create_task(self.lookup.follow(self.memory.listen), name="names")]
                 if self.lookup is not None and self.memory is not None
@@ -1021,6 +1031,7 @@ class DMBot(commands.AutoShardedBot):
         wait is cut short, and saving comes first."""
         gid = table.guild_id
         session = table.segmenter.session
+        await self.meter_table(table, ended_at)  # the last, rounded-up minutes (#437)
         with log_context(guild_id=gid, campaign_id=table.campaign_id):
             try:
                 caught_up = await self.pipeline.drain(session, STOP_DRAIN_TIMEOUT_S)
@@ -1584,6 +1595,10 @@ class DMBot(commands.AutoShardedBot):
             transcript_channel_id=self._usable_transcript(guild, campaign),
             started_at=saved.started_at,
         )
+        if self.meter is not None:  # minutes recorded before the restart are not counted twice
+            table.metered_minutes = await self.meter.recorded(
+                guild.id, campaign.id, saved.started_at
+            )
         if campaign.transcript_channel_id is not None and table.transcript_channel_id is None:
             await self.post(
                 screen_id, screen_messages.transcript_stopped(campaign.transcript_channel_id)
@@ -2950,6 +2965,41 @@ class DMBot(commands.AutoShardedBot):
                     view=review_view(cid),
                 )
 
+    async def _meter_loop(self) -> None:
+        """Once a minute, write each running session's listening minutes to the hours
+        meter (#437), so a crash or restart loses at most the last minute."""
+        while True:
+            await asyncio.sleep(METER_INTERVAL_S)
+            await asyncio.gather(*(self.meter_table(t) for t in list(self.tables.values())))
+
+    async def meter_table(self, table: Table, now: int | None = None) -> None:
+        """Record the minutes this session has run and not yet written down, for the
+        campaign's owner right now (a hand-over mid-session moves the later minutes to
+        the new owner). Never raises: the meter must not stop a game."""
+        if self.meter is None or table.campaign_id is None or table.started_at <= 0:
+            return
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            try:
+                async with table.meter_lock:
+                    stamp = int(time.time()) if now is None else now
+                    owed = hours.minutes_owed(table.started_at, stamp, table.metered_minutes)
+                    if owed <= 0:
+                        return
+                    campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+                    if campaign is None or campaign.owner_user_id is None:
+                        return  # gone, or no owner yet: nobody's hours to spend
+                    await self.meter.add(
+                        guild_id=table.guild_id,
+                        campaign_id=table.campaign_id,
+                        owner_user_id=campaign.owner_user_id,
+                        session_started_at=table.started_at,
+                        minutes=owed,
+                        now=stamp,
+                    )
+                    table.metered_minutes += owed
+            except Exception:
+                log.exception("Couldn't write down the listening minutes")
+
     async def _idle_sweeper(self) -> None:
         while True:
             await asyncio.sleep(IDLE_SWEEP_INTERVAL_S)
@@ -3365,6 +3415,7 @@ async def run(settings: Settings) -> None:
             MemoryStore(db, keep_days=settings.memory_keep_days),
             TranscriptStore(db),
             SheetStore(db),
+            usage.Meter(db),
         )
         _close_on_sigterm(bot)
         async with bot:

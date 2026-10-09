@@ -9,8 +9,8 @@ from dmbot import hours
 from dmbot.entitlements import NO_ACCESS, Access, Entitlement
 
 
-def ts(*args: int) -> int:
-    return int(datetime(*args, tzinfo=UTC).timestamp())
+def ts(year: int, month: int, day: int, hour: int = 0) -> int:
+    return int(datetime(year, month, day, hour, tzinfo=UTC).timestamp())
 
 
 def paid(hours_cap: int | None = 18) -> Access:
@@ -30,6 +30,19 @@ class Minutes(unittest.TestCase):
 
     def test_a_clock_that_went_backwards_is_nothing(self) -> None:
         self.assertEqual(hours.minutes_used(100, 40), 0)
+
+
+class Owed(unittest.TestCase):
+    def test_the_whole_session_less_what_is_recorded(self) -> None:
+        self.assertEqual(hours.minutes_owed(0, 125, 0), 3)
+        self.assertEqual(hours.minutes_owed(0, 125, 2), 1)
+
+    def test_a_repeat_adds_nothing(self) -> None:
+        self.assertEqual(hours.minutes_owed(0, 125, 3), 0)
+        self.assertEqual(hours.minutes_owed(0, 120, 3), 0)
+
+    def test_never_negative(self) -> None:
+        self.assertEqual(hours.minutes_owed(0, 10, 5), 0)
 
 
 class Months(unittest.TestCase):

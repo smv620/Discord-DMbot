@@ -193,6 +193,17 @@ class Database:
             yield conn
 
     @asynccontextmanager
+    async def meter(self, guild_id: int, owner_user_id: int) -> AsyncIterator[Conn]:
+        """The only way to add to an owner's hours (`owner_hours`) and to a campaign's
+        session usage (`session_usage`), for the bot's hours meter (#437). It sets the
+        server being played in and the campaign's owner for this one transaction, so both
+        rows are written together and neither can see another server or person."""
+        async with self._with(
+            guild_id=str(int(guild_id)), user_id=str(int(owner_user_id)), meter="bot"
+        ) as conn:
+            yield conn
+
+    @asynccontextmanager
     async def plan_writer(self, user_id: int) -> AsyncIterator[Conn]:
         """The only way to change a person's plan (`entitlements`): for the payment
         webhook and Try It (dmbot.web, #435). Everything else reads plans.

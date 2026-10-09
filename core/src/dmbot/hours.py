@@ -37,6 +37,13 @@ def minutes_used(started_at: int, ended_at: int) -> int:
     return -(-seconds // 60)
 
 
+def minutes_owed(started_at: int, now: int, recorded: int) -> int:
+    """Minutes to add to a session's record now: the whole session so far, rounded up,
+    less what is already recorded (never negative, so a late or repeated call adds nothing
+    twice)."""
+    return max(0, minutes_used(started_at, now) - recorded)
+
+
 def _add_months(start: datetime, months: int) -> datetime:
     """`start` plus whole calendar months, keeping the time of day. A 29th to 31st start
     falls on the month's last day where that month is shorter, so it never skips a month."""
