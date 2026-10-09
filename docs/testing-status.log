@@ -9,6 +9,11 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev3, PR #872 (#399): core only, no migration or setting. The after-session name scan
+  no longer suggests a word of a known name that was said whole ("Oskar" when Oskar Vane
+  is known and "Oskar Vane" was said); a lone "Oskar" elsewhere is still suggested. Check
+  after a session: "Check new names" doesn't offer the first word of a two-word name the
+  campaign already has.
 - dev2, PR #847 (#677): core only, no migration or setting. The DM can put back a line
   the off-topic filter left out by mistake. One DM-screen message per session, "🙈 Left
   out as off-topic", edited in place, with the newest 10 runs and a "Put it back N" button
