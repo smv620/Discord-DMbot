@@ -240,7 +240,7 @@ than in separate volumes.
 | 3 | **Rules advisor + house rules**: alerts with ✅ Agree / 🙈 Ignore / ⚖️ Override, house rules by voice with DM approval, `/dmbot houserules` | Uses the rules hierarchy below |
 | 4 | **TimeBot**: game clock, effect durations, rests, dawn/noon/dusk, split-party clocks | |
 | 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only. *Split (decided 2026-10-06, docs/STORY_MEMORY.md):* 5a claims, state facts and the first continuity warnings · 5b NPC tracker, who knows what, hierarchical reputations · 5c PlotBot: threads, promises, summaries, pre-session note · 5d the Shared story switch |
-| 6 | **DM sidebar**: voice messages to DMbot, marked `[DM Sidebar Discussion]` | No install needed |
+| 6 | **DM sidebar**: quick, very short AI answers for the DM, by voice memo or by asking out loud at the table; tagged `[DM Sidebar]` in the raw transcript only (owner, 2026-10-09) | No install needed; being built early, after the rules lookup |
 | 7 | **Google Drive** (house-rules doc mirror) and **character data** from D&D Beyond links | |
 | later | Paid service billing (owner's key, per-server metering); D&D Beyond companion extension; optional DM hotkey helper | |
 
@@ -577,7 +577,7 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 **Transcripts vs. the DM screen (decided 2026-10-04).**
 | Content | Who sees it |
 |---|---|
-| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons, DM sidebar messages and all other DM-screen content never appear in the transcript channel or a transcript. |
+| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons and all other DM-screen content never appear in the transcript channel or a transcript. The DM sidebar is the one exception (owner, 2026-10-09): its lines go into the raw transcript, tagged, and never the cleaned one; who may read them is #933. |
 | **DM screen** (rules alerts, house-rule prompts, NPC and plot notes) | The DM, plus players only as the campaign's **DM-screen visibility** allows (below). The bot never *sends* DM-screen content to players. |
 
 **DM-screen visibility (decided 2026-10-04).** Each campaign's DM picks one; if none is
@@ -882,8 +882,9 @@ plus the list of fixes between them.
 **Transcript format (decided 2026-10-04).** One line per utterance:
 `[timestamp] (Discord name) {entity}: text`, where `{entity}` is the in-game character,
 an NPC or other in-game entity, `{narrating}` for the DM, `{table_talk}`, or
-`{non-game_content}`. DM voice messages to the bot are DM-screen content: they appear
-only in the DM screen, marked `[DM Sidebar Discussion]`, **never in a transcript**.
+`{non-game_content}`. DM sidebar lines (2026-10-09, see "DM sidebar") go into the raw
+transcript only, tagged `[DM Sidebar]`, with DMbot's in-game replies under `DMbot`; never
+into the cleaned transcript.
 - **Off-topic talk (decided 2026-10-05, #52):** in the **cleaned** transcript, talk that
   is clearly unrelated (not the campaign, D&D, rules or table talk) is replaced by one
   line saying how long it was: `[timestamp] (Discord name) [1m 22s of off-topic chat
@@ -1625,11 +1626,41 @@ background.
   far ahead of the other.
 - The DM can correct the clock with buttons ([+1 hour] [It's dawn] [Set time…]).
 
-**DM sidebar (decided 2026-10-04).** A Discord bot can't watch for key presses, and
-muting in Discord stops audio to everyone including the bot. So the DM sends a **voice
-message in their DM conversation with DMbot** (hold the mic button, speak, release).
-DMbot transcribes it, answers in the DM screen, and logs it there as
-`[DM Sidebar Discussion]`. The table never hears it, and it never goes into a transcript. An optional hotkey helper app for the DM's PC may come later.
+**DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
+DMbot is there to help the game move quickly, never to bog it down or distract. The
+sidebar is the DM's shortcut to an AI that knows this campaign and knows DMbot, so the
+table isn't left waiting while the DM looks something up.
+- **Two ways in.**
+  1. **A voice memo:** while the table plays, the DM mutes in the voice channel and holds
+     the mic button in their private chat with DMbot (Discord's voice messages; on a
+     computer, where Discord has no voice messages, they type the question there instead).
+  2. **Said out loud at the table:** the DM says they need to look something up ("hold on,
+     I need to find if you need line of sight for fireball"). Only the campaign's DM's own
+     lines start this, and only a clear "I need to find / look up / check" request.
+- **Heard like everything else:** a memo goes through the same speech-to-text and the same
+  name fixing (the campaign's names list) as table speech. Only from a DM who has agreed to
+  be recorded; a DM who hasn't is asked to agree first.
+- **What the AI knows:** everything about this one campaign (campaign memory, transcripts,
+  house rules, homebrew, the scene so far, content the DM shared with the right-to-use
+  confirmation), the rules in the hierarchy below (house rules → homebrew → target →
+  fallback), and how DMbot itself works (DMbot's public documentation from its repository,
+  shipped with each build). Never another campaign's or server's data (isolation rule).
+- **Answers are as short as possible.** If "yes" or "no" answers it accurately, that is
+  the answer. No elaborating unless the DM asks. Example: "Fireball has no sight
+  requirement: its origin is 'a point you choose within range'." The full spell text (and
+  a link to read it outside Discord) comes only when asked for ("I need the spell
+  description"). Rules answers still carry their source and how sure DMbot is, in a few
+  words.
+- **Only on topic:** the campaign, the game's rules and content, DMbot itself, and Discord
+  mechanics. Anything else gets one short line saying it can't help with that here.
+- **Where answers go:** privately, in the DM's chat with DMbot, never in a public
+  channel.
+- **Transcripts:** the DM's sidebar lines are added to the **raw** transcript with the tag
+  `[DM Sidebar]`, and DMbot's replies about in-game content are added under the speaker
+  name `DMbot`. Both are always kept out of the **cleaned** transcript. Who can read those
+  raw lines: see the open question on #933 (until it is answered, they are in the DM's own
+  raw download only, never in the live transcript channel or a player's download).
+- **Cost:** every answer spends AI tokens, so it goes through `can_use_ai` (#919).
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
