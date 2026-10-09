@@ -319,13 +319,14 @@ in the repository; the files record its SHA-256): all 339 spells and the 15 cond
 `core/src/dmbot/rules/data/srd52/`, with `ATTRIBUTION.md` (the statement the SRD asks for,
 and the changes made) and the same statement in the README. Nothing from any other book
 is in the repository. Each entry has its source, section and page, so an alert can cite
-it ("SRD 5.2.1, Spell Descriptions, p. 131"). A name is matched without case, punctuation
-or apostrophes, and the 19 spells the 2024 books renamed are also found under their 2014
-names (`rules/aliases.py`, each with a comment; Feeblemind and Branding Smite included). `lookup(name, target, fallback)` tries the
-target ruleset, then the fallback; a fallback hit is tagged (`[Legacy 2014]` for 2014
-content). An older entry is used only when no newer one matches any name. The 2014 SRD 5.1
-(also CC-BY-4.0) is not loaded yet: the index takes more data folders with their own
-edition, and filing that is the follow-up. Not built: the rules advisor that uses it.
+it ("SRD 5.2.1, Spell Descriptions, p. 131"). A name is matched without case,
+punctuation or apostrophes, and the 19 spells the 2024 books renamed are also found under
+their 2014 names (`rules/aliases.py`, each with a comment; Feeblemind and Branding Smite
+included). `lookup(name, target, fallback)` tries the target ruleset, then the fallback;
+a fallback hit is tagged (`[Legacy 2014]` for 2014 content). An older entry is used only
+when no newer one matches any name. The 2014 SRD 5.1 (also CC-BY-4.0) is not loaded yet:
+the index takes more data folders with their own edition, and filing that is the
+follow-up (#873). Not built: the rules advisor that uses it.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
