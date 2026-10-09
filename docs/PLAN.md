@@ -1005,7 +1005,13 @@ names panel nor the speech-to-text hints can be a fixed list.
     day on #598 because the per-line cap alone leaves one name able to gather tens of
     thousands of other names across lines, **at most 50 other names and 50 secret
     names per name and 5,000 other and secret names per upload**, counting only what
-    the upload adds so a Download all file always uploads again). **Names only:** lines with
+    the upload adds so a Download all file always uploads again). **A campaign too big
+    for one upload (over 2,000 lines or 256 KB) downloads as several files** (decided
+    2026-10-09, #685), named `names-01-of-12-…` (the number first, padded so they sort): each is within the
+    limits above counting its `#` notes, holds whole names (a name on several lines is
+    never split), starts with the instructions and a line saying it is one of N files that
+    can each be added on its own, in any order; the
+    ten files Discord takes in a message go ten to a message. **Names only:** lines with
     descriptions or other columns are refused as unclear, and DMbot never offers
     ready-made sourcebook name lists (IP rule). It writes only into the chosen
     campaign, through the normal memory rules (checks, change log), **saved in one go**
