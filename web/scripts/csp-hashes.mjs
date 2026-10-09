@@ -4,11 +4,20 @@
 // - connect-src: add the web API's origin when PUBLIC_API_BASE is a full address.
 // - Cloudflare Turnstile (the "Say hello" forms' person check, #665): its script and its
 //   frame, only when PUBLIC_TURNSTILE_SITE_KEY is set.
+// - The development branch's build (#837) uses PUBLIC_DEV_API_BASE and gets noindex.
 // Usage: node scripts/csp-hashes.mjs [dist-dir]
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { apiOrigin, htmlFiles, inlineScriptHashes, TURNSTILE_ORIGIN } from "./csp.mjs";
+import {
+  addDevHeaders,
+  apiOrigin,
+  effectiveApiBase,
+  htmlFiles,
+  inlineScriptHashes,
+  isDevSite,
+  TURNSTILE_ORIGIN,
+} from "./csp.mjs";
 
 const dist = process.argv[2] ?? new URL("../dist/", import.meta.url).pathname;
 const headersFile = join(dist, "_headers");
@@ -29,8 +38,15 @@ headers = headers.replace("script-src 'self';", `script-src ${scripts.join(" ")}
 if (turnstile) {
   headers = headers.replace("frame-ancestors", `frame-src ${TURNSTILE_ORIGIN}; frame-ancestors`);
 }
-const origin = apiOrigin(process.env.PUBLIC_API_BASE);
+const origin = apiOrigin(effectiveApiBase(process.env));
 if (origin) headers = headers.replace("connect-src 'self';", `connect-src 'self' ${origin};`);
+// The development site is a test copy: keep it out of search results (#837).
+try {
+  headers = addDevHeaders(headers, process.env);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
 writeFileSync(headersFile, headers);
 console.log(
   `script-src allows ${hashes.size} inline script(s) by hash` +

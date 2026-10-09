@@ -321,6 +321,65 @@ To turn it off, dev1 runs `docker compose stop cloudflared`. The admin page then
 reached from outside until it is started again. To remove the token as well, empty the
 `CLOUDFLARE_TUNNEL_TOKEN=` line with `nano .env` (set-key can't empty a value).
 
+### Put the test website online (dev.getdmbot.com)
+
+Until the real website opens (#498), the test website shows the work in progress. These
+three links all show the same site: https://dev.getdmbot.com, https://getdmbot.com and
+https://www.getdmbot.com. Search engines are told to skip them. The admin page works only at
+https://dev.getdmbot.com/admin.
+
+**You (the owner), in Cloudflare.** It is safe to stop at any step. If a step shows an error
+or looks different, stop and tell dev1 the step number and what the screen says. A
+screenshot is fine, as long as it shows no password or key.
+1. Go to https://dash.cloudflare.com. In the left menu press Workers & Pages. Open the
+   project named `getdmbot`. If you can't find it, stop and tell dev1.
+2. Press Settings, then Variables and Secrets (it may be called Environment variables). If
+   you can't find it, stop and tell dev1.
+3. You already added `PUBLIC_DEV_API_BASE` for Preview. Now add the same one for Production.
+   Press Add variable. In Name type `PUBLIC_DEV_API_BASE`. In Value type
+   `https://api.getdmbot.com`. Choose Production (not Preview). Leave the type as Text. This
+   is a public address, not a secret.
+4. Press Save. The list must now show `PUBLIC_DEV_API_BASE` twice, once for Production and
+   once for Preview. If you only see one, stop and tell dev1.
+5. Press DNS, then Records (for `getdmbot.com`). Look for a row named `dev` with the Target
+   `getdmbot.pages.dev`. Don't change it. If there is no `dev` row, or the Target is
+   different, stop and tell dev1.
+6. Go back to the `getdmbot` project and press Deployments.
+7. Find the top row marked Production. Press the three dots on that row, then press Retry
+   deployment. (The new setting only applies to builds started after you saved it.)
+8. Wait until that row says Success. This can take a few minutes. If it says Failed, stop
+   and tell dev1.
+9. Open https://dev.getdmbot.com. If you see the DMbot website, go to the next step. If you
+   see an error, wait 5 minutes and reload. If it still shows an error after 15 minutes,
+   stop and tell dev1.
+10. Type this in the Claude Code window that dev1 is running in (not GitHub): dev site ready
+
+That's everything for you. dev1 does the rest and will tell you when the admin page is ready.
+When it is, sign in at https://dev.getdmbot.com/admin.
+
+**dev1:**
+- The site is built from the `development` branch, talks to the real API at
+  `https://api.getdmbot.com`, and gets `X-Robots-Tag: noindex, nofollow`. Pull request
+  previews keep the pretend API. A `development` build fails without `PUBLIC_DEV_API_BASE`,
+  so the variable must be set for Production as well as Preview.
+1. Check `WEB_SITE_URL` is already `https://dev.getdmbot.com` (the tunnel section set it;
+   change it with `nano .env` only if it isn't, since set-key only takes keys, then
+   `docker compose up -d web-api`). The API lets only that one address talk to it (sign-in
+   cookies and CORS both follow `WEB_SITE_URL`), so a wrong value shows up as the page
+   saying it can't reach DMbot. Check `docker compose ps web-api` shows it running.
+2. Check from any computer, on both https://dev.getdmbot.com/ and https://getdmbot.com/
+   (the home pages, not `/admin`, which has its own noindex header): `curl -sI <address>`
+   must contain `noindex`, and its Content-Security-Policy line must name
+   `https://api.getdmbot.com` in `connect-src`. If either is missing, check the variable
+   under Production (owner steps 3 and 4) and the Retry (steps 7 and 8), then tell the owner.
+3. Record the result in the testing log, and tell the owner the dev site is up and they can
+   go on to "Turn on the admin page" (the next section in this file).
+
+When the website goes live (#498), production moves to the `main` branch after a promotion,
+`WEB_SITE_URL` becomes https://getdmbot.com and the tunnel's Path limit comes off. Then
+https://dev.getdmbot.com moves to the `development` preview build, with a bypass for Pages'
+preview login.
+
 ### Turn on the admin page
 
 The admin page (`/admin` on the website, never linked) is for giving free access (#772).

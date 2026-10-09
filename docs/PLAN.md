@@ -257,7 +257,7 @@ commands are only visible to the person who used them.
 | `/dmbot stop` | Stop listening and close the session. Replaces `/table leave` |
 | `/dmbot backup` · `/dmbot restore` | Download a complete copy of a campaign, secrets included (anyone in the server, so a campaign is never lost if its DM disappears; decided 2026-10-06, #229; whoever restores a copy becomes its DM); bring one back from a copy (restore needs a file, which only a command can take) |
 | `/dmbot help` | A short, friendly guide with buttons |
-| `/dmbot houserules` | List, add, edit, and remove house rules for the current campaign |
+| `/dmbot houserules` | List, add, edit, and remove house rules for the current campaign (built 2026-10-09, #865: anyone in the server reads the list; only the campaign's DMs get Add, Edit and Remove) |
 | `/dmbot optionalrules` | Turn optional rules (e.g. Xanathar's, Tasha's) on or off for the current campaign (built in #49: a catalog of rule names, one-line summaries and their books, never book text; each change noted in the DM screen) |
 | `/transcript` | Download a session transcript: **cleaned**, **as heard** (raw), or **both** (#125). Anyone in the server can use it. If DMbot is still recording, the DM is told "This transcript ends at 19:42. To get the whole session, stop with `/dmbot stop` first." and a player is told "This transcript ends at 19:42. You'll get a message with the full transcript when the DM ends the session." [Download anyway] [Cancel] |
 
@@ -311,6 +311,21 @@ prompts, so rules alerts can cite it. It stays in that one campaign, never in th
 repository, and the DM can remove it. It follows the rules edition and precedence below:
 a shared book is matched to its edition (2024, 2014 or other) and is a sourcebook in the
 target or fallback ruleset, not a house rule.
+
+*Built, the rules index (2026-10-09, #866):* `dmbot.rules.index` looks a spell or a
+condition up by name. The data is the **SRD 5.2.1** (CC-BY-4.0), taken from Wizards of
+the Coast's own PDF by `python -m dmbot.devtools.srd` (the PDF is downloaded, never kept
+in the repository; the files record its SHA-256): all 339 spells and the 15 conditions, in
+`core/src/dmbot/rules/data/srd52/`, with `ATTRIBUTION.md` (the statement the SRD asks for,
+and the changes made) and the same statement in the README. Nothing from any other book
+is in the repository. Each entry has its source, section and page, so an alert can cite
+it ("SRD 5.2.1, Spell Descriptions, p. 131"). A name is matched without case, punctuation
+or apostrophes, and the 19 spells the 2024 books renamed are also found under their 2014
+names (`rules/aliases.py`, each with a comment; Feeblemind and Branding Smite included). `lookup(name, target, fallback)` tries the
+target ruleset, then the fallback; a fallback hit is tagged (`[Legacy 2014]` for 2014
+content). An older entry is used only when no newer one matches any name. The 2014 SRD 5.1
+(also CC-BY-4.0) is not loaded yet: the index takes more data folders with their own
+edition, and filing that is the follow-up. Not built: the rules advisor that uses it.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
@@ -367,6 +382,44 @@ happened). Ways in:
 
 Only the DM can declare or change a house rule. A player may suggest one; it becomes a
 proposal when the DM clearly agrees out loud, then goes through the same approval.
+
+*Built, part 1: the store and `/dmbot houserules` (2026-10-09, #865):* no AI, voice or
+alerts yet; those build on this.
+- **Table `house_rules`** (migration 0031), per campaign, with row-level security like
+  every campaign table: the rule (at most 500 characters), `supersedes` (the book rule it
+  replaces, free text, optional), `scenario` (what happened, optional), `session_id`
+  (optional; nothing sets it yet), who created it, and when it was created and last
+  changed. At most 200 per campaign. The website's role has no grant on it. It goes in
+  backups (a section that validates every field of the untrusted file) and is deleted with
+  the campaign. A backup never carries `session_id`, which means nothing in another server.
+- **A rule's number is its own, for good (decided 2026-10-09, Supervisor):** alerts cite
+  "house rule 12", so a number never changes meaning. It is the campaign's next number
+  when the rule is made (`campaigns.house_rules_made` counts them, under the campaign's
+  lock), it is never used again, even after the rule is removed, and backups carry both
+  the numbers and the count of numbers used (so a copy goes on where the campaign was,
+  even if its newest rules were removed; a backup made without the count goes on after its
+  highest number). Restoring over a campaign keeps its own count if that is higher. The list shows each rule's own number, newest (highest) first,
+  so it has gaps after a removal, with one line saying each rule keeps its number; the
+  buttons and the menu use that number ("Edit 12").
+- **Two DMs, one rule:** each rule counts its changes (`version`). Edit and Remove say
+  which version the DM was shown; if another DM changed the rule meanwhile, nothing is
+  saved or removed, and the DM is told (Edit gives their words back to paste again).
+- **Who may change them:** only the campaign's DMs, not even server managers: the store
+  checks it in the same transaction as the change. Anyone in the server may list them,
+  as they may read transcripts.
+- **`/dmbot houserules`** answers privately, newest first. It opens the campaign being
+  played, else the one campaign the person is a DM of, else the server's only one, else
+  asks which. A DM gets **Add a house rule** (a form: "The rule" and "Instead of
+  (optional)", shown in the list as "(instead of: …)"), and Edit and Remove for the rules
+  on the page shown: buttons when the page shows four or fewer, a menu above that, and pages
+  (what fits in one message, at most ten rules). The DM stays on their page after a change.
+  Remove asks first, shows the rule, and says it can't be undone; after it, the words are
+  given back whole, to paste into **Add a house rule** if it was a mistake. A refused form
+  gives both boxes back, whole and as typed. Nothing is posted to the DM screen (the list
+  isn't DM-screen content).
+- **Replace means replace:** restoring a backup over a campaign replaces its house rules
+  with the backup's, as it does everything else; a backup made before this has none.
+- **Wording:** "house rule" only: no "precedence" or "hierarchy" in anything users read.
 
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and

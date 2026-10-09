@@ -1162,3 +1162,38 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     Supervisor); `/admin/auth/ways` answers from DMbot (404 JSON until ADMIN_EMAILS is set,
     then 200); the cloudflared log says "Registered tunnel connection". Record the result, no
     token.
+
+==============================================================================
+2026-10-09  Admin page: Google sign-in works, first free-access grant (dev1, owner)
+==============================================================================
+  - The admin page lives at https://dev.getdmbot.com/admin (the Pages project builds its
+    production site from the development branch, so getdmbot.com serves the same build;
+    both send noindex and CSP connect-src https://api.getdmbot.com: open question with the
+    Supervisor on #833). The API is reached through the Cloudflare Tunnel at
+    api.getdmbot.com (path limit ^/admin(/|$): /health, /me, /auth/discord/login,
+    /billing, /webhooks answer 404; /admin/auth/ways answers 200 with google and password
+    on; CORS allows the dev origin with credentials).
+  - web-api log, no email and no address kept here: "Admin signed in with Google" at
+    01:32 UTC and again at 03:10 UTC; "Admin free access grant" at 03:11 UTC.
+  - Database (counts only): access_grants 1 row (level unlimited, no end date, none
+    revoked); access_log 1 row (grant). The grant is the owner's own Discord account.
+  - Not done yet: the password way of signing in (never tried); Change and Revoke; the
+    "done when" of #773: the owner's account starts a session with no plan on the live
+    site; the order rule (#825's account page live before free access is granted: the
+    page is part of the same Pages build, Supervisor to confirm it is live).
+  - DMBOT_FREE_USERS is still empty on purpose (the always-free list is separate from
+    grants made on the admin page).
+
+==============================================================================
+2026-10-09  Admin page: password sign-in, Change and Revoke all work (dev1, owner)
+==============================================================================
+  - 03:27 UTC  "Admin signed in with the password" (web-api log; no email, no address
+    kept here). So both sign-in ways work: Google (01:32, 03:10) and the password.
+  - 03:28-03:30 UTC  The owner gave, changed and revoked free access from the admin page;
+    the web-api log has one line per action (ids never printed here). Database, counts
+    only: access_log has grant x4, change x1, revoke x1; access_grants has 3 rows left
+    (levels guild and unlimited, none with an end date): the revoked one no longer counts
+    as a grant. No errors in the web-api or core logs.
+  - Left for #773's "done when": the owner's account starts a session with no plan on the
+    live site (needs the plan checks, #771 part 2).
+  - DMBOT_FREE_USERS (the always-free list in .env) is still empty on purpose.
