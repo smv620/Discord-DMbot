@@ -20,6 +20,9 @@ dependencies = [
     # The website's API (python -m dmbot.web, #435): its own container, same image.
     "fastapi>=0.115",
     "uvicorn>=0.30",
+    # Reading a DM's Discord voice message (Ogg Opus) into audio (#935). Its wheels carry
+    # their own codecs; nothing else is installed on the server for it.
+    "av>=12",
 ]
 
 [project.optional-dependencies]
@@ -28,10 +31,9 @@ whisper = [
     "faster-whisper>=1.1",
     "numpy>=1.26",
 ]
-# The session twin (python -m dmbot.devtools.replay, #299) reading m4a/mp3 recordings.
-twin = [
-    "av>=12",
-]
+# The session twin (python -m dmbot.devtools.replay, #299) reading m4a/mp3 recordings:
+# PyAV is a normal dependency now (the DM sidebar reads voice messages), so this adds nothing.
+twin = []
 dev = [
     "numpy>=1.26",
     "pytest>=8",

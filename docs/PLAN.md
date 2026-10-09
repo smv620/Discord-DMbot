@@ -1661,6 +1661,27 @@ table isn't left waiting while the DM looks something up.
   raw lines: see the open question on #933 (until it is answered, they are in the DM's own
   raw download only, never in the live transcript channel or a player's download).
 - **Cost:** every answer spends AI tokens, so it goes through `can_use_ai` (#919).
+- **Built (#935, the ways in; the answers are #934):**
+  - **In the DM's chat with DMbot** (`dmbot.sidebar.service`): a voice message or a typed
+    message from a campaign's DM, while a session of theirs runs. A voice message is read in
+    memory (PyAV, now a normal dependency), written down by the table's speech-to-text with
+    the campaign's names as hints, and dropped at once. Names are fixed the way table speech
+    is (only the sure ones). A DM who has not agreed to be recorded is asked first, with the
+    consent button; nothing is downloaded or kept. If the DM runs several games, a button asks
+    which. One question at a time. The reply shows what was heard (voice only).
+  - **Said at the table:** a DM's own line, in the live transcript, that has a hold-on
+    lead-in, then "I need to / I have to / let me", then find, look up or check, then
+    something (`dmbot.sidebar.ask`, with tests for lines that must not start one). At most one
+    a minute per table. The answer goes to the DM's private chat, never a channel.
+  - **Transcript lines:** the question and DMbot's in-game answer are saved with the line
+    kind `question` / `answer` (migration 0035; answers are saved under the DM's id so a
+    consent stop removes both), shown only in the as-heard file as `(DM name) [DM Sidebar]:`
+    and `(DMbot) [DM Sidebar]:`. Never in the cleaned file, the live channel, or the session
+    counts. Who may read them is one constant, `dmbot.sidebar.access.SIDEBAR_READERS`
+    (the campaign's DMs only until #933 is answered). Backups hold no transcripts, so they hold
+    no sidebar lines.
+  - **Limits:** DMs reach only the first shard's process, so a table on another shard's process
+    is not found (single process today).
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
