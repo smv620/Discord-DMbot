@@ -41,6 +41,7 @@ log = logging.getLogger(__name__)
 NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 SETTINGS_LABEL = "Settings"
+RULE_LOOKUP_LABEL = "Look up a rule"
 ONLY_DM = "Only this campaign's DM (or a server manager) can open or change its settings."
 GONE = messages.DM_CAMPAIGN_GONE
 FAILED = "Sorry, that didn't save. Please try again."
@@ -66,6 +67,8 @@ def settings_text(campaign: Campaign, offer: HandoverOffer | None = None) -> str
             f"• **Who can see the DM screen:** {who}",
             "• **Saved transcripts:** anyone in the server can read and download them with "
             "`/transcript`. (This can't be changed.)",
+            "• **Rules:** press 📖 Look up a rule to read a spell, condition or creature from "
+            "the free rules (SRD). Only you see it.",
             handover.owner_line(campaign, offer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
             "now on.",
@@ -84,6 +87,8 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(SettingsVisibilityButton(campaign.id, visibility, current=current))
     for item in handover.owner_buttons(campaign, offer, viewer):
         view.add_item(item)
+    if viewer in campaign.dm_user_ids:  # rules lookup is for the campaign's DMs (#908)
+        view.add_item(RuleLookupButton(campaign.id))
     return view
 
 
@@ -177,6 +182,53 @@ class SettingsButton(
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
+
+
+class RuleLookupButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:rulelookup:{_ID}",
+):
+    """📖 Look up a rule, on ⚙️ Settings: a form with one box; the answer is private. Only
+    the campaign's DMs (a server manager who isn't one doesn't get it)."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=RULE_LOOKUP_LABEL,
+                emoji="📖",
+                style=discord.ButtonStyle.secondary,
+                row=3,
+                custom_id=f"dmbot:rulelookup:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> RuleLookupButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.rule_lookup import ONLY_DMS, LookupForm, may_look_up
+
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for a rules lookup")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if not may_look_up(campaign, interaction.user.id):
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        await interaction.response.send_modal(LookupForm(campaign))
 
 
 class LevelButton(

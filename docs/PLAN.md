@@ -343,7 +343,22 @@ found by its name, by the bracket-less name ("Gnome, Deep"), the word in the bra
 bracket left off; 27 older names are aliased to the creature the 2025 books renamed (Goblin
 is now Goblin Warrior), and the seven 5.1 creatures with no 5.2.1 one (Duergar, Drow, Deep
 Gnome, Lizardfolk, Orc, Half-Red Dragon Veteran, Succubus/Incubus) are `[Legacy 2014]`
-entries. Not built: the rules advisor that uses it.
+entries.
+
+**Built: rules lookup (#908).** The first use of the index: a campaign's DM presses
+**📖 Look up a rule** on the ⚙️ Settings card (a form with one box) or types `/dmbot rule name:`
+(names open as they type, newest rules first) and gets a private card: the name, a short facts
+line (a spell's level, school, casting time, range, components and duration; a creature's
+size and type, AC, HP, speed and CR), the text as printed, and its source with
+`[Legacy 2014]` when it came from the fallback ("Goblin is now called Goblin Warrior" when
+the DM typed an older name). Text past Discord's limit is split at paragraphs or sentences,
+never cut, with a **Read the rest** button. No match: "couldn't find that in the free rules
+(SRD)", up to five close names as buttons, nothing picked for the DM. Two decisions
+(Supervisor, 2026-10-09): **only a campaign's DMs** look things up for now (the answer is
+private, never in a channel or a transcript; players looking up rules is a later question),
+and **precedence is shown, not decided**: a house rule of that campaign (and no other's) that
+names the thing comes first as "🏠 House rule 12: …", then the book, and the DM decides what
+applies. Not built: alerts from what is said at the table, the AI, shared rulebooks.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when

@@ -19,6 +19,7 @@ page, and, for older content, its edition tag.
 
 from __future__ import annotations
 
+import difflib
 import functools
 import json
 import re
@@ -33,6 +34,7 @@ from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.rules import aliases
 
 DATA = Path(__file__).resolve().parent / "data"
+SUGGEST_CUTOFF = 0.7  # how alike two names must be to be offered as "did you mean"
 LEGACY = "2014"  # the edition whose content is always tagged legacy; update when a newer
 # edition ships (then 2024 becomes legacy too, and gets its own tag)
 
@@ -182,6 +184,58 @@ class Index:
                         tag = edition_tag(edition, from_fallback=from_fallback)
                         return Hit(entry, tag, found_as, (edition, found_as) in self._alias_keys)
         return None
+
+    def _pool(self, target: str, fallback: str) -> dict[str, Entry]:
+        """Every name an entry is found by (in the target ruleset, then the fallback) and
+        the entry it leads to; a name in both editions leads to the target's."""
+        pool: dict[str, Entry] = {}
+        for edition in (target, fallback):
+            if edition == FALLBACK_NONE:
+                continue
+            for key, entries in self._by_edition.get(edition, {}).items():
+                pool.setdefault(key, entries[0])
+        return pool
+
+    def suggest(
+        self, typed: str, target: str, fallback: str = FALLBACK_NONE, *, limit: int = 5
+    ) -> list[Entry]:
+        """Entries whose names are close to what was typed, never more than `limit`: the ones
+        it begins ("fireb" for Fireball), then the ones spelled nearly the same. Only to
+        suggest ("Did you mean..."): nothing here is a match, and nothing is picked."""
+        key = normalize(typed)
+        if not key:
+            return []
+        pool = self._pool(target, fallback)
+        begins = sorted(k for k in pool if k.startswith(key))
+        near = difflib.get_close_matches(key, list(pool), n=limit * 3, cutoff=SUGGEST_CUTOFF)
+        found: list[Entry] = []
+        for k in [*begins, *near]:
+            entry = pool[k]
+            if entry not in found:
+                found.append(entry)
+            if len(found) == limit:
+                break
+        return found
+
+    def typeahead(
+        self, typed: str, target: str, fallback: str = FALLBACK_NONE, *, limit: int = 25
+    ) -> list[Entry]:
+        """Entries for a name being typed: names that begin with it first, then names with
+        a word that begins with it, the target ruleset's before the fallback's, each group
+        in alphabetical order. With nothing typed, the target ruleset's first names."""
+        key = normalize(typed)
+        pool = self._pool(target, fallback)
+        keys = sorted(pool)
+        if key:
+            begins = [k for k in keys if k.startswith(key)]
+            words = [k for k in keys if k not in begins and f" {key}" in f" {k}"]
+            keys = begins + words
+        found: list[Entry] = []
+        for k in keys:
+            if pool[k] not in found:
+                found.append(pool[k])
+        found.sort(key=lambda e: e.edition != target)  # stable: the target's names first
+        return found[:limit]
 
     def names(self, kind: str, edition: str) -> list[str]:
         """The names of that edition's entries of that kind, in order."""

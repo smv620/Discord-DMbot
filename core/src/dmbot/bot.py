@@ -84,7 +84,12 @@ from dmbot.dm_screen.name_questions import (
     fix_notes_view,
     question_view,
 )
-from dmbot.dm_screen.settings import LevelButton, SettingsButton, SettingsVisibilityButton
+from dmbot.dm_screen.settings import (
+    LevelButton,
+    RuleLookupButton,
+    SettingsButton,
+    SettingsVisibilityButton,
+)
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
@@ -145,6 +150,7 @@ from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
+from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.sheets import MySheetButton
 from dmbot.ui.transcripts import DownloadButton, download_view, ended_text, transcript_command
 
@@ -502,7 +508,9 @@ class DMBot(commands.AutoShardedBot):
         self.tree.add_command(transcript_command)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
-        self.add_dynamic_items(SettingsButton, LevelButton, SettingsVisibilityButton)
+        self.add_dynamic_items(
+            SettingsButton, LevelButton, SettingsVisibilityButton, RuleLookupButton
+        )
         # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
         self.add_dynamic_items(
             HandoverButton,
