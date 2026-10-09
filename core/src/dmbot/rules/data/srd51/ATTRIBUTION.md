@@ -6,7 +6,7 @@ This work includes material taken from the System Reference Document 5.1 (“SRD
 
 ## What is here
 
-`spells.json` and `conditions.json` hold every spell and every condition of the SRD 5.1 (the 2014 rules), and nothing from any other book. DMbot uses them only as the legacy fallback, tagged `[Legacy 2014]`, when the newer rules have nothing under the name. Each file says where it came from: the SRD 5.1 PDF that Wizards of the Coast publishes at the address in the file, with that PDF's SHA-256, so anyone can check it.
+`spells.json`, `conditions.json` and `monsters.json` hold every spell, every condition and every creature of the SRD 5.1 (the 2014 rules: the Monsters pages, the Miscellaneous Creatures appendix and the Nonplayer Characters appendix), and nothing from any other book. DMbot uses them only as the legacy fallback, tagged `[Legacy 2014]`, when the newer rules have nothing under the name. Each file says where it came from: the SRD 5.1 PDF that Wizards of the Coast publishes at the address in the file, with that PDF's SHA-256, so anyone can check it.
 
 ## Changes made (CC BY 4.0 asks us to say so)
 
@@ -17,7 +17,9 @@ The words are the SRD's. DMbot's own tool (`python -m dmbot.devtools.srd`) took 
 - closed the space the PDF leaves before a full stop, comma, semicolon or colon;
 - split the text into entries, and pulled each spell's level, school, casting time, range, components and duration out of its heading lines (this edition's spell heading has no list of classes, so these entries have none);
 - recorded the page each entry is on, so DMbot can name it ("SRD 5.1, Spell Descriptions, p. 114");
-- read "Component:" in Contagion's heading as "Components:".
+- read "Component:" in Contagion's heading as "Components:";
+- read each creature's stat block into fields (size, type and alignment, armor class and what follows it, hit points and their dice, speed, the six ability scores, saving throws, skills, damage vulnerabilities, resistances and immunities, condition immunities, senses, languages, challenge rating and XP), and kept the traits and actions as one paragraph each under their headings (Actions, Reactions, Legendary Actions), with a spell list line by line. The group names in front of a creature ("Fungi", "Golems") and the book's own paragraphs between stat blocks are not part of any entry;
+- closed a space inside a die ("3 d10" is "3d10") and a number the print had split ("17d10 + 8 5" is "17d10 + 85", "3, 900 XP" is "3,900 XP", "+1 0 to hit" is "+10 to hit").
 
 Tables inside a spell or condition are kept as plain lines of text, one line for each row (a row that the print wraps over two lines is joined, so the words of a wrapped cell come at the end of the row).
 

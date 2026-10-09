@@ -36,6 +36,7 @@ DATA = Path(__file__).resolve().parent / "data"
 LEGACY = "2014"  # the edition whose content is always tagged legacy; update when a newer
 # edition ships (then 2024 becomes legacy too, and gets its own tag)
 
+_SUFFIX = re.compile(r"\s*\([^)]*\)\s*$")  # a name's last bracket: "(Legacy)", "(Svirfneblin)"
 _APOSTROPHES = re.compile(r"[’‘ʼ'`]")
 _NOT_ALNUM = re.compile(r"[^0-9a-z]+")
 
@@ -46,6 +47,21 @@ def normalize(name: str) -> str:
     text = unicodedata.normalize("NFKC", name).casefold()
     text = _APOSTROPHES.sub("", text)
     return _NOT_ALNUM.sub(" ", text).strip()
+
+
+def monster_keys(name: str) -> list[str]:
+    """The other names a creature is found by: without its bracket ("Gnome, Deep"), the
+    bracket's own word ("Svirfneblin") and the comma turned round ("Deep Gnome")."""
+    plain = _SUFFIX.sub("", name)
+    found = [plain]
+    inner = re.search(r"\(([^)]*)\)\s*$", name)
+    if inner:
+        found.append(inner.group(1))
+    head, comma, tail = plain.partition(", ")
+    if comma:
+        found.append(f"{tail} {head}")
+    own = normalize(name)
+    return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
 
 
 def edition_tag(edition: str, *, from_fallback: bool) -> str:
@@ -61,7 +77,7 @@ def edition_tag(edition: str, *, from_fallback: bool) -> str:
 class Entry:
     """One rule in the index."""
 
-    kind: str  # "spell" or "condition"
+    kind: str  # "spell", "condition" or "monster"
     name: str
     edition: str  # "2024", "2014"
     source: str  # "SRD 5.2.1"
@@ -114,6 +130,9 @@ class Index:
         self._by_edition: dict[str, dict[str, list[Entry]]] = {}
         for entry in self.entries:
             self._add(entry.edition, normalize(entry.name), entry)
+            if entry.kind == "monster":
+                for key in monster_keys(entry.name):
+                    self._add(entry.edition, key, entry)
         for older, current in alias_pairs:
             found = self._by_edition.get(alias_edition, {}).get(normalize(current))
             if not found:
@@ -137,12 +156,18 @@ class Index:
         key = normalize(name)
         if not key:
             return None
+        keys = [key]
+        plain = normalize(_SUFFIX.sub("", name))  # "Goblin (Legacy)" is found as "Goblin"
+        if plain and plain != key:
+            keys.append(plain)
         for edition, from_fallback in ((target, False), (fallback, True)):
             if edition == FALLBACK_NONE or (from_fallback and edition == target):
                 continue
-            for entry in self._by_edition.get(edition, {}).get(key, []):
-                if kind is None or entry.kind == kind:
-                    return Hit(entry, edition_tag(edition, from_fallback=from_fallback), key)
+            for found_as in keys:
+                for entry in self._by_edition.get(edition, {}).get(found_as, []):
+                    if kind is None or entry.kind == kind:
+                        tag = edition_tag(edition, from_fallback=from_fallback)
+                        return Hit(entry, tag, found_as)
         return None
 
     def names(self, kind: str, edition: str) -> list[str]:
@@ -157,7 +182,7 @@ def load_folder(folder: Path) -> list[Entry]:
     for path in sorted(folder.glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         for raw in data["entries"]:
-            details = {k: v for k, v in raw.items() if k not in ("name", "text", "page")}
+            details = {k: v for k, v in raw.items() if k not in ("name", "text", "page", "section")}
             if "classes" in details:
                 details["classes"] = tuple(details["classes"])
             entries.append(
@@ -166,7 +191,7 @@ def load_folder(folder: Path) -> list[Entry]:
                     raw["name"],
                     data["edition"],
                     data["source"],
-                    data["section"],
+                    raw.get("section", data.get("section", "")),  # a file of one section or not
                     int(raw["page"]),
                     raw["text"],
                     details,
@@ -180,4 +205,4 @@ def srd() -> Index:
     """The index of what DMbot ships: the SRD 5.2.1 and, as legacy, the SRD 5.1, with the
     renamed spells' older names."""
     entries = load_folder(DATA / "srd52") + load_folder(DATA / "srd51")
-    return Index(entries, aliases.SPELL_ALIASES)
+    return Index(entries, aliases.ALL)

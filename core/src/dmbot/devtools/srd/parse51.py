@@ -56,7 +56,9 @@ STRAY_WORDS = frozenset(["a", "i"])
 # Plain words the SRD 5.1 uses that neither the 5.2.1 data nor this PDF spells out whole
 # often enough to be known. Some put a cut word back together ("attacked"); some only stop
 # a wrong join of two real words ("bed linen", "dimly lit").
-EXTRA_WORDS = frozenset(["attacked", "bed", "defends", "dimly", "dread", "linen", "lit", "strip"])
+EXTRA_WORDS = frozenset(
+    ["attacked", "bed", "defends", "dimly", "dread", "linen", "lit", "strip", "ideas"]
+)
 SCHOOLS = (
     "abjuration conjuration divination enchantment evocation illusion necromancy transmutation"
 )
@@ -67,7 +69,10 @@ _ORDINAL = re.compile(r"(?<=\d)(?:s t|n d|r d|t h)\b")  # "3r d" is "3rd"
 _END = re.compile(r"(.*?)([A-Za-z’']+)")  # a token that ends in letters: (the rest, them)
 _START = re.compile(r"[A-Za-z’']+")  # the letters a token starts with
 _DICE = re.compile(r"(?<=\b\d) (?=d(?:4|6|8|10|12|20|100)\b)")  # "3 d10" is "3d10"
-_BEFORE_PUNCTUATION = re.compile(r"(?<=[A-Za-z0-9)”’]) ([.,;:])(?=\s|$)")  # "turn ," is "turn,"
+_BONUS = re.compile(r"(?<=\+\d) (?=\d to hit)")  # "+1 0 to hit" is "+10 to hit"
+_BEFORE_PUNCTUATION = re.compile(
+    r"(?<=[A-Za-z0-9.)”’]) ([.,;:)])(?![A-Za-z0-9])"
+)  # "turn ," is "turn,"
 _HYPHEN = re.compile(r"(?<=[A-Za-z0-9]) - ?(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])- (?=[a-z0-9])")
 
 
@@ -123,7 +128,7 @@ class Vocabulary:
         """Text made of lines run together: hyphens closed up across the line breaks,
         ordinals whole ("3rd"), cut words joined again."""
         text = _ORDINAL.sub(lambda m: m.group().replace(" ", ""), _HYPHEN.sub("-", text))
-        text = _DICE.sub("", _BEFORE_PUNCTUATION.sub(r"\1", text))
+        text = _BONUS.sub("", _DICE.sub("", _BEFORE_PUNCTUATION.sub(r"\1", text)))
         return self.repair(text)
 
     def run_on(self, row: str, text: str) -> str:

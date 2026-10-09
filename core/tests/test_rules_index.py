@@ -23,7 +23,7 @@ ATTRIBUTION_51 = (
     "under the Creative Commons Attribution 4.0 International License available at "
     "https://creativecommons.org/licenses/by/4.0/legalcode."
 )
-FILES = ("ATTRIBUTION.md", "conditions.json", "spells.json")
+FILES = ("ATTRIBUTION.md", "conditions.json", "monsters.json", "spells.json")
 
 
 def all_text(entry: Entry) -> str:
@@ -36,9 +36,9 @@ def all_text(entry: Entry) -> str:
     return "\n".join(parts)
 
 
-def srd_entries(edition: str) -> list[Entry]:
-    """What `srd()` holds for one edition."""
-    return [e for e in index.srd().entries if e.edition == edition]
+def srd_entries(edition: str, kinds: tuple[str, ...] = ("spell", "condition")) -> list[Entry]:
+    """What `srd()` holds for one edition (spells and conditions unless `kinds` says)."""
+    return [e for e in index.srd().entries if e.edition == edition and e.kind in kinds]
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -434,7 +434,7 @@ class Provenance(unittest.TestCase):
         # Only the layout: a hand edit of a spell's words would still pass. The real check
         # is running the tool on the PDF and seeing no change (ATTRIBUTION.md).
         for folder in ("srd52", "srd51"):
-            for name in ("spells.json", "conditions.json"):
+            for name in ("spells.json", "conditions.json", "monsters.json"):
                 text = (DATA / folder / name).read_text(encoding="utf-8")
                 self.assertEqual(build.dump(json.loads(text)), text, f"{folder}/{name}")
 

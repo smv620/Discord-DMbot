@@ -330,8 +330,18 @@ the same way, as the legacy fallback: all 319 of its spells and its 15 condition
 Smite are in 5.1 and not in 5.2.1, and they are found as their renamed 2024 spells first.
 The 5.1 PDF's text layer is rougher (cut words, a few lost words): the tool repairs cut
 words only with words the SRD itself uses, never edits by hand, and `ATTRIBUTION.md` says
-that one lost word (a stray letter in Animal Friendship, named there) remains. Not built: the rules advisor that
-uses it.
+that one lost word (a stray letter in Animal Friendship, named there) remains. Creatures are in the index too (#900): the 330 stat blocks of the 5.2.1's Monsters A-Z and
+Animals sections and the 317 of the 5.1's Monsters pages and its two creature appendices,
+as `monsters.json` next to the spells, each with its size, type, alignment, armor class, hit
+points and dice, speed, ability scores, saves, skills, resistances, vulnerabilities,
+immunities, senses, languages, challenge and XP (and, in the 5.2.1, initiative, gear and
+proficiency bonus), and its traits and actions as printed, one paragraph each. A creature is
+found by its name, by the bracket-less name ("Gnome, Deep"), the word in the bracket
+("Svirfneblin"), the comma turned round ("Deep Gnome") and with a "(Legacy)" or other
+bracket left off; 27 older names are aliased to the creature the 2025 books renamed (Goblin
+is now Goblin Warrior), and the seven 5.1 creatures with no 5.2.1 one (Duergar, Drow, Deep
+Gnome, Lizardfolk, Orc, Half-Red Dragon Veteran, Succubus/Incubus) are `[Legacy 2014]`
+entries. Not built: the rules advisor that uses it.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when

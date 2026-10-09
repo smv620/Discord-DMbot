@@ -46,3 +46,41 @@ SPELL_ALIASES: tuple[tuple[str, str], ...] = (
     ("Feeblemind", "Befuddlement"),  # 2014 SRD 5.1 name; 2024 renamed it (and reworked it)
     ("Branding Smite", "Shining Smite"),  # same: 2024 renamed it (and reworked it)
 )
+
+# Monsters the 2025 books renamed (or split, keeping one creature plainly the same). Made by
+# comparing every creature name in the 2014 SRD 5.1 with the 2024 SRD 5.2.1: 34 names of
+# the 5.1 have no 5.2.1 entry of that name; these 27 are the same creature under a new
+# name. The other seven stay [Legacy 2014] entries: the 5.2.1 has no Duergar, Drow, Deep
+# Gnome, Lizardfolk, Orc or Half-Red Dragon Veteran, and no single Succubus/Incubus
+# (they are two entries now, each found by its own name).
+MONSTER_ALIASES: tuple[tuple[str, str], ...] = (
+    ("Flying Sword", "Animated Flying Sword"),  # 5.1 name; the 5.2.1 calls it "Animated"
+    ("Rug of Smothering", "Animated Rug of Smothering"),  # same
+    ("Azer", "Azer Sentinel"),  # one azer is now a "Sentinel"
+    ("Bugbear", "Bugbear Warrior"),  # the plain bugbear is the "Warrior" (a Stalker is new)
+    ("Centaur", "Centaur Trooper"),  # renamed
+    ("Shrieker", "Shrieker Fungus"),  # renamed
+    ("Gnoll", "Gnoll Warrior"),  # the plain gnoll is the "Warrior"
+    ("Goblin", "Goblin Warrior"),  # same (a Minion and a Boss are new)
+    ("Hobgoblin", "Hobgoblin Warrior"),  # same (a Captain is new)
+    ("Kobold", "Kobold Warrior"),  # same
+    ("Merfolk", "Merfolk Skirmisher"),  # renamed
+    ("Minotaur", "Minotaur of Baphomet"),  # renamed
+    ("Sahuagin", "Sahuagin Warrior"),  # same
+    ("Androsphinx", "Sphinx of Valor"),  # the sphinxes were renamed by what they stand for
+    ("Gynosphinx", "Sphinx of Lore"),  # same
+    ("Giant Poisonous Snake", "Giant Venomous Snake"),  # "poisonous" became "venomous"
+    ("Poisonous Snake", "Venomous Snake"),  # same
+    ("Swarm of Poisonous Snakes", "Swarm of Venomous Snakes"),  # same
+    ("Giant Sea Horse", "Giant Seahorse"),  # one word now
+    ("Sea Horse", "Seahorse"),  # same
+    ("Quipper", "Piranha"),  # renamed
+    ("Swarm of Quippers", "Swarm of Piranhas"),  # same
+    ("Acolyte", "Priest Acolyte"),  # renamed
+    ("Cult Fanatic", "Cultist Fanatic"),  # renamed
+    ("Thug", "Tough"),  # renamed
+    ("Tribal Warrior", "Warrior Infantry"),  # renamed
+    ("Veteran", "Warrior Veteran"),  # renamed
+)
+
+ALL: tuple[tuple[str, str], ...] = SPELL_ALIASES + MONSTER_ALIASES
