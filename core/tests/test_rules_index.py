@@ -452,10 +452,6 @@ class Provenance(unittest.TestCase):
         self.assertFalse(hit.renamed)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheLegacyData(unittest.TestCase):
     """The 2014 SRD 5.1, as the legacy fallback (#873)."""
 
@@ -522,4 +518,8 @@ class TheLegacyData(unittest.TestCase):
         # The PDF lost a few words (ATTRIBUTION.md); this keeps a worse reading from
         # slipping in unnoticed.
         left = parse51.strays(e.text for e in srd_entries("2014"))
-        self.assertLessEqual(sum(left.values()), 6, dict(left))
+        self.assertLessEqual(sum(left.values()), 3, dict(left))
+
+
+if __name__ == "__main__":
+    unittest.main()

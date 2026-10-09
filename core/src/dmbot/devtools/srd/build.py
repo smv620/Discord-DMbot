@@ -106,15 +106,16 @@ def build(path: str) -> dict[str, dict[str, Any]]:
 
 
 def known_words() -> set[str]:
-    """The words of the 5.2.1 data, if it has been built: the 5.1 reader puts its cut
-    words back using them."""
+    """The words of the 5.2.1 data: the 5.1 reader puts its cut words back using them. The
+    5.2.1 data must be there, or the 5.1 files would come out differently."""
     words: set[str] = set()
     for name in ("spells.json", "conditions.json"):
         path = OUT / name
-        if path.exists():
-            for entry in json.loads(path.read_text(encoding="utf-8"))["entries"]:
-                for field in ("name", "text"):
-                    words.update(w.lower() for w in parse51.WORD.findall(entry[field]))
+        if not path.exists():
+            raise parse.SrdError(f"Build the SRD 5.2.1 data first: {path} is missing.")
+        for entry in json.loads(path.read_text(encoding="utf-8"))["entries"]:
+            for field in ("name", "text"):
+                words.update(w.lower() for w in parse51.WORD.findall(entry[field]))
     return words
 
 

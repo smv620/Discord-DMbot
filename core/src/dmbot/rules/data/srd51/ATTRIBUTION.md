@@ -22,7 +22,7 @@ Tables inside a spell are kept as plain lines of text, one line for each row.
 
 ## Known defects of the PDF
 
-The PDF's text layer has lost a few words and letters altogether, so a handful of lines carry a stray letter where a word should be (for example the "At Higher Levels" line of Animal Friendship reads “one additional beast t level above 1st”). They cannot be put back from the PDF and are not corrected by hand: the files hold what the PDF holds. Where a spell's wording matters, check it against the SRD 5.1 itself.
+The PDF's text layer has lost a few words and letters altogether, so three lines carry a stray letter where a word should be: Animal Friendship (“one additional beast t level above 1st”), Dispel Magic (“equal too r less than”) and Flesh to Stone (“forth e duration”). They cannot be put back from the PDF and are not corrected by hand: the files hold what the PDF holds. Where a spell's wording matters, check it against the SRD 5.1 itself.
 
 ## Making the files again
 

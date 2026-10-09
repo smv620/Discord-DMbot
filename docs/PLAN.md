@@ -330,7 +330,7 @@ the same way, as the legacy fallback: all 319 of its spells and its 15 condition
 Smite are in 5.1 and not in 5.2.1, and they are found as their renamed 2024 spells first.
 The 5.1 PDF's text layer is rougher (cut words, a few lost words): the tool repairs cut
 words only with words the SRD itself uses, never edits by hand, and `ATTRIBUTION.md` says
-that a handful of lost words (six stray letters) remain. Not built: the rules advisor that
+that three lost words (three stray letters, named there) remain. Not built: the rules advisor that
 uses it.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the

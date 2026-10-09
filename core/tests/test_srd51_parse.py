@@ -4,8 +4,10 @@ in the shapes the 5.1 PDF has (no PDF is needed, and none is kept in the reposit
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from unittest import mock
 
-from dmbot.devtools.srd import parse51
+from dmbot.devtools.srd import build, parse51
 from dmbot.devtools.srd.parse import SrdError
 from dmbot.devtools.srd.pdf import Line, Piece
 
@@ -72,6 +74,18 @@ class Cleaning(unittest.TestCase):
         self.assertEqual(dict(parse51.strays([text, "a cat", "I see"])), {"t": 1})
 
 
+class Punctuation(unittest.TestCase):
+    def test_a_space_before_a_full_stop_or_comma_is_closed(self) -> None:
+        self.assertEqual(
+            vocab().tidy("your next turn , the end . You"), "your next turn, the end. You"
+        )
+
+    def test_a_lone_letter_beside_a_piece_with_punctuation_is_joined(self) -> None:
+        words = vocab("including", "your", "lips")
+        self.assertEqual(words.tidy("(includin g your turn)"), "(including your turn)")
+        self.assertEqual(words.tidy("on the l ips.”"), "on the lips.”")
+
+
 class Spells(unittest.TestCase):
     def test_a_spell_is_read(self) -> None:
         words = vocab("pointing", "finger", "sulfur")
@@ -121,3 +135,49 @@ class Conditions(unittest.TestCase):
         self.assertEqual(found[0].text, "• A blinded creature can’t see.")
         with self.assertRaises(SrdError):
             parse51.parse_conditions(lines, vocab(), ["Blinded", "Stunned"])
+
+
+class Building(unittest.TestCase):
+    def pages(self) -> list[list[Line]]:
+        contents = [say("Spell Descriptions", "Cambria")]  # the contents page: not a heading
+        spells = [say("Spell Descriptions", TITLE, page=11), *fireball()]
+        traps = [say("Traps", TITLE, page=12)]
+        conditions = [say("Appendix PH-A:", TITLE, page=13)]
+        for name in build.CONDITIONS_51:
+            conditions += [say(name, TITLE, page=13), say("• It can’t do much.", page=13)]
+        after = [say("Appendix PH-B:", TITLE, page=14)]
+        return [contents, *[[]] * 9, spells, traps, conditions, after]
+
+    def document(self) -> dict[str, object]:
+        return {"title": "t", "url": "u", "sha256": "s", "pages": 14}
+
+    def test_the_files_are_made_in_the_2014_shape(self) -> None:
+        files = build.build_files_51(self.pages(), self.document(), {"pointing", "finger"})
+        for data in files.values():
+            self.assertEqual(
+                (data["source"], data["edition"], data["licence"]),
+                ("SRD 5.1", "2014", "CC-BY-4.0"),
+            )
+        self.assertEqual([e["name"] for e in files["spells.json"]["entries"]], ["Fireball"])
+        self.assertEqual(len(files["conditions.json"]["entries"]), 15)
+        self.assertEqual(files["conditions.json"]["entries"][0]["page"], 13)
+
+    def test_the_edition_picks_the_folder(self) -> None:
+        files = build.build_files_51(self.pages(), self.document(), set())
+        self.assertEqual(build.folder_for(files), build.OUT_51)
+        self.assertEqual(build.folder_for({"spells.json": {"edition": "2024"}}), build.OUT)
+        self.assertNotEqual(build.OUT, build.OUT_51)
+
+    def test_the_document_is_told_from_its_footer(self) -> None:
+        def pages(footer: str) -> list[list[Line]]:
+            return [[say(footer, page=1)]]
+
+        self.assertEqual(build.which_document(pages("System Reference Document 5.1")), "5.1")
+        self.assertEqual(build.which_document(pages("System Reference Document 5.2.1")), "5.2.1")
+        with self.assertRaises(SrdError):
+            build.which_document(pages("Some other book"))
+
+    def test_without_the_5_2_1_data_the_tool_stops_rather_than_guess(self) -> None:
+        nowhere = Path("/nonexistent-srd52-folder")
+        with mock.patch.object(build, "OUT", nowhere), self.assertRaises(SrdError):
+            build.known_words()

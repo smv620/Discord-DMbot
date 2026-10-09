@@ -55,6 +55,7 @@ SCHOOLS = (
 _NOISE = re.compile(r"[\t\r\xa0]+")
 _SOFT = re.compile(r"[\xad‐‑]")
 _ORDINAL = re.compile(r"(?<=\d)(?:s t|n d|r d|t h)\b")  # "3r d" is "3rd"
+_BEFORE_PUNCTUATION = re.compile(r"(?<=[A-Za-z0-9)”’]) ([.,;:])(?=\s|$)")  # "turn ," is "turn,"
 _HYPHEN = re.compile(r"(?<=[A-Za-z0-9]) - ?(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])- (?=[a-z0-9])")
 
 
@@ -109,30 +110,33 @@ class Vocabulary:
         """Text made of lines run together: hyphens closed up across the line breaks,
         ordinals whole ("3rd"), cut words joined again."""
         text = _ORDINAL.sub(lambda m: m.group().replace(" ", ""), _HYPHEN.sub("-", text))
+        text = _BEFORE_PUNCTUATION.sub(r"\1", text)
         return " ".join(self._strays_joined(self.repair(text).split(" ")))
 
     def _strays_joined(self, tokens: list[str]) -> list[str]:
         """A lone letter next to a piece that isn't a word is the rest of that piece ("d
-        ropping", "knocke d"). Between two words it is a gap in the text, and is left."""
+        ropping", "knocke d", "(includin g"). Between two words it is a gap in the text, and
+        is left. Punctuation around a token stays where it is."""
         out: list[str] = []
-        i = 0
-        while i < len(tokens):
-            token = tokens[i]
-            lone = len(token) == 1 and token.isalpha() and token.lower() not in STRAY_WORDS
-            before = out[-1] if out else ""
+        for i, token in enumerate(tokens):
+            lead, core, trail = _split(token)
             after = tokens[i + 1] if i + 1 < len(tokens) else ""
-            if lone and self._piece(after):
-                tokens[i + 1] = token + after
-            elif lone and self._piece(before):
-                out[-1] = before + token
-            else:
-                out.append(token)
-            i += 1
+            if len(core) == 1 and core.lower() not in STRAY_WORDS and not trail:
+                next_lead, next_core, _ = _split(after)
+                if self._piece(next_core) and not next_lead:
+                    tokens[i + 1] = lead + core + after
+                    continue
+            if out and len(core) == 1 and core.lower() not in STRAY_WORDS and not lead:
+                _, before_core, before_trail = _split(out[-1])
+                if self._piece(before_core) and not before_trail:
+                    out[-1] = out[-1] + token
+                    continue
+            out.append(token)
         return out
 
-    def _piece(self, token: str) -> bool:
+    def _piece(self, core: str) -> bool:
         """A bare run of letters that is not a word: the part of a cut one."""
-        return token.isalpha() and token.lower() not in self.words
+        return core.isalpha() and core.lower() not in self.words
 
     def repair(self, text: str) -> str:
         """The text with cut words joined again."""
@@ -154,6 +158,15 @@ class Vocabulary:
                     changed = True
                     break
         return " ".join(tokens)
+
+
+def _split(token: str) -> tuple[str, str, str]:
+    """(punctuation before, the letters, punctuation after) of a token; the letters are
+    empty if it is anything but one run of letters with punctuation around it."""
+    match = re.fullmatch(r"([^A-Za-z]*)([A-Za-z]*)([^A-Za-z]*)", token)
+    if match is None:
+        return "", "", token
+    return match[1], match[2], match[3]
 
 
 def strays(texts: Iterable[str]) -> Counter[str]:
