@@ -1090,3 +1090,25 @@ test("someone waiting to listen again can't be the source of a failed packet (#9
   assert.equal(failures.get(ALICE) ?? 0, 0);
   assert.equal(failures.get(ERIN), 6);
 });
+
+test("failures are shared out in turn among everyone unheard, then among all sending (#916)", async () => {
+  const h = harness();
+  const people = ["1101", "1102", "1103"];
+  h.allowlist.set(GUILD, people);
+  for (const id of people) {
+    h.session.noteMember(id, false);
+    h.receiver.packet(id);
+  }
+  await nextFrame();
+  mock.timers.tick(300); // nobody heard for a while, all still sending
+  for (const id of people) h.receiver.sending(id);
+  for (let i = 0; i < 9; i++) h.debug(FAILED);
+  h.receiver.packet("1101"); // 1101 is heard again: the rest are the guess now
+  for (let i = 0; i < 4; i++) h.debug(FAILED);
+  for (const id of people) await stop(h, id);
+  const failures = new Map(
+    h.sent.flatMap((m) => (m.type === "health" ? [[m.userId, m.decryptFailures ?? 0] as const] : [])),
+  );
+  assert.deepEqual([...failures.values()].reduce((a, b) => a + b, 0), 13);
+  assert.ok((failures.get("1102") ?? 0) >= 5 && (failures.get("1103") ?? 0) >= 5, JSON.stringify([...failures]));
+});

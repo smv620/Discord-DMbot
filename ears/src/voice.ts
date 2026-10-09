@@ -79,7 +79,9 @@ interface SpeakerPipeline {
   accounted: number;
   watchdog?: NodeJS.Timeout;
   retry?: NodeJS.Timeout; // a delayed re-listen
-  relistening: boolean; // between a failure and the new subscription: nothing is received
+  // Between a failure and the new subscription: nothing is received. Cleared only in
+  // listenAgain; a pipeline removed meanwhile is never looked at again, so a stale true is harmless.
+  relistening: boolean;
   warnedSilent: boolean; // logged "sending but nothing heard" for this pipeline
   silentPeriods: number; // watchdog periods in a row with packets arriving, none heard
   /** Packets the voice library couldn't decrypt, not yet counted as lost (#43). */
@@ -407,10 +409,10 @@ export class TableSession {
    * The library said it failed to decrypt a packet, without saying whose. Only people who are
    * recorded are subscribed, so it was one of them: someone sending right now, preferring
    * those nothing has been heard from lately. Several at once (a key change hits everyone)
-   * take turns: exact in total, approximate per person (for the first ~100 ms of a burst the
-   * failing speaker may still count as heard, so a healthy one can be charged a few, and
-   * their percent can shift with their count). Someone waiting to listen again can't be
-   * the source: nothing of theirs is being received.
+   * take turns, in the order they joined: exact in total, approximate per person (for the
+   * first ~100 ms of a burst the failing speaker may still count as heard, so a healthy one
+   * can be charged a few, and their percent can shift with their count). Someone waiting to
+   * listen again can't be the source: nothing of theirs is being received.
    */
   private noteDecryptFailure(): void {
     const now = Date.now();
@@ -424,11 +426,14 @@ export class TableSession {
       if (now - pipeline.accounted > SPEAKING_DELAY_MS) unheard.push(pipeline);
     }
     const candidates = unheard.length > 0 ? unheard : sending;
-    if (candidates.length === 0) {
+    let pipeline: SpeakerPipeline | undefined;
+    if (candidates.length > 0) pipeline = candidates[this.decryptTurn++ % candidates.length];
+    sending.length = 0; // don't keep ended pipelines (and their streams) alive until the next failure
+    unheard.length = 0;
+    if (!pipeline) {
       this.strayDecryptFailures++;
       return;
     }
-    const pipeline = candidates[this.decryptTurn++ % candidates.length] as SpeakerPipeline;
     pipeline.undecrypted++;
     pipeline.decryptFailures++;
   }
