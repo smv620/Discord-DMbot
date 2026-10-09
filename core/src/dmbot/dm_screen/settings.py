@@ -104,7 +104,7 @@ def settings_text(
             *rules,
             _rules_cards_line(campaign, viewer),
             handover.owner_line(campaign, offer),
-            pause_line(campaign),
+            pause_line(campaign, viewer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
             "now on.",
         ]

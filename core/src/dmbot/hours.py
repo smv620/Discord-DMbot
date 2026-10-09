@@ -211,10 +211,12 @@ def more_hours(site_url: str, buys_hours: bool = True, renews: bool = False) -> 
     return "Ask the campaign's owner what to do next."
 
 
-PAUSE_WAY = "pause another one (⚙️ Settings, then ⏸️ **Pause this campaign**)"
+PAUSE_WAY = (
+    "pause one of your other campaigns first "
+    "(open it, then ⚙️ Settings and ⏸️ **Pause this campaign**)"
+)
 PAUSED_OWNER = (
-    "This campaign is paused, so it can't start. Open ⚙️ Settings and press ▶️ **Unpause** "
-    "to use it again. Everything in it is kept."
+    "This campaign is paused. Open ⚙️ Settings and press ▶️ **Unpause**. Everything in it is kept."
 )
 PAUSED_OTHER = "This campaign is paused. Ask its owner to unpause it, then press Start again."
 
@@ -252,9 +254,10 @@ def campaigns_refusal(
 
 
 PAUSED_TOLD = (
-    "Your plan now covers {cap} {noun}, so DMbot paused {what}. Paused campaigns keep "
-    "everything and can't start. To use one again, pause another and press ▶️ **Unpause** "
-    "(⚙️ Settings){change}"
+    "DMbot paused {what} because your plan now covers {cap} {noun}. A paused campaign keeps "
+    "everything but can't start. To use one again, pause one you play less (open it, then "
+    "⚙️ Settings and ⏸️ **Pause this campaign**), then open the paused one and press "
+    "▶️ **Unpause**.{change}"
 )
 
 
@@ -265,9 +268,9 @@ def paused_told(names: list[str], cap: int, *, site_url: str = "", can_change_pl
     shown = ", ".join(f"**{n}**" for n in names[:10])
     if len(names) > 10:
         shown += f" and {len(names) - 10} more"
-    what = ("this one: " if len(names) == 1 else "these: ") + shown
+    what = shown
     where = f"here: {site_url}/account" if site_url else "on DMbot's website"
-    change = f", or change your plan {where}" if can_change_plan else "."
+    change = f" Or change your plan {where}" if can_change_plan else ""
     return PAUSED_TOLD.format(cap=cap, noun=noun, what=what, change=change)
 
 

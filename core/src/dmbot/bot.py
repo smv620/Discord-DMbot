@@ -1297,7 +1297,7 @@ class DMBot(commands.AutoShardedBot):
         check still refuses them until one is paused.)"""
         if not self.settings.enforce_plans or self.meter is None:
             return None
-        await self._settle_cap(guild_id, user_id)  # a shrunk plan pauses its extras first
+        await self._settle_cap(guild_id, user_id, 1.0)  # shrunk plan: pause extras (3 s deadline)
         try:
             async with asyncio.timeout(GATE_TIMEOUT_S):
                 room = await self.meter.campaign_room(guild_id, user_id, int(time.time()))
@@ -1321,7 +1321,7 @@ class DMBot(commands.AutoShardedBot):
         fail-open as `create_refusal`; the store checks again as the backstop."""
         if not self.settings.enforce_plans or self.meter is None:
             return None
-        await self._settle_cap(guild_id, user_id)
+        await self._settle_cap(guild_id, user_id, GATE_TIMEOUT_S)
         try:
             async with asyncio.timeout(GATE_TIMEOUT_S):
                 room = await self.meter.campaign_room(guild_id, user_id, int(time.time()))
@@ -1345,21 +1345,26 @@ class DMBot(commands.AutoShardedBot):
         """Pause or unpause a campaign for its owner (#957). A campaign DMbot is listening
         to can't be paused (stop it first); an unpause that would go over the plan's cap
         says so in the plan's words. Raises CampaignError in plain words."""
-        table = self.tables.get(guild_id)
-        if paused and table is not None and table.campaign_id == campaign_id:
-            raise CampaignError(
-                "DMbot is listening to this campaign now. Stop it with `/dmbot stop`, "
-                "then pause it."
+        # Under the session lock, like a start, so a start can't slip in between the
+        # check and the save.
+        async with self.session_lock(guild_id):
+            table = self.tables.get(guild_id)
+            if paused and table is not None and table.campaign_id == campaign_id:
+                raise CampaignError(
+                    "DMbot is listening to this campaign now. Stop it with `/dmbot stop`, "
+                    "then pause it."
+                )
+            if not paused:
+                refused = await self.unpause_refusal(guild_id, user_id)
+                if refused:
+                    raise CampaignError(refused)
+            return await self.campaigns.set_paused(
+                guild_id, campaign_id, user_id, paused, int(time.time())
             )
-        if not paused:
-            refused = await self.unpause_refusal(guild_id, user_id)
-            if refused:
-                raise CampaignError(refused)
-        return await self.campaigns.set_paused(
-            guild_id, campaign_id, user_id, paused, int(time.time())
-        )
 
-    async def _settle_cap(self, guild_id: int, owner_id: int) -> None:
+    async def _settle_cap(
+        self, guild_id: int, owner_id: int, wait: float = METER_CALL_TIMEOUT_S
+    ) -> None:
         """Pause the owner's campaigns over their plan's cap, and tell them once in a
         private message which and how to change it (#957). Done when the bot next reads the
         plan (a start, a new campaign, an unpause) rather than from the website's webhook:
@@ -1368,8 +1373,9 @@ class DMBot(commands.AutoShardedBot):
         if not self.settings.enforce_plans or self.meter is None:
             return
         try:
-            async with asyncio.timeout(METER_CALL_TIMEOUT_S):
-                settled = await self.meter.settle_cap(guild_id, owner_id, int(time.time()))
+            async with asyncio.timeout(wait):
+                live = [t.campaign_id for t in self.tables.values() if t.campaign_id]
+                settled = await self.meter.settle_cap(guild_id, owner_id, int(time.time()), live)
         except Exception:
             log.exception("Couldn't settle the owner's campaign cap")
             return
@@ -1382,9 +1388,11 @@ class DMBot(commands.AutoShardedBot):
             can_change_plan=settled.can_change_plan,
         )
         try:
-            user = self.get_user(owner_id) or await self.fetch_user(owner_id)
-            await user.send(text, allowed_mentions=discord.AllowedMentions.none())
-        except discord.HTTPException:  # private messages off: the start refusal says it too
+            async with asyncio.timeout(GATE_TIMEOUT_S):
+                user = self.get_user(owner_id) or await self.fetch_user(owner_id)
+                await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+        except (discord.HTTPException, OSError, TimeoutError):
+            # Private messages off or slow: the pause is saved and the start refusal says it too.
             log.info("Couldn't tell an owner their campaigns were paused")
 
     async def plan_gate(

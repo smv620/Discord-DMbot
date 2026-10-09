@@ -4,6 +4,7 @@ cap (the most recently played kept), telling the owner once. Needs Postgres."""
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -184,6 +185,24 @@ class SettlingTheCap(PauseTest):
         assert again is not None
         self.assertEqual(again.paused, [])
 
+    async def test_a_campaign_being_listened_to_is_kept_first(self) -> None:
+        await self.give_plan(ALICE, 1)
+        live = await self.make(GUILD_A, "Live", ALICE, played=100)  # the older one
+        await self.make(GUILD_B, "Newer", ALICE, played=200)
+        async with self.db.meter(GUILD_A, ALICE) as conn:
+            await conn.execute("SELECT * FROM dmbot_pause_over_cap(1, %s)", ([live.id],))
+        self.assertNotIn(live.id, await self.paused_ids(ALICE))
+        self.assertEqual(len(await self.paused_ids(ALICE)), 1)
+
+    async def test_two_settles_at_once_pause_each_campaign_once(self) -> None:
+        await self.give_plan(ALICE, 1)
+        for n in (1, 2, 3):
+            await self.make(GUILD_A, f"C{n}", ALICE, played=n * 100)
+        results = await asyncio.gather(self.settle(ALICE), self.settle(ALICE))
+        counts = sorted(len(r.paused) for r in results if r is not None)
+        self.assertEqual(counts, [0, 2])  # the owner is told about the two, once
+        self.assertEqual(await self.counted(ALICE), 1)
+
     async def test_it_pauses_only_this_owners_campaigns(self) -> None:
         await self.give_plan(ALICE, 1)
         await self.give_plan(BOB, 5)
@@ -280,6 +299,25 @@ class BotSide(PauseTest):
         oldest = cast(Campaign, await self.store.get(GUILD_A, made[0].id))
         self.assertEqual(await self.bot.plan_refusal(GUILD_A, oldest, ALICE), hours.PAUSED_OWNER)
         self.sent.assert_awaited_once()
+
+    async def test_a_message_that_cannot_be_sent_never_breaks_the_start(self) -> None:
+        await self.give_plan(ALICE, 1)
+        await self.make(GUILD_A, "Old", ALICE, played=100)
+        new = await self.make(GUILD_A, "New", ALICE, played=200)
+        for failure in (OSError("down"), TimeoutError()):
+            self.sent.side_effect = failure
+            self.assertIsNone(await self.bot.plan_refusal(GUILD_A, new, ALICE))
+        self.assertEqual(await self.counted(ALICE), 1)  # the pause stands
+
+    async def test_a_slow_or_broken_settle_fails_open(self) -> None:
+        await self.give_plan(ALICE, 1)
+        a = await self.make(GUILD_A, "One", ALICE)
+        with (
+            patch.object(self.bot.meter, "settle_cap", side_effect=RuntimeError("down")),
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
+            self.assertIsNone(await self.bot.plan_refusal(GUILD_A, a, ALICE))
+            self.assertIsNone(await self.bot.create_refusal(GUILD_A, BOB))
 
     async def test_unpause_at_the_cap_is_refused_in_the_cap_words(self) -> None:
         await self.give_plan(ALICE, 1)

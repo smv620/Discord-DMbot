@@ -302,8 +302,8 @@ NO_ROOM_TO_RESTORE = (
 )
 NOT_THE_OWNER_PAUSE = "Only the campaign's owner can pause or unpause it."
 NO_ROOM_TO_UNPAUSE = (
-    "Your plan has no room to unpause this campaign. Pause another one first (⚙️ Settings, "
-    "then ⏸️ **Pause this campaign**), or change your plan."
+    "Your plan has no room to unpause this campaign. Pause one of your other campaigns first "
+    "(open it, then ⚙️ Settings and ⏸️ **Pause this campaign**)."
 )
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."

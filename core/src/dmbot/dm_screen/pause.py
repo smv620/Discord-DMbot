@@ -26,20 +26,26 @@ NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 PAUSE_LABEL = "Pause this campaign"
 UNPAUSE_LABEL = "Unpause"
-ONLY_OWNER = "Only the campaign's owner can pause or unpause it."
+ONLY_OWNER = "Only the campaign's owner can pause or unpause it. Ask them to."
 FAILED = "Sorry, that didn't save. Please try again."
-LINE_RUNNING = (
-    "• **Paused:** no. Pausing keeps everything but stops it from starting, and it no longer "
-    "uses a place on your plan. Only the owner can pause it."
+# What each person reads about the plan differs: only the owner is told how pausing
+# touches their plan (CLAUDE.md: nobody learns another person's plan).
+LINE_RUNNING_OWNER = (
+    "• **Paused:** no. Pausing keeps everything but stops it from starting, and frees a "
+    "place on your plan."
 )
-LINE_PAUSED = (
-    "• **Paused:** yes. It can't start, and it doesn't use a place on the owner's plan. "
-    "Everything in it is kept. Only the owner can unpause it."
+LINE_PAUSED_OWNER = (
+    "• **Paused:** yes. It can't start. Everything is kept. Press ▶️ **Unpause** to use it again."
 )
+LINE_RUNNING_OTHER = "• **Paused:** no."
+LINE_PAUSED_OTHER = "• **Paused:** yes. It can't start. Ask the campaign's owner to unpause it."
 
 
-def pause_line(campaign: Campaign) -> str:
-    return LINE_PAUSED if campaign.paused else LINE_RUNNING
+def pause_line(campaign: Campaign, viewer: int | None) -> str:
+    owner = viewer is not None and viewer == campaign.owner_user_id
+    if campaign.paused:
+        return LINE_PAUSED_OWNER if owner else LINE_PAUSED_OTHER
+    return LINE_RUNNING_OWNER if owner else LINE_RUNNING_OTHER
 
 
 def pause_buttons(campaign: Campaign, viewer: int) -> list[discord.ui.Item[Any]]:

@@ -121,7 +121,9 @@ class Settled:
     paused: list[PausedCampaign]
 
 
-async def settle_cap(db: Database, guild_id: int, owner_user_id: int, now: int) -> Settled | None:
+async def settle_cap(
+    db: Database, guild_id: int, owner_user_id: int, now: int, live: list[str] | None = None
+) -> Settled | None:
     """Pause the owner's campaigns over their plan's cap, most recently played kept (#957).
 
     Run when the plan is read for a start, a create or an unpause, not from the website's
@@ -136,7 +138,7 @@ async def settle_cap(db: Database, guild_id: int, owner_user_id: int, now: int) 
         keep = access.campaign_cap if access.works else plans.load().by_id["try-it"].campaigns
         if keep is None:  # no limit
             return None
-        cur = await conn.execute("SELECT * FROM dmbot_pause_over_cap(%s)", (keep,))
+        cur = await conn.execute("SELECT * FROM dmbot_pause_over_cap(%s, %s)", (keep, live or []))
         paused = [
             PausedCampaign(str(r["campaign_id"]), int(r["server_id"]), str(r["campaign_name"]))
             for r in await cur.fetchall()
@@ -342,5 +344,7 @@ class Meter:
     async def campaign_room(self, guild_id: int, owner_user_id: int, now: int) -> campaign_cap.Room:
         return await campaign_room(self.db, guild_id, owner_user_id, now)
 
-    async def settle_cap(self, guild_id: int, owner_user_id: int, now: int) -> Settled | None:
-        return await settle_cap(self.db, guild_id, owner_user_id, now)
+    async def settle_cap(
+        self, guild_id: int, owner_user_id: int, now: int, live: list[str] | None = None
+    ) -> Settled | None:
+        return await settle_cap(self.db, guild_id, owner_user_id, now, live)

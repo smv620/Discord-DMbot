@@ -1264,7 +1264,7 @@ PAUSE = """
     CREATE POLICY pause_by_owner ON campaigns
         USING (dmbot_owner_sync() = 'pause' AND owner_user_id = dmbot_current_user())
         WITH CHECK (dmbot_owner_sync() = 'pause' AND owner_user_id = dmbot_current_user());
-    CREATE FUNCTION dmbot_pause_over_cap(keep INTEGER)
+    CREATE FUNCTION dmbot_pause_over_cap(keep INTEGER, live TEXT[] DEFAULT '{}')
         RETURNS TABLE (campaign_id TEXT, server_id BIGINT, campaign_name TEXT)
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
@@ -1275,14 +1275,28 @@ PAUSE = """
         IF me IS NULL OR keep IS NULL OR keep < 0 THEN
             RETURN;
         END IF;
-        -- One at a time per person, as the cap's other checks (campaign_cap).
-        PERFORM pg_advisory_xact_lock(hashtextextended('dmbot.owner_slots:' || me::text, 0));
+        -- The common case, nothing over the cap: answer from the small owner table before
+        -- locking or scanning anything (this runs on every start).
+        IF (SELECT count(*) FROM owner_campaigns oc
+            WHERE oc.owner_user_id = me AND NOT oc.paused) <= keep THEN
+            RETURN;
+        END IF;
         PERFORM set_config('dmbot.owner_sync', 'pause', true);
+        -- Same lock order as every other caller (campaign row first, then the per-person
+        -- lock of campaign_cap), rows in a fixed order so two of these can't cross: a
+        -- hand-over holding one campaign while it waits for the person lock must not meet
+        -- us holding the person lock while we wait for that campaign.
+        PERFORM 1 FROM campaigns c WHERE c.owner_user_id = me
+            ORDER BY c.guild_id, c.id FOR UPDATE;
+        PERFORM pg_advisory_xact_lock(hashtextextended('dmbot.owner_slots:' || me::text, 0));
         RETURN QUERY
         WITH ranked AS (
             SELECT c.id AS cid, c.guild_id AS gid,
+                   -- A campaign DMbot is listening to now is kept first: pausing a live
+                   -- table is refused everywhere else ("stop it first").
                    row_number() OVER (
-                       ORDER BY COALESCE(c.last_played_at, c.created_at) DESC,
+                       ORDER BY (c.id = ANY(live)) DESC,
+                                COALESCE(c.last_played_at, c.created_at) DESC,
                                 c.created_at DESC, c.id) AS n
             FROM campaigns c
             WHERE c.owner_user_id = me AND NOT c.paused
@@ -1299,12 +1313,12 @@ PAUSE = """
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_pause_over_cap(INTEGER)'
+            'ALTER FUNCTION dmbot_pause_over_cap(INTEGER, TEXT[])'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_pause_over_cap(INTEGER) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_pause_over_cap(INTEGER, TEXT[]) FROM PUBLIC;
 """
 
 OWNER_CAMPAIGNS = (
