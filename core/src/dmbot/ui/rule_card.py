@@ -28,8 +28,11 @@ NAME_MAX = 100
 MIN_TEXT_ROOM = 200  # a first part with less room than this is only the heading
 
 FREE_RULES = "the free rules (SRD)"
-NOT_A_RULING = "_From the free rules (SRD). DMbot reads it out; you decide what applies._"
-OLDER_NOTE = "_Older 2014 rules: the newer rules don't have this._"
+NOT_A_RULING = (
+    "_From the free rules (SRD). DMbot shows the rules as written; you decide what applies._"
+)
+OLDER_NOTE = "_From the older 2014 rules (the newer free rules don't have it)._"
+TAG_WORDS = {"[2024]": "[Newer 2024 rules]"}  # a tag as the DM reads it
 ONLY_FREE_RULES = "_Only the free rules are in DMbot so far, not your own books._"
 KIND_WORDS = {"spell": "spell", "condition": "condition", "monster": "creature"}
 
@@ -88,7 +91,9 @@ def facts(entry: Entry) -> str:
 def house_matches(rules: Iterable[HouseRule], names: Iterable[str]) -> list[HouseRule]:
     """The house rules that name the thing: any of `names` (case, punctuation and
     apostrophes ignored) is a whole word or phrase in the rule or in what it replaces.
-    From the rules given, which are one campaign's: this never looks further."""
+    From the rules given, which are one campaign's: this never looks further. A short name
+    ("Light", "Fly") matches loosely on purpose: the DM sees every house rule that might
+    apply, and decides."""
     wanted = {n for n in (normalize(name) for name in names) if len(n) >= 2}
     found = []
     for rule in rules:
@@ -105,7 +110,10 @@ def house_lines(matches: Sequence[HouseRule], line_max: int = HOUSE_LINE_MAX) ->
         return []
     if line_max <= 0:
         plural = "s" if len(matches) != 1 else ""
-        return [f"🏠 {len(matches)} house rule{plural} name this: `/dmbot houserules`"]
+        return [
+            f"🏠 {len(matches)} house rule{plural} mention this. "
+            "See them all with `/dmbot houserules`."
+        ]
     lines = []
     for rule in matches[:HOUSE_SHOWN]:
         words = _md(rule.rule)
@@ -115,7 +123,10 @@ def house_lines(matches: Sequence[HouseRule], line_max: int = HOUSE_LINE_MAX) ->
     extra = len(matches) - HOUSE_SHOWN
     if extra > 0:
         plural = "s" if extra != 1 else ""
-        lines.append(f"🏠 …and {extra} more house rule{plural}: `/dmbot houserules`")
+        lines.append(
+            f"🏠 …and {extra} more house rule{plural} mention this. "
+            "See them all with `/dmbot houserules`."
+        )
     return lines
 
 
@@ -131,16 +142,18 @@ def names_for(entry: Entry, typed: str) -> list[str]:
 def split_text(text: str, first: int, rest: int) -> list[str]:
     """The text in parts that fit: the first part up to `first` characters, the others up
     to `rest`. Parts end between paragraphs when they can, else between sentences or
-    words; no word is cut (unless one is longer than a whole part)."""
-    atoms: list[str] = []
+    words; no word is cut (unless one is longer than a whole part). Where a part ends inside
+    a paragraph the break was a space, and a break between paragraphs was a new line."""
+    atoms: list[tuple[str, str]] = []  # (what came before it, the piece)
     limit = max(1, min(first, rest) if first >= MIN_TEXT_ROOM else rest)
     for line in text.split("\n"):
-        atoms.extend(_atoms(line, limit))
+        for number, piece in enumerate(_atoms(line, limit)):
+            atoms.append(("\n" if number == 0 else " ", piece))
     parts: list[str] = []
     current = ""
-    for atom in atoms:
+    for before, atom in atoms:
         budget = first if not parts else rest
-        joined = f"{current}\n{atom}" if current else atom
+        joined = f"{current}{before}{atom}" if current else atom
         if len(joined) <= budget:
             current = joined
             continue
@@ -185,6 +198,12 @@ def _words(sentence: str, limit: int) -> list[str]:
     return out
 
 
+def source(hit: Hit) -> str:
+    """Where it comes from, with the tag in words a DM reads ("[Newer 2024 rules]")."""
+    tag = TAG_WORDS.get(hit.tag, hit.tag)
+    return f"{hit.entry.citation} {tag}" if tag else hit.entry.citation
+
+
 def header(
     hit: Hit, typed: str, rules: Sequence[HouseRule], *, house_max: int = HOUSE_LINE_MAX
 ) -> str:
@@ -198,14 +217,14 @@ def header(
     line = facts(entry)
     if line:
         lines.append(line)
-    lines.append(f"_Source: {_md(hit.citation)}_")
+    lines.append(f"_Source: {_md(source(hit))}_")
     asked = _fit(_md(" ".join(typed.split())), NAME_MAX)
     if hit.renamed and asked:
         lines.append(f"_{asked} is now called {called} in the newer rules._")
     elif asked and normalize(typed) != normalize(entry.name):
         lines.append(f"_Showing {called} (you typed {asked})._")
-    if hit.tag:
-        lines.append(OLDER_NOTE)
+    if hit.tag and hit.from_fallback and entry.edition == index.LEGACY:
+        lines.append(OLDER_NOTE)  # when 2014 is the campaign's own choice, the tag is enough
     lines.append(NOT_A_RULING)
     return "\n".join(lines)
 

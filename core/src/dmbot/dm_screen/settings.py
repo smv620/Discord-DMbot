@@ -35,6 +35,7 @@ from dmbot.campaigns.models import (
 )
 from dmbot.dm_screen import handover, messages
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
+from dmbot.logs import set_log_context
 
 log = logging.getLogger(__name__)
 
@@ -219,6 +220,7 @@ class RuleLookupButton(
     async def callback(self, interaction: discord.Interaction) -> Any:
         from dmbot.ui.rule_lookup import ONLY_DMS, LookupForm, may_look_up
 
+        set_log_context(guild_id=interaction.guild_id)
         store = getattr(interaction.client, "campaigns", None)
         guild = interaction.guild
         campaign: Campaign | None = None

@@ -403,6 +403,27 @@ class Timeout(LookupTest):
 
 
 class SuggestionButtons(LookupTest):
+    async def test_an_older_only_name_says_so(self) -> None:
+        near = index.srd().suggest("Orcc", "2024", "2014")
+        labels = self.labels(ui.Suggestions(campaign(), near))
+        self.assertIn("Orc [Legacy 2014]", labels)
+        self.assertTrue(all(len(label) <= 80 for label in labels))
+        long = index.Entry("monster", "N" * 90, "2014", "SRD 5.1", "x", 1, "t", {})
+        (label,) = self.labels(ui.Suggestions(campaign(), [long]))
+        self.assertLessEqual(len(label), 80)
+        self.assertTrue(label.endswith("[Legacy 2014]"))
+
+    async def test_pressing_a_name_reads_that_kind_of_thing(self) -> None:
+        spell = index.Entry("spell", "Sleep", "2024", "SRD 5.2.1", "Spell Descriptions", 1, "t", {})
+        thing = index.Entry("condition", "Sleep", "2024", "SRD 5.2.1", "x", 2, "t", {})
+        view = ui.Suggestions(self.campaigns[C1], [spell, thing])
+        read = self.it()
+        await self.press(view, "Sleep (spell)").callback(read)
+        self.assertIn("📖 **Sleep** (spell)", self.sent(read)[0])
+        other = self.it()  # there is no condition Sleep: the spell is not read in its place
+        await self.press(view, "Sleep (condition)").callback(other)
+        self.assertIn("couldn't find **Sleep**", self.sent(other)[0])
+
     async def test_the_same_name_of_two_kinds_is_two_buttons_that_say_which(self) -> None:
         def entry(kind: str) -> index.Entry:
             return index.Entry(kind, "Sleep", "2024", "SRD 5.2.1", "x", 1, "text", {})
@@ -416,6 +437,13 @@ class SuggestionButtons(LookupTest):
 
 
 class ReadTheRestParts(LookupTest):
+    async def test_the_pressed_message_loses_its_button_so_a_part_is_never_sent_twice(self) -> None:
+        view = ui.Card(["first", "second", "third"], 1)
+        pressed = self.it()
+        await view.children[0].callback(pressed)
+        self.assertEqual(pressed.response.edited, [("", None)])  # its own buttons are gone
+        self.assertEqual(self.sent(pressed)[0], "second")  # and the next part is a new message
+
     async def test_the_last_part_has_no_button_and_each_press_sends_one_part(self) -> None:
         parts = ["first", "second", "third", "fourth"]
         view: Any = ui.Card(parts, 1)

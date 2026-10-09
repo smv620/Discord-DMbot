@@ -116,6 +116,7 @@ class Hit:
     tag: str  # "" for the target ruleset's own; "[Legacy 2014]" for an older one
     found_as: str  # the key that matched, which may be an older name
     via_alias: bool = False  # found by a name the newest edition renamed it from
+    from_fallback: bool = False  # the target ruleset had nothing: found in the fallback
 
     @property
     def citation(self) -> str:
@@ -183,7 +184,8 @@ class Index:
                 for entry in self._by_edition.get(edition, {}).get(found_as, []):
                     if kind is None or entry.kind == kind:
                         tag = edition_tag(edition, from_fallback=from_fallback)
-                        return Hit(entry, tag, found_as, (edition, found_as) in self._alias_keys)
+                        via_alias = (edition, found_as) in self._alias_keys
+                        return Hit(entry, tag, found_as, via_alias, from_fallback)
         return None
 
     def _pool(self, target: str, fallback: str) -> dict[str, Entry]:

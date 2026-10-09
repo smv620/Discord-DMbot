@@ -44,13 +44,11 @@ from dmbot.ui.dmbot_commands import (
 
 log = logging.getLogger(__name__)
 
-LOOKUP_LABEL = "Look up a rule"
 FORM_TITLE = "Look up a rule"
 BOX_LABEL = "Spell, condition or creature"
 BOX_PLACEHOLDER = "For example: Fireball, Grappled or Goblin"
 BOX_MAX = 100
 READ_REST_LABEL = "Read the rest"
-NOT_READY = "Rules lookup isn't available right now. Please try again in a moment."
 NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with `/dmbot start`."
 ONLY_DMS = "Only this campaign's DM can look up rules for now. Ask your DM."
 ONLY_DMS_ANY = "Only a campaign's DM can look up rules for now. Ask your DM."
@@ -60,6 +58,7 @@ EMPTY = "Type a spell, a condition or a creature, then try again."
 TOO_LONG = f"That's too long for a name. Use at most {BOX_MAX} characters."
 NAMES_MORE = 25  # most choices Discord shows as a person types
 TYPEAHEAD_WAIT_S = 1.0  # the longest the list waits for the database
+SUGGESTION_MAX = 80  # a button's label may hold 80 characters
 
 
 def may_look_up(campaign: Campaign, user_id: int) -> bool:
@@ -82,7 +81,12 @@ async def _house_rules(interaction: discord.Interaction, campaign: Campaign) -> 
 
 
 async def look_up(
-    interaction: discord.Interaction, campaign_id: str, typed: str, *, guild_id: int
+    interaction: discord.Interaction,
+    campaign_id: str,
+    typed: str,
+    *,
+    guild_id: int,
+    kind: str | None = None,
 ) -> None:
     """Find `typed` for this campaign and send the card privately. The campaign is read
     again and the person checked again: a button or a form can be used minutes later."""
@@ -103,7 +107,7 @@ async def look_up(
         return
     rules = await _house_rules(interaction, campaign)
     srd = index.srd()
-    hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset)
+    hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
     if hit is None:
         close = srd.suggest(typed, campaign.target_ruleset, campaign.fallback_ruleset)
         text = rule_card.no_match_text(typed, rules, bool(close))
@@ -133,7 +137,9 @@ class Card(_KeepsItsText):
         self.add_item(_Button(self._more, label=label, style=discord.ButtonStyle.primary))
 
     async def _more(self, interaction: discord.Interaction) -> None:
-        await _answer_first(interaction)
+        # The pressed message loses its button (so a part is never sent twice), then the
+        # next part comes as a new private message with its own button.
+        await interaction.response.edit_message(view=None)
         follow = self.next_part + 1
         view = Card(self.parts, follow) if follow < len(self.parts) else None
         await _send(interaction, self.parts[self.next_part], view)
@@ -150,19 +156,18 @@ class Suggestions(_KeepsItsText):
             shown.setdefault((entry.name, entry.kind), entry)
         names = [name for name, _ in shown]
         for (name, kind), entry in list(shown.items())[: logic.SELECT_OPTIONS_MAX]:
-            label = name
+            tag = f" [Legacy {entry.edition}]" if entry.edition == index.LEGACY else ""
             if names.count(name) > 1:  # say which, when the same name is two things
-                label = f"{name} ({rule_card.KIND_WORDS.get(kind, kind)})"
-            self.add_item(
-                _Button(
-                    partial(look_up_name, campaign, entry.name),
-                    label=logic.shorten(label, logic.PHONE_LABEL_MAX * 3),
-                )
-            )
+                tag = f" ({rule_card.KIND_WORDS.get(kind, kind)}){tag}"
+            label = logic.shorten(name, SUGGESTION_MAX - len(tag)) + tag
+            self.add_item(_Button(partial(look_up_name, campaign, name, kind), label=label))
 
 
-async def look_up_name(campaign: Campaign, name: str, interaction: discord.Interaction) -> None:
-    await look_up(interaction, campaign.id, name, guild_id=campaign.guild_id)
+async def look_up_name(
+    campaign: Campaign, name: str, kind: str, interaction: discord.Interaction
+) -> None:
+    """A suggested name was pressed: read that name, of that kind."""
+    await look_up(interaction, campaign.id, name, guild_id=campaign.guild_id, kind=kind)
 
 
 class LookupForm(discord.ui.Modal, title=FORM_TITLE):

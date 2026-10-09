@@ -505,7 +505,8 @@ class DMBot(commands.AutoShardedBot):
             install.install_link(),
         )
         # Load the free rules once now, off the event loop: the first rules lookup (and its
-        # list of names, which Discord gives 3 seconds) then finds them ready (#908).
+        # list of names, which Discord gives 3 seconds) then finds them ready (#908). Broken
+        # packaged data stops start-up here, on purpose: better now than at the table.
         await asyncio.to_thread(rules_index.srd)
         self.tree.add_command(dmbot_group)
         self.tree.add_command(consent_group)

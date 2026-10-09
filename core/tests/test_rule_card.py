@@ -68,7 +68,29 @@ class Header(unittest.TestCase):
     def test_the_older_rules_are_tagged_and_said_plainly(self) -> None:
         text = rule_card.header(hit("Orc"), "Orc", [])
         self.assertIn("SRD 5.1, Monsters, p. 339 [Legacy 2014]", text)
-        self.assertIn("Older 2014 rules: the newer rules don't have this.", text)
+        self.assertIn("From the older 2014 rules (the newer free rules don't have it).", text)
+
+    def test_the_older_rules_note_only_when_they_were_the_fallback(self) -> None:
+        note = rule_card.OLDER_NOTE
+        # 2014 is the campaign's own choice: the tag in the source line is enough
+        own = hit("Fireball", "2014", "2024")
+        text = rule_card.header(own, "Fireball", [])
+        self.assertIn("SRD 5.1, Spell Descriptions", text)
+        self.assertIn("[Legacy 2014]", text)
+        self.assertNotIn(note, text)
+        self.assertNotIn(note, rule_card.header(hit("Fireball", "2014", "none"), "Fireball", []))
+        # a newer entry that came from the fallback is not "older" and says "newer"
+        newer = rule_card.header(hit("Goblin Warrior", "2014", "2024"), "Goblin Warrior", [])
+        self.assertNotIn(note, newer)
+        self.assertNotIn("older", newer.lower().replace("the older rules", ""))
+        self.assertIn("[Newer 2024 rules]", newer)
+        self.assertNotIn("[2024]", newer)
+        # a 2014 entry the newer rules lack, found in the fallback: the note
+        self.assertIn(note, rule_card.header(hit("Orc", "2024", "2014"), "Orc", []))
+        # the target's own newest rules need neither
+        plain = rule_card.header(hit("Fireball", "2024", "2014"), "Fireball", [])
+        self.assertNotIn(note, plain)
+        self.assertNotIn("[", plain.replace("[Legacy", "").split("_Source")[1].split("_")[0])
 
     def test_an_older_name_says_what_it_is_called_now(self) -> None:
         text = rule_card.header(hit("Goblin"), "goblin", [])
@@ -123,7 +145,9 @@ class HouseRules(unittest.TestCase):
         many = [rule(n, "Fireball is louder") for n in range(1, 7)]
         text = rule_card.header(hit("Fireball"), "fireball", many)
         self.assertEqual(text.count("🏠 **House rule"), rule_card.HOUSE_SHOWN)
-        self.assertIn("…and 3 more house rules: `/dmbot houserules`", text)
+        self.assertIn(
+            "…and 3 more house rules mention this. See them all with `/dmbot houserules`.", text
+        )
 
     def test_the_dms_words_never_format_the_card(self) -> None:
         text = rule_card.header(hit("Fireball"), "fireball", [rule(1, "Fireball **bold** ||x||")])
@@ -161,6 +185,17 @@ class Splitting(unittest.TestCase):
         pieces = rule_card.split_text(blob, 120, 120)
         self.assertTrue(all(len(p) <= 120 for p in pieces))
         self.assertEqual(" ".join(pieces).split(), blob.split())  # no word cut
+
+    def test_a_break_inside_a_paragraph_is_a_space_between_paragraphs_a_new_line(self) -> None:
+        text = "First paragraph. " + "word " * 80 + "\nSecond paragraph here."
+        parts = rule_card.split_text(text, 120, 120)
+        self.assertGreater(len(parts), 2)
+        self.assertEqual(" ".join(parts).split(), text.split())  # nothing lost
+        # a line break appears only where the text had one, never inside a long paragraph
+        for part in parts:
+            if "\n" in part:
+                self.assertEqual(part.count("\n"), 1)
+                self.assertTrue(part.endswith("Second paragraph here."))
 
     def test_a_word_longer_than_a_part_is_the_only_thing_cut(self) -> None:
         parts = rule_card.split_text("y" * 250, 100, 100)
@@ -218,7 +253,9 @@ class Worst(unittest.TestCase):
         none = rule_card.house_lines(rules, 0)
         self.assertTrue(all(len(x) <= 60 for x in short))
         self.assertGreater(len(full[0]), len(short[0]))
-        self.assertEqual(none, ["🏠 3 house rules name this: `/dmbot houserules`"])
+        self.assertEqual(
+            none, ["🏠 3 house rules mention this. See them all with `/dmbot houserules`."]
+        )
         self.assertEqual(rule_card.house_lines([], 0), [])
 
 
