@@ -164,6 +164,29 @@ class Gate(base.UsageTest):
         for action in ("ai", "copy", "transcript"):
             self.assertIsNone(await self.gate(action))
 
+    async def campaign_a(self) -> Any:
+        campaign = await self.campaigns.get(base.GUILD_A, self.a.id)
+        assert campaign is not None
+        return campaign
+
+    async def test_plan_allows_says_no_without_a_plan(self) -> None:
+        self.assertFalse(
+            await self.bot.plan_allows("transcript", base.GUILD_A, await self.campaign_a())
+        )
+
+    async def test_plan_allows_follows_try_it_and_paid_plans(self) -> None:
+        await self.plan(plan="try-it")
+        campaign = await self.campaign_a()
+        self.assertTrue(await self.bot.plan_allows("ai", base.GUILD_A, campaign))
+        self.assertFalse(await self.bot.plan_allows("transcript", base.GUILD_A, campaign))
+
+    async def test_plan_allows_says_yes_for_a_paid_plan_and_when_not_enforced(self) -> None:
+        await self.plan()
+        campaign = await self.campaign_a()
+        self.assertTrue(await self.bot.plan_allows("transcript", base.GUILD_A, campaign))
+        off = self.make_bot(enforce=False)
+        self.assertTrue(await off.plan_allows("copy", base.GUILD_A, campaign))
+
     async def test_a_try_it_owner_may_use_the_ai_but_is_refused_a_copy(self) -> None:
         await self.plan(plan="try-it")
         self.assertIsNone(await self.gate("ai"))

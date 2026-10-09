@@ -153,7 +153,13 @@ from dmbot.ui.names import ReviewButton, after_session_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.sheets import MySheetButton
-from dmbot.ui.transcripts import DownloadButton, download_view, ended_text, transcript_command
+from dmbot.ui.transcripts import (
+    DownloadButton,
+    download_view,
+    ended_no_download_text,
+    ended_text,
+    transcript_command,
+)
 
 log = logging.getLogger(__name__)
 
@@ -1307,6 +1313,25 @@ class DMBot(commands.AutoShardedBot):
             owner_known=owner is not None,
             site_url=self.settings.site_url,
         )
+
+    async def plan_allows(
+        self, action: plan_rules.Action, guild_id: int, campaign: Campaign
+    ) -> bool:
+        """Does the campaign's owner's plan allow `action`, as a plain yes or no (no words, so
+        no question of who is asking)? Fails open (True) like `plan_gate`, and is True when
+        plans aren't enforced. A campaign with no owner has no plan to allow anything."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return True
+        owner = campaign.owner_user_id
+        access = None
+        if owner is not None:
+            try:
+                async with asyncio.timeout(GATE_TIMEOUT_S):
+                    access = await self.meter.access(guild_id, owner, int(time.time()))
+            except Exception:
+                log.exception("Couldn't check the plan; allowing it")
+                return True
+        return plan_rules.allowed(plan_rules.RULE_OF[action], access)
 
     async def restore_gate(
         self, guild_id: int, user_id: int, replacing: Campaign | None = None
@@ -3601,19 +3626,68 @@ class DMBot(commands.AutoShardedBot):
             if session is None or session.lines == 0:
                 return 0
             people = {table.dm_user_id, *table.dm_user_ids, *session.speakers}
+            notice = await self._no_download_notice(table)
+            if notice is not None:
+                recipients, note = notice
+                sent = 0
+                for user_id in sorted(recipients):
+                    sent += await self._send_download(
+                        user_id, table, session_id, blocked=True, note=note
+                    )
+                log.info("Transcript not offered (plan): told %d person(s)", sent)
+                return sent
             sent = 0
             for user_id in sorted(people):
                 sent += await self._send_download(user_id, table, session_id)
             log.info("Transcript download offered privately to %d of %d", sent, len(people))
             return sent
 
-    async def _send_download(self, user_id: int, table: Table, session_id: str) -> int:
+    async def _no_download_notice(self, table: Table) -> tuple[set[int], str] | None:
+        """With the campaign's plan not including copies (Try It, #938) the download buttons
+        would be refused on every press. Players have nothing to act on, so only the owner is
+        told, once, why there is no transcript (or, with no owner, the DMs are told to take the
+        campaign on). Returns who to tell and what, or None when downloads are fine. Fails
+        open like `plan_gate`: any error leaves the buttons in place, since this runs after
+        the session was ended and must never stop the end-of-session message. The plan is
+        asked at most twice: whether it is blocked, and what the owner is told."""
+        if table.campaign_id is None:
+            return None
+        gid = table.guild_id
+        try:
+            campaign = await self.campaigns.get(gid, table.campaign_id)
+            if campaign is None or await self.plan_allows("transcript", gid, campaign):
+                return None
+            owner_id = campaign.owner_user_id
+            if owner_id is None:
+                return {table.dm_user_id, *table.dm_user_ids}, plan_rules.NO_OWNER
+            note = await self.plan_gate("transcript", gid, campaign, owner_id)
+            return {owner_id}, note or plan_rules.NO_OWNER
+        except Exception:
+            log.exception("Couldn't check whether the plan has downloads; offering them")
+            return None
+
+    async def _send_download(
+        self,
+        user_id: int,
+        table: Table,
+        session_id: str,
+        *,
+        blocked: bool = False,
+        note: str | None = None,
+    ) -> int:
         """1 if the private message went out; people with private messages off use
-        `/transcript` instead."""
+        `/transcript` instead. `blocked`: the plan has no downloads, so no buttons; `note` is
+        the line for the owner only."""
         try:
             user = self.get_user(user_id) or await self.fetch_user(user_id)
             if user.bot:
                 return 0
+            if blocked:
+                await user.send(
+                    ended_no_download_text(table.campaign_name, note or plan_rules.NO_OWNER),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+                return 1
             await user.send(
                 ended_text(table.campaign_name),
                 view=download_view(table.guild_id, session_id),

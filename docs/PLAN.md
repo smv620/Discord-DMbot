@@ -1849,7 +1849,11 @@ only "<Copies of this campaign aren't available | Transcripts aren't available f
 campaign | Finding names with DMbot's AI isn't available for this campaign | Loading a copy isn't
 available>. Ask the campaign's owner to take a look.", never anything about the plan. A campaign
 with no owner is told "This campaign has no owner yet. One of its DMs needs to press **Take it
-on** on the campaign's card in the DM screen first." A refused Find names answers Discord first,
+on** on the campaign's card in the DM screen first." When the plan has no downloads (#938), the end-of-session private message is not sent to
+players at all (they could not act on it, and a download button would be refused on every
+press): only the owner is messaged, once, "The session for X has ended. Its transcript
+is kept, but this campaign's plan doesn't include downloads." plus the owner's line above; with no owner, the campaign's DMs get the
+no-owner line instead. If the plan check fails the buttons go out as usual. A refused Find names answers Discord first,
 leaves the menu in place (so "Add the lines that fit" still works), does not count against the
 day's reads, and records no right-to-use confirmation, because nothing was read. Only when
 `DMBOT_ENFORCE_PLANS` is on; a database hiccup, or one slower than 2 seconds, lets the action through, like the start check. A campaign with no owner has no plan, so it
