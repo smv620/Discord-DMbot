@@ -340,7 +340,9 @@ class TheSrdOnly(unittest.TestCase):
         self.assertIn("Stage Condition Stage Condition", weather)
         self.assertNotRegex(by_name["Control Weather"], r"[a-ce-z]\d |\d[A-Z]")  # kept apart
         self.assertIn("Bat, Cat, Frog, Hawk, Lizard, Octopus", by_name["Find Familiar"])
-        self.assertNotIn("Ghouls .", by_name["Create Undead"])  # no space put before a full stop
+        # The tool puts no space before a full stop. (A few "name ." spaces are in the PDF
+        # itself, drawn as a piece that ends in a space; they are kept as the PDF has them.)
+        self.assertNotIn("Ghouls .", by_name["Create Undead"])
         self.assertIn("not even Wish—can", by_name["Mind Blank"])
         self.assertIn("Familiarity Mishap Area Target Target", by_name["Teleport"])
 

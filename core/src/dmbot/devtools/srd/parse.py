@@ -142,7 +142,8 @@ def _paragraphs(lines: Sequence[Line], mender: Mender) -> str:
         in_stat = line.first_font.startswith(STAT_FAMILY)
         # ...and so does a bold entry name still inside its brackets: "Healing Touch
         # (Celestial Only; Recharges after a Long" / "Rest)."
-        open_name = bool(paragraphs) and paragraphs[-1].count("(") > paragraphs[-1].count(")")
+        name = paragraphs[-1].split(". ", 1)[0] if paragraphs else ""  # before its first sentence
+        open_name = name.count("(") > name.count(")")
         wrapped = in_stat and previous_stat and (line.first_font not in STAT_STARTS or open_name)
         fresh = not wrapped and (
             not paragraphs

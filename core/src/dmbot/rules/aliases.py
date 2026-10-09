@@ -15,7 +15,7 @@ not a name).
 
 Made by comparing every spell name in the 2014 SRD 5.1 with the 2024 SRD 5.2.1. Most
 entries only drop a creator's name (the 2014 books' titles; the 5.1 SRD itself already
-printed the short ones). Four were renamed for real: Nystul's Magic Aura (now Arcanist's),
+printed the short ones). Five were renamed for real: Nystul's Magic Aura (now Arcanist's),
 Feeblemind (Befuddlement) and Branding Smite (Shining Smite), and Mordenkainen's Sword
 and Bigby's Hand, which gained "Arcane".
 """

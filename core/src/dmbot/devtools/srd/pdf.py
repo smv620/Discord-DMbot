@@ -77,7 +77,10 @@ class Line:
         return self.first_font == name
 
 
-CHAR_WIDTH = 5.5  # more than any letter of the SRD's body or table fonts is wide, in points
+# An estimate of how far a character of the SRD's body or table fonts reaches, in points
+# (an average, with room to spare: capitals are wider). Only the gap between two columns
+# of a table has to clear it plus GAP_SLACK, and this PDF's byte-for-byte output is the test.
+CHAR_WIDTH = 5.5
 GAP_SLACK = 12.0
 
 
