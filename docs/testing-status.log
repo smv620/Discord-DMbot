@@ -9,6 +9,18 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev3, PR #877 (#573): core only, no migration or setting. The Transcript Cleaner no
+  longer merges a new name into a known look-alike. (1) With the known name in the same
+  line, a look-alike word stays as heard ("Today Isolde heals the wounded, and Ysolde
+  rests."). (2) A fix by sound is silent only when spelled at least 0.95 alike; closer
+  than the old bars but below that it is made WITH a note and Undo in ✏️ Name fixes to
+  check, and under Quiet it is not made. So **almost every fix by sound is now a note,
+  not a silent fix** (also "Beleros" → Belleros): watch how many notes appear in a
+  session. Same-letters respellings ("Kazeth" → "Ka'zeth") and the DM's own fixes stay
+  silent. (3) A name the DM confirmed is never merged again. Check in the next
+  names-stress test: Isolde and Rothgar next to Ysolde and Hrothgar stay as heard; a
+  lone one is fixed but noted with Undo; real mishearings are still fixed. If the notes
+  pile up, tell dev3: one constant (NEAR_CERTAIN) moves the line.
 - dev2, PR #869 (#865): core with **migration 0031** (a new table `house_rules` and a new
   column `campaigns.house_rules_made`; the migration runs when core starts, so rebuild
   core). No setting. `/dmbot houserules`: a campaign's house rules, which everyone in the
