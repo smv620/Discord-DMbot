@@ -3226,10 +3226,16 @@ class DMBot(commands.AutoShardedBot):
             if self.tables.get(table.guild_id) is not table:
                 return  # already stopped by someone
             try:
-                await self.sessions.clear(table.guild_id, "the owner's hours are used up")
+                # Bounded: this runs under the session lock, which /dmbot stop and Start wait
+                # on. A timeout is an error here too, so the next tick tries again.
+                async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                    await self.sessions.clear(table.guild_id, "the owner's hours are used up")
             except Exception:
                 log.exception("Couldn't clear the saved session; will try to stop again")
                 return
+            # As in /dmbot stop, if stopping itself fails after this, the saved session is
+            # already gone: a restart before the next tick then ends the session, which is
+            # what the hours ask for anyway.
             await self.stop_table(table.guild_id, "the owner's hours are used up")
         await self.post(
             table.screen_channel_id,

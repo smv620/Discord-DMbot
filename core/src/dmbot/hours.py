@@ -205,10 +205,10 @@ def more_hours(site_url: str, buys_hours: bool = True, renews: bool = False) -> 
     owner can't, so they are told when the hours start again, or to ask the owner. The link
     comes last so no full stop is glued onto it."""
     if buys_hours:
-        return f"The campaign's owner can add more at {account_link(site_url)}"
+        return f"The campaign's owner can add more hours at {account_link(site_url)}"
     if renews:
         return "Hours start again when the plan renews."
-    return "Ask the campaign's owner."
+    return "Ask the campaign's owner what to do next."
 
 
 def warning_text(
@@ -287,23 +287,27 @@ def grace_started_text(
     buys_hours: bool = True,
     renews: bool = False,
 ) -> str:
-    until = f" until <t:{ends_at}:t>" if ends_at is not None else ""
+    # The end time says how long it runs; the "2 hours" is only for when it isn't known.
+    until = (
+        f" until <t:{ends_at}:t>"
+        if ends_at is not None
+        else f" (up to {GRACE_MINUTES // 60} hours)"
+    )
     return (
         "⏳ This month's listening hours are used up. This session can finish: DMbot keeps "
-        f"listening{until} (up to {GRACE_MINUTES // 60} more hours), then stops. To play "
-        f"again after that: {more_hours(site_url, buys_hours, renews)}"
+        f"listening{until}, then stops. {more_hours(site_url, buys_hours, renews)}"
     )
 
 
 def stop_soon_text(site_url: str = "", buys_hours: bool = True, renews: bool = False) -> str:
     return (
-        f"⏳ DMbot will stop listening in about {STOP_WARNING_MINUTES} minutes: this month's "
-        f"listening hours are used up. To keep going: {more_hours(site_url, buys_hours, renews)}"
+        f"⏳ DMbot will stop listening in about {STOP_WARNING_MINUTES} minutes. This month's "
+        f"listening hours are used up. {more_hours(site_url, buys_hours, renews)}"
     )
 
 
 def stopped_text(site_url: str = "", buys_hours: bool = True, renews: bool = False) -> str:
     return (
-        "⏳ DMbot has stopped listening: this month's listening hours are used up. To play "
-        f"again: {more_hours(site_url, buys_hours, renews)}"
+        "⏳ DMbot has stopped listening. This month's listening hours are used up. "
+        f"{more_hours(site_url, buys_hours, renews)}"
     )

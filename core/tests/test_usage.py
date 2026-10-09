@@ -648,7 +648,7 @@ class PlanChecks(UsageTest):
         with patch.object(self.bot, "post", new=AsyncMock()) as post:
             await self.bot.meter_table(table, NOW)  # +2: 91.7%
         self.assertIn(
-            "The campaign's owner can add more at https://dmbot.example/account",
+            "The campaign's owner can add more hours at https://dmbot.example/account",
             post.await_args.args[1],  # type: ignore[union-attr]
         )
 
@@ -660,7 +660,7 @@ class PlanChecks(UsageTest):
             await self.bot.meter_table(table, NOW)  # +19: 98%, past 80 and 90 but not the cap
         warnings = [c.args[1] for c in post.await_args_list if "left this month" in c.args[1]]
         self.assertEqual(len(warnings), 1)  # not one for 80 and another for 90
-        self.assertIn("owner can add more at", warnings[0])
+        self.assertIn("owner can add more hours at", warnings[0])
 
     async def test_the_final_charge_never_warns(self) -> None:
         await self.small_plan()
@@ -761,7 +761,7 @@ class PlanChecks(UsageTest):
             await self.bot.meter_table(table, NOW)  # 58 + 5 = 63 minutes: at the cap
             await self.bot.meter_table(table, NOW + 60)  # still in the grace
         texts = [c.args[1] for c in post.await_args_list]
-        self.assertEqual(sum("2 more hours" in x for x in texts), 1)
+        self.assertEqual(sum("This session can finish" in x for x in texts), 1)
         self.assertIs(self.bot.tables.get(GUILD_A), table)  # still listening
 
     async def test_when_the_grace_is_spent_the_session_is_stopped_and_forgotten(self) -> None:
@@ -806,7 +806,7 @@ class PlanChecks(UsageTest):
         ):
             await self.bot.meter_table(table, NOW)
         stop.assert_not_awaited()
-        self.assertFalse(any("2 more hours" in c.args[1] for c in post.await_args_list))
+        self.assertFalse(any("This session can finish" in c.args[1] for c in post.await_args_list))
 
     async def test_nothing_is_stopped_when_checks_are_off(self) -> None:
         bot = self.make_bot(enforce=False)
@@ -837,7 +837,7 @@ class PlanChecks(UsageTest):
         ):
             await self.bot.meter_table(table, NOW)
         stop.assert_awaited_once()
-        self.assertFalse(any("2 more hours" in c.args[1] for c in post.await_args_list))
+        self.assertFalse(any("This session can finish" in c.args[1] for c in post.await_args_list))
 
     async def test_a_stop_is_never_cut_short_by_the_time_limit_on_writing_minutes(self) -> None:
         await self.small_plan()
@@ -1028,6 +1028,25 @@ class PlanChecks(UsageTest):
         stop.assert_not_awaited()  # still listening: the next tick tries again
         post.assert_not_awaited()
         self.assertIs(self.bot.tables.get(GUILD_A), table)
+
+    async def test_a_hung_save_cannot_hold_the_session_lock_while_stopping(self) -> None:
+        table = self.running_table(started=NOW - 120)
+        standing = usage.Standing(entitlements.NO_ACCESS, usage.calendar_month(NOW), 0, 0)
+
+        async def hangs(*args: object, **kwargs: object) -> None:
+            await asyncio.Event().wait()
+
+        with (
+            patch("dmbot.bot.METER_CALL_TIMEOUT_S", 0.05),
+            patch.object(self.bot.sessions, "clear", side_effect=hangs),
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
+            await asyncio.wait_for(self.bot._stop_for_hours(table, standing), 2)
+        stop.assert_not_awaited()  # nothing was stopped: the next tick tries again
+        async with asyncio.timeout(1):
+            async with self.bot.session_lock(GUILD_A):
+                pass
 
     async def test_a_stop_forgets_the_saved_session_first_then_posts_the_notice(self) -> None:
         table = self.running_table(started=NOW - 120)
