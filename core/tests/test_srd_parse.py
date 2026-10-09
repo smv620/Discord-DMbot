@@ -154,6 +154,20 @@ class Fireball(unittest.TestCase):
         self.assertEqual(splash.duration, "Instantaneous")
         self.assertEqual(splash.text, "You create an acidic bubble.")
 
+    def test_a_spell_that_ran_into_the_next_one_stops_the_tool(self) -> None:
+        # The second title is in a font the tool doesn't recognise as a title: without a
+        # guard, its spell would be swallowed whole by the one before.
+        lines = [
+            *header("Alarm", "Level 1 Abjuration (Ranger, Wizard)"),
+            say("You set an alarm."),
+            say("Alter Self", "Cambria-Bold"),
+            say("Level 2 Transmutation (Sorcerer, Wizard)", ITALIC),
+            say("Casting Time: Action", "GillSans"),
+            say("You change."),
+        ]
+        with self.assertRaisesRegex(parse.SrdError, "'Alarm' on page 107: another spell is inside"):
+            parse.parse_spells(lines)
+
     def test_something_unexpected_stops_with_where(self) -> None:
         lines = [say("Wish", TITLE), say("Level 9 Conjuration (Sorcerer, Wizard)", ITALIC),
                  labelled("Casting Time", "Action"), say("You speak.")]  # fmt: skip

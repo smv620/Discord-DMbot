@@ -30,6 +30,7 @@ LICENCE = "CC-BY-4.0"
 SOURCE_URL = "https://media.dndbeyond.com/compendium-images/srd/5.2/SRD_CC_v5.2.1.pdf"
 OUT = Path(__file__).resolve().parents[2] / "rules" / "data" / "srd52"
 
+CONTENTS_PAGES = 10  # the table of contents names every heading too: look after it
 SPELLS_HEADING = "Spell Descriptions"
 GLOSSARY_HEADING = "Rules Glossary"
 AFTER_GLOSSARY_HEADING = "Gameplay Toolbox"
@@ -73,7 +74,7 @@ def build_files(
     pages: Sequence[Sequence[Line]], document: dict[str, Any]
 ) -> dict[str, dict[str, Any]]:
     """The same from pages already read (so it can be tested without the PDF)."""
-    spells_at = first_page_of(pages, SPELLS_HEADING, after=10)  # not the contents page
+    spells_at = first_page_of(pages, SPELLS_HEADING, after=CONTENTS_PAGES)
     glossary_at = first_page_of(pages, GLOSSARY_HEADING, after=spells_at)
     toolbox_at = first_page_of(pages, AFTER_GLOSSARY_HEADING, after=glossary_at)
     spells = parse.parse_spells(lines_between(pages, spells_at, glossary_at))

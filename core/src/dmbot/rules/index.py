@@ -124,7 +124,8 @@ class Index:
         self, name: str, target: str, fallback: str = FALLBACK_NONE, *, kind: str | None = None
     ) -> Hit | None:
         """The entry for `name` in the target ruleset, else in the fallback ruleset
-        (tagged), else None. `kind` limits it to spells or conditions."""
+        (tagged), else None. `kind` limits it to spells or conditions; without it, a name
+        that is both (the SRD has none) gives the one loaded first."""
         key = normalize(name)
         if not key:
             return None

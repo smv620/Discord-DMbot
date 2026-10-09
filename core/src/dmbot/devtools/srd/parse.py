@@ -34,6 +34,10 @@ BOLD_LEAD_INS = ("Cambria-Bold", "Cambria-BoldItalic")
 
 LEVEL_LINE = re.compile(r"^Level (?P<level>\d) (?P<school>[A-Z][a-z]+) \((?P<classes>.+)\)$")
 CANTRIP_LINE = re.compile(r"^(?P<school>[A-Z][a-z]+) Cantrip \((?P<classes>.+)\)$")
+# What a spell's own description never has, but a merged-in next spell would.
+SPELL_HEADING_IN_TEXT = re.compile(
+    r"^(Casting Time:|Level \d+ [A-Z][a-z]+ \(|[A-Z][a-z]+ Cantrip \()", re.MULTILINE
+)
 # The start of either, on the first of its lines (a long list of classes wraps).
 KIND_START = re.compile(r"^(Level \d+ [A-Z][a-z]+|[A-Z][a-z]+ Cantrip) \(")
 FIELDS = ("Casting Time", "Range", "Components", "Duration")
@@ -170,6 +174,9 @@ def parse_spells(lines: Sequence[Line]) -> list[Spell]:
     for n, start in enumerate(starts):
         end = starts[n + 1] if n + 1 < len(starts) else len(lines)
         spells.append(_spell(lines[start:end], mender))
+    for spell in spells:  # a spell whose heading wasn't recognised ran into the one before
+        if SPELL_HEADING_IN_TEXT.search(spell.text):
+            raise SrdError(f"Spell {spell.name!r} on page {spell.page}: another spell is inside it")
     return spells
 
 

@@ -2,7 +2,7 @@
 
 This work includes material from the System Reference Document 5.2.1 (“SRD 5.2.1”) by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd. The SRD 5.2.1 is licensed under the Creative Commons Attribution 4.0 International License, available at https://creativecommons.org/licenses/by/4.0/legalcode.
 
-(That is the statement the SRD asks for, word for word. DMbot is compatible with fifth edition; it is not made or endorsed by Wizards of the Coast.)
+(That is the statement the SRD asks for, word for word. DMbot is compatible with fifth edition.)
 
 ## What is here
 
@@ -25,4 +25,4 @@ Download the PDF into a folder of its own (it is not kept in this repository), t
 
     python -m dmbot.devtools.srd PATH/TO/SRD_CC_v5.2.1.pdf
 
-The same PDF always gives the same files. If Wizards of the Coast publishes a new version, the tool stops with a message rather than guessing when the layout is not what it expects.
+The same PDF always gives the same files, so running the tool on the PDF and seeing no change (`git diff`) is how to check them. If Wizards of the Coast publishes a new version, the tool stops with a message rather than guessing when the layout is not what it expects.

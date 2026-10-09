@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -291,25 +293,33 @@ class Provenance(unittest.TestCase):
             self.assertRegex(data["document"]["sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(documents[0], documents[1])  # made from one file
 
-    def test_the_files_are_exactly_what_the_tool_writes(self) -> None:
-        # A hand edit would show here: the tool's own layout, nothing added or changed.
+    def test_the_files_keep_the_tools_layout(self) -> None:
+        # Only the layout: a hand edit of a spell's words would still pass. The real check
+        # is running the tool on the PDF and seeing no change (ATTRIBUTION.md).
         for name in ("spells.json", "conditions.json"):
             path = DATA / "srd52" / name
             text = path.read_text(encoding="utf-8")
             self.assertEqual(build.dump(json.loads(text)), text, name)
 
     def test_the_pdf_is_not_kept_in_the_repository(self) -> None:
-        pdfs = [
-            p
-            for p in REPO.rglob("*.pdf")
-            if ".venv" not in p.parts and "node_modules" not in p.parts
-        ]
-        self.assertEqual(pdfs, [])
+        try:
+            tracked = subprocess.run(
+                ["git", "ls-files", "*.pdf"], cwd=REPO, capture_output=True, text=True, check=True
+            ).stdout.split()
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("git isn't available here")
+        self.assertEqual(tracked, [])
 
-    def test_the_shipped_data_is_in_the_package_files(self) -> None:
-        toml = (REPO / "core" / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn("rules/data/srd52/*.json", toml)
-        self.assertIn("rules/data/srd52/*.md", toml)
+    def test_every_data_file_is_in_the_package(self) -> None:
+        # The Docker image does a normal install: a file no package-data pattern matches
+        # would be missing there, and the lookups would find nothing.
+        package = REPO / "core" / "src" / "dmbot"
+        toml = tomllib.loads((REPO / "core" / "pyproject.toml").read_text(encoding="utf-8"))
+        patterns = toml["tool"]["setuptools"]["package-data"]["dmbot"]
+        shipped = {path for pattern in patterns for path in package.glob(pattern)}
+        files = {path for path in DATA.rglob("*") if path.is_file()}
+        self.assertTrue(files)
+        self.assertEqual(files - shipped, set())
 
     def test_a_hit_knows_its_entry(self) -> None:
         hit = Hit(spell("Fireball"), "", "fireball")
