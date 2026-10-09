@@ -9,7 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- #959 (7cc1c5c, dev2): House rules by voice (#953). No migration. When a DM says "house rule: ..."
+  (or "new house rule", "for this table, ...", "our rule is ..."), a proposal with Save / Edit /
+  Cancel appears in #dm-screen; nothing is saved without a press. Live check (about 2 minutes,
+  the DM and one more person not needed): say "house rule: potions are a bonus action" at the
+  table, press Save in #dm-screen, then see it in /dmbot houserules ("Said at the table"). Also
+  say it again within a minute (nothing new should appear).
 
 ------------------------------------------------------------------------------
 LIVE NOW
