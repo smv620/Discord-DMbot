@@ -48,8 +48,26 @@ class CleanerOnTheScriptTests(unittest.TestCase):
         self.assertEqual(self.clean(*heard), heard)  # was: Isolde written as Ysolde
 
     def test_rothgar_next_to_hrothgar_stays_another_person(self) -> None:
-        heard = ["Every market day, Rothgar sells cheaper shields than Hrothgar."]
+        heard = [
+            "The blacksmith Hrothgar has a rival named Rothgar.",  # line 32, Hrothgar first
+            "Every market day, Rothgar sells cheaper shields than Hrothgar.",
+        ]
         self.assertEqual(self.clean(*heard), heard)  # was: Hrothgar sells... than Hrothgar
+
+    def test_a_lone_rothgar_is_noted_not_silent(self) -> None:
+        from dmbot.transcript.cleaner import Vocabulary, clean
+
+        known = load_known(NAMES)
+        hrothgar = next(iter(known.lookup.by_key["hrothgar"])).entity_id
+        result = clean(
+            known.lookup,
+            "I think Rothgar sells shields.",
+            vocabulary=Vocabulary(),
+            scene={hrothgar},  # Hrothgar was said a moment ago, in another line
+        )
+        self.assertEqual([(f.heard, f.written, f.sure) for f in result.fixes],
+                         [("Rothgar", "Hrothgar", False)])  # fmt: skip
+        self.assertEqual(result.text, "I think Hrothgar sells shields.")  # noted, with Undo
 
     def test_a_real_mishearing_is_still_fixed(self) -> None:
         self.assertEqual(

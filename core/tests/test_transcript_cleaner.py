@@ -166,7 +166,9 @@ class MishearingsTest(unittest.TestCase):
         # Hrothgar is only suggested: its fix needs the DM screen's Undo (#504).
         self.assertEqual(text("then Hrothgarr roars"), "then Hrothgar roars")
         self.assertEqual(text("then Hrothgarr roars", unsure=False), "then Hrothgarr roars")
-        self.assertEqual(text("I think Beleros has it", unsure=False), "I think Belleros has it")
+        # A near-certain one is silent; a close look-alike is noted, so Quiet leaves it (#573).
+        self.assertEqual(text("I think Beleros has it", unsure=False), "I think Beleros has it")
+        self.assertEqual(text("I think Beleros has it"), "I think Belleros has it")
 
     def test_a_name_is_written_the_way_it_was_said(self) -> None:
         # "Frostwolves" is the tribe's other name: not changed to "Frostwolf tribe"
@@ -309,11 +311,31 @@ class TrapsTest(unittest.TestCase):
         result = clean(self.ysolde(), heard, scene=EVERYONE | {YSOLDE}, unsure=False)
         self.assertEqual((result.text, result.fixes), (heard, ()))
 
-    def test_a_near_certain_mishearing_is_still_fixed_silently(self) -> None:
-        result = clean(lookup(), "I think Beleros has the key.", scene=EVERYONE)
-        (fix,) = result.fixes
+    def test_only_a_near_identical_spelling_is_fixed_silently(self) -> None:
+        # Pinned from both sides: one wrong letter is silent only in a long name.
+        long = "m" * 32
+        names = lookup(
+            more=(entity(long, "Wolfsbane Highlands Keep"),),
+            more_aliases=(alias(long, "Wolfsbane Highlands Keep"),),
+        )
+        (fix,) = clean(names, "we ride to Wolfsbane Highlands Keap", scene=EVERYONE | {long}).fixes
+        self.assertGreaterEqual(likeness(fix.heard, fix.written), cleaner.NEAR_CERTAIN)  # 0.955
         self.assertTrue(fix.sure)
-        self.assertGreaterEqual(likeness(fix.heard, fix.written), cleaner.NEAR_CERTAIN)
+        for said in ("Bryn Shandar", "Brin Shander"):  # 0.91: made, but noted with Undo
+            (fix,) = clean(lookup(), f"we ride to {said}", scene=EVERYONE).fixes
+            self.assertLess(likeness(fix.heard, fix.written), cleaner.NEAR_CERTAIN, said)
+            self.assertEqual((fix.written, fix.sure), ("Bryn Shander", False), said)
+        # The old flagship, one letter short (0.93): noted now, not silent.
+        (fix,) = clean(lookup(), "I think Beleros has the key.", scene=EVERYONE).fixes
+        self.assertEqual((fix.written, fix.sure), ("Belleros", False))
+
+    def test_a_name_the_dm_typed_in_the_line_also_counts_as_said(self) -> None:
+        # Hrothgar is only suggested here, and "Hroth" is the DM's own spelling of him.
+        names = lookup(corrections=(correction("Hroth", GUESS, FIX),))
+        alone = clean(names, "then Hrothgarr roars", scene=EVERYONE)
+        self.assertEqual(len(alone.fixes), 1)  # fixed with Undo, as it always was
+        both = clean(names, "then Hroth and Hrothgarr fight", scene=EVERYONE)
+        self.assertEqual([f.how for f in both.fixes if f.how == SOUND], [])
 
     def test_a_name_the_dm_confirmed_is_never_merged_again(self) -> None:
         names = self.ysolde(isolda=True)

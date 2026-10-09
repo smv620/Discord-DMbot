@@ -1228,16 +1228,19 @@ reads the campaign memory and never changes it.
        line already says. With Ysolde in the line, "Isolde" stays "Isolde" (it is a
        second person); the same holds for the options in a "Did they mean…?".
     2. **Silent only when near-certain.** A fix by sound is silent only when the heard
-       word is spelled at least **0.9** alike to the name (`NEAR_CERTAIN`). Below that
+       word is spelled at least **0.95** alike to the name (`NEAR_CERTAIN`). Below that
        (and above the old bars of 0.7 joined, 0.8 one word) it is a **medium** fix:
        made, with a note and Undo in "✏️ Name fixes to check". With **How much DMbot
-       says: Quiet** it is not made. Measured: real mishearings sit at 0.91 to 0.94
-       ("Gorak" for Gorrak, "Rothgar" for Hrothgar, "Belle Ross" for Belleros), the
-       look-alike pairs of names-stress at 0.83 ("Isolde"/Ysolde, "Cedric"/Cerric). The
-       one-word rules (the name in the scene, 0.8) are unchanged. 0.9 was measured on
-       about six pairs: revisit it with the twin when more real mishearings are on
-       record. A one-letter slip in a short name scores about 0.83 to 0.86, so it is
-       noted, never silent.
+       says: Quiet** it is not made. Measured on names-stress and the tests: a new
+       name that looks like a known one scores 0.83 ("Isolde"/Ysolde, "Cedric"/Cerric)
+       up to 0.93 ("Rothgar"/Hrothgar, which names-stress calls the likeliest wrong fix),
+       and a likely mishearing of a known name 0.91 to 0.94 ("Gorak"/Gorrak, "Beleros",
+       "Belle Ross"). The ranges overlap, so only near-identical spellings (0.95 and up)
+       stay silent; the rest are noted, and the DM decides. The cost is a few more lines
+       in "✏️ Name fixes to check". The one-word rules (the name in the scene, 0.8) are
+       unchanged. This rests on about a dozen pairs: revisit it with the twin when more
+       real mishearings are on record. A one-letter slip in a short name scores about
+       0.83 to 0.86.
     3. **Once the DM confirms a name it is known.** "Isolda" confirmed next to Ysolde is
        never rewritten; "Isolde", sounding like both, is asked about, never made Ysolde.
   - "Did they mean…?" and Undo appear **only in the DM screen**, never in the transcript
