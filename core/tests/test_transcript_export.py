@@ -3,9 +3,17 @@ database."""
 
 import dataclasses
 import unittest
+from typing import ClassVar
 
 from dmbot.transcript import export
-from dmbot.transcript.models import MAX_UNSAVED, Line, TranscriptBuffer, TranscriptSession
+from dmbot.transcript.models import (
+    MAX_UNSAVED,
+    SIDEBAR_ANSWER,
+    SIDEBAR_QUESTION,
+    Line,
+    TranscriptBuffer,
+    TranscriptSession,
+)
 
 START = 1_700_000_000  # 2023-11-14 22:13:20 UTC
 MIA, DEE = 8, 9
@@ -192,3 +200,83 @@ class DownloadButtons(unittest.TestCase):
         self.assertEqual(old.versions, (export.AS_HEARD,))
         both = ui.DownloadButton(1, "a" * 32, "both")
         self.assertEqual(both.versions, (export.CLEANED, export.AS_HEARD))
+
+
+DM = 7
+
+
+def sidebar(seconds: float, kind: str, text: str) -> Line:
+    when = int(START * 1000 + seconds * 1000)
+    return Line(when, DM, text, text, sidebar=kind)
+
+
+class DmSidebarLines(unittest.TestCase):
+    """The DM's question and DMbot's answer (#935): as-heard, for those who may read them."""
+
+    lines: ClassVar[list[Line]] = [
+        line(5, MIA, "We ride at dawn."),
+        sidebar(10, SIDEBAR_QUESTION, "find if you need line of sight for fireball"),
+        sidebar(12, SIDEBAR_ANSWER, "No: a point you choose within range. (SRD 5.2.1, sure)"),
+        line(20, DEE, "Run!"),
+    ]
+    names: ClassVar[dict[int, str]] = {MIA: "Mia", DEE: "Dee", DM: "Sam"}
+
+    def render(self, version: str, with_sidebar: bool) -> str:
+        return export.render(
+            "X", session(), self.lines, self.names, version=version, with_sidebar=with_sidebar
+        )
+
+    def test_the_dms_as_heard_file_has_them_in_time_order(self) -> None:
+        body = self.render(export.AS_HEARD, True).split("\n\n", 1)[1].splitlines()
+        self.assertEqual(
+            body,
+            [
+                "[0:00:05] (Mia): We ride at dawn.",
+                "[0:00:10] (Sam) [DM Sidebar]: find if you need line of sight for fireball",
+                "[0:00:12] (DMbot) [DM Sidebar]: No: a point you choose within range. "
+                "(SRD 5.2.1, sure)",
+                "[0:00:20] (Dee): Run!",
+            ],
+        )
+        self.assertIn("for the DM only", self.render(export.AS_HEARD, True))
+
+    def test_nobody_else_gets_them(self) -> None:
+        text = self.render(export.AS_HEARD, False)
+        self.assertNotIn("Sidebar", text)
+        self.assertNotIn("fireball", text)
+        self.assertNotIn("DMbot)", text)
+        self.assertIn("We ride at dawn.", text)
+
+    def test_the_cleaned_file_never_has_them_even_for_the_dm(self) -> None:
+        text = self.render(export.CLEANED, True)
+        self.assertNotIn("Sidebar", text)
+        self.assertNotIn("fireball", text)
+        self.assertIn("Run!", text)
+
+    def test_a_name_cant_pass_for_dmbot(self) -> None:
+        mean = {**self.names, DM: "DMbot [DM Sidebar]"}
+        text = export.render(
+            "X", session(), self.lines, mean, version=export.AS_HEARD, with_sidebar=True
+        )
+        self.assertIn("(DMbot DM Sidebar) [DM Sidebar]: find if you need", text)
+
+    def test_the_header_says_nothing_about_them_when_there_are_none(self) -> None:
+        text = export.render("X", session(), [line(5, MIA, "hi")], {MIA: "Mia"}, with_sidebar=True)
+        self.assertNotIn("Sidebar", text)
+
+
+class SidebarLinesInTheBuffer(unittest.TestCase):
+    def test_an_undo_or_a_topic_never_changes_a_sidebar_line(self) -> None:
+        buffer = TranscriptBuffer()
+        question = sidebar(10, SIDEBAR_QUESTION, "find the rules for flanking")
+        buffer.add(question)
+        self.assertFalse(buffer.relabel(DM, question.started_ms, "something else"))
+        self.assertFalse(buffer.set_topic(DM, question.started_ms, "off_topic"))
+        (kept,) = buffer.take(lambda user: True)
+        self.assertEqual((kept.text, kept.topic, kept.sidebar), (question.text, "game", "question"))
+
+    def test_a_consent_stop_takes_the_answer_too(self) -> None:
+        buffer = TranscriptBuffer()
+        buffer.add(sidebar(10, SIDEBAR_QUESTION, "find the rules for flanking"))
+        buffer.add(sidebar(12, SIDEBAR_ANSWER, "Flanking is optional. (SRD, sure)"))
+        self.assertEqual(buffer.take(lambda user: user != DM), [])  # answers carry the DM's ID

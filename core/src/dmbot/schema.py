@@ -672,6 +672,14 @@ TRANSCRIPT_TOPICS = """
         ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0);
     """
 
+TRANSCRIPT_SIDEBAR = """
+    -- DM sidebar lines (#935): the DM's question and DMbot's answer, NULL for table speech.
+    -- They are in the as-heard download only, for the campaign's DM (who else may read them
+    -- is the owner's open question, #933), never in the cleaned one.
+    ALTER TABLE transcript_lines
+        ADD COLUMN sidebar TEXT CHECK (sidebar IN ('question', 'answer'));
+    """
+
 FEEDBACK = """
     -- Messages sent from the website's "Say hello" page (#665). The message is also posted
     -- as a GitHub Discussion (with its date, nothing else); how to reach the sender stays
@@ -1350,6 +1358,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0032_usage", USAGE),
     ("0033_usage_grace", USAGE_GRACE),
     ("0034_owner_campaigns", OWNER_CAMPAIGNS),
+    ("0035_transcript_sidebar", TRANSCRIPT_SIDEBAR),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

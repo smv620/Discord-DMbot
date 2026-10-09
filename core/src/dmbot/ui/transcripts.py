@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.sidebar import access as sidebar_access
 from dmbot.transcript import cleaner, export
 from dmbot.transcript.models import Line, TranscriptSession
 from dmbot.ui import logic
@@ -142,8 +143,10 @@ async def make_file(
     guild_id: int,
     session_id: str,
     versions: tuple[str, ...] = (export.AS_HEARD,),
+    viewer_id: int | None = None,
 ) -> list[discord.File] | str:
-    """The download, one file per version, or what to tell the person instead."""
+    """The download, one file per version, or what to tell the person instead.
+    `viewer_id`: who asked; the DM sidebar lines are added for those who may read them."""
     store = bot.transcripts
     if store is None:
         return NOT_AVAILABLE
@@ -159,12 +162,13 @@ async def make_file(
     lines = await store.lines(guild_id, session.id)
     names = await display_names(guild, tuple(sorted({line.user_id for line in lines})))
     playing = await player_characters(bot, guild_id, campaign.id)
+    with_sidebar = sidebar_access.may_read(campaign.dm_user_ids, viewer_id)
     files = []
     total = 0
     for version in versions:
         # Off the event loop: a long session's file takes a fifth of a second to build.
         data = await asyncio.to_thread(
-            _build, campaign.name, session, lines, names, playing, running, version
+            _build, campaign.name, session, lines, names, playing, running, version, with_sidebar
         )
         total += len(data)
         if total > FILE_LIMIT:  # one message: both files together
@@ -182,6 +186,7 @@ def _build(
     playing: dict[int, str],
     running: bool,
     version: str,
+    with_sidebar: bool = False,
 ) -> bytes:
     text = export.render(
         campaign_name,
@@ -191,6 +196,7 @@ def _build(
         characters=playing,
         running=running,
         version=version,
+        with_sidebar=with_sidebar,
     )
     return text.encode("utf-8")
 
@@ -209,7 +215,9 @@ async def send_file(
         await interaction.response.defer(ephemeral=True, thinking=True)
     bot = _bot(interaction)
     try:
-        result = await make_file(bot, bot.get_guild(guild_id), guild_id, session_id, versions)
+        result = await make_file(
+            bot, bot.get_guild(guild_id), guild_id, session_id, versions, interaction.user.id
+        )
     except Exception:
         log.exception("Couldn't build a transcript download")
         await _tell(interaction, FAILED)

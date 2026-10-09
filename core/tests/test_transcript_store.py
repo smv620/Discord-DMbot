@@ -15,7 +15,8 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
-from dmbot.transcript.models import Line
+from dmbot.transcript import export
+from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, Line
 from dmbot.transcript.store import TranscriptStore
 from dmbot.ui import transcripts as ui
 from tests.pg import DatabaseTest
@@ -43,6 +44,39 @@ class StoreTests(DatabaseTest):
         self.assertEqual(len(ids), 2)
         lines = await self.store.lines(GUILD, sid)
         self.assertEqual([(x.heard, x.text) for x in lines], [("first",) * 2, ("second",) * 2])
+
+    async def test_sidebar_lines_are_kept_apart_and_never_edited(self) -> None:
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        asked = Line(
+            START * 1000 + 5000, DM, "find flanking", "find flanking", 0, "game", SIDEBAR_QUESTION
+        )
+        answer = Line(
+            START * 1000 + 7000,
+            DM,
+            "Optional. (sure)",
+            "Optional. (sure)",
+            0,
+            "game",
+            SIDEBAR_ANSWER,
+        )
+        await self.store.add_lines(GUILD, sid, [asked, answer, line(5, DM, "table speech")])
+        lines = await self.store.lines(GUILD, sid)
+        self.assertEqual(
+            [(x.heard, x.sidebar) for x in lines],
+            [("find flanking", "question"), ("table speech", ""), ("Optional. (sure)", "answer")],
+        )
+        # An Undo, the off-topic filter or Put it back on the same second touches only speech.
+        self.assertEqual(await self.store.relabel_line(GUILD, sid, DM, asked.started_ms, "x"), 0)
+        self.assertEqual(
+            await self.store.set_topic(GUILD, sid, DM, asked.started_ms, "off_topic"), 0
+        )
+        self.assertEqual(
+            await self.store.set_topics(GUILD, sid, DM, [asked.started_ms], "off_topic"), 0
+        )
+        again = await self.store.lines(GUILD, sid)
+        self.assertEqual(
+            next((x.text, x.topic) for x in again if x.sidebar), ("find flanking", "game")
+        )
 
     async def test_a_resumed_session_keeps_its_transcript(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
@@ -407,6 +441,43 @@ class BotTests(DatabaseTest):
         button = next(b for b in view.children if b.label == label)
         await button.callback(it)
         return it
+
+    async def test_only_the_dm_downloads_the_sidebar_lines(self) -> None:
+        sid = await self.finished_session()
+        asked = Line(
+            START * 1000 + 50_000,
+            DM,
+            "find if flanking is optional",
+            "find if flanking is optional",
+            0,
+            "game",
+            SIDEBAR_QUESTION,
+        )
+        answer = Line(
+            START * 1000 + 52_000,
+            DM,
+            "Yes, it is optional. (sure)",
+            "Yes, it is optional. (sure)",
+            0,
+            "game",
+            SIDEBAR_ANSWER,
+        )
+        await self.store.add_lines(GUILD, sid, [asked, answer])
+        mine = await ui.make_file(
+            self.bot, self.guild, GUILD, sid, (export.AS_HEARD, export.CLEANED), DM
+        )
+        theirs = await ui.make_file(
+            self.bot, self.guild, GUILD, sid, (export.AS_HEARD, export.CLEANED), PLAYER
+        )
+        assert not isinstance(mine, str) and not isinstance(theirs, str)
+        dm_heard, dm_cleaned = (f.fp.read().decode() for f in mine)
+        player_heard, player_cleaned = (f.fp.read().decode() for f in theirs)
+        self.assertIn("(Sam) [DM Sidebar]: find if flanking is optional", dm_heard)
+        self.assertIn("(DMbot) [DM Sidebar]: Yes, it is optional. (sure)", dm_heard)
+        for text in (dm_cleaned, player_heard, player_cleaned):
+            self.assertNotIn("Sidebar", text)
+            self.assertNotIn("flanking", text)
+            self.assertIn("We ride at dawn.", text)
 
     async def test_both_versions_come_as_two_files(self) -> None:
         sid = await self.finished_session()

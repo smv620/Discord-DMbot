@@ -17,7 +17,7 @@ import time
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
-from dmbot.transcript.models import Line, TranscriptSession
+from dmbot.transcript.models import SIDEBAR_QUESTION, Line, TranscriptSession
 from dmbot.transcript.topics import GAME, Spoken, collapse
 
 UNKNOWN_SPEAKER = "Someone"
@@ -37,6 +37,11 @@ CLEANED_NOTE = (
     'it was spoken. The "As heard" version (/transcript) still has every word. Only people '
     "who agreed were recorded."
 )
+SIDEBAR_NOTE = (
+    "[DM Sidebar] lines are the DM's quick questions to DMbot and its answers. They are in "
+    "this file for the DM only."
+)
+SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
 HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."
 
 AS_HEARD, CLEANED = "as-heard", "cleaned"
@@ -139,17 +144,24 @@ def render(
     characters: Mapping[int, str] | None = None,
     running: bool = False,
     version: str = AS_HEARD,
+    with_sidebar: bool = False,
 ) -> str:
     """The whole file. `names`: speaker ID → display name (missing ones show as
     'Someone'); `characters`: speaker ID → the character they play. `running`: DMbot
-    is still recording this session. `version`: CLEANED or AS_HEARD."""
+    is still recording this session. `version`: CLEANED or AS_HEARD. `with_sidebar`: add the
+    DM sidebar lines (#935), to the as-heard version only; the caller decides who may read
+    them (`dmbot.sidebar.access`)."""
     _check(version)
     start_ms = session.started_at * 1000
     playing = characters or {}
     shown: dict[int, tuple[str, str | None]] = {}  # each name cleaned once
-    body = []
+    timed: list[tuple[int, str]] = []  # (when it started, the line)
     # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
     # marker with how long it lasted. The as-heard version keeps everything.
+    lines = list(lines)
+    sidebar = [line for line in lines if line.sidebar]
+    lines = [line for line in lines if not line.sidebar]
+    shown_sidebar = sidebar if with_sidebar and version == AS_HEARD else []
     spoken = [
         Spoken(
             line.user_id,
@@ -170,9 +182,18 @@ def render(
         when = clock((item.started_ms - start_ms) / 1000)
         who = label(when, *shown[item.speaker])
         if item.skipped:  # "[0:12:04] (Mia) [1m 22s of off-topic chat skipped]"
-            body.append(f"{who} {item.text}")
+            timed.append((item.started_ms, f"{who} {item.text}"))
         else:
-            body.append(f"{who}: {' '.join(item.text.split())}")
+            timed.append((item.started_ms, f"{who}: {' '.join(item.text.split())}"))
+    for line in shown_sidebar:  # "[0:12:04] (Sam) [DM Sidebar]: …", "[0:12:09] (DMbot) …"
+        asker = (
+            DMBOT_NAME if line.sidebar != SIDEBAR_QUESTION else clean_name(names.get(line.user_id))
+        )
+        when = clock((line.started_ms - start_ms) / 1000)
+        said = " ".join(line.heard.split())
+        timed.append((line.started_ms, f"[{when}] ({_plain(asker)}) {SIDEBAR_TAG}: {said}"))
+    timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
+    body = [text for _, text in timed]
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))
     ran = (
         f", ran {duration(session.ended_at - session.started_at)}"
@@ -185,6 +206,7 @@ def render(
         *([f"Speech to text: {written_by(session.engines)}"] if session.engines else []),
         CLEANED_NOTE if version == CLEANED else AS_HEARD_NOTE,
         HOW_TO_READ,
+        *([SIDEBAR_NOTE] if shown_sidebar else []),
     ]
     if running:
         header.append(

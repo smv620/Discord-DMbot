@@ -32,6 +32,13 @@ class Line:
     # game, table_talk or off_topic (#52; dmbot.transcript.topics): only off_topic is
     # hidden, in the cleaned transcript. Until the filter says, a line is game talk.
     topic: str = "game"
+    # "" for table speech. A DM sidebar line (docs/PLAN.md, "DM sidebar"; #935): the DM's
+    # question, or DMbot's answer (saved under the DM's ID, so a consent stop removes both,
+    # and shown as DMbot). Only in the as-heard download, never the cleaned one.
+    sidebar: str = ""
+
+
+SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
 
 
 @dataclass(slots=True)
@@ -67,7 +74,10 @@ class TranscriptBuffer:
         """A waiting line's cleaned words changed (an Undo or an answer, #296, #503);
         True if it was here."""
         for i, waiting in enumerate(self._waiting):
-            if (waiting.user_id, waiting.started_ms) == (user_id, started_ms):
+            if (waiting.user_id, waiting.started_ms) == (
+                user_id,
+                started_ms,
+            ) and not waiting.sidebar:
                 self._waiting[i] = replace(waiting, text=text)
                 return True
         return False
@@ -75,7 +85,10 @@ class TranscriptBuffer:
     def set_topic(self, user_id: int, started_ms: int, topic: str) -> bool:
         """A waiting line's topic, from the off-topic filter (#52); True if it was here."""
         for i, waiting in enumerate(self._waiting):
-            if (waiting.user_id, waiting.started_ms) == (user_id, started_ms):
+            if (waiting.user_id, waiting.started_ms) == (
+                user_id,
+                started_ms,
+            ) and not waiting.sidebar:
                 self._waiting[i] = replace(waiting, topic=topic)
                 return True
         return False

@@ -60,11 +60,13 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "INSERT INTO transcript_lines"
-                " (guild_id, session_id, started_ms, user_id, heard, text, duration_ms, topic)"
+                " (guild_id, session_id, started_ms, user_id, heard, text, duration_ms, topic,"
+                " sidebar)"
                 " SELECT %s, %s, l.started_ms, l.user_id, l.heard, l.text, l.duration_ms,"
-                " l.topic"
+                " l.topic, l.sidebar"
                 " FROM unnest(%s::bigint[], %s::bigint[], %s::text[], %s::text[], %s::int[],"
-                " %s::text[]) AS l(started_ms, user_id, heard, text, duration_ms, topic)"
+                " %s::text[], %s::text[])"
+                " AS l(started_ms, user_id, heard, text, duration_ms, topic, sidebar)"
                 " RETURNING id",
                 (
                     guild_id,
@@ -76,6 +78,7 @@ class TranscriptStore:
                     [None if line.text == line.heard else line.text for line in lines],
                     [line.duration_ms for line in lines],
                     [line.topic for line in lines],
+                    [line.sidebar or None for line in lines],
                 ),
             )
             ids = [int(r["id"]) for r in await cur.fetchall()]
@@ -97,7 +100,8 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET text = NULLIF(%s, heard)"
-                " WHERE session_id = %s AND user_id = %s AND started_ms = %s",
+                " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
+                " AND sidebar IS NULL",
                 (text, session_id, user_id, started_ms),
             )
             return cur.rowcount
@@ -110,7 +114,8 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET topic = %s"
-                " WHERE session_id = %s AND user_id = %s AND started_ms = %s",
+                " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
+                " AND sidebar IS NULL",
                 (topic, session_id, user_id, started_ms),
             )
             return cur.rowcount
@@ -128,7 +133,8 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET topic = %s"
-                " WHERE session_id = %s AND user_id = %s AND started_ms = ANY(%s)",
+                " WHERE session_id = %s AND user_id = %s AND started_ms = ANY(%s)"
+                " AND sidebar IS NULL",
                 (topic, session_id, user_id, sorted(started)),
             )
             return cur.rowcount
@@ -194,7 +200,8 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT started_ms, user_id, heard, coalesce(text, heard) AS text, duration_ms,"
-                " topic FROM transcript_lines WHERE session_id = %s ORDER BY started_ms, id",
+                " topic, coalesce(sidebar, '') AS sidebar FROM transcript_lines"
+                " WHERE session_id = %s ORDER BY started_ms, id",
                 (session_id,),
             )
             return [
@@ -205,6 +212,7 @@ class TranscriptStore:
                     r["text"],
                     int(r["duration_ms"]),
                     r["topic"],
+                    r["sidebar"],
                 )
                 for r in await cur.fetchall()
             ]
