@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import gzip
+import io
 import json
 import logging
 import re
@@ -1244,11 +1245,21 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
 def encode_backup(backup: dict[str, Any]) -> bytes:
     """Serialise a backup for the DM to download: compressed JSON (#164), so a big
     campaign still fits in one Discord file. Raises BackupTooBig rather than make a copy
-    a restore would refuse. Run off the event loop for big ones."""
-    text = json.dumps(backup, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    if len(text) > MAX_BACKUP_BYTES:
-        raise BackupTooBig(CAMPAIGN_TOO_BIG)
-    return gzip.compress(text, compresslevel=6, mtime=0)
+    a restore would refuse. Run off the event loop for big ones.
+
+    The JSON is fed to the compressor piece by piece, so the whole text (up to 25 MB) never
+    sits in memory next to its compressed copy, and the size check stops it early."""
+    out = io.BytesIO()
+    size = 0
+    encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
+    with gzip.GzipFile(fileobj=out, mode="wb", compresslevel=6, mtime=0) as packed:
+        for piece in encoder.iterencode(backup):
+            data = piece.encode("utf-8")
+            size += len(data)
+            if size > MAX_BACKUP_BYTES:  # what decode_backup would refuse to unpack
+                raise BackupTooBig(CAMPAIGN_TOO_BIG)
+            packed.write(data)
+    return out.getvalue()
 
 
 def decode_backup(raw: bytes) -> object:

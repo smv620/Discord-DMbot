@@ -516,7 +516,7 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         raw = await asyncio.to_thread(encode_backup, data)
     except BackupTooBig:
         raw = None  # bigger than a restore takes: no copy that can't come back
-    if raw is None or len(raw) > logic.FILE_MAX:  # or bigger than Discord sends
+    if raw is None or len(raw) > logic.upload_limit(guild.filesize_limit):  # or too big to send
         log.warning("Backup of campaign %s is too big to make", campaign.id)
         await _tell(
             interaction,

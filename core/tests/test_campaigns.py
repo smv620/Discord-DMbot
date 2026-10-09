@@ -466,6 +466,20 @@ class BackupFiles(unittest.TestCase):
         self.assertLess(len(raw), FILE_MAX)
         self.assertEqual(store_mod.decode_backup(raw), data)  # and it comes back
 
+    def test_the_streamed_copy_is_the_same_json_as_dumping_it_whole(self) -> None:
+        import gzip
+
+        from dmbot.campaigns import store as store_mod
+
+        data = {"format": EXPORT_FORMAT, "notes": ["héllo", "日本", {"n": 1.5, "ok": None}]}
+        raw = store_mod.encode_backup(data)
+        self.assertTrue(raw.startswith(b"\x1f\x8b"))
+        self.assertEqual(
+            gzip.decompress(raw),
+            json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode(),
+        )
+        self.assertEqual(store_mod.encode_backup(data), raw)  # and the same every time
+
     def test_no_copy_is_made_that_a_restore_would_refuse(self) -> None:
         from dmbot.campaigns import store as store_mod
 
