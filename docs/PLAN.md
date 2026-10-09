@@ -1709,7 +1709,18 @@ recorded (never limited), in UTC calendar months. *2b, the checks, built in two 
 ended or the hours are used up (a campaign with no owner is asked to be taken on first), and
 the DM screen warns when the hours pass 80% and 90% (said once each, "About 4 hours left
 this month"); a database hiccup lets the start go ahead rather than lock a table out;
-(ii) the cap finish. *2c (decided with Supervisor):* the campaign count, in an owner-scoped
+(ii) the cap finish: when the owner's hours reach the cap a running session may carry on
+for up to 2 more hours, once a month, given to the first session to reach it (recorded as
+`owner_hours.grace_session`, so a restart neither repeats nor removes it). The DM screen says
+so once, with the time it runs to (a Discord time, shown in each reader's own time zone);
+about 15 minutes before the stop it says so again, once; when the grace is spent, or for any
+other session that reaches the cap later that month, DMbot stops listening, forgets the saved
+session and says why. These notices name only "the campaign's owner" and the site, never a
+plan or payment, since co-DMs read the screen. The grace is the owner's: it is spent from
+their total across all their campaigns, and a campaign handed over mid-grace gives the new
+owner their own grace on their own hours. A stop that comes in between the minutes being
+written and the grace being given never spends the grace. All of it only when
+`DMBOT_ENFORCE_PLANS` is on. *2c (decided with Supervisor):* the campaign count, in an owner-scoped
 table kept in step by a trigger on `campaigns`, since a person's campaigns span servers;
 "paused" waits for the downgrade part. All of 2b acts only when
 `DMBOT_ENFORCE_PLANS` is on (default off; the meter records either way), which dev1 turns

@@ -199,6 +199,21 @@ class Isolation(UsageTest):
                     (OTHER, month.start),
                 )
 
+    async def test_only_the_meter_sets_the_grace(self) -> None:
+        month = await self.add(GUILD_A, self.a.id, OWNER, 5)
+        for door in (self.db.user(OWNER), self.db.guild(GUILD_A)):
+            try:
+                async with door as conn:
+                    cur = await conn.execute(
+                        "UPDATE owner_hours SET grace_session = 1 WHERE owner_user_id = %s",
+                        (OWNER,),
+                    )
+                    changed = cur.rowcount
+            except pg_errors.InsufficientPrivilege:
+                changed = 0
+            self.assertEqual(changed, 0)
+        self.assertTrue(await usage.start_grace(self.db, GUILD_A, OWNER, month, START))
+
     async def test_session_usage_goes_with_the_campaign(self) -> None:
         await self.add(GUILD_A, self.a.id, OWNER, 5)
         await self.campaigns.delete(GUILD_A, self.a.id)
@@ -424,22 +439,23 @@ class TheBotMeters(UsageTest):
         self.table(guild=GUILD_B, campaign=self.b.id)
         seen = []
 
-        async def tick(table: Table, *args: object, **kwargs: object) -> bool:
+        async def tick(table: Table, *args: object, **kwargs: object) -> tuple[bool, None]:
             seen.append(table.guild_id)
-            return await forever() if table is a else True
+            if table is a:
+                await forever()
+            return True, None
 
         async def one_round(_: float) -> None:
             if seen:
                 raise asyncio.CancelledError
 
         with (
-            patch.object(self.bot, "meter_table", side_effect=tick),
+            patch.object(self.bot, "_meter_write", side_effect=tick),
             patch("dmbot.bot.METER_CALL_TIMEOUT_S", 0.05),
             patch("dmbot.bot.asyncio.sleep", side_effect=one_round),
             self.assertLogs("dmbot.bot", "ERROR"),
             self.assertRaises(asyncio.CancelledError),
         ):
-            await self.bot._meter_loop()
             await self.bot._meter_loop()
         self.assertEqual(seen, [GUILD_A, GUILD_B])
 
@@ -642,8 +658,9 @@ class PlanChecks(UsageTest):
         table = self.running_table(started=NOW - 20 * 60)
         with patch.object(self.bot, "post", new=AsyncMock()) as post:
             await self.bot.meter_table(table, NOW)  # +20: 100%
-        post.assert_awaited_once()
-        self.assertIn("owner can add more at", post.await_args.args[1])  # type: ignore[union-attr]
+        warnings = [c.args[1] for c in post.await_args_list if "left this month" in c.args[1]]
+        self.assertEqual(len(warnings), 1)  # not one for 80 and another for 90
+        self.assertIn("owner can add more at", warnings[0])
 
     async def test_the_final_charge_never_warns(self) -> None:
         await self.small_plan()
@@ -708,6 +725,255 @@ class PlanChecks(UsageTest):
             self.assertLogs("dmbot.bot", "ERROR"),
         ):
             self.assertIsNone(await self.refusal())  # fails open
+
+    async def test_the_grace_goes_to_one_session_a_month(self) -> None:
+        await self.small_plan()
+        first = await usage.add_minutes(
+            self.db,
+            guild_id=GUILD_A,
+            campaign_id=self.a.id,
+            owner_user_id=OWNER,
+            session_started_at=START,
+            minutes=60,
+            now=NOW,
+        )
+        got = await asyncio.gather(
+            usage.start_grace(self.db, GUILD_A, OWNER, first.month, START),
+            usage.start_grace(self.db, GUILD_B, OWNER, first.month, START + 1),
+        )
+        self.assertEqual(sorted(got), [False, True])
+        again = await usage.add_minutes(
+            self.db,
+            guild_id=GUILD_A,
+            campaign_id=self.a.id,
+            owner_user_id=OWNER,
+            session_started_at=START,
+            minutes=1,
+            now=NOW,
+        )
+        self.assertIn(again.grace_session, (START, START + 1))
+
+    async def test_reaching_the_cap_lets_the_session_finish_and_says_so_once(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 58, started=START - 9)
+        table = self.running_table(started=NOW - 5 * 60)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW)  # 58 + 5 = 63 minutes: at the cap
+            await self.bot.meter_table(table, NOW + 60)  # still in the grace
+        texts = [c.args[1] for c in post.await_args_list]
+        self.assertEqual(sum("2 more hours" in x for x in texts), 1)
+        self.assertIs(self.bot.tables.get(GUILD_A), table)  # still listening
+
+    async def test_when_the_grace_is_spent_the_session_is_stopped_and_forgotten(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 59, started=START - 9)
+        table = self.running_table(started=NOW - 10 * 60)
+        with (
+            patch.object(self.bot, "post", new=AsyncMock()) as post,
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+            patch.object(self.bot.sessions, "clear", new=AsyncMock()) as clear,
+        ):
+            await self.bot.meter_table(table, NOW)  # 69: in the grace
+            stop.assert_not_awaited()
+            await self.bot.meter_table(table, NOW + 120 * 60)  # 189 >= 60 + 120
+        stop.assert_awaited_once()
+        clear.assert_awaited_once()
+        self.assertIn("has stopped listening", post.await_args.args[1])  # type: ignore[union-attr]
+
+    async def test_a_second_session_the_same_month_stops_at_the_cap(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 60, started=START - 9)
+        async with self.db.meter(GUILD_A, OWNER) as conn:
+            await conn.execute("UPDATE owner_hours SET grace_session = %s", (START - 9,))
+        table = self.running_table(started=NOW - 120)  # a different session
+        with (
+            patch.object(self.bot, "post", new=AsyncMock()),
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+            patch.object(self.bot.sessions, "clear", new=AsyncMock()),
+        ):
+            await self.bot.meter_table(table, NOW)
+        stop.assert_awaited_once()
+
+    async def test_a_restart_in_the_grace_neither_repeats_the_notice_nor_stops(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 60, started=START - 9)
+        async with self.db.meter(GUILD_A, OWNER) as conn:
+            await conn.execute("UPDATE owner_hours SET grace_session = %s", (NOW - 300,))
+        table = self.running_table(started=NOW - 300)  # the session that was given it
+        with (
+            patch.object(self.bot, "post", new=AsyncMock()) as post,
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+        ):
+            await self.bot.meter_table(table, NOW)
+        stop.assert_not_awaited()
+        self.assertFalse(any("2 more hours" in c.args[1] for c in post.await_args_list))
+
+    async def test_nothing_is_stopped_when_checks_are_off(self) -> None:
+        bot = self.make_bot(enforce=False)
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 60, started=START - 9)
+        table = self.running_table(started=NOW - 300)
+        bot.tables[GUILD_A] = table
+        with (
+            patch.object(bot, "stop_table", new=AsyncMock()) as stop,
+            patch.object(bot, "post", new=AsyncMock()) as post,
+        ):
+            await bot.meter_table(table, NOW)
+        stop.assert_not_awaited()
+        post.assert_not_awaited()
+        async with self.db.meter(GUILD_A, OWNER) as conn:
+            cur = await conn.execute("SELECT grace_session FROM owner_hours")
+            self.assertTrue(all(r["grace_session"] is None for r in await cur.fetchall()))
+
+    async def test_the_session_that_loses_the_grace_race_stops_without_a_notice(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 60, started=START - 9)
+        table = self.running_table(started=NOW - 120)
+        with (
+            patch.object(self.bot, "post", new=AsyncMock()) as post,
+            patch.object(usage.Meter, "start_grace", new=AsyncMock(return_value=False)),
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+            patch.object(self.bot.sessions, "clear", new=AsyncMock()),
+        ):
+            await self.bot.meter_table(table, NOW)
+        stop.assert_awaited_once()
+        self.assertFalse(any("2 more hours" in c.args[1] for c in post.await_args_list))
+
+    async def test_a_stop_is_never_cut_short_by_the_time_limit_on_writing_minutes(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 200, started=START - 9)  # well past the grace
+        self.running_table(started=NOW - 120)
+        finished = []
+
+        async def slow_stop(*args: object, **kwargs: object) -> None:
+            await asyncio.sleep(0.15)  # longer than the limit patched below
+            finished.append(1)
+
+        async def one_round(_: float) -> None:
+            if finished:
+                raise asyncio.CancelledError
+
+        with (
+            patch("dmbot.bot.METER_CALL_TIMEOUT_S", 0.05),
+            patch("dmbot.bot.asyncio.sleep", side_effect=one_round),
+            patch.object(self.bot, "stop_table", side_effect=slow_stop),
+            patch.object(self.bot.sessions, "clear", new=AsyncMock()),
+            patch.object(self.bot, "post", new=AsyncMock()),
+            self.assertRaises(asyncio.CancelledError),
+        ):
+            await self.bot._meter_loop()
+        self.assertEqual(finished, [1])  # the stop ran to the end
+
+    async def test_a_failing_warning_does_not_skip_the_cap(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 200, started=START - 9)
+        table = self.running_table(started=NOW - 120)
+        with (
+            patch.object(self.bot, "_warn_hours", side_effect=RuntimeError("x")),
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+            patch.object(self.bot.sessions, "clear", new=AsyncMock()),
+            patch.object(self.bot, "post", new=AsyncMock()),
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
+            await self.bot.meter_table(table, NOW)
+        stop.assert_awaited_once()
+
+    async def test_each_owner_has_their_own_grace_and_a_new_month_a_new_one(self) -> None:
+        await self.small_plan()
+        month = await self.add(GUILD_A, self.a.id, OWNER, 70)
+        self.assertTrue(await usage.start_grace(self.db, GUILD_A, OWNER, month, START))
+        await self.add(GUILD_A, self.a.id, NEW_OWNER, 70)
+        nm = usage.calendar_month(NOW)
+        self.assertTrue(await usage.start_grace(self.db, GUILD_A, NEW_OWNER, nm, START))
+
+    async def test_a_stop_that_came_in_first_does_not_spend_the_grace(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 58, started=START - 9)
+        table = self.running_table(started=NOW - 5 * 60)
+        _, warn = await self.bot._meter_write(table, NOW)  # at the cap: a grace is due
+        self.assertIsNotNone(warn)
+        del self.bot.tables[GUILD_A]  # /dmbot stop got in between
+        with (
+            patch.object(usage.Meter, "start_grace", new=AsyncMock()) as grace,
+            patch.object(self.bot, "post", new=AsyncMock()) as post,
+        ):
+            await self.bot._meter_follow_up(table, warn)  # type: ignore[arg-type]
+        grace.assert_not_awaited()
+        post.assert_not_awaited()
+        month = usage.calendar_month(NOW)
+        self.assertIsNone(await self.grace_of(OWNER, warn[0].month if warn else month))
+
+    async def grace_of(self, owner: int, month: hours.Month) -> int | None:
+        async with self.db.user(owner) as conn:
+            cur = await conn.execute(
+                "SELECT grace_session FROM owner_hours"
+                " WHERE owner_user_id = %s AND month_start = %s",
+                (owner, month.start),
+            )
+            row = await cur.fetchone()
+        return None if row is None or row["grace_session"] is None else int(row["grace_session"])
+
+    async def test_a_slow_follow_up_does_not_hold_up_the_next_one(self) -> None:
+        table = self.running_table(started=NOW - 120)
+        standing = usage.Standing(entitlements.NO_ACCESS, usage.calendar_month(NOW), 0, 0)
+        started = []
+
+        async def hangs(*args: object, **kwargs: object) -> None:
+            started.append(1)
+            await asyncio.Event().wait()
+
+        with patch.object(self.bot, "_meter_follow_up", side_effect=hangs):
+            self.bot._start_follow_up(table, (standing, OWNER))  # returns at once
+            await asyncio.sleep(0)
+            self.bot._start_follow_up(table, (standing, OWNER))  # last one still working: skipped
+            await asyncio.sleep(0)
+        self.assertEqual(started, [1])
+        task = self.bot._follow_ups[GUILD_A]
+        self.assertFalse(task.done())
+        task.cancel()
+
+    async def test_the_session_in_its_grace_is_told_before_it_stops(self) -> None:
+        await self.small_plan()  # 1 hour: the grace runs to 180 minutes
+        month = await self.add(GUILD_A, self.a.id, OWNER, 160, started=START - 9)
+        table = self.running_table(started=NOW - 10 * 60)
+        await usage.start_grace(self.db, GUILD_A, OWNER, month, table.started_at)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW)  # 160 + 10 = 170: inside the last 15 minutes
+            await self.bot.meter_table(table, NOW + 60)  # and not said again
+        texts = [c.args[1] for c in post.await_args_list]
+        self.assertEqual(sum("will stop listening in about 15 minutes" in x for x in texts), 1)
+        self.assertIs(self.bot.tables.get(GUILD_A), table)
+
+    async def test_the_grace_names_the_time_it_runs_to(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 58, started=START - 9)
+        table = self.running_table(started=NOW - 5 * 60)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW)
+        text = post.await_args.args[1]  # type: ignore[union-attr]
+        self.assertRegex(text, r"until <t:\d{10}:t>")
+
+    async def test_a_new_month_has_its_own_grace(self) -> None:
+        march, april = (
+            int(datetime(2026, 3, 5, tzinfo=UTC).timestamp()),
+            int(datetime(2026, 4, 5, tzinfo=UTC).timestamp()),
+        )
+        months = []
+        for now in (march, april):
+            standing = await usage.add_minutes(
+                self.db,
+                guild_id=GUILD_A,
+                campaign_id=self.a.id,
+                owner_user_id=OWNER,
+                session_started_at=START,
+                minutes=1,
+                now=now,
+            )
+            self.assertIsNone(standing.grace_session)  # a fresh month's row has no grace
+            months.append(standing.month)
+        self.assertTrue(await usage.start_grace(self.db, GUILD_A, OWNER, months[0], START))
+        self.assertFalse(await usage.start_grace(self.db, GUILD_A, OWNER, months[0], START + 1))
+        self.assertTrue(await usage.start_grace(self.db, GUILD_A, OWNER, months[1], START + 1))
 
     async def test_no_warning_when_checks_are_off(self) -> None:
         bot = self.make_bot(enforce=False)

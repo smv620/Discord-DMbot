@@ -38,6 +38,7 @@ class Standing:
     month: hours.Month
     used_before: int
     used_after: int
+    grace_session: int | None = None  # the session given this month's grace, if any
     # What a refusal may offer (hours.refusal): a paid plan can buy extra hours and renews;
     # Try It, grants and the free list can do neither.
     buys_hours: bool = False
@@ -54,13 +55,13 @@ async def standing_of(
     month = hours.month_for(access, plan, grant.granted_at if grant else None, now) or (
         calendar_month(now)
     )
-    used = await minutes_this_month(conn, owner_user_id, month) if read_used else 0
+    used, grace = await _hours_row(conn, owner_user_id, month, read=read_used)
     known = plans.load().get(plan.plan) if plan is not None and access.kind == "paid" else None
     buys_hours = bool(known and known.price_cents)  # Try It is free and buys nothing
     # Not known to be cancelled: the plan row doesn't record a cancel at period end yet, so a
     # plan that will lapse still reads as renewing until the payment events store that.
     renews = buys_hours and plan is not None and plan.status == "active"
-    return Standing(access, month, used, used, buys_hours, renews)
+    return Standing(access, month, used, used, grace, buys_hours, renews)
 
 
 async def month_of(conn: Conn, owner_user_id: int, now: int) -> hours.Month:
@@ -123,13 +124,33 @@ async def add_minutes(
             "INSERT INTO owner_hours (owner_user_id, month_start, minutes)"
             " VALUES (%s, %s, %s) ON CONFLICT (owner_user_id, month_start)"
             " DO UPDATE SET minutes = owner_hours.minutes + EXCLUDED.minutes"
-            " RETURNING minutes",
+            " RETURNING minutes, grace_session",
             (owner_user_id, s.month.start, minutes),
         )
         row = await cur.fetchone()
     assert row is not None  # an upsert with RETURNING always gives its row back
     after = int(row["minutes"])
-    return Standing(s.access, s.month, after - minutes, after, s.buys_hours, s.renews)
+    grace = None if row["grace_session"] is None else int(row["grace_session"])
+    return Standing(s.access, s.month, after - minutes, after, grace, s.buys_hours, s.renews)
+
+
+async def _hours_row(
+    conn: Conn, owner_user_id: int, month: hours.Month, *, read: bool = True
+) -> tuple[int, int | None]:
+    """The owner's minutes and the session given this month's grace, if any. `read=False`
+    skips the query for a caller that gets the numbers from its own write."""
+    if not read:
+        return 0, None
+    cur = await conn.execute(
+        "SELECT minutes, grace_session FROM owner_hours"
+        " WHERE owner_user_id = %s AND month_start = %s",
+        (owner_user_id, month.start),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        return 0, None
+    grace = row["grace_session"]
+    return int(row["minutes"]), None if grace is None else int(grace)
 
 
 async def add_unowned_minutes(
@@ -159,12 +180,27 @@ async def minutes_this_month(conn: Conn, owner_user_id: int, month: hours.Month)
     """The owner's recorded minutes in this month, from any server. Reads only the
     owner's own row; needs an open transaction with that owner set (Database.meter or
     Database.user)."""
-    cur = await conn.execute(
-        "SELECT minutes FROM owner_hours WHERE owner_user_id = %s AND month_start = %s",
-        (owner_user_id, month.start),
-    )
-    row = await cur.fetchone()
-    return int(row["minutes"]) if row else 0
+    return (await _hours_row(conn, owner_user_id, month))[0]
+
+
+async def start_grace(
+    db: Database,
+    guild_id: int,
+    owner_user_id: int,
+    month: hours.Month,
+    session_started_at: int,
+) -> bool:
+    """Give this session the month's grace, if no session has had it yet. True if it got
+    it; False if another session did first (two campaigns reaching the cap together). The
+    row it updates exists: the minutes that put the owner at the cap were just added to it."""
+    async with db.meter(guild_id, owner_user_id) as conn:
+        cur = await conn.execute(
+            "UPDATE owner_hours SET grace_session = %s"
+            " WHERE owner_user_id = %s AND month_start = %s AND grace_session IS NULL"
+            " RETURNING grace_session",
+            (session_started_at, owner_user_id, month.start),
+        )
+        return await cur.fetchone() is not None
 
 
 async def session_minutes(db: Database, guild_id: int, campaign_id: str, started_at: int) -> int:
@@ -227,6 +263,11 @@ class Meter:
 
     async def recorded(self, guild_id: int, campaign_id: str, started_at: int) -> int:
         return await session_minutes(self.db, guild_id, campaign_id, started_at)
+
+    async def start_grace(
+        self, guild_id: int, owner_user_id: int, month: hours.Month, session_started_at: int
+    ) -> bool:
+        return await start_grace(self.db, guild_id, owner_user_id, month, session_started_at)
 
     async def check(self, guild_id: int, owner_user_id: int, now: int) -> StartCheck:
         return await check_start(self.db, guild_id, owner_user_id, now)

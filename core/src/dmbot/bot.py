@@ -468,6 +468,8 @@ class DMBot(commands.AutoShardedBot):
         self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
         self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
         self._finishing: set[asyncio.Task[None]] = set()  # stopped sessions winding down
+        # The hours follow-up (warn, grace, stop) in flight, per server (#437).
+        self._follow_ups: dict[int, asyncio.Task[None]] = {}
         # Stopped sessions still writing down their last words, by server.
         self._ending: dict[int, list[Table]] = {}
         self._session_locks: dict[int, asyncio.Lock] = {}
@@ -3017,24 +3019,53 @@ class DMBot(commands.AutoShardedBot):
         while True:
             await asyncio.sleep(METER_INTERVAL_S)
             for table in list(self.tables.values()):
+                warn = None
                 try:
                     async with asyncio.timeout(METER_CALL_TIMEOUT_S):
-                        await self.meter_table(table)
+                        _, warn = await self._meter_write(table)
                 except TimeoutError:  # a slow database delays this table, not the others
                     log.error("The listening minutes took too long to write down")
+                if warn is not None:
+                    self._start_follow_up(table, warn)
+
+    def _start_follow_up(self, table: Table, warn: tuple[usage.Standing, int]) -> None:
+        """Act on where the hours stand in a task of its own, one at a time per server: a
+        slow Discord post, database call or held session lock must not hold up the other
+        tables' minutes. If last minute's is still working, this one is skipped; the next
+        tick looks again, and a spent grace or a stop is found from the numbers each time."""
+        running = self._follow_ups.get(table.guild_id)
+        if running is not None and not running.done():
+            return
+        task = self._track(self._meter_follow_up(table, warn), "hours follow-up")
+        if task is not None:
+            self._follow_ups[table.guild_id] = task
 
     async def meter_table(
         self, table: Table, now: int | None = None, *, final: bool = False
     ) -> bool:
+        """Write the minutes (`_meter_write`), then act on where the hours stand
+        (`_meter_follow_up`). The final charge at a stop and the tests use this; the tick
+        loop calls the two apart, the second in a task of its own, so that stopping a
+        session is never inside the time limit on writing minutes and a slow stop never holds
+        up the other tables."""
+        ok, warn = await self._meter_write(table, now, final=final)
+        if warn is not None:
+            await self._meter_follow_up(table, warn)
+        return ok
+
+    async def _meter_write(
+        self, table: Table, now: int | None = None, *, final: bool = False
+    ) -> tuple[bool, tuple[usage.Standing, int] | None]:
         """Record the minutes this session has run and not yet written down, for the
         campaign's owner right now (a hand-over mid-session moves the later minutes to
         the new owner). `final` is the stop: it closes the meter for this session, so a
         tick that was already waiting can never bill time after the end. Never raises
-        (the meter must not stop a game); returns whether it worked."""
+        (the meter must not stop a game); returns whether it worked, and where the owner's
+        hours stand if a warning or the cap may need acting on."""
         if self.meter is None or table.campaign_id is None or table.started_at <= 0:
-            return True
+            return True, None
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
-            warn: usage.Standing | None = None
+            warn: tuple[usage.Standing, int] | None = None
             try:
                 async with table.meter_lock:
                     # A tick that was already waiting when the session stopped must not
@@ -3042,7 +3073,7 @@ class DMBot(commands.AutoShardedBot):
                     if table.metering_closed or (
                         not final and self.tables.get(table.guild_id) is not table
                     ):
-                        return True
+                        return True, None
                     stamp = int(time.time()) if now is None else now
                     if table.ended_at is not None:  # a tick that was mid-flight at the stop
                         stamp = min(stamp, table.ended_at)
@@ -3083,20 +3114,30 @@ class DMBot(commands.AutoShardedBot):
                             # adds these minutes again: rare, and over rather than under.
                             table.metered_minutes += owed
                             if self.settings.enforce_plans and not final:
-                                warn = standing
+                                warn = (standing, campaign.owner_user_id)
                     if final:
                         table.metering_closed = True
-                if warn is not None:
-                    # After the lock, so a slow Discord post doesn't hold the meter. It still
-                    # counts against the loop's time limit, but the minutes are already
-                    # written: a timeout cancels only the post. A warning that fails to
-                    # post is not retried (the mark was crossed once); losing one is
-                    # accepted.
-                    await self._warn_hours(table, warn)
-                return True
+                return True, warn
             except Exception:
                 log.exception("Couldn't write down the listening minutes")
-                return False
+                return False, None
+
+    async def _meter_follow_up(self, table: Table, warn: tuple[usage.Standing, int]) -> None:
+        """After the minutes are safely written: warn at 80% and 90%, and at the cap let
+        the session finish or stop it. Apart from the write so a slow Discord post can
+        neither undo minutes nor cut a stop short; a warning that fails to post is not
+        retried (the mark was crossed once), and one step failing never skips the other."""
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            if self.tables.get(table.guild_id) is not table or table.metering_closed:
+                return  # stopped since the minutes were written: say and do nothing
+            try:
+                await self._warn_hours(table, warn[0])
+            except Exception:
+                log.exception("Couldn't warn about the hours")
+            try:
+                await self._enforce_cap(table, *warn)
+            except Exception:
+                log.exception("Couldn't act on the hours cap")
 
     async def _warn_hours(self, table: Table, standing: usage.Standing) -> None:
         """Tell the DM screen when the owner's hours pass 80% or 90% (#437). Each mark is
@@ -3107,6 +3148,57 @@ class DMBot(commands.AutoShardedBot):
             await self.post(
                 table.screen_channel_id, hours.warning_text(cap, mark, self.settings.site_url)
             )
+
+    async def _enforce_cap(self, table: Table, standing: usage.Standing, owner: int) -> None:
+        """At the cap, let this session finish (up to 2 hours, once a month), then stop it
+        (#437). Never touches a session that is under the cap. Needs the meter and
+        DMBOT_ENFORCE_PLANS; the caller has already left the meter lock, because stopping
+        starts the session's final charge. Enforcement runs on a tick that bills a new
+        minute, so after a restart it is a minute late, which doesn't matter."""
+        assert self.meter is not None
+        action = hours.cap_action(
+            standing.access, standing.used_after, standing.grace_session, table.started_at
+        )
+        if action == "start_grace":
+            # Under the session lock with the table checked again, so a stop that came in
+            # since the minutes were written can't spend the owner's grace on a dead session.
+            async with self.session_lock(table.guild_id):
+                if self.tables.get(table.guild_id) is not table:
+                    return
+                got = await self.meter.start_grace(
+                    table.guild_id, owner, standing.month, table.started_at
+                )
+            action = "in_grace" if got else "stop"
+            if got:
+                ends_at = hours.grace_ends_at(
+                    standing.access, standing.used_after, int(time.time())
+                )
+                await self.post(
+                    table.screen_channel_id,
+                    hours.grace_started_text(ends_at, self.settings.site_url),
+                )
+        elif action == "in_grace" and hours.stop_warning_due(
+            standing.access,
+            standing.grace_session,
+            table.started_at,
+            standing.used_before,
+            standing.used_after,
+        ):
+            await self.post(table.screen_channel_id, hours.stop_soon_text(self.settings.site_url))
+        if action == "stop":
+            await self._stop_for_hours(table)
+
+    async def _stop_for_hours(self, table: Table) -> None:
+        """End the session because the hours are used up: stop listening, forget the saved
+        session so it doesn't come back after a restart, and say why on the DM screen. The
+        session is forgotten only once it has really stopped: if stopping fails, the next
+        tick tries again and the saved session is still there."""
+        async with self.session_lock(table.guild_id):
+            if self.tables.get(table.guild_id) is not table:
+                return  # already stopped by someone
+            await self.stop_table(table.guild_id, "the owner's hours are used up")
+            await self.sessions.clear(table.guild_id, "the owner's hours are used up")
+        await self.post(table.screen_channel_id, hours.stopped_text(self.settings.site_url))
 
     async def _meter_final(self, table: Table, ended_at: int) -> None:
         """The last, rounded-up minutes at a stop: tried a few times, since nothing else

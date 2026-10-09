@@ -234,6 +234,75 @@ class Refusals(unittest.TestCase):
         self.assertIn("DMbot's website", hours.warning_text(60, 90))
 
 
+class CapActions(unittest.TestCase):
+    CAP = 600  # a 10-hour plan, in minutes
+
+    def act(self, used: int, grace: int | None = None, session: int = 5) -> str:
+        return hours.cap_action(paid(10), used, grace, session)
+
+    def test_under_the_cap_nothing_happens(self) -> None:
+        self.assertEqual(self.act(self.CAP - 1), "none")
+
+    def test_reaching_the_cap_gives_the_first_session_the_grace(self) -> None:
+        self.assertEqual(self.act(self.CAP), "start_grace")
+        self.assertEqual(self.act(self.CAP + 119), "start_grace")
+
+    def test_the_session_with_the_grace_carries_on_until_it_is_spent(self) -> None:
+        self.assertEqual(self.act(self.CAP + 30, grace=5), "in_grace")
+        self.assertEqual(self.act(self.CAP + 119, grace=5), "in_grace")
+        self.assertEqual(self.act(self.CAP + 120, grace=5), "stop")
+
+    def test_another_session_gets_no_grace_the_same_month(self) -> None:
+        self.assertEqual(self.act(self.CAP, grace=99, session=5), "stop")
+
+    def test_exactly_at_the_end_of_the_grace_with_none_given_stops(self) -> None:
+        self.assertEqual(self.act(self.CAP + 120), "stop")
+
+    def test_a_jump_past_the_whole_grace_stops_at_once(self) -> None:
+        self.assertEqual(self.act(self.CAP + 500), "stop")
+
+    def test_no_cap_never_acts(self) -> None:
+        free = Access("free", "Free access", None, None, True)
+        self.assertEqual(hours.cap_action(free, 10**6, None, 5), "none")
+
+    def test_the_texts_are_plain_and_send_people_to_the_site(self) -> None:
+        self.assertIn("up to 2 more hours", hours.grace_started_text(site_url="https://x.example"))
+        self.assertIn("https://x.example/account", hours.stopped_text("https://x.example"))
+        self.assertIn("DMbot's website", hours.stopped_text())
+
+
+class TheGraceTexts(unittest.TestCase):
+    def test_the_grace_names_when_it_ends_in_each_readers_time(self) -> None:
+        self.assertIn("until <t:1700000000:t>", hours.grace_started_text(1700000000))
+        self.assertNotIn("<t:", hours.grace_started_text())
+
+    def test_the_end_follows_the_minutes_that_are_left(self) -> None:
+        access = paid(1)  # a 60-minute cap, 120 of grace
+        self.assertEqual(hours.grace_ends_at(access, 70, 1000), 1000 + 110 * 60)
+        self.assertEqual(hours.grace_ends_at(access, 500, 1000), 1000)  # never in the past
+        self.assertIsNone(hours.grace_ends_at(paid(None), 10, 1000))
+
+    def test_the_heads_up_comes_once_for_the_session_that_holds_the_grace(self) -> None:
+        access = paid(1)
+        due = hours.stop_warning_due
+        mark = 60 + hours.GRACE_MINUTES - hours.STOP_WARNING_MINUTES  # 165
+        self.assertTrue(due(access, 7, 7, mark - 1, mark))
+        self.assertFalse(due(access, 7, 7, mark, mark + 1))  # already said
+        self.assertFalse(due(access, 7, 7, mark - 5, mark - 1))  # not yet
+        self.assertFalse(due(access, 7, 8, mark - 1, mark))  # another session: it stops at once
+        self.assertFalse(due(access, None, 7, mark - 1, mark))  # no grace given
+
+    def test_none_of_the_cap_texts_names_a_plan_or_payment(self) -> None:
+        for text in (
+            hours.grace_started_text(1700000000, "https://x.example"),
+            hours.stop_soon_text("https://x.example"),
+            hours.stopped_text("https://x.example"),
+        ):
+            for word in ("plan", "price", "$", "pay", "subscri", "Your hours"):
+                self.assertNotIn(word, text)
+            self.assertIn("campaign's owner", text)
+
+
 class Standing(unittest.TestCase):
     def test_percent_and_left(self) -> None:
         s = hours.standing(paid(10), 300)

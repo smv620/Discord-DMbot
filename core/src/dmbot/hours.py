@@ -18,6 +18,7 @@ from dmbot.entitlements import Access, Entitlement
 
 WARN_AT = (80, 90)  # percent of the month's hours (PLAN: warnings at 80% and 90%)
 GRACE_MINUTES = 2 * 60  # a session that hits the cap may finish, once a period
+STOP_WARNING_MINUTES = 15  # the grace session is told this long before it stops
 
 Verdict = Literal["ok", "no_plan", "out_of_hours"]
 
@@ -209,3 +210,81 @@ def warning_text(left_minutes: int, mark: int = 80, site_url: str = "") -> str:
         return f"{text} (Hours are DMbot's listening time.)"
     where = f"{site_url}/account" if site_url else "DMbot's website"
     return f"{text} The campaign's owner can add more at {where}"
+
+
+CapAction = Literal["none", "start_grace", "in_grace", "stop"]
+
+
+def cap_action(
+    access: Access, used: int, grace_session: int | None, session_started_at: int
+) -> CapAction:
+    """What to do about a running session when the owner's hours are at or past the cap
+    (#437). Under the cap, nothing. At the cap a session that has not had the month's
+    grace is given it ("start_grace": it may run up to GRACE_MINUTES more); the session
+    that was given it carries on until the grace is spent ("in_grace", then "stop"); any
+    other session stops at once, because the grace is once a month."""
+    cap = standing(access, used).cap_minutes
+    # A session is told apart by its start second: two campaigns of one owner starting in
+    # the very same second would share the grace (so rare it is accepted).
+    if cap is None or used < cap:
+        return "none"
+    if grace_session is None:
+        return "start_grace" if used < cap + GRACE_MINUTES else "stop"
+    if grace_session == session_started_at and used < cap + GRACE_MINUTES:
+        return "in_grace"
+    return "stop"
+
+
+def grace_ends_at(access: Access, used: int, now: int) -> int | None:
+    """When the grace runs out if listening carries on (Unix seconds), from the owner's
+    minutes used so far. Approximate: another campaign of the same owner listening at the
+    same time spends the same hours, so the real end can only come sooner."""
+    cap = standing(access, 0).cap_minutes
+    if cap is None:
+        return None
+    return now + max(0, cap + GRACE_MINUTES - used) * 60
+
+
+def stop_warning_due(
+    access: Access,
+    grace_session: int | None,
+    session_started_at: int,
+    used_before: int,
+    used_after: int,
+) -> bool:
+    """Is this the tick that brings the grace session within STOP_WARNING_MINUTES of its
+    stop? True once: found, like the 80% and 90% marks, by comparing the minutes before and
+    after. Only the session that holds the grace is warned; any other already stopped."""
+    cap = standing(access, 0).cap_minutes
+    if cap is None or grace_session != session_started_at:
+        return False
+    mark = cap + GRACE_MINUTES - STOP_WARNING_MINUTES
+    return used_before < mark <= used_after
+
+
+# The grace and stop notices are read by everyone who can see the DM screen, so they say
+# only that the campaign's owner can add more hours, never whose plan it is.
+def grace_started_text(ends_at: int | None = None, site_url: str = "") -> str:
+    where = f"{site_url}/account" if site_url else "DMbot's website"
+    until = f" until <t:{ends_at}:t>" if ends_at is not None else ""
+    return (
+        "⏳ This month's listening hours are used up. This session can finish: DMbot keeps "
+        f"listening{until} (up to {GRACE_MINUTES // 60} more hours), then stops. To play "
+        f"again after that, the campaign's owner can add more at {where}"
+    )
+
+
+def stop_soon_text(site_url: str = "") -> str:
+    where = f"{site_url}/account" if site_url else "DMbot's website"
+    return (
+        f"⏳ DMbot will stop listening in about {STOP_WARNING_MINUTES} minutes: this month's "
+        f"listening hours are used up. To keep going, the campaign's owner can add more at {where}"
+    )
+
+
+def stopped_text(site_url: str = "") -> str:
+    where = f"{site_url}/account" if site_url else "DMbot's website"
+    return (
+        "⏳ DMbot has stopped listening: this month's listening hours are used up. To play "
+        f"again, the campaign's owner can add more at {where}"
+    )
