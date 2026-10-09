@@ -123,6 +123,29 @@ async def _hours_row(conn: Conn, owner_user_id: int, month: hours.Month) -> tupl
     return int(row["minutes"]), None if grace is None else int(grace)
 
 
+async def add_unowned_minutes(
+    db: Database,
+    *,
+    guild_id: int,
+    campaign_id: str,
+    session_started_at: int,
+    minutes: int,
+    now: int,
+) -> None:
+    """Listening minutes while the campaign had no owner: kept in the campaign's own
+    session record (owner 0) and nowhere else. Nobody's hours are spent, and whoever takes
+    the campaign on later is billed only from then."""
+    async with db.guild(guild_id) as conn:
+        await conn.execute(
+            "INSERT INTO session_usage (guild_id, campaign_id, session_started_at,"
+            " owner_user_id, minutes, updated_at) VALUES (%s, %s, %s, 0, %s, %s)"
+            " ON CONFLICT (guild_id, campaign_id, session_started_at, owner_user_id)"
+            " DO UPDATE SET minutes = session_usage.minutes + EXCLUDED.minutes,"
+            " updated_at = EXCLUDED.updated_at",
+            (guild_id, campaign_id, session_started_at, minutes, now),
+        )
+
+
 async def minutes_this_month(conn: Conn, owner_user_id: int, month: hours.Month) -> int:
     """The owner's recorded minutes in this month, from any server. Reads only the
     owner's own row; needs an open transaction with that owner set (Database.meter or
@@ -184,6 +207,24 @@ class Meter:
             guild_id=guild_id,
             campaign_id=campaign_id,
             owner_user_id=owner_user_id,
+            session_started_at=session_started_at,
+            minutes=minutes,
+            now=now,
+        )
+
+    async def add_unowned(
+        self,
+        *,
+        guild_id: int,
+        campaign_id: str,
+        session_started_at: int,
+        minutes: int,
+        now: int,
+    ) -> None:
+        await add_unowned_minutes(
+            self.db,
+            guild_id=guild_id,
+            campaign_id=campaign_id,
             session_started_at=session_started_at,
             minutes=minutes,
             now=now,

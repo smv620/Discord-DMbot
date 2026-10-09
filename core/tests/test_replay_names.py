@@ -91,12 +91,12 @@ class ScanScoreTests(unittest.TestCase):
             "The orc Gorak shouts. We fight Gorak.",  # known, misheard: again
             "We see Zzqx today. Later, Zzqx returns.",  # nothing: other
             "He casts Fireball now. Again he casts Fireball.",  # a spell
-            "Then Oskar Vane leaves. We follow Oskar Vane.",  # "Oskar" alone (#399): again
+            "Then Oskar Vane leaves. We follow Oskar Vane.",  # a known name said whole (#399)
             "We meet Val Zimmer. Later Val Zimmer smiles.",  # misheard Vhalzimar
         ]
         score = score_scan(lines, self.known, self.names, limit=False)
         self.assertIn("Hrothgar", score.found)
-        self.assertEqual(sorted(score.again), ["Gorak", "Oskar"])
+        self.assertEqual(sorted(score.again), ["Gorak"])  # not "Oskar" any more (#399)
         self.assertEqual(score.rules, ["Fireball"])
         self.assertEqual(score.misheard, ["Val Zimmer"])
         self.assertEqual(score.junk, ["Zzqx"])

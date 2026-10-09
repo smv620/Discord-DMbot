@@ -314,10 +314,14 @@ class Table:
     heard_counts: Counter[tuple[str, int]] = field(default_factory=Counter)
     # The stored transcript (#41, #125): this session's row, and lines not saved yet.
     started_at: int = 0  # Unix seconds; the same after a restart
-    # Listening minutes already written to the hours meter (#437): the whole session so
-    # far, rounded up, so a restart picks up from the stored number and counts none twice.
-    # None until first read (the stored number, so a restart counts none twice).
+    # Listening minutes already written to the hours meter (#437). None until first read:
+    # the stored number, so a restart counts none twice. `meter_base` is that number and
+    # `meter_since` when this process began listening, so time while DMbot was down is
+    # never billed. `ended_at` is the stop, past which no tick bills.
     metered_minutes: int | None = None
+    meter_base: int = 0
+    meter_since: int = 0
+    ended_at: int | None = None
     meter_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     metering_closed: bool = False  # the session ended: nothing more is billed
     listening_from: int = 0  # Unix seconds; since this process took the session on
@@ -1025,6 +1029,7 @@ class DMBot(commands.AutoShardedBot):
         # apart from other background work, so a shutdown right after a stop still
         # saves the end of the transcript.
         ended_at = int(time.time())
+        table.ended_at = ended_at  # no tick bills past this (#437)
         task = asyncio.create_task(self.wind_down(table, ended_at), name="wind-down")
         self._finishing.add(task)
         task.add_done_callback(self._finishing.discard)
@@ -3045,14 +3050,33 @@ class DMBot(commands.AutoShardedBot):
                     ):
                         return True, None
                     stamp = int(time.time()) if now is None else now
+                    if table.ended_at is not None:  # a tick that was mid-flight at the stop
+                        stamp = min(stamp, table.ended_at)
                     if table.metered_minutes is None:  # first time (or after a restart)
                         table.metered_minutes = await self.meter.recorded(
                             table.guild_id, table.campaign_id, table.started_at
                         )
-                    owed = hours.minutes_owed(table.started_at, stamp, table.metered_minutes)
+                        # What was stored is the base; only time this process has been
+                        # listening adds to it, so a gap while DMbot was down isn't billed.
+                        table.meter_base = table.metered_minutes
+                        table.meter_since = max(table.started_at, table.listening_from)
+                    target = table.meter_base + hours.minutes_used(table.meter_since, stamp)
+                    owed = max(0, target - table.metered_minutes)
                     if owed > 0:
                         campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
-                        if campaign is not None and campaign.owner_user_id is not None:
+                        if campaign is not None and campaign.owner_user_id is None:
+                            # Nobody's hours to spend yet: keep the minutes in the session
+                            # record only, and move on, so whoever takes the campaign on is
+                            # billed from then and never for these.
+                            await self.meter.add_unowned(
+                                guild_id=table.guild_id,
+                                campaign_id=table.campaign_id,
+                                session_started_at=table.started_at,
+                                minutes=owed,
+                                now=stamp,
+                            )
+                            table.metered_minutes += owed
+                        elif campaign is not None and campaign.owner_user_id is not None:
                             standing = await self.meter.add(
                                 guild_id=table.guild_id,
                                 campaign_id=table.campaign_id,
@@ -3062,12 +3086,10 @@ class DMBot(commands.AutoShardedBot):
                                 now=stamp,
                             )
                             # If the commit succeeded but its reply was lost, the next tick
-                            # adds these minutes again; rare, and the cost is a few minutes
-                            # over, never under, so the increments are kept simple.
+                            # adds these minutes again: rare, and over rather than under.
                             table.metered_minutes += owed
                             if self.settings.enforce_plans and not final:
                                 warn = (standing, campaign.owner_user_id)
-                        # else: gone, or no owner yet: nobody's hours to spend
                     if final:
                         table.metering_closed = True
                 return True, warn
