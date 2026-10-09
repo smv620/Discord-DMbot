@@ -486,6 +486,39 @@ class Conflicts(TableTest):
         self.assertLessEqual(len(text), 2000)
 
 
+class Typed(TableTest):
+    async def test_a_typed_rule_is_the_same_proposal_marked_typed(self) -> None:
+        started = self.bot.sidebar_house_rule(
+            self.table, DM, "house rule: potions are a bonus action"
+        )
+        await self.settle()
+        self.assertTrue(started)
+        (post,) = self.posts
+        self.assertEqual(post[0], SCREEN)
+        self.assertEqual(
+            [str(b.item.label) for b in post[2].children], ["Save rule", "Edit", "Cancel"]
+        )
+        await self.button(post[2], "Save rule").callback(self.interaction(content=post[1]))
+        (added,) = self.store.added
+        self.assertRegex(added["scenario"], r"^Typed by the DM, \d{4}-\d{2}-\d{2}$")
+        self.assertEqual(added["session_id"], "session-1")
+
+    async def test_the_limits_are_shared_with_what_is_said_aloud(self) -> None:
+        await self.deliver("house rule: potions are a bonus action")
+        self.assertFalse(self.bot.sidebar_house_rule(self.table, DM, "house rule: no flanking"))
+        self.rewind()
+        self.assertFalse(  # the same words once a session, however they came
+            self.bot.sidebar_house_rule(self.table, DM, "House rule: potions are a bonus action.")
+        )
+
+    async def test_a_player_or_a_finished_session_starts_nothing(self) -> None:
+        text = "house rule: potions are a bonus action"
+        self.assertFalse(self.bot.sidebar_house_rule(self.table, PLAYER, text))
+        self.table.listening = False
+        self.assertFalse(self.bot.sidebar_house_rule(self.table, DM, text))
+        self.assertEqual(self.posts, [])
+
+
 class Races(TableTest):
     async def test_two_presses_of_save_write_one_rule(self) -> None:
         await self.deliver("house rule: potions are a bonus action")

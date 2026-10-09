@@ -62,9 +62,10 @@ LABELS = {
 }
 
 
-def scenario_for(now: float) -> str:
+def scenario_for(now: float, *, typed: bool = False) -> str:
     """What the house rule says about where it came from."""
-    return "Said at the table, " + time.strftime("%Y-%m-%d", time.gmtime(now))
+    how = "Typed by the DM" if typed else "Said at the table"
+    return f"{how}, " + time.strftime("%Y-%m-%d", time.gmtime(now))
 
 
 def clashes(
