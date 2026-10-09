@@ -1192,6 +1192,56 @@ class Lists(NamesTest):
             self.assertIsNone(problem)
             self.assertEqual(read, text)
 
+    async def test_a_later_batch_that_fails_to_send_says_which_files_are_missing(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.ui import name_lists
+
+        texts = [f"### part {i}\nName {i:02}\n" for i in range(23)]
+        self.fresh()
+        it = self.it()
+        sent: list[Any] = []
+
+        async def send(text: str = "", **kw: Any) -> None:
+            sent.append((text, kw))
+            if len(sent) == 2:  # the second batch (files 11 to 20)
+                raise discord.HTTPException(MagicMock(status=500, reason="x"), "boom")
+
+        it.followup.send = AsyncMock(side_effect=send)
+        with (
+            patch.object(name_lists, "download_files", return_value=(texts, 23)),
+            self.assertLogs("dmbot.ui.name_lists", "WARNING"),
+        ):
+            await name_lists.send_download(it, self.campaign.id)
+        self.assertEqual(len(sent), 3)  # first batch, the failed one, then the warning
+        self.assertIn("Files 11 to 23 of 23 didn't arrive", sent[2][0])
+        self.assertIn("Press 📤 Download all again", sent[2][0])
+        self.assertIn("Files 1 to 10 are fine.", sent[2][0])
+        self.assertNotIn("files", sent[2][1])
+
+    async def test_one_missing_last_file_is_named_in_the_singular(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.ui import name_lists
+
+        texts = [f"### part {i}\nName {i:02}\n" for i in range(11)]
+        self.fresh()
+        it = self.it()
+        sent: list[Any] = []
+
+        async def send(text: str = "", **kw: Any) -> None:
+            sent.append(text)
+            if len(sent) == 2:
+                raise discord.HTTPException(MagicMock(status=500, reason="x"), "boom")
+
+        it.followup.send = AsyncMock(side_effect=send)
+        with (
+            patch.object(name_lists, "download_files", return_value=(texts, 11)),
+            self.assertLogs("dmbot.ui.name_lists", "WARNING"),
+        ):
+            await name_lists.send_download(it, self.campaign.id)
+        self.assertIn("File 11 of 11 didn't arrive", sent[2])
+
     async def test_more_than_ten_files_go_in_more_than_one_message(self) -> None:
         from unittest.mock import patch
 
