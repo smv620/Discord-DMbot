@@ -56,6 +56,12 @@ never needs `'unsafe-inline'` for scripts, and adds the API's address to `connec
 when `PUBLIC_API_BASE` is a full address. `npm run check:csp` (in CI) checks the result.
 A `mock` build can't be deployed to the live site (branch `main`).
 
+The `development` branch's build (`dev.getdmbot.com`, #837) is different: when Cloudflare
+Pages builds it (`CF_PAGES_BRANCH=development`) and `PUBLIC_DEV_API_BASE` is set (a Preview
+variable), that address replaces `PUBLIC_API_BASE`, is added to `connect-src`, and the
+whole site gets `X-Robots-Tag: noindex, nofollow`. Other previews keep the pretend API and
+`main` is never switched. See `docs/DEPLOY.md`.
+
 ### The "Say hello" page
 
 `/hello` (#665) has two small forms, feedback and questions, in a Preact island
