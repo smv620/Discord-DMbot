@@ -1680,6 +1680,12 @@ table isn't left waiting while the DM looks something up.
     counts. Who may read them is one constant, `dmbot.sidebar.access.SIDEBAR_READERS`
     (the campaign's DMs only until #933 is answered). Backups hold no transcripts, so they hold
     no sidebar lines.
+  - **Cost limits:** a spoken question is one a minute per table; questions in the DM chat are
+    six a minute per DM (each can spend speech-to-text and AI money). A voice message's speech
+    counts in the end-of-session "sent" line for outside engines, not in the hours meter.
+  - **Not built yet:** a line the Cleaner tags as in character is not told apart from the DM
+    speaking (the `in_character` flag exists, nothing sets it); only the "hold on" lead-in
+    guards against it.
   - **Limits:** DMs reach only the first shard's process, so a table on another shard's process
     is not found (single process today).
 

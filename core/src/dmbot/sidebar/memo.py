@@ -37,16 +37,18 @@ def decode(data: bytes) -> bytes:
         raise MemoError(TOO_LONG)
     resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
     chunks: list[bytes] = []
+    total = 0
+    limit = int(MAX_MEMO_S * SAMPLE_RATE * BYTES_PER_SAMPLE)
     try:
-        with av.open(io.BytesIO(data), "r") as container:
+        with av.open(io.BytesIO(data), "r", format="ogg") as container:  # what Discord sends
             if not container.streams.audio:
                 raise MemoError("That file has no sound. Send a voice message instead.")
             for frame in container.decode(audio=0):
-                chunks.extend(_samples(out) for out in resampler.resample(frame))
-                if sum(map(len, chunks)) > MAX_MEMO_S * SAMPLE_RATE * BYTES_PER_SAMPLE:
-                    raise MemoError(
-                        "That voice message is too long. Keep it under a minute and a half."
-                    )
+                for out in resampler.resample(frame):
+                    chunks.append(_samples(out))
+                    total += len(chunks[-1])
+                if total > limit:
+                    raise MemoError(TOO_LONG)
         chunks.extend(_samples(out) for out in resampler.resample(None))
     except av.FFmpegError as exc:
         raise MemoError("I couldn't read that voice message. Try sending it again.") from exc

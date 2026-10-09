@@ -67,6 +67,15 @@ class Decode(unittest.TestCase):
         with self.assertRaises(memo.MemoError):
             memo.decode(data)
 
+    def test_a_voice_message_over_the_limit_by_a_second_is_refused(self) -> None:
+        under = ogg_opus(memo.MAX_MEMO_S - 5)
+        over = ogg_opus(memo.MAX_MEMO_S + 1)
+        if under is None or over is None:
+            self.skipTest("this PyAV can't encode Opus")
+        self.assertAlmostEqual(memo.seconds(memo.decode(under)), memo.MAX_MEMO_S - 5, delta=0.2)
+        with self.assertRaises(memo.MemoError):
+            memo.decode(over)
+
     def test_a_very_long_one_is_refused(self) -> None:
         data = ogg_opus(memo.MAX_MEMO_S + 10)
         if data is None:

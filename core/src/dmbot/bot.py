@@ -718,6 +718,7 @@ class DMBot(commands.AutoShardedBot):
             table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
             table.unsaved.drop_speaker(user_id)  # and never saved
+            table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
             if table.fix_notes.drop_speaker(user_id):  # their fixes leave the DM screen
@@ -1969,6 +1970,8 @@ class DMBot(commands.AutoShardedBot):
         """A voice message written down by the table's speech-to-text, with the
         campaign's names as hints. Consent was checked by the caller, and is again."""
         hints = await self._name_hints(utterance)
+        if self.settings.transcription.sends_audio_out:  # billed by the outside company
+            self.pipeline.sent_s_in[utterance.session] += utterance.duration_s
         text = await asyncio.wait_for(
             self.pipeline.transcriber.transcribe(utterance, hints),
             clip_budget_s(utterance.duration_s),
@@ -2059,7 +2062,8 @@ class DMBot(commands.AutoShardedBot):
         if text:
             table.recent.add(utterance.user_id, str(cleaned or text), time.monotonic())
             if self.tables.get(table.guild_id) is table:
-                # Only the DM's own lines can start it; consent was just re-checked.
+                # Only the DM's own lines can start it; consent was just re-checked. Lines
+                # the Cleaner tags as in character are not told apart yet (in_character).
                 self.sidebar.ask_at_table(table, utterance.user_id, str(cleaned or text))
         if text and self._topic_pending(table, utterance, cleaned or text, names_said):
             pass  # held for the off-topic filter: the names scan gets it once labelled

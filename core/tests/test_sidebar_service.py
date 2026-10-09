@@ -332,6 +332,90 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(scene == "" or "Mia: I draw my bow." in scene)
 
 
+class TheRulesStayTrue(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.table = make_table()
+        self.host = FakeHost(tables={GUILD: self.table}, agreed={(GUILD, DM), (GUILD, PLAYER)})
+        self.answerer = FakeAnswerer()
+        self.sidebar = SidebarService(self.host)
+        self.sidebar.answerer = self.answerer
+
+    async def test_someone_who_stopped_being_recorded_is_not_in_the_scene(self) -> None:
+        self.table.recent.add(PLAYER, "I draw my bow.", 100.0)
+        self.table.recent.add(DM, "The goblin ducks.", 101.0)
+        self.table.recent.drop_speaker(PLAYER)  # what stop_recording does
+        await self.sidebar.on_dm_message(dm_message(content="check how grappling works"))
+        self.assertNotIn("bow", self.answerer.asked[0][2])
+        # ...and if the line were still there, someone who no longer agrees is skipped too
+        self.table.recent.add(PLAYER, "Secret plan.", 200.0)
+        self.host.agreed.discard((GUILD, PLAYER))
+        scene = self.table.recent.scene(
+            lambda u: "x", 200.0, lambda u: self.host.has_consent(GUILD, u)
+        )
+        self.assertNotIn("Secret", scene)
+
+    async def test_a_dm_who_stopped_being_dm_while_the_picker_was_open_gets_nothing(self) -> None:
+        other = make_table(OTHER_GUILD, "c2", "Strahd")
+        self.host.tables[OTHER_GUILD] = other
+        self.host.agreed.add((OTHER_GUILD, DM))
+        message = dm_message(content="check how grappling works")
+        await self.sidebar.on_dm_message(message)
+        view = message.channel.send.await_args_list[0].kwargs["view"]
+        other.is_dm = lambda user: False  # a handover happened meanwhile
+        button = next(b for b in view.children if b.label == "Strahd")
+        mine = SimpleNamespace(
+            user=SimpleNamespace(id=DM), response=SimpleNamespace(edit_message=AsyncMock())
+        )
+        await button.callback(mine)
+        self.assertEqual(self.answerer.asked, [])
+        self.assertIn(service.NO_SESSION, sent(message))
+
+    async def test_no_longer_the_dm_after_the_question_was_asked_sends_nothing(self) -> None:
+        self.answerer.gate = asyncio.Event()
+        message = dm_message(content="check how grappling works")
+        task = asyncio.create_task(self.sidebar.on_dm_message(message))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        self.table.is_dm = lambda user: False
+        self.answerer.gate.set()
+        await task
+        self.assertEqual(sent(message), [])
+
+    async def test_a_few_questions_a_minute_in_the_chat(self) -> None:
+        now = [1000.0]
+        self.sidebar._clock = lambda: now[0]
+        messages = [dm_message(content="check how grappling works") for _ in range(8)]
+        for message in messages:
+            await self.sidebar.on_dm_message(message)
+            now[0] += 2
+        self.assertEqual(len(self.answerer.asked), service.CHAT_PER_MINUTE)
+        self.assertEqual(sent(messages[6]), [service.SLOW_DOWN])
+        self.assertEqual(sent(messages[7]), [])  # said once
+        now[0] += 60
+        later = dm_message(content="check how flanking works")
+        await self.sidebar.on_dm_message(later)
+        self.assertEqual(len(self.answerer.asked), service.CHAT_PER_MINUTE + 1)
+
+    async def test_strangers_do_not_make_the_notes_grow_forever(self) -> None:
+        self.host.tables.clear()
+        now = [1000.0]
+        self.sidebar._clock = lambda: now[0]
+        for user in range(5_000, 5_000 + service.NOTE_KEEP + 200):
+            await self.sidebar.on_dm_message(dm_message(user, "hi"))
+        now[0] += 120
+        await self.sidebar.on_dm_message(dm_message(9_999, "hi"))
+        self.assertLess(len(self.sidebar._noted), 10)
+
+    async def test_a_busy_flag_never_sticks_after_a_failure(self) -> None:
+        self.answerer.error = RuntimeError("boom")
+        await self.sidebar.on_dm_message(dm_message(content="check how grappling works"))
+        self.assertEqual(self.sidebar._busy, set())
+        self.answerer.error = None
+        again = dm_message(content="check how grappling works")
+        await self.sidebar.on_dm_message(again)
+        self.assertEqual(sent(again), [FakeAnswer().text])
+
+
 class SeveralGames(unittest.IsolatedAsyncioTestCase):
     async def test_the_dm_picks_which_game_and_only_then_it_goes_on(self) -> None:
         host = FakeHost(

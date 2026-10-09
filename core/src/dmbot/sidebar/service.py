@@ -46,6 +46,10 @@ ANSWER_TIMEOUT_S = 25.0
 SCENE_SECONDS = 180.0
 SCENE_CHARS = 1_200
 RECENT_LINES = 40
+READ_TIMEOUT_S = 30.0
+CHAT_PER_MINUTE = 6  # questions typed or spoken in the DM chat, per DM
+NOTE_KEEP = 1_000
+_DECODING = asyncio.Semaphore(2)
 NOTE_EVERY_S = 30.0  # the same kind of note to the same person, at most this often
 
 NO_SESSION = "No game is running with you as DM. Start one with /dmbot start, then ask again."
@@ -63,6 +67,7 @@ CANT_DM = (
     "(server name, then Privacy Settings), then ask again."
 )
 WHICH = "Which game is this for?"
+SLOW_DOWN = "That's a lot of questions. Try again in a minute."
 TYPE_INSTEAD = "I can only read typed questions and voice messages."
 NOT_YOURS = "This isn't your question."
 TOO_LONG = memo.TOO_LONG
@@ -117,9 +122,21 @@ class Recent:
         if text.strip():
             self.lines.append((now, user_id, text))
 
-    def scene(self, name_of: Callable[[int], str], now: float) -> str:
-        """The last few minutes, newest last, cut to a size the engine can take."""
-        kept = [(u, t) for at, u, t in self.lines if now - at <= SCENE_SECONDS]
+    def drop_speaker(self, user_id: int) -> None:
+        """Someone stopped being recorded: nothing they said is used again."""
+        kept = [item for item in self.lines if item[1] != user_id]
+        self.lines.clear()
+        self.lines.extend(kept)
+
+    def scene(
+        self,
+        name_of: Callable[[int], str],
+        now: float,
+        agreed: Callable[[int], bool] = lambda user_id: True,
+    ) -> str:
+        """The last few minutes, newest last, cut to a size the engine can take. Only
+        people who still agree to be recorded."""
+        kept = [(u, t) for at, u, t in self.lines if now - at <= SCENE_SECONDS and agreed(u)]
         out: list[str] = []
         size = 0
         for user_id, text in reversed(kept):
@@ -138,6 +155,7 @@ class SidebarService:
         self._clock = clock
         self._busy: set[int] = set()  # DMs with a question being answered
         self._noted: dict[tuple[int, str], float] = {}
+        self._asked_at: dict[int, deque[float]] = {}  # per DM: when lately (chat path)
         self._tasks: set[asyncio.Task[None]] = set()
 
     # ---- the DM's chat with DMbot ---------------------------------------------------
@@ -181,8 +199,21 @@ class SidebarService:
             t for t in self.host.tables.values() if t.campaign_id is not None and t.is_dm(user_id)
         ]
 
+    def _chat_ok(self, user_id: int) -> bool:
+        """A few questions a minute in the DM chat: each one can spend speech-to-text and
+        AI money (the spoken trigger has its own one-a-minute limit)."""
+        now = self._clock()
+        recent = self._asked_at.setdefault(user_id, deque(maxlen=CHAT_PER_MINUTE))
+        if len(recent) == CHAT_PER_MINUTE and now - recent[0] < 60.0:
+            return False
+        recent.append(now)
+        return True
+
     def _note_ok(self, user_id: int, kind: str) -> bool:
         now = self._clock()
+        if len(self._noted) > NOTE_KEEP:  # strangers can message DMbot: keep this small
+            self._noted = {k: at for k, at in self._noted.items() if now - at < NOTE_EVERY_S}
+            self._asked_at = {u: d for u, d in self._asked_at.items() if now - d[-1] < 60.0}
         if now - self._noted.get((user_id, kind), -NOTE_EVERY_S) < NOTE_EVERY_S:
             return False
         self._noted[(user_id, kind)] = now
@@ -205,6 +236,10 @@ class SidebarService:
             if self._note_ok(user_id, "busy"):
                 await reply(NOT_SOON_AGAIN)
             return
+        if not self._chat_ok(user_id):
+            if self._note_ok(user_id, "slow"):
+                await reply(SLOW_DOWN)
+            return
         self._busy.add(user_id)
         try:
             heard: str | None
@@ -225,16 +260,22 @@ class SidebarService:
     ) -> str | None:
         """The voice message as text, or None after telling the DM why not."""
         guild_id = table.guild_id
-        if attachment.size > memo.MAX_MEMO_BYTES:
-            await reply(TOO_LONG)
+        length = getattr(attachment, "duration", None)  # Discord says how long it is
+        if attachment.size > memo.MAX_MEMO_BYTES or (length and length > memo.MAX_MEMO_S):
+            await reply(TOO_LONG)  # before downloading anything
             return None
         try:
-            data = await attachment.read()
-            pcm = await asyncio.to_thread(memo.decode, data)
+            data = await asyncio.wait_for(attachment.read(), READ_TIMEOUT_S)
+            async with _DECODING:  # a few at a time: it is CPU work in a shared pool
+                pcm = await asyncio.to_thread(memo.decode, data)
         except memo.MemoError as exc:
             await reply(str(exc))
             return None
-        except (discord.HTTPException, OSError):
+        except (discord.HTTPException, OSError, TimeoutError):
+            await reply(FAILED)
+            return None
+        except Exception:
+            log.exception("Couldn't read a voice message")
             await reply(FAILED)
             return None
         if not self._still(table, user_id):
@@ -319,10 +360,12 @@ class SidebarService:
     # ---- the question, the answer, the lines ------------------------------------------
 
     def _still(self, table: Table, user_id: int) -> bool:
-        """The session is still the one running and the DM still agrees to be recorded."""
+        """The session is still the one running, the asker is still its DM, and still agrees to
+        be recorded."""
         return (
             self.host.tables.get(table.guild_id) is table
             and table.campaign_id is not None
+            and table.is_dm(user_id)
             and self.host.has_consent(table.guild_id, user_id)
         )
 
@@ -345,7 +388,11 @@ class SidebarService:
         if campaign is None or not self._still(table, user_id):
             return
         now = time.monotonic()
-        scene = table.recent.scene(lambda u: self.host.name_of(guild_id, u), now)
+        scene = table.recent.scene(
+            lambda u: self.host.name_of(guild_id, u),
+            now,
+            lambda u: self.host.has_consent(guild_id, u),
+        )
         try:
             answer = await asyncio.wait_for(
                 answerer.answer(campaign, question, scene=scene), ANSWER_TIMEOUT_S
@@ -420,5 +467,8 @@ class _PickButton(discord.ui.Button["_PickView"]):
         table = view._by_id.get(self._campaign_id)
         await interaction.response.edit_message(content=None, view=None)
         view.stop()
-        if table is not None:
-            await view._service._from_message(table, view._message, view._reply)
+        live = table is not None and view._service.host.tables.get(table.guild_id) is table
+        if table is None or not live or not table.is_dm(interaction.user.id):
+            await view._reply(NO_SESSION)
+            return
+        await view._service._from_message(table, view._message, view._reply)
