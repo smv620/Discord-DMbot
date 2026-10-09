@@ -112,7 +112,7 @@ class CaptureLogTests(unittest.TestCase):
         self.assertEqual(
             log.log_line(),
             "Capture check: 2 speaker(s); user 1: 1 x speech, 1.0 s, audio 80% (audio gaps) "
-            "(8 not decrypted, 1 decode errors, 1 dropped on the link); "
+            "(8 not decrypted, 1 decode error, 1 dropped on the link); "
             "user 2: 1 x speech, 1.0 s, audio 100%",
         )
 

@@ -255,6 +255,7 @@ HELP_TEXT = (
     "• `/dmbot names`: the names DMbot listens for (characters, places, NPCs)\n"
     "• `/dmbot optionalrules`: turn optional rules from Xanathar's and Tasha's on or off\n"
     "• `/dmbot houserules`: see this campaign's house rules (its DM adds, edits and removes them)\n"
+    "• `/dmbot rule`: look up a spell, condition or creature in the free rules (the DM only)\n"
     "• `/transcript`: download what was said in a session (anyone in the server)\n"
     "• `/dmbot backup`: download a complete copy of a campaign (anyone can)\n"
     "• `/dmbot restore`: bring a campaign back from a copy\n"

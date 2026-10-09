@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-09 by dev1 (core 0c2c5ca live; admin page works; Test D next)
+Last updated: 2026-10-09 by dev1 (core and ears 010bd65 live; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,12 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting) Still open on development, not merged: #914 (audio health counts).
+(nothing waiting)
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core 0c2c5ca (2026-10-09 16:28 UTC, migrations through 0033), ears e299bfc build, web-api
+core and ears 010bd65 (2026-10-09 17:05 UTC; core since 16:28 with migrations through 0033), web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
 website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS is empty. The app stays
@@ -24,7 +24,7 @@ private (no install link) until the website launches.
 NEXT TEST: Test D, no false ⚠️ with a TV on (docs/next-test-step.md)
 ------------------------------------------------------------------------------
 Needs the owner, one person, ~3 minutes. Covers #697 and #718 (the audio warning reads
-the transcript first). Result goes in the history log; then the next small test below.
+the transcript first); run it with DMBOT_DEBUG_AUDIO=1 so #914's counts show (check below). Result goes in the history log; then the next small test below.
 
 SMALL TESTS AFTER THAT (one at a time; each one's "Check:" note is in the history log,
 entry "Status log as it stood before it was trimmed"):
@@ -35,7 +35,9 @@ entry "Status log as it stood before it was trimmed"):
   6. Plain words when something breaks (#637); /dmbot start with ears stopped (#659).
   7. Backup and restore (#879); one PDF (#630); character sheets (#740, #781).
   8. The hours meter records a session (#883, #909; plans off): numbers only.
-  9. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
+  9. #914 (audio health counts, with Test D): `audio user=...` lines show decrypt_failed=,
+     decode_errors=, link_dropped=; `Capture check:` names the cause when audio went missing.
+ 10. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
 
 ------------------------------------------------------------------------------
 LATEST RESULTS

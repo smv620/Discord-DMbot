@@ -11,7 +11,7 @@
 **Why:** on Oct 8 a TV in the room set off DMbot's ⚠️ warning even though everything you said was written down. DMbot now reads the transcript before it warns. Check that a noisy room gives no false alarm.
 
 ### Before you start
-- **dev1 must update DMbot first.** Check that dev1 has said the update is done.
+- DMbot is up to date (dev1 updated it on Oct 9 at 16:28 UTC).
 - Turn on a TV (or music with talking) in the room, at a normal volume.
 - DMbot may ask you to agree to recording again after the update. If it does, press **I consent**.
 - Tell dev1 you're starting, so it can watch from its side.

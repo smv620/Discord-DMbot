@@ -19,6 +19,7 @@ page, and, for older content, its edition tag.
 
 from __future__ import annotations
 
+import difflib
 import functools
 import json
 import re
@@ -33,6 +34,7 @@ from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.rules import aliases
 
 DATA = Path(__file__).resolve().parent / "data"
+SUGGEST_CUTOFF = 0.7  # how alike two names must be to be offered as "did you mean"
 LEGACY = "2014"  # the edition whose content is always tagged legacy; update when a newer
 # edition ships (then 2024 becomes legacy too, and gets its own tag)
 
@@ -114,6 +116,7 @@ class Hit:
     tag: str  # "" for the target ruleset's own; "[Legacy 2014]" for an older one
     found_as: str  # the key that matched, which may be an older name
     via_alias: bool = False  # found by a name the newest edition renamed it from
+    from_fallback: bool = False  # the target ruleset had nothing: found in the fallback
 
     @property
     def citation(self) -> str:
@@ -139,6 +142,7 @@ class Index:
         self.entries: tuple[Entry, ...] = tuple(entries)
         self._by_edition: dict[str, dict[str, list[Entry]]] = {}
         self._alias_keys: set[tuple[str, str]] = set()  # (edition, key) added by an alias
+        self._pools: dict[tuple[str, str], tuple[dict[str, Entry], list[str]]] = {}
         for entry in self.entries:
             self._add(entry.edition, normalize(entry.name), entry)
             if entry.kind == "monster":
@@ -180,8 +184,74 @@ class Index:
                 for entry in self._by_edition.get(edition, {}).get(found_as, []):
                     if kind is None or entry.kind == kind:
                         tag = edition_tag(edition, from_fallback=from_fallback)
-                        return Hit(entry, tag, found_as, (edition, found_as) in self._alias_keys)
+                        via_alias = (edition, found_as) in self._alias_keys
+                        return Hit(entry, tag, found_as, via_alias, from_fallback)
         return None
+
+    def _pool(self, target: str, fallback: str) -> dict[str, Entry]:
+        """Every name an entry is found by (in the target ruleset, then the fallback) and
+        the entry it leads to; a name in both editions leads to the target's."""
+        cached = self._pools.get((target, fallback))
+        if cached is None:  # the index never changes, so the answer can be kept
+            pool: dict[str, Entry] = {}
+            for edition in (target, fallback):
+                if edition == FALLBACK_NONE:
+                    continue
+                for key, entries in self._by_edition.get(edition, {}).items():
+                    pool.setdefault(key, entries[0])
+            cached = (pool, sorted(pool))
+            self._pools[(target, fallback)] = cached
+        return cached[0]
+
+    def _sorted_keys(self, target: str, fallback: str) -> list[str]:
+        self._pool(target, fallback)
+        return self._pools[(target, fallback)][1]
+
+    def suggest(
+        self, typed: str, target: str, fallback: str = FALLBACK_NONE, *, limit: int = 5
+    ) -> list[Entry]:
+        """Entries whose names are close to what was typed, never more than `limit`: the ones
+        it begins ("fireb" for Fireball), then the ones spelled nearly the same. Only to
+        suggest ("Did you mean..."): nothing here is a match, and nothing is picked."""
+        key = normalize(typed)
+        if not key:
+            return []
+        pool = self._pool(target, fallback)
+        begins = sorted(k for k in pool if k.startswith(key))
+        near = difflib.get_close_matches(key, list(pool), n=limit * 3, cutoff=SUGGEST_CUTOFF)
+        found: list[Entry] = []
+        seen: set[int] = set()  # the pool's entries are shared: who they are is enough
+        for k in [*begins, *near]:
+            entry = pool[k]
+            if id(entry) not in seen:
+                seen.add(id(entry))
+                found.append(entry)
+            if len(found) == limit:
+                break
+        return found
+
+    def typeahead(
+        self, typed: str, target: str, fallback: str = FALLBACK_NONE, *, limit: int = 25
+    ) -> list[Entry]:
+        """Entries for a name being typed: names that begin with it first, then names with
+        a word that begins with it, the target ruleset's before the fallback's, each group
+        in alphabetical order. With nothing typed, the target ruleset's first names."""
+        key = normalize(typed)
+        pool = self._pool(target, fallback)
+        keys = self._sorted_keys(target, fallback)
+        if key:
+            begins = [k for k in keys if k.startswith(key)]
+            starts = set(begins)
+            keys = begins + [k for k in keys if k not in starts and f" {key}" in f" {k}"]
+        found: list[Entry] = []
+        seen: set[int] = set()
+        for k in keys:
+            entry = pool[k]
+            if id(entry) not in seen:
+                seen.add(id(entry))
+                found.append(entry)
+        found.sort(key=lambda e: e.edition != target)  # stable: the target's names first
+        return found[:limit]
 
     def names(self, kind: str, edition: str) -> list[str]:
         """The names of that edition's entries of that kind, in order."""
