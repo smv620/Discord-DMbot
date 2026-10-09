@@ -155,6 +155,31 @@ class WebRole(DatabaseTest):
             cur = await conn.execute("SELECT name FROM campaigns")
             self.assertEqual([r["name"] for r in await cur.fetchall()], [self.hidden.name])
 
+    async def test_the_pause_policies_are_not_open_to_it(self) -> None:
+        # #957: the setting that opens `campaigns` for the pause function is one any session
+        # can set, so the policies it opens must be for the bot's role only.
+        session = await self.alice()
+        async with self.web.user(session.user_id, session=session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.owner_sync', 'pause', true)")
+            cur = await conn.execute("SELECT name FROM campaigns")  # no server chosen
+            self.assertEqual(await cur.fetchall(), [])
+            cur = await conn.execute("UPDATE campaigns SET paused = TRUE RETURNING id")
+            self.assertEqual(await cur.fetchall(), [])
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT policyname, roles, cmd FROM pg_policies WHERE schemaname ="
+                " current_schema() AND policyname IN ('pause_read', 'pause_by_owner')"
+                " ORDER BY policyname"
+            )
+            rows = await cur.fetchall()
+        self.assertEqual(
+            [(r["policyname"], r["cmd"]) for r in rows],
+            [("pause_by_owner", "UPDATE"), ("pause_read", "SELECT")],
+        )
+        for row in rows:
+            self.assertNotIn(schema.WEB_ROLE, list(row["roles"]))
+            self.assertNotIn("public", list(row["roles"]))
+
     async def test_its_limits_apply_to_it_and_never_to_the_bot(self) -> None:
         async with self.db.unscoped() as conn:
             cur = await conn.execute(

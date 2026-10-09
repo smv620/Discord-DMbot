@@ -1261,9 +1261,24 @@ PAUSE = """
     -- opens `campaigns` to itself for this one person only, through a setting it sets and puts
     -- back. A guard against code that does this by mistake, not against a hostile process. Only
     -- the bot's role may call it (not the website's).
-    CREATE POLICY pause_by_owner ON campaigns
-        USING (dmbot_owner_sync() = 'pause' AND owner_user_id = dmbot_current_user())
-        WITH CHECK (dmbot_owner_sync() = 'pause' AND owner_user_id = dmbot_current_user());
+    -- Opens `campaigns` to the pause function only: TO the role that owns the function
+    -- (the one running this migration), never the website's role, which could otherwise
+    -- set the setting itself and read every campaign a person owns in every server.
+    -- SELECT and UPDATE only: it can't insert or delete.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY pause_read ON campaigns FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''pause'' AND owner_user_id = dmbot_current_user())',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY pause_by_owner ON campaigns FOR UPDATE TO %I
+                USING (dmbot_owner_sync() = ''pause'' AND owner_user_id = dmbot_current_user())
+                WITH CHECK (dmbot_owner_sync() = ''pause''
+                            AND owner_user_id = dmbot_current_user())',
+            current_user);
+    END
+    $do$;
     CREATE FUNCTION dmbot_pause_over_cap(keep INTEGER, live TEXT[] DEFAULT '{}')
         RETURNS TABLE (campaign_id TEXT, server_id BIGINT, campaign_name TEXT)
         LANGUAGE plpgsql SECURITY DEFINER
@@ -1498,7 +1513,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0033_usage_grace", USAGE_GRACE),
     ("0034_owner_campaigns", OWNER_CAMPAIGNS),
     ("0035_rules_cards", RULES_CARDS),
-    ("0036_pause", PAUSE),
+    ("0037_pause", PAUSE),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

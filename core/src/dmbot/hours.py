@@ -10,6 +10,7 @@ what a person may do, and the usage table (a later slice) holds what they have u
 from __future__ import annotations
 
 import calendar
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -218,6 +219,23 @@ PAUSE_WAY = (
 PAUSED_OWNER = (
     "This campaign is paused. Open ⚙️ Settings and press ▶️ **Unpause**. Everything in it is kept."
 )
+
+
+def md_escape(text: str) -> str:
+    """Keeps a campaign's name from changing how a message looks (hours.py has no Discord
+    import, so this is the same backslash-escape discord.py does)."""
+    return re.sub(r"([\\*_`~|>\[\]()#-])", r"\\\1", text)
+
+
+def paused_resume(name: str) -> str:
+    """Posted on the DM screen when a restart finds a saved session on a campaign that was
+    paused meanwhile: DMbot doesn't start listening again (#957)."""
+    return (
+        f"**{md_escape(name)}** is paused, so DMbot did not start listening again after its "
+        "restart. Its owner can open ⚙️ Settings and press ▶️ **Unpause**, then press Start."
+    )
+
+
 PAUSED_OTHER = "This campaign is paused. Ask its owner to unpause it, then press Start again."
 
 

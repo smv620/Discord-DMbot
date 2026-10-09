@@ -241,7 +241,7 @@ class SettlingTheCap(PauseTest):
         self.assertEqual(await self.paused_ids(ALICE), {a.id})
 
 
-class BotSide(PauseTest):
+class BotTest(PauseTest):
     SITE = "https://dmbot.example"
 
     async def asyncSetUp(self) -> None:
@@ -259,6 +259,8 @@ class BotSide(PauseTest):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+
+class BotSide(BotTest):
     async def test_a_paused_campaign_cannot_start_and_the_words_name_the_button(self) -> None:
         await self.give_plan(ALICE, 2)
         a = await self.make(GUILD_A, "One", ALICE)
@@ -341,3 +343,83 @@ class BotSide(PauseTest):
         with self.assertRaises(CampaignError):
             await self.bot.set_paused(GUILD_A, a.id, ALICE, True)
         self.assertEqual(await self.paused_ids(ALICE), set())
+
+
+class PauseButtonAndResume(BotTest):
+    async def test_the_button_only_goes_to_the_owner(self) -> None:
+        from dmbot.dm_screen.pause import PauseButton, pause_buttons
+
+        await self.give_plan(ALICE, 2)
+        a = await self.make(GUILD_A, "One", ALICE)
+        await self.store.add_dm(GUILD_A, a.id, BOB)
+        campaign = cast(Campaign, await self.store.get(GUILD_A, a.id))
+        self.assertEqual([type(b) for b in pause_buttons(campaign, ALICE)], [PauseButton])
+        self.assertEqual(pause_buttons(campaign, BOB), [])  # a co-DM
+        self.assertEqual(pause_buttons(campaign, CAROL), [])
+
+    async def _press(self, user_id: int, campaign: Campaign, *, paused: bool) -> AsyncMock:
+        from dmbot.dm_screen.pause import PauseButton
+
+        followup = AsyncMock()
+        interaction = SimpleNamespace(
+            guild=SimpleNamespace(id=GUILD_A),
+            guild_id=GUILD_A,
+            user=SimpleNamespace(id=user_id),
+            client=self.bot,
+            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+            followup=SimpleNamespace(send=followup),
+            edit_original_response=AsyncMock(),
+        )
+        button = PauseButton(campaign.id, paused=paused)
+        await button.callback(cast(Any, interaction))
+        return followup
+
+    async def test_a_button_left_in_a_co_dms_hands_changes_nothing(self) -> None:
+        await self.give_plan(ALICE, 2)
+        a = await self.make(GUILD_A, "One", ALICE)
+        campaign = cast(Campaign, await self.store.get(GUILD_A, a.id))
+        followup = await self._press(BOB, campaign, paused=False)
+        followup.assert_awaited_once()
+        self.assertIn("Only the campaign's owner", cast(Any, followup.await_args).args[0])
+        self.assertEqual(await self.paused_ids(ALICE), set())
+
+    async def test_listening_means_stop_it_first(self) -> None:
+        await self.give_plan(ALICE, 2)
+        a = await self.make(GUILD_A, "One", ALICE)
+        campaign = cast(Campaign, await self.store.get(GUILD_A, a.id))
+        self.bot.tables[GUILD_A] = cast(Any, SimpleNamespace(campaign_id=a.id))
+        followup = await self._press(ALICE, campaign, paused=False)
+        self.assertIn("listening to this campaign", cast(Any, followup.await_args).args[0])
+        self.assertEqual(await self.paused_ids(ALICE), set())
+
+    async def test_the_owner_pauses_with_the_button(self) -> None:
+        await self.give_plan(ALICE, 2)
+        a = await self.make(GUILD_A, "One", ALICE)
+        campaign = cast(Campaign, await self.store.get(GUILD_A, a.id))
+        await self._press(ALICE, campaign, paused=False)
+        self.assertEqual(await self.paused_ids(ALICE), {a.id})
+
+    async def test_a_restart_does_not_bring_a_paused_campaign_back(self) -> None:
+        await self.give_plan(ALICE, 2)
+        a = await self.make(GUILD_A, "One", ALICE)
+        await self.store.set_paused(GUILD_A, a.id, ALICE, True, NOW)
+        paused = cast(Campaign, await self.store.get(GUILD_A, a.id))
+        guild = SimpleNamespace(id=GUILD_A)
+        saved = SimpleNamespace(started_at=NOW, screen_channel_id=1, voice_channel_id=2)
+        posted: list[str] = []
+
+        async def post(channel_id: int, text: str, **_: object) -> None:
+            posted.append(text)
+
+        clear = AsyncMock()
+        with (
+            patch.object(self.bot, "_usable_screen", return_value=1),
+            patch.object(self.bot, "post", side_effect=post),
+            patch.object(self.bot.sessions, "clear", clear),
+        ):
+            started = await self.bot._resume_campaign(cast(Any, guild), cast(Any, saved), paused)
+        self.assertFalse(started)
+        clear.assert_awaited_once()
+        self.assertIn("paused", cast(Any, clear.await_args).args[1])
+        self.assertEqual(posted, [hours.paused_resume("One")])
+        self.assertIn("▶️ **Unpause**", posted[0])
