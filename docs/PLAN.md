@@ -324,9 +324,14 @@ punctuation or apostrophes, and the 19 spells the 2024 books renamed are also fo
 their 2014 names (`rules/aliases.py`, each with a comment; Feeblemind and Branding Smite
 included). `lookup(name, target, fallback)` tries the target ruleset, then the fallback;
 a fallback hit is tagged (`[Legacy 2014]` for 2014 content). An older entry is used only
-when no newer one matches any name. The 2014 SRD 5.1 (also CC-BY-4.0) is not loaded yet:
-the index takes more data folders with their own edition, and filing that is the
-follow-up (#873). Not built: the rules advisor that uses it.
+when no newer one matches any name. The 2014 SRD 5.1 (also CC-BY-4.0) is loaded
+the same way, as the legacy fallback: all 319 of its spells and its 15 conditions in
+`rules/data/srd51/`, with its own `ATTRIBUTION.md` (#873). Only Feeblemind and Branding
+Smite are in 5.1 and not in 5.2.1, and they are found as their renamed 2024 spells first.
+The 5.1 PDF's text layer is rougher (cut words, a few lost words): the tool repairs cut
+words only with words the SRD itself uses, never edits by hand, and `ATTRIBUTION.md` says
+that one lost word (a stray letter in Animal Friendship, named there) remains. Not built: the rules advisor that
+uses it.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
