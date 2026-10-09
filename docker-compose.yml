@@ -111,6 +111,8 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       # Free access (#771): the owner's own Discord ids, as the bot reads them.
       DMBOT_FREE_USERS: ${DMBOT_FREE_USERS:-}
+      # The same switch as the bot's: the site's hand-over accept checks the campaign cap too.
+      DMBOT_ENFORCE_PLANS: ${DMBOT_ENFORCE_PLANS:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     expose:

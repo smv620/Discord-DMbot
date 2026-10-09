@@ -240,7 +240,7 @@ than in separate volumes.
 | 3 | **Rules advisor + house rules**: alerts with ✅ Agree / 🙈 Ignore / ⚖️ Override, house rules by voice with DM approval, `/dmbot houserules` | Uses the rules hierarchy below |
 | 4 | **TimeBot**: game clock, effect durations, rests, dawn/noon/dusk, split-party clocks | |
 | 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only. *Split (decided 2026-10-06, docs/STORY_MEMORY.md):* 5a claims, state facts and the first continuity warnings · 5b NPC tracker, who knows what, hierarchical reputations · 5c PlotBot: threads, promises, summaries, pre-session note · 5d the Shared story switch |
-| 6 | **DM sidebar**: voice messages to DMbot, marked `[DM Sidebar Discussion]` | No install needed |
+| 6 | **DM sidebar**: quick, very short AI answers for the DM, by voice memo or by asking out loud at the table; tagged `[DM Sidebar]` in the raw transcript only (owner, 2026-10-09) | No install needed; being built early, after the rules lookup |
 | 7 | **Google Drive** (house-rules doc mirror) and **character data** from D&D Beyond links | |
 | later | Paid service billing (owner's key, per-server metering); D&D Beyond companion extension; optional DM hotkey helper | |
 
@@ -577,7 +577,7 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 **Transcripts vs. the DM screen (decided 2026-10-04).**
 | Content | Who sees it |
 |---|---|
-| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons, DM sidebar messages and all other DM-screen content never appear in the transcript channel or a transcript. |
+| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons and all other DM-screen content never appear in the transcript channel or a transcript. The DM sidebar is the one exception (owner, 2026-10-09): its lines go into the raw transcript, tagged, and never the cleaned one; who may read them is #933. |
 | **DM screen** (rules alerts, house-rule prompts, NPC and plot notes) | The DM, plus players only as the campaign's **DM-screen visibility** allows (below). The bot never *sends* DM-screen content to players. |
 
 **DM-screen visibility (decided 2026-10-04).** Each campaign's DM picks one; if none is
@@ -882,8 +882,9 @@ plus the list of fixes between them.
 **Transcript format (decided 2026-10-04).** One line per utterance:
 `[timestamp] (Discord name) {entity}: text`, where `{entity}` is the in-game character,
 an NPC or other in-game entity, `{narrating}` for the DM, `{table_talk}`, or
-`{non-game_content}`. DM voice messages to the bot are DM-screen content: they appear
-only in the DM screen, marked `[DM Sidebar Discussion]`, **never in a transcript**.
+`{non-game_content}`. DM sidebar lines (2026-10-09, see "DM sidebar") go into the raw
+transcript only, tagged `[DM Sidebar]`, with DMbot's in-game replies under `DMbot`; never
+into the cleaned transcript.
 - **Off-topic talk (decided 2026-10-05, #52):** in the **cleaned** transcript, talk that
   is clearly unrelated (not the campaign, D&D, rules or table talk) is replaced by one
   line saying how long it was: `[timestamp] (Discord name) [1m 22s of off-topic chat
@@ -1625,11 +1626,41 @@ background.
   far ahead of the other.
 - The DM can correct the clock with buttons ([+1 hour] [It's dawn] [Set time…]).
 
-**DM sidebar (decided 2026-10-04).** A Discord bot can't watch for key presses, and
-muting in Discord stops audio to everyone including the bot. So the DM sends a **voice
-message in their DM conversation with DMbot** (hold the mic button, speak, release).
-DMbot transcribes it, answers in the DM screen, and logs it there as
-`[DM Sidebar Discussion]`. The table never hears it, and it never goes into a transcript. An optional hotkey helper app for the DM's PC may come later.
+**DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
+DMbot is there to help the game move quickly, never to bog it down or distract. The
+sidebar is the DM's shortcut to an AI that knows this campaign and knows DMbot, so the
+table isn't left waiting while the DM looks something up.
+- **Two ways in.**
+  1. **A voice memo:** while the table plays, the DM mutes in the voice channel and holds
+     the mic button in their private chat with DMbot (Discord's voice messages; on a
+     computer, where Discord has no voice messages, they type the question there instead).
+  2. **Said out loud at the table:** the DM says they need to look something up ("hold on,
+     I need to find if you need line of sight for fireball"). Only the campaign's DM's own
+     lines start this, and only a clear "I need to find / look up / check" request.
+- **Heard like everything else:** a memo goes through the same speech-to-text and the same
+  name fixing (the campaign's names list) as table speech. Only from a DM who has agreed to
+  be recorded; a DM who hasn't is asked to agree first.
+- **What the AI knows:** everything about this one campaign (campaign memory, transcripts,
+  house rules, homebrew, the scene so far, content the DM shared with the right-to-use
+  confirmation), the rules in the hierarchy below (house rules → homebrew → target →
+  fallback), and how DMbot itself works (DMbot's public documentation from its repository,
+  shipped with each build). Never another campaign's or server's data (isolation rule).
+- **Answers are as short as possible.** If "yes" or "no" answers it accurately, that is
+  the answer. No elaborating unless the DM asks. Example: "Fireball has no sight
+  requirement: its origin is 'a point you choose within range'." The full spell text (and
+  a link to read it outside Discord) comes only when asked for ("I need the spell
+  description"). Rules answers still carry their source and how sure DMbot is, in a few
+  words.
+- **Only on topic:** the campaign, the game's rules and content, DMbot itself, and Discord
+  mechanics. Anything else gets one short line saying it can't help with that here.
+- **Where answers go:** privately, in the DM's chat with DMbot, never in a public
+  channel.
+- **Transcripts:** the DM's sidebar lines are added to the **raw** transcript with the tag
+  `[DM Sidebar]`, and DMbot's replies about in-game content are added under the speaker
+  name `DMbot`. Both are always kept out of the **cleaned** transcript. Who can read those
+  raw lines: see the open question on #933 (until it is answered, they are in the DM's own
+  raw download only, never in the live transcript channel or a player's download).
+- **Cost:** every answer spends AI tokens, so it goes through `can_use_ai` (#919).
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
@@ -1738,9 +1769,29 @@ plan or payment, since co-DMs read the screen. The grace is the owner's: it is s
 their total across all their campaigns, and a campaign handed over mid-grace gives the new
 owner their own grace on their own hours. A stop that comes in between the minutes being
 written and the grace being given never spends the grace. All of it only when
-`DMBOT_ENFORCE_PLANS` is on. *2c (decided with Supervisor):* the campaign count, in an owner-scoped
-table kept in step by a trigger on `campaigns`, since a person's campaigns span servers;
-"paused" waits for the downgrade part. All of 2b acts only when
+`DMBOT_ENFORCE_PLANS` is on. *2c, the campaign cap (decided with Supervisor, 2026-10-09):* the count is
+read from `owner_campaigns` (`owner_user_id` and `campaign_id` only: no server, no name;
+scoped to the owner like `owner_hours`; no grant on the table for the website's role), because a person's campaigns span servers and `campaigns` is isolated per
+server. A `SECURITY DEFINER` trigger on `campaigns` (fixed `search_path`, nothing but one
+insert, delete or move) keeps it in step through create, restore, hand-over, delete and a
+server's data being removed; the migration backfills it, opening the tables it touches for
+itself. It is owner-level data, so it is not in a backup: a restore rebuilds it through the
+trigger (which refuses `TRUNCATE campaigns`, since a row trigger would not see it: bulk
+removal uses `DELETE`). The only way to read the count is `dmbot_owned_campaigns()`, a
+`SECURITY DEFINER` function (fixed `search_path`, no argument, EXECUTE for the bot's role and
+the website's only) that returns the number for the person set in the transaction and nothing
+else; the bot sets that person for one read only, through `dmbot.campaign_cap`, and the person
+switch itself is private to `dmbot.entitlements`. One function (`dmbot.campaign_cap`) counts
+for every check: `/dmbot start` refuses an owner who owns more campaigns than the plan covers
+("Your plan covers 2 campaigns, and you have 3. To start this one, pause one or change your
+plan", the cap from `plans.json`; the change-plan offer only for a plan that can change, and
+anyone but the owner only hears "ask the owner"); **making a new campaign past the cap is
+refused too** (same words, "To make a new one", so a third campaign never locks the first two
+out; someone with no plan yet may still make one, to start once they pick a plan); a hand-over,
+a take-over and a restore each need room for one more, **on the website as well** (the web
+API reads `DMBOT_ENFORCE_PLANS` like the bot, and its accept counts through the same
+function). Every owned campaign
+counts for now; "paused" waits for the downgrade part (a column is added then). All of 2b acts only when
 `DMBOT_ENFORCE_PLANS` is on (default off; the meter records either way), which dev1 turns
 on with the website's go-live (#498) and notes in the testing log. The refusal for a plan
 that has ended says "Your plan has ended. Pick one here: <WEB_SITE_URL>/account" (or "Pick
@@ -1767,25 +1818,43 @@ labels lines inside a session is covered by the start check); the story-memory a
 rules-advisor AI calls will call it when they exist. **`can_backup`:** true for a paid plan other
 than Try It, a grant or the free list (`backups` in `plans.json`), false for Try It, an ended plan
 and no owner. It guards `/dmbot backup`, every transcript download (`/transcript`, the
-end-of-session button, "as heard too") and **restore**, where it is judged on the *restorer's own*
-plan, since they become the owner; the free slot is the store's check (`restore_needs_slot`, 2c).
-Both are read through the meter door (the owner's plan, scoped to the owner), so the whole table
-stops or goes together. A refusal is private to the person who pressed: the owner (or the
-restorer) hears "Your plan has ended. Pick one here: <WEB_SITE_URL>/account" or, for Try It,
-"Copies and transcripts come with a paid plan. Pick one here: ..."; anyone else, a co-DM
-included, is told only to ask the campaign's owner, never anything about the plan. A refused
-Find names leaves the menu in place (so "Add the lines that fit" still works) and records no
-right-to-use confirmation, because nothing was read. Only when `DMBOT_ENFORCE_PLANS` is on; a
-database hiccup, or one slower than 2 seconds (a button must be answered within Discord's
-3), lets the action through, like the start check. A campaign with no owner has no plan, so it
+end-of-session button, "as heard too") and **restore**. Restore is judged on whose campaign it
+makes: a copy loaded as a *new* campaign makes the restorer its owner, so it is the *restorer's
+own* plan that has to include copies (and the free slot is the store's check, `restore_needs_slot`);
+a copy loaded *over* a campaign keeps that campaign's owner (#609), so it is the *owner's* plan
+that counts, and a co-DM with no plan may restore their paid owner's campaign. The check is made
+when the choice is made, since that is when it is known, after "Restoring…" has answered Discord.
+Both rules are read through the meter door (the owner's plan, scoped to the owner), so the whole
+table stops or goes together. A refusal is private to the person who pressed, and names what they
+pressed. The owner (or the restorer) hears, for an ended plan, "Your plan has ended, so DMbot
+can't <make copies | send transcripts | find names with its AI | load copies>. Pick one here:
+<WEB_SITE_URL>/account" (the same first words as the hours refusal; the data cannot tell an ended
+plan from one never had); for Try It, "Try It campaigns can't make copies or transcripts. A paid
+plan can. See plans here: <WEB_SITE_URL>/account", or when loading a copy "Nothing was loaded.
+Loading a copy needs a paid plan. Pick one here: ...". Anyone else, a co-DM included, is told
+only "<Copies of this campaign aren't available | Transcripts aren't available for this
+campaign | Finding names with DMbot's AI isn't available for this campaign | Loading a copy isn't
+available>. Ask the campaign's owner to take a look.", never anything about the plan. A campaign
+with no owner is told "This campaign has no owner yet. One of its DMs needs to press **Take it
+on** on the campaign's card in the DM screen first." A refused Find names answers Discord first,
+leaves the menu in place (so "Add the lines that fit" still works), does not count against the
+day's reads, and records no right-to-use confirmation, because nothing was read. Only when
+`DMBOT_ENFORCE_PLANS` is on; a database hiccup, or one slower than 2 seconds, lets the action through, like the start check. A campaign with no owner has no plan, so it
 has no copies or AI until a DM takes it on (the issue's rule; a player is told a DM must).
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
 names, later story memory and rules lookups), plus backup, restore and transcript
 download (paid campaigns only; restoring needs a subscriber with a free slot, who becomes
-the owner). Two different waits: the 7-day payment grace is a plan rule (a failed payment
-leaves 7 days to fix it); separately, a paid plan keeps working up to 3 days past its
+the owner). **Campaign cap (decided 2026-10-09, #927):** with `DMBOT_ENFORCE_PLANS` on, making
+a campaign beyond the plan's cap is refused (same plain words and offers as the start
+refusal, "Your plan covers N campaigns, and you have M"), so one extra campaign can never
+lock the owner out of the ones that fit; the count is one owner-scoped table
+(`owner_campaigns`) read through one narrow function, by the bot and the website alike.
+Two different waits: the 7-day payment grace is a plan rule (a failed payment
+leaves 7 days to fix it), **and only for an account that has paid successfully before**
+(owner, 2026-10-09, #498, #922): a failed first payment gets no grace, the plan simply
+doesn't start; separately, a paid plan keeps working up to 3 days past its
 period end while the payment company's renewal arrives (a technical guard against a late
 webhook, not a plan rule; Try It ends exactly at its 30 days). Warnings on the DM screen
 at 80% and 90% of the hours (decided 2026-10-09, #897: they name only the hours left,
@@ -1935,11 +2004,15 @@ ones.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
-email guilds`); payments through a merchant-of-record hosted checkout (Paddle or Lemon
-Squeezy, owner's choice) with its customer portal for plan changes; the API is FastAPI in
+email guilds`); payments through a merchant-of-record hosted checkout, **Lemon Squeezy** (owner's
+choice, 2026-10-09, #498) with its customer portal for plan changes; the API is FastAPI in
 `core/src/dmbot/web/`, its own container, the only writer of the `entitlements` table via
 the provider's webhook. No D&D or Wizards trademarks or art: "for 5e-compatible tabletop
-games". Terms, privacy and refund pages before launch. Settings stay in Discord for now;
+games". Terms, privacy and refund pages before launch: **signed off by the owner on
+2026-10-09, which is their effective date** (#498). Also approved for go-live that day:
+rate limits at the proxy, the separate `dmbot_web` database role, and Cloudflare in front
+of the API. The Discord app stays private until the rest of #498 is done and the owner
+says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
 **Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
 Feedback and Ask a question, posted by the web API as GitHub Discussions in this

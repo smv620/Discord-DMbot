@@ -635,6 +635,10 @@ class AIOffer(_Menu):
         self.add_item(_Button(self._cancel, label="Cancel", style=grey))
 
     async def _read(self, interaction: discord.Interaction) -> None:
+        # Answer Discord first (#88, #351): the plan check below is a database read with a
+        # limit of its own, and the three seconds Discord gives are not ours to spend. Every
+        # reply after this is a private follow-up or an edit of this message.
+        await interaction.response.defer()
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
             return
@@ -666,7 +670,7 @@ class AIOffer(_Menu):
             del _ai_reads[old]  # only today counts
         _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
         try:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for "
                 "a long document.",
                 view=None,

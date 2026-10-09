@@ -250,7 +250,10 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
         it: Any = SimpleNamespace(
             guild=SimpleNamespace(id=GUILD),
             user=SimpleNamespace(id=DM),
-            client=SimpleNamespace(campaigns=SimpleNamespace(create=create)),
+            client=SimpleNamespace(
+                campaigns=SimpleNamespace(create=create),
+                create_refusal=AsyncMock(return_value=None),
+            ),
         )
         with patch.object(cmds, "show_voice_step", AsyncMock()):
             await view._create(it)
@@ -264,6 +267,22 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
                 "dm_screen_level": "quiet",
             },
         )
+
+    async def test_create_is_refused_past_the_plans_campaign_cap(self) -> None:
+        view = cmds.NewCampaignSettings("Frostmaiden")
+        create = AsyncMock()
+        it = fake_interaction(
+            SimpleNamespace(  # type: ignore[arg-type]
+                campaigns=SimpleNamespace(create=create),
+                create_refusal=AsyncMock(
+                    return_value="Your plan covers 2 campaigns, and you have 2."
+                ),
+            )
+        )
+        await view._create(it)
+        create.assert_not_awaited()  # nothing is made, and the form stays up
+        self.assertIn("Your plan covers 2 campaigns", it.response.sent[0][0])
+        self.assertFalse(view.is_finished())
 
 
 class AnswerBeforeTheLock(unittest.IsolatedAsyncioTestCase):
@@ -329,7 +348,10 @@ class RestoreEndsWithAnOutcome(unittest.IsolatedAsyncioTestCase):
             "session_lock": lambda _gid: asyncio.Lock(),
             "is_campaign_playing": AsyncMock(return_value=False),
             "restore_gate": AsyncMock(return_value=None),
-            "campaigns": SimpleNamespace(import_backup=AsyncMock(return_value=MagicMock())),
+            "campaigns": SimpleNamespace(
+                import_backup=AsyncMock(return_value=MagicMock()),
+                get=AsyncMock(return_value=None),
+            ),
         }
         bot = SimpleNamespace(**{**defaults, **bot_kw})
         it = fake_interaction(bot)  # type: ignore[arg-type]
@@ -356,11 +378,17 @@ class RestoreEndsWithAnOutcome(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text, cmds.RESTORE_FAILED)
 
     async def test_a_damaged_backup(self) -> None:
-        bad = SimpleNamespace(import_backup=AsyncMock(side_effect=CampaignError("damaged")))
+        bad = SimpleNamespace(
+            import_backup=AsyncMock(side_effect=CampaignError("damaged")),
+            get=AsyncMock(return_value=None),
+        )
         self.assertEqual(await self.restore_with(campaigns=bad), "damaged")
 
     async def test_an_unexpected_error(self) -> None:
-        broken = SimpleNamespace(import_backup=AsyncMock(side_effect=RuntimeError("db")))
+        broken = SimpleNamespace(
+            import_backup=AsyncMock(side_effect=RuntimeError("db")),
+            get=AsyncMock(return_value=None),
+        )
         with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
             text = await self.restore_with(campaigns=broken)
         self.assertEqual(text, cmds.RESTORE_FAILED)

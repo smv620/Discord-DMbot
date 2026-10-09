@@ -394,6 +394,10 @@ class NewCampaignSettings(_Menu):
         if guild is None:
             await _tell(interaction, NOT_IN_SERVER)
             return
+        refused = await _bot(interaction).create_refusal(guild.id, interaction.user.id)
+        if refused is not None:
+            await _tell(interaction, refused)  # the form stays, to come back to after a pause
+            return
         try:
             campaign = await _bot(interaction).campaigns.create(
                 guild.id,
@@ -517,6 +521,10 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         await _tell(interaction, NOT_IN_SERVER)
         return
     bot = _bot(interaction)
+    # Answered first: the campaign read and the plan check below are database reads, and
+    # Discord gives three seconds (#88, #351).
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True, thinking=True)
     campaign = await bot.campaigns.get(guild.id, campaign_id)
     if campaign is None:
         await _tell(interaction, "That campaign isn't here any more.")
@@ -525,16 +533,12 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
     # is never lost if its DM disappears (owner decision, 2026-10-06; CLAUDE.md). Only of a
     # campaign whose owner's plan includes copies (#437 part 3); the owner hears why,
     # everyone else is told to ask the owner.
-    if not interaction.response.is_done():
-        await interaction.response.defer(ephemeral=True, thinking=True)  # before the plan check
-    refused = await bot.plan_gate("backup", guild.id, campaign, interaction.user.id)
+    refused = await bot.plan_gate("copy", guild.id, campaign, interaction.user.id)
     if refused is not None:
         await _tell(interaction, refused)
         return
     dm = interaction.user.id in campaign.dm_user_ids
     name = discord.utils.escape_markdown(campaign.name)
-    if not interaction.response.is_done():
-        await interaction.response.defer(ephemeral=True, thinking=True)
     data = await bot.campaigns.export(guild.id, campaign.id)
     try:
         raw = await asyncio.to_thread(encode_backup, data)
@@ -658,17 +662,21 @@ class RestoreChoice(_Menu):
             await _tell(interaction, NOT_IN_SERVER)
             return
         bot = _bot(interaction)
-        # Asked again here: the person may have waited at the buttons while their plan
-        # changed (the check at /dmbot restore was minutes ago).
-        refused = await bot.restore_gate(guild.id, interaction.user.id)
-        if refused is not None:
-            await _replace(interaction, refused, None)
-            self.stop()
-            return
         # Answer first (#88, as #351): the session lock may be held for a few seconds
-        # by a /dmbot start setting up the DM screen.
+        # by a /dmbot start setting up the DM screen, and the plan check is a database read.
         await _replace(interaction, "Restoring…", None)
         self.stop()  # its buttons are gone; its timeout mustn't cover the outcome
+        # Judged here, once it is known whether a campaign is being replaced: that keeps its
+        # owner, so it is the owner's plan that counts; a new campaign makes this person its
+        # owner, so it is theirs (#437 part 3). Asked now, not only at /dmbot restore: the
+        # buttons may have waited a while.
+        replacing = (
+            await bot.campaigns.get(guild.id, replace_id) if replace_id is not None else None
+        )
+        refused = await bot.restore_gate(guild.id, interaction.user.id, replacing)
+        if refused is not None:
+            await _replace(interaction, refused, None)
+            return
         # The session lock stops a campaign being replaced while it's starting up.
         async with bot.session_lock(guild.id):
             try:
@@ -819,11 +827,6 @@ async def dmbot_restore(interaction: discord.Interaction, file: discord.Attachme
         await _tell(interaction, TOO_BIG)
         return
     await interaction.response.defer(ephemeral=True, thinking=True)
-    # The restorer becomes the owner, so their own plan has to include copies (#437 part 3).
-    refused = await _bot(interaction).restore_gate(guild.id, interaction.user.id)
-    if refused is not None:
-        await _tell(interaction, refused)
-        return
     try:
         raw = await file.read()
         data = await asyncio.to_thread(decode_backup, raw)
@@ -840,6 +843,14 @@ async def dmbot_restore(interaction: discord.Interaction, file: discord.Attachme
     campaigns = await _bot(interaction).campaigns.list_campaigns(guild.id)
     # Only a campaign's own DM may replace it (the store enforces this too).
     replaceable = [c for c in campaigns if interaction.user.id in c.dm_user_ids]
+    if not replaceable:
+        # Only a new campaign is possible, which makes them its owner: their own plan has to
+        # include copies (#437 part 3). With campaigns to replace, the plan that counts
+        # depends on the choice, so it is checked when they make it (RestoreChoice.restore).
+        refused = await _bot(interaction).restore_gate(guild.id, interaction.user.id)
+        if refused is not None:
+            await _tell(interaction, refused)
+            return
     await _send(
         interaction,
         f"**Restore the copy of {name}?**\n"

@@ -217,6 +217,10 @@ terminal output or Discord screenshots copied to it.
   recording me** (owner decision, 2026-10-08). Stopping shows one short, factual warning
   and one confirmation, never more. See docs/PLAN.md.
 - **One voice channel:** the bot listens only to the configured table channel.
+- **Quick, short and on topic** (owner, 2026-10-09): DMbot is there to help the game move
+  quickly, never to bog it down or distract. AI answers to the DM are as short as possible
+  ("yes" when yes answers it), elaborate only when asked, and stay on the campaign, the
+  game's rules and content, DMbot itself and Discord mechanics.
 - **DM authority:** the bot never posts rulings to players or public channels. Advice
   goes only to `#dm-screen` / the DM. PlotBot and NPCBot record only DM-confirmed facts.
 - **Transcripts are shared; the DM screen is not pushed to players.** Anyone in the
@@ -227,7 +231,10 @@ terminal output or Discord screenshots copied to it.
   sends it to players. Players see the DM screen only if the campaign's DM-screen
   visibility allows it: **private** (DM only), **opt-in peek** (the default: hidden, with a
   "Peek behind the DM screen" button that warns about spoilers before granting access),
-  or **open**. See docs/PLAN.md.
+  or **open**. The one exception is the **DM sidebar** (owner, 2026-10-09): the DM's quick
+  questions to DMbot and its in-game replies go into the **raw** transcript, tagged
+  `[DM Sidebar]` and `DMbot`, never the cleaned one; who may read them is #933 (until
+  answered: the DM's own copy only). See docs/PLAN.md.
 - **Backups are complete, and anyone in the server may download one of a paid campaign**
   (owner decision, 2026-10-06, narrowed 2026-10-07: Try It campaigns have no backups or
   downloads; loading a backup needs a subscriber with a free campaign slot, see #437): a campaign must never be lost if its DM disappears. A backup holds the

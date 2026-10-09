@@ -40,59 +40,70 @@ def allowed(rule: Rule, access: Access | None) -> bool:
 
 
 Action = Literal["ai", "copy", "transcript", "restore"]
+# Each thing a person can press belongs to exactly one rule, so the pair can't drift apart.
+RULE_OF: dict[Action, Rule] = {
+    "ai": "ai",
+    "copy": "backup",
+    "transcript": "backup",
+    "restore": "backup",
+}
 
-# What a person pressed, in the words the refusal uses, so it names what they tried and not
-# a neighbour (UX review: "transcripts" is noise to someone loading a copy). Non-owners are
-# told the same thing whatever the cause, and where to go, so they learn nothing of the plan.
-_UNAVAILABLE = {
+# What a person pressed, in the words the refusal uses, so it names what they tried and not a
+# neighbour (UX review: "transcripts" is noise to someone loading a copy). Non-owners are told
+# the same thing whatever the cause, and where to go, so they learn nothing of the plan.
+_UNAVAILABLE: dict[Action, str] = {
     "ai": "Finding names with DMbot's AI isn't available for this campaign",
     "copy": "Copies of this campaign aren't available",
     "transcript": "Transcripts aren't available for this campaign",
     "restore": "Loading a copy isn't available",
 }
-ASK_OWNER_AI = f"{_UNAVAILABLE['ai']}. Ask the campaign's owner to check DMbot's website."
-ASK_OWNER_BACKUP = f"{_UNAVAILABLE['copy']}. Ask the campaign's owner to check DMbot's website."
-ASK_OWNER_TRANSCRIPT = (
-    f"{_UNAVAILABLE['transcript']}. Ask the campaign's owner to check DMbot's website."
-)
-_ASK_OWNER = {
-    "ai": ASK_OWNER_AI,
-    "copy": ASK_OWNER_BACKUP,
-    "transcript": ASK_OWNER_TRANSCRIPT,
-    "restore": f"{_UNAVAILABLE['restore']}. Ask the campaign's owner to check DMbot's website.",
+_CANT: dict[Action, str] = {
+    "ai": "find names with its AI",
+    "copy": "make copies",
+    "transcript": "send transcripts",
+    "restore": "load copies",
 }
+_ASK_OWNER: dict[Action, str] = {
+    action: f"{text}. Ask the campaign's owner to take a look."
+    for action, text in _UNAVAILABLE.items()
+}
+ASK_OWNER_AI = _ASK_OWNER["ai"]
+ASK_OWNER_BACKUP = _ASK_OWNER["copy"]
+ASK_OWNER_TRANSCRIPT = _ASK_OWNER["transcript"]
 # Nobody to ask: a campaign with no owner has no plan to use. A DM of the campaign can take
-# it on (the **Take it on** button); anyone else needs one of them to.
-NO_OWNER = "This campaign has no owner yet. One of its DMs needs to press **Take it on** first."
+# it on (the **Take it on** button on its card in the DM screen); anyone else needs one of
+# them to.
+NO_OWNER = (
+    "This campaign has no owner yet. One of its DMs needs to press **Take it on** on the "
+    "campaign's card in the DM screen first."
+)
 
 
 def refusal(
-    rule: Rule,
+    action: Action,
     access: Access | None,
     *,
     is_owner: bool,
     owner_known: bool = True,
     site_url: str = "",
-    action: Action | None = None,
 ) -> str | None:
     """The plain words for a refused action, or None if it may go ahead.
 
-    `action` is what the person pressed (default: the AI for "ai", a copy for "backup").
-    The owner (or someone restoring a copy, who is about to become one) hears the reason and
-    the next step; the link goes last so no full stop is glued onto it. Everyone else is
-    told it isn't available and to ask the owner. `Access` can't tell a plan that ended from
-    one never had, so the words fit both."""
-    if allowed(rule, access):
+    `action` is what the person pressed; its rule follows from it (`RULE_OF`). The owner
+    (or someone restoring a copy for themselves, who is about to become one) hears the
+    reason and the next step; the link goes last so no full stop is glued onto it. Everyone
+    else is told it isn't available and to ask the owner. `Access` can't tell a plan that
+    ended from one never had, so the words are the ended-plan ones, as `hours.refusal`'s."""
+    if allowed(RULE_OF[action], access):
         return None
-    what: Action = action or ("ai" if rule == "ai" else "copy")
     if not owner_known:
         return NO_OWNER
     if not is_owner:
-        return _ASK_OWNER[what]
+        return _ASK_OWNER[action]
     where = f"here: {account_link(site_url)}" if site_url else "on DMbot's website"
     if access is None or not access.works:
-        return f"You need a plan for that. Pick one {where}"
+        return f"Your plan has ended, so DMbot can't {_CANT[action]}. Pick one {where}"
     # A plan that works but has no copies: Try It, the only one (plans.json).
-    if what == "restore":
+    if action == "restore":
         return f"Nothing was loaded. Loading a copy needs a paid plan. Pick one {where}"
     return f"Try It campaigns can't make copies or transcripts. A paid plan can. See plans {where}"

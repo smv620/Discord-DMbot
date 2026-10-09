@@ -70,6 +70,9 @@ class WebSettings:
     session_days: int = 30
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
     free_users: frozenset[int] = field(default=frozenset(), repr=False)
+    # The same switch as the bot's: when on, the site's hand-over accept checks the campaign
+    # cap too, so the two never disagree (#437 part 2c).
+    enforce_plans: bool = False
 
     @property
     def site_origin(self) -> str:
@@ -200,8 +203,12 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         free_users = parse_free_users(get("DMBOT_FREE_USERS"))
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
+    enforce_raw = (get("DMBOT_ENFORCE_PLANS") or "0").lower()
+    if enforce_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_ENFORCE_PLANS must be 1 (on) or 0 (off), got "{enforce_raw}".')
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        enforce_plans=enforce_raw in ("1", "true", "on"),
         discord_client_id=get("DISCORD_CLIENT_ID"),
         discord_client_secret=get("DISCORD_CLIENT_SECRET"),
         secret_key=secret.encode("utf-8"),

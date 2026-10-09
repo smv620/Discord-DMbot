@@ -24,7 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import entitlements, hours, install, plan_rules, usage
+from dmbot import campaign_cap, entitlements, hours, install, plan_rules, usage
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -1211,9 +1211,9 @@ class DMBot(commands.AutoShardedBot):
         return None
 
     async def plan_refusal(self, guild_id: int, campaign: Campaign, starter_id: int) -> str | None:
-        """Why the campaign's owner's plan or hours don't allow a start, in plain words for
-        the person starting it, or None (#437). Only when DMBOT_ENFORCE_PLANS is on. Fails
-        open: a database hiccup must never lock a table out of its game."""
+        """Why the campaign's owner's plan, hours or campaign count don't allow a start, in
+        plain words for the person starting it, or None (#437). Only when DMBOT_ENFORCE_PLANS
+        is on. Fails open: a database hiccup must never lock a table out of its game."""
         if not self.settings.enforce_plans or self.meter is None:
             return None
         owner = campaign.owner_user_id
@@ -1226,7 +1226,7 @@ class DMBot(commands.AutoShardedBot):
         except Exception:  # a slow database (TimeoutError) too
             log.exception("Couldn't check the plan; starting anyway")
             return None
-        return hours.refusal(
+        refused = hours.refusal(
             check.verdict,
             is_owner=starter_id == owner,
             site_url=self.settings.site_url,
@@ -1234,19 +1234,61 @@ class DMBot(commands.AutoShardedBot):
             renews=check.renews,
             extra_hours=check.extra_hours,
         )
+        if refused is not None:
+            return refused
+        # The owner's plan and hours are fine; do they own more campaigns than the plan
+        # covers? (They can always start one they own within the cap: `fits(0)`.)
+        try:
+            async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                room = await self.meter.campaign_room(guild_id, owner, int(time.time()))
+        except Exception:
+            log.exception("Couldn't count the owner's campaigns; starting anyway")
+            return None
+        if room.fits(0) or room.cap is None:
+            return None
+        return hours.campaigns_refusal(
+            room.cap,
+            room.owned,
+            is_owner=starter_id == owner,
+            site_url=self.settings.site_url,
+            can_change_plan=room.can_change_plan,
+        )
+
+    async def create_refusal(self, guild_id: int, user_id: int) -> str | None:
+        """Why this person may not make one more campaign, or None (#437 part 2c). Only when
+        DMBOT_ENFORCE_PLANS is on, and only for a plan that works and has a cap they are
+        already at: someone with no plan can make a campaign (they pick a plan to start it),
+        and making one past the cap would lock all their campaigns out of starting. Fails
+        open, like the start check. (Two made at the same instant could both pass; the start
+        check still refuses them until one is paused.)"""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S):
+                room = await self.meter.campaign_room(guild_id, user_id, int(time.time()))
+        except Exception:
+            log.exception("Couldn't count the person's campaigns; allowing it")
+            return None
+        if not room.works or room.cap is None or room.fits(1):
+            return None
+        return hours.campaigns_refusal(
+            room.cap,
+            room.owned,
+            is_owner=True,
+            site_url=self.settings.site_url,
+            can_change_plan=room.can_change_plan,
+            creating=True,
+        )
 
     async def plan_gate(
-        self,
-        rule: plan_rules.Rule,
-        guild_id: int,
-        campaign: Campaign,
-        user_id: int,
-        action: plan_rules.Action | None = None,
+        self, action: plan_rules.Action, guild_id: int, campaign: Campaign, user_id: int
     ) -> str | None:
-        """Why `user_id` may not use the AI or make a copy or transcript of this campaign,
-        in plain words for them, or None (#437 part 3). Judged by the campaign's owner's
-        plan, so the whole table stops or goes together. Only when DMBOT_ENFORCE_PLANS is
-        on. Fails open like `plan_refusal`: a database hiccup must not lock the table out."""
+        """Why `user_id` may not do `action` (use the AI, make a copy or transcript, replace
+        the campaign from a copy) with this campaign, in plain words for them, or None
+        (#437 part 3). Judged by the campaign's owner's plan, so the whole table stops or goes
+        together. Only when DMBOT_ENFORCE_PLANS is on. Fails open like `plan_refusal`: a
+        database hiccup, or one slower than Discord's 3 seconds allow, must not lock the table
+        out."""
         if not self.settings.enforce_plans or self.meter is None:
             return None
         owner = campaign.owner_user_id
@@ -1259,30 +1301,34 @@ class DMBot(commands.AutoShardedBot):
                 log.exception("Couldn't check the plan; allowing it")
                 return None
         return plan_rules.refusal(
-            rule,
+            action,
             access,
             is_owner=user_id == owner,
             owner_known=owner is not None,
             site_url=self.settings.site_url,
-            action=action,
         )
 
-    async def restore_gate(self, guild_id: int, user_id: int) -> str | None:
-        """Why this person may not restore a copy, or None. They become the restored
-        campaign's owner, so their own plan has to include copies (#437 part 3); the free
-        slot is the store's check (`CampaignStore(restore_needs_slot=True)`). They are told
-        about their own plan, since it is theirs. Replacing a campaign with a copy keeps that
-        campaign's owner, but the restorer's plan is checked all the same: loading a copy is
-        a copy feature, whoever ends up owning the result."""
+    async def restore_gate(
+        self, guild_id: int, user_id: int, replacing: Campaign | None = None
+    ) -> str | None:
+        """Why this person may not load a copy, or None (#437 part 3). A copy loaded as a new
+        campaign makes them its owner, so it is their own plan that has to include copies
+        (the free slot is the store's check, `restore_needs_slot`), and they hear about it
+        since it is theirs. A copy loaded over a campaign that has an owner keeps that owner
+        (#609), so it is the campaign's owner's plan that counts, as for any copy: a co-DM
+        with no plan may restore their paid owner's campaign. Over a campaign with no owner
+        the restorer becomes it, which is the first case."""
         if not self.settings.enforce_plans or self.meter is None:
             return None
+        if replacing is not None and replacing.owner_user_id is not None:
+            return await self.plan_gate("restore", guild_id, replacing, user_id)
         try:
             async with asyncio.timeout(GATE_TIMEOUT_S):
                 access = await self.meter.access(guild_id, user_id, int(time.time()))
         except Exception:
             log.exception("Couldn't check the plan; allowing it")
             return None
-        return plan_rules.refusal("backup", access, is_owner=True, site_url=self.settings.site_url)
+        return plan_rules.refusal("restore", access, is_owner=True, site_url=self.settings.site_url)
 
     async def start_campaign_session(
         self, interaction: discord.Interaction, campaign_id: str, voice_id: int
@@ -3724,7 +3770,15 @@ async def run(settings: Settings) -> None:
     try:
         transcriber = build_transcriber(settings.transcription)
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
-        campaigns = CampaignStore(db)
+        # With plans enforced, a hand-over, take-over or restore also needs room under the
+        # owner's campaign cap (#437 part 2c); otherwise a plan that works is enough.
+        campaigns = (
+            CampaignStore(
+                db, has_free_slot=campaign_cap.has_room_for_one_more, restore_needs_slot=True
+            )
+            if settings.enforce_plans
+            else CampaignStore(db)
+        )
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         # DMBot sets this too; passing it here means the store never starts out wrong.

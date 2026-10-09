@@ -1,11 +1,11 @@
 """`/transcript` and the download button sent privately when a session ends (#41, #125).
 
-Anyone in the server can download any of its campaigns' transcripts (decided
-2026-10-05): only people who agreed were recorded, and they were told the whole server
-can read it. Replies are private. Downloads are plain text files built on request from
-the stored lines, so a later fix (the Transcript Cleaner, Phase 2b) shows up in the next
-download. Building one takes database reads and name lookups, so the reply is deferred
-first (Discord wants an answer within 3 seconds).
+Anyone in the server can download the transcripts of a campaign whose plan includes copies
+(decided 2026-10-05; the plan rule is #437 part 3): only people who agreed were recorded, and
+they were told the whole server can read it. Replies are private. Downloads are plain text
+files built on request from the stored lines, so a later fix (the Transcript Cleaner,
+Phase 2b) shows up in the next download. Building one takes database reads and name
+lookups, so the reply is deferred first (Discord wants an answer within 3 seconds).
 """
 
 from __future__ import annotations
@@ -154,7 +154,7 @@ async def make_file(
         return GONE
     # Transcript downloads belong to the plans with copies (#437 part 3). Here, not in each
     # button, so /transcript, the end-of-session button and "as heard too" all obey it.
-    refused = await bot.plan_gate("backup", guild_id, campaign, user_id, "transcript")
+    refused = await bot.plan_gate("transcript", guild_id, campaign, user_id)
     if refused is not None:
         return refused
     running = _running(bot, session)

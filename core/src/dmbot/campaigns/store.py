@@ -295,14 +295,19 @@ OFFER_WAITING = (
     "You already offered this campaign to someone. Take that offer back first (⚙️ Settings, "
     f"then **Take back offer**), or wait: it ends by itself after {HANDOVER_DAYS} days."
 )
+NO_ROOM_TO_RESTORE = (
+    "Your plan has no room for another campaign, so nothing was restored. Pause one or "
+    "change your plan, then restore it again."
+)
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
 )
 
 AcceptResult = Literal["accepted", "no_free_slot", "gone"]
 TakeResult = Literal["taken", "no_free_slot", "gone"]
-# Whether a person may own one more campaign (conn, user id, now). Until the campaign
-# count comes in (#437 part 3), having a plan that works is enough.
+# Whether a person may own one more campaign (conn, user id, now). By default having a
+# plan that works is enough; with plans enforced the bot passes
+# `campaign_cap.has_room_for_one_more`, which also counts what they own (#437 part 2c).
 SlotCheck = Callable[[Conn, int, int], Awaitable[bool]]
 
 
@@ -319,10 +324,14 @@ class CampaignStore:
         *,
         clock: Callable[[], float] = time.time,
         has_free_slot: SlotCheck = plan_works,
+        restore_needs_slot: bool = False,
     ) -> None:
         self._db = db
         self._clock = clock
         self._has_free_slot = has_free_slot
+        # Restoring makes the importer an owner, which takes a slot. Checked only when the
+        # bot enforces plans (DMBOT_ENFORCE_PLANS, #437).
+        self._restore_needs_slot = restore_needs_slot
         self._sections: dict[str, ExportSection] = {}
         self.register_section(_DMSection())
         self.register_section(_OptionalRulesSection())
@@ -1022,6 +1031,8 @@ class CampaignStore:
                 existing = await self._require(conn, guild_id, replace_campaign_id)
                 if importer_id not in existing.dm_user_ids:
                     raise CampaignError("Only this campaign's DM can replace it with a backup.")
+                if existing.owner_user_id is None:  # the importer becomes its owner
+                    await self._require_slot(conn, importer_id)
                 campaign_id = replace_campaign_id
                 for section in self._sections.values():
                     await section.clear(conn, guild_id, campaign_id)
@@ -1044,6 +1055,7 @@ class CampaignStore:
                     ),
                 )
             else:
+                await self._require_slot(conn, importer_id)
                 name = await self._free_name(conn, guild_id, info["name"])
                 try:
                     campaign_id = await self._insert(
@@ -1083,6 +1095,13 @@ class CampaignStore:
             return await self._require(conn, guild_id, campaign_id)
 
     # ---- helpers (run inside a guild transaction) ----------------------------
+
+    async def _require_slot(self, conn: Conn, importer_id: int) -> None:
+        """A restore that makes the importer an owner needs room in their plan (#437)."""
+        if self._restore_needs_slot and not await self._has_free_slot(
+            conn, importer_id, int(self._clock())
+        ):
+            raise CampaignError(NO_ROOM_TO_RESTORE)
 
     async def _set(self, guild_id: int, campaign_id: str, column: str, value: object) -> Campaign:
         if column not in _SETTABLE:
