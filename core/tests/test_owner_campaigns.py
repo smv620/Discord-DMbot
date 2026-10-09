@@ -399,19 +399,23 @@ class Words(OwnerCampaignsTest):
             hours.campaigns_refusal(
                 2, 3, is_owner=True, site_url="https://dmbot.example", can_change_plan=True
             ),
-            "Your plan covers 2 campaigns, and you have 3. To start this one, pause one or "
-            "change your plan here: https://dmbot.example/account",
+            "Your plan covers 2 campaigns, and you have 3. To start this one, pause another one "
+            "(⚙️ Settings, then ⏸️ **Pause this campaign**) or change your plan here: "
+            "https://dmbot.example/account",
         )
         self.assertEqual(
             hours.campaigns_refusal(1, 1, is_owner=True, can_change_plan=True, creating=True),
-            "Your plan covers 1 campaign, and you have 1. To make a new one, pause one or "
-            "change your plan on DMbot's website",
+            "Your plan covers 1 campaign, and you have 1. To make a new one, pause another one "
+            "(⚙️ Settings, then ⏸️ **Pause this campaign**) or change your plan on DMbot's "
+            "website",
         )
 
     def test_a_plan_that_cant_change_is_not_offered_a_change(self) -> None:
         text = hours.campaigns_refusal(3, 4, is_owner=True)
         self.assertEqual(
-            text, "Your plan covers 3 campaigns, and you have 4. To start this one, pause one."
+            text,
+            "Your plan covers 3 campaigns, and you have 4. To start this one, pause another one "
+            "(⚙️ Settings, then ⏸️ **Pause this campaign**).",
         )
 
     def test_anyone_else_is_told_nothing_about_the_plan(self) -> None:

@@ -35,6 +35,7 @@ from dmbot.campaigns.models import (
 )
 from dmbot.dm_screen import handover, messages
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
+from dmbot.dm_screen.pause import pause_buttons, pause_line
 from dmbot.logs import set_log_context
 
 log = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ def settings_text(
             *rules,
             _rules_cards_line(campaign, viewer),
             handover.owner_line(campaign, offer),
+            pause_line(campaign),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
             "now on.",
         ]
@@ -119,6 +121,8 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         current = visibility == campaign.dm_screen_visibility
         view.add_item(SettingsVisibilityButton(campaign.id, visibility, current=current))
     for item in handover.owner_buttons(campaign, offer, viewer):
+        view.add_item(item)
+    for item in pause_buttons(campaign, viewer):
         view.add_item(item)
     if viewer in campaign.dm_user_ids:  # rules lookup is for the campaign's DMs (#908)
         view.add_item(RuleLookupButton(campaign.id))

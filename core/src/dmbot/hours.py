@@ -211,6 +211,14 @@ def more_hours(site_url: str, buys_hours: bool = True, renews: bool = False) -> 
     return "Ask the campaign's owner what to do next."
 
 
+PAUSE_WAY = "pause another one (⚙️ Settings, then ⏸️ **Pause this campaign**)"
+PAUSED_OWNER = (
+    "This campaign is paused, so it can't start. Open ⚙️ Settings and press ▶️ **Unpause** "
+    "to use it again. Everything in it is kept."
+)
+PAUSED_OTHER = "This campaign is paused. Ask its owner to unpause it, then press Start again."
+
+
 def campaigns_refusal(
     cap: int,
     owned: int,
@@ -219,21 +227,48 @@ def campaigns_refusal(
     site_url: str = "",
     can_change_plan: bool = False,
     creating: bool = False,
+    unpausing: bool = False,
 ) -> str | None:
-    """The plain words for a start (or, with `creating`, a new campaign) refused because the
-    owner has more campaigns than their plan covers (#437 part 2c), or what anyone else is
-    told. Like `refusal`: only the owner hears why, with both numbers; the change-your-plan
-    offer only goes to a plan that can change; the link goes last. "Pause one" is the way
-    out the downgrade part brings."""
+    """The plain words for a start (or, with `creating`, a new campaign; with `unpausing`,
+    an unpause) refused because the owner has as many campaigns as their plan covers (#437
+    part 2c, #957), or what anyone else is told. Like `refusal`: only the owner hears why,
+    with both numbers; the change-your-plan offer only goes to a plan that can change; the
+    link goes last. The way out names the real button (pausing, #957)."""
     if not is_owner:
         return START_BLOCKED
     noun = "campaign" if cap == 1 else "campaigns"
     text = f"Your plan covers {cap} {noun}, and you have {owned}."
-    action = "To make a new one" if creating else "To start this one"
+    action = (
+        "To make a new one"
+        if creating
+        else "To unpause this one"
+        if unpausing
+        else "To start this one"
+    )
     if can_change_plan:
         where = f"here: {site_url}/account" if site_url else "on DMbot's website"
-        return f"{text} {action}, pause one or change your plan {where}"
-    return f"{text} {action}, pause one."
+        return f"{text} {action}, {PAUSE_WAY} or change your plan {where}"
+    return f"{text} {action}, {PAUSE_WAY}."
+
+
+PAUSED_TOLD = (
+    "Your plan now covers {cap} {noun}, so DMbot paused {what}. Paused campaigns keep "
+    "everything and can't start. To use one again, pause another and press ▶️ **Unpause** "
+    "(⚙️ Settings){change}"
+)
+
+
+def paused_told(names: list[str], cap: int, *, site_url: str = "", can_change_plan: bool) -> str:
+    """The one private note to an owner whose campaigns were paused because their plan
+    shrank (#957): which, why, and how to change it."""
+    noun = "campaign" if cap == 1 else "campaigns"
+    shown = ", ".join(f"**{n}**" for n in names[:10])
+    if len(names) > 10:
+        shown += f" and {len(names) - 10} more"
+    what = ("this one: " if len(names) == 1 else "these: ") + shown
+    where = f"here: {site_url}/account" if site_url else "on DMbot's website"
+    change = f", or change your plan {where}" if can_change_plan else "."
+    return PAUSED_TOLD.format(cap=cap, noun=noun, what=what, change=change)
 
 
 def warning_text(
