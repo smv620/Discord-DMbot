@@ -30,10 +30,19 @@ HOUSE_RULES_MAX = 200  # per campaign, so a campaign (and its backup) stays a se
 INT64_MAX = 2**63 - 1
 
 NO_CAMPAIGN = "That campaign isn't here any more."
-NOT_DM = "Only this campaign's DM can change its house rules."
+NOT_DM = (
+    "Only this campaign's DM can change its house rules. You can still read them with "
+    "`/dmbot houserules`."
+)
 GONE = "That house rule isn't here any more."
-EMPTY = "Please type the rule."
-FULL = f"This campaign already has {HOUSE_RULES_MAX} house rules. Remove one first."
+CHANGED = (
+    "That house rule was changed since you looked, so nothing was removed. Here is the list now."
+)
+EMPTY = "The rule box was empty, so nothing was saved. Open the form again and type the rule."
+FULL = (
+    f"This campaign already has {HOUSE_RULES_MAX} house rules, so yours wasn't saved. "
+    "Remove one first, then add it again."
+)
 DAMAGED = "This backup file is damaged (bad house rule)."
 
 
@@ -60,7 +69,9 @@ def clean_rule(raw: str) -> str:
     if not text:
         raise HouseRuleError(EMPTY)
     if len(text) > RULE_MAX:
-        raise HouseRuleError(f"That's too long. Keep the rule under {RULE_MAX} characters.")
+        raise HouseRuleError(
+            f"That's too long, so nothing was saved. Keep the rule under {RULE_MAX} characters."
+        )
     return text
 
 
@@ -68,7 +79,9 @@ def clean_optional(raw: str | None, what: str) -> str | None:
     """An optional text: None when left empty. Raises HouseRuleError if too long."""
     text = " ".join((raw or "").split())
     if len(text) > RULE_MAX:
-        raise HouseRuleError(f"That's too long. Keep {what} under {RULE_MAX} characters.")
+        raise HouseRuleError(
+            f"That's too long, so nothing was saved. Keep {what} under {RULE_MAX} characters."
+        )
     return text or None
 
 
@@ -170,20 +183,34 @@ class HouseRuleStore:
             return _rule(row)
 
     async def remove(
-        self, guild_id: int, campaign_id: str, user_id: int, rule_id: int
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        rule_id: int,
+        *,
+        unchanged_since: int | None = None,
     ) -> HouseRule:
-        """Take a rule away; returns it. Only the campaign's DMs."""
+        """Take a rule away; returns it. Only the campaign's DMs. `unchanged_since`: the
+        rule's `updated_at` as the DM saw it when asked "Remove it?"; if another DM changed
+        it meanwhile, nothing is removed (they were shown different words)."""
         async with self._db.guild(guild_id) as conn:
             await _require_dm(conn, guild_id, campaign_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM house_rules WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                " AND (%s::bigint IS NULL OR updated_at = %s)"
                 f" RETURNING {_COLUMNS}",
-                (guild_id, campaign_id, rule_id),
+                (guild_id, campaign_id, rule_id, unchanged_since, unchanged_since),
             )
             row = await cur.fetchone()
-            if row is None:
-                raise HouseRuleError(GONE)
-            return _rule(row)
+            if row is not None:
+                return _rule(row)
+            cur = await conn.execute(
+                "SELECT 1 AS ok FROM house_rules WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s",
+                (guild_id, campaign_id, rule_id),
+            )
+            raise HouseRuleError(GONE if await cur.fetchone() is None else CHANGED)
 
 
 async def _require_dm(
@@ -301,6 +328,8 @@ class HouseRulesSection:
 
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
         """`rows` as `check` returned them, or straight from a file (checked here)."""
+        if not rows:
+            return
         checked = rows if all(isinstance(r, _Checked) for r in rows) else self.check(rows)
         async with conn.cursor() as cur:
             await cur.executemany(

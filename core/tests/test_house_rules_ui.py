@@ -108,11 +108,21 @@ class FakeStore:
                 return changed
         raise HouseRuleError(house.GONE)
 
-    async def remove(self, guild_id: int, cid: str, user_id: int, rule_id: int) -> HouseRule:
+    async def remove(
+        self,
+        guild_id: int,
+        cid: str,
+        user_id: int,
+        rule_id: int,
+        *,
+        unchanged_since: int | None = None,
+    ) -> HouseRule:
         self.calls.append(("remove", cid, user_id, rule_id))
         self._dm(cid, user_id)
         for i, existing in enumerate(self.rules.get(cid, [])):
             if existing.id == rule_id:
+                if unchanged_since is not None and existing.updated_at != unchanged_since:
+                    raise HouseRuleError(house.CHANGED)
                 return self.rules[cid].pop(i)
         raise HouseRuleError(house.GONE)
 
@@ -158,8 +168,9 @@ class UITest(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def opened(it: Any) -> tuple[str, Any]:
-        text, kw = it.response.sent[0]
-        return text, kw.get("view")
+        """What the command showed: it answers Discord first, so it comes as a follow-up."""
+        call = it.followup.send.await_args
+        return str(call.args[0]), call.kwargs.get("view")
 
     @staticmethod
     def labels(view: Any) -> list[str]:
@@ -217,23 +228,28 @@ class Text(unittest.TestCase):
         self.assertEqual([i for p in ui.pages(long) for i in p], [0, 1, 2, 3, 4])  # none lost
 
     def test_the_message_always_fits_discord(self) -> None:
-        worst = [rule(n, "*" * 500, "|" * 500) for n in range(1, 40)]
-        for page in range(len(ui.pages(worst))):
-            text = ui.list_text(
-                campaign(name="*" * 80), worst, page, is_dm=True, note="✏️ Changed house rule 12."
-            )
-            self.assertLessEqual(len(text), 2000)
+        # Rules of every size, so that some page is as full as a page can be, with the
+        # longest name and note around it (each of them escaped, so they double).
+        name, note = "*" * 80, "🗑 Removed house rule: " + "*" * 300
+        for size in (1, 40, 150, 330, 500):
+            worst = [rule(n, "*" * size, "|" * size) for n in range(1, 25)]
+            for page in range(len(ui.pages(worst))):
+                for is_dm in (True, False):
+                    text = ui.list_text(campaign(name=name), worst, page, is_dm=is_dm, note=note)
+                    self.assertLessEqual(len(text), 2000, (size, page))
 
     def test_who_sees_what(self) -> None:
         c = campaign(name="Frost*maiden")
         dm = ui.list_text(c, [], 0, is_dm=True)
         self.assertIn("📜 **House rules: Frost\\*maiden**", dm)
         self.assertIn("No house rules yet. Press **Add a house rule**", dm)
-        self.assertIn("You decide; DMbot only keeps them.", dm)
+        self.assertIn("You decide: DMbot never makes up a house rule.", dm)
         player = ui.list_text(c, [], 0, is_dm=False)
         self.assertIn("No house rules yet.", player)
         self.assertNotIn("Add a house rule", player)
         self.assertNotIn("You decide", player)
+        self.assertIn("Everyone in the server can read this list", player)
+        self.assertIn("DMbot never makes up a house rule.", player)
 
     def test_the_note_comes_first_and_pages_say_so(self) -> None:
         rules = [rule(n) for n in range(1, 13)]
@@ -256,7 +272,7 @@ class Opening(UITest):
         self.store.seed("c1", 2)
         it = await self.command(PLAYER)
         text, view = self.opened(it)
-        self.assertTrue(it.response.sent[0][1]["ephemeral"])
+        self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])
         self.assertIn("2. Rule number 1", text)
         self.assertTrue(text.index("1. Rule number 2") < text.index("2. Rule number 1"))
         self.assertIsNone(view)  # a player has nothing to press
@@ -288,15 +304,38 @@ class Opening(UITest):
         self.assertIn("Strahd's own rule", shown)
         self.assertIsNone(after)  # read only
 
+    async def test_the_command_answers_discord_before_it_reads_anything(self) -> None:
+        order: list[str] = []
+        it = self.it(kind=discord.InteractionType.application_command)
+        it.response.defer = AsyncMock(side_effect=lambda **_: order.append("answered"))
+        real = self.bot.campaigns.list_campaigns
+
+        async def slow(guild_id: int) -> list[Campaign]:
+            order.append("read")
+            return await real(guild_id)  # type: ignore[no-any-return]
+
+        self.bot.campaigns.list_campaigns = slow
+        await ui.dmbot_house_rules.callback(it)  # type: ignore[call-arg]
+        self.assertEqual(order[:2], ["answered", "read"])
+        self.assertTrue(it.response.defer.await_args.kwargs["ephemeral"])  # private
+
+    async def test_more_than_a_menu_holds_says_which_are_shown(self) -> None:
+        self.playing = None
+        for n in range(30):
+            self.campaigns[f"x{n}"] = campaign(f"x{n}", f"Campaign {n}", frozenset({PLAYER}))
+        text, view = self.opened(await self.command(user_id=99))
+        self.assertIn(ui.MORE_CAMPAIGNS, text)
+        self.assertEqual(len(view.pick.options), SELECT_OPTIONS_MAX)
+
     async def test_no_campaign_at_all(self) -> None:
         self.campaigns.clear()
         it = await self.command()
-        self.assertIn("no campaign in this server yet", it.response.sent[0][0])
+        self.assertIn("no campaign in this server yet", self.told(it))
 
     async def test_without_a_database_it_says_so(self) -> None:
         self.bot.house_rules = None
         it = await self.command()
-        self.assertEqual(it.response.sent[0][0], ui.NOT_READY)
+        self.assertEqual(self.told(it), ui.NOT_READY)
 
     async def test_in_a_direct_message_it_says_to_use_a_server(self) -> None:
         it = self.it(kind=discord.InteractionType.application_command)
@@ -379,7 +418,12 @@ class Adding(UITest):
         await self.press(view, ui.ADD_LABEL).callback(it)
         form = it.response.modal
         self.assertEqual(form.title, "Add a house rule")
-        self.assertEqual([c.label for c in form.children], ["The rule", "Instead of (optional)"])
+        self.assertEqual(
+            [c.label for c in form.children],
+            ["The rule", "Which rule does it change? (optional)"],
+        )
+        for box in form.children:
+            self.assertLessEqual(len(box.label), 45)  # Discord's limit for a form's label
         self.assertTrue(form.children[0].required)
         self.assertFalse(form.children[1].required)
         self.assertEqual(form.children[0].max_length, house.RULE_MAX)
@@ -392,7 +436,7 @@ class Adding(UITest):
         it = await self.submit(form)
         self.assertEqual(self.store.calls[-1][:3], ("add", "c1", DM))
         text, view = self.shown(it)
-        self.assertTrue(text.startswith("➕ Added as house rule 1.\n"))
+        self.assertTrue(text.startswith("➕ Added house rule: Crits double the dice\n"))
         self.assertIn("1. Crits double the dice (instead of: Crits roll once)", text)
         self.assertIn("2. Rule number 1", text)
         self.assertIn(ui.ADD_LABEL, self.labels(view))
@@ -402,7 +446,7 @@ class Adding(UITest):
         form = ui.AddForm(self.campaigns["c1"])
         form.rule._value = "Everyone gets a pony"
         it = await self.submit(form, PLAYER)
-        self.assertEqual(self.told(it), house.NOT_DM)
+        self.assertTrue(self.told(it).startswith(house.NOT_DM))
         self.assertEqual(await self.store.list(GUILD, "c1"), [])
         self.assertEqual(it.edited, [])
 
@@ -412,6 +456,19 @@ class Adding(UITest):
         it = await self.submit(form)
         self.assertEqual(self.told(it), house.EMPTY)
         self.assertEqual(it.edited, [])
+
+    async def test_a_refusal_gives_the_words_back_to_copy(self) -> None:
+        # The form is closed by then: a DM who wrote a long rule must not have to retype it.
+        async def full(*_: Any, **__: Any) -> HouseRule:
+            raise HouseRuleError(house.FULL)
+
+        self.store.add = full  # type: ignore[method-assign]
+        form = ui.AddForm(self.campaigns["c1"])
+        form.rule._value = "  A *natural*  20 doubles   the dice  "
+        it = await self.submit(form)
+        told = self.told(it)
+        self.assertTrue(told.startswith(house.FULL))
+        self.assertIn("Your words, to copy: A \\*natural\\* 20 doubles the dice", told)
 
     async def test_a_deleted_campaign_is_said_not_crashed_on(self) -> None:
         form = ui.AddForm(self.campaigns["c1"])
@@ -428,7 +485,7 @@ class Adding(UITest):
             side_effect=discord.HTTPException(MagicMock(status=404, reason="x"), "gone")
         )
         await form.on_submit(it)
-        self.assertIn("➕ Added as house rule 1.", it.followup.send.await_args.args[0])
+        self.assertIn("➕ Added house rule: Crits double", it.followup.send.await_args.args[0])
 
 
 class Editing(UITest):
@@ -451,7 +508,7 @@ class Editing(UITest):
         form.instead._value = ""
         it = await self.submit(form)
         text, _ = self.shown(it)
-        self.assertTrue(text.startswith("✏️ Changed house rule 2.\n"))
+        self.assertTrue(text.startswith("✏️ Changed house rule: Crits max the dice\n"))
         self.assertIn("2. Crits max the dice\n", text + "\n")
         self.assertIn("1. Rule number 3", text)
         self.assertIn("3. Rule number 1", text)
@@ -463,7 +520,8 @@ class Editing(UITest):
         form = ui.EditForm(self.campaigns["c1"], existing, 0)
         form.rule._value = "Too late"
         it = await self.submit(form)
-        self.assertEqual(self.told(it), house.GONE)
+        self.assertTrue(self.told(it).startswith(ui.SOMEONE_REMOVED))
+        self.assertIn("Your words, to copy: Too late", self.told(it))
 
     async def test_a_player_cannot_edit(self) -> None:
         self.store.seed("c1", 1)
@@ -471,7 +529,7 @@ class Editing(UITest):
         form = ui.EditForm(self.campaigns["c1"], existing, 0)
         form.rule._value = "Mine now"
         it = await self.submit(form, PLAYER)
-        self.assertEqual(self.told(it), house.NOT_DM)
+        self.assertTrue(self.told(it).startswith(house.NOT_DM))
         self.assertEqual((await self.store.list(GUILD, "c1"))[0].rule, "Rule number 1")
 
 
@@ -482,7 +540,7 @@ class Removing(UITest):
         it = self.it()
         await self.press(view, "Remove 2").callback(it)
         text, confirm = self.shown(it)
-        self.assertIn("Remove house rule 2?", text)
+        self.assertIn("Remove this house rule?", text)
         self.assertIn("2. Rule number 1", text)
         self.assertIn("This can't be undone.", text)
         self.assertEqual(self.labels(confirm), [ui.YES_REMOVE_LABEL, ui.KEEP_LABEL])
@@ -498,7 +556,7 @@ class Removing(UITest):
         yes = self.it()
         await self.press(confirm, ui.YES_REMOVE_LABEL).callback(yes)
         text, after = self.shown(yes)
-        self.assertTrue(text.startswith("🗑 Removed: Rule number 1\n"))
+        self.assertTrue(text.startswith("🗑 Removed house rule: Rule number 1\n"))
         self.assertNotIn("2. Rule number 1", text)
         self.assertEqual([r.rule for r in await self.store.list(GUILD, "c1")], ["Rule number 2"])
         self.assertEqual(self.labels(after), [ui.ADD_LABEL, "Edit 1", "Remove 1"])
@@ -513,6 +571,20 @@ class Removing(UITest):
         self.assertIn("1. Rule number 1", self.shown(keep)[0])
         self.assertEqual(len(await self.store.list(GUILD, "c1")), 1)
 
+    async def test_a_rule_changed_since_it_was_shown_is_not_removed(self) -> None:
+        self.store.seed("c1", 1)
+        _, view = self.opened(await self.command())
+        ask = self.it()
+        await self.press(view, "Remove 1").callback(ask)  # shows the words as they are now
+        (existing,) = await self.store.list(GUILD, "c1")
+        await self.store.edit(GUILD, "c1", DM, existing.id, "Something else entirely")
+        yes = self.it()
+        await self.press(self.shown(ask)[1], ui.YES_REMOVE_LABEL).callback(yes)
+        text = self.shown(yes)[0]
+        self.assertTrue(text.startswith(house.CHANGED))
+        self.assertIn("1. Something else entirely", text)  # it stays, and the list is fresh
+        self.assertEqual(len(await self.store.list(GUILD, "c1")), 1)
+
     async def test_removing_twice_is_said_not_crashed_on(self) -> None:
         self.store.seed("c1", 1)
         _, view = self.opened(await self.command())
@@ -522,7 +594,7 @@ class Removing(UITest):
         await self.press(confirm, ui.YES_REMOVE_LABEL).callback(self.it())
         again = self.it()
         await self.press(confirm, ui.YES_REMOVE_LABEL).callback(again)
-        self.assertTrue(self.shown(again)[0].startswith(house.GONE))
+        self.assertTrue(self.shown(again)[0].startswith(ui.ALREADY_GONE))
 
     async def test_a_player_cannot_remove(self) -> None:
         self.store.seed("c1", 1)
@@ -559,7 +631,7 @@ class PickingFromTheMenu(UITest):
         self.assertEqual(edit.response.modal.children[0].default, "Rule number 5")
         ask = self.it()
         await self.press(menu, ui.REMOVE_LABEL).callback(ask)
-        self.assertIn("Remove house rule 2?", self.shown(ask)[0])
+        self.assertIn("Remove this house rule?", self.shown(ask)[0])
 
     async def test_back_returns_to_the_list(self) -> None:
         it, _ = await self.picked(1)
@@ -583,7 +655,7 @@ class PickingFromTheMenu(UITest):
         await self.press(menu, ui.REMOVE_LABEL).callback(ask)
         yes = self.it()
         await self.press(self.shown(ask)[1], ui.YES_REMOVE_LABEL).callback(yes)
-        self.assertTrue(self.shown(yes)[0].startswith(house.GONE))
+        self.assertTrue(self.shown(yes)[0].startswith(ui.ALREADY_GONE))
 
 
 class Registered(unittest.TestCase):

@@ -91,7 +91,7 @@ class Writing(HouseRulesTest):
         self.assertIsNone(saved.scenario)
 
     async def test_bad_text_is_refused_in_plain_words(self) -> None:
-        for text, words in (("   ", "type the rule"), ("x" * 501, "under 500")):
+        for text, words in (("   ", "box was empty"), ("x" * 501, "under 500")):
             with self.assertRaisesRegex(HouseRuleError, words):
                 await self.rules.add(GUILD_A, self.campaign.id, DM, text)
         with self.assertRaisesRegex(HouseRuleError, "under 500"):
@@ -122,6 +122,26 @@ class Writing(HouseRulesTest):
             await self.rules.remove(GUILD_A, self.campaign.id, DM, rule_id)
         with self.assertRaisesRegex(HouseRuleError, "isn't here any more"):
             await self.rules.edit(GUILD_A, self.campaign.id, DM, rule_id, "Back again")
+
+    async def test_remove_only_takes_the_rule_the_dm_was_shown(self) -> None:
+        rule_id = await self.add("Crits double the dice")
+        (shown,) = await self.rules.list(GUILD_A, self.campaign.id)
+        self.clock.now += 60
+        await self.rules.edit(GUILD_A, self.campaign.id, DM, rule_id, "Crits max")
+        with self.assertRaisesRegex(HouseRuleError, "was changed since you looked"):
+            await self.rules.remove(
+                GUILD_A, self.campaign.id, DM, rule_id, unchanged_since=shown.updated_at
+            )
+        self.assertEqual(await self.texts(), ["Crits max"])  # nothing was removed
+        (now,) = await self.rules.list(GUILD_A, self.campaign.id)
+        gone = await self.rules.remove(
+            GUILD_A, self.campaign.id, DM, rule_id, unchanged_since=now.updated_at
+        )
+        self.assertEqual(gone.rule, "Crits max")
+        with self.assertRaisesRegex(HouseRuleError, "isn't here any more"):  # already gone
+            await self.rules.remove(
+                GUILD_A, self.campaign.id, DM, rule_id, unchanged_since=now.updated_at
+            )
 
     async def test_a_campaign_holds_a_few_hundred_and_no_more(self) -> None:
         for number in range(HOUSE_RULES_MAX):
@@ -254,6 +274,19 @@ class Backups(HouseRulesTest):
         restored = await self.campaigns.import_backup(GUILD_B, backup, PLAYER)
         self.assertEqual(await self.texts(restored), [])
 
+    async def test_replacing_with_a_backup_from_before_house_rules_clears_them(self) -> None:
+        # "Replace" means replace: the copy's rules are the campaign's rules afterwards,
+        # and a backup that has none leaves it with none (the same as for its names).
+        await self.add("Crits double the dice")
+        backup = await self.campaigns.export(GUILD_A, self.campaign.id)
+        del backup["sections"]["house_rules"]
+        await self.add("A rule made after the backup")
+        await self.campaigns.import_backup(
+            GUILD_A, backup, DM, replace_campaign_id=self.campaign.id
+        )
+        (replaced,) = await self.campaigns.list_campaigns(GUILD_A)
+        self.assertEqual(await self.texts(replaced), [])
+
     async def test_a_damaged_row_refuses_the_whole_backup(self) -> None:
         await self.add("Crits double the dice")
         good = await self.campaigns.export(GUILD_A, self.campaign.id)
@@ -346,7 +379,7 @@ class Command(HouseRulesTest):
     async def test_a_dm_adds_a_rule_and_everyone_reads_it(self) -> None:
         opened = self.it(DM, discord.InteractionType.application_command)
         await ui.dmbot_house_rules.callback(opened)  # type: ignore[call-arg]
-        text, kw = opened.response.sent[0]
+        text = opened.followup.send.await_args.args[0]  # it answers Discord first
         self.assertIn("No house rules yet.", text)
         form = ui.AddForm(self.campaign)
         form.rule._value = "A natural 20 doubles the damage dice"
@@ -358,7 +391,8 @@ class Command(HouseRulesTest):
         # A player opens it: the same list, and nothing to press.
         reading = self.it(PLAYER, discord.InteractionType.application_command)
         await ui.dmbot_house_rules.callback(reading)  # type: ignore[call-arg]
-        text, kw = reading.response.sent[0]
+        call = reading.followup.send.await_args
+        text, kw = call.args[0], call.kwargs
         self.assertIn("1. A natural 20 doubles the damage dice", text)
         self.assertIsNone(kw.get("view"))
 
@@ -369,6 +403,7 @@ class Command(HouseRulesTest):
         it = self.it(PLAYER, discord.InteractionType.modal_submit)
         await form.on_submit(it)
         self.assertIn("Only this campaign's DM", it.followup.send.await_args.args[0])
+        self.assertIn("Everyone gets a pony", it.followup.send.await_args.args[0])  # words back
         (existing,) = await self.rules.list(GUILD_A, self.campaign.id)
         confirm = ui.ConfirmRemove(self.campaign, existing, 0)
         press = self.it(PLAYER, discord.InteractionType.component)

@@ -382,10 +382,15 @@ alerts yet; those build on this.
   as they may read transcripts.
 - **`/dmbot houserules`** answers privately, newest first, numbered. It opens the campaign
   being played, else the one campaign the person is a DM of, else the server's only one,
-  else asks which. A DM gets **Add a house rule** (a form: "The rule" and "Instead of
-  (optional)"), and Edit and Remove for each rule: buttons when there are four or fewer,
-  a menu above that, and pages of ten above that. Remove asks first and says it can't be
-  undone. Nothing is posted to the DM screen (the list isn't DM-screen content).
+  else asks which. A DM gets **Add a house rule** (a form: "The rule" and "Which rule does it
+  change? (optional)", shown in the list as "(instead of: …)"), and Edit and Remove for each
+  rule: buttons when there are four or fewer, a menu above that, and pages (what fits in
+  one message, at most ten rules) above that. Remove asks first, shows the rule, and says
+  it can't be undone; if another DM changed that rule meanwhile, nothing is removed and
+  the list is shown again. A refused form gives the DM's words back to copy. Nothing is
+  posted to the DM screen (the list isn't DM-screen content).
+- **Replace means replace:** restoring a backup over a campaign replaces its house rules
+  with the backup's, as it does everything else; a backup made before this has none.
 - **Wording:** "house rule" only: no "precedence" or "hierarchy" in anything users read.
 
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio

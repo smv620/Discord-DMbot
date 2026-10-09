@@ -16,6 +16,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.logs import set_log_context
+from dmbot.rules import house
 from dmbot.rules.house import RULE_MAX, HouseRule, HouseRuleError, HouseRuleStore
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -37,23 +38,34 @@ from dmbot.ui.dmbot_commands import (
 log = logging.getLogger(__name__)
 
 PAGE_RULES = 10  # most rules on one page
-TEXT_MAX = 1700  # of the list itself; the heading and the note go around it
+# Discord allows 2,000 characters. The list gets TEXT_MAX; around it go the note (cut to
+# NOTE_MAX), the heading (the campaign's name cut to NAME_MAX), the intro and the page line.
+TEXT_MAX = 1300
+NOTE_MAX = 160
+NAME_MAX = 100
 ENTRY_MAX = 1000  # one rule, after escaping (a rule and its "instead of" are 500 each)
 BUTTON_RULES = 4  # up to this many rules in all: Edit and Remove buttons for each
 
 NOT_READY = "House rules aren't available right now. Please try again in a moment."
 NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with `/dmbot start`."
 GONE = "That campaign isn't here any more. Use `/dmbot houserules` to see the list again."
-STALE = "That list had changed, so here it is again."
+STALE = "The list changed, so here is the new one. Pick again."
+ALREADY_GONE = "That house rule was already removed. Here is the list now."
+SOMEONE_REMOVED = (
+    "Someone removed that house rule while you were editing, so your change wasn't saved."
+)
+MORE_CAMPAIGNS = "_Showing the 25 played most recently._"
 NONE_YET = "No house rules yet."
 ADD_HINT = "Press **Add a house rule** to write the first one."
 DM_INTRO = (
-    "The rules your table decided on. They win over the book. Only a DM of this campaign "
-    "can change them. You decide; DMbot only keeps them."
+    "The rules your table decided on. When one disagrees with the official rules, your "
+    "table's rule is used. Everyone in the server can read this list; only a DM of this "
+    "campaign can change it. You decide: DMbot never makes up a house rule."
 )
 READ_INTRO = (
-    "The rules this table decided on. They win over the book. Only a DM of this campaign "
-    "can change them."
+    "The rules this table decided on. When one disagrees with the official rules, the "
+    "table's rule is used. Everyone in the server can read this list; only a DM of this "
+    "campaign can change it. DMbot never makes up a house rule."
 )
 
 ADD_LABEL = "➕ Add a house rule"
@@ -81,12 +93,22 @@ def _fit(text: str, limit: int) -> str:
     return cut + "…"
 
 
-def entry_text(number: int, rule: HouseRule) -> str:
-    """One rule as a numbered line: `3. Crits double the dice (instead of: …)`."""
-    text = f"{number}. {_md(rule.rule)}"
+def entry_words(rule: HouseRule) -> str:
+    """A rule without its number: `Crits double the dice (instead of: …)`."""
+    text = _md(rule.rule)
     if rule.supersedes:
         text += f" (instead of: {_md(rule.supersedes)})"
-    return _fit(text, ENTRY_MAX)
+    return text
+
+
+def entry_text(number: int, rule: HouseRule) -> str:
+    """One rule as a numbered line: `3. Crits double the dice (instead of: …)`."""
+    return _fit(f"{number}. {entry_words(rule)}", ENTRY_MAX)
+
+
+def short_words(rule: HouseRule) -> str:
+    """A rule's words for a note about it: cut short, never half an escape."""
+    return _fit(_md(rule.rule), 100)
 
 
 def pages(rules: list[HouseRule]) -> list[list[int]]:
@@ -109,8 +131,8 @@ def list_text(
 ) -> str:
     """The message: what just happened (first, where a phone shows it), the heading, and
     this page of the numbered list, newest first."""
-    lines = [note] if note else []
-    lines.append(f"📜 **House rules: {_md(campaign.name)}**")
+    lines = [_fit(note, NOTE_MAX)] if note else []
+    lines.append(f"📜 **House rules: {_fit(_md(campaign.name), NAME_MAX)}**")
     lines.append(DM_INTRO if is_dm else READ_INTRO)
     shown = pages(rules)
     if not rules:
@@ -269,7 +291,7 @@ async def ask_remove(
     campaign: Campaign, rule: HouseRule, place: int, interaction: discord.Interaction
 ) -> None:
     """Never remove at once: say which rule, and that it can't be undone."""
-    text = f"Remove house rule {place + 1}?\n{entry_text(place + 1, rule)}\nThis can't be undone."
+    text = f"Remove this house rule?\n{entry_text(place + 1, rule)}\nThis can't be undone."
     await _show(interaction, text, ConfirmRemove(campaign, rule, place))
 
 
@@ -288,11 +310,17 @@ class ConfirmRemove(_Menu):
             return
         c = self.campaign
         try:
-            gone = await store.remove(c.guild_id, c.id, interaction.user.id, self.rule.id)
+            gone = await store.remove(
+                c.guild_id,
+                c.id,
+                interaction.user.id,
+                self.rule.id,
+                unchanged_since=self.rule.updated_at,
+            )
         except HouseRuleError as exc:
-            note = str(exc)
+            note = ALREADY_GONE if str(exc) == house.GONE else str(exc)
         else:
-            note = f"🗑 Removed: {_fit(_md(gone.rule), 100)}"
+            note = f"🗑 Removed house rule: {short_words(gone)}"
         await _redraw(interaction, c, note=note)
 
     async def _keep(self, interaction: discord.Interaction) -> None:
@@ -309,8 +337,8 @@ class _RuleForm(discord.ui.Modal):
         max_length=RULE_MAX,
     )
     instead: discord.ui.TextInput[_RuleForm] = discord.ui.TextInput(
-        label="Instead of (optional)",
-        placeholder="The book rule this replaces, if any",
+        label="Which rule does it change? (optional)",
+        placeholder="Leave empty if this is a new rule, not a change",
         style=discord.TextStyle.paragraph,
         required=False,
         max_length=RULE_MAX,
@@ -338,9 +366,15 @@ class _RuleForm(discord.ui.Modal):
         try:
             note = await self.save(store, interaction.user.id)
         except HouseRuleError as exc:
-            await _tell(interaction, str(exc))
+            # The form is closed: give the words back, so they can be pasted again.
+            words = " ".join(self.rule.value.split())
+            said = f"\nYour words, to copy: {_fit(_md(words), 300)}" if words else ""
+            await _tell(interaction, self.refusal(str(exc)) + said)
             return
         await _redraw(interaction, self.campaign, note=note)
+
+    def refusal(self, message: str) -> str:
+        return message
 
     async def save(self, store: HouseRuleStore, user_id: int) -> str:
         raise NotImplementedError
@@ -349,8 +383,8 @@ class _RuleForm(discord.ui.Modal):
 class AddForm(_RuleForm, title="Add a house rule"):
     async def save(self, store: HouseRuleStore, user_id: int) -> str:
         c = self.campaign
-        await store.add(c.guild_id, c.id, user_id, self.rule.value, self.instead.value)
-        return "➕ Added as house rule 1."
+        saved = await store.add(c.guild_id, c.id, user_id, self.rule.value, self.instead.value)
+        return f"➕ Added house rule: {short_words(saved)}"
 
 
 class EditForm(_RuleForm, title="Edit a house rule"):
@@ -362,10 +396,13 @@ class EditForm(_RuleForm, title="Edit a house rule"):
 
     async def save(self, store: HouseRuleStore, user_id: int) -> str:
         c = self.campaign
-        await store.edit(
+        changed = await store.edit(
             c.guild_id, c.id, user_id, self.existing.id, self.rule.value, self.instead.value
         )
-        return f"✏️ Changed house rule {self.place + 1}."
+        return f"✏️ Changed house rule: {short_words(changed)}"
+
+    def refusal(self, message: str) -> str:
+        return SOMEONE_REMOVED if message == house.GONE else message
 
 
 class CampaignChoice(_Menu):
@@ -399,13 +436,15 @@ class CampaignChoice(_Menu):
 
 
 @dmbot_group.command(
-    name="houserules", description="See your house rules; a DM can add, edit or remove them"
+    name="houserules",
+    description="See this table's house rules (a DM can add, edit or remove them)",
 )
 async def dmbot_house_rules(interaction: discord.Interaction) -> None:
     guild = interaction.guild
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
         return
+    await _answer_first(interaction)  # the database can be slow; Discord waits 3 seconds
     bot = _bot(interaction)
     everyone = await bot.campaigns.list_campaigns(guild.id)
     if not everyone:
@@ -422,4 +461,7 @@ async def dmbot_house_rules(interaction: discord.Interaction) -> None:
         await show_list(interaction, current, first=True)
         return
     # More than one and none playing: everyone may read any campaign's, so offer them all.
-    await _send(interaction, "**Which campaign's house rules?**", CampaignChoice(everyone))
+    ask = "**Which campaign's house rules?**"
+    if len(everyone) > logic.SELECT_OPTIONS_MAX:
+        ask += "\n" + MORE_CAMPAIGNS
+    await _send(interaction, ask, CampaignChoice(everyone))
