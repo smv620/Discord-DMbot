@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-09 by dev1 (core and web-api 85cc405 live, ears 21c5ff1; Test D next)
+Last updated: 2026-10-09 by CloudDev (ready to deploy: #937; earlier by dev1: core and web-api 85cc405 live, ears 21c5ff1; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,7 +9,13 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- CloudDev, PR #937 (#437 part 3, #919; skip if core on the server already includes commit
+  32e7bd4): core only, no migration or setting. Nothing visible while DMBOT_ENFORCE_PLANS is
+  off (it stays off until go-live, #498), so the check is only that core starts with no ERROR
+  and that these still work as before: 🤖 Find names on a pasted list, `/dmbot backup` and
+  `/dmbot restore`, and a transcript download button. With the setting on (go-live only): a
+  Try It owner is refused a copy and a transcript in plain words, a player is told to ask the
+  owner, and an ended plan is told "Your plan has ended, so DMbot can't <do that>".
 
 ------------------------------------------------------------------------------
 LIVE NOW
