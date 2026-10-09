@@ -1282,6 +1282,29 @@ reads the campaign memory and never changes it.
 
   - **Only confirmed names and aliases can make a silent (high) fix.** A proposed name
     reaches at most medium, which always shows Undo.
+  - **A look-alike is not always a mishearing (decided 2026-10-09, #573).** Three rules
+    keep the Cleaner from merging two people into one:
+    1. **Two people in one line:** a look-alike word is never made into a name the same
+       line already says. With Ysolde in the line, "Isolde" stays "Isolde" (it is a
+       second person); the same holds for the options in a "Did they mean…?".
+    2. **Silent only when near-certain.** A fix by sound is silent only when the heard
+       word is spelled at least **0.95** alike to the name (`NEAR_CERTAIN`). Below that
+       (and above the old bars of 0.7 joined, 0.8 one word) it is a **medium** fix:
+       made, with a note and Undo in "✏️ Name fixes to check". With **How much DMbot
+       says: Quiet** it is not made. Measured on names-stress and the tests: a new
+       name that looks like a known one scores 0.83 ("Isolde"/Ysolde, "Cedric"/Cerric)
+       up to 0.93 ("Rothgar"/Hrothgar, which names-stress calls the likeliest wrong fix),
+       and a likely mishearing of a known name 0.91 to 0.94 ("Gorak"/Gorrak, "Beleros",
+       "Belle Ross"). The ranges overlap, so only near-identical spellings (0.95 and up)
+       stay silent; the rest are noted, and the DM decides. The cost is a few more lines
+       in "✏️ Name fixes to check". Under **Quiet**, noted fixes are not made, so
+       sound-alike names are left as heard: that is what Quiet promises (fewer misheard
+       names get fixed, no notes). The one-word rules (the name in the scene, 0.8) are
+       unchanged. This rests on about a dozen pairs: revisit it with the twin when more
+       real mishearings are on record. A one-letter slip in a short name scores about
+       0.83 to 0.86.
+    3. **Once the DM confirms a name it is known.** "Isolda" confirmed next to Ysolde is
+       never rewritten; "Isolde", sounding like both, is asked about, never made Ysolde.
   - "Did they mean…?" and Undo appear **only in the DM screen**, never in the transcript
     channel. The question leads with what was heard: "❓ **Mia said "Bell or us"**: did
     they mean… [Belleros] [Bellamy] [Type it…] [Keep as heard]". At most 3 options.
@@ -1433,7 +1456,8 @@ consent check just made still holds:
 - **Fixes with Undo (decided 2026-10-07 on #296):**
   - **Which fixes:** a misheard word that sounds like a name DMbot only *suggested*
     (spelled at least 0.9 alike, never secret, not next to a secret name) is fixed,
-    but never silently.
+    but never silently. So is a close look-alike of a *confirmed* name spelled less than
+    0.95 alike (decided on #573, see the Cleaner's "look-alike" rules above).
   - **Where they show:** only in the DM screen, in one "✏️ Name fixes to check" message
     edited in place: "DMbot changed these words in the transcript but isn't sure.
     Wrong? Press its Undo to put back what was heard." One numbered line and one
