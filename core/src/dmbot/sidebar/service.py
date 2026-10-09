@@ -21,8 +21,9 @@ import asyncio
 import contextlib
 import logging
 import time
+import uuid
 from collections import deque
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -31,7 +32,15 @@ import discord
 from dmbot.audio.segmenter import Utterance
 from dmbot.sidebar import memo
 from dmbot.sidebar.ask import Request, request_in
-from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, Line
+from dmbot.transcript.models import (
+    SIDEBAR_ANSWER,
+    SIDEBAR_QUESTION,
+    VIA_TABLE,
+    VIA_TYPED,
+    VIA_VOICE,
+    Line,
+    Lineage,
+)
 from dmbot.transcription.base import TranscriptionProblem
 
 if TYPE_CHECKING:
@@ -83,6 +92,13 @@ class Answer(Protocol):
     def in_game(self) -> bool: ...  # about the campaign or the game: goes in the transcript
     @property
     def refused(self) -> bool: ...  # the plan said no: `text` has the plain words
+    # Where the reply came from, kept with it in the transcript (owner, #933).
+    @property
+    def model(self) -> str: ...
+    @property
+    def prompt_version(self) -> str: ...
+    @property
+    def sources(self) -> Sequence[str]: ...  # rules entries, house rule numbers, facts, span
 
 
 class Answerer(Protocol):
@@ -102,6 +118,7 @@ class Host(Protocol):
     def sidebar_clean(self, table: Table, text: str) -> str: ...
     async def sidebar_send_dm(self, user_id: int, text: str) -> bool: ...
     def sidebar_save(self, table: Table, line: Line) -> None: ...
+    def sidebar_stt(self) -> str: ...  # the speech-to-text in use: "engine model host"
     async def sidebar_tell_screen(self, table: Table, text: str) -> None: ...
 
 
@@ -251,7 +268,7 @@ class SidebarService:
             else:
                 heard = message.content.strip()[:MAX_TYPED_CHARS]
                 show = False
-            await self._ask(table, user_id, heard, reply, show_heard=show)
+            await self._ask(table, user_id, heard, reply, via=VIA_VOICE if show else VIA_TYPED)
         finally:
             self._busy.discard(user_id)
 
@@ -346,7 +363,7 @@ class SidebarService:
             return await self.host.sidebar_send_dm(user_id, text)
 
         try:
-            await self._ask(table, user_id, request.question, reply, show_heard=False)
+            await self._ask(table, user_id, request.question, reply, via=VIA_TABLE)
         except Exception:
             log.exception("A question said at the table failed")
         finally:
@@ -369,9 +386,9 @@ class SidebarService:
             and self.host.has_consent(table.guild_id, user_id)
         )
 
-    async def _ask(
-        self, table: Table, user_id: int, heard: str, reply: Reply, *, show_heard: bool
-    ) -> None:
+    async def _ask(self, table: Table, user_id: int, heard: str, reply: Reply, *, via: str) -> None:
+        """`via`: how the question came in (VIA_VOICE, VIA_TYPED or VIA_TABLE)."""
+        show_heard = via == VIA_VOICE
         guild_id, campaign_id = table.guild_id, table.campaign_id
         if campaign_id is None or not self._still(table, user_id):
             return
@@ -381,8 +398,18 @@ class SidebarService:
             return
         question = self.host.sidebar_clean(table, heard)
         asked_ms = int(self._clock() * 1000)
+        ref = uuid.uuid4().hex[:6]  # the reply says which question it answers
+        stt = self.host.sidebar_stt() if via != VIA_TYPED else ""
         self.host.sidebar_save(
-            table, Line(asked_ms, user_id, heard, question, sidebar=SIDEBAR_QUESTION)
+            table,
+            Line(
+                asked_ms,
+                user_id,
+                heard,
+                question,
+                sidebar=SIDEBAR_QUESTION,
+                lineage=Lineage(ref=ref, via=via, stt=stt),
+            ),
         )
         campaign = await self.host.campaign(guild_id, campaign_id)
         if campaign is None or not self._still(table, user_id):
@@ -423,6 +450,12 @@ class SidebarService:
                     answer.text.strip(),
                     answer.text.strip(),
                     sidebar=SIDEBAR_ANSWER,
+                    lineage=Lineage(
+                        reply_to=ref,
+                        model=answer.model,
+                        prompt=answer.prompt_version,
+                        sources=tuple(answer.sources),
+                    ),
                 ),
             )
 

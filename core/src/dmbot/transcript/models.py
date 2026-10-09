@@ -23,6 +23,35 @@ class TranscriptSession:
 
 
 SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
+VIA_VOICE, VIA_TYPED, VIA_TABLE = "voice-memo", "typed", "table-trigger"
+VIAS = (VIA_VOICE, VIA_TYPED, VIA_TABLE)
+
+
+@dataclass(frozen=True, slots=True)
+class Lineage:
+    """Where a DM sidebar line came from (owner decision on #933, 2026-10-09): stored as
+    columns, shown in the raw transcript's tag.
+
+    A question has `ref` (its short id), `via` and, for speech, `stt` ("engine model host").
+    DMbot's reply has `reply_to` (the question's `ref`), the AI `model`, the `prompt`
+    version and the `sources` it used (rules entries, house rule numbers, memory facts,
+    transcript span).
+    """
+
+    ref: str = ""
+    reply_to: str = ""
+    via: str = ""
+    stt: str = ""
+    model: str = ""
+    prompt: str = ""
+    sources: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.via and self.via not in VIAS:
+            raise ValueError(f"unknown way in {self.via!r}")
+
+
+NO_LINEAGE = Lineage()
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +68,7 @@ class Line:
     # question, or DMbot's answer (saved under the DM's ID, so a consent stop removes both,
     # and shown as DMbot). Only in the as-heard download, never the cleaned one.
     sidebar: str = ""
+    lineage: Lineage = NO_LINEAGE
 
     def __post_init__(self) -> None:
         if self.sidebar not in ("", SIDEBAR_QUESTION, SIDEBAR_ANSWER):  # not at the database

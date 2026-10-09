@@ -1675,11 +1675,12 @@ table isn't left waiting while the DM looks something up.
     a minute per table. The answer goes to the DM's private chat, never a channel.
   - **Transcript lines:** the question and DMbot's in-game answer are saved with the line
     kind `question` / `answer` (migration 0035; answers are saved under the DM's id so a
-    consent stop removes both), shown only in the as-heard file as `(DM name) [DM Sidebar]:`
-    and `(DMbot) [DM Sidebar]:`. Never in the cleaned file, the live channel, or the session
-    counts. Who may read them is one constant, `dmbot.sidebar.access.SIDEBAR_READERS`
-    (the campaign's DMs only until #933 is answered). Backups hold no transcripts, so they hold
-    no sidebar lines.
+    consent stop removes both), shown in the as-heard file for everyone who can read it as
+    `(DM name) [DM Sidebar id=… via=… stt=…]:` and `(DMbot) [DM Sidebar reply-to=… model=…
+    prompt=… sources=…]:`. Where each came from is stored as columns (how it came in, the
+    speech-to-text, the question it answers, the AI model, the prompt version, the sources).
+    Never in the cleaned file, the live channel, or the session counts. Backups hold no
+    transcripts, so they hold no sidebar lines.
   - **Cost limits:** a spoken question is one a minute per table; questions in the DM chat are
     six a minute per DM (each can spend speech-to-text and AI money). A voice message's speech
     counts in the end-of-session "sent" line for outside engines, not in the hours meter.

@@ -23,6 +23,9 @@ class FakeAnswer:
     text: str = "No: its origin is a point you choose. (SRD 5.2.1, sure)"
     in_game: bool = True
     refused: bool = False
+    model: str = "model-1"
+    prompt_version: str = "prompt-1"
+    sources: tuple[str, ...] = ("SRD 5.2.1 p. 241",)
 
 
 class FakeAnswerer:
@@ -95,6 +98,9 @@ class FakeHost:
     def sidebar_save(self, table: Any, line: Line) -> None:
         self.saved.append(line)
 
+    def sidebar_stt(self) -> str:
+        return "deepgram nova-3 api.example"
+
     async def sidebar_tell_screen(self, table: Any, text: str) -> None:
         self.screen.append(text)
 
@@ -146,6 +152,27 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(question_line.text, "find if you need line of sight for Fireball")
         self.assertEqual((answer_line.user_id, answer_line.sidebar), (DM, SIDEBAR_ANSWER))
         self.assertEqual(answer_line.heard, FakeAnswer().text)
+
+    async def test_every_line_records_where_it_came_from(self) -> None:
+        await self.sidebar.on_dm_message(dm_message(content="check how grappling works"))
+        asked, answered = self.host.saved
+        self.assertEqual((asked.lineage.via, asked.lineage.stt), ("typed", ""))  # no speech
+        self.assertEqual(len(asked.lineage.ref), 6)
+        self.assertEqual(answered.lineage.reply_to, asked.lineage.ref)
+        self.assertEqual(
+            (answered.lineage.model, answered.lineage.prompt, answered.lineage.sources),
+            ("model-1", "prompt-1", ("SRD 5.2.1 p. 241",)),
+        )
+
+    async def test_a_voice_message_records_the_speech_to_text(self) -> None:
+        data = ogg_opus(1.0)
+        if data is None:
+            self.skipTest("this PyAV can't encode Opus")
+        await self.sidebar.on_dm_message(dm_message(voice=data))
+        asked, _ = self.host.saved
+        self.assertEqual(
+            (asked.lineage.via, asked.lineage.stt), ("voice-memo", self.host.sidebar_stt())
+        )
 
     async def test_a_co_dm_may_ask_too(self) -> None:
         message = dm_message(CO_DM, "check how grappling works")
@@ -470,6 +497,8 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
             [(x.sidebar, x.heard) for x in self.host.saved],
             [(SIDEBAR_QUESTION, FIREBALL), (SIDEBAR_ANSWER, FakeAnswer().text)],
         )
+        asked = self.host.saved[0].lineage
+        self.assertEqual((asked.via, asked.stt), ("table-trigger", self.host.sidebar_stt()))
 
     async def test_a_player_saying_the_same_words_starts_nothing(self) -> None:
         said = "Hold on, I need to find if you need line of sight for fireball."

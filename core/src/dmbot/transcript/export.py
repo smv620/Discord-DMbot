@@ -38,8 +38,8 @@ CLEANED_NOTE = (
     "who agreed were recorded."
 )
 SIDEBAR_NOTE = (
-    "[DM Sidebar] lines are the DM's private questions to DMbot and its answers. Only "
-    "people allowed to read them get this file with them in."
+    "[DM Sidebar] lines are the DM's questions to DMbot and its answers, with where each "
+    "came from. They are left out of the Cleaned version."
 )
 SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
 HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."
@@ -124,6 +124,34 @@ def written_by(engines: Sequence[str]) -> str:
     return "; then ".join(words)
 
 
+def _value(text: str) -> str:
+    """One word for a tag: no spaces, brackets or equals signs to confuse a reader."""
+    return "-".join(text.translate(_BRACKETS).replace("=", "-").split()) or "unknown"
+
+
+def sidebar_tag(line: Line) -> str:
+    """`[DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]` on a question, and
+    `[DM Sidebar reply-to=a1b2c3 model=… prompt=… sources=…]` on DMbot's reply: where
+    each line came from (owner, #933). Only what is known is shown."""
+    info = line.lineage
+    parts: list[tuple[str, str]]
+    if line.sidebar == SIDEBAR_QUESTION:
+        engine, _, rest = info.stt.partition(" ")  # the company's host stays private
+        stt = f"{engine}/{rest.split(' ')[0]}" if rest else engine
+        parts = [("id", info.ref), ("via", info.via), ("stt", stt)]
+    else:
+        parts = [
+            ("reply-to", info.reply_to),
+            ("model", info.model),
+            ("prompt", info.prompt),
+            ("sources", ";".join(_value(x) for x in info.sources)),
+        ]
+    shown = " ".join(
+        f"{key}={_value(value) if key != 'sources' else value}" for key, value in parts if value
+    )
+    return f"[DM Sidebar {shown}]" if shown else SIDEBAR_TAG
+
+
 def label(when: str, speaker: str, character: str | None = None) -> str:
     """`[0:42:10] (Mia) {Cerric}`, or `[0:42:10] (Sam)` without a character."""
     speaker, character = _plain(speaker), _plain(character) if character else None
@@ -144,13 +172,12 @@ def render(
     characters: Mapping[int, str] | None = None,
     running: bool = False,
     version: str = AS_HEARD,
-    with_sidebar: bool = False,
 ) -> str:
     """The whole file. `names`: speaker ID → display name (missing ones show as
     'Someone'); `characters`: speaker ID → the character they play. `running`: DMbot
-    is still recording this session. `version`: CLEANED or AS_HEARD. `with_sidebar`: add the
-    DM sidebar lines (#935), to the as-heard version only; the caller decides who may read
-    them (`dmbot.sidebar.access`)."""
+    is still recording this session. `version`: CLEANED or AS_HEARD. The DM sidebar lines
+    (#935) are in the as-heard version, for everyone who may read it, and never in the
+    cleaned one (owner, #933)."""
     _check(version)
     start_ms = session.started_at * 1000
     playing = characters or {}
@@ -160,11 +187,7 @@ def render(
     # marker with how long it lasted. The as-heard version keeps everything.
     everything = list(lines)
     table_lines = [line for line in everything if not line.sidebar]
-    shown_sidebar = (
-        [line for line in everything if line.sidebar]
-        if with_sidebar and version == AS_HEARD
-        else []
-    )
+    shown_sidebar = [line for line in everything if line.sidebar] if version == AS_HEARD else []
     spoken = [
         Spoken(
             line.user_id,
@@ -194,7 +217,8 @@ def render(
         )
         when = clock((line.started_ms - start_ms) / 1000)
         said = " ".join(line.heard.split())
-        timed.append((line.started_ms, f"[{when}] ({_plain(asker)}) {SIDEBAR_TAG}: {said}"))
+        tag = sidebar_tag(line)
+        timed.append((line.started_ms, f"[{when}] ({_plain(asker)}) {tag}: {said}"))
     timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
     body = [text for _, text in timed]
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))

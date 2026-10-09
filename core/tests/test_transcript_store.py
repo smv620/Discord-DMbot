@@ -16,7 +16,7 @@ from dmbot.consent import ConsentStore
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
 from dmbot.transcript import export
-from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, Line
+from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, VIA_VOICE, Line, Lineage
 from dmbot.transcript.store import TranscriptStore
 from dmbot.ui import transcripts as ui
 from tests.pg import DatabaseTest
@@ -47,8 +47,19 @@ class StoreTests(DatabaseTest):
 
     async def test_sidebar_lines_are_kept_apart_and_never_edited(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        asked_from = Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host")
+        answered_from = Lineage(
+            reply_to="a1b2c3", model="m-1", prompt="p-1", sources=("SRD p. 1", "house rule 3")
+        )
         asked = Line(
-            START * 1000 + 5000, DM, "find flanking", "find flanking", 0, "game", SIDEBAR_QUESTION
+            START * 1000 + 5000,
+            DM,
+            "find flanking",
+            "find flanking",
+            0,
+            "game",
+            SIDEBAR_QUESTION,
+            asked_from,
         )
         answer = Line(
             START * 1000 + 7000,
@@ -58,6 +69,7 @@ class StoreTests(DatabaseTest):
             0,
             "game",
             SIDEBAR_ANSWER,
+            answered_from,
         )
         await self.store.add_lines(GUILD, sid, [asked, answer, line(5, DM, "table speech")])
         # They are not speech: the session counts one line and one speaker, as without them.
@@ -68,6 +80,11 @@ class StoreTests(DatabaseTest):
             [(x.heard, x.sidebar) for x in lines],
             [("find flanking", "question"), ("table speech", ""), ("Optional. (sure)", "answer")],
         )
+        # Where each came from is kept as columns, and table speech has none.
+        by_kind = {x.sidebar: x for x in lines}
+        self.assertEqual(by_kind["question"].lineage, asked_from)
+        self.assertEqual(by_kind["answer"].lineage, answered_from)
+        self.assertEqual(by_kind[""].lineage, Lineage())
         # An Undo, the off-topic filter or Put it back at the same moment as a sidebar line
         # changes the speech line only: the question and the answer stay as they were.
         key = asked.started_ms
@@ -451,7 +468,9 @@ class BotTests(DatabaseTest):
         await button.callback(it)
         return it
 
-    async def test_only_the_dm_downloads_the_sidebar_lines(self) -> None:
+    async def test_everyone_who_can_read_the_raw_file_sees_the_sidebar_lines_and_nobody_the_cleaned(
+        self,
+    ) -> None:
         sid = await self.finished_session()
         asked = Line(
             START * 1000 + 50_000,
@@ -461,6 +480,7 @@ class BotTests(DatabaseTest):
             0,
             "game",
             SIDEBAR_QUESTION,
+            Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host"),
         )
         answer = Line(
             START * 1000 + 52_000,
@@ -470,23 +490,27 @@ class BotTests(DatabaseTest):
             0,
             "game",
             SIDEBAR_ANSWER,
+            Lineage(reply_to="a1b2c3", model="m-1", prompt="p-1", sources=("SRD p. 1",)),
         )
         await self.store.add_lines(GUILD, sid, [asked, answer])
-        mine = await ui.make_file(
-            self.bot, self.guild, GUILD, sid, (export.AS_HEARD, export.CLEANED), DM
+        result = await ui.make_file(
+            self.bot, self.guild, GUILD, sid, (export.AS_HEARD, export.CLEANED)
         )
-        theirs = await ui.make_file(
-            self.bot, self.guild, GUILD, sid, (export.AS_HEARD, export.CLEANED), PLAYER
+        assert not isinstance(result, str)
+        heard, cleaned = (f.fp.read().decode() for f in result)
+        self.assertIn(
+            "(Sam) [DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]: "
+            "find if flanking is optional",
+            heard,
         )
-        assert not isinstance(mine, str) and not isinstance(theirs, str)
-        dm_heard, dm_cleaned = (f.fp.read().decode() for f in mine)
-        player_heard, player_cleaned = (f.fp.read().decode() for f in theirs)
-        self.assertIn("(Sam) [DM Sidebar]: find if flanking is optional", dm_heard)
-        self.assertIn("(DMbot) [DM Sidebar]: Yes, it is optional. (sure)", dm_heard)
-        for text in (dm_cleaned, player_heard, player_cleaned):
-            self.assertNotIn("Sidebar", text)
-            self.assertNotIn("flanking", text)
-            self.assertIn("We ride at dawn.", text)
+        self.assertIn(
+            "(DMbot) [DM Sidebar reply-to=a1b2c3 model=m-1 prompt=p-1 sources=SRD-p.-1]: "
+            "Yes, it is optional. (sure)",
+            heard,
+        )
+        self.assertNotIn("Sidebar", cleaned)
+        self.assertNotIn("flanking", cleaned)
+        self.assertIn("We ride at dawn.", cleaned)
 
     async def test_both_versions_come_as_two_files(self) -> None:
         sid = await self.finished_session()

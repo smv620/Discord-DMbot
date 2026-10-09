@@ -10,12 +10,13 @@ reads and writes go through `Database.guild`, so Postgres only shows that server
 
 from __future__ import annotations
 
+import json
 import uuid
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any
 
 from dmbot.db import Database, row_int
-from dmbot.transcript.models import Line, TranscriptSession
+from dmbot.transcript.models import Line, Lineage, TranscriptSession
 
 RECENT_SESSIONS = 25  # Discord's limit for a menu
 
@@ -61,12 +62,16 @@ class TranscriptStore:
             cur = await conn.execute(
                 "INSERT INTO transcript_lines"
                 " (guild_id, session_id, started_ms, user_id, heard, text, duration_ms, topic,"
-                " sidebar)"
+                " sidebar, sidebar_ref, sidebar_reply_to, sidebar_via, sidebar_stt,"
+                " sidebar_model, sidebar_prompt, sidebar_sources)"
                 " SELECT %s, %s, l.started_ms, l.user_id, l.heard, l.text, l.duration_ms,"
-                " l.topic, l.sidebar"
+                " l.topic, l.sidebar, l.ref, l.reply_to, l.via, l.stt, l.model, l.prompt,"
+                " l.sources::jsonb"
                 " FROM unnest(%s::bigint[], %s::bigint[], %s::text[], %s::text[], %s::int[],"
-                " %s::text[], %s::text[])"
-                " AS l(started_ms, user_id, heard, text, duration_ms, topic, sidebar)"
+                " %s::text[], %s::text[], %s::text[], %s::text[], %s::text[], %s::text[],"
+                " %s::text[], %s::text[], %s::text[])"
+                " AS l(started_ms, user_id, heard, text, duration_ms, topic, sidebar, ref,"
+                " reply_to, via, stt, model, prompt, sources)"
                 " RETURNING id",
                 (
                     guild_id,
@@ -79,6 +84,7 @@ class TranscriptStore:
                     [line.duration_ms for line in lines],
                     [line.topic for line in lines],
                     [line.sidebar or None for line in lines],
+                    *_lineage_columns(lines),
                 ),
             )
             ids = [int(r["id"]) for r in await cur.fetchall()]
@@ -207,7 +213,9 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT started_ms, user_id, heard, coalesce(text, heard) AS text, duration_ms,"
-                " topic, coalesce(sidebar, '') AS sidebar FROM transcript_lines"
+                " topic, coalesce(sidebar, '') AS sidebar, sidebar_ref, sidebar_reply_to,"
+                " sidebar_via, sidebar_stt, sidebar_model, sidebar_prompt, sidebar_sources"
+                " FROM transcript_lines"
                 " WHERE session_id = %s ORDER BY started_ms, id",
                 (session_id,),
             )
@@ -220,9 +228,43 @@ class TranscriptStore:
                     int(r["duration_ms"]),
                     r["topic"],
                     r["sidebar"],
+                    _lineage(r),
                 )
                 for r in await cur.fetchall()
             ]
+
+
+def _lineage_columns(lines: Sequence[Line]) -> list[list[str | None]]:
+    """The sidebar lineage of each line as one list per column; NULL for table speech."""
+
+    def column(pick: Callable[[Line], str]) -> list[str | None]:
+        return [pick(line) or None if line.sidebar else None for line in lines]
+
+    return [
+        column(lambda x: x.lineage.ref),
+        column(lambda x: x.lineage.reply_to),
+        column(lambda x: x.lineage.via),
+        column(lambda x: x.lineage.stt),
+        column(lambda x: x.lineage.model),
+        column(lambda x: x.lineage.prompt),
+        [
+            json.dumps(list(x.lineage.sources)) if x.sidebar and x.lineage.sources else None
+            for x in lines
+        ],
+    ]
+
+
+def _lineage(row: dict[str, Any]) -> Lineage:
+    sources = row["sidebar_sources"] or ()
+    return Lineage(
+        ref=row["sidebar_ref"] or "",
+        reply_to=row["sidebar_reply_to"] or "",
+        via=row["sidebar_via"] or "",
+        stt=row["sidebar_stt"] or "",
+        model=row["sidebar_model"] or "",
+        prompt=row["sidebar_prompt"] or "",
+        sources=tuple(str(x) for x in sources),
+    )
 
 
 def _session(row: dict[str, Any]) -> TranscriptSession:

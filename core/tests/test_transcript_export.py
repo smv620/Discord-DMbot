@@ -8,9 +8,13 @@ from typing import ClassVar
 from dmbot.transcript import export
 from dmbot.transcript.models import (
     MAX_UNSAVED,
+    NO_LINEAGE,
     SIDEBAR_ANSWER,
     SIDEBAR_QUESTION,
+    VIA_TYPED,
+    VIA_VOICE,
     Line,
+    Lineage,
     TranscriptBuffer,
     TranscriptSession,
 )
@@ -205,63 +209,84 @@ class DownloadButtons(unittest.TestCase):
 DM = 7
 
 
-def sidebar(seconds: float, kind: str, text: str) -> Line:
+def sidebar(seconds: float, kind: str, text: str, lineage: Lineage = NO_LINEAGE) -> Line:
     when = int(START * 1000 + seconds * 1000)
-    return Line(when, DM, text, text, sidebar=kind)
+    return Line(when, DM, text, text, sidebar=kind, lineage=lineage)
+
+
+ASKED = Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 api.deepgram.com")
+REPLIED = Lineage(
+    reply_to="a1b2c3",
+    model="claude-haiku-4-5",
+    prompt="sidebar-1",
+    sources=("SRD 5.2.1 p. 241", "house rule 3"),
+)
 
 
 class DmSidebarLines(unittest.TestCase):
-    """The DM's question and DMbot's answer (#935): as-heard, for those who may read them."""
+    """The DM's question and DMbot's answer (#935, #933): in the as-heard file for everyone
+    who can read transcripts, with where each came from; never in the cleaned one."""
 
     lines: ClassVar[list[Line]] = [
         line(5, MIA, "We ride at dawn."),
-        sidebar(10, SIDEBAR_QUESTION, "find if you need line of sight for fireball"),
-        sidebar(12, SIDEBAR_ANSWER, "No: a point you choose within range. (SRD 5.2.1, sure)"),
+        sidebar(10, SIDEBAR_QUESTION, "find if you need line of sight for fireball", ASKED),
+        sidebar(12, SIDEBAR_ANSWER, "No: a point you choose. (SRD 5.2.1, sure)", REPLIED),
         line(20, DEE, "Run!"),
     ]
     names: ClassVar[dict[int, str]] = {MIA: "Mia", DEE: "Dee", DM: "Sam"}
 
-    def render(self, version: str, with_sidebar: bool) -> str:
-        return export.render(
-            "X", session(), self.lines, self.names, version=version, with_sidebar=with_sidebar
-        )
+    def render(self, version: str, lines: list[Line] | None = None) -> str:
+        return export.render("X", session(), lines or self.lines, self.names, version=version)
 
-    def test_the_dms_as_heard_file_has_them_in_time_order(self) -> None:
-        body = self.render(export.AS_HEARD, True).split("\n\n", 1)[1].splitlines()
+    def test_the_as_heard_file_has_them_in_time_order_with_where_they_came_from(self) -> None:
+        text = self.render(export.AS_HEARD)
         self.assertEqual(
-            body,
+            text.split("\n\n", 1)[1].splitlines(),
             [
                 "[0:00:05] (Mia): We ride at dawn.",
-                "[0:00:10] (Sam) [DM Sidebar]: find if you need line of sight for fireball",
-                "[0:00:12] (DMbot) [DM Sidebar]: No: a point you choose within range. "
-                "(SRD 5.2.1, sure)",
+                "[0:00:10] (Sam) [DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]: "
+                "find if you need line of sight for fireball",
+                "[0:00:12] (DMbot) [DM Sidebar reply-to=a1b2c3 model=claude-haiku-4-5 "
+                "prompt=sidebar-1 sources=SRD-5.2.1-p.-241;house-rule-3]: "
+                "No: a point you choose. (SRD 5.2.1, sure)",
                 "[0:00:20] (Dee): Run!",
             ],
         )
-        self.assertIn("private questions to DMbot", self.render(export.AS_HEARD, True))
+        self.assertIn("questions to DMbot", text)
+        self.assertNotIn("api.deepgram.com", text)  # the company's host stays private
 
-    def test_nobody_else_gets_them(self) -> None:
-        text = self.render(export.AS_HEARD, False)
-        self.assertNotIn("Sidebar", text)
-        self.assertNotIn("fireball", text)
-        self.assertNotIn("DMbot)", text)
-        self.assertIn("We ride at dawn.", text)
-
-    def test_the_cleaned_file_never_has_them_even_for_the_dm(self) -> None:
-        text = self.render(export.CLEANED, True)
-        self.assertNotIn("Sidebar", text)
-        self.assertNotIn("fireball", text)
+    def test_the_cleaned_file_never_has_them(self) -> None:
+        text = self.render(export.CLEANED)
+        for word in ("Sidebar", "fireball", "DMbot)", "a1b2c3"):
+            self.assertNotIn(word, text)
         self.assertIn("Run!", text)
 
-    def test_a_name_cant_pass_for_dmbot(self) -> None:
-        mean = {**self.names, DM: "DMbot [DM Sidebar]"}
-        text = export.render(
-            "X", session(), self.lines, mean, version=export.AS_HEARD, with_sidebar=True
+    def test_a_typed_question_and_an_unknown_origin_show_only_what_is_known(self) -> None:
+        typed = sidebar(
+            10, SIDEBAR_QUESTION, "check flanking", Lineage(ref="ff0011", via=VIA_TYPED)
         )
-        self.assertIn("(DMbot DM Sidebar) [DM Sidebar]: find if you need", text)
+        bare = sidebar(11, SIDEBAR_ANSWER, "Optional.")
+        body = self.render(export.AS_HEARD, [typed, bare]).split("\n\n", 1)[1].splitlines()
+        self.assertEqual(
+            body,
+            [
+                "[0:00:10] (Sam) [DM Sidebar id=ff0011 via=typed]: check flanking",
+                "[0:00:11] (DMbot) [DM Sidebar]: Optional.",
+            ],
+        )
+
+    def test_a_name_cant_pass_for_dmbot_or_forge_a_tag(self) -> None:
+        mean = {**self.names, DM: "DMbot [DM Sidebar]"}
+        text = export.render("X", session(), self.lines, mean, version=export.AS_HEARD)
+        self.assertIn("(DMbot DM Sidebar) [DM Sidebar id=a1b2c3", text)
+        forged = Lineage(ref="x] [DM Sidebar", via=VIA_TYPED)
+        line_ = sidebar(10, SIDEBAR_QUESTION, "hi", forged)
+        self.assertIn(
+            "[DM Sidebar id=x-DM-Sidebar via=typed]", self.render(export.AS_HEARD, [line_])
+        )
 
     def test_the_header_says_nothing_about_them_when_there_are_none(self) -> None:
-        text = export.render("X", session(), [line(5, MIA, "hi")], {MIA: "Mia"}, with_sidebar=True)
+        text = export.render("X", session(), [line(5, MIA, "hi")], {MIA: "Mia"})
         self.assertNotIn("Sidebar", text)
 
 
@@ -269,6 +294,8 @@ class SidebarKinds(unittest.TestCase):
     def test_a_made_up_kind_is_refused_before_it_can_fail_a_whole_save(self) -> None:
         with self.assertRaises(ValueError):
             Line(1, DM, "x", "x", sidebar="memo")
+        with self.assertRaises(ValueError):
+            Lineage(via="carrier-pigeon")
 
 
 class SidebarLinesInTheBuffer(unittest.TestCase):
