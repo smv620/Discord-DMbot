@@ -86,6 +86,18 @@ def ended_text(campaign_name: str) -> str:
     )
 
 
+def ended_no_download_text(campaign_name: str, note: str) -> str:
+    """The same message when the campaign's plan has no downloads (#938), sent to the owner
+    only: what happened first (the transcript is kept, this plan just doesn't include
+    downloads), then why and what to do, in the words the refusals use. No buttons, and no
+    promise of `/transcript`, which would be refused."""
+    name = discord.utils.escape_markdown(campaign_name)
+    return (
+        f"The session for **{name}** has ended. Its transcript is kept, but this campaign's "
+        f"plan doesn't include downloads.\n{note}"
+    )
+
+
 def still_recording_text(is_dm: bool, so_far: str) -> str:
     if is_dm:
         return (

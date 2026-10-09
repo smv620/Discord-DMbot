@@ -1195,6 +1195,14 @@ USAGE_GRACE = """
     ALTER TABLE owner_hours ADD COLUMN grace_session BIGINT;
     """
 
+RULES_CARDS = """
+    -- A campaign setting (#931): "Rules cards when a spell or creature is named", off by
+    -- default. When on, a live session puts a card for a spell, condition or creature on
+    -- the DM screen when it is named at the table. Only the campaign's DMs change it. It
+    -- travels in a backup with the campaign's other settings.
+    ALTER TABLE campaigns ADD COLUMN rules_cards BOOLEAN NOT NULL DEFAULT FALSE;
+"""
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -1371,6 +1379,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0032_usage", USAGE),
     ("0033_usage_grace", USAGE_GRACE),
     ("0034_owner_campaigns", OWNER_CAMPAIGNS),
+    ("0035_rules_cards", RULES_CARDS),
     ("0036_transcript_sidebar", TRANSCRIPT_SIDEBAR),
 )
 

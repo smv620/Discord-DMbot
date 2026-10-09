@@ -425,6 +425,125 @@ class BotTests(DatabaseTest):
         session = await self.store.session(GUILD, sid or "")
         assert session is not None and session.ended_at is not None
 
+    async def end_with_gate(self, gate: Any, allows: Any = None) -> dict[int, Any]:
+        await self.consent.grant(GUILD, PLAYER)
+        table = self.table()
+        self.said(table, PLAYER, "Hello.")
+        users: dict[int, Any] = {}
+
+        def get_user(uid: int) -> Any:
+            return users.setdefault(uid, SimpleNamespace(id=uid, bot=False, send=AsyncMock()))
+
+        self.bot.get_user = get_user  # type: ignore[method-assign]
+        self.bot.plan_gate = gate  # type: ignore[method-assign]
+        if allows is not None:
+            self.bot.plan_allows = allows  # type: ignore[method-assign]
+        del self.bot.tables[GUILD]
+        await self.bot.finish_transcript(table)
+        return users
+
+    async def test_a_plan_without_downloads_tells_only_the_owner_and_sends_no_buttons(
+        self,
+    ) -> None:
+        # Try It with plans enforced (#938): the gate refuses, so no buttons that every press
+        # would refuse. Players have nothing to act on, so only the owner (the DM here) is told.
+        async def gate(action: str, guild: int, campaign: Any, user: int) -> str | None:
+            assert action == "transcript"
+            return "Try It campaigns don't keep downloads." if user == DM else "Ask the owner."
+
+        users = await self.end_with_gate(gate, AsyncMock(return_value=False))
+        self.assertEqual(set(users), {DM})  # the player was not messaged at all
+        call = users[DM].send.await_args
+        self.assertIn("Its transcript is kept, but this campaign's plan", call.args[0])
+        self.assertIn("doesn't include downloads", call.args[0])
+        self.assertIn("Try It campaigns don't keep downloads.", call.args[0])
+        self.assertNotIn("view", call.kwargs)
+        self.assertNotIn("/transcript", call.args[0])  # that would be refused too
+
+    async def test_the_owner_is_told_even_if_they_were_not_at_the_table(self) -> None:
+        campaign = await self.campaigns.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        outsider = 999
+        self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
+            return_value=SimpleNamespace(
+                id=campaign.id, owner_user_id=outsider, dm_user_ids=campaign.dm_user_ids
+            )
+        )
+
+        async def gate(action: str, guild: int, campaign: Any, user: int) -> str | None:
+            return "Pick a plan." if user == outsider else "Ask the owner."
+
+        users = await self.end_with_gate(gate, AsyncMock(return_value=False))
+        self.assertEqual(set(users), {outsider})
+        self.assertIn("Pick a plan.", users[outsider].send.await_args.args[0])
+
+    async def test_with_no_owner_the_dms_are_told_to_take_it_on_and_players_are_not(self) -> None:
+        campaign = await self.campaigns.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
+            return_value=SimpleNamespace(
+                id=campaign.id, owner_user_id=None, dm_user_ids=campaign.dm_user_ids
+            )
+        )
+        users = await self.end_with_gate(
+            AsyncMock(return_value="no owner"), AsyncMock(return_value=False)
+        )
+        self.assertEqual(set(users), {DM})
+        self.assertIn("Take it on", users[DM].send.await_args.args[0])
+
+    async def test_a_plan_with_downloads_keeps_the_buttons_and_adds_no_line(self) -> None:
+        users = await self.end_with_gate(AsyncMock(return_value=None), AsyncMock(return_value=True))
+        for user in users.values():
+            call = user.send.await_args
+            self.assertEqual(len(call.kwargs["view"].children), 3)
+            self.assertIn("Download the transcript", call.args[0])
+
+    async def test_the_plan_is_asked_at_most_twice_for_the_whole_table(self) -> None:
+        gate, allows = AsyncMock(return_value="no"), AsyncMock(return_value=False)
+        await self.end_with_gate(gate, allows)
+        self.assertEqual((allows.await_count, gate.await_count), (1, 1))  # blocked?; owner's line
+
+    async def test_the_real_gate_tells_only_the_owner_who_is_not_at_the_table(self) -> None:
+        import dataclasses
+
+        from dmbot.entitlements import Access
+
+        outsider = 999
+        campaign = await self.campaigns.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
+            return_value=SimpleNamespace(
+                id=campaign.id, owner_user_id=outsider, dm_user_ids=campaign.dm_user_ids
+            )
+        )
+        self.bot.settings = dataclasses.replace(
+            self.bot.settings, enforce_plans=True, site_url="https://dmbot.example"
+        )
+        try_it = Access("paid", "Try It", 480, 1, False)  # plans.json: Try It has no backups
+        self.bot.meter = SimpleNamespace(access=AsyncMock(return_value=try_it))  # type: ignore[assignment]
+        users = await self.end_with_gate(self.bot.plan_gate)  # the real gate and check
+        self.assertEqual(set(users), {outsider})
+        text = users[outsider].send.await_args.args[0]
+        self.assertIn("Try It campaigns can't make copies or transcripts", text)
+        self.assertIn("https://dmbot.example/account", text)
+
+    async def test_a_failing_plan_check_still_sends_the_downloads(self) -> None:
+        self.campaigns.get = AsyncMock(side_effect=OSError("down"))  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            users = await self.end_with_gate(
+                AsyncMock(return_value="no"), AsyncMock(return_value=False)
+            )
+        self.assertEqual(set(users), {DM, PLAYER})
+        for user in users.values():
+            self.assertIn("view", user.send.await_args.kwargs)
+
+    async def test_a_missing_campaign_keeps_the_downloads(self) -> None:
+        self.campaigns.get = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        users = await self.end_with_gate(
+            AsyncMock(return_value="no"), AsyncMock(return_value=False)
+        )
+        self.assertEqual(set(users), {DM, PLAYER})
+
     async def test_nothing_said_sends_nothing(self) -> None:
         table = self.table()
         self.bot.get_user = MagicMock()  # type: ignore[method-assign]
