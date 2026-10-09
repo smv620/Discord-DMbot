@@ -24,7 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import entitlements, install
+from dmbot import entitlements, hours, install, usage
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -172,6 +172,10 @@ TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel 
 STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be written
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
 IDLE_SWEEP_INTERVAL_S = 1
+METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
+METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
+METER_FINAL_RETRY_S = 2
+METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
 
@@ -312,6 +316,16 @@ class Table:
     heard_counts: Counter[tuple[str, int]] = field(default_factory=Counter)
     # The stored transcript (#41, #125): this session's row, and lines not saved yet.
     started_at: int = 0  # Unix seconds; the same after a restart
+    # Listening minutes already written to the hours meter (#437). None until first read:
+    # the stored number, so a restart counts none twice. `meter_base` is that number and
+    # `meter_since` when this process began listening, so time while DMbot was down is
+    # never billed. `ended_at` is the stop, past which no tick bills.
+    metered_minutes: int | None = None
+    meter_base: int = 0
+    meter_since: int = 0
+    ended_at: int | None = None
+    meter_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    metering_closed: bool = False  # the session ended: nothing more is billed
     listening_from: int = 0  # Unix seconds; since this process took the session on
     after_restart: bool = False  # listening_from is a restart (`resumed` resets on join)
     transcript_session_id: str | None = None  # set at the first save
@@ -384,6 +398,7 @@ class DMBot(commands.AutoShardedBot):
         transcripts: TranscriptStore | None = None,
         sheets: SheetStore | None = None,
         house_rules: HouseRuleStore | None = None,
+        meter: usage.Meter | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -411,6 +426,9 @@ class DMBot(commands.AutoShardedBot):
         self.sheets = sheets
         # A campaign's house rules, for `/dmbot houserules` (#865); None without a database.
         self.house_rules = house_rules
+        # The hours meter (#437 part 2): listening minutes are written here; None records
+        # nothing (tests and tools that run no real sessions).
+        self.meter = meter
         # AI text calls (a document into a names list); None when no key is set.
         self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None
         # The off-topic filter (#52) always uses the smallest model, whatever AI_MODEL is.
@@ -517,6 +535,7 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self.pipeline.run(), "transcribe"),
             self._watched(self._idle_sweeper(), "idle-sweep"),
             self._watched(self._summary_poster(), "summaries"),
+            self._watched(self._meter_loop(), "hours-meter"),
             *(
                 [asyncio.create_task(self.lookup.follow(self.memory.listen), name="names")]
                 if self.lookup is not None and self.memory is not None
@@ -1014,9 +1033,16 @@ class DMBot(commands.AutoShardedBot):
         # In the background: /dmbot stop must answer within Discord's 3 seconds. Kept
         # apart from other background work, so a shutdown right after a stop still
         # saves the end of the transcript.
-        task = asyncio.create_task(self.wind_down(table, int(time.time())), name="wind-down")
+        ended_at = int(time.time())
+        table.ended_at = ended_at  # no tick bills past this (#437)
+        task = asyncio.create_task(self.wind_down(table, ended_at), name="wind-down")
         self._finishing.add(task)
         task.add_done_callback(self._finishing.discard)
+        # The last, rounded-up minutes of the hours meter (#437) in a task of their own, so
+        # a slow database can never hold up saving the transcript.
+        meter_task = asyncio.create_task(self._meter_final(table, ended_at), name="meter-final")
+        self._finishing.add(meter_task)
+        meter_task.add_done_callback(self._finishing.discard)
         return table
 
     async def wind_down(self, table: Table, ended_at: int) -> None:
@@ -2956,6 +2982,98 @@ class DMBot(commands.AutoShardedBot):
                     view=review_view(cid),
                 )
 
+    async def _meter_loop(self) -> None:
+        """Once a minute, write each running session's listening minutes to the hours
+        meter (#437), so a crash or restart loses at most the last minute. One table at a
+        time: with many servers, a burst of connections would starve the pool."""
+        while True:
+            await asyncio.sleep(METER_INTERVAL_S)
+            for table in list(self.tables.values()):
+                try:
+                    async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                        await self.meter_table(table)
+                except TimeoutError:  # a slow database delays this table, not the others
+                    log.error("The listening minutes took too long to write down")
+
+    async def meter_table(
+        self, table: Table, now: int | None = None, *, final: bool = False
+    ) -> bool:
+        """Record the minutes this session has run and not yet written down, for the
+        campaign's owner right now (a hand-over mid-session moves the later minutes to
+        the new owner). `final` is the stop: it closes the meter for this session, so a
+        tick that was already waiting can never bill time after the end. Never raises
+        (the meter must not stop a game); returns whether it worked."""
+        if self.meter is None or table.campaign_id is None or table.started_at <= 0:
+            return True
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            try:
+                async with table.meter_lock:
+                    # A tick that was already waiting when the session stopped must not
+                    # bill time after its end: the stop settles the rest.
+                    if table.metering_closed or (
+                        not final and self.tables.get(table.guild_id) is not table
+                    ):
+                        return True
+                    stamp = int(time.time()) if now is None else now
+                    if table.ended_at is not None:  # a tick that was mid-flight at the stop
+                        stamp = min(stamp, table.ended_at)
+                    if table.metered_minutes is None:  # first time (or after a restart)
+                        table.metered_minutes = await self.meter.recorded(
+                            table.guild_id, table.campaign_id, table.started_at
+                        )
+                        # What was stored is the base; only time this process has been
+                        # listening adds to it, so a gap while DMbot was down isn't billed.
+                        table.meter_base = table.metered_minutes
+                        table.meter_since = max(table.started_at, table.listening_from)
+                    target = table.meter_base + hours.minutes_used(table.meter_since, stamp)
+                    owed = max(0, target - table.metered_minutes)
+                    if owed > 0:
+                        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+                        if campaign is not None and campaign.owner_user_id is None:
+                            # Nobody's hours to spend yet: keep the minutes in the session
+                            # record only, and move on, so whoever takes the campaign on is
+                            # billed from then and never for these.
+                            await self.meter.add_unowned(
+                                guild_id=table.guild_id,
+                                campaign_id=table.campaign_id,
+                                session_started_at=table.started_at,
+                                minutes=owed,
+                                now=stamp,
+                            )
+                            table.metered_minutes += owed
+                        elif campaign is not None and campaign.owner_user_id is not None:
+                            await self.meter.add(
+                                guild_id=table.guild_id,
+                                campaign_id=table.campaign_id,
+                                owner_user_id=campaign.owner_user_id,
+                                session_started_at=table.started_at,
+                                minutes=owed,
+                                now=stamp,
+                            )
+                            # If the commit succeeded but its reply was lost, the next tick
+                            # adds these minutes again: rare, and over rather than under.
+                            table.metered_minutes += owed
+                    if final:
+                        table.metering_closed = True
+                    return True
+            except Exception:
+                log.exception("Couldn't write down the listening minutes")
+                return False
+
+    async def _meter_final(self, table: Table, ended_at: int) -> None:
+        """The last, rounded-up minutes at a stop: tried a few times, since nothing else
+        will write them once the session is gone."""
+        for attempt in range(METER_FINAL_TRIES):
+            try:
+                async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                    if await self.meter_table(table, ended_at, final=True):
+                        return
+            except TimeoutError:
+                log.error("The listening minutes took too long to write down")
+            if attempt + 1 < METER_FINAL_TRIES:
+                await asyncio.sleep(METER_FINAL_RETRY_S)
+        table.metering_closed = True  # give up: a late tick must not bill past the end
+
     async def _idle_sweeper(self) -> None:
         while True:
             await asyncio.sleep(IDLE_SWEEP_INTERVAL_S)
@@ -3373,6 +3491,7 @@ async def run(settings: Settings) -> None:
             TranscriptStore(db),
             SheetStore(db),
             HouseRuleStore(db),
+            usage.Meter(db),
         )
         _close_on_sigterm(bot)
         async with bot:

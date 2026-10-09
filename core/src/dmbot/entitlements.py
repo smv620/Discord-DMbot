@@ -104,6 +104,7 @@ class Grant:
     level: GrantLevel
     ends_at: int | None
     revoked_at: int | None
+    granted_at: int | None = None  # a Guild-level grant's hours month runs from this day
 
     def active(self, now: int) -> bool:
         return self.revoked_at is None and (self.ends_at is None or now < self.ends_at)
@@ -184,12 +185,20 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
 async def effective(conn: Conn, user_id: int, now: int) -> Access:
     """What this person may do now, inside a transaction the caller already has open
     (as entitlements.read): every plan rule asks this."""
+    return (await inputs(conn, user_id, now))[2]
+
+
+async def inputs(
+    conn: Conn, user_id: int, now: int
+) -> tuple[Entitlement | None, Grant | None, Access]:
+    """`effective`, with the paid plan and grant it came from: the hours meter needs them
+    to find the month the hours belong to (dmbot.hours.month_for)."""
     if user_id in _free_users:
-        return access_for(user_id, None, None, now)
+        return None, None, access_for(user_id, None, None, now)
     async with _as_person(conn, user_id):
         plan = await _read_plan(conn, user_id)
         grant = await _read_grant(conn, user_id)
-    return access_for(user_id, plan, grant, now)
+    return plan, grant, access_for(user_id, plan, grant, now)
 
 
 async def plan_and_access(
@@ -238,7 +247,7 @@ async def _as_person(conn: Conn, user_id: int) -> AsyncIterator[None]:
 
 async def _read_grant(conn: Conn, user_id: int) -> Grant | None:
     cur = await conn.execute(
-        "SELECT discord_user_id, level, ends_at, revoked_at FROM access_grants"
+        "SELECT discord_user_id, level, ends_at, revoked_at, granted_at FROM access_grants"
         " WHERE discord_user_id = %s",
         (user_id,),
     )
@@ -250,6 +259,7 @@ async def _read_grant(conn: Conn, user_id: int) -> Grant | None:
         cast(GrantLevel, row["level"]),
         row["ends_at"],
         row["revoked_at"],
+        row["granted_at"],
     )
 
 

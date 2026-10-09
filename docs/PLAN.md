@@ -1674,6 +1674,29 @@ a bypass for Pages' preview login). When the site goes live,
 `WEB_SITE_URL` becomes `getdmbot.com` and the path limit comes off. Built in #836 (tunnel)
 and #837 (the dev site's API address).
 
+**The hours meter (#437 part 2), decided 2026-10-09 with Supervisor, built in slices.**
+*2a, recording:* listening minutes are written once a minute while a session runs and once
+more, rounded up, when it stops (a restart carries on from what is stored and counts none
+twice). Two tables, so no query crosses servers: `session_usage` (per campaign and
+session, server-isolated, deleted with the campaign; one row per owner the session had)
+and `owner_hours` (`owner_user_id`, `month_start`, `minutes`: numbers only, scoped to the
+owner like `entitlements`, readable by that owner across servers, written only through
+`Database.meter()`, which sets the server and the owner for that one write). Minutes count
+toward whoever owns the campaign when each is recorded, so a hand-over mid-session moves
+the later minutes; a campaign with no owner records nothing. `owner_hours` is not a
+campaign's data and never goes into a backup. Only time DMbot is actually listening counts: a restart gap is never billed (a resumed session adds to the minutes already stored, from the moment it is picked up again), and minutes while a campaign has no owner are kept in its session record under "nobody" and billed to no one, so whoever takes it on is billed only from then. The month: a paid plan's billing period;
+Try It its 30 days; a grant that is Guild-level, calendar months from the day it started
+(a 29th to 31st start falls on the month's last day); a grant overlapping a paid plan, the
+paid plan's month; the free list and "no limits" grants are recorded but
+never limited, in UTC calendar months. *2b, the checks (next):* `/dmbot start` refuses when the
+plan has ended, hours are used up or owned campaigns are over the cap ("paused" waits for
+the downgrade part); warnings at 80% and 90%; the cap finish. All of 2b acts only when
+`DMBOT_ENFORCE_PLANS` is on (default off; the meter records either way), which dev1 turns
+on with the website's go-live (#498) and notes in the testing log. The refusal for a plan
+that has ended says "Your plan has ended. Pick one at <WEB_SITE_URL>/account." (or "Pick
+one on DMbot's website." while it isn't set), shown only to the DM, never in public, and
+never telling anyone else why.
+
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
 names, later story memory and rules lookups), plus backup, restore and transcript
