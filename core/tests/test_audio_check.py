@@ -263,6 +263,18 @@ class TriggerTests(unittest.TestCase):
         clean = log_with_failures("I attack the goblin with my sword", 0.95)
         (d,) = clean.due(10)
         self.assertEqual((d.percent, d.lost), (90, 150))  # the loss is counted...
+        # ...the same as when ears sent no counts at all: the counts change what the log
+        # says, never what the DM screen is told.
+        plain = CaptureLog()
+        plain.add_utterance(utt(1, 2.0))
+        for n in range(5):
+            plain.add_health(1, 270, 300, n)
+        plain.add_line(1, "I attack the goblin with my sword", 0.95, 0)
+        (same,) = plain.due(10)
+        self.assertEqual((same.percent, same.lost), (d.percent, d.lost))
+        self.assertEqual(
+            check(AudioChecker(), same, FakeAI("no")), check(AudioChecker(), d, FakeAI("no"))
+        )
         self.assertFalse(check(AudioChecker(), d, FakeAI("no")).garbled)  # reads fine
         self.assertIsNone(clean.render(str, 10, confirm=lambda due: False))  # ...no warning
         garbled = log_with_failures("I go to the ... the ... north road and", 0.3)

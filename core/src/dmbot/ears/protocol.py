@@ -101,6 +101,13 @@ def _non_negative_int(value: object) -> int | None:
     return None
 
 
+def _optional_count(data: dict[str, object], key: str) -> int | None:
+    """A count ears may leave out: missing or `null` is read as 0 (older ears, and ears
+    omits a zero). None if it's there but not a whole number from 0 up."""
+    value = data.get(key)
+    return 0 if value is None else _non_negative_int(value)
+
+
 def parse_ears_message(raw: str) -> EarsMessage | None:
     """Parse and validate a JSON control message from ears. Returns None if invalid."""
     try:
@@ -163,13 +170,11 @@ def parse_ears_message(raw: str) -> EarsMessage | None:
         if guild_id is None or user_id is None or received is None or expected is None:
             return None
         # Omitted when zero; a wrong type is a broken message, not a zero.
-        extras = [
-            0 if data.get(key) is None else _non_negative_int(data.get(key))
-            for key in ("decryptFailures", "decodeErrors", "linkDropped")
-        ]
-        if any(count is None for count in extras):
+        decrypt = _optional_count(data, "decryptFailures")
+        decode = _optional_count(data, "decodeErrors")
+        dropped = _optional_count(data, "linkDropped")
+        if decrypt is None or decode is None or dropped is None:
             return None
-        decrypt, decode, dropped = (count or 0 for count in extras)
         return Health(guild_id, user_id, received, expected, decrypt, decode, dropped)
 
     return None

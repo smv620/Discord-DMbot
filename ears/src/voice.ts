@@ -79,6 +79,7 @@ interface SpeakerPipeline {
   accounted: number;
   watchdog?: NodeJS.Timeout;
   retry?: NodeJS.Timeout; // a delayed re-listen
+  relistening: boolean; // between a failure and the new subscription: nothing is received
   warnedSilent: boolean; // logged "sending but nothing heard" for this pipeline
   silentPeriods: number; // watchdog periods in a row with packets arriving, none heard
   /** Packets the voice library couldn't decrypt, not yet counted as lost (#43). */
@@ -99,9 +100,9 @@ export interface TableSessionOptions {
   peekBot: BotPeek;
   lookUpBot: BotLookup;
   /**
-   * Log per-utterance audio health (user IDs and counts only), and turn on the voice
-   * library's debug events, of which only its encryption (`[NW] [DAVE] `) lines are logged
-   * (see onVoiceDebug).
+   * Log per-utterance audio health (user IDs and counts only), and the voice library's
+   * encryption (`[NW] [DAVE] `) debug lines (see onVoiceDebug). The library's debug events
+   * themselves are always on: failed packets are counted from them.
    */
   debugAudio?: boolean;
   log: Logger;
@@ -140,6 +141,8 @@ export class TableSession {
   private readonly warnedAt = new Map<string, number>();
   private lastDecryptLog = -Infinity;
   private decryptLinesSkipped = 0;
+  private readonly sendingScratch: SpeakerPipeline[] = []; // reused by noteDecryptFailure
+  private readonly unheardScratch: SpeakerPipeline[] = [];
   private decryptTurn = 0; // which of several speakers the next failed packet goes to
   private strayDecryptFailures = 0; // failures while nobody who is recorded was sending
   private destroyed = false;
@@ -295,6 +298,7 @@ export class TableSession {
       decodeErrors: 0,
       linkDropped: 0,
       failedTries: 0,
+      relistening: false,
     };
     this.speakers.set(userId, pipeline);
 
@@ -404,20 +408,27 @@ export class TableSession {
    * recorded are subscribed, so it was one of them: someone sending right now, preferring
    * those nothing has been heard from lately. Several at once (a key change hits everyone)
    * take turns: exact in total, approximate per person (for the first ~100 ms of a burst the
-   * failing speaker may still count as heard, so a healthy one can be charged a few).
+   * failing speaker may still count as heard, so a healthy one can be charged a few, and
+   * their percent can shift with their count). Someone waiting to listen again can't be
+   * the source: nothing of theirs is being received.
    */
   private noteDecryptFailure(): void {
     const now = Date.now();
-    const sending = [...this.speakers.entries()]
-      .filter(([userId]) => this.connection.receiver.speaking.users.has(userId))
-      .sort(([a], [b]) => (a < b ? -1 : 1));
-    const unheard = sending.filter(([, pipeline]) => now - pipeline.accounted > SPEAKING_DELAY_MS);
+    const sending = this.sendingScratch;
+    const unheard = this.unheardScratch;
+    sending.length = 0;
+    unheard.length = 0;
+    for (const [userId, pipeline] of this.speakers) {
+      if (pipeline.relistening || !this.connection.receiver.speaking.users.has(userId)) continue;
+      sending.push(pipeline);
+      if (now - pipeline.accounted > SPEAKING_DELAY_MS) unheard.push(pipeline);
+    }
     const candidates = unheard.length > 0 ? unheard : sending;
     if (candidates.length === 0) {
       this.strayDecryptFailures++;
       return;
     }
-    const [, pipeline] = candidates[this.decryptTurn++ % candidates.length] as [string, SpeakerPipeline];
+    const pipeline = candidates[this.decryptTurn++ % candidates.length] as SpeakerPipeline;
     pipeline.undecrypted++;
     pipeline.decryptFailures++;
   }
@@ -485,6 +496,7 @@ export class TableSession {
     const step = Math.min(pipeline.failedTries, RESUBSCRIBE_DELAYS_MS.length - 1);
     const delay = RESUBSCRIBE_DELAYS_MS[step] ?? 0;
     pipeline.failedTries++;
+    pipeline.relistening = true;
     tries.push(now);
     this.retries.set(userId, tries);
     this.options.log.warn(
@@ -515,15 +527,17 @@ export class TableSession {
       this.endSpeaker(userId, true);
       return;
     }
+    pipeline.relistening = false;
     pipeline.stream = this.receiveStream(userId);
     this.listen(userId, pipeline);
   }
 
   /**
-   * The voice library's encryption (DAVE) debug lines, with DMBOT_DEBUG_AUDIO=1 (#631):
-   * transitions, versions, failure counts. Only those: its other lines (the websocket's)
-   * can hold the session's credentials. Failed-decrypt lines come per packet, so at most
-   * one a second is logged, with how many were skipped.
+   * The voice library's encryption (DAVE) debug lines. Always listened to, to count failed
+   * packets (#43); with DMBOT_DEBUG_AUDIO=1 they are also logged (#631): transitions,
+   * versions, failure counts. Only those: its other lines (the websocket's) can hold the
+   * session's credentials. Failed-decrypt lines come per packet, so at most one a second is
+   * logged, with how many were skipped.
    */
   private onVoiceDebug(message: string): void {
     const prefix = "[NW] [DAVE] ";

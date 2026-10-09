@@ -184,7 +184,7 @@ class CaptureLog:
                 f"{count} {what}"
                 for count, what in (
                     (s.decrypt_failures, "not decrypted"),
-                    (s.decode_errors, "decode errors"),
+                    (s.decode_errors, "decode error" if s.decode_errors == 1 else "decode errors"),
                     (s.link_dropped, "dropped on the link"),
                 )
                 if count
