@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-09 by CloudDev (ready to deploy: #870, #895, #879, #883, #894)
+Last updated: 2026-10-09 by CloudDev (ready to deploy: #870, #895, #879, #883, #894, #905)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,6 +9,17 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev2, PR #905 (#900): core only, no migration or setting. The rules index also holds the
+  SRD's creatures: 330 stat blocks of the 5.2.1 and, as the [Legacy 2014] fallback, 317 of
+  the 5.1, in monsters.json next to the spells (same attribution files). Nothing calls the
+  index yet, so there is nothing to see in Discord. Check: core starts after the rebuild and
+  logs no error. It also fixes five lines of the 5.1 spell data that had cut words ("under
+  stand", "with in range", "automatic ally", "be comes"). For dev1, once, covering #892,
+  #894 and #905 together: download both official PDFs (their addresses are in the two
+  ATTRIBUTION.md files) each into a folder of its own, then from core/ in a checkout run
+  `python -m dmbot.devtools.srd <the PDF>` for the 5.2.1 first and the 5.1 second; `git diff`
+  must show nothing (this also checks "thunder-wave" in the Grappled condition is the PDF's
+  own hyphen).
 - dev2, PR #894 (#873; with #892, #889): core only, no migration or setting. The rules
   index also holds the 2014 System Reference Document 5.1's 319 spells and 15 conditions
   (CC-BY-4.0; attribution in the README and core/src/dmbot/rules/data/srd51/ATTRIBUTION.md)
