@@ -6,7 +6,8 @@
   "title": "System Reference Document 5.1",
   "url": "https://media.dndbeyond.com/compendium-images/srd/5.1/SRD_CC_v5.1.pdf",
   "sha256": "2504d2a0abb0a4d491a939be4f17910a2dde0312570ab8d208080225ccf0a1f0",
-  "pages": 403
+  "pages": 403,
+  "word_list_sha256": "2e6d50f7d3d1ffa9815bfe43889676c60cf76312c8cc7b5749b6d243ea517490"
  },
  "kind": "condition",
  "section": "Appendix PH-A: Conditions",
@@ -28,7 +29,7 @@
   },
   {
    "name": "Exhaustion",
-   "text": "Some special abilities and environmental hazards, such as\nstarvation and the long-term effects of freezing or scorching\ntemperatures, can lead to a special condition called\nexhaustion. Exhaustion is measured in six levels. An effect\ncan give a creature one or more levels of exhaustion, as\nspecified in the effect’s description.\nLevel Effect\n1 Disadvantage on ability checks\n2 Speed halved\n3 Disadvantage on attack rolls and saving throws\n4 Hit point maximum halved\n5 Speed reduced to 0\n6 Death\nIf an already exhausted creature suffers another effect that\ncauses exhaustion, its current level of exhaustion increases\nby the amount specified in the effect’s description.\nA creature suffers the effect of its current level of\nexhaustion as well as all lower levels. For example, a creature\nsuffering level 2 exhaustion has its speed halved and has\ndisadvantage on ability checks.\nAn effect that removes exhaustion reduces its level as\nspecified in the effect’s description, with all exhaustion\neffects ending if a creature’s exhaustion level is reduced\nbelow 1.\nFinishing a long rest reduces a creature’s exhaustion level\nby 1, provided that the creature has also ingested some food\nand drink.",
+   "text": "Some special abilities and environmental hazards, such as starvation and the long-term effects of freezing or scorching temperatures, can lead to a special condition called exhaustion. Exhaustion is measured in six levels. An effect can give a creature one or more levels of exhaustion, as specified in the effect’s description.\nLevel Effect\n1 Disadvantage on ability checks\n2 Speed halved\n3 Disadvantage on attack rolls and saving throws\n4 Hit point maximum halved\n5 Speed reduced to 0\n6 Death\nIf an already exhausted creature suffers another effect that causes exhaustion, its current level of exhaustion increases by the amount specified in the effect’s description.\nA creature suffers the effect of its current level of exhaustion as well as all lower levels. For example, a creature suffering level 2 exhaustion has its speed halved and has disadvantage on ability checks.\nAn effect that removes exhaustion reduces its level as specified in the effect’s description, with all exhaustion effects ending if a creature’s exhaustion level is reduced below 1.\nFinishing a long rest reduces a creature’s exhaustion level by 1, provided that the creature has also ingested some food and drink.",
    "page": 358
   },
   {

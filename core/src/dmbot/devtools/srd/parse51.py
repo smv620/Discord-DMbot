@@ -5,9 +5,11 @@ The 5.1 PDF is laid out differently from 5.2.1's, and its text layer is rougher:
 - Its characters are surrounded by tabs, no-break spaces and soft hyphens
   ("2nd-\\xad\\u2010\\u2011level"), which are cleaned away.
 - A hyphen has spaces around it ("15 - foot- radius"), which are closed up.
-- Words are cut by stray spaces in places ("hig her", "adva ntage", "t o"). A cut word is
-  put back together when the whole word is one the SRD itself uses somewhere: the words of
-  the 5.2.1 data and the words this PDF uses often. A space is never taken out of two
+- Words are cut by stray spaces in places ("hig her", "adva ntage", "t o"), and a letter is
+  sometimes on the wrong side of a space ("the n ature"). A cut word is put back together
+  when the whole word is one the SRD itself uses somewhere (the words of the 5.2.1 data and
+  the words this PDF uses often), or when neither piece is a word and one is very short. A
+  letter goes with the piece that makes a word of it, and a space is never taken out of two
   words that are both known.
 - In a few places the text layer has lost words altogether (a spell's "At Higher Levels"
   line reads "…one additional beast t level above 1st."). Those cannot be put back from
@@ -46,8 +48,15 @@ LEVEL_LINE = re.compile(
 CANTRIP_LINE = re.compile(r"^(?P<school>[a-z]+?)cantrip$")
 INDENT = (4.0, 20.0)  # a wrapped value is set in from its label by about this much
 WORD = re.compile(r"[A-Za-z’']+")
-COMMON = 8  # words this PDF uses at least this often count as words
+HYPHENATED_WORD = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)+")
+# The ends of words that cut ones leave behind, so they are never words themselves.
+ENDINGS = frozenset(["ing", "ion", "ons", "ous", "ers", "ess", "ent", "ect", "ive"])
+SHORT = 3  # a piece of a cut word with no real word in it is this short or shorter
+COMMON = 4  # words this PDF uses at least this often count as words
 STRAY_WORDS = frozenset(["a", "i"])
+# Plain words the SRD 5.1 uses that neither the 5.2.1 data nor this PDF spells out whole
+# often enough to be known; they only let a cut one be put back together.
+EXTRA_WORDS = frozenset(["attacked", "bed", "defends", "dimly", "dread", "linen", "lit"])
 SCHOOLS = (
     "abjuration conjuration divination enchantment evocation illusion necromancy transmutation"
 )
@@ -55,6 +64,8 @@ SCHOOLS = (
 _NOISE = re.compile(r"[\t\r\xa0]+")
 _SOFT = re.compile(r"[\xad‐‑]")
 _ORDINAL = re.compile(r"(?<=\d)(?:s t|n d|r d|t h)\b")  # "3r d" is "3rd"
+_END = re.compile(r"(.*?)([A-Za-z’']+)")  # a token that ends in letters: (the rest, them)
+_START = re.compile(r"[A-Za-z’']+")  # the letters a token starts with
 _BEFORE_PUNCTUATION = re.compile(r"(?<=[A-Za-z0-9)”’]) ([.,;:])(?=\s|$)")  # "turn ," is "turn,"
 _HYPHEN = re.compile(r"(?<=[A-Za-z0-9]) - ?(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])- (?=[a-z0-9])")
 
@@ -91,82 +102,79 @@ class Vocabulary:
     """The words the SRD uses, for putting back words that stray spaces have cut."""
 
     def __init__(self, known: Iterable[str], lines: Iterable[Line]) -> None:
-        seen: Counter[str] = Counter()
-        for line in lines:
-            seen.update(w.lower() for w in WORD.findall(clean(line.text)))
         # A lone letter is not a word (but "a" and "I" are): "a s much" is "as much".
         self.words: set[str] = {w.lower() for w in known if len(w) > 1} | set(SCHOOLS.split())
-        self.words |= STRAY_WORDS
-        self.words |= {w for w, n in seen.items() if n >= COMMON and len(w) >= 3}
-
-    def join(self, left: str, right: str) -> str | None:
-        """`leftright` as one word, if that is a word and the two aren't both words."""
-        whole = (left + right).lower()
-        if whole in self.words and not (left.lower() in self.words and right.lower() in self.words):
-            return left + right
-        return None
+        self.words |= STRAY_WORDS | EXTRA_WORDS
+        self.hyphens = {w.lower() for w in known if "-" in w}
+        self.freq: Counter[str] = Counter()
+        self.cut = False  # whether two pieces that are not words are taken as one
+        # The PDF's own words: those it uses often, counted after the first repair so that
+        # the pieces of a cut word ("eature") don't count as words.
+        for line in lines:
+            repaired = self.repair(clean(line.text))
+            self.freq.update(w.lower() for w in WORD.findall(repaired))
+        self.words |= {
+            w for w, n in self.freq.items() if n >= COMMON and len(w) >= 3 and w not in ENDINGS
+        }
+        self.cut = True
 
     def tidy(self, text: str) -> str:
         """Text made of lines run together: hyphens closed up across the line breaks,
         ordinals whole ("3rd"), cut words joined again."""
         text = _ORDINAL.sub(lambda m: m.group().replace(" ", ""), _HYPHEN.sub("-", text))
-        text = _BEFORE_PUNCTUATION.sub(r"\1", text)
-        return " ".join(self._strays_joined(self.repair(text).split(" ")))
+        return self.repair(_BEFORE_PUNCTUATION.sub(r"\1", text))
 
-    def _strays_joined(self, tokens: list[str]) -> list[str]:
-        """A lone letter next to a piece that isn't a word is the rest of that piece ("d
-        ropping", "knocke d", "(includin g"). Between two words it is a gap in the text, and
-        is left. Punctuation around a token stays where it is."""
-        out: list[str] = []
-        for i, token in enumerate(tokens):
-            lead, core, trail = _split(token)
-            after = tokens[i + 1] if i + 1 < len(tokens) else ""
-            if len(core) == 1 and core.lower() not in STRAY_WORDS and not trail:
-                next_lead, next_core, _ = _split(after)
-                if self._piece(next_core) and not next_lead:
-                    tokens[i + 1] = lead + core + after
-                    continue
-            if out and len(core) == 1 and core.lower() not in STRAY_WORDS and not lead:
-                _, before_core, before_trail = _split(out[-1])
-                if self._piece(before_core) and not before_trail:
-                    out[-1] = out[-1] + token
-                    continue
-            out.append(token)
-        return out
+    def run_on(self, row: str, text: str) -> str:
+        """`row` with the next line `text` after it. A hyphen the print put at a line break
+        is dropped when the word without it is one the SRD uses and the hyphenated one is
+        not ("thunder-" "wave" is "thunderwave", "nine-" "course" stays "nine-course")."""
+        broken = re.search(r"([A-Za-z]+)-$", row)
+        following = re.match(r"[a-z]+", text)
+        if broken is None or following is None:
+            return f"{row} {text}"
+        head, tail = broken[1], following.group()
+        if (head + tail).lower() in self.words and f"{head}-{tail}".lower() not in self.hyphens:
+            return row[:-1] + text
+        return row + text
 
-    def _piece(self, core: str) -> bool:
-        """A bare run of letters that is not a word: the part of a cut one."""
-        return core.isalpha() and core.lower() not in self.words
+    def _joined(self, tokens: list[str], i: int) -> bool:
+        """Whether `tokens[i]` and `tokens[i + 1]` are the two halves of one cut word.
+
+        Either the whole is a word the SRD uses and the two aren't both words already; or
+        neither half is a word at all ("atta cked", "d ropping"). A half that is a word is
+        not taken from the piece after it: in "the n ature" the "n" belongs to "ature"
+        ("nature"), and "the"+"n" ("then") would leave "ature" behind."""
+        end = _END.fullmatch(tokens[i])
+        start = _START.match(tokens[i + 1])
+        if end is None or start is None or any(c.isdigit() for c in end[1]):
+            return False  # (a digit before it: an ordinal such as "4th", not a word)
+        left, right = end[2], start.group()
+        is_left, is_right = left.lower() in self.words, right.lower() in self.words
+        whole = (left + right).lower()
+        following = _START.match(tokens[i + 2]) if i + 2 < len(tokens) else None
+        if following and not is_right and (right + following.group()).lower() in self.words:
+            # The right piece could join the next token instead. Joining it to the left
+            # must not leave a non-word behind, and if both work the commoner word wins.
+            taken = (right + following.group()).lower()
+            if whole not in self.words or following.group().lower() not in self.words:
+                return False
+            return self.freq[whole] >= self.freq[taken]
+        if whole in self.words:
+            return not (is_left and is_right)
+        short = min(len(left), len(right)) <= SHORT
+        return self.cut and short and not is_left and not is_right and right[0].islower()
 
     def repair(self, text: str) -> str:
         """The text with cut words joined again."""
         tokens = text.split(" ")
-        changed = True
-        while changed:
-            changed = False
-            for i in range(len(tokens) - 1):
-                left, right = tokens[i], tokens[i + 1]
-                if not (left.isalpha() or left.replace("’", "").isalpha()):
-                    continue  # only a bare word can be the front of a cut one
-                match = WORD.match(right)
-                if match is None or match.start() != 0:
-                    continue
-                core = match.group()
-                joined = self.join(left, core)
-                if joined is not None:
-                    tokens[i : i + 2] = [joined + right[len(core) :]]
-                    changed = True
-                    break
+        i = 0
+        while i < len(tokens) - 1:
+            if self._joined(tokens, i):
+                tokens[i : i + 2] = [tokens[i] + tokens[i + 1]]
+                i = max(i - 1, 0)
+            else:
+                i += 1
         return " ".join(tokens)
-
-
-def _split(token: str) -> tuple[str, str, str]:
-    """(punctuation before, the letters, punctuation after) of a token; the letters are
-    empty if it is anything but one run of letters with punctuation around it."""
-    match = re.fullmatch(r"([^A-Za-z]*)([A-Za-z]*)([^A-Za-z]*)", token)
-    if match is None:
-        return "", "", token
-    return match[1], match[2], match[3]
 
 
 def strays(texts: Iterable[str]) -> Counter[str]:
@@ -185,18 +193,23 @@ def _paragraphs(lines: Sequence[Line], vocab: Vocabulary) -> str:
     isn't the body's)."""
     rows: list[str] = []
     joinable = False  # the last row takes the next line as its continuation
+    after_table = False  # the last line was a table line
     for line in lines:
         text = clean(line.text)
         if not text:
             continue
         font = line.first_font
         table = not (font.startswith(BODY_FAMILY) or font == "Symbol")
-        fresh = not rows or table or not joinable or font == LEAD_IN_FONT or text.startswith("•")
+        # A table line that starts in lower case is the rest of the line above it.
+        continued = table and after_table and text[:1].islower()
+        fresh = not rows or font == LEAD_IN_FONT or text.startswith("•")
+        fresh = fresh or (not continued and (table or not joinable))
         if fresh:
             rows.append(text)
         else:
-            rows[-1] += " " + text
+            rows[-1] = vocab.run_on(rows[-1], text)
         joinable = not table
+        after_table = table
     return "\n".join(vocab.tidy(r) for r in rows)
 
 

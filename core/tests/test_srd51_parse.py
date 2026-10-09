@@ -29,8 +29,46 @@ def labelled(label: str, value: str) -> Line:
     )
 
 
+COMMON_WORDS = [
+    "the",
+    "end",
+    "you",
+    "your",
+    "next",
+    "turn",
+    "can’t",
+    "see",
+    "ball",
+    "of",
+    "bat",
+    "and",
+    "on",
+    "a",
+    "tiny",
+    "to",
+    "in",
+    "or",
+    "this",
+    "level",
+    "nature",
+    "target",
+    "creature",
+    "for",
+    "each",
+    "food",
+    "by",
+    "then",
+    "bright",
+    "streak",
+    "flashes",
+    "from",
+    "damage",
+]
+
+
 def vocab(*words: str, text: tuple[str, ...] = ()) -> parse51.Vocabulary:
-    return parse51.Vocabulary(words, [say(t) for t in text])
+    """A vocabulary of a few plain words and `words`."""
+    return parse51.Vocabulary([*COMMON_WORDS, *words], [say(t) for t in text])
 
 
 def fireball() -> list[Line]:
@@ -84,6 +122,42 @@ class Punctuation(unittest.TestCase):
         words = vocab("including", "your", "lips")
         self.assertEqual(words.tidy("(includin g your turn)"), "(including your turn)")
         self.assertEqual(words.tidy("on the l ips.”"), "on the lips.”")
+
+
+class CutWords(unittest.TestCase):
+    def test_a_letter_that_belongs_to_the_next_piece_is_moved_across(self) -> None:
+        words = vocab("nature", "specific", "symbol")
+        self.assertEqual(words.tidy("by the n ature"), "by the nature")  # not "then ature"
+        self.assertEqual(words.tidy("a t arget"), "a target")  # not "at arget"
+        self.assertEqual(words.tidy("a s ymbol of this"), "a symbol of this")
+        self.assertEqual(words.tidy("in t his"), "in this")  # not "int his"
+
+    def test_two_pieces_that_are_not_words_are_one_word_if_one_is_short(self) -> None:
+        words = vocab()
+        self.assertEqual(words.tidy("the exc ess and dis eases"), "the excess and diseases")
+        self.assertEqual(words.tidy("(Investigat ion)"), "(Investigation)")
+        # two long words that merely aren't known stay two
+        self.assertEqual(words.tidy("the foul mimicry"), "the foul mimicry")
+
+    def test_the_ends_of_cut_words_are_never_words_of_their_own(self) -> None:
+        # "ing" is common in the PDF only because words are cut before it
+        lines = [say("bark ing"), say("pass ing")] * 5
+        words = parse51.Vocabulary(COMMON_WORDS, lines)
+        self.assertNotIn("ing", words.words)
+
+    def test_a_pdf_word_it_uses_often_is_a_word(self) -> None:
+        words = parse51.Vocabulary(COMMON_WORDS, [say("her warhorse")] * 5)
+        self.assertEqual(words.tidy("give her warhorse"), "give her warhorse")
+
+    def test_an_ordinal_is_not_taken_for_a_cut_word(self) -> None:
+        self.assertEqual(vocab("level").tidy("a 4th level spell"), "a 4th level spell")
+
+    def test_a_line_break_hyphen_goes_unless_the_srd_hyphenates_the_word(self) -> None:
+        words = vocab("thunderwave", "nine-course", "course")
+        self.assertEqual(words.run_on("casts thunder-", "wave at"), "casts thunderwave at")
+        self.assertEqual(words.run_on("a nine-", "course meal"), "a nine-course meal")
+        self.assertEqual(words.run_on("a red-", "hot rod"), "a red-hot rod")
+        self.assertEqual(words.run_on("a line", "wave"), "a line wave")
 
 
 class Spells(unittest.TestCase):

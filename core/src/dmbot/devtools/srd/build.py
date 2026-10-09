@@ -95,7 +95,10 @@ def build(path: str) -> dict[str, dict[str, Any]]:
             "sha256": sha256_of(path),
             "pages": len(pages),
         }
-        return build_files_51(pages, document, known_words())
+        known = known_words()
+        # The 5.1 words depend on the 5.2.1 data's words: record which data it was.
+        document["word_list_sha256"] = word_list_sha256()
+        return build_files_51(pages, document, known)
     document = {
         "title": "System Reference Document 5.2.1",
         "url": SOURCE_URL,
@@ -116,7 +119,16 @@ def known_words() -> set[str]:
         for entry in json.loads(path.read_text(encoding="utf-8"))["entries"]:
             for field in ("name", "text"):
                 words.update(w.lower() for w in parse51.WORD.findall(entry[field]))
+                words.update(w.lower() for w in parse51.HYPHENATED_WORD.findall(entry[field]))
     return words
+
+
+def word_list_sha256() -> str:
+    """A fingerprint of the 5.2.1 data files that `known_words()` reads."""
+    digest = hashlib.sha256()
+    for name in ("spells.json", "conditions.json"):
+        digest.update((OUT / name).read_bytes())
+    return digest.hexdigest()
 
 
 def folder_for(files: dict[str, dict[str, Any]]) -> Path:
@@ -166,7 +178,8 @@ def build_files_51(
     pantheons_at = first_page_of(pages, AFTER_CONDITIONS_HEADING_51, after=conditions_at)
     spell_lines = lines_between(pages, spells_at, traps_at)
     condition_lines = lines_between(pages, conditions_at, pantheons_at)
-    vocab = parse51.Vocabulary(known, spell_lines + condition_lines)
+    # Every page of the PDF teaches it which words are words (the book says "her" often).
+    vocab = parse51.Vocabulary(known, [line for page in pages for line in page])
     spells = parse51.parse_spells(spell_lines, vocab)
     conditions = parse51.parse_conditions(condition_lines, vocab, CONDITIONS_51)
 

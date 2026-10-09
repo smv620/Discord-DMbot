@@ -3,6 +3,7 @@ the shipped SRD 5.2.1 data: complete, cited, attributed, and nothing from outsid
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import subprocess
@@ -514,11 +515,64 @@ class TheLegacyData(unittest.TestCase):
         self.assertIs(by_name["Detect Magic"].details["ritual"], True)
         self.assertIs(by_name["Fireball"].details["ritual"], False)
 
-    def test_the_known_lost_words_stay_few(self) -> None:
-        # The PDF lost a few words (ATTRIBUTION.md); this keeps a worse reading from
-        # slipping in unnoticed.
-        left = parse51.strays(e.text for e in srd_entries("2014"))
-        self.assertLessEqual(sum(left.values()), 3, dict(left))
+    def test_only_the_listed_defects_remain(self) -> None:
+        # The PDF lost a few words; ATTRIBUTION.md lists what is left, and this fails if a
+        # worse reading slips in or a listed defect goes away (then edit both).
+        text = {e.name: e.text for e in srd_entries("2014")}
+        left = {name: parse51.strays([t]) for name, t in text.items() if parse51.strays([t])}
+        self.assertEqual(left, {"Animal Friendship": {"t": 1}})
+        self.assertIn("beast t level above 1st", text["Animal Friendship"])
+
+    def test_cut_words_are_put_back_and_no_pieces_are_left_beside_each_other(self) -> None:
+        # Every pair of neighbouring words, neither of which the 5.2.1 data knows, where
+        # one is a short piece: the shape of a cut word. These few are real words that the
+        # 5.2.1 data happens not to use.
+        words = build.known_words()
+        words = {w for w in words if "-" not in w}
+        found = set()
+        for e in srd_entries("2014"):
+            tokens = e.text.split()
+            for a, b in itertools.pairwise(tokens):
+                left, right = re.sub(r"[^A-Za-z’']", "", a), re.sub(r"[^A-Za-z’']", "", b)
+                if (
+                    left
+                    and right
+                    and a[-1:].isalpha()
+                    and b[:1].isalpha()
+                    and left.lower() not in words
+                    and right.lower() not in words
+                    and min(len(left), len(right)) <= 3
+                ):
+                    found.add((left.lower(), right.lower()))
+        self.assertEqual(
+            found,
+            {
+                ("his", "mace"), ("his", "hammer"), ("her", "warhorse"), ("beggar", "she"),
+                ("she", "meets"), ("bed", "linen"), ("dimly", "lit"),
+            },
+        )  # fmt: skip
+
+    def test_the_repairs_that_went_wrong_once_stay_right(self) -> None:
+        # Joined wrongly by an earlier reading (Supervisor review of #894), or never joined.
+        wrong = (
+            "then ature", "At arget", "then earest", "or as ymbol", "as pecific", "off ood",
+            "int he", "int his", "atta cked", "exc ess", "ins tantaneous", "Investigat ion",
+            "dre ad", "def ends", "defe nds", "dis eases", "4thlevel",
+            "too r less", "forth e", "includin g", "y ou", "l ips",
+        )  # fmt: skip
+        for e in srd_entries("2014"):
+            for bad in wrong:
+                with self.subTest(e.name, bad=bad):
+                    self.assertIsNone(re.search(rf"(?<!\w){re.escape(bad)}(?!\w)", e.text))
+        by_name = {e.name: e.text for e in srd_entries("2014")}
+        self.assertIn("the nature", by_name["Animal Shapes"])
+        self.assertIn("A target takes 8d6", by_name["Circle of Death"])
+        self.assertIn("equal to or less", by_name["Dispel Magic"])
+        self.assertIn("for the duration", by_name["Flesh to Stone"])
+        # the PDF itself has the hyphen here, in the middle of the line
+        self.assertIn("by the thunder-wave spell", by_name["Grappled"])
+        for name, text in by_name.items():
+            self.assertNotRegex(text, r"\w [.,;:](\s|$)", name)  # a space before a stop
 
 
 if __name__ == "__main__":
