@@ -249,6 +249,15 @@ class TriggerTests(unittest.TestCase):
         log = self.log_with([(270, 300)] * 5, [("I attack the goblin", 0.95)])
         self.assertIsNone(log.render(str, 10, confirm=lambda d: False))
 
+    def test_failed_packets_lower_the_percent_but_clean_lines_still_warn_nobody(self) -> None:
+        # The owner (#45): the DM screen is for losses that hurt the story. Counting failed
+        # packets makes the percent honest, but only lines that read garbled warn.
+        log = self.log_with([(270, 300)] * 5, [("I attack the goblin with my sword", 0.95)])
+        self.assertIsNone(log.render(str, 10, confirm=lambda d: False))
+        garbled = self.log_with([(270, 300)] * 5, [("I ... the ... north road and", 0.3)])
+        (d,) = garbled.due(10)
+        self.assertTrue(d.lost > 0 and d.lines)  # the check runs, and reads the lines
+
     def test_lines_leave_the_window_with_the_minute(self) -> None:
         log = CaptureLog()
         log.add_line(1, "old", 0.9, 0)

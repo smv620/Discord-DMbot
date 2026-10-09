@@ -68,6 +68,10 @@ class Health:
     user_id: int
     frames_received: int
     frames_expected: int
+    # Why frames are missing, for the log (#43, #45); already left out of frames_received.
+    decrypt_failures: int = 0  # packets the voice library couldn't decrypt (DAVE)
+    decode_errors: int = 0  # packets the Opus decoder refused
+    link_dropped: int = 0  # frames dropped on the link to core because it was busy
 
 
 EarsMessage = Hello | Status | Speaking | Health
@@ -158,7 +162,15 @@ def parse_ears_message(raw: str) -> EarsMessage | None:
         expected = _non_negative_int(data.get("framesExpected"))
         if guild_id is None or user_id is None or received is None or expected is None:
             return None
-        return Health(guild_id, user_id, received, expected)
+        # Omitted when zero; a wrong type is a broken message, not a zero.
+        extras = [
+            0 if data.get(key) is None else _non_negative_int(data.get(key))
+            for key in ("decryptFailures", "decodeErrors", "linkDropped")
+        ]
+        if any(count is None for count in extras):
+            return None
+        decrypt, decode, dropped = (count or 0 for count in extras)
+        return Health(guild_id, user_id, received, expected, decrypt, decode, dropped)
 
     return None
 

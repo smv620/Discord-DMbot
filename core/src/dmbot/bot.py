@@ -1764,6 +1764,9 @@ class DMBot(commands.AutoShardedBot):
                     message.frames_received,
                     message.frames_expected,
                     time.monotonic(),
+                    decrypt_failures=message.decrypt_failures,
+                    decode_errors=message.decode_errors,
+                    link_dropped=message.link_dropped,
                 )
                 table.totals.add_health(
                     message.user_id, message.frames_received, message.frames_expected
