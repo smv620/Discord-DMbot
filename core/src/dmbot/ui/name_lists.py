@@ -1682,7 +1682,14 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
             with contextlib.suppress(discord.HTTPException):
                 await interaction.followup.send(
                     f"⚠️ {missing[0].upper()}{missing[1:]} of {len(files)} didn't arrive. "
-                    "Press 📤 Download all again to get them.",
+                    "Press 📤 Download all again to get them."
+                    + (
+                        f" Files 1 to {at} are fine."
+                        if at > 1
+                        else " File 1 is fine."
+                        if at
+                        else ""
+                    ),
                     ephemeral=True,
                     allowed_mentions=NO_PINGS,
                 )

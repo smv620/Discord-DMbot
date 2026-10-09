@@ -1216,6 +1216,7 @@ class Lists(NamesTest):
         self.assertEqual(len(sent), 3)  # first batch, the failed one, then the warning
         self.assertIn("Files 11 to 23 of 23 didn't arrive", sent[2][0])
         self.assertIn("Press 📤 Download all again", sent[2][0])
+        self.assertIn("Files 1 to 10 are fine.", sent[2][0])
         self.assertNotIn("files", sent[2][1])
 
     async def test_one_missing_last_file_is_named_in_the_singular(self) -> None:
