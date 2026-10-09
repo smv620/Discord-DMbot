@@ -5,8 +5,10 @@ A campaign setting: **Quiet** (only what you ask for), **Normal** (the default:
 questions and fixes, one at a time) or **Chatty** (also what it noticed). Every post that
 a level can turn off (questions, fix notes, notices) asks `allows` first, with its kind.
 Alerts (transcription stopped or working again, hours warnings) always post and don't
-ask: the DM needs them to know the bot is working. The level is read when a session
-starts; ⚙️ Settings changes it mid-session too (`DMBot.set_screen_level`, #515).
+ask: the DM needs them to know the bot is working. So does "🙈 Left out as off-topic"
+(#677): it's the DM's only chance to undo, and one message edited in place never pings.
+The level is read when a session starts; ⚙️ Settings changes it mid-session too
+(`DMBot.set_screen_level`, #515).
 """
 
 from __future__ import annotations

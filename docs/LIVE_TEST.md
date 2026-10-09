@@ -3,7 +3,8 @@
 A step-by-step script for testing DMbot against a real Discord voice channel. Written
 so **both the owner and a Claude session** can follow it. Each step says who does it.
 
-- **Owner:** anything in Discord or the Developer Portal, editing `.env`, and talking.
+- **Owner:** anything in Discord or the Developer Portal
+  (https://discord.com/developers/applications), editing `.env`, and talking.
 - **Claude (server session):** DMbot runs on the cloud test server (CLAUDE.md, "Claude
   sessions and who does what"). The server session updates and starts it there
   (`git pull && docker compose up -d --build`), watches `docker compose logs -f core
@@ -22,7 +23,8 @@ encryption, with little or no audio loss, and that consent is enforced.
 
 ### Prerequisites (owner, one time)
 
-- [ ] **Bot created** in the Discord Developer Portal, with its token copied.
+- [ ] **Bot created** in the Discord Developer Portal (https://discord.com/developers/applications),
+      with its token copied.
 - [ ] **One-click install set up** (README, "Create the bot"): Developer Portal →
       Installation → Default Install Settings → Guild Install with scopes `bot` +
       `applications.commands` and the eight permissions (number `2251800085335056`).

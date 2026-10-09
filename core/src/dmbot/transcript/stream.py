@@ -177,6 +177,18 @@ class TranscriptStream:
         if ref is not None:
             self._recent.append(_Posted(ref, now, items))
 
+    def can_change(self, speaker_id: int, started_ms: int, now: float) -> bool:
+        """The line is still waiting, or was posted in the last EDIT_WINDOW_S: `relabel`
+        can change it in the channel (#677)."""
+        if any(w.speaker_id == speaker_id and w.started_ms == started_ms for w in self._waiting):
+            return True
+        return any(
+            w.speaker_id == speaker_id and w.started_ms == started_ms
+            for posted in self._recent
+            if now - posted.at <= EDIT_WINDOW_S
+            for w in posted.items
+        )
+
     def relabel(
         self, speaker_id: int, started_ms: int, text: str, now: float
     ) -> tuple[Editable, str] | None:

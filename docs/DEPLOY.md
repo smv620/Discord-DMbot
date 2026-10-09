@@ -191,42 +191,98 @@ does that safely: the server only calls out to Cloudflare, so no new door is ope
 and Cloudflare looks after the secure padlock (HTTPS). Only the admin pages go through.
 The pages customers will use stay closed until #498.
 
-**You (the owner), in Cloudflare:**
+First one Discord step (step A), because the API will not start without it, then the
+Cloudflare steps (1 to 5).
+
+**Step A, you (the owner), for Discord sign-in (once; do it only if dev1 says the website's
+Discord sign-in isn't set, because the API won't start without it):**
+- Open https://discord.com/developers/applications, then your app (the DMbot one), then
+  **OAuth2**. You will see two different things there:
+  - The **Client ID** is a long number that is always shown. It is not secret: type it to dev1
+    in the Claude Code window where dev1 runs (not GitHub).
+  - The **Client Secret** is hidden. Press **Reset Secret** (Discord may ask for your
+    password or a code). A long mix of letters and digits appears **once**. Copy it at once
+    and, on the server, type `scripts/set-key DISCORD_CLIENT_SECRET` and paste it there,
+    never into a chat. If it asks "Restart DMbot now?", press Enter (that means no) and
+    ignore the docker compose line it shows. If you lose the secret, press Reset Secret again
+    and set it again.
+  - **Redirects** (same page): leave it empty for now. Customer sign-in stays closed until
+    #498, and the admin page signs in with Google, not Discord. When it is time, dev1 gives
+    you the exact address to paste.
+- **If dev1 says the Discord secret is already set, do not press Reset Secret:** it would
+  stop the secret that is in use.
+- **Only the OAuth2 page is safe.** The page called **Bot** has a **Reset Token** button: do
+  not press it. That is the bot's own key (`DISCORD_TOKEN`); resetting it logs the bot out
+  of Discord until the new one is set on the server. If you are unsure which page you are
+  on, stop and ask dev1.
+
+**You (the owner), in Cloudflare (after step A):**
 1. Go to https://one.dash.cloudflare.com, then Networks, then Tunnels (newer screens:
    Networks, then Connectors, then Cloudflare Tunnels), then Create a tunnel. Pick
-   "Cloudflared", name it `dmbot-api`, and save.
-2. Cloudflare then shows a long command with the token inside it. Do not run that
-   command. Copy only the token: the very long text that starts with `eyJ`, after
-   `install` or after `--token`. On the server (log in with ssh, then `cd Discord-DMbot`),
-   type this and press Enter:
-
-       scripts/set-key CLOUDFLARE_TUNNEL_TOKEN
-
-   When it asks for the value, paste the token and press Enter. You won't see it as you
-   type. When it asks "Restart DMbot now?", press Enter without typing anything (that
-   means no) and skip any docker compose line it shows: dev1 starts the tunnel. Never
-   paste the token anywhere else: not in a chat, an issue, or the Claude Code window. If
-   you pasted the wrong thing, run the same command again and paste the right token.
-3. In Cloudflare, on the tunnel's "Published application routes" tab (older screens call
-   it "Public Hostname"), press Add and fill in:
+   "Cloudflared" and name it `dmbot-api`. Cloudflare then shows an "Install and Run" page
+   with a choice of system (Windows, Mac, Debian, Docker and so on) and a long command with
+   the token inside it. Pick Docker (any choice will do: only the text matters) and **do
+   not run any command shown there.** The token is only the very long text that starts
+   with `eyJ`, after `--token` (or after `install`). You don't need to copy or keep it now:
+   when dev1 says the update is in (step 4), open the tunnel's page in Cloudflare and copy
+   it again from its install command. Never paste it into a chat, an email, an issue, or the
+   Claude Code window. If Cloudflare won't show it again, tell dev1 (a new tunnel is easy to
+   make).
+2. Continue stays grey ("No connection detected yet"). That is normal: leave the page with
+   Cancel or the back arrow. It stays grey because nothing is connected until dev1 starts
+   the tunnel. You should now see `dmbot-api` in your list of tunnels, marked Inactive or
+   Down. That is right, and the tunnel is already saved. If it isn't in the list, tell dev1.
+3. Add the route. Go to https://one.dash.cloudflare.com, then Networks, then Tunnels (or
+   Connectors, then Cloudflare Tunnels), then
+   `dmbot-api`, then "Published application routes" (older screens call it "Public
+   Hostname"), then Add, and fill in:
    - Subdomain: `api`
-   - Domain: `getdmbot.com`
-   - Path: `^/admin(/|$)`
+   - Domain: pick `getdmbot.com` from the list
+   - Path: `^/admin(/|$)` (copy it exactly, including the `^` at the start and the `$`
+     near the end)
    - Service type: HTTP (Cloudflare may ask for this first)
    - URL: `web-api:8080` (if Cloudflare insists on a full address, use
      `http://web-api:8080`)
 
-   Save. The Path is what keeps everything except the admin pages closed. Cloudflare adds
-   the DNS record itself.
-4. Tell dev1, in the Claude Code window where dev1 runs (not GitHub): "tunnel ready"
-   (just those words, never the token).
+   Save. The Path is what keeps everything except the admin pages closed, so never leave
+   it empty: if Cloudflare rejects it, stop and tell dev1. Cloudflare adds the DNS record
+   itself: don't add one by hand.
+
+**You (the owner), on the server, once dev1 says the update is in:**
+
+4. Copy the token again from the tunnel's page in Cloudflare (open
+   https://one.dash.cloudflare.com, then Networks, then Tunnels, then `dmbot-api`). Open your
+   server connection (ssh) as for the earlier steps, `cd Discord-DMbot`, type this and press
+   Enter:
+
+       scripts/set-key CLOUDFLARE_TUNNEL_TOKEN
+
+   When it asks for the value, paste the token and press Enter. You won't see it as you
+   type. It may ask "Restart DMbot now?": press Enter (that means no). It may also print
+   "Not restarted..." and a `docker compose up -d` line: ignore it and don't type it, dev1
+   starts the tunnel. When you see "Saved CLOUDFLARE_TUNNEL_TOKEN", it worked. If you
+   pasted the wrong thing, run the same command again and paste the right token. If it says
+   "Not saved. CLOUDFLARE_TUNNEL_TOKEN isn't one of DMbot's keys", stop: don't edit
+   anything and don't follow its `nano .env` hint. Tell dev1 "set-key doesn't know the
+   tunnel key" (the update isn't in yet). Nothing was changed.
+5. Tell dev1, in the Claude Code window where dev1 runs (not GitHub): "tunnel ready"
+   (just those words, never the token). dev1 will reply with the result, usually within a
+   few minutes. If nothing comes back, ask again.
 
 If any step shows an error, or Cloudflare says something you don't understand, stop and
 tell dev1 what the screen says (never the token). Nothing is broken by stopping: the
 tunnel stays off until dev1 starts it.
 
 **dev1:**
+0. Before the owner's step 4: update the server's checkout (`git pull`), run
+   `scripts/update-env --check`, then `scripts/update-env` so `.env` gets the new
+   `CLOUDFLARE_TUNNEL_TOKEN` line. Confirm with `scripts/set-key`: its list must show
+   `CLOUDFLARE_TUNNEL_TOKEN` (press Enter to cancel). Only then tell the owner: "The update
+   is in. Do step 4."
 1. Make the website API ready to start, or the tunnel connects but answers 502:
+   - When the owner sends the Discord Client ID, set `DISCORD_CLIENT_ID` with `nano .env` (it
+     isn't secret; set-key only takes keys), then confirm `scripts/set-key` lists
+     `DISCORD_CLIENT_SECRET` as "set" (press Enter to cancel).
    - Check the settings (this prints no secrets):
      `grep -E '^(COMPOSE_PROFILES|WEB_CLIENT_IP_HEADER|WEB_API_URL|WEB_SITE_URL|WEB_API_PORT)=' .env`.
      `COMPOSE_PROFILES` must include `web`, `WEB_CLIENT_IP_HEADER` must be `CF-Connecting-IP`,
@@ -239,8 +295,8 @@ tunnel stays off until dev1 starts it.
      error names the setting to fix: fix it and run both again.
    - Check `scripts/set-key` lists `CLOUDFLARE_TUNNEL_TOKEN` as "set" (press Enter to cancel):
      with the `web` profile on and no token, the tunnel keeps restarting.
-2. Run `docker compose up -d cloudflared`, then `docker compose logs --tail 20 cloudflared`.
-   Look for "Registered tunnel connection".
+2. Wait for the owner's "tunnel ready", then run `docker compose up -d cloudflared`, then
+   `docker compose logs --tail 20 cloudflared`. Look for "Registered tunnel connection".
 3. Check from any computer (each prints a number):
    - `curl -s -o /dev/null -w '%{http_code}\n' https://api.getdmbot.com/health` must print
      404. web-api itself always answers 200 here, so a 404 proves Cloudflare is keeping
@@ -334,8 +390,9 @@ an issue or a PR.
 2. Type `scripts/set-admin-password`. Pick a password of 16 or more characters (a long
    sentence works). You won't see it as you type. Type it only there, never into a chat.
    If it shows an error, tell dev1 what it says (never the password).
-3. Optional, for Google sign-in, in the Google Cloud console (Google may call these pages
-   "Google Auth Platform": Branding, Audience, Clients):
+3. Optional, for Google sign-in, in the Google Cloud console
+   (https://console.cloud.google.com/auth/clients; Google may call these pages "Google Auth
+   Platform": Branding, Audience, Clients):
    - The OAuth consent screen (Audience): External, kept in Testing, with the email
      you'll sign in with as a test user.
    - Credentials (Clients) → Create credentials → OAuth client ID → Web application. Its

@@ -530,13 +530,14 @@ it isn't (it's refreshed at the next `/dmbot start`), so a resumed session may l
 Backups carry the level, and a restore uses the backup's (older backups: Normal).
 | Level | What DMbot posts on its own |
 |---|---|
-| **Quiet** | Only what you ask for, plus warnings (so fewer misheard names get fixed) |
+| **Quiet** | Only what you ask for, plus warnings and the 🙈 Left out as off-topic list. Fewer misheard names get fixed. |
 | **Normal** (default) | Also questions and fixes, one at a time: "Did they mean…?" and ✏️ Name fixes to check |
 | **Chatty** | Also what it noticed (reserved: not offered yet; behaves like Normal) |
 
 Every post a level can turn off asks `dmbot.dm_screen.levels.allows` first, with its
 kind: `question`, `fix_note` or `notice`. **Alerts** (speech-to-text stopped or working
-again, hours warnings) always post, at every level. The level is read when a session
+again, hours warnings) always post, at every level, and so does the one "🙈 Left out as
+off-topic" message (#677: the DM's only chance to undo). The level is read when a session
 starts, and ⚙️ Settings updates a running session too. An
 unknown kind never shows, so nothing new slips past Quiet. At Quiet a fix from a name
 DMbot only suggested isn't made at all, because such a fix is never silent and there'd
@@ -1438,6 +1439,23 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
   back: the name fixer's word list (lower-case words from every line). The log line
   "Off-topic filter: N calls, … tokens" gives the cost. Replay case:
   docs/test-scripts/off-topic.md.
+- **Put it back (decided 2026-10-08, Supervisor, #677; why: the DM decides).** A game line
+  wrongly labelled off-topic can be undone. The DM screen keeps one message per session,
+  "🙈 Left out as off-topic: kept out of the cleaned transcript. Game talk? Press its Put
+  it back.", edited in place, with the newest 10 runs (one person's off-topic lines from one
+  check, in a row). Each run gets one line, `[time] Name: first words…`, and a **Put it
+  back N** button with its number.
+  Pressing it makes those lines game talk again: in the stored transcript (so the cleaned
+  download shows them), in lines waiting to be saved, and in the live channel if they were
+  posted in the last ~30 s; they also go to the names scan, once (even if the session
+  is stopped mid-press). The line then reads "↩️ Put back: [time] Name: first words…".
+  With no stored transcript yet for lines already out of the waiting buffer, nothing is
+  said to be back: the DM is asked to try again. Only the campaign's DM can press it, and the
+  buttons go when the session ends. It shows at every DM-screen level, quiet included,
+  because it's the DM's only chance to undo; one message edited in place never pings.
+  Privacy: these lines are table chatter, already in the as-heard file anyone in the
+  server can download, not DM-screen content. A speaker who stops being recorded has
+  their runs taken down.
 
 **Story memory: continuity, reputations, the shared story (decided 2026-10-06, #227).**
 Full design and rationale: docs/STORY_MEMORY.md. In short:
