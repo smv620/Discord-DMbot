@@ -259,6 +259,9 @@ class CapActions(unittest.TestCase):
     def test_another_session_gets_no_grace_the_same_month(self) -> None:
         self.assertEqual(self.act(self.CAP, grace=99, session=5), "stop")
 
+    def test_exactly_at_the_end_of_the_grace_with_none_given_stops(self) -> None:
+        self.assertEqual(self.act(self.CAP + 120), "stop")
+
     def test_a_jump_past_the_whole_grace_stops_at_once(self) -> None:
         self.assertEqual(self.act(self.CAP + 500), "stop")
 

@@ -343,16 +343,18 @@ class TheBotMeters(UsageTest):
         self.table(guild=GUILD_B, campaign=self.b.id)
         seen = []
 
-        async def tick(table: Table, *args: object, **kwargs: object) -> bool:
+        async def tick(table: Table, *args: object, **kwargs: object) -> tuple[bool, None]:
             seen.append(table.guild_id)
-            return await forever() if table is a else True
+            if table is a:
+                await forever()
+            return True, None
 
         async def one_round(_: float) -> None:
             if seen:
                 raise asyncio.CancelledError
 
         with (
-            patch.object(self.bot, "meter_table", side_effect=tick),
+            patch.object(self.bot, "_meter_write", side_effect=tick),
             patch("dmbot.bot.METER_CALL_TIMEOUT_S", 0.05),
             patch("dmbot.bot.asyncio.sleep", side_effect=one_round),
             self.assertLogs("dmbot.bot", "ERROR"),
@@ -687,9 +689,84 @@ class PlanChecks(UsageTest):
         await self.add(GUILD_A, self.a.id, OWNER, 60, started=START - 9)
         table = self.running_table(started=NOW - 300)
         bot.tables[GUILD_A] = table
-        with patch.object(bot, "stop_table", new=AsyncMock()) as stop:
+        with (
+            patch.object(bot, "stop_table", new=AsyncMock()) as stop,
+            patch.object(bot, "post", new=AsyncMock()) as post,
+        ):
             await bot.meter_table(table, NOW)
         stop.assert_not_awaited()
+        post.assert_not_awaited()
+        async with self.db.meter(GUILD_A, OWNER) as conn:
+            cur = await conn.execute("SELECT grace_session FROM owner_hours")
+            self.assertTrue(all(r["grace_session"] is None for r in await cur.fetchall()))
+
+    async def test_the_session_that_loses_the_grace_race_stops_without_a_notice(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 60, started=START - 9)
+        table = self.running_table(started=NOW - 120)
+        with (
+            patch.object(self.bot, "post", new=AsyncMock()) as post,
+            patch.object(usage.Meter, "start_grace", new=AsyncMock(return_value=False)),
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+            patch.object(self.bot.sessions, "clear", new=AsyncMock()),
+        ):
+            await self.bot.meter_table(table, NOW)
+        stop.assert_awaited_once()
+        self.assertFalse(any("2 more hours" in c.args[1] for c in post.await_args_list))
+
+    async def test_a_stop_is_never_cut_short_by_the_time_limit_on_writing_minutes(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 200, started=START - 9)  # well past the grace
+        self.running_table(started=NOW - 120)
+        finished = []
+
+        async def slow_stop(*args: object, **kwargs: object) -> None:
+            await asyncio.sleep(0.15)  # longer than the limit patched below
+            finished.append(1)
+
+        async def one_round(_: float) -> None:
+            if finished:
+                raise asyncio.CancelledError
+
+        with (
+            patch("dmbot.bot.METER_CALL_TIMEOUT_S", 0.05),
+            patch("dmbot.bot.asyncio.sleep", side_effect=one_round),
+            patch.object(self.bot, "stop_table", side_effect=slow_stop),
+            patch.object(self.bot.sessions, "clear", new=AsyncMock()),
+            patch.object(self.bot, "post", new=AsyncMock()),
+            self.assertRaises(asyncio.CancelledError),
+        ):
+            await self.bot._meter_loop()
+            await self.bot._meter_loop()
+        self.assertEqual(finished, [1])  # the stop ran to the end
+
+    async def test_a_failing_warning_does_not_skip_the_cap(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 200, started=START - 9)
+        table = self.running_table(started=NOW - 120)
+        with (
+            patch.object(self.bot, "_warn_hours", side_effect=RuntimeError("x")),
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+            patch.object(self.bot.sessions, "clear", new=AsyncMock()),
+            patch.object(self.bot, "post", new=AsyncMock()),
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
+            await self.bot.meter_table(table, NOW)
+        stop.assert_awaited_once()
+
+    async def test_a_handover_gives_the_new_owner_their_own_grace(self) -> None:
+        await self.small_plan()
+        month = await self.add(GUILD_A, self.a.id, OWNER, 70)
+        self.assertTrue(await usage.start_grace(self.db, GUILD_A, OWNER, month, START))
+        await self.add(GUILD_A, self.a.id, NEW_OWNER, 70)
+        nm = usage.calendar_month(NOW)
+        self.assertTrue(await usage.start_grace(self.db, GUILD_A, NEW_OWNER, nm, START))
 
     async def test_no_warning_when_checks_are_off(self) -> None:
         from unittest.mock import AsyncMock, patch

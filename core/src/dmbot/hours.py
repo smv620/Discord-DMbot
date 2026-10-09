@@ -216,6 +216,8 @@ def cap_action(
     that was given it carries on until the grace is spent ("in_grace", then "stop"); any
     other session stops at once, because the grace is once a month."""
     cap = standing(access, used).cap_minutes
+    # A session is told apart by its start second: two campaigns of one owner starting in
+    # the very same second would share the grace (so rare it is accepted).
     if cap is None or used < cap:
         return "none"
     if grace_session is None:
@@ -229,8 +231,8 @@ def grace_started_text(site_url: str = "") -> str:
     where = f"{site_url}/account" if site_url else "DMbot's website"
     return (
         "⏳ Your hours for this month are used up. This session can finish: DMbot keeps "
-        f"listening for up to 2 more hours. To play again after that, add 10 hours or "
-        f"change your plan at {where}"
+        f"listening for up to {GRACE_MINUTES // 60} more hours. To play again after that, add "
+        f"10 hours or change your plan at {where}"
     )
 
 

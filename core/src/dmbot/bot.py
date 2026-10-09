@@ -3003,22 +3003,37 @@ class DMBot(commands.AutoShardedBot):
         while True:
             await asyncio.sleep(METER_INTERVAL_S)
             for table in list(self.tables.values()):
+                warn = None
                 try:
                     async with asyncio.timeout(METER_CALL_TIMEOUT_S):
-                        await self.meter_table(table)
+                        _, warn = await self._meter_write(table)
                 except TimeoutError:  # a slow database delays this table, not the others
                     log.error("The listening minutes took too long to write down")
+                if warn is not None:
+                    await self._meter_follow_up(table, warn)
 
     async def meter_table(
         self, table: Table, now: int | None = None, *, final: bool = False
     ) -> bool:
+        """Write the minutes (`_meter_write`), then act on where the hours stand
+        (`_meter_follow_up`). The tick loop calls the two apart so that stopping a session
+        is never inside the time limit on writing minutes."""
+        ok, warn = await self._meter_write(table, now, final=final)
+        if warn is not None:
+            await self._meter_follow_up(table, warn)
+        return ok
+
+    async def _meter_write(
+        self, table: Table, now: int | None = None, *, final: bool = False
+    ) -> tuple[bool, tuple[usage.Standing, int] | None]:
         """Record the minutes this session has run and not yet written down, for the
         campaign's owner right now (a hand-over mid-session moves the later minutes to
         the new owner). `final` is the stop: it closes the meter for this session, so a
         tick that was already waiting can never bill time after the end. Never raises
-        (the meter must not stop a game); returns whether it worked."""
+        (the meter must not stop a game); returns whether it worked, and where the owner's
+        hours stand if a warning or the cap may need acting on."""
         if self.meter is None or table.campaign_id is None or table.started_at <= 0:
-            return True
+            return True, None
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
             warn: tuple[usage.Standing, int] | None = None
             try:
@@ -3028,7 +3043,7 @@ class DMBot(commands.AutoShardedBot):
                     if table.metering_closed or (
                         not final and self.tables.get(table.guild_id) is not table
                     ):
-                        return True
+                        return True, None
                     stamp = int(time.time()) if now is None else now
                     if table.metered_minutes is None:  # first time (or after a restart)
                         table.metered_minutes = await self.meter.recorded(
@@ -3055,16 +3070,25 @@ class DMBot(commands.AutoShardedBot):
                         # else: gone, or no owner yet: nobody's hours to spend
                     if final:
                         table.metering_closed = True
-                if warn is not None:
-                    # After the lock and the time limit: a slow Discord post can't undo
-                    # minutes already written. A warning that fails to post is not retried
-                    # (the mark was crossed once); losing one is accepted.
-                    await self._warn_hours(table, warn[0])
-                    await self._enforce_cap(table, *warn)
-                return True
+                return True, warn
             except Exception:
                 log.exception("Couldn't write down the listening minutes")
-                return False
+                return False, None
+
+    async def _meter_follow_up(self, table: Table, warn: tuple[usage.Standing, int]) -> None:
+        """After the minutes are safely written: warn at 80% and 90%, and at the cap let
+        the session finish or stop it. Apart from the write so a slow Discord post can
+        neither undo minutes nor cut a stop short; a warning that fails to post is not
+        retried (the mark was crossed once), and one step failing never skips the other."""
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            try:
+                await self._warn_hours(table, warn[0])
+            except Exception:
+                log.exception("Couldn't warn about the hours")
+            try:
+                await self._enforce_cap(table, *warn)
+            except Exception:
+                log.exception("Couldn't act on the hours cap")
 
     async def _warn_hours(self, table: Table, standing: usage.Standing) -> None:
         """Tell the DM screen when the owner's hours pass 80% or 90% (#437). Each mark is
