@@ -43,7 +43,7 @@ def fake_interaction(bot: DMBot, user_id: int = DM) -> Any:
     user = MagicMock(spec=discord.Member)
     user.id = user_id
     user.guild_permissions = discord.Permissions.none()
-    guild = SimpleNamespace(id=GUILD)
+    guild = SimpleNamespace(id=GUILD, filesize_limit=10 * 1024 * 1024)
     followup = SimpleNamespace(send=AsyncMock())
     return SimpleNamespace(
         client=bot, guild=guild, user=user, response=FakeResponse(), followup=followup
@@ -141,6 +141,20 @@ class CommandTests(DatabaseTest):
         await cmds.dmbot_restore.callback(it, attachment(json.dumps(data).encode()))  # type: ignore[call-arg]
         self.assertIsInstance(it.followup.send.call_args.kwargs["view"], cmds.RestoreChoice)
 
+    async def test_a_boosted_server_is_sent_a_copy_bigger_than_ten_megabytes(self) -> None:
+        await self.campaigns.create(GUILD, "Big", DM)
+        it = fake_interaction(self.bot)
+        it.guild.filesize_limit = 50 * 1024 * 1024
+        with patch("dmbot.ui.logic.FILE_MAX", 10):  # the standard limit, made tiny
+            await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
+        self.assertIn("file", it.followup.send.call_args.kwargs)
+        plain = fake_interaction(self.bot)  # the same copy to a standard server is too big
+        plain.guild.filesize_limit = 10
+        with patch("dmbot.ui.logic.FILE_MAX", 10):
+            await cmds.dmbot_backup.callback(plain)  # type: ignore[call-arg]
+        self.assertNotIn("file", plain.followup.send.call_args.kwargs)
+        self.assertIn("too big", plain.followup.send.call_args.args[0])
+
     async def test_a_backup_too_big_to_send_says_so(self) -> None:
         await self.campaigns.create(GUILD, "Huge_*one*", DM)
         limits = (
@@ -150,6 +164,7 @@ class CommandTests(DatabaseTest):
         for limit in limits:
             with self.subTest(limit), limit:
                 it = fake_interaction(self.bot)
+                it.guild.filesize_limit = 10  # Discord's number for this server
                 await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
                 message = it.followup.send.call_args.args[0]
                 self.assertIn("**Huge\\_\\*one\\*** is too big for DMbot to copy yet", message)

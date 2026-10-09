@@ -516,8 +516,13 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         raw = await asyncio.to_thread(encode_backup, data)
     except BackupTooBig:
         raw = None  # bigger than a restore takes: no copy that can't come back
-    if raw is None or len(raw) > logic.FILE_MAX:  # or bigger than Discord sends
-        log.warning("Backup of campaign %s is too big to make", campaign.id)
+    limit = logic.upload_limit(guild.filesize_limit)
+    if raw is None or len(raw) > limit:  # no copy a restore takes, or none this server takes
+        log.warning(
+            "Backup of campaign %s is too big to %s",
+            campaign.id,
+            "make" if raw is None else "send here",
+        )
         await _tell(
             interaction,
             f"💾 **{name}** is too big for DMbot to copy yet. Nothing was lost: the campaign "
@@ -536,7 +541,13 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         )
         + "\nUse `/dmbot restore` to bring it back, here or in another server. Whoever "
         "restores it becomes its DM. It's packed small and won't open in a text app; that's "
-        "normal. Upload it as is to restore.",
+        "normal. Upload it as is to restore."
+        + (
+            " It's bigger than 10 MB, so it can only be loaded in a boosted server, or by "
+            "someone with Nitro."
+            if len(raw) > logic.FILE_MAX
+            else ""
+        ),
         file=file,
         ephemeral=True,
         allowed_mentions=NO_PINGS,
