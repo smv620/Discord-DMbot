@@ -252,11 +252,22 @@ class TriggerTests(unittest.TestCase):
     def test_failed_packets_lower_the_percent_but_clean_lines_still_warn_nobody(self) -> None:
         # The owner (#45): the DM screen is for losses that hurt the story. Counting failed
         # packets makes the percent honest, but only lines that read garbled warn.
-        log = self.log_with([(270, 300)] * 5, [("I attack the goblin with my sword", 0.95)])
-        self.assertIsNone(log.render(str, 10, confirm=lambda d: False))
-        garbled = self.log_with([(270, 300)] * 5, [("I ... the ... north road and", 0.3)])
+        def log_with_failures(line: str, conf: float) -> CaptureLog:
+            log = CaptureLog()
+            log.add_utterance(utt(1, 2.0))
+            for n in range(5):  # 90% got through, 30 frames of each 300 lost to failures
+                log.add_health(1, 270, 300, n, decrypt_failures=30)
+            log.add_line(1, line, conf, 0)
+            return log
+
+        clean = log_with_failures("I attack the goblin with my sword", 0.95)
+        (d,) = clean.due(10)
+        self.assertEqual((d.percent, d.lost), (90, 150))  # the loss is counted...
+        self.assertFalse(check(AudioChecker(), d, FakeAI("no")).garbled)  # reads fine
+        self.assertIsNone(clean.render(str, 10, confirm=lambda due: False))  # ...no warning
+        garbled = log_with_failures("I ... the ... north road and", 0.3)
         (d,) = garbled.due(10)
-        self.assertTrue(d.lost > 0 and d.lines)  # the check runs, and reads the lines
+        self.assertTrue(check(AudioChecker(), d, FakeAI("no")).garbled)
 
     def test_lines_leave_the_window_with_the_minute(self) -> None:
         log = CaptureLog()

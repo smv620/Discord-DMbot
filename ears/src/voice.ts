@@ -205,6 +205,12 @@ export class TableSession {
     if (this.destroyed) return;
     this.destroyed = true;
     for (const userId of [...this.speakers.keys()]) this.endSpeaker(userId, false);
+    if (this.options.debugAudio && this.strayDecryptFailures > 0) {
+      // Failed packets nobody recorded was sending for: a key change in the silence, say.
+      this.options.log.info(`dave: ${this.strayDecryptFailures} failed packet(s) with nobody recorded sending`, {
+        guildId: this.guildId,
+      });
+    }
     this.bots.clear();
     this.retries.clear();
     this.warnedAt.clear();
@@ -297,6 +303,8 @@ export class TableSession {
     pipeline.decoder.on("data", (pcm48k: Buffer) => {
       const now = Date.now();
       const pcm16k = pipeline.downsampler.push(pcm48k);
+      // One decoder frame is one packet's audio, so one drop is one frame (an empty chunk,
+      // while the downsampler is still filling, is not a frame and is not sent).
       if (pcm16k.length > 0 && !link.sendAudio(encodeAudioFrame(this.guildId, userId, now, pcm16k))) {
         pipeline.linkDropped++; // it reached ears but not core (#45)
         pipeline.tracker.dropped(1);
@@ -395,7 +403,8 @@ export class TableSession {
    * The library said it failed to decrypt a packet, without saying whose. Only people who are
    * recorded are subscribed, so it was one of them: someone sending right now, preferring
    * those nothing has been heard from lately. Several at once (a key change hits everyone)
-   * take turns, so the total is exact.
+   * take turns: exact in total, approximate per person (for the first ~100 ms of a burst the
+   * failing speaker may still count as heard, so a healthy one can be charged a few).
    */
   private noteDecryptFailure(): void {
     const now = Date.now();

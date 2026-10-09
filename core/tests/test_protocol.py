@@ -154,6 +154,23 @@ class HelloSecretHidden(unittest.TestCase):
         self.assertNotIn("topsecret", repr(Hello(2, "topsecret")))
 
 
+class HealthFixture(unittest.TestCase):
+    def test_parses_what_ears_sends_with_every_count(self) -> None:
+        # The same JSON ears builds in ears/test/voice.test.ts.
+        parsed = parse_ears_message(json.dumps(FIXTURES["health"]["json"]))
+        self.assertEqual(
+            parsed, Health(111, 1001, 5, 23, decrypt_failures=4, decode_errors=1, link_dropped=2)
+        )
+
+    def test_a_null_count_is_zero_and_a_missing_one_too(self) -> None:
+        raw = {**FIXTURES["health"]["json"], "decryptFailures": None}
+        del raw["linkDropped"]
+        self.assertEqual(
+            parse_ears_message(json.dumps(raw)),
+            Health(111, 1001, 5, 23, decrypt_failures=0, decode_errors=1, link_dropped=0),
+        )
+
+
 class HelloFixture(unittest.TestCase):
     def test_parses_what_ears_sends(self) -> None:
         h = FIXTURES["hello"]
