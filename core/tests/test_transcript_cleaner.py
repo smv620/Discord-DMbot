@@ -29,6 +29,7 @@ from dmbot.transcript.cleaner import (
 )
 
 BELLEROS, CERRIC, KAZETH, TOWN, GUESS, TRIBE, THORIN, MAREN, MARRON = (c * 32 for c in "abcdefghi")
+YSOLDE, ISOLDA = "y" * 32, "z" * 32
 MIA, DEE = 8, 9
 # Every entry in the scene: the traps must hold even then.
 EVERYONE = frozenset((BELLEROS, CERRIC, KAZETH, TOWN, GUESS, TRIBE, THORIN, MAREN, MARRON))
@@ -235,6 +236,65 @@ class TrapsTest(unittest.TestCase):
         self.assertFalse(fix.sure)
         # less alike than that: left as heard
         self.assertEqual(text("then Hrothgor roars"), "then Hrothgor roars")
+
+    # ---- a look-alike is not always a mishearing (#573) --------------------------
+
+    def ysolde(self, *, isolda: bool = False) -> CampaignLookup:
+        more = [entity(YSOLDE, "Ysolde")]
+        more_aliases = [alias(YSOLDE, "Ysolde")]
+        if isolda:  # the DM confirmed the new name
+            more.append(entity(ISOLDA, "Isolda"))
+            more_aliases.append(alias(ISOLDA, "Isolda"))
+        return lookup(more=tuple(more), more_aliases=tuple(more_aliases))
+
+    def test_a_look_alike_next_to_the_name_it_resembles_is_another_person(self) -> None:
+        # names-stress lines 40-41: Ysolde has a student, heard as "Isolde".
+        everyone = EVERYONE | {YSOLDE}
+        for heard in (
+            "Today Isolde heals the wounded, and Ysolde rests.",
+            "The healer Ysolde has a student called Isolde.",
+        ):
+            result = clean(self.ysolde(), heard, scene=everyone)
+            self.assertEqual((result.text, result.fixes), (heard, ()), heard)
+
+    def test_a_close_look_alike_alone_is_fixed_with_a_note_not_silently(self) -> None:
+        # 0.83 alike: possibly a mishearing, possibly someone new, so the DM can Undo.
+        result = clean(
+            self.ysolde(), "Today I saw Isolde heal the wounded.", scene=EVERYONE | {YSOLDE}
+        )
+        self.assertEqual(result.text, "Today I saw Ysolde heal the wounded.")
+        (fix,) = result.fixes
+        self.assertFalse(fix.sure)
+        self.assertLess(likeness(fix.heard, fix.written), cleaner.NEAR_CERTAIN)
+
+    def test_quiet_leaves_a_close_look_alike_as_heard(self) -> None:
+        # With no notes shown (How much DMbot says: Quiet), a fix that needs Undo isn't made.
+        heard = "Today I saw Isolde heal the wounded."
+        result = clean(self.ysolde(), heard, scene=EVERYONE | {YSOLDE}, unsure=False)
+        self.assertEqual((result.text, result.fixes), (heard, ()))
+
+    def test_a_near_certain_mishearing_is_still_fixed_silently(self) -> None:
+        result = clean(lookup(), "I think Beleros has the key.", scene=EVERYONE)
+        (fix,) = result.fixes
+        self.assertTrue(fix.sure)
+        self.assertGreaterEqual(likeness(fix.heard, fix.written), cleaner.NEAR_CERTAIN)
+
+    def test_a_name_the_dm_confirmed_is_never_merged_again(self) -> None:
+        names = self.ysolde(isolda=True)
+        scene = EVERYONE | {YSOLDE, ISOLDA}
+        heard = "Today Isolda heals the wounded."
+        self.assertEqual(clean(names, heard, scene=scene).text, heard)  # known: untouched
+        # "Isolde" now sounds like two known names: it is asked about, never made Ysolde.
+        result = clean(names, "Today I met Isolde in town.", scene=scene)
+        self.assertEqual(result.text, "Today I met Isolde in town.")
+        (question,) = result.questions
+        self.assertEqual({e for e, _ in question.options}, {YSOLDE, ISOLDA})
+
+    def test_a_question_drops_a_name_the_line_already_says(self) -> None:
+        names = self.ysolde(isolda=True)
+        result = clean(names, "Ysolde and Isolde talk.", scene=EVERYONE | {YSOLDE, ISOLDA})
+        self.assertEqual(result.text, "Ysolde and Isolde talk.")
+        self.assertEqual(result.questions, ())  # only Isolda is left to offer: not asked
 
     def test_two_names_sounding_alike_are_left_alone(self) -> None:
         names = lookup(

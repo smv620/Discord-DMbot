@@ -59,6 +59,12 @@ ENTRIES_PER_NAME = 8  # of one entry's names sounding alike, the most weighed pe
 MIN_LIKENESS_ONE_WORD = 0.8
 # From a name DMbot only suggested: spelled very alike, and always shown with Undo.
 MIN_LIKENESS_UNSURE = 0.9
+# A fix by sound is silent only when the word is spelled this alike to the name (#573).
+# Below it, a close look-alike may be another person ("Isolde" and Ysolde, 0.83; "Cedric"
+# and Cerric, 0.83), so it is fixed with a note and Undo in the DM screen, never silently.
+# Real mishearings measured on the stress names and the tests sit above it ("Rothgar" and
+# Hrothgar 0.93, "Belle Ross" and Belleros 0.94, "Gorak" and Gorrak 0.91).
+NEAR_CERTAIN = 0.9
 # Runs of words checked against secret names, per line. Enough for any real campaign
 # (a few dozen); past it, the line's remaining fixes are dropped: no fix is the safe way.
 SECRET_CHECKS_PER_LINE = 400
@@ -239,6 +245,7 @@ def clean(
 
     near = _SecretChecks()
     by_sound, asking = _by_sound(lookup, heard, words, known, vocabulary, scene)
+    by_sound, asking = _not_a_second_person(lookup, heard, by_sound, asking)
     fixes = [
         fix
         for fix in [*_known_names(lookup, heard, person_keys), *by_sound]
@@ -254,6 +261,24 @@ def clean(
     if near.ran_out:
         log.debug("Secret-name check ran out for a line: %d fix(es) kept", len(fixes))
     return Cleaned(text, tuple(fixes), questions)
+
+
+def _not_a_second_person(
+    lookup: CampaignLookup, heard: str, fixes: list[Fix], asking: list[Question]
+) -> tuple[list[Fix], list[Question]]:
+    """A look-alike word is never made into a name the same line already says: with
+    Ysolde in the line, "Isolde" is another person, not a mishearing of her (#573)."""
+    if not fixes and not asking:
+        return fixes, asking  # the usual line: nothing to check, so no second search
+    said = {found.entity_id for found in find_mentions(lookup, heard, typed_names=True)}
+    if not said:
+        return fixes, asking
+    kept_questions = []
+    for q in asking:
+        options = tuple(o for o in q.options if o[0] not in said)
+        if len(options) > 1:
+            kept_questions.append(replace(q, options=options))
+    return [f for f in fixes if f.entity_id not in said], kept_questions
 
 
 def safe_answer(
@@ -451,6 +476,8 @@ def _by_sound(
             # A fix with Undo needs no scene: it's always shown to the DM.
             if found is not None and size == 1 and found.sure and not _one_word_ok(found, scene):
                 found = None
+            if found is not None and found.sure and likeness(said, found.written) < NEAR_CERTAIN:
+                found = replace(found, sure=False)  # a close look-alike: noted, with Undo
             if found is not None:
                 fixes.append(found)
                 i += size
