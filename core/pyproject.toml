@@ -51,7 +51,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 # The plan facts (#432, #437): a copy of web/src/content/plans.json; a test keeps them equal.
 # The rules data (#866): the SRD 5.2.1's spells and conditions, and its attribution.
-dmbot = ["plans.json", "rules/data/srd52/*.json", "rules/data/srd52/*.md", "rules/data/srd51/*.json", "rules/data/srd51/*.md"]
+dmbot = ["plans.json", "rules/data/srd52/*.json", "rules/data/srd52/*.md", "rules/data/srd51/*.json", "rules/data/srd51/*.md", "sidebar/*.md"]
 
 [tool.ruff]
 line-length = 100

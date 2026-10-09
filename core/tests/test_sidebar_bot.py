@@ -15,9 +15,9 @@ from dmbot.transcript.models import SIDEBAR_QUESTION, Line
 GUILD, DM, PLAYER = 1, 7, 8
 
 
-def make_bot(*, transcripts: object | None = None) -> DMBot:
+def make_bot(*, transcripts: object | None = None, **settings: object) -> DMBot:
     return DMBot(
-        Settings(discord_token="t", ears_secret="s"),
+        Settings(discord_token="t", ears_secret="s", **settings),  # type: ignore[arg-type]
         MagicMock(),
         MagicMock(),
         MagicMock(),
@@ -44,6 +44,13 @@ class Glue(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(bot.intents.dm_messages)
         self.assertFalse(bot.intents.message_content)  # DMs need no special permission
         self.assertFalse(bot.intents.guild_messages)
+
+    def test_the_answer_engine_is_connected_only_when_the_sidebar_is_switched_on(self) -> None:
+        self.assertIsNone(make_bot(ai_key="k").sidebar.answerer)  # off by default
+        self.assertIsNone(make_bot(sidebar_on=True).sidebar.answerer)  # on, but no AI key
+        on = make_bot(sidebar_on=True, ai_key="k")
+        self.assertIsNotNone(on.sidebar_answers)
+        self.assertIs(on.sidebar.answerer, on.sidebar_answers)
 
     async def test_a_private_message_goes_to_the_sidebar_and_a_failure_is_survived(self) -> None:
         bot = make_bot()

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+from dmbot.ai import AIError
 from dmbot.sidebar import service
 from dmbot.sidebar.ask import AskLimiter
 from dmbot.sidebar.service import Recent, SidebarService
@@ -26,17 +27,22 @@ class FakeAnswer:
     model: str = "model-1"
     prompt_version: str = "prompt-1"
     sources: tuple[str, ...] = ("SRD 5.2.1 p. 241",)
+    parts: tuple[str, ...] = ()
 
 
 class FakeAnswerer:
     def __init__(self, answer: FakeAnswer | None = None) -> None:
         self.answer_to_give = answer or FakeAnswer()
         self.asked: list[tuple[Any, str, str]] = []
+        self.askers: list[int] = []
         self.error: Exception | None = None
         self.gate: asyncio.Event | None = None
 
-    async def answer(self, campaign: Any, question: str, *, scene: str) -> FakeAnswer:
+    async def answer(
+        self, campaign: Any, question: str, *, asker_id: int, scene: str = ""
+    ) -> FakeAnswer:
         self.asked.append((campaign, question, scene))
+        self.askers.append(asker_id)
         if self.gate is not None:
             await self.gate.wait()
         if self.error is not None:
@@ -176,6 +182,40 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             (asked.lineage.via, asked.lineage.stt), ("voice-memo", self.host.sidebar_stt())
         )
+
+    async def test_the_engine_is_told_who_asked(self) -> None:
+        await self.sidebar.on_dm_message(dm_message(CO_DM, "check how grappling works"))
+        self.assertEqual(self.answerer.askers, [CO_DM])
+
+    async def test_a_rule_card_comes_as_its_parts(self) -> None:
+        card = (
+            "**Fireball** (level 3)\n" + " ".join(["text"] * 40),
+            "More of it.\nRead it outside Discord: https://x",
+        )
+        self.answerer.answer_to_give = FakeAnswer("Fireball: 8d6.", parts=card)
+        message = dm_message(content="check the spell description of fireball")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), list(card))
+
+    async def test_the_engines_plain_words_are_shown_and_nothing_is_kept(self) -> None:
+        self.answerer.error = AIError("That took too long. Ask again.")
+        message = dm_message(content="check how grappling works")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), ["That took too long. Ask again."])
+        self.assertEqual(self.host.saved, [])
+
+    async def test_one_question_at_a_time_for_a_campaign_even_from_two_dms(self) -> None:
+        self.answerer.gate = asyncio.Event()
+        first = dm_message(DM, "check how grappling works")
+        task = asyncio.create_task(self.sidebar.on_dm_message(first))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        second = dm_message(CO_DM, "check how flanking works")
+        await self.sidebar.on_dm_message(second)
+        self.assertEqual(sent(second), [service.NOT_SOON_AGAIN])
+        self.answerer.gate.set()
+        await task
+        self.assertEqual(len(self.answerer.asked), 1)
 
     async def test_a_co_dm_may_ask_too(self) -> None:
         message = dm_message(CO_DM, "check how grappling works")

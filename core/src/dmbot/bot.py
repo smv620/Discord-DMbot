@@ -15,7 +15,7 @@ import logging
 import signal
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, cast
@@ -126,6 +126,7 @@ from dmbot.rules import index as rules_index
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
+from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.ask import AskLimiter
 from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.transcript import fix_notes, left_out
@@ -195,6 +196,7 @@ IDLE_SWEEP_INTERVAL_S = 1
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
+NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
@@ -466,6 +468,10 @@ class DMBot(commands.AutoShardedBot):
         self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None
         # The off-topic filter (#52) always uses the smallest model, whatever AI_MODEL is.
         self.topic_ai = AnthropicClient(settings.ai_key, DEFAULT_MODEL) if settings.ai_key else None
+        # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
+        # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
+        # without an AI key.
+        self.sidebar_answers = self._make_sidebar_answers()
         self._hints_failed_at = -HINTS_FAIL_LOG_S
         # Per server: (when, who agreed, (names at the table, names not there)).
         self._hint_people_cache: dict[
@@ -475,7 +481,9 @@ class DMBot(commands.AutoShardedBot):
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
         self.tables: dict[int, Table] = {}
-        self.sidebar = SidebarService(self)  # `.answerer` is set when #934 lands
+        self.sidebar = SidebarService(self)
+        if settings.sidebar_on:  # off until the answers have been read (#954)
+            self.sidebar.answerer = self.sidebar_answers
         self.pipeline = TranscriptionPipeline(
             transcriber or PlaceholderTranscriber(),
             consent,
@@ -1312,6 +1320,25 @@ class DMBot(commands.AutoShardedBot):
             can_change_plan=room.can_change_plan,
             creating=True,
         )
+
+    def _make_sidebar_answers(self) -> Sidebar | None:
+        if self.topic_ai is None:
+            return None
+
+        async def gate(campaign: Campaign, user_id: int) -> str | None:
+            return await self.plan_gate("ai", campaign.guild_id, campaign, user_id)
+
+        async def houses(campaign: Campaign) -> Sequence[HouseRule]:
+            if self.house_rules is None:
+                return []
+            return await self.house_rules.list(campaign.guild_id, campaign.id)
+
+        async def names(campaign: Campaign) -> CampaignLookup | None:
+            if self.lookup is None:
+                return None
+            return await self.lookup.get_within(campaign.guild_id, campaign.id, NAMES_WAIT_S)
+
+        return Sidebar(self.topic_ai, rules_index.srd, gate=gate, houses=houses, names=names)
 
     async def plan_gate(
         self, action: plan_rules.Action, guild_id: int, campaign: Campaign, user_id: int

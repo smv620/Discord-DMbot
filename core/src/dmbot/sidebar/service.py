@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import discord
 
+from dmbot.ai import AIError
 from dmbot.audio.segmenter import Utterance
 from dmbot.sidebar import memo
 from dmbot.sidebar.ask import Request, request_in
@@ -101,10 +102,14 @@ class Answer(Protocol):
     def prompt_version(self) -> str: ...
     @property
     def sources(self) -> Sequence[str]: ...  # rules entries, house rule numbers, facts, span
+    @property
+    def parts(self) -> Sequence[str]: ...  # a long answer as messages; else (text,)
 
 
 class Answerer(Protocol):
-    async def answer(self, campaign: Campaign, question: str, *, scene: str) -> Answer: ...
+    async def answer(
+        self, campaign: Campaign, question: str, *, asker_id: int, scene: str
+    ) -> Answer: ...
 
 
 class Host(Protocol):
@@ -180,7 +185,7 @@ class SidebarService:
         self._monotonic = monotonic  # what Table.recent is timed with
         self.answerer: Answerer | None = None  # set when the answer engine (#934) exists
         self._clock = clock
-        self._busy: set[int] = set()  # DMs with a question being answered
+        self._busy: set[tuple[int, str]] = set()  # campaigns with a question being answered
         self._noted: dict[tuple[int, str], float] = {}
         self._asked_at: dict[int, deque[float]] = {}  # per DM: when lately (chat path)
         self._tasks: set[asyncio.Task[None]] = set()
@@ -272,7 +277,7 @@ class SidebarService:
             except discord.HTTPException:
                 log.info("Couldn't send the consent question to user %s", user_id)
             return
-        if user_id in self._busy:
+        if _campaign_key(table) in self._busy:
             if self._note_ok(user_id, "busy"):
                 await reply(NOT_SOON_AGAIN)
             return
@@ -280,7 +285,7 @@ class SidebarService:
             if self._note_ok(user_id, "slow"):
                 await reply(SLOW_DOWN)
             return
-        self._busy.add(user_id)
+        self._busy.add(_campaign_key(table))
         try:
             heard: str | None
             if message.flags.voice and message.attachments:
@@ -296,7 +301,7 @@ class SidebarService:
                 show = False
             await self._ask(table, user_id, heard, reply, via=VIA_VOICE if show else VIA_TYPED)
         finally:
-            self._busy.discard(user_id)
+            self._busy.discard(_campaign_key(table))
 
     async def _hear(
         self, table: Table, user_id: int, attachment: discord.Attachment, reply: Reply
@@ -359,13 +364,13 @@ class SidebarService:
         request = request_in(text, in_character=in_character)
         if request is None:
             return False
-        if user_id in self._busy:
+        if _campaign_key(table) in self._busy:
             self._note_later(user_id, "busy", NOT_SOON_AGAIN)
             return False
         if not table.sidebar_limiter.allow(self._clock()):  # last: it uses up the minute
             self._note_later(user_id, "limit", ONE_A_MINUTE)
             return False
-        self._busy.add(user_id)
+        self._busy.add(_campaign_key(table))
         task = asyncio.create_task(self._table_question(table, user_id, request), name="sidebar")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -395,7 +400,7 @@ class SidebarService:
         except Exception:
             log.exception("A question said at the table failed")
         finally:
-            self._busy.discard(user_id)
+            self._busy.discard(_campaign_key(table))
 
     async def close(self) -> None:
         for task in list(self._tasks):
@@ -436,8 +441,12 @@ class SidebarService:
         )
         try:
             answer = await asyncio.wait_for(
-                answerer.answer(campaign, question, scene=scene), ANSWER_TIMEOUT_S
+                answerer.answer(campaign, question, asker_id=user_id, scene=scene),
+                ANSWER_TIMEOUT_S,
             )
+        except AIError as exc:  # plain words from the engine: show them, keep nothing
+            await reply(str(exc))
+            return
         except Exception:
             log.exception("The sidebar couldn't answer")
             await reply(FAILED)
@@ -445,15 +454,15 @@ class SidebarService:
         if not self._still(table, user_id):
             return
         said = answer.text.strip()
+        shown = [x.strip() for x in answer.parts if x.strip()] or [said]
         if not said:
             await reply(FAILED)
             return
-        text = said
         if via == VIA_VOICE:
             echo = question if len(question) <= ECHO_CHARS else question[:ECHO_CHARS].rstrip() + "…"
-            text = f"🎙️ “{discord.utils.escape_markdown(echo)}”\n{said}"
+            shown[0] = f"🎙️ “{discord.utils.escape_markdown(echo)}”\n{shown[0]}"
         self._undelivered.pop(user_id, None)
-        for part in _parts(text):
+        for part in (piece for text in shown for piece in _parts(text)):
             if not await reply(part):
                 # Only the table path, and only when Discord says their messages are closed:
                 # the DM screen is the one place left to say so.
@@ -499,6 +508,10 @@ class SidebarService:
         log.info("Couldn't send a sidebar answer to the DM")
         if self._note_ok(user_id, "cantdm"):
             await self.host.sidebar_tell_screen(table, CANT_DM)
+
+
+def _campaign_key(table: Table) -> tuple[int, str]:
+    return (table.guild_id, table.campaign_id or "")
 
 
 def _is_dm(table: Table, user_id: int) -> bool:
