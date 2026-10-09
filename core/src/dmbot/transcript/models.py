@@ -22,6 +22,38 @@ class TranscriptSession:
     engines: tuple[str, ...] = ()  # "engine model host" of each speech-to-text used
 
 
+SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
+VIA_VOICE, VIA_TYPED, VIA_TABLE = "voice-memo", "typed", "table-trigger"
+VIAS = (VIA_VOICE, VIA_TYPED, VIA_TABLE)
+
+
+@dataclass(frozen=True, slots=True)
+class Lineage:
+    """Where a DM sidebar line came from (owner decision on #933, 2026-10-09): stored as
+    columns, shown in the raw transcript's tag.
+
+    A question has `ref` (its short id), `via` and, for speech, `stt` ("engine model host").
+    DMbot's reply has `reply_to` (the question's `ref`), the AI `model`, the `prompt`
+    version and the `sources` it used (rules entries, house rule numbers, memory facts,
+    transcript span).
+    """
+
+    ref: str = ""
+    reply_to: str = ""
+    via: str = ""
+    stt: str = ""
+    model: str = ""
+    prompt: str = ""
+    sources: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.via and self.via not in VIAS:
+            raise ValueError(f"unknown way in {self.via!r}")
+
+
+NO_LINEAGE = Lineage()
+
+
 @dataclass(frozen=True, slots=True)
 class Line:
     started_ms: int  # Unix milliseconds, when the speech started
@@ -32,6 +64,19 @@ class Line:
     # game, table_talk or off_topic (#52; dmbot.transcript.topics): only off_topic is
     # hidden, in the cleaned transcript. Until the filter says, a line is game talk.
     topic: str = "game"
+    # "" for table speech. A DM sidebar line (docs/PLAN.md, "DM sidebar"; #935): the DM's
+    # question, or DMbot's answer (saved under the DM's ID, so a consent stop removes both,
+    # and shown as DMbot). Only in the as-heard download, never the cleaned one.
+    sidebar: str = ""
+    lineage: Lineage = NO_LINEAGE
+
+    def __post_init__(self) -> None:
+        if self.sidebar not in ("", SIDEBAR_QUESTION, SIDEBAR_ANSWER):  # not at the database
+            raise ValueError(f"unknown sidebar kind {self.sidebar!r}")
+
+    def is_at(self, user_id: int, started_ms: int) -> bool:
+        """The speech this person began at this moment (never a sidebar line)."""
+        return (self.user_id, self.started_ms) == (user_id, started_ms) and not self.sidebar
 
 
 @dataclass(slots=True)
@@ -67,7 +112,10 @@ class TranscriptBuffer:
         """A waiting line's cleaned words changed (an Undo or an answer, #296, #503);
         True if it was here."""
         for i, waiting in enumerate(self._waiting):
-            if (waiting.user_id, waiting.started_ms) == (user_id, started_ms):
+            if (waiting.user_id, waiting.started_ms) == (
+                user_id,
+                started_ms,
+            ) and not waiting.sidebar:
                 self._waiting[i] = replace(waiting, text=text)
                 return True
         return False
@@ -75,7 +123,10 @@ class TranscriptBuffer:
     def set_topic(self, user_id: int, started_ms: int, topic: str) -> bool:
         """A waiting line's topic, from the off-topic filter (#52); True if it was here."""
         for i, waiting in enumerate(self._waiting):
-            if (waiting.user_id, waiting.started_ms) == (user_id, started_ms):
+            if (waiting.user_id, waiting.started_ms) == (
+                user_id,
+                started_ms,
+            ) and not waiting.sidebar:
                 self._waiting[i] = replace(waiting, topic=topic)
                 return True
         return False

@@ -481,6 +481,33 @@ alerts yet; those build on this.
   with the backup's, as it does everything else; a backup made before this has none.
 - **Wording:** "house rule" only: no "precedence" or "hierarchy" in anything users read.
 
+*Built, part 2: by voice, no AI (2026-10-09, #953):*
+- **What starts a proposal:** a line from one of the campaign's DMs (nobody else's) that
+  begins with "house rule" (then `:`, `,` or `-`), "new house rule", "for this table"
+  (then `:`, `,` or `-`), or "our rule is" / "our house rule is". The words after it, at
+  least two, are the rule (cut at 500 characters on a word, and the proposal says so).
+  "The house rules say…" and questions start nothing. No AI reads the line.
+- **The proposal** goes to `#dm-screen` only, never to a channel, never into the
+  transcript: 🏠 **New house rule?** with the words, and **Save / Edit / Cancel**. Nothing
+  is saved until a DM presses Save. Edit opens the same form as Add, with the rule filled
+  in. A saved rule records `scenario` ("Said at the table, <date>") and `session_id`.
+- **Simple conflicts:** the rule-card name matcher finds this campaign's rules that name
+  the same spell, condition or creature; the proposal shows up to two and says what each
+  button does. With one clash: **Save as new rule** (keeps both), **Replace rule N** (the
+  old rule keeps its number and its "instead of"; the note says what it used to say) or
+  Cancel. With several: Save as new rule, Edit or Cancel, never Replace (it would be unclear
+  which goes). A rule changed by another DM meanwhile is never replaced.
+- **One save only:** a proposal is claimed before the save, so two presses (or two DMs)
+  write one rule; it is given back if the save is refused. If the campaign's rules couldn't
+  be read, the proposal says it didn't check for a repeat.
+- **Limits:** one proposal a minute, and the same words once a session. If the post fails
+  the words and the minute are given back.
+- **Every press** re-checks that the person is a DM of that campaign now; a proposal is
+  forgotten when the session ends or the bot restarts, and an old button says so.
+- **Not built: typed proposals ("House rule: …" in the DM screen).** The bot doesn't read
+  messages (the narrowest Discord intents), so typing uses the **Add a house rule** form in
+  `/dmbot houserules`, with the same save step.
+
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
 is chosen by `TRANSCRIBER=` in config.
@@ -1698,6 +1725,38 @@ table isn't left waiting while the DM looks something up.
   `[time] (DMbot) [DM Sidebar reply-to=<id> model=<model> sources=<…>]: …`, with the same
   fields stored as columns, not only text.
 - **Cost:** every answer spends AI tokens, so it goes through `can_use_ai` (#919).
+- **Built (#935, the ways in; the answers are #934):**
+  - **In the DM's chat with DMbot** (`dmbot.sidebar.service`): a voice message or a typed
+    message from a campaign's DM, while a session of theirs runs. A voice message is read in
+    memory (PyAV, now a normal dependency), written down by the table's speech-to-text with
+    the campaign's names as hints, and dropped at once. Names are fixed the way table speech
+    is (only the sure ones). Any of the campaign's DMs (not just whoever pressed Start) may use it. A DM who has not agreed to be recorded is asked first, with the
+    consent button; nothing is downloaded or kept. If the DM runs several games, a button asks
+    which. One question at a time. The reply shows what was heard (voice only).
+  - **Said at the table:** a DM's own line, in the live transcript, that has a hold-on
+    lead-in, then "I need to / I have to / let me", then find, look up or check, then
+    something (`dmbot.sidebar.ask`, with tests for lines that must not start one). At most one
+    a minute per table. The answer goes to the DM's private chat, never a channel.
+  - **Transcript lines:** the question and DMbot's in-game answer are saved with the line
+    kind `question` / `answer` (migration 0036; answers are saved under the DM's id so a
+    consent stop removes both), shown in the as-heard file for everyone who can read it as
+    `(DM name) [DM Sidebar id=… via=… stt=…]:` and `(DMbot) [DM Sidebar reply-to=… model=…
+    prompt=… sources=…]:`. Where each came from is stored as columns (how it came in, the
+    speech-to-text, the question it answers, the AI model, the prompt version, the sources).
+    Never in the cleaned file, the live channel, or the session counts. Backups hold no
+    transcripts, so they hold no sidebar lines.
+  - **Cost limits:** nothing is downloaded, written down or asked while the answer engine (#934) is missing. A voice message may be up to 30 seconds. A spoken question is one a minute per table; questions in the DM chat are
+    six a minute per DM (each can spend speech-to-text and AI money). A voice message's speech
+    counts in the end-of-session "sent" line for outside engines, not in the hours meter.
+  - **Switch:** the ways in answer only when `DMBOT_SIDEBAR=1` (default 0, and it needs
+    `ANTHROPIC_API_KEY`); off, a DM gets "Quick answers aren't switched on yet." and the table
+    trigger stays quiet. Turn it on after the sidebar's test answers have been read (#954). One
+    question at a time per campaign.
+  - **Not built yet:** a line the Cleaner tags as in character is not told apart from the DM
+    speaking (the `in_character` flag exists, nothing sets it); only the "hold on" lead-in
+    guards against it.
+  - **Limits:** DMs reach only the first shard's process, so a table on another shard's process
+    is not found (single process today).
 
 *Built, part 1: the answer engine (#934, CloudDev, 2026-10-09):* `dmbot.sidebar` (no Discord, no
 voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)` returns an `Answer`:

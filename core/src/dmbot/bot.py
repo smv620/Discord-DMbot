@@ -67,6 +67,7 @@ from dmbot.dm_screen import (
     peek_view,
     rules_cards,
 )
+from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen.handover import (
@@ -123,11 +124,14 @@ from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
+from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar.answer import Sidebar
+from dmbot.sidebar.ask import AskLimiter
+from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.transcript import fix_notes, left_out
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import stream as transcript_lines
@@ -148,7 +152,7 @@ from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obvio
 from dmbot.transcript.topics import marker as topic_marker
 from dmbot.transcription.base import PlaceholderTranscriber, Transcriber, confidence_of
 from dmbot.transcription.factory import build_transcriber
-from dmbot.transcription.pipeline import TranscriptionPipeline, speech_sent_line
+from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import rule_card
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
@@ -326,6 +330,8 @@ class Table:
     rules_on: bool = False
     rules_rulesets: tuple[str, str] = ("2024", "2014")
     rules: rules_cards.RulesCards = field(default_factory=rules_cards.RulesCards)
+    # A house rule the DM said at the table, offered with Save / Edit / Cancel (#953).
+    house_voice: house_voice.HouseVoice = field(default_factory=house_voice.HouseVoice)
     resumed: bool = False  # picked up again after a restart
     announce_resume: bool = True  # post "listening again" when voice is back
     # Asked privately about recording (or reminded) this session: at most once each.
@@ -375,6 +381,10 @@ class Table:
     topic_failures: int = 0  # in a row: after a few, the filter rests a while
     topic_paused_until: float = 0.0  # monotonic seconds
     hidden: set[tuple[int, int]] = field(default_factory=set)  # lines shown as a marker
+    # The DM sidebar (#935): what was said lately (the scene for an answer), and the
+    # one-question-a-minute limit on asking at the table.
+    recent: Recent = field(default_factory=Recent.new)
+    sidebar_limiter: AskLimiter = field(default_factory=AskLimiter)
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
@@ -430,6 +440,9 @@ class DMBot(commands.AutoShardedBot):
         intents = discord.Intents.none()
         intents.guilds = True
         intents.voice_states = True  # who is in which voice channel; not privileged
+        # Messages sent to DMbot in a private chat (the DM sidebar, #935); not privileged,
+        # and DMs are the one place message content needs no special permission.
+        intents.dm_messages = True
         silence_voice_warnings()  # before super().__init__, which logs them
         super().__init__(
             command_prefix=commands.when_mentioned,
@@ -473,6 +486,9 @@ class DMBot(commands.AutoShardedBot):
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
         self.tables: dict[int, Table] = {}
+        self.sidebar = SidebarService(self)
+        if settings.sidebar_on:  # off until the answers have been read (#954)
+            self.sidebar.answerer = self.sidebar_answers
         self.pipeline = TranscriptionPipeline(
             transcriber or PlaceholderTranscriber(),
             consent,
@@ -565,6 +581,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton, FixUndoButton)
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
+        self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
         # A player's 📜 My character sheet, in their private messages (#723).
         self.add_dynamic_items(MySheetButton)
         if self.settings.dev_guild_id:
@@ -619,6 +636,7 @@ class DMBot(commands.AutoShardedBot):
                 FINAL_FLUSH_TIMEOUT_S,
             )
         lookups = list(self._lookups.values())  # so the database can close at once
+        await self.sidebar.close()
         for task in [*self._background, *self._asking, *lookups]:
             task.cancel()
         await asyncio.gather(*self._background, *self._asking, *lookups, return_exceptions=True)
@@ -736,6 +754,7 @@ class DMBot(commands.AutoShardedBot):
             table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
             table.unsaved.drop_speaker(user_id)  # and never saved
+            table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
             if table.fix_notes.drop_speaker(user_id):  # their fixes leave the DM screen
@@ -2149,6 +2168,80 @@ class DMBot(commands.AutoShardedBot):
         """Running sessions and stopped ones still finishing."""
         return [*self.tables.values(), *(t for ts in self._ending.values() for t in ts)]
 
+    # ---- the DM sidebar (#935; dmbot.sidebar.service) -----------------------------------
+
+    async def on_message(self, message: discord.Message) -> None:
+        """Only private messages reach here (the DM intent); the sidebar reads them."""
+        try:
+            await self.sidebar.on_dm_message(message)
+        except Exception:
+            log.exception("Couldn't handle a private message")
+
+    def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
+        return self.consent.has_consent(guild_id, user_id)
+
+    async def sidebar_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None:
+        return await self.campaigns.get(guild_id, campaign_id)
+
+    def sidebar_server_name(self, guild_id: int) -> str:
+        guild = self.get_guild(guild_id)
+        return guild.name if guild else "another server"
+
+    def consent_request(self, table: Table) -> tuple[str, discord.ui.View]:
+        """The question about recording, for someone who hasn't agreed yet."""
+        guild = self.get_guild(table.guild_id)
+        voice = self.get_channel(table.voice_channel_id)
+        text = request_text(
+            guild.name if guild else "your server",
+            voice=voice.name if isinstance(voice, discord.abc.GuildChannel) else None,
+            dm=self.name_of(table.guild_id, table.dm_user_id),
+            cloud=self.sends_audio_out,
+            company=self.company,
+        )
+        return text, request_view(table.guild_id, outside=self.outside_engine)
+
+    async def sidebar_transcribe(self, table: Table, utterance: Utterance) -> str | None:
+        """A voice message written down by the table's speech-to-text, with the
+        campaign's names as hints. Consent was checked by the caller, and is again."""
+        hints = await self._name_hints(utterance)
+        if self.settings.transcription.sends_audio_out:  # billed by the outside company
+            self.pipeline.sent_s_in[utterance.session] += utterance.duration_s
+        text = await asyncio.wait_for(
+            self.pipeline.transcriber.transcribe(utterance, hints),
+            clip_budget_s(utterance.duration_s),
+        )
+        return str(text) if text else None
+
+    def sidebar_clean(self, table: Table, text: str) -> str:
+        """Names fixed the way table speech is (only the ones DMbot is sure of)."""
+        if table.name_lookup is None:
+            return text
+        return self._clean(table, text, unsure=False).text
+
+    async def sidebar_send_dm(self, user_id: int, text: str) -> str:
+        """ "sent", "forbidden" (their messages from DMbot are closed) or "failed"."""
+        try:
+            user = self.get_user(user_id) or await self.fetch_user(user_id)
+            await user.send(text, allowed_mentions=NO_PINGS)
+        except discord.Forbidden as exc:
+            log.info("Couldn't message user %s privately: %s", user_id, exc)
+            return "forbidden"
+        except discord.HTTPException as exc:
+            log.info("Couldn't message user %s privately: %s", user_id, exc)
+            return "failed"
+        return "sent"
+
+    async def sidebar_tell_screen(self, table: Table, text: str) -> None:
+        await self.post(table.screen_channel_id, text)
+
+    def sidebar_stt(self) -> str:
+        return self.settings.transcription.source
+
+    def sidebar_save(self, table: Table, line: Line) -> None:
+        """A sidebar line for the stored (raw) transcript; never the live channel."""
+        if self.transcripts is not None and self.tables.get(table.guild_id) is table:
+            table.unsaved.add(line)
+
     def _table_for(self, utterance: Utterance) -> Table | None:
         for table in [
             self.tables.get(utterance.guild_id),
@@ -2207,11 +2300,22 @@ class DMBot(commands.AutoShardedBot):
                 self._note_rules(table, utterance.user_id, str(cleaned or text))
             except Exception:
                 log.exception("Rules cards: couldn't look at a line")
+            try:
+                if utterance.user_id in table.dm_user_ids:  # only a DM can start a proposal
+                    self._note_house_rule(table, utterance.user_id, str(cleaned or text))
+            except Exception:
+                log.exception("House rules by voice: couldn't look at a line")
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
             table.unsaved.add(
                 Line(utterance.start_ms, utterance.user_id, text, cleaned or text, duration_ms)
             )
+        if text:
+            table.recent.add(utterance.user_id, str(cleaned or text), time.monotonic())
+            if self.tables.get(table.guild_id) is table:
+                # Only the DM's own lines can start it; consent was just re-checked. Lines
+                # the Cleaner tags as in character are not told apart yet (in_character).
+                self.sidebar.ask_at_table(table, utterance.user_id, str(cleaned or text))
         if text and self._topic_pending(table, utterance, cleaned or text, names_said):
             pass  # held for the off-topic filter: the names scan gets it once labelled
         elif text and len(table.heard) < HEARD_MAX:
@@ -2262,6 +2366,79 @@ class DMBot(commands.AutoShardedBot):
         before = table.rules.last_at  # given back if the card can't be shown
         card_id = table.rules.remember(mention, time.monotonic())
         self._track(self._post_rules_card(table, user_id, mention, card_id, before), "rules-card")
+
+    def _note_house_rule(self, table: Table, user_id: int, line: str) -> None:
+        """A DM's line that starts "house rule: …" and the like (#953): offer to write it
+        down, on the DM screen only. No AI. Nothing is saved without a DM pressing Save.
+        One proposal a minute; the same words once a session."""
+        if not table.listening or self.tables.get(table.guild_id) is not table:
+            return
+        said = table.house_voice.pick(house_voice.find(line), time.monotonic())
+        if said is None or table.campaign_id is None:
+            return
+        proposal_id, now, before = (
+            house_voice_screen.new_id(),
+            time.monotonic(),
+            table.house_voice.last_at,
+        )
+        proposal = house_voice.Proposal(
+            said, (), house_voice_screen.scenario_for(time.time()), table.transcript_session_id
+        )
+        table.house_voice.remember(said, now, proposal_id, proposal)
+        self._track(
+            self._post_house_proposal(table, user_id, proposal_id, proposal, before, now),
+            "house-rule-voice",
+        )
+
+    async def _post_house_proposal(
+        self,
+        table: Table,
+        user_id: int,
+        proposal_id: str,
+        proposal: house_voice.Proposal,
+        before: float | None,
+        now: float,
+    ) -> None:
+        """Post the proposal in the DM screen only. A proposal that can't be shown gives its
+        words and its minute back."""
+        rules: list[HouseRule] = []
+        unchecked = True
+        if self.house_rules is not None and table.campaign_id is not None:
+            try:  # this campaign's own house rules and no other's
+                async with asyncio.timeout(RULES_CARD_DB_S):
+                    rules = await self.house_rules.list(table.guild_id, table.campaign_id)
+                unchecked = False
+            except TimeoutError:
+                log.warning("Reading house rules for a proposal took too long")
+            except Exception:
+                log.exception("Couldn't read house rules for a proposal")
+        clashing = await asyncio.to_thread(  # the first build of the names takes ~0.15 s
+            house_voice_screen.clashes, proposal.said, rules, *table.rules_rulesets
+        )
+        proposal = house_voice.Proposal(
+            proposal.said, clashing, proposal.scenario, proposal.session_id, unchecked
+        )
+        # After the awaits: the DM's words are shown, so they must still be recorded and the
+        # session still running.
+        if (
+            not self.consent.has_consent(table.guild_id, user_id)
+            or not table.listening
+            or self.tables.get(table.guild_id) is not table
+        ):
+            table.house_voice.forget(proposal_id, before, now)
+            return
+        table.house_voice.proposals[proposal_id] = proposal
+        try:
+            posted = await self.post_message(
+                table.screen_channel_id,
+                house_voice_screen.proposal_text(proposal),
+                house_voice_screen.proposal_view(table.guild_id, proposal_id, proposal),
+            )
+        except Exception:
+            log.exception("Couldn't post a house rule proposal")
+            posted = None
+        if posted is None:
+            table.house_voice.forget(proposal_id, before, now)
 
     def _warm_rules(self, rulesets: tuple[str, str]) -> None:
         """Build the names to look for off the event loop (about 0.15 s), so the first line

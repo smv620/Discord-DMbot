@@ -50,6 +50,9 @@ class Settings:
     # before they can pay. `site_url` is where the refusals send people.
     enforce_plans: bool = False
     site_url: str = ""
+    # The DM sidebar's ways in (#935) use the answer engine (#934) only when this is on.
+    # Off until the sidebar's 17 test answers have been read (#954).
+    sidebar_on: bool = False
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -109,6 +112,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             'DMBOT_ENFORCE_PLANS must be 1 (on) or 0 (off), got "' + enforce_raw + '".'
         )
 
+    sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
+    if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
+
     return Settings(
         discord_token=get("DISCORD_TOKEN"),
         ears_secret=get("EARS_SHARED_SECRET"),
@@ -127,4 +134,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         free_users=free_users,
         enforce_plans=enforce_raw in ("1", "true", "on"),
         site_url=get("WEB_SITE_URL").rstrip("/"),
+        sidebar_on=sidebar_raw in ("1", "true", "on"),
     )

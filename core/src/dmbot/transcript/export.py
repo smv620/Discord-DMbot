@@ -17,7 +17,7 @@ import time
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
-from dmbot.transcript.models import Line, TranscriptSession
+from dmbot.transcript.models import SIDEBAR_QUESTION, Line, TranscriptSession
 from dmbot.transcript.topics import GAME, Spoken, collapse
 
 UNKNOWN_SPEAKER = "Someone"
@@ -37,6 +37,11 @@ CLEANED_NOTE = (
     'it was spoken. The "As heard" version (/transcript) still has every word. Only people '
     "who agreed were recorded."
 )
+SIDEBAR_NOTE = (
+    "[DM Sidebar] lines are the DM's questions to DMbot and its answers, with where each "
+    "came from. They are left out of the Cleaned version."
+)
+SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
 HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."
 
 AS_HEARD, CLEANED = "as-heard", "cleaned"
@@ -119,6 +124,34 @@ def written_by(engines: Sequence[str]) -> str:
     return "; then ".join(words)
 
 
+def _value(text: str) -> str:
+    """One word for a tag: no spaces, brackets or equals signs to confuse a reader."""
+    return "-".join(text.translate(_BRACKETS).replace("=", "-").split()) or "unknown"
+
+
+def sidebar_tag(line: Line) -> str:
+    """`[DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]` on a question, and
+    `[DM Sidebar reply-to=a1b2c3 model=… prompt=… sources=…]` on DMbot's reply: where
+    each line came from (owner, #933). Only what is known is shown."""
+    info = line.lineage
+    parts: list[tuple[str, str]]
+    if line.sidebar == SIDEBAR_QUESTION:
+        engine, _, rest = info.stt.partition(" ")  # the company's host stays private
+        stt = f"{engine}/{rest.split(' ')[0]}" if rest else engine
+        parts = [("id", info.ref), ("via", info.via), ("stt", stt)]
+    else:
+        parts = [
+            ("reply-to", info.reply_to),
+            ("model", info.model),
+            ("prompt", info.prompt),
+            ("sources", ";".join(_value(x) for x in info.sources)),
+        ]
+    shown = " ".join(
+        f"{key}={_value(value) if key != 'sources' else value}" for key, value in parts if value
+    )
+    return f"[DM Sidebar {shown}]" if shown else SIDEBAR_TAG
+
+
 def label(when: str, speaker: str, character: str | None = None) -> str:
     """`[0:42:10] (Mia) {Cerric}`, or `[0:42:10] (Sam)` without a character."""
     speaker, character = _plain(speaker), _plain(character) if character else None
@@ -142,14 +175,19 @@ def render(
 ) -> str:
     """The whole file. `names`: speaker ID → display name (missing ones show as
     'Someone'); `characters`: speaker ID → the character they play. `running`: DMbot
-    is still recording this session. `version`: CLEANED or AS_HEARD."""
+    is still recording this session. `version`: CLEANED or AS_HEARD. The DM sidebar lines
+    (#935) are in the as-heard version, for everyone who may read it, and never in the
+    cleaned one (owner, #933)."""
     _check(version)
     start_ms = session.started_at * 1000
     playing = characters or {}
     shown: dict[int, tuple[str, str | None]] = {}  # each name cleaned once
-    body = []
+    timed: list[tuple[int, str]] = []  # (when it started, the line)
     # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
     # marker with how long it lasted. The as-heard version keeps everything.
+    everything = list(lines)
+    table_lines = [line for line in everything if not line.sidebar]
+    shown_sidebar = [line for line in everything if line.sidebar] if version == AS_HEARD else []
     spoken = [
         Spoken(
             line.user_id,
@@ -158,7 +196,7 @@ def render(
             line.text if version == CLEANED else line.heard,
             line.topic if version == CLEANED else GAME,
         )
-        for line in lines
+        for line in table_lines
     ]
     for item in collapse(spoken):
         if item.speaker not in shown:
@@ -170,9 +208,19 @@ def render(
         when = clock((item.started_ms - start_ms) / 1000)
         who = label(when, *shown[item.speaker])
         if item.skipped:  # "[0:12:04] (Mia) [1m 22s of off-topic chat skipped]"
-            body.append(f"{who} {item.text}")
+            timed.append((item.started_ms, f"{who} {item.text}"))
         else:
-            body.append(f"{who}: {' '.join(item.text.split())}")
+            timed.append((item.started_ms, f"{who}: {' '.join(item.text.split())}"))
+    for line in shown_sidebar:  # "[0:12:04] (Sam) [DM Sidebar]: …", "[0:12:09] (DMbot) …"
+        asker = (
+            DMBOT_NAME if line.sidebar != SIDEBAR_QUESTION else clean_name(names.get(line.user_id))
+        )
+        when = clock((line.started_ms - start_ms) / 1000)
+        said = " ".join(line.heard.split())
+        tag = sidebar_tag(line)
+        timed.append((line.started_ms, f"[{when}] ({_plain(asker)}) {tag}: {said}"))
+    timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
+    body = [text for _, text in timed]
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))
     ran = (
         f", ran {duration(session.ended_at - session.started_at)}"
@@ -185,6 +233,7 @@ def render(
         *([f"Speech to text: {written_by(session.engines)}"] if session.engines else []),
         CLEANED_NOTE if version == CLEANED else AS_HEARD_NOTE,
         HOW_TO_READ,
+        *([SIDEBAR_NOTE] if shown_sidebar else []),
     ]
     if running:
         header.append(
