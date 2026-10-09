@@ -471,7 +471,14 @@ class BackupFiles(unittest.TestCase):
 
         from dmbot.campaigns import store as store_mod
 
-        data = {"format": EXPORT_FORMAT, "notes": ["héllo", "日本", {"n": 1.5, "ok": None}]}
+        data = {
+            "format": EXPORT_FORMAT,
+            "notes": ["héllo", "日本", {"n": 1.5, "ok": None}],
+            "sections": {"a": {"b": {"c": {"d": [1, [2, {"e": "x"}]]}}, "f": []}, "g": {}},
+            "lines": [{"t": "ü" * 5}, {}, [], "s", 3, None],
+            "empty": {},
+            "7": True,
+        }
         raw = store_mod.encode_backup(data)
         self.assertTrue(raw.startswith(b"\x1f\x8b"))
         self.assertEqual(
@@ -479,6 +486,25 @@ class BackupFiles(unittest.TestCase):
             json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode(),
         )
         self.assertEqual(store_mod.encode_backup(data), raw)  # and the same every time
+
+    def test_exactly_the_limit_is_made_and_one_more_is_refused(self) -> None:
+        from dmbot.campaigns import store as store_mod
+
+        base = len('{"n":""}')
+        edge = {"n": "a" * (store_mod.MAX_BACKUP_BYTES - base)}
+        self.assertEqual(store_mod.decode_backup(store_mod.encode_backup(edge)), edge)
+        over = {"n": "a" * (store_mod.MAX_BACKUP_BYTES - base + 1)}
+        with self.assertRaises(store_mod.BackupTooBig):
+            store_mod.encode_backup(over)
+
+    def test_a_copy_too_big_to_upload_again_is_refused_too(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.campaigns import store as store_mod
+
+        small = patch.object(store_mod, "MAX_BACKUP_BYTES", 40)  # packed bigger than the text
+        with small, self.assertRaises(store_mod.BackupTooBig):
+            store_mod.encode_backup({"n": "".join(chr(33 + i % 90) for i in range(35))})
 
     def test_no_copy_is_made_that_a_restore_would_refuse(self) -> None:
         from dmbot.campaigns import store as store_mod

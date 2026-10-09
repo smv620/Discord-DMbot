@@ -23,12 +23,6 @@ BUTTON_LABEL_MAX = 80
 FILE_MAX = 10 * 1024 * 1024  # the biggest file a bot may send
 
 
-def upload_limit(guild_limit: int) -> int:
-    """The biggest file DMbot may send in this server: Discord's own number for it (a
-    boosted server takes more than 10 MB), never less than the standard 10 MB."""
-    return max(FILE_MAX, guild_limit)
-
-
 OPTION_LABEL_MAX = 100
 SELECT_OPTIONS_MAX = 25
 # What a phone shows of a button or menu choice before cutting it off (#112). Labels
@@ -293,3 +287,9 @@ def backup_campaign_name(data: object) -> str | None:
 def dm_list(campaign: Campaign) -> str:
     """'<@1>, <@2>' for messages (sent with pings turned off)."""
     return ", ".join(f"<@{uid}>" for uid in sorted(campaign.dm_user_ids)) or "nobody"
+
+
+def upload_limit(guild_limit: int) -> int:
+    """The biggest file DMbot may send in this server: Discord's own number for it (a
+    boosted server takes more than 10 MB), never less than the standard 10 MB."""
+    return max(FILE_MAX, guild_limit)

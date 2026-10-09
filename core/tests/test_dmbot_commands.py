@@ -148,6 +148,12 @@ class CommandTests(DatabaseTest):
         with patch("dmbot.ui.logic.FILE_MAX", 10):  # the standard limit, made tiny
             await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         self.assertIn("file", it.followup.send.call_args.kwargs)
+        plain = fake_interaction(self.bot)  # the same copy to a standard server is too big
+        plain.guild.filesize_limit = 10
+        with patch("dmbot.ui.logic.FILE_MAX", 10):
+            await cmds.dmbot_backup.callback(plain)  # type: ignore[call-arg]
+        self.assertNotIn("file", plain.followup.send.call_args.kwargs)
+        self.assertIn("too big", plain.followup.send.call_args.args[0])
 
     async def test_a_backup_too_big_to_send_says_so(self) -> None:
         await self.campaigns.create(GUILD, "Huge_*one*", DM)
