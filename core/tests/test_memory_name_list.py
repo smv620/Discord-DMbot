@@ -6,6 +6,10 @@ from pathlib import Path
 
 from dmbot.memory.name_list import (
     HEADER,
+    MAX_ADDED,
+    MAX_FILE_BYTES,
+    MAX_LINES,
+    MAX_NAMES,
     MAX_PER_LINE,
     TEMPLATE,
     TOO_MANY_OTHERS,
@@ -14,6 +18,7 @@ from dmbot.memory.name_list import (
     header,
     parse,
     render,
+    render_files,
 )
 from dmbot.memory.sounds import sound_codes
 from dmbot.transcript.cleaner import likeness
@@ -173,6 +178,75 @@ class Download(unittest.TestCase):
         players = render(names, campaign="Frostmaiden", secrets=False)
         self.assertNotIn("Hood", players)
         self.assertEqual(parse(players, secrets=False).lines[0].others, others)
+
+
+class BigDownload(unittest.TestCase):
+    """A download that is too big for one upload comes as several files, each of which
+    uploads again (#685)."""
+
+    @staticmethod
+    def campaign(count: int, *, others: int = 1) -> list[OutName]:
+        return [
+            OutName(f"Name {i:05}", "npc", tuple(f"Nick {i:05} {k}" for k in range(others)), ())
+            for i in range(count)
+        ]
+
+    def test_a_small_campaign_is_one_file_exactly_as_before(self) -> None:
+        names = self.campaign(30)
+        self.assertEqual(
+            render_files(names, campaign="Frostmaiden", secrets=True),
+            [render(names, campaign="Frostmaiden", secrets=True)],
+        )
+
+    def test_every_file_of_a_full_campaign_passes_the_uploads_own_limits(self) -> None:
+        names = self.campaign(MAX_NAMES)
+        files = render_files(names, campaign="Frostmaiden", secrets=True)
+        self.assertGreater(len(files), 1)
+        for text in files:
+            self.assertLessEqual(len(text.splitlines()), MAX_LINES)  # notes count
+            self.assertLessEqual(len(text.encode()), MAX_FILE_BYTES)
+            self.assertIn("name | kind | other names | secret names", text)  # valid alone
+
+    def test_the_files_restore_every_name_each_under_the_add_cap(self) -> None:
+        names = self.campaign(MAX_NAMES, others=2)
+        seen: dict[str, tuple[str, ...]] = {}
+        files = render_files(names, campaign="Frostmaiden", secrets=True)
+        for text in reversed(files):  # in any order
+            parsed = parse(text, secrets=True)
+            self.assertEqual(parsed.refused, [])
+            added = sum(len(line.others) + len(line.secrets) for line in parsed.lines)
+            self.assertLessEqual(added, MAX_ADDED)
+            for line in parsed.lines:
+                self.assertNotIn(line.name, seen)  # a name is in one file only
+                seen[line.name] = line.others
+        self.assertEqual(seen, {n.name: n.others for n in names})
+
+    def test_a_name_on_several_lines_stays_whole_in_one_file(self) -> None:
+        many = tuple(f"Bell {i}" for i in range(45))  # three lines
+        names = [OutName(f"Name {i:05}", "npc", (), ()) for i in range(1990)]
+        names.insert(1000, OutName("Name 00999b", "npc", many, ("Hood",)))
+        files = render_files(names, campaign="Frostmaiden", secrets=True)
+        holding = [f for f in files if "Name 00999b | NPC" in f]
+        self.assertEqual(len(holding), 1)
+        self.assertEqual(holding[0].count("\nName 00999b | NPC"), 3)
+        (line,) = [x for x in parse(holding[0], secrets=True).lines if x.name == "Name 00999b"]
+        self.assertEqual((line.others, line.secrets), (many, ("Hood",)))
+
+    def test_long_names_split_on_size_before_the_line_count(self) -> None:
+        long = tuple(f"{'x' * 90} {k:02}" for k in range(20))  # a line of about 2 KB
+        names = [OutName(f"{'N' * 80} {i:04}", "npc", long, ()) for i in range(300)]
+        files = render_files(names, campaign="Frostmaiden", secrets=False)
+        self.assertGreater(len(files), 1)
+        for text in files:
+            self.assertLessEqual(len(text.encode()), MAX_FILE_BYTES)
+            self.assertLess(len(text.splitlines()), MAX_LINES)
+        restored = [line.name for text in files for line in parse(text, secrets=False).lines]
+        self.assertEqual(sorted(restored), sorted(n.name for n in names))
+
+    def test_each_file_says_which_one_it_is(self) -> None:
+        files = render_files(self.campaign(5000), campaign="Frostmaiden", secrets=False)
+        for i, text in enumerate(files, 1):
+            self.assertIn(f"Names DMbot knows for Frostmaiden (file {i} of {len(files)})", text)
 
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "docs" / "test-scripts"

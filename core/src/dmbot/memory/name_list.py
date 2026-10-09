@@ -341,18 +341,70 @@ def lines_for(name: str, kind: str, others: Sequence[str], secrets: Sequence[str
     return out
 
 
+def _prelude(*, campaign: str, secrets: bool, part: str = "") -> list[str]:
+    """The lines every download file starts with: the instructions (so each file is valid
+    on its own), then what it holds."""
+    lines = [
+        header(secrets=secrets).rstrip("\n"),
+        "###",
+        f"### Names DMbot knows for {' '.join(campaign.split())}{part}",
+    ]
+    if secrets:
+        lines.append("### This file includes secret names. Don't share it with players.")
+    return lines
+
+
 def render(names: Iterable[OutName], *, campaign: str, secrets: bool) -> str:
     """A download: the instructions, then one line per name, A to Z. Uploading it again
     adds nothing that's already known. A name with more other or secret names than a
     line holds goes on more lines, as a person would write it."""
-    lines = [
-        header(secrets=secrets).rstrip("\n"),
-        "###",
-        f"### Names DMbot knows for {' '.join(campaign.split())}",
-    ]
-    if secrets:
-        lines.append("### This file includes secret names. Don't share it with players.")
+    lines = _prelude(campaign=campaign, secrets=secrets)
     for n in sorted(names, key=lambda n: name_key(n.name)):
         hidden = n.secrets if secrets else ()
         lines += lines_for(n.name, KIND_OUT.get(n.kind, "other"), n.others, hidden)
     return "\n".join(lines) + "\n"
+
+
+# Room kept in every file for the " (file 12 of 20)" note, whose digits aren't known until
+# the files are counted.
+_PART_NOTE_BYTES = 40
+
+
+def render_files(names: Iterable[OutName], *, campaign: str, secrets: bool) -> list[str]:
+    """A download as one or more files, each one the upload's own limits allow (#685):
+    at most MAX_LINES lines (the # notes count) and MAX_FILE_BYTES, so every file can be
+    added again. One file when it all fits, exactly as render() writes it. A name's lines
+    (more than a line's worth of other names goes on more lines) never split across files,
+    and every file starts with the instructions, so each is valid on its own and the
+    files can be added in any order."""
+    ordered = sorted(names, key=lambda n: name_key(n.name))
+    groups = [
+        lines_for(n.name, KIND_OUT.get(n.kind, "other"), n.others, n.secrets if secrets else ())
+        for n in ordered
+    ]
+    prelude = _prelude(campaign=campaign, secrets=secrets)
+    joined = "\n".join(prelude)
+    base_lines = joined.count("\n") + 1  # the instructions are many lines in one string
+    base_bytes = len(joined.encode("utf-8")) + 1 + _PART_NOTE_BYTES
+    chunks: list[list[str]] = [[]]
+    used_lines, used_bytes = base_lines, base_bytes
+    for group in groups:
+        size = sum(len(line.encode("utf-8")) + 1 for line in group)
+        if chunks[-1] and (
+            used_lines + len(group) > MAX_LINES or used_bytes + size > MAX_FILE_BYTES
+        ):
+            chunks.append([])
+            used_lines, used_bytes = base_lines, base_bytes
+        chunks[-1].extend(group)
+        used_lines += len(group)
+        used_bytes += size
+    if len(chunks) == 1:
+        return [render(ordered, campaign=campaign, secrets=secrets)]
+    return [
+        "\n".join(
+            _prelude(campaign=campaign, secrets=secrets, part=f" (file {i} of {len(chunks)})")
+            + body
+        )
+        + "\n"
+        for i, body in enumerate(chunks, 1)
+    ]
