@@ -35,5 +35,18 @@
         3
       ]
     }
+  },
+  "health": {
+    "_comment": "What ears sends when an utterance ends having lost frames to a decrypt failure, a decoder error and a busy link (ears/test/voice.test.ts builds exactly this); parse_ears_message in core reads it. The three counts are optional and omitted when zero.",
+    "json": {
+      "type": "health",
+      "guildId": "111",
+      "userId": "1001",
+      "framesReceived": 5,
+      "framesExpected": 23,
+      "decryptFailures": 4,
+      "decodeErrors": 1,
+      "linkDropped": 2
+    }
   }
 }

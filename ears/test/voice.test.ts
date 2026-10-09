@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import { Readable, Transform } from "node:stream";
 import { afterEach, beforeEach, mock, test } from "node:test";
@@ -90,6 +91,10 @@ interface Harness {
   /** Audio frames sent to core. */
   audio: Buffer[];
   lookups: string[];
+  /** The voice library's debug event (what it says when it can't decrypt a packet). */
+  debug: (message: string) => void;
+  /** What the voice connection was asked for. */
+  connectOptions: unknown[];
 }
 
 /** Stands in for the Opus decoder: 20 ms of 48 kHz stereo silence per packet. */
@@ -107,6 +112,8 @@ interface Extra {
   logLines?: string[];
   /** The connection's "debug" listeners, if given. */
   debugListeners?: ((message: string) => void)[];
+  /** Audio frames to refuse, as a busy link to core does: called per frame, true = drop. */
+  dropAudio?: () => boolean;
 }
 
 function harness(
@@ -118,10 +125,15 @@ function harness(
   const sent: EarsMessage[] = [];
   const audio: Buffer[] = [];
   const lookups: string[] = [];
+  const listeners: ((message: string) => void)[] = [];
+  const connectOptions: unknown[] = [];
   const connection = {
     receiver,
     on: (event: string, listener: (message: string) => void) => {
-      if (event === "debug") extra.debugListeners?.push(listener);
+      if (event === "debug") {
+        listeners.push(listener);
+        extra.debugListeners?.push(listener);
+      }
       return connection;
     },
     state: { status: "ready" },
@@ -134,7 +146,15 @@ function harness(
     channelId: CHANNEL,
     adapterCreator: (() => ({})) as unknown as DiscordGatewayAdapterCreator,
     allowlist,
-    link: { send: (m) => sent.push(m), sendAudio: (frame) => audio.push(frame), droppedAudioFrames: 0 },
+    link: {
+      send: (m) => sent.push(m),
+      sendAudio: (frame) => {
+        if (extra.dropAudio?.()) return false;
+        audio.push(frame);
+        return true;
+      },
+      droppedAudioFrames: 0,
+    },
     peekBot: (userId) => cached.get(userId),
     lookUpBot: (userId) => {
       lookups.push(userId);
@@ -148,10 +168,14 @@ function harness(
       write: (line: string) => extra.logLines?.push(line),
     }),
     // The fake has just the parts TableSession uses.
-    connect: () => connection as unknown as VoiceConnection,
+    connect: (config) => {
+      connectOptions.push(config);
+      return connection as unknown as VoiceConnection;
+    },
     createDecoder: fakeDecoder,
   });
-  return { session, allowlist, receiver, sent, audio, lookups };
+  const debug = (message: string): void => listeners.forEach((listener) => listener(message));
+  return { session, allowlist, receiver, sent, audio, lookups, debug, connectOptions };
 }
 
 /** Let stream events run, then move the clock one Opus frame on. */
@@ -677,10 +701,216 @@ test("with DMBOT_DEBUG_AUDIO, the encryption's debug lines are logged, and only 
   assert.doesNotMatch(logged, /secret-token/);
 });
 
-test("without it, the connection's debug lines aren't even asked for", () => {
+test("without it, the debug lines are listened to (failed packets are counted) but never logged", () => {
+  const logLines: string[] = [];
   const debugListeners: ((message: string) => void)[] = [];
-  harness(undefined, undefined, { debugListeners });
-  assert.equal(debugListeners.length, 0);
+  harness(undefined, undefined, { logLines, debugListeners });
+  assert.equal(debugListeners.length, 1);
+  debugListeners[0]?.("[NW] [DAVE] Transition executed (v0 -> v1, id: 0)");
+  debugListeners[0]?.("[NW] [DAVE] Failed to decrypt a packet (1 consecutive fails)");
+  assert.deepEqual(logLines, []);
+});
+
+// ---- audio lost that the clock can't see (#43, #45) --------------------------------
+
+const FAILED = "[NW] [DAVE] Failed to decrypt a packet (1 consecutive fails)";
+
+/** The one health report sent so far, with the counts that say why audio was lost. */
+function healthOf(h: Harness): Extract<EarsMessage, { type: "health" }> {
+  const reports = h.sent.filter((m): m is Extract<EarsMessage, { type: "health" }> => m.type === "health");
+  assert.equal(reports.length, 1);
+  return reports[0] as Extract<EarsMessage, { type: "health" }>;
+}
+
+test("packets that fail to decrypt right after a pause count as lost, not as the pause (#43)", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 5);
+  for (let i = 0; i < 5; i++) {
+    h.receiver.packet(ALICE, SILENCE); // the client's silence run: a pause follows
+    await nextFrame();
+  }
+  mock.timers.tick(400); // the pause
+  h.receiver.sending(ALICE); // they speak again, but the library can't decrypt it
+  for (let i = 0; i < 20; i++) {
+    h.debug(FAILED);
+    await nextFrame();
+  }
+  await speak(h, ALICE, 5); // decrypting works again
+  await stop(h, ALICE);
+  const health = healthOf(h);
+  assert.equal(health.decryptFailures, 20);
+  // 15 packets heard, the 20 that failed, and not the 400 ms pause: 35 expected.
+  assert.equal(health.framesReceived, 15);
+  assert.equal(health.framesExpected, 35);
+});
+
+test("failed packets nobody was sending for don't count against anyone (#43)", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 5);
+  h.receiver.quiet(ALICE); // nobody is sending any more
+  h.debug(FAILED);
+  h.debug(FAILED);
+  await stop(h, ALICE);
+  const health = healthOf(h);
+  assert.equal(health.decryptFailures, undefined); // omitted when zero
+  assert.deepEqual([health.framesReceived, health.framesExpected], [5, 5]);
+});
+
+test("a key change that fails everyone's packets is shared out, so the total is exact (#43)", async () => {
+  const h = harness();
+  h.allowlist.set(GUILD, [ALICE, ERIN]);
+  h.session.noteMember(ALICE, false);
+  h.session.noteMember(ERIN, false);
+  h.receiver.packet(ALICE);
+  h.receiver.packet(ERIN);
+  await nextFrame();
+  mock.timers.tick(300); // nothing heard from either, both still sending
+  h.receiver.sending(ALICE);
+  h.receiver.sending(ERIN);
+  for (let i = 0; i < 10; i++) h.debug(FAILED);
+  await stop(h, ALICE);
+  await stop(h, ERIN);
+  const failures = h.sent.flatMap((m) => (m.type === "health" ? [m.decryptFailures ?? 0] : []));
+  assert.deepEqual(failures, [5, 5]);
+});
+
+test("a decoder error is counted, and its audio is not counted as received (#45)", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 5);
+  const decoder = (h.session as unknown as { speakers: Map<string, { decoder: Transform }> }).speakers.get(ALICE)?.decoder;
+  assert.ok(decoder);
+  decoder.emit("error", new Error("corrupt packet"));
+  await nextFrame();
+  const health = healthOf(h);
+  assert.equal(health.decodeErrors, 1);
+  assert.equal(health.framesReceived, 4); // the 5th reached ears but not core
+});
+
+test("frames the busy link to core dropped are counted, and are not 'received' (#45)", async () => {
+  let drop = false;
+  const h = harness(undefined, undefined, { dropAudio: () => drop });
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 3);
+  drop = true;
+  await speak(h, ALICE, 4); // the link is too busy for these
+  drop = false;
+  await speak(h, ALICE, 3);
+  await stop(h, ALICE);
+  const health = healthOf(h);
+  assert.equal(health.linkDropped, 4);
+  assert.equal(h.audio.length, 6);
+  assert.deepEqual([health.framesReceived, health.framesExpected], [6, 10]);
+});
+
+test("the voice connection is always asked for debug events: failed packets can't be counted without", () => {
+  const h = harness();
+  assert.equal((h.connectOptions[0] as { debug?: boolean }).debug, true);
+});
+
+test("a non-DAVE debug line never reaches the log, with or without DMBOT_DEBUG_AUDIO", () => {
+  for (const debugAudio of [false, true]) {
+    const logLines: string[] = [];
+    const h = harness(undefined, undefined, { debugAudio, logLines });
+    h.debug('[NW] [WS] << {"op":2,"d":{"secret_key":[1,2,3],"token":"secret-token"}}');
+    h.debug("[NW] [UDP] socket opened");
+    assert.doesNotMatch(logLines.join("\n"), /secret|socket/);
+  }
+});
+
+test("one speaker failing while another is healthy: the failures go to the one not heard (#43)", async () => {
+  const h = harness();
+  h.allowlist.set(GUILD, [ALICE, ERIN]);
+  h.session.noteMember(ALICE, false);
+  h.session.noteMember(ERIN, false);
+  h.receiver.packet(ALICE);
+  h.receiver.packet(ERIN);
+  await nextFrame();
+  for (let i = 0; i < 10; i++) {
+    h.receiver.packet(ALICE); // Alice is heard all the time
+    h.receiver.sending(ERIN); // Erin is sending, but nothing of hers gets through
+    h.debug(FAILED);
+    await nextFrame();
+  }
+  await stop(h, ALICE);
+  await stop(h, ERIN);
+  const failures = new Map(h.sent.flatMap((m) => (m.type === "health" ? [[m.userId, m.decryptFailures ?? 0] as const] : [])));
+  // The library doesn't say whose packet failed. For the first 100 ms (Erin hasn't been quiet
+  // longer than the speaking delay) it is a guess between the two; after that it is Erin.
+  const [erin, alice] = [failures.get(ERIN) ?? 0, failures.get(ALICE) ?? 0];
+  assert.equal(erin + alice, 10);
+  assert.ok(erin >= 7 && alice <= 3, `Erin ${erin}, Alice ${alice}`);
+});
+
+test("a long burst across many speakers adds up exactly (#43)", async () => {
+  const h = harness();
+  const people = ["1101", "1102", "1103", "1104", "1105", "1106", "1107", "1108"];
+  h.allowlist.set(GUILD, people);
+  for (const id of people) {
+    h.session.noteMember(id, false);
+    h.receiver.packet(id);
+  }
+  await nextFrame();
+  mock.timers.tick(300);
+  for (const id of people) h.receiver.sending(id);
+  for (let i = 0; i < 1000; i++) h.debug(FAILED);
+  for (const id of people) await stop(h, id);
+  const total = h.sent.reduce((sum, m) => sum + (m.type === "health" ? (m.decryptFailures ?? 0) : 0), 0);
+  assert.equal(total, 1000);
+});
+
+test("someone who stops mid-burst: the rest go to who is left, or to nobody (#43)", async () => {
+  const logLines: string[] = [];
+  const h = harness(undefined, undefined, { debugAudio: true, logLines });
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 3);
+  mock.timers.tick(300);
+  h.receiver.sending(ALICE);
+  for (let i = 0; i < 5; i++) h.debug(FAILED);
+  h.session.dropSpeakers([ALICE]); // consent withdrawn: nothing of theirs is kept
+  for (let i = 0; i < 5; i++) h.debug(FAILED); // nobody recorded is sending now
+  h.session.destroy();
+  assert.equal(h.sent.filter((m) => m.type === "health").length, 0);
+  assert.match(logLines.join("\n"), /5 failed packet\(s\) with nobody recorded sending/);
+});
+
+test("failures while packets keep arriving don't add lost frames on top of the gap (#43)", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 3);
+  for (let i = 0; i < 10; i++) {
+    h.debug(FAILED); // lost to the library...
+    await nextFrame(); // ...with no packet heard for these 10 frames
+  }
+  await speak(h, ALICE, 3);
+  await stop(h, ALICE);
+  const health = healthOf(h);
+  // The clock sees the 10 missing frames; the 10 failures are the same frames, not 10 more.
+  assert.deepEqual([health.framesReceived, health.framesExpected], [6, 16]);
+});
+
+test("failures still pending when the utterance ends are counted once (#43)", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 5);
+  h.receiver.sending(ALICE);
+  mock.timers.tick(300);
+  for (let i = 0; i < 6; i++) h.debug(FAILED);
+  await stop(h, ALICE);
+  const health = healthOf(h);
+  assert.equal(health.decryptFailures, 6);
+  assert.deepEqual([health.framesReceived, health.framesExpected], [5, 11]);
+});
+
+test("a clean utterance reports no extra counts", async () => {
+  const h = harness();
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 5);
+  await stop(h, ALICE);
+  const health = healthOf(h);
+  assert.deepEqual(Object.keys(health).sort(), ["framesExpected", "framesReceived", "guildId", "type", "userId"]);
 });
 
 // ---- a stream the library ends while they're still sending (#645) -----------------
@@ -797,4 +1027,26 @@ test("after re-listening once, a stream that hears nothing is left to the watchd
   assert.equal(ends(h.sent), 1);
   const [report] = health(h.sent);
   assert.ok(report && report.framesExpected > report.framesReceived + 150);
+});
+
+test("the health message with every count is exactly the shared fixture", async () => {
+  // Core parses the same JSON (core/tests/test_protocol.py): the two ends can't drift.
+  let drop = false;
+  const h = harness(undefined, undefined, { dropAudio: () => drop });
+  h.session.noteMember(ALICE, false);
+  await speak(h, ALICE, 4);
+  drop = true;
+  await speak(h, ALICE, 2); // the link is too busy for these
+  drop = false;
+  h.receiver.sending(ALICE);
+  mock.timers.tick(300);
+  for (let i = 0; i < 4; i++) h.debug(FAILED); // packets the library can't decrypt
+  await speak(h, ALICE, 2);
+  const decoder = (h.session as unknown as { speakers: Map<string, { decoder: Transform }> }).speakers.get(ALICE)?.decoder;
+  decoder?.emit("error", new Error("corrupt packet"));
+  await nextFrame();
+  const fixture = JSON.parse(
+    readFileSync(new URL("../../protocol/fixtures.json", import.meta.url), "utf8"),
+  ) as { health: { json: unknown } };
+  assert.deepEqual(healthOf(h), fixture.health.json);
 });
