@@ -1314,6 +1314,25 @@ class DMBot(commands.AutoShardedBot):
             site_url=self.settings.site_url,
         )
 
+    async def plan_allows(
+        self, action: plan_rules.Action, guild_id: int, campaign: Campaign
+    ) -> bool:
+        """Does the campaign's owner's plan allow `action`, as a plain yes or no (no words, so
+        no question of who is asking)? Fails open (True) like `plan_gate`, and is True when
+        plans aren't enforced. A campaign with no owner has no plan to allow anything."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return True
+        owner = campaign.owner_user_id
+        access = None
+        if owner is not None:
+            try:
+                async with asyncio.timeout(GATE_TIMEOUT_S):
+                    access = await self.meter.access(guild_id, owner, int(time.time()))
+            except Exception:
+                log.exception("Couldn't check the plan; allowing it")
+                return True
+        return plan_rules.allowed(plan_rules.RULE_OF[action], access)
+
     async def restore_gate(
         self, guild_id: int, user_id: int, replacing: Campaign | None = None
     ) -> str | None:
@@ -3630,14 +3649,13 @@ class DMBot(commands.AutoShardedBot):
         campaign on). Returns who to tell and what, or None when downloads are fine. Fails
         open like `plan_gate`: any error leaves the buttons in place, since this runs after
         the session was ended and must never stop the end-of-session message. The plan is
-        asked at most twice: whether it is blocked (as user 0, which no Discord account is,
-        so never the owner), and what the owner is told."""
+        asked at most twice: whether it is blocked, and what the owner is told."""
         if table.campaign_id is None:
             return None
         gid = table.guild_id
         try:
             campaign = await self.campaigns.get(gid, table.campaign_id)
-            if campaign is None or await self.plan_gate("transcript", gid, campaign, 0) is None:
+            if campaign is None or await self.plan_allows("transcript", gid, campaign):
                 return None
             owner_id = campaign.owner_user_id
             if owner_id is None:
