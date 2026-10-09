@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
+from dmbot import hours
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.campaigns.models import HandoverOffer
 from dmbot.campaigns.store import NO_OWNER_YET, NOT_THE_OWNER, OFFER_WAITING
@@ -594,6 +595,28 @@ class TakingItOn(unittest.IsolatedAsyncioTestCase):
                 picker = VoicePicker(campaign(owner=None), 5)
                 await picker._start(it)
                 self.assertEqual(ask.await_count, 1 if ok else 0)
+
+    async def test_a_start_refused_for_want_of_an_owner_has_the_take_on_button(self) -> None:
+        # Through the Start button, since the DM screen's card may not exist yet. Only the
+        # DM's words come with the button; and not Not now, which says the session runs.
+        cases = [
+            (hours.NO_OWNER_ASK, [TakeOnButton]),
+            (hours.NO_OWNER, None),
+            (hours.START_BLOCKED, None),
+        ]
+        for message, buttons in cases:
+            with self.subTest(message=message[:30]):
+                it = interaction(OTHER)
+                it.client.start_campaign_session = AsyncMock(return_value=(False, message))
+                it.response.is_done.return_value = True  # the press was deferred
+                await VoicePicker(campaign(owner=None), 5)._start(it)
+                sent = it.followup.send.await_args
+                self.assertEqual(sent.args[0], message)
+                self.assertTrue(sent.kwargs["ephemeral"])
+                if buttons is None:
+                    self.assertNotIn("view", sent.kwargs)
+                else:
+                    self.assertEqual([type(i) for i in sent.kwargs["view"].children], buttons)
 
     async def test_a_failed_check_asks_nothing(self) -> None:
         it = interaction(OTHER)

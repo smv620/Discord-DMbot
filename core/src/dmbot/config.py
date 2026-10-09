@@ -45,6 +45,11 @@ class Settings:
     memory_keep_days: int = 30
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
     free_users: frozenset[int] = field(default=frozenset(), repr=False)
+    # Plan checks at /dmbot start and the hours warnings (#437 part 2). Off until the
+    # website goes live (#498): the meter records either way, and nobody is refused
+    # before they can pay. `site_url` is where the refusals send people.
+    enforce_plans: bool = False
+    site_url: str = ""
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -98,6 +103,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
+    enforce_raw = (get("DMBOT_ENFORCE_PLANS") or "0").lower()
+    if enforce_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            'DMBOT_ENFORCE_PLANS must be 1 (on) or 0 (off), got "' + enforce_raw + '".'
+        )
+
     return Settings(
         discord_token=get("DISCORD_TOKEN"),
         ears_secret=get("EARS_SHARED_SECRET"),
@@ -114,4 +125,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_model=get("AI_MODEL") or DEFAULT_MODEL,
         memory_keep_days=keep_days,
         free_users=free_users,
+        enforce_plans=enforce_raw in ("1", "true", "on"),
+        site_url=get("WEB_SITE_URL").rstrip("/"),
     )

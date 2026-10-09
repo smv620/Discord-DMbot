@@ -137,3 +137,75 @@ def hours_left_words(left_minutes: int) -> str:
         return "about half an hour"
     amount = f"{whole}½" if half else str(whole)
     return f"about {amount} {'hour' if halves == 2 else 'hours'}"
+
+
+def account_link(site_url: str) -> str:
+    """Where a message sends someone to pick or change a plan; plain words until the
+    website's address is set (#437)."""
+    return f"{site_url}/account" if site_url else "DMbot's website"
+
+
+START_BLOCKED = (
+    "DMbot can't start this campaign right now. Ask the campaign's owner to take a look."
+)
+# A campaign with no owner can't start, because DMbot wouldn't know whose hours to use. A DM
+# of the campaign gets a Take it on button under this (it may be the first time the card
+# for ⚙️ Settings exists, so the words don't send them there); anyone else is pointed at the
+# DMs.
+NO_OWNER_ASK = (
+    "This campaign has no owner yet, so DMbot doesn't know whose hours it uses. Press "
+    "**Take it on** to use your plan for it, then press Start again."
+)
+NO_OWNER = (
+    "This campaign has no owner yet, so DMbot doesn't know whose hours it uses. One of its "
+    "DMs needs to take it on first."
+)
+
+
+def refusal(
+    verdict: Verdict,
+    *,
+    is_owner: bool,
+    site_url: str = "",
+    can_change_plan: bool = False,
+    renews: bool = False,
+    extra_hours: int = 0,
+) -> str | None:
+    """The plain words for a refused start, or None if it may go ahead. Only the owner is
+    told why; anyone else starting the campaign is told to ask the owner, in words that fit
+    every cause, so they never learn about the owner's plan or hours (#437). A link goes
+    last so no full stop is glued onto it.
+
+    What the owner is offered follows from their plan: `can_change_plan` (a paid plan or Try
+    It), `extra_hours` (how many hours one purchase adds, 0 when their plan can't buy any,
+    which is the free list and grants), and `renews` (a paid plan that does renew). No date
+    is given for the hours coming back: Try It's period ends rather than renews, a renewal
+    can be a few days late, and which day it is depends on the owner's time zone."""
+    if verdict == "ok":
+        return None
+    if not is_owner:
+        return START_BLOCKED
+    where = f"here: {site_url}/account" if site_url else "on DMbot's website"
+    if verdict == "no_plan":
+        return f"Your plan has ended. Pick one {where}"
+    text = "You've used all your hours this month."
+    if renews:
+        text += " They start again when your plan renews."
+    if extra_hours:
+        return f"{text} To play now, add {extra_hours} hours or change your plan {where}"
+    if can_change_plan:
+        return f"{text} To play now, change your plan {where}"
+    return text
+
+
+def warning_text(left_minutes: int, mark: int = 80, site_url: str = "") -> str:
+    """The DM-screen warning as hours run low: "About 4 hours left this month." The first
+    one (80%) says what an hour is; the 90% one says where more can be added. It is read by
+    everyone who can see the DM screen, so it says only that the campaign's owner can add
+    more, never whose plan it is or anything about payment."""
+    words = hours_left_words(left_minutes)
+    text = f"⏳ {words[0].upper()}{words[1:]} left this month."
+    if mark < 90:
+        return f"{text} (Hours are DMbot's listening time.)"
+    where = f"{site_url}/account" if site_url else "DMbot's website"
+    return f"{text} The campaign's owner can add more at {where}"

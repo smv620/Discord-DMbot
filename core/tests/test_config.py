@@ -70,3 +70,30 @@ class MemorySettings(unittest.TestCase):
                 self.assertRaisesRegex(ConfigError, "MEMORY_CHANGELOG_KEEP_DAYS"),
             ):
                 load_settings({**BASE, "MEMORY_CHANGELOG_KEEP_DAYS": raw})
+
+
+class PlanChecksSetting(unittest.TestCase):
+    def test_off_by_default_with_no_site_address(self) -> None:
+        s = load_settings(BASE)
+        self.assertFalse(s.enforce_plans)
+        self.assertEqual(s.site_url, "")
+
+    def test_on_and_off_words(self) -> None:
+        for raw, expected in (
+            ("1", True),
+            ("true", True),
+            ("ON", True),
+            ("0", False),
+            ("off", False),
+        ):
+            self.assertEqual(
+                load_settings({**BASE, "DMBOT_ENFORCE_PLANS": raw}).enforce_plans, expected
+            )
+
+    def test_a_typo_is_refused_not_guessed(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "DMBOT_ENFORCE_PLANS must be 1"):
+            load_settings({**BASE, "DMBOT_ENFORCE_PLANS": "yes please"})
+
+    def test_the_site_address_loses_its_trailing_slash(self) -> None:
+        s = load_settings({**BASE, "WEB_SITE_URL": "https://dmbot.example/"})
+        self.assertEqual(s.site_url, "https://dmbot.example")

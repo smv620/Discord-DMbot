@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
-from dmbot import hours
+from dmbot import hours, plans
 from dmbot.entitlements import NO_ACCESS, Access, Entitlement
 
 
@@ -145,6 +145,93 @@ class Words(unittest.TestCase):
         self.assertEqual(hours.hours_left_words(35), "about half an hour")
         self.assertEqual(hours.hours_left_words(20), "less than half an hour")
         self.assertEqual(hours.hours_left_words(0), "less than half an hour")
+
+
+class Refusals(unittest.TestCase):
+    SITE = "https://dmbot.example"
+
+    def test_a_start_that_may_go_ahead_has_no_refusal(self) -> None:
+        self.assertIsNone(hours.refusal("ok", is_owner=True))
+
+    def test_an_ended_plan_sends_the_owner_to_the_site(self) -> None:
+        self.assertEqual(
+            hours.refusal("no_plan", is_owner=True, site_url=self.SITE),
+            "Your plan has ended. Pick one here: https://dmbot.example/account",
+        )
+
+    def test_without_a_site_address_it_says_where_in_words(self) -> None:
+        self.assertEqual(
+            hours.refusal("no_plan", is_owner=True),
+            "Your plan has ended. Pick one on DMbot's website",
+        )
+
+    def test_a_paid_owner_is_offered_extra_hours_from_the_plan_facts(self) -> None:
+        # The amount is plans.json's, not typed here.
+        self.assertEqual(
+            hours.refusal(
+                "out_of_hours",
+                is_owner=True,
+                site_url=self.SITE,
+                can_change_plan=True,
+                renews=True,
+                extra_hours=plans.load().extra_hours,
+            ),
+            f"You've used all your hours this month. They start again when your plan renews. "
+            f"To play now, add {plans.load().extra_hours} hours or change your plan here: "
+            "https://dmbot.example/account",
+        )
+
+    def test_try_it_can_change_its_plan_but_buys_no_hours_and_nothing_renews(self) -> None:
+        self.assertEqual(
+            hours.refusal("out_of_hours", is_owner=True, site_url=self.SITE, can_change_plan=True),
+            "You've used all your hours this month. To play now, change your plan here: "
+            "https://dmbot.example/account",
+        )
+
+    def test_a_grant_owner_is_offered_nothing_to_buy(self) -> None:
+        text = hours.refusal("out_of_hours", is_owner=True, site_url=self.SITE) or ""
+        self.assertEqual(text, "You've used all your hours this month.")
+
+    def test_no_date_is_ever_given(self) -> None:
+        # Try It ends rather than renews, a renewal can be days late, and the day depends on
+        # the owner's time zone: the message never names one.
+        text = hours.refusal(
+            "out_of_hours", is_owner=True, can_change_plan=True, renews=True, extra_hours=10
+        )
+        self.assertNotRegex(text or "", r"\d(st|nd|rd|th)\b")
+
+    def test_anyone_else_is_never_told_why(self) -> None:
+        for verdict in ("no_plan", "out_of_hours"):
+            text = hours.refusal(
+                verdict,
+                is_owner=False,
+                site_url=self.SITE,
+                can_change_plan=True,
+                renews=True,
+                extra_hours=10,
+            )
+            self.assertEqual(text, hours.START_BLOCKED)
+            for word in ("plan", "hours", "renew", "dmbot.example"):
+                self.assertNotIn(word, text or "")
+
+    def test_the_no_owner_words_fit_with_and_without_the_button(self) -> None:
+        self.assertIn("Press **Take it on**", hours.NO_OWNER_ASK)
+        self.assertNotIn("Take it on**", hours.NO_OWNER)  # no button under this one
+        self.assertNotIn("Settings", hours.NO_OWNER_ASK + hours.NO_OWNER)  # the card may not exist
+
+    def test_the_first_warning_says_what_an_hour_is(self) -> None:
+        self.assertEqual(
+            hours.warning_text(4 * 60 + 10, 80),
+            "⏳ About 4 hours left this month. (Hours are DMbot's listening time.)",
+        )
+
+    def test_the_second_says_where_to_add_more(self) -> None:
+        self.assertEqual(
+            hours.warning_text(60, 90, self.SITE),
+            "⏳ About 1 hour left this month. The campaign's owner can add more at "
+            "https://dmbot.example/account",
+        )
+        self.assertIn("DMbot's website", hours.warning_text(60, 90))
 
 
 class Standing(unittest.TestCase):

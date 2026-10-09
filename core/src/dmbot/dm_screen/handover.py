@@ -696,6 +696,13 @@ def take_on_view(campaign_id: str) -> discord.ui.View:
     return view
 
 
+def take_on_only_view(campaign_id: str) -> discord.ui.View:
+    """Just the Take it on button, for a start that was refused for want of an owner."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(TakeOnButton(campaign_id))
+    return view
+
+
 async def ask_to_take_on(interaction: discord.Interaction, campaign_id: str) -> None:
     """After `/dmbot start`: if the campaign has no owner yet and this person is one of
     its DMs, ask them privately to take it on (never guessed: it spends their hours)."""

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 import discord
 from discord import app_commands
 
+from dmbot import hours
 from dmbot.campaigns import DEFAULT_DM_SCREEN_VISIBILITY, Campaign, CampaignError
 from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_LEVEL,
@@ -123,12 +124,21 @@ def _is_manager(interaction: discord.Interaction) -> bool:
     return isinstance(user, discord.Member) and user.guild_permissions.manage_guild
 
 
-async def _tell(interaction: discord.Interaction, text: str) -> None:
+async def _tell(
+    interaction: discord.Interaction, text: str, *, view: discord.ui.View | None = None
+) -> None:
     """A private reply, whether or not this interaction has been answered already."""
-    if interaction.response.is_done():
-        await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
+    if view is None:
+        if interaction.response.is_done():
+            await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
+        else:
+            await interaction.response.send_message(text, ephemeral=True, allowed_mentions=NO_PINGS)
+    elif interaction.response.is_done():
+        await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS, view=view)
     else:
-        await interaction.response.send_message(text, ephemeral=True, allowed_mentions=NO_PINGS)
+        await interaction.response.send_message(
+            text, ephemeral=True, allowed_mentions=NO_PINGS, view=view
+        )
 
 
 async def _send(interaction: discord.Interaction, text: str, view: _Menu | None = None) -> None:
@@ -455,7 +465,13 @@ class VoicePicker(_Menu):
             # A campaign with no owner yet: ask this DM to take it on (#437).
             await handover.ask_to_take_on(interaction, self.campaign.id)
         else:
-            await _tell(interaction, message)
+            # No owner yet (DMBOT_ENFORCE_PLANS): a DM of the campaign is given the button
+            # that fixes it, right here, since the DM screen's card may not exist yet. Not
+            # take_on_view: its Not now says the session runs anyway, which isn't true now.
+            view = None
+            if message == hours.NO_OWNER_ASK:
+                view = handover.take_on_only_view(self.campaign.id)
+            await _tell(interaction, message, view=view)
 
 
 async def show_voice_step(

@@ -7,15 +7,20 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import time
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NoReturn, cast
+from unittest.mock import AsyncMock, patch
 
 from psycopg import errors as pg_errors
 
-from dmbot import entitlements, hours, usage
+from dmbot import entitlements, hours, plans, usage
 from dmbot.audio.segmenter import Segmenter
 from dmbot.bot import DMBot, Table
+from dmbot.campaigns import Campaign
 from dmbot.campaigns.store import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
@@ -41,15 +46,17 @@ class UsageTest(DatabaseTest):
     async def add(
         self, guild: int, campaign_id: str, owner: int, minutes: int, started: int = START
     ) -> hours.Month:
-        return await usage.add_minutes(
-            self.db,
-            guild_id=guild,
-            campaign_id=campaign_id,
-            owner_user_id=owner,
-            session_started_at=started,
-            minutes=minutes,
-            now=NOW,
-        )
+        return (
+            await usage.add_minutes(
+                self.db,
+                guild_id=guild,
+                campaign_id=campaign_id,
+                owner_user_id=owner,
+                session_started_at=started,
+                minutes=minutes,
+                now=NOW,
+            )
+        ).month
 
     async def owner_minutes(self, owner: int, month: hours.Month) -> int:
         async with self.db.user(owner) as conn:
@@ -359,8 +366,6 @@ class TheBotMeters(UsageTest):
         self.assertEqual(await usage.session_minutes(self.db, GUILD_A, self.a.id, START), 10)
 
     async def test_a_failed_read_after_a_restart_adds_nothing_and_is_retried(self) -> None:
-        from unittest.mock import patch
-
         table = self.table()
         broken = patch.object(usage.Meter, "recorded", side_effect=RuntimeError("down"))
         with broken, self.assertLogs("dmbot.bot", "ERROR"):
@@ -370,8 +375,6 @@ class TheBotMeters(UsageTest):
         self.assertEqual(await usage.session_minutes(self.db, GUILD_A, self.a.id, START), 10)
 
     async def test_the_final_charge_is_retried_then_closes_the_meter(self) -> None:
-        from unittest.mock import patch
-
         table = self.table()
         calls = []
 
@@ -395,8 +398,6 @@ class TheBotMeters(UsageTest):
         self.assertTrue(table.metering_closed)
 
     async def test_a_stop_settles_the_session_in_its_own_task(self) -> None:
-        from unittest.mock import AsyncMock, patch
-
         table = self.table()
         with (
             patch.object(self.bot, "_meter_final", new=AsyncMock()) as final,
@@ -415,8 +416,6 @@ class TheBotMeters(UsageTest):
         self.assertEqual(await usage.session_minutes(self.db, GUILD_A, self.a.id, START), 0)
 
     async def test_a_slow_database_cannot_hold_up_the_loop(self) -> None:
-        from unittest.mock import patch
-
         async def forever(*args: object, **kwargs: object) -> bool:
             await asyncio.Event().wait()  # never finishes
             return True
@@ -445,8 +444,6 @@ class TheBotMeters(UsageTest):
         self.assertEqual(seen, [GUILD_A, GUILD_B])
 
     async def test_a_database_failure_never_stops_the_game(self) -> None:
-        from unittest.mock import patch
-
         down = patch.object(usage.Meter, "add", side_effect=RuntimeError("down"))
         with down, self.assertLogs("dmbot.bot", "ERROR"):
             await self.bot.meter_table(self.table(), NOW)
@@ -454,6 +451,281 @@ class TheBotMeters(UsageTest):
 
 async def _false(*args: object, **kwargs: object) -> bool:
     return False
+
+
+class PlanChecks(UsageTest):
+    SITE = "https://dmbot.example"
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot = self.make_bot(enforce=True)
+
+    def make_bot(self, *, enforce: bool) -> DMBot:
+        return DMBot(
+            Settings(discord_token="t", ears_secret="s", enforce_plans=enforce, site_url=self.SITE),
+            ConsentStore(self.db),
+            self.campaigns,
+            SessionStore(self.db),
+            meter=usage.Meter(self.db),
+        )
+
+    async def campaign(self) -> object:
+        return await self.campaigns.get(GUILD_A, self.a.id)
+
+    async def refusal(self, starter: int = OWNER, bot: DMBot | None = None) -> str | None:
+        campaign = await self.campaign()
+        return await (bot or self.bot).plan_refusal(GUILD_A, campaign, starter)  # type: ignore[arg-type]
+
+    async def test_off_by_default_nobody_is_refused(self) -> None:
+        self.assertIsNone(await self.refusal(bot=self.make_bot(enforce=False)))
+
+    async def test_an_owner_with_no_plan_is_told_to_pick_one(self) -> None:
+        self.assertEqual(
+            await self.refusal(), f"Your plan has ended. Pick one here: {self.SITE}/account"
+        )
+
+    async def test_a_co_dm_is_not_told_about_the_owners_plan(self) -> None:
+        self.assertEqual(await self.refusal(starter=NEW_OWNER), hours.START_BLOCKED)
+
+    async def test_a_plan_with_hours_left_may_start(self) -> None:
+        await self.give_plan(OWNER, period_start=NOW - 1000, period_end=int(time.time()) + 5000)
+        self.assertIsNone(await self.refusal())
+
+    async def test_used_up_hours_are_refused_until_the_period_ends(self) -> None:
+        # (The plan covers the fixed NOW the minutes are recorded at and the real now of the check.)
+        await self.give_plan(
+            OWNER, period_start=NOW - 1000, period_end=int(time.time()) + 5000, hours_cap=1
+        )
+        await self.add(GUILD_A, self.a.id, OWNER, 60)
+        text = await self.refusal()
+        self.assertIsNotNone(text)
+        self.assertIn("You've used all your hours this month.", text or "")
+        self.assertIn(f"{self.SITE}/account", text or "")
+
+    async def test_a_paid_owner_is_offered_extra_hours_and_the_renewal(self) -> None:
+        await self.give_plan(
+            OWNER, period_start=NOW - 1000, period_end=int(time.time()) + 5000, hours_cap=1
+        )
+        await self.add(GUILD_A, self.a.id, OWNER, 60)
+        self.assertEqual(
+            await self.refusal(),
+            "You've used all your hours this month. They start again when your plan renews. "
+            f"To play now, add {plans.load().extra_hours} hours or change your plan here: "
+            f"{self.SITE}/account",
+        )
+
+    async def test_try_it_may_change_its_plan_but_buys_no_hours(self) -> None:
+        await self.give_plan(
+            OWNER,
+            plan="try-it",
+            period_start=NOW - 1000,
+            period_end=int(time.time()) + 5000,
+            hours_cap=1,
+        )
+        await self.add(GUILD_A, self.a.id, OWNER, 60)
+        self.assertEqual(
+            await self.refusal(),
+            f"You've used all your hours this month. To play now, change your plan here: "
+            f"{self.SITE}/account",
+        )
+
+    async def test_a_guild_grant_owner_is_offered_nothing_to_buy(self) -> None:
+        began = int(datetime(2026, 1, 14, 10, tzinfo=UTC).timestamp())
+        await grants.give(
+            self.db, "admin@example.invalid", OWNER, "guild", ends_at=None, note="", now=began
+        )
+        check = await usage.check_start(self.db, GUILD_A, OWNER, NOW)
+        self.assertEqual(
+            (check.can_change_plan, check.extra_hours, check.renews), (False, 0, False)
+        )
+
+    async def test_the_warning_marks_come_round_again_in_a_new_month(self) -> None:
+        # A Guild grant's months start on its day: 80% in one month, and again in the next.
+        began = int(datetime(2026, 1, 14, 10, tzinfo=UTC).timestamp())
+        await grants.give(
+            self.db, "admin@example.invalid", OWNER, "guild", ends_at=None, note="", now=began
+        )
+        marks = []
+        for month in (3, 4):
+            now = int(datetime(2026, month, 20, tzinfo=UTC).timestamp())
+            standing = await usage.add_minutes(
+                self.db,
+                guild_id=GUILD_A,
+                campaign_id=self.a.id,
+                owner_user_id=OWNER,
+                session_started_at=now - 60,
+                minutes=87 * 60 * 80 // 100 + 5,  # a little past 80% of Guild's hours
+                now=now,
+            )
+            marks.append(
+                hours.warning_crossed(standing.access, standing.used_before, standing.used_after)
+            )
+        self.assertEqual(marks, [80, 80])
+
+    async def test_a_free_account_has_no_limit(self) -> None:
+        entitlements.configure_free_users([OWNER])
+        await self.add(GUILD_A, self.a.id, OWNER, 10_000)
+        self.assertIsNone(await self.refusal())
+
+    async def test_a_campaign_with_no_owner_is_asked_to_be_taken_on(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = NULL WHERE id = %s", (self.a.id,)
+            )
+        campaign = cast(Campaign, await self.campaign())
+        as_dm = replace(campaign, dm_user_ids=frozenset({OWNER}))
+        not_dm = replace(campaign, dm_user_ids=frozenset({NEW_OWNER}))
+        # A DM of the campaign is asked to take it on (with the button); anyone else is
+        # told it needs one of its DMs.
+        self.assertEqual(await self.bot.plan_refusal(GUILD_A, as_dm, OWNER), hours.NO_OWNER_ASK)
+        self.assertEqual(await self.bot.plan_refusal(GUILD_A, not_dm, OWNER), hours.NO_OWNER)
+
+    async def test_a_database_failure_lets_the_game_start(self) -> None:
+        broken = patch.object(usage.Meter, "check", side_effect=RuntimeError("down"))
+        with broken, self.assertLogs("dmbot.bot", "ERROR"):
+            self.assertIsNone(await self.refusal())
+
+    async def test_crossing_80_percent_warns_the_dm_screen_once(self) -> None:
+        await self.give_plan(OWNER, period_start=NOW - 1000, period_end=NOW + 5000, hours_cap=1)
+        await self.add(GUILD_A, self.a.id, OWNER, 47, started=START - 9)  # 78% used
+        table = self.running_table(started=NOW - 120)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW)  # +2 minutes: 81%
+            await self.bot.meter_table(table, NOW + 60)  # +1 more: still past, said once
+        post.assert_awaited_once()
+        self.assertEqual(post.await_args.args[0], 77)  # type: ignore[union-attr]
+        self.assertIn("left this month", post.await_args.args[1])  # type: ignore[union-attr]
+
+    def running_table(self, *, started: int, screen: int = 77) -> Table:
+        table = Table(
+            guild_id=GUILD_A,
+            voice_channel_id=2,
+            screen_channel_id=screen,
+            dm_user_id=OWNER,
+            segmenter=Segmenter(GUILD_A),
+            campaign_id=self.a.id,
+            campaign_name="F",
+            started_at=started,
+        )
+        self.bot.tables[GUILD_A] = table
+        return table
+
+    async def small_plan(self) -> None:
+        await self.give_plan(OWNER, period_start=NOW - 1000, period_end=NOW + 5000, hours_cap=1)
+
+    async def test_the_warning_text_is_the_80_percent_one(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 47, started=START - 9)
+        table = self.running_table(started=NOW - 120)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW)
+        # 60 - 49 = 11 minutes left: under half an hour
+        self.assertEqual(
+            post.await_args.args[1],  # type: ignore[union-attr]
+            "⏳ Less than half an hour left this month. (Hours are DMbot's listening time.)",
+        )
+
+    async def test_crossing_90_percent_says_where_to_add_more(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 53, started=START - 9)  # 88%
+        table = self.running_table(started=NOW - 120)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW)  # +2: 91.7%
+        self.assertIn(
+            "The campaign's owner can add more at https://dmbot.example/account",
+            post.await_args.args[1],  # type: ignore[union-attr]
+        )
+
+    async def test_crossing_both_marks_in_one_tick_warns_once_with_the_higher(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 40, started=START - 9)  # 66%
+        table = self.running_table(started=NOW - 20 * 60)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW)  # +20: 100%
+        post.assert_awaited_once()
+        self.assertIn("owner can add more at", post.await_args.args[1])  # type: ignore[union-attr]
+
+    async def test_the_final_charge_never_warns(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 47, started=START - 9)
+        table = self.running_table(started=NOW - 120)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW, final=True)
+        post.assert_not_awaited()
+
+    async def test_a_restart_does_not_say_the_same_mark_again(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 47, started=START - 9)
+        first = self.running_table(started=NOW - 120)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(first, NOW)
+            again = self.running_table(started=NOW - 120)  # a new process, same session
+            await self.bot.meter_table(again, NOW + 1)
+        post.assert_awaited_once()
+
+    async def test_a_plan_with_no_cap_never_warns(self) -> None:
+        entitlements.configure_free_users([OWNER])
+        table = self.running_table(started=NOW - 5000 * 60)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW)
+        post.assert_not_awaited()
+
+    async def test_two_campaigns_ticking_at_once_cross_a_mark_exactly_once(self) -> None:
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 47, started=START - 9)  # 78%
+        results = await asyncio.gather(
+            usage.add_minutes(
+                self.db,
+                guild_id=GUILD_A,
+                campaign_id=self.a.id,
+                owner_user_id=OWNER,
+                session_started_at=START,
+                minutes=1,
+                now=NOW,
+            ),
+            usage.add_minutes(
+                self.db,
+                guild_id=GUILD_B,
+                campaign_id=self.b.id,
+                owner_user_id=OWNER,
+                session_started_at=START,
+                minutes=1,
+                now=NOW,
+            ),
+        )
+        marks = [hours.warning_crossed(r.access, r.used_before, r.used_after) for r in results]
+        self.assertEqual(sorted(m or 0 for m in marks), [0, 80])  # said by exactly one
+        self.assertEqual({r.used_after for r in results}, {48, 49})
+
+    async def test_a_slow_database_cannot_hold_up_a_start(self) -> None:
+        async def forever(*args: object, **kwargs: object) -> NoReturn:
+            await asyncio.Event().wait()
+            raise AssertionError("never reached")
+
+        with (
+            patch.object(usage.Meter, "check", side_effect=forever),
+            patch("dmbot.bot.METER_CALL_TIMEOUT_S", 0.05),
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
+            self.assertIsNone(await self.refusal())  # fails open
+
+    async def test_no_warning_when_checks_are_off(self) -> None:
+        bot = self.make_bot(enforce=False)
+        await self.give_plan(OWNER, period_start=NOW - 1000, period_end=NOW + 5000, hours_cap=1)
+        table = Table(
+            guild_id=GUILD_A,
+            voice_channel_id=2,
+            screen_channel_id=77,
+            dm_user_id=OWNER,
+            segmenter=Segmenter(GUILD_A),
+            campaign_id=self.a.id,
+            campaign_name="F",
+            started_at=NOW - 55 * 60,
+        )
+        bot.tables[GUILD_A] = table
+        with patch.object(bot, "post", new=AsyncMock()) as post:
+            await bot.meter_table(table, NOW)
+        post.assert_not_awaited()
 
 
 class OnlyUsageOpensTheMeter(unittest.TestCase):

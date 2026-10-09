@@ -1194,6 +1194,31 @@ class DMBot(commands.AutoShardedBot):
             )
         return None
 
+    async def plan_refusal(self, guild_id: int, campaign: Campaign, starter_id: int) -> str | None:
+        """Why the campaign's owner's plan or hours don't allow a start, in plain words for
+        the person starting it, or None (#437). Only when DMBOT_ENFORCE_PLANS is on. Fails
+        open: a database hiccup must never lock a table out of its game."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        owner = campaign.owner_user_id
+        if owner is None:
+            # A DM of the campaign gets a Take it on button with this (see the Start button).
+            return hours.NO_OWNER_ASK if starter_id in campaign.dm_user_ids else hours.NO_OWNER
+        try:
+            async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                check = await self.meter.check(guild_id, owner, int(time.time()))
+        except Exception:  # a slow database (TimeoutError) too
+            log.exception("Couldn't check the plan; starting anyway")
+            return None
+        return hours.refusal(
+            check.verdict,
+            is_owner=starter_id == owner,
+            site_url=self.settings.site_url,
+            can_change_plan=check.can_change_plan,
+            renews=check.renews,
+            extra_hours=check.extra_hours,
+        )
+
     async def start_campaign_session(
         self, interaction: discord.Interaction, campaign_id: str, voice_id: int
     ) -> tuple[bool, str]:
@@ -1227,6 +1252,9 @@ class DMBot(commands.AutoShardedBot):
             return False, "Use this in a server."
         if not ui_logic.can_run(campaign, user.id, user.guild_permissions.manage_guild):
             return False, ui_logic.NO_CAMPAIGN_ACCESS
+        refused = await self.plan_refusal(guild.id, campaign, user.id)
+        if refused:
+            return False, refused
         me = cast(discord.Member | None, guild.me)  # None while the guild is still loading
         if me is None:
             return False, STARTING_UP
@@ -3006,6 +3034,7 @@ class DMBot(commands.AutoShardedBot):
         if self.meter is None or table.campaign_id is None or table.started_at <= 0:
             return True
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            warn: usage.Standing | None = None
             try:
                 async with table.meter_lock:
                     # A tick that was already waiting when the session stopped must not
@@ -3042,7 +3071,7 @@ class DMBot(commands.AutoShardedBot):
                             )
                             table.metered_minutes += owed
                         elif campaign is not None and campaign.owner_user_id is not None:
-                            await self.meter.add(
+                            standing = await self.meter.add(
                                 guild_id=table.guild_id,
                                 campaign_id=table.campaign_id,
                                 owner_user_id=campaign.owner_user_id,
@@ -3053,12 +3082,31 @@ class DMBot(commands.AutoShardedBot):
                             # If the commit succeeded but its reply was lost, the next tick
                             # adds these minutes again: rare, and over rather than under.
                             table.metered_minutes += owed
+                            if self.settings.enforce_plans and not final:
+                                warn = standing
                     if final:
                         table.metering_closed = True
-                    return True
+                if warn is not None:
+                    # After the lock, so a slow Discord post doesn't hold the meter. It still
+                    # counts against the loop's time limit, but the minutes are already
+                    # written: a timeout cancels only the post. A warning that fails to
+                    # post is not retried (the mark was crossed once); losing one is
+                    # accepted.
+                    await self._warn_hours(table, warn)
+                return True
             except Exception:
                 log.exception("Couldn't write down the listening minutes")
                 return False
+
+    async def _warn_hours(self, table: Table, standing: usage.Standing) -> None:
+        """Tell the DM screen when the owner's hours pass 80% or 90% (#437). Each mark is
+        said once, because it is found by comparing the minutes before and after."""
+        mark = hours.warning_crossed(standing.access, standing.used_before, standing.used_after)
+        cap = hours.standing(standing.access, standing.used_after).left_minutes
+        if mark is not None and cap is not None:
+            await self.post(
+                table.screen_channel_id, hours.warning_text(cap, mark, self.settings.site_url)
+            )
 
     async def _meter_final(self, table: Table, ended_at: int) -> None:
         """The last, rounded-up minutes at a stop: tried a few times, since nothing else

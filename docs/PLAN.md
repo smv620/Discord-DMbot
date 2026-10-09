@@ -1692,15 +1692,30 @@ the later minutes; a campaign with no owner records nothing. `owner_hours` is no
 campaign's data and never goes into a backup. Only time DMbot is actually listening counts: a restart gap is never billed (a resumed session adds to the minutes already stored, from the moment it is picked up again), and minutes while a campaign has no owner are kept in its session record under "nobody" and billed to no one, so whoever takes it on is billed only from then. The month: a paid plan's billing period;
 Try It its 30 days; a grant that is Guild-level, calendar months from the day it started
 (a 29th to 31st start falls on the month's last day); a grant overlapping a paid plan, the
-paid plan's month; the free list and "no limits" grants are recorded but
-never limited, in UTC calendar months. *2b, the checks (next):* `/dmbot start` refuses when the
-plan has ended, hours are used up or owned campaigns are over the cap ("paused" waits for
-the downgrade part); warnings at 80% and 90%; the cap finish. All of 2b acts only when
+paid plan's month; the free list and "no limits" grants have no limit but are
+recorded (never limited), in UTC calendar months. *2b, the checks, built in two steps:* (i) `/dmbot start` refuses when the plan has
+ended or the hours are used up (a campaign with no owner is asked to be taken on first), and
+the DM screen warns when the hours pass 80% and 90% (said once each, "About 4 hours left
+this month"); a database hiccup lets the start go ahead rather than lock a table out;
+(ii) the cap finish. *2c (decided with Supervisor):* the campaign count, in an owner-scoped
+table kept in step by a trigger on `campaigns`, since a person's campaigns span servers;
+"paused" waits for the downgrade part. All of 2b acts only when
 `DMBOT_ENFORCE_PLANS` is on (default off; the meter records either way), which dev1 turns
 on with the website's go-live (#498) and notes in the testing log. The refusal for a plan
-that has ended says "Your plan has ended. Pick one at <WEB_SITE_URL>/account." (or "Pick
-one on DMbot's website." while it isn't set), shown only to the DM, never in public, and
-never telling anyone else why.
+that has ended says "Your plan has ended. Pick one here: <WEB_SITE_URL>/account" (or "Pick
+one on DMbot's website" while it isn't set); one for used-up hours says so and offers what
+the owner's plan allows: a paid plan "add N hours or change your plan" (N is `extraHours` in
+`plans.json`, never typed in code) and says the hours "start again when your plan
+renews"; Try It "change your plan" only; a grant or the free list nothing to buy. It never
+names a date (Try It ends rather than renews, a renewal can be days late, and the day depends
+on the owner's time zone). Refusals are shown only to the person starting, never in public.
+Anyone but the owner is told only to ask the owner, so they never learn about the owner's plan
+or hours. A campaign with no owner can't start: a DM of it is given a **Take it on** button
+right under the refusal (the DM screen's card may not exist yet), anyone else is told one of
+its DMs must take it on. The DM-screen warnings (decided with Supervisor, 2026-10-09) stay on
+the DM screen because co-DMs need to know the table may stop; they name only the hours left,
+and the 90% one says "The campaign's owner can add more at <WEB_SITE_URL>/account", so it fits
+everyone who reads the screen and never says whose plan it is.
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find

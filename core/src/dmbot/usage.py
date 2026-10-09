@@ -13,9 +13,10 @@ The meter records for everyone. Whether a refusal follows is a separate switch
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from dmbot import entitlements, hours
+from dmbot import entitlements, hours, plans
 from dmbot.db import Conn, Database
 
 
@@ -28,12 +29,68 @@ def calendar_month(now: int) -> hours.Month:
     return hours.Month(int(start.timestamp()), int(nxt.timestamp()))
 
 
-async def month_of(conn: Conn, owner_user_id: int, now: int) -> hours.Month:
-    """The month this owner's hours belong to now. Needs an open transaction."""
+@dataclass(frozen=True, slots=True)
+class Standing:
+    """An owner's hours at one moment: what they may do, the month the hours belong to,
+    and the minutes recorded in it (before and after what was just added)."""
+
+    access: entitlements.Access
+    month: hours.Month
+    used_before: int
+    used_after: int
+    # What a refusal may offer (hours.refusal): a paid plan can buy extra hours and renews;
+    # Try It, grants and the free list can do neither.
+    buys_hours: bool = False
+    renews: bool = False
+
+
+async def standing_of(
+    conn: Conn, owner_user_id: int, now: int, *, read_used: bool = True
+) -> Standing:
+    """The owner's access, month and recorded minutes. Needs an open transaction with the
+    owner set (Database.meter). `read_used=False` skips reading the minutes for a caller
+    that gets them another way (the write in `add_minutes` returns the total)."""
     plan, grant, access = await entitlements.inputs(conn, owner_user_id, now)
-    return hours.month_for(access, plan, grant.granted_at if grant else None, now) or (
+    month = hours.month_for(access, plan, grant.granted_at if grant else None, now) or (
         calendar_month(now)
     )
+    used = await minutes_this_month(conn, owner_user_id, month) if read_used else 0
+    known = plans.load().get(plan.plan) if plan is not None and access.kind == "paid" else None
+    buys_hours = bool(known and known.price_cents)  # Try It is free and buys nothing
+    # Not known to be cancelled: the plan row doesn't record a cancel at period end yet, so a
+    # plan that will lapse still reads as renewing until the payment events store that.
+    renews = buys_hours and plan is not None and plan.status == "active"
+    return Standing(access, month, used, used, buys_hours, renews)
+
+
+async def month_of(conn: Conn, owner_user_id: int, now: int) -> hours.Month:
+    """The month this owner's hours belong to now. Needs an open transaction."""
+    return (await standing_of(conn, owner_user_id, now)).month
+
+
+async def check_start(db: Database, guild_id: int, owner_user_id: int, now: int) -> StartCheck:
+    """May this owner's campaign start listening? Reads only; the bot refuses with
+    `hours.refusal` when the verdict isn't "ok"."""
+    async with db.meter(guild_id, owner_user_id) as conn:
+        s = await standing_of(conn, owner_user_id, now)
+    return StartCheck(
+        hours.start_verdict(s.access, s.used_before),
+        s.month,
+        can_change_plan=s.access.kind == "paid",
+        extra_hours=plans.load().extra_hours if s.buys_hours else 0,
+        renews=s.renews,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class StartCheck:
+    """The answer to "may this campaign start", with what a refusal may offer the owner."""
+
+    verdict: hours.Verdict
+    month: hours.Month
+    can_change_plan: bool = False
+    extra_hours: int = 0
+    renews: bool = False
 
 
 async def add_minutes(
@@ -45,27 +102,34 @@ async def add_minutes(
     session_started_at: int,
     minutes: int,
     now: int,
-) -> hours.Month:
-    """Add listening minutes for this owner, in both tables at once. Returns the month
-    they were recorded in."""
+) -> Standing:
+    """Add listening minutes for this owner, in both tables at once. Returns where their
+    hours stand now (the month they were recorded in, and the minutes before and after)."""
     async with db.meter(guild_id, owner_user_id) as conn:
-        month = await month_of(conn, owner_user_id, now)
-        if minutes > 0:  # (nothing to add still names the month)
-            await conn.execute(
-                "INSERT INTO session_usage (guild_id, campaign_id, session_started_at,"
-                " owner_user_id, minutes, updated_at) VALUES (%s, %s, %s, %s, %s, %s)"
-                " ON CONFLICT (guild_id, campaign_id, session_started_at, owner_user_id)"
-                " DO UPDATE SET minutes = session_usage.minutes + EXCLUDED.minutes,"
-                " updated_at = EXCLUDED.updated_at",
-                (guild_id, campaign_id, session_started_at, owner_user_id, minutes, now),
-            )
-            await conn.execute(
-                "INSERT INTO owner_hours (owner_user_id, month_start, minutes)"
-                " VALUES (%s, %s, %s) ON CONFLICT (owner_user_id, month_start)"
-                " DO UPDATE SET minutes = owner_hours.minutes + EXCLUDED.minutes",
-                (owner_user_id, month.start, minutes),
-            )
-    return month
+        s = await standing_of(conn, owner_user_id, now, read_used=minutes <= 0)
+        if minutes <= 0:
+            return s
+        await conn.execute(
+            "INSERT INTO session_usage (guild_id, campaign_id, session_started_at,"
+            " owner_user_id, minutes, updated_at) VALUES (%s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT (guild_id, campaign_id, session_started_at, owner_user_id)"
+            " DO UPDATE SET minutes = session_usage.minutes + EXCLUDED.minutes,"
+            " updated_at = EXCLUDED.updated_at",
+            (guild_id, campaign_id, session_started_at, owner_user_id, minutes, now),
+        )
+        # The row lock this upsert takes serialises two campaigns of one owner ticking at
+        # once; the total it returns, not the earlier read, says where the hours stand now.
+        cur = await conn.execute(
+            "INSERT INTO owner_hours (owner_user_id, month_start, minutes)"
+            " VALUES (%s, %s, %s) ON CONFLICT (owner_user_id, month_start)"
+            " DO UPDATE SET minutes = owner_hours.minutes + EXCLUDED.minutes"
+            " RETURNING minutes",
+            (owner_user_id, s.month.start, minutes),
+        )
+        row = await cur.fetchone()
+    assert row is not None  # an upsert with RETURNING always gives its row back
+    after = int(row["minutes"])
+    return Standing(s.access, s.month, after - minutes, after, s.buys_hours, s.renews)
 
 
 async def add_unowned_minutes(
@@ -132,7 +196,7 @@ class Meter:
         session_started_at: int,
         minutes: int,
         now: int,
-    ) -> hours.Month:
+    ) -> Standing:
         return await add_minutes(
             self.db,
             guild_id=guild_id,
@@ -163,3 +227,6 @@ class Meter:
 
     async def recorded(self, guild_id: int, campaign_id: str, started_at: int) -> int:
         return await session_minutes(self.db, guild_id, campaign_id, started_at)
+
+    async def check(self, guild_id: int, owner_user_id: int, now: int) -> StartCheck:
+        return await check_start(self.db, guild_id, owner_user_id, now)
