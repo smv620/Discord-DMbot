@@ -323,67 +323,62 @@ reached from outside until it is started again. To remove the token as well, emp
 
 ### Put the test website online (dev.getdmbot.com)
 
-This sets up a test copy of the website at https://dev.getdmbot.com. It takes about 15
-minutes. Nothing public changes: the live site is not touched, and search engines can't
-find the test copy. Until the live site is ready (#498), the admin page is on the test copy.
+Until the real website opens (#498), the test website shows the work in progress. These
+three links all show the same site: https://dev.getdmbot.com, https://getdmbot.com and
+https://www.getdmbot.com. Search engines are told to skip them. The admin page works only at
+https://dev.getdmbot.com/admin.
 
-**You (the owner), in Cloudflare.** Do the steps in this order: the setting first, then the
-address. If any step shows an error or looks different, stop and tell dev1 the step number
-and what the screen says (a screenshot is fine; never a password or key). Nothing is broken
-by stopping.
-1. Go to https://dash.cloudflare.com, then Workers & Pages, and open the project named
-   `getdmbot` (the website). If the name you see is different, use that one wherever these
-   steps say `getdmbot`.
-2. Open Settings, then Variables and Secrets (older screens call it Environment variables).
-3. Find the Preview section. Do not use Production.
-4. Press Add. Type the name `PUBLIC_DEV_API_BASE` and the value `https://api.getdmbot.com`.
-   Leave the type as Text. It is a public address, not a secret.
-5. Press Save. Check that the variable shows under Preview only, not Production.
-6. Tell dev1, in the Claude Code window where dev1 runs (not GitHub): "preview variable is
-   in". dev1 then lets the website change go live (it needs this setting first). Wait for
-   dev1 to say it has, then go on.
-7. In the project, open Deployments. Find the top row marked `development`, press the three
-   dots on it, and press Retry deployment (the setting only counts for builds made after you
-   saved it). Wait until the row says Success, which can take a few minutes. If it says
-   Failed, stop and tell dev1.
-8. Open the Custom domains tab (if you don't see it, look under Settings). Press Set up a
-   custom domain, type `dev.getdmbot.com`, press Continue, then press Activate domain. If
-   Cloudflare asks which branch to use (a branch is a version of the website being tested),
-   pick `development`. Wait until the domain says Active (this can take a few minutes).
-9. Go to https://dash.cloudflare.com again, open `getdmbot.com`, then DNS, then Records.
-   Find the row named `dev` (step 8 made it). Press Edit and change Target to
-   `development.getdmbot.pages.dev` (the project's own address with `development.` in
-   front; if the project is not named `getdmbot`, use its real `pages.dev` name from the
-   project's page). Keep Proxy status on (orange cloud, "Proxied"). Press Save. If saving
-   shows an error, stop and tell dev1.
-10. Open https://dev.getdmbot.com. If it shows an error, wait 5 minutes and try again. If it
-    still shows an error after 15 minutes, stop and tell dev1. Go on once you see the DMbot
-    website.
-11. Tell dev1, in the Claude Code window where dev1 runs (not GitHub): "dev site ready".
+**You (the owner), in Cloudflare.** It is safe to stop at any step. If a step shows an error
+or looks different, stop and tell dev1 the step number and what the screen says. A
+screenshot is fine, as long as it shows no password or key.
+1. Go to https://dash.cloudflare.com. In the left menu press Workers & Pages. Open the
+   project named `getdmbot`. If you can't find it, stop and tell dev1.
+2. Press Settings, then Variables and Secrets (it may be called Environment variables). If
+   you can't find it, stop and tell dev1.
+3. You already added `PUBLIC_DEV_API_BASE` for Preview. Now add the same one for Production.
+   Press Add variable. In Name type `PUBLIC_DEV_API_BASE`. In Value type
+   `https://api.getdmbot.com`. Choose Production (not Preview). Leave the type as Text. This
+   is a public address, not a secret.
+4. Press Save. The list must now show `PUBLIC_DEV_API_BASE` twice, once for Production and
+   once for Preview. If you only see one, stop and tell dev1.
+5. Press DNS, then Records (for `getdmbot.com`). Look for a row named `dev` with the Target
+   `getdmbot.pages.dev`. Don't change it. If there is no `dev` row, or the Target is
+   different, stop and tell dev1.
+6. Go back to the `getdmbot` project and press Deployments.
+7. Find the top row marked Production. Press the three dots on that row, then press Retry
+   deployment. (The new setting only applies to builds started after you saved it.)
+8. Wait until that row says Success. This can take a few minutes. If it says Failed, stop
+   and tell dev1.
+9. Open https://dev.getdmbot.com. If you see the DMbot website, go to the next step. If you
+   see an error, wait 5 minutes and reload. If it still shows an error after 15 minutes,
+   stop and tell dev1.
+10. Type this in the Claude Code window that dev1 is running in (not GitHub): dev site ready
 
-That's everything for you. dev1 does the rest and will tell you when the page is ready.
+That's everything for you. dev1 does the rest and will tell you when the admin page is ready.
+When it is, sign in at https://dev.getdmbot.com/admin.
 
 **dev1:**
-- The test site is built from the `development` branch, talks to the real API at
+- The site is built from the `development` branch, talks to the real API at
   `https://api.getdmbot.com`, and gets `X-Robots-Tag: noindex, nofollow`. Pull request
   previews keep the pretend API. A `development` build fails without `PUBLIC_DEV_API_BASE`,
-  which is why RepoManager merges this change only after the owner says "preview variable is
-  in" (owner step 6): tell RepoManager when you hear it.
+  so the variable must be set for Production as well as Preview.
 1. Check `WEB_SITE_URL` is already `https://dev.getdmbot.com` (the tunnel section set it;
    change it with `nano .env` only if it isn't, since set-key only takes keys, then
    `docker compose up -d web-api`). The API lets only that one address talk to it (sign-in
    cookies and CORS both follow `WEB_SITE_URL`), so a wrong value shows up as the page
    saying it can't reach DMbot. Check `docker compose ps web-api` shows it running.
-2. Check from any computer: `curl -sI https://dev.getdmbot.com/` (the home page, not
-   `/admin`, which has its own noindex header) must contain `noindex`, and its
-   Content-Security-Policy line must name `https://api.getdmbot.com` in `connect-src`. If
-   either is missing, check the Preview variable (owner steps 2 to 5) and the Retry (step
-   7), then tell the owner.
+2. Check from any computer, on both https://dev.getdmbot.com/ and https://getdmbot.com/
+   (the home pages, not `/admin`, which has its own noindex header): `curl -sI <address>`
+   must contain `noindex`, and its Content-Security-Policy line must name
+   `https://api.getdmbot.com` in `connect-src`. If either is missing, check the variable
+   under Production (owner steps 3 and 4) and the Retry (steps 7 and 8), then tell the owner.
 3. Record the result in the testing log, and tell the owner the dev site is up and they can
-   go on to "Turn on the admin page".
+   go on to "Turn on the admin page" (the next section in this file).
 
-When the live site goes up (#498), `WEB_SITE_URL` becomes https://getdmbot.com and the
-tunnel's Path limit comes off.
+When the website goes live (#498), production moves to the `main` branch after a promotion,
+`WEB_SITE_URL` becomes https://getdmbot.com and the tunnel's Path limit comes off. Then
+https://dev.getdmbot.com moves to the `development` preview build, with a bypass for Pages'
+preview login.
 
 ### Turn on the admin page
 
