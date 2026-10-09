@@ -22,6 +22,7 @@ from dmbot.memory.name_list import (
 )
 from dmbot.memory.sounds import sound_codes
 from dmbot.transcript.cleaner import likeness
+from dmbot.ui.name_lists import read_upload
 
 
 class Template(unittest.TestCase):
@@ -250,7 +251,9 @@ class BigDownload(unittest.TestCase):
         base = "\n".join(_prelude(campaign="Frostmaiden", secrets=False, part=None))
         room = MAX_LINES - (base.count("\n") + 1)
         many = tuple(f"Bell {i}" for i in range(45))  # three lines
-        names = [OutName(f"Name {i:05}", "npc", (), ()) for i in range(room - 2)]  # 2 lines left
+        names = [
+            OutName(f"Name {i:05}", "npc", (), ()) for i in range(room - 2)
+        ]  # 2 lines left, 1 once the part note is counted
         names.append(OutName("Zzz Belleros", "npc", many, ()))
         files = render_files(names, campaign="Frostmaiden", secrets=False)
         self.assertEqual(len(files), 2)
@@ -259,15 +262,52 @@ class BigDownload(unittest.TestCase):
         self.assertNotIn("Zzz Belleros", files[0])
         self.assertEqual(files[1].count("\nZzz Belleros | NPC"), 3)
 
-    def test_the_file_number_notes_fit_in_the_size_limit(self) -> None:
-        # Names of one length, so a file stops within a few bytes of the limit: the lines
-        # saying "file i of n" must have been counted, or the file would pass it.
-        names = [OutName(f"N{i:07}", "npc", ("o" * 130,), ()) for i in range(6_000)]
-        files = render_files(names, campaign="Frostmaiden", secrets=False)
+    @staticmethod
+    def _tuned(count: int, pad: int) -> list[OutName]:
+        # Lines of one size (about 500 bytes, so the line limit stays far off), plus one
+        # last name whose length moves the total byte by byte.
+        others = tuple(f"{j}" + "o" * 100 for j in range(5))
+        names = [OutName(f"N{i:07}", "npc", others, ()) for i in range(count)]
+        return [*names, OutName("Tuner " + "x" * pad, "npc", (), ())]
+
+    def test_a_file_of_exactly_the_size_limit_is_one_file_and_one_byte_more_is_two(self) -> None:
+        count = 400
+        while len(render(self._tuned(count + 1, 0), campaign="C", secrets=False).encode()) <= (
+            MAX_FILE_BYTES
+        ):
+            count += 1  # the most lines that fit, leaving less than a line of room
+        size = len(render(self._tuned(count, 0), campaign="C", secrets=False).encode())
+        pad = MAX_FILE_BYTES - size
+        self.assertTrue(0 <= pad < 600)
+        files = render_files(self._tuned(count, pad), campaign="C", secrets=False)
+        self.assertEqual(len(files), 1)
+        self.assertEqual(len(files[0].encode()), MAX_FILE_BYTES)  # incl. the final newline
+        over = render_files(self._tuned(count, pad + 1), campaign="C", secrets=False)
+        self.assertEqual(len(over), 2)
+
+    def test_every_file_fits_however_the_slack_falls(self) -> None:
+        # The last name moves the slack through every position, including the narrow band
+        # between the "file i of n" notes' size and one line's size, where leaving the notes
+        # out of the plan would push a file over the limit.
+        for pad in range(0, 600, 3):
+            self._assert_every_file_is_accepted(self._tuned(1500, pad))
+
+    def test_the_widest_file_numbers_fit_too(self) -> None:
+        # Ten or more files make the numbers a digit wider ("10 of 12"). Lines of 218 bytes
+        # fit 1,193 to a file if the notes were "1 of 1", but only 1,192 with the real
+        # ones: the plan must leave room for the widest, or the 10th file is a byte over.
+        names = [OutName(f"N{i:07}", "npc", ("o" * 200,), ()) for i in range(13_000)]
+        files = self._assert_every_file_is_accepted(names)
+        self.assertGreaterEqual(len(files), 10)
+
+    def _assert_every_file_is_accepted(self, names: list[OutName]) -> list[str]:
+        files = render_files(names, campaign="C", secrets=False)
         self.assertGreater(len(files), 1)
-        sizes = [len(text.encode()) for text in files]
-        self.assertLessEqual(max(sizes), MAX_FILE_BYTES)
-        self.assertGreater(max(sizes), MAX_FILE_BYTES - 120)  # and no more room is wasted
+        for text in files:
+            self.assertLessEqual(len(text.encode()), MAX_FILE_BYTES)
+            _, refused = read_upload(text.encode())  # and the upload itself accepts it
+            self.assertIsNone(refused)
+        return files
 
     def test_no_names_is_one_header_only_file(self) -> None:
         files = render_files([], campaign="Frostmaiden", secrets=False)

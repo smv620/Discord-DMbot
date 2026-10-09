@@ -135,6 +135,9 @@ class WebRole(DatabaseTest):
                 await conn.execute("SELECT 1 FROM consent")
         async with self.web.unscoped() as conn:
             with self.assertRaises(errors.InsufficientPrivilege):
+                await conn.execute("SELECT 1 FROM house_rules")  # #865: the bot's only
+        async with self.web.unscoped() as conn:
+            with self.assertRaises(errors.InsufficientPrivilege):
                 await conn.execute("CREATE TABLE sneaky (x INT)")
         async with self.web.unscoped() as conn:
             with self.assertRaises(errors.InsufficientPrivilege):

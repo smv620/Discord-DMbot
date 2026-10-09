@@ -1653,7 +1653,7 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
         )
     else:
         messages = -(-len(files) // FILES_PER_MESSAGE)
-        more = f", {messages} messages" if messages > 1 else ""
+        more = f" ({messages} messages)" if messages > 1 else ""
         intro = (
             f"📤 **All {count:,} names for {_md(campaign.name)}, in {len(files)} files{more}.**\n"
             + (secret_warning.format("these files") + "\n" if secrets else "")
