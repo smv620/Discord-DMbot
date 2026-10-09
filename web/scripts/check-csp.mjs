@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
-import { htmlFiles, inlineScriptHashes, mockLeaks, TURNSTILE_ORIGIN } from "./csp.mjs";
+import { effectiveApiBase, htmlFiles, inlineScriptHashes, mockLeaks, TURNSTILE_ORIGIN } from "./csp.mjs";
 
 const SCRIPTED = new Set(["account.html", "hello.html", "admin.html"]);
 const dist = process.argv[2] ?? new URL("../dist/", import.meta.url).pathname;
@@ -39,7 +39,7 @@ if (process.env.PUBLIC_TURNSTILE_SITE_KEY?.trim()) {
 // A real build must not contain the pretend API (src/account/mock.ts): neither its chunk
 // nor its marker. This reads the shell's PUBLIC_API_BASE only; a mock build set through
 // web/.env instead fails here, which is the safe way round.
-if (process.env.PUBLIC_API_BASE !== "mock") problems.push(...mockLeaks(dist));
+if (effectiveApiBase(process.env) !== "mock") problems.push(...mockLeaks(dist));
 
 if (problems.length > 0) {
   console.error(problems.join("\n"));

@@ -136,4 +136,15 @@ describe("the facts #433 asks for", () => {
     expect(privacy()).toMatch(/one cookie, only to keep you signed in/);
     expect(privacy()).toContain("no tracking or ad cookies");
   });
+
+  // Stopping now goes through the ⚙️ Menu (#807, #830): no page may send people to a
+  // "Stop recording me" button that isn't there.
+  it.each(["terms", "privacy"])("%s: stopping is explained through the ⚙️ Menu", (name) => {
+    const body = text(rendered.get(name)?.querySelector("main") ?? rendered.get(name) ?? null);
+    const stops = [...body.matchAll(/Stop recording me/g)];
+    expect(stops.length).toBeGreaterThan(0);
+    for (const stop of stops) {
+      expect(body.slice(Math.max(0, stop.index - 80), stop.index)).toContain("⚙️ Menu");
+    }
+  });
 });

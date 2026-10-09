@@ -35,6 +35,33 @@ export function mockLeaks(dist) {
     .map((name) => `_astro/${name} contains the pretend API; build without PUBLIC_API_BASE=mock`);
 }
 
+/**
+ * The API address this build uses (#837). The development branch's build (dev.getdmbot.com)
+ * talks to the real API at PUBLIC_DEV_API_BASE; every other preview keeps whatever
+ * PUBLIC_API_BASE says (the pretend API), and production (main) is never switched.
+ */
+export function effectiveApiBase(env) {
+  const dev = env.PUBLIC_DEV_API_BASE?.trim();
+  return env.CF_PAGES_BRANCH === "development" && dev ? dev : env.PUBLIC_API_BASE;
+}
+
+/** True for the development branch's build: kept out of search results (#837). */
+export function isDevSite(env) {
+  return env.CF_PAGES_BRANCH === "development";
+}
+
+/**
+ * Adds the noindex header to the site-wide "/*" block for the development site (#837); any
+ * other build is returned untouched. Throws if the block is missing, so noindex can't be
+ * dropped silently.
+ */
+export function addDevHeaders(headers, env) {
+  if (!isDevSite(env)) return headers;
+  const block = /^\/\*\r?\n/m;
+  if (!block.test(headers)) throw new Error('dist/_headers must contain a "/*" block to add noindex to');
+  return headers.replace(block, (match) => `${match}  X-Robots-Tag: noindex, nofollow\n`);
+}
+
 /** The API's origin if PUBLIC_API_BASE is a full address, else null (same site). */
 export function apiOrigin(base) {
   if (!base || !/^https?:\/\//i.test(base)) return null;
