@@ -52,7 +52,9 @@ SPELL_ALIASES: tuple[tuple[str, str], ...] = (
 # the 5.1 have no 5.2.1 entry of that name; these 27 are the same creature under a new
 # name. The other seven stay [Legacy 2014] entries: the 5.2.1 has no Duergar, Drow, Deep
 # Gnome, Lizardfolk, Orc or Half-Red Dragon Veteran, and no single Succubus/Incubus
-# (they are two entries now, each found by its own name).
+# (they are two entries now, each found by its own name). Each pair was checked by hand
+# against the creature's challenge rating, size and kind (the Minotaur and the Veteran changed
+# their numbers a little; the Kobold became a dragon; none is a different creature).
 MONSTER_ALIASES: tuple[tuple[str, str], ...] = (
     ("Flying Sword", "Animated Flying Sword"),  # 5.1 name; the 5.2.1 calls it "Animated"
     ("Rug of Smothering", "Animated Rug of Smothering"),  # same

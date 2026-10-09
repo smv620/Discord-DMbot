@@ -348,6 +348,22 @@ class Names(unittest.TestCase):
             monster_keys("Gnome, Deep (Svirfneblin)"), ["gnome deep", "svirfneblin", "deep gnome"]
         )
         self.assertEqual(monster_keys("Elf, Drow"), ["drow elf"])
+        self.assertEqual(monster_keys("Succubus/Incubus"), ["succubus", "incubus"])
+
+    def test_a_2014_campaign_finds_each_side_of_succubus_incubus(self) -> None:
+        for said in ("Succubus", "Incubus"):
+            hit = index.srd().lookup(said, "2014", "2024", kind="monster")
+            with self.subTest(said):
+                assert hit is not None
+                self.assertEqual(hit.entry.name, "Succubus/Incubus")
+        newer = index.srd().lookup("Succubus", "2024", "2014", kind="monster")
+        assert newer is not None
+        self.assertEqual((newer.entry.name, newer.entry.edition), ("Succubus", "2024"))
+
+    def test_the_bracket_rule_holds_for_spells_too(self) -> None:
+        hit = index.srd().lookup("Fireball (Legacy)", "2024", "2014", kind="spell")
+        assert hit is not None
+        self.assertEqual((hit.entry.name, hit.entry.edition), ("Fireball", "2024"))
 
 
 class Provenance(unittest.TestCase):
@@ -358,10 +374,10 @@ class Provenance(unittest.TestCase):
             self.assertEqual(data["licence"], "CC-BY-4.0")
             self.assertNotIn("section", data)  # each entry names its own
             self.assertRegex(data["document"]["sha256"], r"^[0-9a-f]{64}$")
-            self.assertRegex(
-                data["document"]["word_list_sha256"] if folder == "srd51" else "0" * 64,
-                r"^[0-9a-f]{64}$",
-            )
+            if folder == "srd51":
+                self.assertRegex(data["document"]["word_list_sha256"], r"^[0-9a-f]{64}$")
+            else:  # the 5.2.1 is built from its PDF alone
+                self.assertNotIn("word_list_sha256", data["document"])
 
     def test_the_5_1_monsters_were_made_with_the_current_5_2_1_words(self) -> None:
         data = json.loads((DATA / "srd51" / "monsters.json").read_text(encoding="utf-8"))

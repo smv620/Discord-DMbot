@@ -51,7 +51,8 @@ def normalize(name: str) -> str:
 
 def monster_keys(name: str) -> list[str]:
     """The other names a creature is found by: without its bracket ("Gnome, Deep"), the
-    bracket's own word ("Svirfneblin") and the comma turned round ("Deep Gnome")."""
+    bracket's own word ("Svirfneblin"), the comma turned round ("Deep Gnome") and each side
+    of a slash ("Succubus", "Incubus")."""
     plain = _SUFFIX.sub("", name)
     found = [plain]
     inner = re.search(r"\(([^)]*)\)\s*$", name)
@@ -60,6 +61,8 @@ def monster_keys(name: str) -> list[str]:
     head, comma, tail = plain.partition(", ")
     if comma:
         found.append(f"{tail} {head}")
+    if "/" in plain:  # "Succubus/Incubus" is also each of the two
+        found.extend(plain.split("/"))
     own = normalize(name)
     return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
 
