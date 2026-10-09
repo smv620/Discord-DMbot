@@ -9,6 +9,7 @@ from dmbot.memory.scan import (
     MAX_SUGGESTIONS,
     Match,
     Suggestion,
+    _many_word_names,
     find_new_names,
     group_alike,
     near_match_in,
@@ -77,6 +78,38 @@ class Scan(unittest.TestCase):
         self.assertIn("Brenn", found)
         self.assertIn("Tolliver", found)
         self.assertNotIn("Oskar", found)
+
+    def test_edges_of_a_known_name_said_whole(self) -> None:
+        skip = ["Oskar Vane", "Vane", "Vane Tolliver", "Ka'zeth Vane"]
+
+        def found(*lines: str) -> list[str]:
+            return names(find_new_names(list(lines) * 2, skip_keys=skip))
+
+        self.assertEqual(found("We saw Oskar Vane's cat."), [])  # a possessive
+        self.assertEqual(found("Oskar Vane and then Oskar Vane again."), [])  # said twice
+        self.assertEqual(found("We follow Oskar Vane Tolliver home."), [])  # overlapping names
+        self.assertEqual(found("Ask Oskar Vane Hrothgar."), ["Hrothgar"])  # at sentence start
+        self.assertEqual(found("Oskar Vane meets us."), [])  # its tail "Vane" isn't offered
+        self.assertEqual(found("We met Ka-Zeth Vane today."), [])  # spelled another way
+        # A run of three before the known name is kept, since the name ends it.
+        self.assertEqual(found("We met Alder Brook Fenn Oskar Vane."), ["Alder Brook Fenn"])
+
+    def test_a_many_word_name_covers_its_words_even_if_each_word_is_unknown(self) -> None:
+        lines = ["We met Caer Dineval today.", "Caer Dineval is far."]
+        self.assertEqual(find_new_names(lines, skip_keys=["Caer Dineval"]), [])
+        lone = ["We saw Caer today.", "We saw Caer again."]
+        self.assertEqual(names(find_new_names(lone, skip_keys=["Caer Dineval"])), ["Caer"])
+
+    def test_a_big_campaign_is_scanned_by_first_word_not_name_by_name(self) -> None:
+        def word(i: int) -> str:  # names have letters only: "Qaab", "Qaac"...
+            return "Qa" + "".join(chr(97 + (i // 26**k) % 26) for k in range(3))
+
+        pairs = [f"{word(i)} Zz{word(i)}" for i in range(5000)]
+        many = _many_word_names(k.casefold() for k in pairs)
+        self.assertEqual(len(many), 5000)
+        self.assertEqual(many[word(7).casefold()], [(f"zz{word(7)}".casefold(),)])
+        lines = [f"We meet {pairs[42]} at dawn."] * 3 + ["We meet Hrothgar."] * 3
+        self.assertEqual(names(find_new_names(lines, skip_keys=pairs)), ["Hrothgar"])
 
     def test_possessives_count_as_the_name(self) -> None:
         lines = ["I meet Hrothgar's men.", "We see Hrothgar’s axe.", "I ask Ka'zeth twice."]

@@ -100,31 +100,45 @@ def _is_name_word(word: str, skip: frozenset[str], lower_words: set[str]) -> boo
     return word[:1].isupper() and name_key(word) not in skip and word.casefold() not in lower_words
 
 
-def _known_name_spans(words: list[str], skip: frozenset[str]) -> set[int]:
+# The many-word known names, by their first word: {"oskar": [("vane",), ...]}.
+KnownNames = dict[str, list[tuple[str, ...]]]
+
+
+def _many_word_names(skip: Iterable[str]) -> KnownNames:
+    """Built once per scan, so each sentence only looks at the names that start with one
+    of its own words (a big campaign has thousands)."""
+    index: KnownNames = {}
+    for known in skip:
+        parts = known.split()
+        if len(parts) > 1:
+            index.setdefault(parts[0], []).append(tuple(parts[1:]))
+    return index
+
+
+def _known_name_spans(words: list[str], many: KnownNames) -> set[int]:
     """The positions of words that belong to a many-word known name said whole here
     ("Oskar Vane"), so that a word of it ("Oskar", whose other half "Vane" is also a
     known name) isn't offered as a new name (#399)."""
+    if not many:
+        return set()
     keys = [name_key(w) for w in words]
     covered: set[int] = set()
-    for known in skip:
-        parts = known.split()
-        size = len(parts)
-        if size < 2:
-            continue
-        for start in range(len(keys) - size + 1):
-            if keys[start : start + size] == parts:
-                covered.update(range(start, start + size))
+    for start, key in enumerate(keys):
+        for rest in many.get(key, ()):
+            end = start + 1 + len(rest)
+            if tuple(keys[start + 1 : end]) == rest:
+                covered.update(range(start, end))
     return covered
 
 
 def _candidates(
-    words: list[str], skip: frozenset[str], lower_words: set[str]
+    words: list[str], skip: frozenset[str], lower_words: set[str], many: KnownNames
 ) -> list[tuple[str, bool]]:
     """Each run of name-like words as (text, said mid-sentence). Runs longer than
     MAX_WORDS are dropped, not chopped (no "Caer Dineval Ice"). A run that starts the
     sentence also offers its tail, so "Ask Hrothgar" still finds Hrothgar. A known
     name said whole ends a run: what's left on either side is still looked at."""
-    covered = _known_name_spans(words, skip)
+    covered = _known_name_spans(words, many)
 
     def name_like(index: int) -> bool:
         return index not in covered and _is_name_word(words[index], skip, lower_words)
@@ -159,11 +173,12 @@ def find_new_names(
     sentences = _sentences(lines)
     skip = frozenset({name_key(k) for k in skip_keys} | COMMON | GAME_TERMS)
     lower_words = {w.casefold() for words in sentences for w in words if w[:1].islower()}
+    many = _many_word_names(skip)
     counts: Counter[str] = Counter()
     spellings: dict[str, Counter[str]] = {}
     mid_sentence: set[str] = set()
     for words in sentences:
-        for text, mid in _candidates(words, skip, lower_words):
+        for text, mid in _candidates(words, skip, lower_words, many):
             key = name_key(text)
             if not key or len(text) > NAME_MAX or key in skip:
                 continue
