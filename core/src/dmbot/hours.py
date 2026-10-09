@@ -18,6 +18,7 @@ from dmbot.entitlements import Access, Entitlement
 
 WARN_AT = (80, 90)  # percent of the month's hours (PLAN: warnings at 80% and 90%)
 GRACE_MINUTES = 2 * 60  # a session that hits the cap may finish, once a period
+STOP_WARNING_MINUTES = 15  # the grace session is told this long before it stops
 
 Verdict = Literal["ok", "no_plan", "out_of_hours"]
 
@@ -234,20 +235,56 @@ def cap_action(
     return "stop"
 
 
-def grace_started_text(site_url: str = "") -> str:
-    """On the DM screen when the hours run out mid-session. Everyone who reads the screen
-    sees it, so like the warnings it says only that the campaign's owner can add more."""
+def grace_ends_at(access: Access, used: int, now: int) -> int | None:
+    """When the grace runs out if listening carries on (Unix seconds), from the owner's
+    minutes used so far. Approximate: another campaign of the same owner listening at the
+    same time spends the same hours, so the real end can only come sooner."""
+    cap = standing(access, 0).cap_minutes
+    if cap is None:
+        return None
+    return now + max(0, cap + GRACE_MINUTES - used) * 60
+
+
+def stop_warning_due(
+    access: Access,
+    grace_session: int | None,
+    session_started_at: int,
+    used_before: int,
+    used_after: int,
+) -> bool:
+    """Is this the tick that brings the grace session within STOP_WARNING_MINUTES of its
+    stop? True once: found, like the 80% and 90% marks, by comparing the minutes before and
+    after. Only the session that holds the grace is warned; any other already stopped."""
+    cap = standing(access, 0).cap_minutes
+    if cap is None or grace_session != session_started_at:
+        return False
+    mark = cap + GRACE_MINUTES - STOP_WARNING_MINUTES
+    return used_before < mark <= used_after
+
+
+# The grace and stop notices are read by everyone who can see the DM screen, so they say
+# only that the campaign's owner can add more hours, never whose plan it is.
+def grace_started_text(ends_at: int | None = None, site_url: str = "") -> str:
+    where = f"{site_url}/account" if site_url else "DMbot's website"
+    until = f" until <t:{ends_at}:t>" if ends_at is not None else ""
+    return (
+        "⏳ This month's listening hours are used up. This session can finish: DMbot keeps "
+        f"listening{until} (up to {GRACE_MINUTES // 60} more hours), then stops. To play "
+        f"again after that, the campaign's owner can add more at {where}"
+    )
+
+
+def stop_soon_text(site_url: str = "") -> str:
     where = f"{site_url}/account" if site_url else "DMbot's website"
     return (
-        "⏳ This campaign's hours for this month are used up. This session can finish: DMbot "
-        f"keeps listening for up to {GRACE_MINUTES // 60} more hours. To play again after "
-        f"that, the campaign's owner can add more at {where}"
+        f"⏳ DMbot will stop listening in about {STOP_WARNING_MINUTES} minutes: this month's "
+        f"listening hours are used up. To keep going, the campaign's owner can add more at {where}"
     )
 
 
 def stopped_text(site_url: str = "") -> str:
     where = f"{site_url}/account" if site_url else "DMbot's website"
     return (
-        "⏳ This campaign's hours for this month are used up, so DMbot has stopped listening. "
-        f"To play again, the campaign's owner can add more at {where}"
+        "⏳ DMbot has stopped listening: this month's listening hours are used up. To play "
+        f"again, the campaign's owner can add more at {where}"
     )

@@ -191,7 +191,8 @@ async def start_grace(
     session_started_at: int,
 ) -> bool:
     """Give this session the month's grace, if no session has had it yet. True if it got
-    it; False if another session did first (two campaigns reaching the cap together)."""
+    it; False if another session did first (two campaigns reaching the cap together). The
+    row it updates exists: the minutes that put the owner at the cap were just added to it."""
     async with db.meter(guild_id, owner_user_id) as conn:
         cur = await conn.execute(
             "UPDATE owner_hours SET grace_session = %s"

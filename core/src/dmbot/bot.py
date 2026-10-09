@@ -468,6 +468,8 @@ class DMBot(commands.AutoShardedBot):
         self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
         self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
         self._finishing: set[asyncio.Task[None]] = set()  # stopped sessions winding down
+        # The hours follow-up (warn, grace, stop) in flight, per server (#437).
+        self._follow_ups: dict[int, asyncio.Task[None]] = {}
         # Stopped sessions still writing down their last words, by server.
         self._ending: dict[int, list[Table]] = {}
         self._session_locks: dict[int, asyncio.Lock] = {}
@@ -3024,14 +3026,28 @@ class DMBot(commands.AutoShardedBot):
                 except TimeoutError:  # a slow database delays this table, not the others
                     log.error("The listening minutes took too long to write down")
                 if warn is not None:
-                    await self._meter_follow_up(table, warn)
+                    self._start_follow_up(table, warn)
+
+    def _start_follow_up(self, table: Table, warn: tuple[usage.Standing, int]) -> None:
+        """Act on where the hours stand in a task of its own, one at a time per server: a
+        slow Discord post, database call or held session lock must not hold up the other
+        tables' minutes. If last minute's is still working, this one is skipped; the next
+        tick looks again, and a spent grace or a stop is found from the numbers each time."""
+        running = self._follow_ups.get(table.guild_id)
+        if running is not None and not running.done():
+            return
+        task = self._track(self._meter_follow_up(table, warn), "hours follow-up")
+        if task is not None:
+            self._follow_ups[table.guild_id] = task
 
     async def meter_table(
         self, table: Table, now: int | None = None, *, final: bool = False
     ) -> bool:
         """Write the minutes (`_meter_write`), then act on where the hours stand
-        (`_meter_follow_up`). The tick loop calls the two apart so that stopping a session
-        is never inside the time limit on writing minutes."""
+        (`_meter_follow_up`). The final charge at a stop and the tests use this; the tick
+        loop calls the two apart, the second in a task of its own, so that stopping a
+        session is never inside the time limit on writing minutes and a slow stop never holds
+        up the other tables."""
         ok, warn = await self._meter_write(table, now, final=final)
         if warn is not None:
             await self._meter_follow_up(table, warn)
@@ -3112,6 +3128,8 @@ class DMBot(commands.AutoShardedBot):
         neither undo minutes nor cut a stop short; a warning that fails to post is not
         retried (the mark was crossed once), and one step failing never skips the other."""
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            if self.tables.get(table.guild_id) is not table or table.metering_closed:
+                return  # stopped since the minutes were written: say and do nothing
             try:
                 await self._warn_hours(table, warn[0])
             except Exception:
@@ -3135,31 +3153,51 @@ class DMBot(commands.AutoShardedBot):
         """At the cap, let this session finish (up to 2 hours, once a month), then stop it
         (#437). Never touches a session that is under the cap. Needs the meter and
         DMBOT_ENFORCE_PLANS; the caller has already left the meter lock, because stopping
-        starts the session's final charge."""
+        starts the session's final charge. Enforcement runs on a tick that bills a new
+        minute, so after a restart it is a minute late, which doesn't matter."""
         assert self.meter is not None
         action = hours.cap_action(
             standing.access, standing.used_after, standing.grace_session, table.started_at
         )
         if action == "start_grace":
-            got = await self.meter.start_grace(
-                table.guild_id, owner, standing.month, table.started_at
-            )
+            # Under the session lock with the table checked again, so a stop that came in
+            # since the minutes were written can't spend the owner's grace on a dead session.
+            async with self.session_lock(table.guild_id):
+                if self.tables.get(table.guild_id) is not table:
+                    return
+                got = await self.meter.start_grace(
+                    table.guild_id, owner, standing.month, table.started_at
+                )
             action = "in_grace" if got else "stop"
             if got:
-                await self.post(
-                    table.screen_channel_id, hours.grace_started_text(self.settings.site_url)
+                ends_at = hours.grace_ends_at(
+                    standing.access, standing.used_after, int(time.time())
                 )
+                await self.post(
+                    table.screen_channel_id,
+                    hours.grace_started_text(ends_at, self.settings.site_url),
+                )
+        elif action == "in_grace" and hours.stop_warning_due(
+            standing.access,
+            standing.grace_session,
+            table.started_at,
+            standing.used_before,
+            standing.used_after,
+        ):
+            await self.post(table.screen_channel_id, hours.stop_soon_text(self.settings.site_url))
         if action == "stop":
             await self._stop_for_hours(table)
 
     async def _stop_for_hours(self, table: Table) -> None:
-        """End the session because the hours are used up: forget the saved session so it
-        doesn't come back after a restart, stop listening, and say why on the DM screen."""
+        """End the session because the hours are used up: stop listening, forget the saved
+        session so it doesn't come back after a restart, and say why on the DM screen. The
+        session is forgotten only once it has really stopped: if stopping fails, the next
+        tick tries again and the saved session is still there."""
         async with self.session_lock(table.guild_id):
             if self.tables.get(table.guild_id) is not table:
                 return  # already stopped by someone
-            await self.sessions.clear(table.guild_id, "the owner's hours are used up")
             await self.stop_table(table.guild_id, "the owner's hours are used up")
+            await self.sessions.clear(table.guild_id, "the owner's hours are used up")
         await self.post(table.screen_channel_id, hours.stopped_text(self.settings.site_url))
 
     async def _meter_final(self, table: Table, ended_at: int) -> None:
