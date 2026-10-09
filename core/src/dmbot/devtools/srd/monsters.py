@@ -59,7 +59,9 @@ class Monster:
     hit_dice: str
     speed: str
     abilities: tuple[tuple[str, int, int], ...]  # (name, score, modifier)
-    saves: str  # the saving throws that differ from the modifier, as the 5.1 prints them
+    # The saving throws that differ from the modifier, as the 5.1 prints them. The 5.2.1
+    # prints all six in its table; this line is made from it, not printed.
+    saves: str
     skills: str
     gear: str
     resistances: str
@@ -170,33 +172,33 @@ def _monster(block: Sequence[Line], section: str, mender: Mender) -> Monster:
     if not body:
         raise SrdError(f"Monster {where}: no traits or actions")
     return Monster(
-        name,
-        section,
-        kind["size"],
-        kind_text,
-        alignment,
-        int(ac["ac"]),
-        "",
-        ac["initiative"],
-        int(hp["hp"]),
-        hp["dice"],
-        values["speed"],
-        tuple((a, *abilities[a][:2]) for a in ABILITY_NAMES),
-        _saves(abilities),
-        values.get("skills", ""),
-        values.get("gear", ""),
-        values.get("resistances", ""),
-        values.get("vulnerabilities", ""),
-        values.get("immunities", ""),
-        "",
-        values.get("senses", ""),
-        values.get("languages", ""),
-        cr["cr"],
-        int(xp.group().replace(",", "")),
-        int(cr["pb"]),
-        cr_line[len("CR ") :],
-        body,
-        block[0].page,
+        name=name,
+        section=section,
+        size=kind["size"],
+        type=kind_text,
+        alignment=alignment,
+        ac=int(ac["ac"]),
+        ac_note="",
+        initiative=ac["initiative"],
+        hp=int(hp["hp"]),
+        hit_dice=hp["dice"],
+        speed=values["speed"],
+        abilities=tuple((a, *abilities[a][:2]) for a in ABILITY_NAMES),
+        saves=_saves(abilities),
+        skills=values.get("skills", ""),
+        gear=values.get("gear", ""),
+        resistances=values.get("resistances", ""),
+        vulnerabilities=values.get("vulnerabilities", ""),
+        immunities=values.get("immunities", ""),
+        condition_immunities="",
+        senses=values.get("senses", ""),
+        languages=values.get("languages", ""),
+        cr=cr["cr"],
+        xp=int(xp.group().replace(",", "")),
+        pb=int(cr["pb"]),
+        challenge=cr_line[len("CR ") :],
+        text=body,
+        page=block[0].page,
     )
 
 

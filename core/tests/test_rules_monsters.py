@@ -275,6 +275,51 @@ class Older(unittest.TestCase):
         self.assertEqual(found, allowed)
 
 
+class CutWordsOfEither(unittest.TestCase):
+    def test_no_two_known_words_that_are_one_cut_word_remain(self) -> None:
+        # Every pair of neighbouring words that make a known word, in any text of the 5.1
+        # (spells, conditions and creatures), where the 5.2.1 data never has the pair. These
+        # are the book's own two words, and one cut word the tool could not be sure of.
+        words = {w for w in build.known_words(monsters_too=True) if "-" not in w}
+        pairs = build.known_pairs(monsters_too=True)
+        found = set()
+        for e in index.srd().entries:
+            if e.edition != "2014":
+                continue
+            for text in [e.text, *(v for v in e.details.values() if isinstance(v, str))]:
+                for a, b in itertools.pairwise(text.split()):
+                    left = re.sub(r"[^A-Za-z’']", "", a).lower()
+                    right = re.sub(r"[^A-Za-z’']", "", b).lower()
+                    if (
+                        left
+                        and right
+                        and a[-1:].isalpha()
+                        and b[:1].isalpha()
+                        and {left, right, left + right} <= words
+                        and (left, right) not in pairs
+                    ):
+                        found.add((left, right))
+        self.assertEqual(
+            found,
+            {
+                ("any", "one"), ("hand", "bell"), ("sea", "horse"), ("a", "mount"),
+                ("up", "on"), ("has", "ten"),
+                ("specific", "ally"),  # a cut word: ATTRIBUTION.md lists it
+            },
+        )  # fmt: skip
+
+    def test_the_cut_words_the_supervisor_found_are_joined(self) -> None:
+        by_name = {e.name: e for e in index.srd().entries if e.edition == "2014"}
+        self.assertIn("darkvision 120 ft.", by_name["Ancient Brass Dragon"].details["senses"])
+        self.assertIn("The dragon regains spent", by_name["Ancient Copper Dragon"].text)
+        self.assertIn("end of another creature’s turn", by_name["Kraken"].text)
+        self.assertIn("you understand the literal", by_name["Comprehend Languages"].text)
+        self.assertIn("automatically negates", by_name["Mass Suggestion"].text)
+        self.assertIn("falling creatures within range", by_name["Feather Fall"].text)
+        self.assertIn("up on", by_name["Ice Devil"].text)  # the book's own two words
+        self.assertIn("has ten tentacles", by_name["Kraken"].text)
+
+
 class Names(unittest.TestCase):
     def test_every_current_name_is_in_the_data(self) -> None:
         names = {normalize(e.name) for e in monsters("2024")}
@@ -347,7 +392,7 @@ class Names(unittest.TestCase):
         self.assertEqual(
             monster_keys("Gnome, Deep (Svirfneblin)"), ["gnome deep", "svirfneblin", "deep gnome"]
         )
-        self.assertEqual(monster_keys("Elf, Drow"), ["drow elf"])
+        self.assertEqual(monster_keys("Elf, Drow"), ["drow elf", "drow"])
         self.assertEqual(monster_keys("Succubus/Incubus"), ["succubus", "incubus"])
 
     def test_a_2014_campaign_finds_each_side_of_succubus_incubus(self) -> None:
@@ -359,6 +404,30 @@ class Names(unittest.TestCase):
         newer = index.srd().lookup("Succubus", "2024", "2014", kind="monster")
         assert newer is not None
         self.assertEqual((newer.entry.name, newer.entry.edition), ("Succubus", "2024"))
+
+    def test_a_drow_and_a_svirfneblin_are_found_by_that_word(self) -> None:
+        for said in ("Drow", "drow", "Svirfneblin"):
+            hit = index.srd().lookup(said, "2024", "2014", kind="monster")
+            with self.subTest(said):
+                assert hit is not None
+                self.assertEqual(hit.entry.edition, "2014")
+        self.assertIsNone(index.srd().lookup("Elf", "2024", "2014", kind="monster"))
+        self.assertIsNone(index.srd().lookup("Deep", "2024", "2014", kind="monster"))
+
+    def test_only_an_old_name_counts_as_renamed(self) -> None:
+        srd = index.srd()
+        goblin = srd.lookup("Goblin", "2024", "2014", kind="monster")
+        deep = srd.lookup("Deep Gnome", "2024", "2014", kind="monster")
+        plain = srd.lookup("Goblin Warrior (Legacy)", "2024", "2014", kind="monster")
+        assert goblin is not None and deep is not None and plain is not None
+        self.assertEqual((goblin.renamed, deep.renamed, plain.renamed), (True, False, False))
+
+    def test_no_name_belongs_to_two_kinds(self) -> None:
+        # so a lookup without `kind` can't answer with the wrong sort of entry
+        for edition, names in index.srd()._by_edition.items():
+            for key, entries in names.items():
+                with self.subTest(edition=edition, key=key):
+                    self.assertEqual(len({e.kind for e in entries}), 1)
 
     def test_the_bracket_rule_holds_for_spells_too(self) -> None:
         hit = index.srd().lookup("Fireball (Legacy)", "2024", "2014", kind="spell")

@@ -18,6 +18,7 @@ the licence asks for is in `rules/data/srd52/ATTRIBUTION.md` and `srd51/ATTRIBUT
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 from collections.abc import Sequence
 from dataclasses import asdict
@@ -117,7 +118,11 @@ def build(path: str) -> dict[str, dict[str, Any]]:
         document["word_list_sha256"] = word_list_sha256()
         monster_document = document | {"word_list_sha256": word_list_sha256(monsters_too=True)}
         return build_files_51(
-            pages, document, known_words(), (monster_document, known_words(monsters_too=True))
+            pages,
+            document,
+            known_words(),
+            (monster_document, known_words(monsters_too=True), known_pairs(monsters_too=True)),
+            known_pairs(),
         )
     document = {
         "title": "System Reference Document 5.2.1",
@@ -142,6 +147,17 @@ def known_words(*, monsters_too: bool = False) -> set[str]:
                 words.update(w.lower() for w in parse51.WORD.findall(entry[field]))
                 words.update(w.lower() for w in parse51.HYPHENATED_WORD.findall(entry[field]))
     return words
+
+
+def known_pairs(*, monsters_too: bool = False) -> set[tuple[str, str]]:
+    """The neighbouring words of the 5.2.1 data (lower case): two words that are never side by
+    side there may be one word cut in two (see `Vocabulary`)."""
+    found: set[tuple[str, str]] = set()
+    for name in _word_files(monsters_too):
+        for entry in json.loads((OUT / name).read_text(encoding="utf-8"))["entries"]:
+            words = [w.lower() for w in parse51.WORD.findall(entry["text"])]
+            found.update(itertools.pairwise(words))
+    return found
 
 
 def _word_files(monsters_too: bool) -> tuple[str, ...]:
@@ -218,7 +234,8 @@ def build_files_51(
     pages: Sequence[Sequence[Line]],
     document: dict[str, Any],
     known: set[str],
-    monster_input: tuple[dict[str, Any], set[str]] | None = None,
+    monster_input: tuple[dict[str, Any], set[str], set[tuple[str, str]]] | None = None,
+    pairs: set[tuple[str, str]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """The 2014 SRD 5.1's files from pages already read."""
     spells_at = first_page_of(pages, SPELLS_HEADING_51, after=CONTENTS_PAGES)
@@ -228,7 +245,7 @@ def build_files_51(
     spell_lines = lines_between(pages, spells_at, traps_at)
     condition_lines = lines_between(pages, conditions_at, pantheons_at)
     # Every page of the PDF teaches it which words are words (the book says "her" often).
-    vocab = parse51.Vocabulary(known, [line for page in pages for line in page])
+    vocab = parse51.Vocabulary(known, [line for page in pages for line in page], pairs or ())
     spells = parse51.parse_spells(spell_lines, vocab)
     conditions = parse51.parse_conditions(condition_lines, vocab, CONDITIONS_51)
 
@@ -253,15 +270,17 @@ def build_files_51(
         },
     }
     if monster_input is not None:
-        monster_document, monster_known = monster_input
-        monster_vocab = parse51.Vocabulary(monster_known, [line for page in pages for line in page])
+        monster_document, monster_known, monster_pairs = monster_input
+        everything = [line for page in pages for line in page]
+        monster_vocab = parse51.Vocabulary(monster_known, everything, monster_pairs)
         monsters_at = first_page_of(pages, MONSTERS_HEADING_51, after=CONTENTS_PAGES)
         sections = [(monsters_at, "Monsters")]
         lines = lines_between(pages, monsters_at, conditions_at)
         for heading, name in MONSTER_APPENDICES_51:
             at = first_page_of(pages, heading, after=pantheons_at)
             sections.append((at, name))
-        lines += lines_between(pages, sections[1][0], len(pages) + 1)
+        appendices_at = sections[1][0]  # the two appendices follow each other to the end
+        lines += lines_between(pages, appendices_at, len(pages) + 1)
         creatures = monsters51.parse_monsters(lines, sections, monster_vocab)
         files["monsters.json"] = {
             **header("monster", None, monster_document),

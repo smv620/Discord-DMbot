@@ -24,6 +24,7 @@ in the appendix "Conditions", followed by bullets.
 
 from __future__ import annotations
 
+import itertools
 import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
@@ -51,6 +52,8 @@ WORD = re.compile(r"[A-Za-z’']+")
 HYPHENATED_WORD = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)+")
 # The ends of words that cut ones leave behind, so they are never words themselves.
 ENDINGS = frozenset(["ing", "ion", "ons", "ous", "ers", "ess", "ent", "ect", "ive"])
+CUT_FREQUENCY = 20  # a word this PDF uses at least this often...
+CUT_RATIO = 20  # ...and this many times more than the two words it could be cut into
 COMMON = 4  # words this PDF uses at least this often count as words
 STRAY_WORDS = frozenset(["a", "i"])
 # Plain words the SRD 5.1 uses that neither the 5.2.1 data nor this PDF spells out whole
@@ -107,18 +110,27 @@ def clean(text: str) -> str:
 class Vocabulary:
     """The words the SRD uses, for putting back words that stray spaces have cut."""
 
-    def __init__(self, known: Iterable[str], lines: Iterable[Line]) -> None:
+    def __init__(
+        self,
+        known: Iterable[str],
+        lines: Iterable[Line],
+        known_pairs: Iterable[tuple[str, str]] = (),
+    ) -> None:
         # A lone letter is not a word (but "a" and "I" are): "a s much" is "as much".
         self.words: set[str] = {w.lower() for w in known if len(w) > 1} | set(SCHOOLS.split())
         self.words |= STRAY_WORDS | EXTRA_WORDS
         self.hyphens = {w.lower() for w in known if "-" in w}
         self.freq: Counter[str] = Counter()
+        self.pairs: Counter[tuple[str, str]] = Counter()  # neighbouring words in this PDF
+        self.known_pairs = frozenset(known_pairs)  # neighbouring words in the 5.2.1 data
         self.cut = False  # whether two pieces that are not words are taken as one
         # The PDF's own words: those it uses often, counted after the first repair so that
         # the pieces of a cut word ("eature") don't count as words.
         for line in lines:
             repaired = self.repair(clean(line.text))
-            self.freq.update(w.lower() for w in WORD.findall(repaired))
+            found = [w.lower() for w in WORD.findall(repaired)]
+            self.freq.update(found)
+            self.pairs.update(itertools.pairwise(found))
         self.words |= {
             w for w, n in self.freq.items() if n >= COMMON and len(w) >= 3 and w not in ENDINGS
         }
@@ -169,11 +181,24 @@ class Vocabulary:
                 return False
             return self.freq[whole] >= self.freq[taken]
         if whole in self.words:
-            return not (is_left and is_right)
+            return not (is_left and is_right) or self._cut_pair(left, right, whole)
         # Neither piece is a word: they are one word if the PDF has that word whole elsewhere
         # ("exc ess", with "excess" on another page). Two words the SRD merely doesn't use
         # ("gum arabic", "rotten egg") are never joined on a guess.
         return self.cut and not (is_left and is_right) and whole in self.freq
+
+    def _cut_pair(self, left: str, right: str, whole: str) -> bool:
+        """Two words that make one more common word ("dark vision", "drag on"): cut, if the
+        5.2.1 data never has them side by side and this PDF has the joined word far more often
+        than the pair. "up on" and "has ten" are the book's own words and stay two."""
+        pair = (left.lower(), right.lower())
+        seen = self.pairs[pair]
+        return (
+            self.cut
+            and pair not in self.known_pairs
+            and self.freq[whole] >= CUT_FREQUENCY
+            and self.freq[whole] >= CUT_RATIO * seen
+        )
 
     def repair(self, text: str) -> str:
         """The text with cut words joined again."""

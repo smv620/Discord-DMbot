@@ -49,6 +49,9 @@ def normalize(name: str) -> str:
     return _NOT_ALNUM.sub(" ", text).strip()
 
 
+PEOPLES = ("elf", "gnome", "dwarf", "halfling", "human", "orc")  # "Elf, Drow": say "Drow"
+
+
 def monster_keys(name: str) -> list[str]:
     """The other names a creature is found by: without its bracket ("Gnome, Deep"), the
     bracket's own word ("Svirfneblin"), the comma turned round ("Deep Gnome") and each side
@@ -61,6 +64,8 @@ def monster_keys(name: str) -> list[str]:
     head, comma, tail = plain.partition(", ")
     if comma:
         found.append(f"{tail} {head}")
+    if comma and not inner and head.lower() in PEOPLES:
+        found.append(tail)  # "Elf, Drow" is also just "Drow"
     if "/" in plain:  # "Succubus/Incubus" is also each of the two
         found.extend(plain.split("/"))
     own = normalize(name)
@@ -108,6 +113,7 @@ class Hit:
     entry: Entry
     tag: str  # "" for the target ruleset's own; "[Legacy 2014]" for an older one
     found_as: str  # the key that matched, which may be an older name
+    via_alias: bool = False  # found by a name the newest edition renamed it from
 
     @property
     def citation(self) -> str:
@@ -116,8 +122,9 @@ class Hit:
 
     @property
     def renamed(self) -> bool:
-        """Found under an older name than the entry's own."""
-        return self.found_as != normalize(self.entry.name)
+        """Found by a name the newest edition renamed it from ("Goblin" for the Goblin Warrior),
+        not by another way of saying its own ("Deep Gnome", "Svirfneblin")."""
+        return self.via_alias
 
 
 class Index:
@@ -131,6 +138,7 @@ class Index:
     ) -> None:
         self.entries: tuple[Entry, ...] = tuple(entries)
         self._by_edition: dict[str, dict[str, list[Entry]]] = {}
+        self._alias_keys: set[tuple[str, str]] = set()  # (edition, key) added by an alias
         for entry in self.entries:
             self._add(entry.edition, normalize(entry.name), entry)
             if entry.kind == "monster":
@@ -142,6 +150,7 @@ class Index:
                 raise ValueError(
                     f"The alias {older!r} points to {current!r}, which isn't in the data"
                 )
+            self._alias_keys.add((alias_edition, normalize(older)))
             for entry in list(found):
                 self._add(alias_edition, normalize(older), entry)
 
@@ -154,8 +163,9 @@ class Index:
         self, name: str, target: str, fallback: str = FALLBACK_NONE, *, kind: str | None = None
     ) -> Hit | None:
         """The entry for `name` in the target ruleset, else in the fallback ruleset
-        (tagged), else None. `kind` limits it to spells or conditions; without it, a name
-        that is both (the SRD has none) gives the one loaded first."""
+        (tagged), else None. `kind` limits it to spells, conditions or monsters; without it, a
+        name that is more than one (the SRD has none: a test pins that) gives the one loaded
+        first."""
         key = normalize(name)
         if not key:
             return None
@@ -170,7 +180,7 @@ class Index:
                 for entry in self._by_edition.get(edition, {}).get(found_as, []):
                     if kind is None or entry.kind == kind:
                         tag = edition_tag(edition, from_fallback=from_fallback)
-                        return Hit(entry, tag, found_as)
+                        return Hit(entry, tag, found_as, (edition, found_as) in self._alias_keys)
         return None
 
     def names(self, kind: str, edition: str) -> list[str]:

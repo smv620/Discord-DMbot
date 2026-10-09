@@ -8,7 +8,7 @@ from typing import Any
 
 from dmbot.devtools.srd import build, parse
 from dmbot.devtools.srd.pdf import COLUMN_SPLIT, FOOTER_Y, Line, Piece, lines_of
-from tests.test_srd_monsters_parse import goblin
+from tests.monster_fixtures import goblin
 
 TITLE, ITALIC, BODY = "GillSans-SemiBold", "Cambria-Italic", "Cambria"
 BOLD_LEAD = "Cambria-BoldItalic"
