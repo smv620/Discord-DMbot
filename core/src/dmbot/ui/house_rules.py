@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from functools import partial
+from typing import Any
 
 import discord
 
@@ -454,6 +455,43 @@ class OverrideForm(AddForm, title="Add a house rule"):
             return
         await _tell(
             interaction, f"{note} Everyone in the server can read it. See all: `/dmbot houserules`."
+        )
+
+
+class ProposalForm(AddForm):
+    """✏️ Edit on a house rule DMbot offered after the DM said it (#953): the Add form with
+    the words filled in. Saving is the DM's press of Submit; the proposal on the DM screen
+    then says what was saved (and loses its buttons)."""
+
+    def __init__(self, campaign: Campaign, proposal: Any) -> None:
+        super().__init__(campaign)
+        self.proposal = proposal
+        self.rule.default = proposal.said.rule
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        store = _store(interaction)
+        if store is None:
+            await interaction.response.send_message(NOT_READY, ephemeral=True)
+            return
+        c = self.campaign
+        try:
+            saved = await store.add(
+                c.guild_id,
+                c.id,
+                interaction.user.id,
+                self.rule.value,
+                self.instead.value,
+                scenario=self.proposal.scenario,
+                session_id=self.proposal.session_id,
+            )
+        except HouseRuleError as exc:
+            await interaction.response.send_message(
+                self.refusal(str(exc)) + self.typed(), ephemeral=True
+            )
+            return
+        words = interaction.message.content if interaction.message is not None else ""
+        await interaction.response.edit_message(
+            content=f"{words}\n✅ Saved as house rule {saved.number}.", view=None
         )
 
 

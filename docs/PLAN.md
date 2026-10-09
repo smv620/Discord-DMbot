@@ -481,6 +481,28 @@ alerts yet; those build on this.
   with the backup's, as it does everything else; a backup made before this has none.
 - **Wording:** "house rule" only: no "precedence" or "hierarchy" in anything users read.
 
+*Built, part 2: by voice, no AI (2026-10-09, #953):*
+- **What starts a proposal:** a line from one of the campaign's DMs (nobody else's) that
+  begins with "house rule" (then `:`, `,` or `-`), "new house rule", "for this table"
+  (then `:`, `,` or `-`), or "our rule is" / "our house rule is". The words after it, at
+  least two, are the rule (cut at 500 characters on a word, and the proposal says so).
+  "The house rules say…" and questions start nothing. No AI reads the line.
+- **The proposal** goes to `#dm-screen` only, never to a channel, never into the
+  transcript: 🏠 **New house rule?** with the words, and **Save / Edit / Cancel**. Nothing
+  is saved until a DM presses Save. Edit opens the same form as Add, with the rule filled
+  in. A saved rule records `scenario` ("Said at the table, <date>") and `session_id`.
+- **Simple conflicts:** the rule-card name matcher finds this campaign's rules that name
+  the same spell, condition or creature; the proposal shows them and offers **Keep both**,
+  **Replace rule N** (the old rule keeps its number and its "instead of") or Cancel. A
+  rule changed by another DM meanwhile is never replaced. The wording stays "house rule".
+- **Limits:** one proposal a minute, and the same words once a session. If the post fails
+  the words and the minute are given back.
+- **Every press** re-checks that the person is a DM of that campaign now; a proposal is
+  forgotten when the session ends or the bot restarts, and an old button says so.
+- **Not built: typed proposals ("House rule: …" in the DM screen).** The bot doesn't read
+  messages (the narrowest Discord intents), so typing uses the **Add a house rule** form in
+  `/dmbot houserules`, with the same save step.
+
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
 is chosen by `TRANSCRIBER=` in config.
