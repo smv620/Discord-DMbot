@@ -9,7 +9,13 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- #949 (core only, no migration): the end-of-session private message has no download
+  buttons when the owner's plan has no downloads (Try It, plans enforced). Nothing visible
+  while DMBOT_ENFORCE_PLANS is off.
+- #954 (core only, no migration): the DM sidebar answer engine. Nothing the DM sees until
+  #935 wires it in. Before the sidebar is turned on, dev1 runs
+  `python -m dmbot.devtools.sidebar_check` with the server's key and pastes the 17 answers
+  and times on #954 for Supervisor.
 
 ------------------------------------------------------------------------------
 LIVE NOW
