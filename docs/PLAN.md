@@ -577,7 +577,7 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 **Transcripts vs. the DM screen (decided 2026-10-04).**
 | Content | Who sees it |
 |---|---|
-| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons and all other DM-screen content never appear in the transcript channel or a transcript. The DM sidebar is the one exception (owner, 2026-10-09): its lines go into the raw transcript, tagged, and never the cleaned one; who may read them is #933. |
+| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons and all other DM-screen content never appear in the transcript channel or a transcript. The DM sidebar is the one exception (owner, 2026-10-09): its lines go into the raw transcript, tagged with their data lineage, and never the cleaned one. The raw transcript is unedited and unredacted for everyone who may read transcripts, spoilers included (#933). |
 | **DM screen** (rules alerts, house-rule prompts, NPC and plot notes) | The DM, plus players only as the campaign's **DM-screen visibility** allows (below). The bot never *sends* DM-screen content to players. |
 
 **DM-screen visibility (decided 2026-10-04).** Each campaign's DM picks one; if none is
@@ -1657,9 +1657,22 @@ table isn't left waiting while the DM looks something up.
   channel.
 - **Transcripts:** the DM's sidebar lines are added to the **raw** transcript with the tag
   `[DM Sidebar]`, and DMbot's replies about in-game content are added under the speaker
-  name `DMbot`. Both are always kept out of the **cleaned** transcript. Who can read those
-  raw lines: see the open question on #933 (until it is answered, they are in the DM's own
-  raw download only, never in the live transcript channel or a player's download).
+  name `DMbot`. Both are always kept out of the **cleaned** transcript. **The raw transcript
+  is unedited and unredacted, sidebar included, for everyone who may read transcripts**
+  (owner, 2026-10-09, #933): a player who downloads the raw copy gets spoilers, and that is
+  accepted. Its purpose is to be the complete data DMbot is improved from as the project
+  evolves; the cleaned transcript is the one for reading. Sidebar lines are not posted
+  live in the transcript channel (they would interrupt the table), only written to the
+  raw record.
+- **Data lineage on every sidebar line** (owner, 2026-10-09, #933): each line records
+  where it came from, so later work knows what data came from where: `via` = `voice-memo`,
+  `typed`, or `table-trigger` (said aloud at the table); for a memo or trigger, the
+  speech-to-text engine and model; for a DMbot reply, the AI model, the prompt version,
+  and the sources it used (rules entries, house rule numbers, memory facts, transcript
+  span); and the id of the question a reply answers. In the raw text a line reads
+  `[time] (DM name) [DM Sidebar via=voice-memo stt=<engine>]: …` and
+  `[time] (DMbot) [DM Sidebar reply-to=<id> model=<model> sources=<…>]: …`, with the same
+  fields stored as columns, not only text.
 - **Cost:** every answer spends AI tokens, so it goes through `can_use_ai` (#919).
 - **Built (#935, the ways in; the answers are #934):**
   - **In the DM's chat with DMbot** (`dmbot.sidebar.service`): a voice message or a typed
@@ -1836,6 +1849,39 @@ its DMs must take it on. The DM-screen warnings (decided with Supervisor, 2026-1
 the DM screen because co-DMs need to know the table may stop; they name only the hours left,
 and the 90% one says "The campaign's owner can add more at <WEB_SITE_URL>/account", so it fits
 everyone who reads the screen and never says whose plan it is.
+
+*Built, part 3: AI and copies by plan (2026-10-09, #919):* `dmbot.plan_rules` holds the two
+rules, pure over the owner's `Access`, and the refusal words, next to `hours.py`'s so the bot
+and the site never disagree. **`can_use_ai`:** true for a working plan of any kind (paid, Try It
+within its period, a grant, the free list), false for an ended plan or a campaign with no owner.
+It guards the one place a person's button press spends AI tokens (🤖 Find names; the AI that
+labels lines inside a session is covered by the start check); the story-memory and
+rules-advisor AI calls will call it when they exist. **`can_backup`:** true for a paid plan other
+than Try It, a grant or the free list (`backups` in `plans.json`), false for Try It, an ended plan
+and no owner. It guards `/dmbot backup`, every transcript download (`/transcript`, the
+end-of-session button, "as heard too") and **restore**. Restore is judged on whose campaign it
+makes: a copy loaded as a *new* campaign makes the restorer its owner, so it is the *restorer's
+own* plan that has to include copies (and the free slot is the store's check, `restore_needs_slot`);
+a copy loaded *over* a campaign keeps that campaign's owner (#609), so it is the *owner's* plan
+that counts, and a co-DM with no plan may restore their paid owner's campaign. The check is made
+when the choice is made, since that is when it is known, after "Restoring…" has answered Discord.
+Both rules are read through the meter door (the owner's plan, scoped to the owner), so the whole
+table stops or goes together. A refusal is private to the person who pressed, and names what they
+pressed. The owner (or the restorer) hears, for an ended plan, "Your plan has ended, so DMbot
+can't <make copies | send transcripts | find names with its AI | load copies>. Pick one here:
+<WEB_SITE_URL>/account" (the same first words as the hours refusal; the data cannot tell an ended
+plan from one never had); for Try It, "Try It campaigns can't make copies or transcripts. A paid
+plan can. See plans here: <WEB_SITE_URL>/account", or when loading a copy "Nothing was loaded.
+Loading a copy needs a paid plan. Pick one here: ...". Anyone else, a co-DM included, is told
+only "<Copies of this campaign aren't available | Transcripts aren't available for this
+campaign | Finding names with DMbot's AI isn't available for this campaign | Loading a copy isn't
+available>. Ask the campaign's owner to take a look.", never anything about the plan. A campaign
+with no owner is told "This campaign has no owner yet. One of its DMs needs to press **Take it
+on** on the campaign's card in the DM screen first." A refused Find names answers Discord first,
+leaves the menu in place (so "Add the lines that fit" still works), does not count against the
+day's reads, and records no right-to-use confirmation, because nothing was read. Only when
+`DMBOT_ENFORCE_PLANS` is on; a database hiccup, or one slower than 2 seconds, lets the action through, like the start check. A campaign with no owner has no plan, so it
+has no copies or AI until a DM takes it on (the issue's rule; a player is told a DM must).
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find

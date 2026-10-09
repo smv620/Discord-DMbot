@@ -301,6 +301,7 @@ class AnswerBeforeTheLock(unittest.IsolatedAsyncioTestCase):
             stop_session=stop_session,
             session_lock=lambda _gid: lock,
             is_campaign_playing=AsyncMock(return_value=False),
+            restore_gate=AsyncMock(return_value=None),
             campaigns=SimpleNamespace(import_backup=AsyncMock(return_value=MagicMock(name="c"))),
         )
         return bot, lock
@@ -346,7 +347,11 @@ class RestoreEndsWithAnOutcome(unittest.IsolatedAsyncioTestCase):
         defaults: dict[str, Any] = {
             "session_lock": lambda _gid: asyncio.Lock(),
             "is_campaign_playing": AsyncMock(return_value=False),
-            "campaigns": SimpleNamespace(import_backup=AsyncMock(return_value=MagicMock())),
+            "restore_gate": AsyncMock(return_value=None),
+            "campaigns": SimpleNamespace(
+                import_backup=AsyncMock(return_value=MagicMock()),
+                get=AsyncMock(return_value=None),
+            ),
         }
         bot = SimpleNamespace(**{**defaults, **bot_kw})
         it = fake_interaction(bot)  # type: ignore[arg-type]
@@ -373,11 +378,17 @@ class RestoreEndsWithAnOutcome(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text, cmds.RESTORE_FAILED)
 
     async def test_a_damaged_backup(self) -> None:
-        bad = SimpleNamespace(import_backup=AsyncMock(side_effect=CampaignError("damaged")))
+        bad = SimpleNamespace(
+            import_backup=AsyncMock(side_effect=CampaignError("damaged")),
+            get=AsyncMock(return_value=None),
+        )
         self.assertEqual(await self.restore_with(campaigns=bad), "damaged")
 
     async def test_an_unexpected_error(self) -> None:
-        broken = SimpleNamespace(import_backup=AsyncMock(side_effect=RuntimeError("db")))
+        broken = SimpleNamespace(
+            import_backup=AsyncMock(side_effect=RuntimeError("db")),
+            get=AsyncMock(return_value=None),
+        )
         with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
             text = await self.restore_with(campaigns=broken)
         self.assertEqual(text, cmds.RESTORE_FAILED)
