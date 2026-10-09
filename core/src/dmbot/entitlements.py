@@ -195,7 +195,7 @@ async def inputs(
     to find the month the hours belong to (dmbot.hours.month_for)."""
     if user_id in _free_users:
         return None, None, access_for(user_id, None, None, now)
-    async with _as_person(conn, user_id):
+    async with as_person(conn, user_id):
         plan = await _read_plan(conn, user_id)
         grant = await _read_grant(conn, user_id)
     return plan, grant, access_for(user_id, plan, grant, now)
@@ -222,13 +222,14 @@ async def read(conn: Conn, user_id: int) -> Entitlement | None:
     `/dmbot start`'s server transaction, #437). The person is set only for this one read
     and then put back as it was, so the rest of the caller's transaction sees nothing more
     of anyone's website rows than before."""
-    async with _as_person(conn, user_id):
+    async with as_person(conn, user_id):
         return await _read_plan(conn, user_id)
 
 
 @contextlib.asynccontextmanager
-async def _as_person(conn: Conn, user_id: int) -> AsyncIterator[None]:
-    """The person set for these reads only, then put back as it was."""
+async def as_person(conn: Conn, user_id: int) -> AsyncIterator[None]:
+    """The person set for these reads only, then put back as it was (the owner's plan
+    in `read`; the owner's campaign count in `usage.owned_count`)."""
     if conn.info.transaction_status != pq.TransactionStatus.INTRANS:
         raise RuntimeError(
             "entitlements.read and effective need an open transaction (use Database.guild)"

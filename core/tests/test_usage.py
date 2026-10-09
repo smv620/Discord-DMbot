@@ -504,7 +504,9 @@ class PlanChecks(UsageTest):
         self.assertEqual(await self.refusal(starter=NEW_OWNER), hours.START_BLOCKED)
 
     async def test_a_plan_with_hours_left_may_start(self) -> None:
-        await self.give_plan(OWNER, period_start=NOW - 1000, period_end=int(time.time()) + 5000)
+        await self.give_plan(
+            OWNER, period_start=NOW - 1000, period_end=int(time.time()) + 5000, campaign_cap=2
+        )  # the owner has two campaigns
         self.assertIsNone(await self.refusal())
 
     async def test_used_up_hours_are_refused_until_the_period_ends(self) -> None:
@@ -517,6 +519,44 @@ class PlanChecks(UsageTest):
         self.assertIsNotNone(text)
         self.assertIn("You've used all your hours this month.", text or "")
         self.assertIn(f"{self.SITE}/account", text or "")
+
+    async def valid_plan(self, **values: object) -> None:
+        await self.give_plan(
+            OWNER, period_start=NOW - 1000, period_end=int(time.time()) + 5000, **values
+        )
+
+    async def test_an_owner_with_more_campaigns_than_the_plan_covers_is_refused(self) -> None:
+        await self.valid_plan(campaign_cap=1)  # the owner has two (UsageTest makes them)
+        self.assertEqual(
+            await self.refusal(),
+            "Your plan covers 1 campaign. To start a second, pause one or change your plan "
+            f"here: {self.SITE}/account",
+        )
+
+    async def test_an_owner_at_the_cap_may_start_one_they_own(self) -> None:
+        await self.valid_plan(campaign_cap=2)
+        self.assertIsNone(await self.refusal())
+
+    async def test_a_co_dm_is_not_told_about_the_campaign_cap(self) -> None:
+        await self.valid_plan(campaign_cap=1)
+        self.assertEqual(await self.refusal(starter=NEW_OWNER), hours.START_BLOCKED)
+
+    async def test_the_campaign_cap_is_not_checked_when_plans_are_not_enforced(self) -> None:
+        await self.valid_plan(campaign_cap=1)
+        self.assertIsNone(await self.refusal(bot=self.make_bot(enforce=False)))
+
+    async def test_the_hours_are_refused_before_the_campaigns(self) -> None:
+        await self.valid_plan(campaign_cap=1, hours_cap=1)
+        await self.add(GUILD_A, self.a.id, OWNER, 60)
+        self.assertIn("You've used all your hours", await self.refusal() or "")
+
+    async def test_a_failing_campaign_count_lets_the_table_start(self) -> None:
+        await self.valid_plan(campaign_cap=1)
+        with (
+            patch.object(usage.Meter, "campaign_room", new=AsyncMock(side_effect=OSError("down"))),
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
+            self.assertIsNone(await self.refusal())
 
     async def test_a_paid_owner_is_offered_extra_hours_and_the_renewal(self) -> None:
         await self.give_plan(
