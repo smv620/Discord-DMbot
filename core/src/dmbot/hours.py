@@ -199,17 +199,34 @@ def refusal(
     return text
 
 
-def warning_text(left_minutes: int, mark: int = 80, site_url: str = "") -> str:
+def more_hours(site_url: str, buys_hours: bool = True, renews: bool = False) -> str:
+    """How more hours can be had, for a message everyone at the table reads, so it never
+    says whose plan it is. Only an owner who can buy hours is sent to the website: a Try It
+    owner can't, so they are told when the hours start again, or to ask the owner. The link
+    comes last so no full stop is glued onto it."""
+    if buys_hours:
+        return f"The campaign's owner can add more at {account_link(site_url)}"
+    if renews:
+        return "Hours start again when the plan renews."
+    return "Ask the campaign's owner."
+
+
+def warning_text(
+    left_minutes: int,
+    mark: int = 80,
+    site_url: str = "",
+    buys_hours: bool = True,
+    renews: bool = False,
+) -> str:
     """The DM-screen warning as hours run low: "About 4 hours left this month." The first
-    one (80%) says what an hour is; the 90% one says where more can be added. It is read by
-    everyone who can see the DM screen, so it says only that the campaign's owner can add
-    more, never whose plan it is or anything about payment."""
+    one (80%) says what an hour is; the 90% one says how more can be had. It is read by
+    everyone who can see the DM screen, so it never says whose plan it is or anything about
+    payment."""
     words = hours_left_words(left_minutes)
     text = f"⏳ {words[0].upper()}{words[1:]} left this month."
     if mark < 90:
         return f"{text} (Hours are DMbot's listening time.)"
-    where = f"{site_url}/account" if site_url else "DMbot's website"
-    return f"{text} The campaign's owner can add more at {where}"
+    return f"{text} {more_hours(site_url, buys_hours, renews)}"
 
 
 CapAction = Literal["none", "start_grace", "in_grace", "stop"]
@@ -262,29 +279,31 @@ def stop_warning_due(
     return used_before < mark <= used_after
 
 
-# The grace and stop notices are read by everyone who can see the DM screen, so they say
-# only that the campaign's owner can add more hours, never whose plan it is.
-def grace_started_text(ends_at: int | None = None, site_url: str = "") -> str:
-    where = f"{site_url}/account" if site_url else "DMbot's website"
+# The grace and stop notices are read by everyone who can see the DM screen, so they never
+# say whose plan it is (see more_hours).
+def grace_started_text(
+    ends_at: int | None = None,
+    site_url: str = "",
+    buys_hours: bool = True,
+    renews: bool = False,
+) -> str:
     until = f" until <t:{ends_at}:t>" if ends_at is not None else ""
     return (
         "⏳ This month's listening hours are used up. This session can finish: DMbot keeps "
         f"listening{until} (up to {GRACE_MINUTES // 60} more hours), then stops. To play "
-        f"again after that, the campaign's owner can add more at {where}"
+        f"again after that: {more_hours(site_url, buys_hours, renews)}"
     )
 
 
-def stop_soon_text(site_url: str = "") -> str:
-    where = f"{site_url}/account" if site_url else "DMbot's website"
+def stop_soon_text(site_url: str = "", buys_hours: bool = True, renews: bool = False) -> str:
     return (
         f"⏳ DMbot will stop listening in about {STOP_WARNING_MINUTES} minutes: this month's "
-        f"listening hours are used up. To keep going, the campaign's owner can add more at {where}"
+        f"listening hours are used up. To keep going: {more_hours(site_url, buys_hours, renews)}"
     )
 
 
-def stopped_text(site_url: str = "") -> str:
-    where = f"{site_url}/account" if site_url else "DMbot's website"
+def stopped_text(site_url: str = "", buys_hours: bool = True, renews: bool = False) -> str:
     return (
         "⏳ DMbot has stopped listening: this month's listening hours are used up. To play "
-        f"again, the campaign's owner can add more at {where}"
+        f"again: {more_hours(site_url, buys_hours, renews)}"
     )
