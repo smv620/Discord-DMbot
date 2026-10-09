@@ -233,8 +233,10 @@ terminal output or Discord screenshots copied to it.
   "Peek behind the DM screen" button that warns about spoilers before granting access),
   or **open**. The one exception is the **DM sidebar** (owner, 2026-10-09): the DM's quick
   questions to DMbot and its in-game replies go into the **raw** transcript, tagged
-  `[DM Sidebar]` and `DMbot`, never the cleaned one; who may read them is #933 (until
-  answered: the DM's own copy only). See docs/PLAN.md.
+  `[DM Sidebar]` and `DMbot` with their data lineage (where each line came from), never
+  the cleaned one. **The raw transcript is unedited and unredacted** for everyone who may
+  read transcripts, spoilers included (owner, #933): it is the data DMbot is improved
+  from. See docs/PLAN.md.
 - **Backups are complete, and anyone in the server may download one of a paid campaign**
   (owner decision, 2026-10-06, narrowed 2026-10-07: Try It campaigns have no backups or
   downloads; loading a backup needs a subscriber with a free campaign slot, see #437): a campaign must never be lost if its DM disappears. A backup holds the

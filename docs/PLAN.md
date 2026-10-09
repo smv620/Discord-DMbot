@@ -577,7 +577,7 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 **Transcripts vs. the DM screen (decided 2026-10-04).**
 | Content | Who sees it |
 |---|---|
-| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons and all other DM-screen content never appear in the transcript channel or a transcript. The DM sidebar is the one exception (owner, 2026-10-09): its lines go into the raw transcript, tagged, and never the cleaned one; who may read them is #933. |
+| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons and all other DM-screen content never appear in the transcript channel or a transcript. The DM sidebar is the one exception (owner, 2026-10-09): its lines go into the raw transcript, tagged with their data lineage, and never the cleaned one. The raw transcript is unedited and unredacted for everyone who may read transcripts, spoilers included (#933). |
 | **DM screen** (rules alerts, house-rule prompts, NPC and plot notes) | The DM, plus players only as the campaign's **DM-screen visibility** allows (below). The bot never *sends* DM-screen content to players. |
 
 **DM-screen visibility (decided 2026-10-04).** Each campaign's DM picks one; if none is
@@ -1657,9 +1657,22 @@ table isn't left waiting while the DM looks something up.
   channel.
 - **Transcripts:** the DM's sidebar lines are added to the **raw** transcript with the tag
   `[DM Sidebar]`, and DMbot's replies about in-game content are added under the speaker
-  name `DMbot`. Both are always kept out of the **cleaned** transcript. Who can read those
-  raw lines: see the open question on #933 (until it is answered, they are in the DM's own
-  raw download only, never in the live transcript channel or a player's download).
+  name `DMbot`. Both are always kept out of the **cleaned** transcript. **The raw transcript
+  is unedited and unredacted, sidebar included, for everyone who may read transcripts**
+  (owner, 2026-10-09, #933): a player who downloads the raw copy gets spoilers, and that is
+  accepted. Its purpose is to be the complete data DMbot is improved from as the project
+  evolves; the cleaned transcript is the one for reading. Sidebar lines are not posted
+  live in the transcript channel (they would interrupt the table), only written to the
+  raw record.
+- **Data lineage on every sidebar line** (owner, 2026-10-09, #933): each line records
+  where it came from, so later work knows what data came from where: `via` = `voice-memo`,
+  `typed`, or `table-trigger` (said aloud at the table); for a memo or trigger, the
+  speech-to-text engine and model; for a DMbot reply, the AI model, the prompt version,
+  and the sources it used (rules entries, house rule numbers, memory facts, transcript
+  span); and the id of the question a reply answers. In the raw text a line reads
+  `[time] (DM name) [DM Sidebar via=voice-memo stt=<engine>]: …` and
+  `[time] (DMbot) [DM Sidebar reply-to=<id> model=<model> sources=<…>]: …`, with the same
+  fields stored as columns, not only text.
 - **Cost:** every answer spends AI tokens, so it goes through `can_use_ai` (#919).
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
