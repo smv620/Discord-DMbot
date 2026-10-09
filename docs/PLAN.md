@@ -324,9 +324,26 @@ punctuation or apostrophes, and the 19 spells the 2024 books renamed are also fo
 their 2014 names (`rules/aliases.py`, each with a comment; Feeblemind and Branding Smite
 included). `lookup(name, target, fallback)` tries the target ruleset, then the fallback;
 a fallback hit is tagged (`[Legacy 2014]` for 2014 content). An older entry is used only
-when no newer one matches any name. The 2014 SRD 5.1 (also CC-BY-4.0) is not loaded yet:
-the index takes more data folders with their own edition, and filing that is the
-follow-up (#873). Not built: the rules advisor that uses it.
+when no newer one matches any name. The 2014 SRD 5.1 (also CC-BY-4.0) is loaded
+the same way, as the legacy fallback: all 319 of its spells and its 15 conditions in
+`rules/data/srd51/`, with its own `ATTRIBUTION.md` (#873). Only Feeblemind and Branding
+Smite are in 5.1 and not in 5.2.1, and they are found as their renamed 2024 spells first.
+The 5.1 PDF's text layer is rougher (cut words, a few lost words): the tool repairs cut
+words only with words the SRD itself uses, never edits by hand, and `ATTRIBUTION.md` says
+that one lost word (a stray letter in Animal Friendship, named there) remains.
+
+Creatures are in the index too (#900): the 330 stat blocks of the 5.2.1's Monsters A-Z and
+Animals sections and the 317 of the 5.1's Monsters pages and its two creature appendices,
+as `monsters.json` next to the spells, each with its size, type, alignment, armor class, hit
+points and dice, speed, ability scores, saves, skills, resistances, vulnerabilities,
+immunities, senses, languages, challenge and XP (and, in the 5.2.1, initiative, gear and
+proficiency bonus), and its traits and actions as printed, one paragraph each. A creature is
+found by its name, by the bracket-less name ("Gnome, Deep"), the word in the bracket
+("Svirfneblin"), the comma turned round ("Deep Gnome") and with a "(Legacy)" or other
+bracket left off; 27 older names are aliased to the creature the 2025 books renamed (Goblin
+is now Goblin Warrior), and the seven 5.1 creatures with no 5.2.1 one (Duergar, Drow, Deep
+Gnome, Lizardfolk, Orc, Half-Red Dragon Veteran, Succubus/Incubus) are `[Legacy 2014]`
+entries. Not built: the rules advisor that uses it.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
@@ -1731,7 +1748,9 @@ the owner). Two different waits: the 7-day payment grace is a plan rule (a faile
 leaves 7 days to fix it); separately, a paid plan keeps working up to 3 days past its
 period end while the payment company's renewal arrives (a technical guard against a late
 webhook, not a plan rule; Try It ends exactly at its 30 days). Warnings on the DM screen
-at 80% and 90% of the hours; at the cap DMbot
+at 80% and 90% of the hours (decided 2026-10-09, #897: they name only the hours left,
+never the plan or anything about payment, because co-DMs, and players who may peek, read
+the DM screen; the 90% one says the campaign's owner can add more); at the cap DMbot
 finishes the session (up to 2 hours of grace, once a month), then refuses to start until
 renewal or a top-up. On a downgrade or lapse the first N campaigns started afterwards
 are active (N = new cap), the rest are paused with their data kept. Retention: 60 days
