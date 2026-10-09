@@ -72,6 +72,10 @@ class Entry:
     # place. Not part of an entry's hash (a mapping isn't hashable).
     details: Mapping[str, Any] = field(default_factory=dict, hash=False)
 
+    def __post_init__(self) -> None:
+        # Every entry, however it was made, gets its own read-only copy.
+        object.__setattr__(self, "details", MappingProxyType(dict(self.details)))
+
     @property
     def citation(self) -> str:
         """What an alert cites: `SRD 5.2.1, Spell Descriptions, p. 131`."""
@@ -165,7 +169,7 @@ def load_folder(folder: Path) -> list[Entry]:
                     data["section"],
                     int(raw["page"]),
                     raw["text"],
-                    MappingProxyType(details),
+                    details,
                 )
             )
     return entries

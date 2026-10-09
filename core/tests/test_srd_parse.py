@@ -226,6 +226,70 @@ class CutWords(unittest.TestCase):
                       "Poisoned", rows)  # fmt: skip
         self.assertIn("Speed 60 ft.", rows)  # a new entry is a new line
 
+    def test_a_stat_block_line_in_italic_or_a_bracketed_name_carries_on(self) -> None:
+        optima = "Optima-Regular"
+        lines = [
+            *header("Giant Insect", "Level 4 Conjuration (Druid)"),
+            say("You summon an insect."),
+            say("Bonus Actions", "GillSans"),
+            say("Venomous Spew (Centipede Only). Constitution Saving", "Optima-BoldItalic"),
+            say("Throw: Your spell save DC, one creature.", "Optima-Italic"),
+            say("Failure: The target is Poisoned.", optima),
+            say("Healing Touch (Celestial Only; Recharges after a Long", "Optima-BoldItalic"),
+            say("Rest). One creature regains Hit Points.", "Optima-BoldItalic"),
+            say("Fey Step (Fey Only). The steed teleports.", "Optima-BoldItalic"),
+            say("The word insect is in the document.", BODY),
+        ]
+        (spell,) = parse.parse_spells(lines)
+        rows = spell.text.splitlines()
+        self.assertIn(
+            "Venomous Spew (Centipede Only). Constitution Saving Throw: Your spell save DC, "
+            "one creature. Failure: The target is Poisoned.",
+            rows,
+        )
+        self.assertIn(
+            "Healing Touch (Celestial Only; Recharges after a Long Rest). One creature regains "
+            "Hit Points.",
+            rows,
+        )
+        self.assertIn("Fey Step (Fey Only). The steed teleports.", rows)  # a new entry: a new line
+
+    def test_a_bold_name_at_a_lines_start_is_not_a_heading_but_a_heading_is(self) -> None:
+        lines = [
+            *header("Find Steed", "Level 2 Conjuration (Paladin)"),
+            say("This creature uses the Otherworldly", BODY),
+            say("Steed", "Cambria-Bold"),
+            say("stat block. If you have a steed, it is replaced.", BODY),
+            line(piece(" "), piece("Using a Higher-Level Spell Slot.", BOLD_LEAD), piece(" More.")),
+        ]
+        (spell,) = parse.parse_spells(lines)
+        self.assertEqual(
+            spell.text.splitlines(),
+            [
+                "This creature uses the Otherworldly Steed stat block. If you have a steed, it is "
+                "replaced.",
+                "Using a Higher-Level Spell Slot. More.",
+            ],
+        )
+
+    def test_a_table_header_in_two_columns_gets_a_space_between_them(self) -> None:
+        columns = Line(313.5, 500, [Piece(313.5, 500, "F+GillSans-SemiBold", "Temperature"),
+                                    Piece(429.7, 500, "F+GillSans-SemiBold", "Wind")])  # fmt: skip
+        self.assertEqual(columns.text, "Temperature Wind")
+
+    def test_words_in_two_fonts_have_no_space_put_between_them(self) -> None:
+        # Pieces drawn from one starting point share its x, so the later ones' x is far from
+        # the line's start without there being a gap: "four Ghouls." stays "four Ghouls.".
+        bold = Line(63.0, 500, [
+            Piece(63.0, 500, "F+Cambria", "over four "),
+            Piece(63.0, 500, "F+Cambria-Bold", "Ghouls"),
+            Piece(137.3, 500, "F+Cambria", ". If you use a level 8 spell slot"),
+        ])  # fmt: skip
+        self.assertEqual(bold.text, "over four Ghouls. If you use a level 8 spell slot")
+        spaced = Line(63.0, 500, [Piece(63.0, 500, "F+Cambria", "Name "),
+                                  Piece(120.0, 500, "F+Cambria", "value")])  # fmt: skip
+        self.assertEqual(spaced.text, "Name value")
+
     def test_ability_names_set_in_small_capitals_are_written_once(self) -> None:
         lines = [
             *header("Giant Insect", "Level 4 Conjuration (Druid)"),
