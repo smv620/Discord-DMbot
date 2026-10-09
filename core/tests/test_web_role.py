@@ -163,8 +163,10 @@ class WebRole(DatabaseTest):
             await conn.execute("SELECT set_config('dmbot.owner_sync', 'pause', true)")
             cur = await conn.execute("SELECT name FROM campaigns")  # no server chosen
             self.assertEqual(await cur.fetchall(), [])
-            cur = await conn.execute("UPDATE campaigns SET paused = TRUE RETURNING id")
-            self.assertEqual(await cur.fetchall(), [])
+        async with self.web.user(session.user_id, session=session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.owner_sync', 'pause', true)")
+            with self.assertRaises(errors.InsufficientPrivilege):  # no grant on the column
+                await conn.execute("UPDATE campaigns SET paused = TRUE")
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT policyname, roles, cmd FROM pg_policies WHERE schemaname ="
