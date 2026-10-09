@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-08 by dev1 (core b445072, web-api and tunnel live; Test D, TV on, next)
+Last updated: 2026-10-09 by dev1 (admin page works; first free-access grant made; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
