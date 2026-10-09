@@ -1580,8 +1580,13 @@ the internet through a Cloudflare Tunnel (`cloudflared` in compose, outbound onl
 published ports, so `CF-Connecting-IP` can be trusted), and until the customer website
 goes live (#498) the tunnel opens only `^/admin(/|$)`: Discord sign-in, `/me`, billing and
 the webhook stay closed. The admin page is served from the development branch's build at
-`dev.getdmbot.com` (noindex), because `main` is far behind and the admin cookie is only
-sent when the page and `api.getdmbot.com` share a site. When the site goes live,
+`dev.getdmbot.com` (noindex), because the admin cookie is only sent when the page and
+`api.getdmbot.com` share a site. *Corrected 2026-10-09 (#833):* the Cloudflare Pages
+project's production branch is `development`, so until go-live getdmbot.com, www and
+dev.getdmbot.com all serve that one build (noindex, the real API, admin paths only);
+`PUBLIC_DEV_API_BASE` is set for Production too. At go-live (#498) production moves to
+`main` after a promotion and `dev.getdmbot.com` moves to the `development` preview (with
+a bypass for Pages' preview login). When the site goes live,
 `WEB_SITE_URL` becomes `getdmbot.com` and the path limit comes off. Built in #836 (tunnel)
 and #837 (the dev site's API address).
 
