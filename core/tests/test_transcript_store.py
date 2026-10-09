@@ -15,7 +15,8 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
-from dmbot.transcript.models import Line
+from dmbot.transcript import export
+from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, VIA_VOICE, Line, Lineage
 from dmbot.transcript.store import TranscriptStore
 from dmbot.ui import transcripts as ui
 from tests.pg import DatabaseTest
@@ -43,6 +44,65 @@ class StoreTests(DatabaseTest):
         self.assertEqual(len(ids), 2)
         lines = await self.store.lines(GUILD, sid)
         self.assertEqual([(x.heard, x.text) for x in lines], [("first",) * 2, ("second",) * 2])
+
+    async def test_sidebar_lines_are_kept_apart_and_never_edited(self) -> None:
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        asked_from = Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host")
+        answered_from = Lineage(
+            reply_to="a1b2c3", model="m-1", prompt="p-1", sources=("SRD p. 1", "house rule 3")
+        )
+        asked = Line(
+            START * 1000 + 5000,
+            DM,
+            "find flanking",
+            "find flanking",
+            0,
+            "game",
+            SIDEBAR_QUESTION,
+            asked_from,
+        )
+        answer = Line(
+            START * 1000 + 7000,
+            DM,
+            "Optional. (sure)",
+            "Optional. (sure)",
+            0,
+            "game",
+            SIDEBAR_ANSWER,
+            answered_from,
+        )
+        await self.store.add_lines(GUILD, sid, [asked, answer, line(5, DM, "table speech")])
+        # They are not speech: the session counts one line and one speaker, as without them.
+        (counted,) = await self.store.sessions(GUILD, self.campaign.id)
+        self.assertEqual(counted.lines, 1)
+        lines = await self.store.lines(GUILD, sid)
+        self.assertEqual(
+            [(x.heard, x.sidebar) for x in lines],
+            [("find flanking", "question"), ("table speech", ""), ("Optional. (sure)", "answer")],
+        )
+        # Where each came from is kept as columns, and table speech has none.
+        by_kind = {x.sidebar: x for x in lines}
+        self.assertEqual(by_kind["question"].lineage, asked_from)
+        self.assertEqual(by_kind["answer"].lineage, answered_from)
+        self.assertEqual(by_kind[""].lineage, Lineage())
+        # An Undo, the off-topic filter or Put it back at the same moment as a sidebar line
+        # changes the speech line only: the question and the answer stay as they were.
+        key = asked.started_ms
+        self.assertEqual(await self.store.relabel_line(GUILD, sid, DM, key, "x"), 1)
+        self.assertEqual(await self.store.set_topic(GUILD, sid, DM, key, "off_topic"), 1)
+        self.assertEqual(await self.store.set_topics(GUILD, sid, DM, [key], "table_talk"), 1)
+        again = await self.store.lines(GUILD, sid)
+        self.assertEqual(
+            [(x.text, x.topic) for x in again if x.sidebar],
+            [("find flanking", "game"), ("Optional. (sure)", "game")],
+        )
+        speech = next(x for x in again if not x.sidebar)
+        self.assertEqual((speech.text, speech.topic), ("x", "table_talk"))
+        # With no speech at that moment, nothing at all is changed.
+        self.assertEqual(await self.store.relabel_line(GUILD, sid, DM, answer.started_ms, "x"), 0)
+        self.assertEqual(
+            await self.store.set_topics(GUILD, sid, DM, [answer.started_ms], "off_topic"), 0
+        )
 
     async def test_a_resumed_session_keeps_its_transcript(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
@@ -526,6 +586,50 @@ class BotTests(DatabaseTest):
         button = next(b for b in view.children if b.label == label)
         await button.callback(it)
         return it
+
+    async def test_everyone_who_can_read_the_raw_file_sees_the_sidebar_lines_and_nobody_the_cleaned(
+        self,
+    ) -> None:
+        sid = await self.finished_session()
+        asked = Line(
+            START * 1000 + 50_000,
+            DM,
+            "find if flanking is optional",
+            "find if flanking is optional",
+            0,
+            "game",
+            SIDEBAR_QUESTION,
+            Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host"),
+        )
+        answer = Line(
+            START * 1000 + 52_000,
+            DM,
+            "Yes, it is optional. (sure)",
+            "Yes, it is optional. (sure)",
+            0,
+            "game",
+            SIDEBAR_ANSWER,
+            Lineage(reply_to="a1b2c3", model="m-1", prompt="p-1", sources=("SRD p. 1",)),
+        )
+        await self.store.add_lines(GUILD, sid, [asked, answer])
+        result = await ui.make_file(
+            self.bot, self.guild, GUILD, sid, PLAYER, (export.AS_HEARD, export.CLEANED)
+        )
+        assert not isinstance(result, str)
+        heard, cleaned = (f.fp.read().decode() for f in result)
+        self.assertIn(
+            "(Sam) [DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]: "
+            "find if flanking is optional",
+            heard,
+        )
+        self.assertIn(
+            "(DMbot) [DM Sidebar reply-to=a1b2c3 model=m-1 prompt=p-1 sources=SRD-p.-1]: "
+            "Yes, it is optional. (sure)",
+            heard,
+        )
+        self.assertNotIn("Sidebar", cleaned)
+        self.assertNotIn("flanking", cleaned)
+        self.assertIn("We ride at dawn.", cleaned)
 
     async def test_both_versions_come_as_two_files(self) -> None:
         sid = await self.finished_session()
