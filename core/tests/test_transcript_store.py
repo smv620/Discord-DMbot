@@ -494,7 +494,7 @@ class BotTests(DatabaseTest):
         )
         await self.store.add_lines(GUILD, sid, [asked, answer])
         result = await ui.make_file(
-            self.bot, self.guild, GUILD, sid, (export.AS_HEARD, export.CLEANED)
+            self.bot, self.guild, GUILD, sid, PLAYER, (export.AS_HEARD, export.CLEANED)
         )
         assert not isinstance(result, str)
         heard, cleaned = (f.fp.read().decode() for f in result)
