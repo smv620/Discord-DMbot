@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-09 by CloudDev (ready to deploy: #870, #895, #879, #883, #894, #905)
+Last updated: 2026-10-09 by CloudDev (ready to deploy: #870, #895, #879, #883, #894, #897, #909, #911, #905)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -117,6 +117,16 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   short session; the logs show no errors from the meter and the session_usage row (read
   only, as dmbot_ro, numbers only) holds about the minutes listened. Nothing from it goes
   in a report.
+- CloudDev, PRs #897, #909 and #911 (#437 parts 2b and 2c, #910): core, **one migration
+  (0033_usage_grace, one nullable column on owner_hours)**; deploying runs it. These add the
+  hours checks: a start is refused when the plan has ended or the hours are used up, the
+  DM screen warns at 80% and 90%, and when the hours run out in a session it may finish
+  (up to 2 more hours, once a month), gets a heads-up 15 minutes before the stop, then
+  stops. All of it is behind DMBOT_ENFORCE_PLANS, which stays OFF (the default) until
+  go-live (#498); with it off the meter only records, as before, and nothing changes at the
+  table. Check with it off: after migrating, a short session starts, runs and stops as
+  before and the logs show no meter errors. A live run with the setting on needs a test
+  owner with a 1-hour plan; that belongs with the go-live checks, not now.
 
 ------------------------------------------------------------------------------
 NEXT TEST: Test 1, run 8: DM + player script, player stops, on Deepgram
