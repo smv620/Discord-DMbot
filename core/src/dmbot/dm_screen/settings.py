@@ -44,16 +44,18 @@ _ID = r"(?P<campaign>[0-9a-f]{32})"
 SETTINGS_LABEL = "Settings"
 RULE_LOOKUP_LABEL = "Look up a rule"
 RULES_CARDS_OFF = (
-    "• **Rules cards: Off.** When on, DMbot shows a short card here when someone at the table "
-    "names a spell, condition or creature. It only shows the free rules (SRD). You decide "
-    "what applies."
+    "• **Rules cards: Off.** When on, DMbot shows a short card on the DM screen when someone "
+    "at the table names a spell, condition or creature. It only shows the free rules (SRD). "
+    "You decide what applies."
 )
 RULES_CARDS_ON = (
-    "• **Rules cards: On.** DMbot shows a short card when someone who agreed to be recorded "
-    "names a spell, condition or creature: at most one a minute, one for each name each "
-    "session. It only shows the free rules (SRD); you decide. Press the button to turn it off."
+    "• **Rules cards: On.** When someone who agreed to be recorded names a spell, condition "
+    "or creature, DMbot shows a short card on the DM screen (one a minute at most). It only "
+    "shows the free rules (SRD); you decide."
 )
-RULES_CARDS_OPEN = " Players can see the cards, because your DM screen is open."
+RULES_CARDS_STOP = " Tap 🃏 Turn rules cards off to stop them."
+RULES_CARDS_PEEK = " Players who peek can see them too."
+RULES_CARDS_OPEN = " Players can see them too, because your DM screen is open."
 RULES_CARDS_ONLY_DMS = "Only this campaign's DMs can change this."
 RULES_LINE = (
     "• **Rules:** press 📖 Look up a rule to read a spell, condition or creature from the "
@@ -70,10 +72,14 @@ def _tick(label: str, current: bool) -> str:
     return f"✓ {label}" if current else label
 
 
-def _rules_cards_line(campaign: Campaign) -> str:
+def _rules_cards_line(campaign: Campaign, viewer: int | None) -> str:
     if not campaign.rules_cards:
         return RULES_CARDS_OFF
-    return RULES_CARDS_ON + (RULES_CARDS_OPEN if campaign.dm_screen_visibility == "open" else "")
+    who = {"peek": RULES_CARDS_PEEK, "open": RULES_CARDS_OPEN}.get(
+        campaign.dm_screen_visibility, ""
+    )
+    stop = RULES_CARDS_STOP if viewer is not None and viewer in campaign.dm_user_ids else ""
+    return RULES_CARDS_ON + who + stop
 
 
 def settings_text(
@@ -95,7 +101,7 @@ def settings_text(
             "• **Saved transcripts:** anyone in the server can read and download them with "
             "`/transcript`. (This can't be changed.)",
             *rules,
-            _rules_cards_line(campaign),
+            _rules_cards_line(campaign, viewer),
             handover.owner_line(campaign, offer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
             "now on.",

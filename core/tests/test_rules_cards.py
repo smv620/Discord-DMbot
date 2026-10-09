@@ -199,6 +199,18 @@ class OnTheTable(TableTest):
                 await task
         self.assertEqual(self.posts, [])
 
+    async def test_a_card_that_fails_does_not_undo_a_later_ones_minute(self) -> None:
+        cards = RulesCards()
+        first = cards.pick(mentions("Fireball"), 1000.0)
+        assert first is not None
+        one = cards.remember(first, 1000.0)
+        second = cards.pick(mentions("Hold Person"), 2000.0)
+        assert second is not None
+        cards.remember(second, 2000.0)  # a later card took the minute
+        cards.forget(one, None)  # the first one turned out to be unshowable
+        self.assertEqual(cards.last_at, 2000.0)  # the later card's minute stands
+        self.assertNotIn(("spell", "fireball"), cards.seen)
+
     async def test_one_card_a_name_and_one_a_minute(self) -> None:
         await self.say("Fireball")
         await self.say("Fireball again")
@@ -310,6 +322,56 @@ class WhenThingsGoWrong(TableTest):
             warm.assert_not_called()
 
 
+class Characters(TableTest):
+    async def test_a_name_the_campaign_uses_for_its_own_is_not_a_rules_question(self) -> None:
+        await self.say("the Ogre charges")  # no such character: a card
+        self.assertEqual(len(self.posts), 1)
+        self.rewind()
+        # the campaign has a character called Ogre and one called Fireball
+        self.table.name_lookup = SimpleNamespace(by_key={"ogre": (), "fireball": ()})  # type: ignore[assignment]
+        self.table.rules = RulesCards()
+        await self.say("Ogre says hello, and Fireball is a good name")
+        self.assertEqual(len(self.posts), 1)  # nothing new
+        await self.say("then I cast Hold Person")
+        self.assertEqual(len(self.posts), 2)  # other names still show
+
+    async def test_a_creature_the_campaign_calls_something_else_still_shows_by_its_book_name(
+        self,
+    ) -> None:
+        self.table.name_lookup = SimpleNamespace(by_key={"goblin warrior": ()})  # type: ignore[assignment]
+        await self.say("the goblin attacks")  # said "goblin": the entry's name is a character's
+        self.assertEqual(self.posts, [])
+
+
+class Registration(unittest.TestCase):
+    def test_every_button_the_dm_screen_builds_is_registered_for_after_a_restart(self) -> None:
+        import ast
+        import inspect
+
+        from dmbot import bot as bot_module
+
+        tree = ast.parse(inspect.getsource(bot_module))
+        registered = {
+            arg.id if isinstance(arg, ast.Name) else arg.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_dynamic_items"
+            for arg in node.args
+            if isinstance(arg, (ast.Name, ast.Attribute))
+        }
+        built = {
+            type(item).__name__
+            for viewer in (DM, PLAYER)
+            for view in (
+                settings_view(campaign(on=True), None, viewer),
+                rules_cards.card_view(GUILD, "abcdef01"),
+            )
+            for item in view.children
+            if isinstance(item, discord.ui.DynamicItem)
+        }
+        self.assertTrue({"RulesCardsButton", "RuleLookupButton", "RulesCardButton"} <= built)
+        self.assertEqual(sorted(built - registered), [])  # a press after a restart must work
+
+
 class FromTheTranscript(TableTest):
     async def test_a_delivered_line_gets_its_card_through_the_real_hook(self) -> None:
         from dmbot.audio.segmenter import Utterance
@@ -322,6 +384,20 @@ class FromTheTranscript(TableTest):
         (post,) = self.posts
         self.assertIn("📖 **Fireball**", post[1])
         self.assertEqual(post[0], SCREEN)
+
+    async def test_no_card_text_ever_reaches_the_stored_transcript(self) -> None:
+        from dmbot.audio.segmenter import Utterance
+
+        self.bot.transcripts = MagicMock()
+        said = Utterance(GUILD, SPEAKER, 0, 0, bytes(32000), self.table.segmenter.session)
+        self.bot._deliver_transcript(said, "Then I cast Fireball")
+        for task in list(asyncio.all_tasks() - {asyncio.current_task()}):
+            if task.get_name() == "rules-card":
+                await task
+        (line,) = self.table.unsaved.take(lambda _user: True)
+        self.assertEqual(line.heard, "Then I cast Fireball")  # what was said, and only that
+        self.assertEqual(len(self.posts), 1)
+        self.assertNotIn("Source:", str(line))
 
     async def test_the_line_that_has_no_name_or_comes_with_the_setting_off_shows_nothing(
         self,
@@ -379,6 +455,11 @@ class Buttons(TableTest):
         self.rewind()
         await self.say("Fireball once more")
         self.assertEqual(len(self.posts), 1)
+
+    async def test_an_ordinary_add_form_after_an_override_has_an_empty_instead_of(self) -> None:
+        house_ui.OverrideForm(self.campaigns[C1], "Fireball")
+        plain = house_ui.AddForm(self.campaigns[C1])
+        self.assertFalse(plain.instead.default)  # the filled-in name did not leak
 
     async def test_override_opens_the_house_rule_form_with_the_name_filled_in(self) -> None:
         _, view = await self.card()
@@ -506,7 +587,7 @@ class Setting(TableTest):
         self.assertIn("**Rules cards: On.**", on)
         self.assertNotIn("Players can see", on)
         self.assertIn(
-            "Players can see the cards", settings_text(campaign(on=True, vis="open"), None, DM)
+            "Players can see them too", settings_text(campaign(on=True, vis="open"), None, DM)
         )
         labels = {c.item.label for c in settings_view(campaign(), None, DM).children}  # type: ignore[attr-defined]
         self.assertIn("Turn rules cards on", labels)
@@ -562,7 +643,7 @@ class Words(unittest.TestCase):
         for text in (rules_cards.CLOSED, rules_cards.ONLY_DMS):
             self.assertNotRegex(text, r"(?i)\b(srd|ruleset|index|query|database)\b")
         self.assertIn("press 📖 Look up a rule", rules_cards.CLOSED)  # what to do next
-        self.assertIn("Rules cards", rules_cards.STOP_ALL)  # how to stop them
+        self.assertIn("Turn rules cards off", rules_cards.STOP_ALL)  # the button, by name
         self.assertEqual(rules_cards.ONLY_DMS.count("DMs"), 1)
 
 

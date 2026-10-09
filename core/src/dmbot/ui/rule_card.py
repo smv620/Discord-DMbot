@@ -25,7 +25,6 @@ HOUSE_LINE_MAX = 250  # one house rule, after escaping
 HOUSE_SHOWN = 3  # most house rules shown; the rest are counted
 FACTS_MAX = 400
 NAME_MAX = 100
-HEARD_MAX = 140  # the words heard, after escaping
 MIN_TEXT_ROOM = 200  # a first part with less room than this is only the heading
 
 FREE_RULES = "the free rules (SRD)"
@@ -211,7 +210,6 @@ def header(
     rules: Sequence[HouseRule],
     *,
     house_max: int = HOUSE_LINE_MAX,
-    heard: str = "",
 ) -> str:
     """Everything above the text: house rules first, the name and facts, where it comes
     from, and any note about how it was found."""
@@ -224,12 +222,10 @@ def header(
     if line:
         lines.append(line)
     lines.append(f"_Source: {_md(source(hit))}_")
-    if heard:  # an alert from the table says what was heard (its confidence)
-        lines.append(f"_Heard: “{_fit(_md(heard), HEARD_MAX)}”_")
     asked = _fit(_md(" ".join(typed.split())), NAME_MAX)
     if hit.renamed and asked:
         lines.append(f"_{asked} is now called {called} in the newer rules._")
-    elif asked and not heard and normalize(typed) != normalize(entry.name):
+    elif asked and normalize(typed) != normalize(entry.name):
         lines.append(f"_Showing {called} (you typed {asked})._")
     if hit.tag and hit.from_fallback and entry.edition == index.LEGACY:
         lines.append(OLDER_NOTE)  # when 2014 is the campaign's own choice, the tag is enough
@@ -253,7 +249,8 @@ def alert_text(hit: Hit, said: str, heard: str, rules: Sequence[HouseRule]) -> s
     lines = house_lines(matches[:1], ALERT_HOUSE_MAX) if matches else []
     if len(matches) > 1:
         more = len(matches) - 1
-        lines.append(f"🏠 …and {more} more: `/dmbot houserules`")
+        plural = "s" if more != 1 else ""
+        lines.append(f"🏠 {more} more house rule{plural}: `/dmbot houserules`")
     called = _fit(_md(entry.name), NAME_MAX)
     lines.append(f"📖 **{called}** ({KIND_WORDS.get(entry.kind, entry.kind)})")
     line = facts(entry)

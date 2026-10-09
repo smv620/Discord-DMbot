@@ -8,7 +8,7 @@ import time
 import unittest
 
 from dmbot.rules import index
-from dmbot.rules.spotter import EVERYDAY, HEARD_MAX, Spotter
+from dmbot.rules.spotter import EVERYDAY, HEARD_WINDOW_MAX, Spotter
 
 
 def spotter(target: str = "2024", fallback: str = "2014") -> Spotter:
@@ -83,7 +83,9 @@ class EverydayWords(unittest.TestCase):
     def test_is_brings_back_a_condition_not_a_spell(self) -> None:
         self.assertEqual(found("the goblin is grappled"), ["Goblin Warrior", "Grappled"])
         self.assertEqual(found("they are poisoned"), ["Poisoned"])
-        self.assertEqual(found("it gets stunned"), ["Stunned"])
+        self.assertEqual(found("it gets stunned"), [])  # only is, are, was and were
+        self.assertEqual(found("he got stunned by the news"), [])
+        self.assertEqual(found("they were stunned"), ["Stunned"])
         self.assertEqual(found("the light is on"), [])  # "is" doesn't bring back a spell
         self.assertEqual(found("is light"), [])
         self.assertEqual(found("is Grappled"), ["Grappled"])
@@ -94,26 +96,51 @@ class EverydayWords(unittest.TestCase):
         self.assertEqual(found("grappled, he is"), [])
 
     def test_a_name_that_is_not_an_everyday_word_needs_no_lead_in(self) -> None:
-        for line in ("Hold Person", "Fireball", "the Tarrasque", "Magic Missile", "a Beholder"):
-            with self.subTest(line):
-                self.assertIn(line.split()[-1], " ".join(found(line)) or "Beholder")
         self.assertEqual(found("Hold Person"), ["Hold Person"])  # kept, as decided
+        self.assertEqual(found("the Tarrasque"), ["Tarrasque"])
+        self.assertEqual(found("Magic Missile"), ["Magic Missile"])
+        self.assertEqual(found("a Beholder appears"), [])  # not in the 2024 free rules at all
+
+    def test_plain_words_the_book_also_uses_as_names_give_no_false_cards(self) -> None:
+        for line in (
+            "what a nightmare", "a tough boss fight", "Battle stations", "that was a hard maze",
+            "a veteran of the war", "the clone is bad", "a solar flare", "time stop the clock",
+            "we have foresight", "my sprite sheet", "fabricate a story", "a unicorn horn",
+        ):  # fmt: skip
+            with self.subTest(line):
+                self.assertEqual(found(line), [])
+
+    def test_a_creature_with_an_everyday_name_never_cards_from_the_table(self) -> None:
+        for line in ("cast Wolf", "the wolves howl", "casts bat", "it is a nightmare", "a Guard"):
+            with self.subTest(line):
+                self.assertEqual(found(line), [])
+        self.assertEqual(found("the ogre and an owlbear"), ["Ogre", "Owlbear"])  # not everyday
+
+    def test_a_name_inside_a_longer_word_is_nothing(self) -> None:
+        for line in ("Fireballoon", "unwebbed", "Hold Personally", "ogresque", "Sleeping"):
+            with self.subTest(line):
+                self.assertEqual(found(line), [])
 
     def test_every_listed_word_is_really_a_name_in_the_index(self) -> None:
         names = {e.name for e in index.srd().entries}
         self.assertEqual(sorted(EVERYDAY - names), [])  # a typo in the list can't hide
 
-    def test_each_of_the_listed_words_is_skipped_alone_and_found_when_cast(self) -> None:
+    def test_each_listed_word_is_skipped_alone_and_a_spell_or_condition_is_found_with_its_lead_in(
+        self,
+    ) -> None:
         pool = index.srd().names_pool("2024", "2014")
         sp = spotter()
         for name in sorted(EVERYDAY):
             if index.normalize(name) not in pool:
                 continue  # a 2014-only name has nothing to find in the 2024 rules
+            kind = pool[index.normalize(name)].kind
             with self.subTest(name):
                 self.assertEqual([m.entry.name for m in sp.find(f"the {name} here")], [])
-                kinds = {pool[index.normalize(name)].kind}
-                lead = "is" if kinds == {"condition"} else "cast"
-                self.assertTrue(sp.find(f"he {lead} {name}"), name)
+                if kind == "monster":
+                    self.assertEqual(sp.find(f"he casts {name}"), [])  # never, whatever precedes
+                else:
+                    lead = "is" if kind == "condition" else "cast"
+                    self.assertTrue(sp.find(f"he {lead} {name}"), name)
 
 
 class Heard(unittest.TestCase):
@@ -128,7 +155,7 @@ class Heard(unittest.TestCase):
 
     def test_a_very_long_name_or_line_is_cut(self) -> None:
         (mention,) = spotter().find("x" * 200 + " Fireball " + "y" * 200)
-        self.assertLessEqual(len(mention.heard), HEARD_MAX + 2)
+        self.assertLessEqual(len(mention.heard), HEARD_WINDOW_MAX + 2)
         self.assertIn("Fireball", mention.heard)
 
     def test_the_key_is_the_entry_not_the_way_it_was_said(self) -> None:

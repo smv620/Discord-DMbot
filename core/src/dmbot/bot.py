@@ -88,6 +88,7 @@ from dmbot.dm_screen.name_questions import (
 from dmbot.dm_screen.settings import (
     LevelButton,
     RuleLookupButton,
+    RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
 )
@@ -524,7 +525,11 @@ class DMBot(commands.AutoShardedBot):
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
         self.add_dynamic_items(
-            SettingsButton, LevelButton, SettingsVisibilityButton, RuleLookupButton
+            SettingsButton,
+            LevelButton,
+            SettingsVisibilityButton,
+            RuleLookupButton,
+            RulesCardsButton,
         )
         # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
         self.add_dynamic_items(
@@ -2042,6 +2047,15 @@ class DMBot(commands.AutoShardedBot):
         ):
             return
         mentions = rules_cards.spotter_for(*table.rules_rulesets).find(line)
+        if mentions and table.name_lookup is not None:
+            # A character, NPC or place of this campaign called Sprite or Raven is a name
+            # the table uses, not a rules question.
+            known = table.name_lookup.by_key
+            mentions = [
+                m
+                for m in mentions
+                if name_key(m.said) not in known and name_key(m.entry.name) not in known
+            ]
         mention = table.rules.pick(mentions, time.monotonic()) if mentions else None
         if mention is None:
             return

@@ -364,7 +364,7 @@ names the thing comes first as "🏠 House rule 12: …", then the book, and the
 applies. Not built: the AI, shared rulebooks.
 
 **Built: rules cards from the table (#931), the first rules alert.** A campaign setting,
-**📖 Rules cards**, in ⚙️ Settings (**off by default**; only the campaign's DMs change it; it
+**🃏 Rules cards**, in ⚙️ Settings (**off by default**; only the campaign's DMs change it; it
 travels in a backup with the campaign's other settings). When on, a live session looks at
 each cleaned line of people who agreed and, when a spell, condition or creature of the
 campaign's rulesets is named (whole names only, plurals count, the longest name first), puts
@@ -375,8 +375,11 @@ with its tag, and what was heard ("Heard: “casts Fireball”", the confidence 
 gives), with **✅ Got it**, **🙈 Ignore** (no more cards for that name this session),
 **⚖️ Override** (the Add a house rule form with "Instead of" filled in; the answer is private)
 and **📖 Read it all** (the full lookup card, privately). Names that are everyday words
-(Light, Fly, Shield, Bat, Prone, …) only count after "cast", "casts" or "casting", or, for a
-condition, after "is" and its kin ("the goblin is grappled"); the list is in
+(Light, Fly, Shield, Prone, Nightmare, Tough Boss, …) only count after "cast", "casts" or
+"casting" right before a spell, or "is", "are", "was" or "were" right before a condition ("the
+goblin is grappled"); an everyday creature (Wolf, Bat, Guard, Nightmare, …) never gets a card
+from the table (the DM looks it up with 📖); a name the campaign itself uses for a character, NPC
+or place (a PC called Sprite) is skipped; the list is in
 `dmbot.rules.spotter`, and a test checks every word on it is a name in the index. Not noisy:
 one card for each name each session, one card a minute (the rest are dropped, not queued), and
 nothing after `/dmbot stop`. The DM screen's level (Quiet, Normal, Chatty) does not govern

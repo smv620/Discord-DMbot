@@ -36,11 +36,11 @@ log = logging.getLogger(__name__)
 NO_PINGS = discord.AllowedMentions.none()
 GAP_S = 60.0  # at most one card in this many seconds, whichever names are said
 CLOSED = (
-    "This card is from a finished session, so its buttons no longer work. To look something "
-    "up, press 📖 Look up a rule in ⚙️ Settings."
+    "These buttons stopped working (the session ended or DMbot restarted). To look "
+    "something up, press 📖 Look up a rule in ⚙️ Settings."
 )
 ONLY_DMS = "Only this campaign's DMs can use these buttons. You can still read the card."
-STOP_ALL = "To stop all cards: ⚙️ Settings, then Rules cards."
+STOP_ALL = "To stop all cards: ⚙️ Settings, then 🃏 Turn rules cards off."
 FAILED = "Something went wrong. Try again in a moment."
 GOT_LABEL, IGNORE_LABEL, OVERRIDE_LABEL, READ_LABEL = "Got it", "Ignore", "Override", "Read it all"
 ACTIONS = {"got": "✅", "ign": "🙈", "ovr": "⚖️", "all": "📖"}
@@ -54,6 +54,7 @@ class Shown:
     kind: str
     name: str  # the entry's name
     said: str  # as said
+    at: float  # when it was put up (the clock `pick` is given)
 
 
 @dataclass(slots=True)
@@ -80,7 +81,7 @@ class RulesCards:
         self.seen.add(mention.key)
         self.last_at = now
         card_id = uuid.uuid4().hex[:8]
-        self.shown[card_id] = Shown(mention.entry.kind, mention.entry.name, mention.said)
+        self.shown[card_id] = Shown(mention.entry.kind, mention.entry.name, mention.said, now)
         return card_id
 
     def forget(self, card_id: str, last_at: float | None) -> None:
@@ -88,7 +89,8 @@ class RulesCards:
         card = self.shown.pop(card_id, None)
         if card is not None:
             self.seen.discard((card.kind, index.normalize(card.name)))
-            self.last_at = last_at
+            if self.last_at == card.at:  # not if a later card has taken the minute since
+                self.last_at = last_at
 
     def ignore(self, card_id: str) -> Shown | None:
         """No more cards for this card's name this session."""
@@ -100,8 +102,9 @@ class RulesCards:
 
 @functools.cache
 def spotter_for(target: str, fallback: str) -> Spotter:
-    """The names to look for in a campaign whose rulesets are these (kept: the index
-    never changes)."""
+    """The names to look for in a campaign whose rulesets are these. Kept for the whole
+    process because the index is the same free rules for everyone; it must become
+    per-campaign when a campaign's own shared rulebook can add names (isolation)."""
     return Spotter.from_pool(index.srd().names_pool(target, fallback))
 
 

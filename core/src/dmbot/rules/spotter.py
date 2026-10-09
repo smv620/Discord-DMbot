@@ -6,10 +6,12 @@ and fallback rulesets. Longest name first ("Hold Person" before "Hold"), a plura
 same name ("goblins"), and a name is never found inside another word.
 
 Plenty of names are everyday words. Said alone, "light", "fly", "shield", "bat", "prone"
-would show a card every minute for nothing, so `EVERYDAY` lists them and they only count
-with a lead-in: "cast", "casts" or "casting" in front of any of them, or "is" and its kin in
-front of a condition ("the goblin is grappled"). Hold Person, Fireball and the like are not
-everyday words and need nothing.
+would show a card every minute for nothing, and a false card counts as a bug, so `EVERYDAY`
+lists them and they only count with a lead-in: "cast", "casts" or "casting" right before a
+spell, or "is", "are", "was" or "were" right before a condition ("the goblin is grappled").
+A creature with an everyday name (Wolf, Bat, Guard, Nightmare) never gets a card from the
+table: "cast" makes no sense in front of one, and the DM can look it up with 📖. Hold Person,
+Fireball and the like are not everyday words and need nothing.
 
 Pure: it reads a line and returns what it found. `dmbot.dm_screen.rules_cards` posts it.
 """
@@ -34,6 +36,9 @@ EVERYDAY: frozenset[str] = frozenset(
         "Levitate", "Light", "Mending", "Message", "Resistance", "Sanctuary", "Seeming",
         "Sending", "Shatter", "Shield", "Silence", "Sleep", "Slow", "Suggestion", "Symbol",
         "Teleport", "Web", "Weird", "Wish",
+        "Clone", "Maze", "Mislead", "Tongues", "Foresight", "Fabricate", "Regenerate",
+        "Resurrection", "Compulsion", "Contingency", "Hallow", "Sequester", "Tsunami",
+        "Time Stop", "Find Traps", "Rope Trick", "Major Image",
         # conditions: all of them are plain words
         "Blinded", "Charmed", "Deafened", "Exhaustion", "Frightened", "Grappled",
         "Incapacitated", "Invisible", "Paralyzed", "Petrified", "Poisoned", "Prone",
@@ -46,15 +51,16 @@ EVERYDAY: frozenset[str] = frozenset(
         "Warhorse", "Weasel", "Wolf",
         "Assassin", "Bandit", "Commoner", "Cultist", "Druid", "Gladiator", "Guard", "Knight",
         "Mage", "Noble", "Pirate", "Priest", "Scout", "Spy", "Tough",
-        "Ghost", "Shadow",
+        "Ghost", "Shadow", "Nightmare", "Solar", "Veteran", "Mimic", "Sprite", "Skeleton",
+        "Unicorn", "Roper", "Tough Boss", "Sea Horse",
     }
 )  # fmt: skip
 
-LEAD_CAST = frozenset({"cast", "casts", "casting"})  # in front of any everyday name
-LEAD_IS = frozenset({"is", "are", "was", "were", "be", "been", "being", "gets", "got"})
+LEAD_CAST = frozenset({"cast", "casts", "casting"})  # in front of an everyday spell
+LEAD_IS = frozenset({"is", "are", "was", "were"})  # in front of a condition: "is grappled"
 WORDS_BEFORE = 3  # words of what was said shown before the name, and after it:
 WORDS_AFTER = 2
-HEARD_MAX = 120
+HEARD_WINDOW_MAX = 120
 
 _WORD = re.compile(r"[A-Za-z0-9’']+")
 _EVERYDAY_KEYS: frozenset[str] = frozenset(normalize(name) for name in EVERYDAY)
@@ -121,7 +127,7 @@ class Spotter:
                     continue
                 if not _matches(tokens, i, words):
                     continue
-                if not _allowed(entry, tokens, i):
+                if not _allowed(entry, " ".join(words), tokens, i):
                     continue
                 return n, entry
         return None
@@ -149,14 +155,17 @@ def _matches(tokens: list[tuple[int, int, str]], i: int, words: tuple[str, ...])
     return True
 
 
-def _allowed(entry: Entry, tokens: list[tuple[int, int, str]], i: int) -> bool:
-    """An everyday name only counts after its lead-in."""
-    if normalize(entry.name) not in _EVERYDAY_KEYS:
+def _allowed(entry: Entry, key: str, tokens: list[tuple[int, int, str]], i: int) -> bool:
+    """An everyday name counts only after its lead-in; an everyday creature never. The name
+    it was said as (`key`, which can be an older name) is checked as well as the entry's."""
+    if key not in _EVERYDAY_KEYS and normalize(entry.name) not in _EVERYDAY_KEYS:
         return True
+    if entry.kind == "monster":
+        return False
     before = tokens[i - 1][2] if i > 0 else ""
-    if before in LEAD_CAST:
-        return True
-    return entry.kind == "condition" and before in LEAD_IS
+    if entry.kind == "condition":
+        return before in LEAD_IS or before in LEAD_CAST
+    return before in LEAD_CAST
 
 
 def _said(line: str, tokens: list[tuple[int, int, str]], i: int, length: int) -> tuple[str, str]:
@@ -166,7 +175,7 @@ def _said(line: str, tokens: list[tuple[int, int, str]], i: int, length: int) ->
     said = line[start:end]
     lo = max(0, i - WORDS_BEFORE)
     hi = min(len(tokens), i + length + WORDS_AFTER)
-    room = max(0, HEARD_MAX - len(said))
+    room = max(0, HEARD_WINDOW_MAX - len(said))
     first = max(tokens[lo][0], start - room // 2)
     last = min(tokens[hi - 1][1], end + room - room // 2)
     heard = line[first:last]
