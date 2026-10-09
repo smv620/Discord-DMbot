@@ -1234,7 +1234,10 @@ reads the campaign memory and never changes it.
        says: Quiet** it is not made. Measured: real mishearings sit at 0.91 to 0.94
        ("Gorak" for Gorrak, "Rothgar" for Hrothgar, "Belle Ross" for Belleros), the
        look-alike pairs of names-stress at 0.83 ("Isolde"/Ysolde, "Cedric"/Cerric). The
-       one-word rules (the name in the scene, 0.8) are unchanged.
+       one-word rules (the name in the scene, 0.8) are unchanged. 0.9 was measured on
+       about six pairs: revisit it with the twin when more real mishearings are on
+       record. A one-letter slip in a short name scores about 0.83 to 0.86, so it is
+       noted, never silent.
     3. **Once the DM confirms a name it is known.** "Isolda" confirmed next to Ysolde is
        never rewritten; "Isolde", sounding like both, is asked about, never made Ysolde.
   - "Did they mean…?" and Undo appear **only in the DM screen**, never in the transcript

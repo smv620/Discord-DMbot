@@ -270,7 +270,9 @@ def _not_a_second_person(
     Ysolde in the line, "Isolde" is another person, not a mishearing of her (#573)."""
     if not fixes and not asking:
         return fixes, asking  # the usual line: nothing to check, so no second search
-    said = {found.entity_id for found in find_mentions(lookup, heard, typed_names=True)}
+    # Without "'s": "Ysolde's student Isolde" names Ysolde (only entity IDs are used here).
+    plain = re.sub(r"['’]s\b", "", heard)
+    said = {found.entity_id for found in find_mentions(lookup, plain, typed_names=True)}
     if not said:
         return fixes, asking
     kept_questions = []

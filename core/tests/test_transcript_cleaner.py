@@ -257,6 +257,42 @@ class TrapsTest(unittest.TestCase):
             result = clean(self.ysolde(), heard, scene=everyone)
             self.assertEqual((result.text, result.fixes), (heard, ()), heard)
 
+    def test_the_same_line_rule_sees_possessives_and_other_names_of_her(self) -> None:
+        everyone = EVERYONE | {YSOLDE}
+        names = lookup(
+            more=(entity(YSOLDE, "Ysolde"),),
+            more_aliases=(alias(YSOLDE, "Ysolde"), alias(YSOLDE, "Sister Anne")),
+        )
+        for heard in (
+            "Ysolde's student Isolde sings.",  # a possessive, with either apostrophe
+            "Ysolde’s student Isolde sings.",
+            "Sister Anne met Isolde today.",  # another name of the same person
+        ):
+            result = clean(names, heard, scene=everyone)
+            self.assertEqual((result.text, result.fixes), (heard, ()), heard)
+
+    def test_a_secret_name_in_the_line_changes_nothing(self) -> None:
+        names = lookup(
+            more=(entity(YSOLDE, "Ysolde"),),
+            more_aliases=(alias(YSOLDE, "Ysolde"), alias(YSOLDE, "Isolda", secret=True)),
+        )
+        heard = "Today Isolde walks with Ysolde."
+        result = clean(names, heard, scene=EVERYONE | {YSOLDE})
+        self.assertEqual((result.text, result.fixes, result.questions), (heard, (), ()))
+
+    def test_a_question_keeps_asking_while_two_options_are_left(self) -> None:
+        extra = {"i" * 32: "Isolda", "j" * 32: "Isolt", "k" * 32: "Ysolde"}
+        names = lookup(
+            more=tuple(entity(e, n) for e, n in extra.items()),
+            more_aliases=tuple(alias(e, n) for e, n in extra.items()),
+        )
+        everyone = EVERYONE | set(extra)
+        (asked,) = clean(names, "Today I met Isolde in town.", scene=everyone).questions
+        self.assertEqual({n for _, n in asked.options}, {"Isolda", "Ysolde", "Isolt"})
+        # Ysolde is in the line: she is not an option, but two others still are.
+        (left,) = clean(names, "Ysolde and Isolde talk.", scene=everyone).questions
+        self.assertEqual({n for _, n in left.options}, {"Isolda", "Isolt"})
+
     def test_a_close_look_alike_alone_is_fixed_with_a_note_not_silently(self) -> None:
         # 0.83 alike: possibly a mishearing, possibly someone new, so the DM can Undo.
         result = clean(
