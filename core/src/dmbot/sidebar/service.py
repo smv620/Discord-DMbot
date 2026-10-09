@@ -79,8 +79,24 @@ CANT_DM = (
     "I couldn't message you the answer privately. Allow direct messages from this server "
     "(server name, then Privacy Settings), then ask again."
 )
-HOUSE_SENT = "Sent to your DM screen to save."
-HOUSE_AGAIN = "I can't offer another house rule just yet. Try again in a minute."
+HOUSE_SENT = "It's on your DM screen now. Press **Save** to keep it. Nothing is saved until you do."
+HOUSE_SOON = (
+    "One house rule a minute, and your last one is on your DM screen. Try again in a minute."
+)
+HOUSE_REPEAT = "I already offered that house rule in this game. Look on your DM screen."
+HOUSE_NOT_NOW = (
+    "I can't offer that right now. Check that the game is still running, "
+    "then type your house rule again."
+)
+HOUSE_NO_SESSION = (
+    "No game is running with you as DM. Start one with /dmbot start, "
+    "then type your house rule again."
+)
+HOUSE_NOT_AGREED = (
+    "First, agree to be recorded with the button below. Then type your house rule again. "
+    "I didn't keep what you typed."
+)
+HOUSE_WHICH = "Which game is this house rule for?"
 WHICH = "Which game is this for?"
 SLOW_DOWN = "That's a lot of questions. Try again in a minute."
 TYPE_INSTEAD = "I can only read typed questions and voice messages."
@@ -131,7 +147,7 @@ class Host(Protocol):
     def sidebar_save(self, table: Table, line: Line) -> None: ...
     def sidebar_stt(self) -> str: ...  # the speech-to-text in use: "engine model host"
     async def sidebar_tell_screen(self, table: Table, text: str) -> None: ...
-    def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> bool: ...
+    def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> str: ...
 
 
 Reply = Callable[[str], Awaitable[bool]]
@@ -212,7 +228,9 @@ class SidebarService:
                 with contextlib.suppress(discord.HTTPException):
                     await message.channel.send(TYPE_INSTEAD, allowed_mentions=NO_PINGS)
             return
-        if typed and house_voice.find(typed) is not None:
+        # (a rule of fewer than two words isn't one: it is read as any other message)
+        typed = typed[:MESSAGE_LIMIT]
+        if typed and not typed.endswith("?") and house_voice.find(typed) is not None:
             await self._house_rule_message(message, typed)  # no AI, so no answer engine needed
             return
         if typed and not _is_question(typed):
@@ -257,7 +275,7 @@ class SidebarService:
         tables = self.tables_of(user_id)
         if not tables:
             if user_id in self._known_dms and self._note_ok(user_id, "nosession"):
-                await reply(NO_SESSION)
+                await reply(HOUSE_NO_SESSION)
             return
 
         async def propose(table: Table) -> None:
@@ -266,30 +284,41 @@ class SidebarService:
         if len(tables) == 1:
             await propose(tables[0])
             return
-        await message.channel.send(
-            WHICH, view=_PickView(self, tables, message, reply, propose), allowed_mentions=NO_PINGS
-        )
+        if not self._note_ok(user_id, "which"):  # (each picker holds its message for 5 minutes)
+            return
+        view = _PickView(self, tables, message, reply, propose, HOUSE_NO_SESSION)
+        await message.channel.send(HOUSE_WHICH, view=view, allowed_mentions=NO_PINGS)
 
     async def _house_rule_for(
         self, table: Table, message: discord.Message, typed: str, reply: Reply
     ) -> None:
         user_id = message.author.id
-        if not await self._agreed(table, message, reply):
+        if not await self._agreed(table, message, reply, HOUSE_NOT_AGREED):
             return
         if not self._still(table, user_id):
-            await reply(NO_SESSION)
+            await reply(HOUSE_NO_SESSION)
             return
-        started = self.host.sidebar_house_rule(table, user_id, typed[:MESSAGE_LIMIT])
-        await reply(HOUSE_SENT if started else HOUSE_AGAIN)
+        result = self.host.sidebar_house_rule(table, user_id, typed)
+        if result != house_voice.STARTED and not self._note_ok(user_id, "house-no"):
+            return  # the refusals are said once in a while, not for every message
+        await reply(
+            {
+                house_voice.STARTED: HOUSE_SENT,
+                house_voice.TOO_SOON: HOUSE_SOON,
+                house_voice.REPEAT: HOUSE_REPEAT,
+            }.get(result, HOUSE_NOT_NOW)
+        )
 
-    async def _agreed(self, table: Table, message: discord.Message, reply: Reply) -> bool:
+    async def _agreed(
+        self, table: Table, message: discord.Message, reply: Reply, ask: str = NOT_AGREED
+    ) -> bool:
         """Has the DM agreed to be recorded? If not, say so (and ask) once in a while."""
         user_id = message.author.id
         if self.host.sidebar_has_consent(table.guild_id, user_id):
             return True
         if self._note_ok(user_id, "agree"):
             text, view = self.host.consent_request(table)
-            await reply(NOT_AGREED)
+            await reply(ask)
             try:
                 await message.channel.send(text, view=view, allowed_mentions=NO_PINGS)
             except discord.HTTPException:
@@ -599,11 +628,13 @@ class _PickView(discord.ui.View):
         message: discord.Message,
         reply: Reply,
         after: Callable[[Table], Awaitable[None]] | None = None,
+        no_session: str = NO_SESSION,
     ) -> None:
         super().__init__(timeout=300)
         self._service = service
         self._message = message
         self._reply = reply
+        self._no_session = no_session
         # What happens for the game picked: a question by default (a house rule, #960)
         self._after = after or (lambda table: service._from_message(table, message, reply))
         self._by_id = {t.campaign_id: t for t in tables if t.campaign_id}
@@ -634,6 +665,6 @@ class _PickButton(discord.ui.Button["_PickView"]):
         view.stop()
         live = table is not None and view._service.host.tables.get(table.guild_id) is table
         if table is None or not live or not _is_dm(table, interaction.user.id):
-            await view._reply(NO_SESSION)
+            await view._reply(view._no_session)
             return
         await view._after(table)

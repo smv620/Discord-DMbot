@@ -2267,24 +2267,29 @@ class DMBot(commands.AutoShardedBot):
         card_id = table.rules.remember(mention, time.monotonic())
         self._track(self._post_rules_card(table, user_id, mention, card_id, before), "rules-card")
 
-    def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> bool:
+    def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> str:
         """A house rule typed to DMbot in the DM's private chat (#960): the same proposal,
-        limits and checks as one said aloud. False if none was started."""
+        limits and checks as one said aloud. Says what happened (`house_voice.STARTED`,
+        TOO_SOON, REPEAT or NOT_NOW)."""
         return self._note_house_rule(table, user_id, text, typed=True)
 
     def _note_house_rule(
         self, table: Table, user_id: int, line: str, *, typed: bool = False
-    ) -> bool:
+    ) -> str:
         """A DM's line that starts "house rule: …" and the like (#953): offer to write it
         down, on the DM screen only. No AI. Nothing is saved without a DM pressing Save.
-        One proposal a minute; the same words once a session. True if one was started."""
+        One proposal a minute; the same words once a session. Says if one was started."""
         if not table.listening or self.tables.get(table.guild_id) is not table:
-            return False
-        if user_id not in table.dm_user_ids:
-            return False
-        said = table.house_voice.pick(house_voice.find(line), time.monotonic())
-        if said is None or table.campaign_id is None:
-            return False
+            return house_voice.NOT_NOW
+        if user_id not in table.dm_user_ids or table.campaign_id is None:
+            return house_voice.NOT_NOW
+        found = house_voice.find(line)
+        if found is None:  # (too few words to be a rule)
+            return house_voice.NOT_NOW
+        now_s = time.monotonic()
+        said = table.house_voice.pick(found, now_s)
+        if said is None:
+            return table.house_voice.why_not(found, now_s)
         proposal_id, now, before = (
             house_voice_screen.new_id(),
             time.monotonic(),
@@ -2301,7 +2306,7 @@ class DMBot(commands.AutoShardedBot):
             self._post_house_proposal(table, user_id, proposal_id, proposal, before, now),
             "house-rule-voice",
         )
-        return True
+        return house_voice.STARTED
 
     async def _post_house_proposal(
         self,

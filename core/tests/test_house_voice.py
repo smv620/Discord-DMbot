@@ -492,7 +492,7 @@ class Typed(TableTest):
             self.table, DM, "house rule: potions are a bonus action"
         )
         await self.settle()
-        self.assertTrue(started)
+        self.assertEqual(started, "started")
         (post,) = self.posts
         self.assertEqual(post[0], SCREEN)
         self.assertEqual(
@@ -505,17 +505,19 @@ class Typed(TableTest):
 
     async def test_the_limits_are_shared_with_what_is_said_aloud(self) -> None:
         await self.deliver("house rule: potions are a bonus action")
-        self.assertFalse(self.bot.sidebar_house_rule(self.table, DM, "house rule: no flanking"))
+        soon = self.bot.sidebar_house_rule(self.table, DM, "house rule: no flanking")
+        self.assertEqual(soon, "too-soon")
         self.rewind()
-        self.assertFalse(  # the same words once a session, however they came
-            self.bot.sidebar_house_rule(self.table, DM, "House rule: potions are a bonus action.")
+        repeat = self.bot.sidebar_house_rule(  # the same words once a session, however they came
+            self.table, DM, "House rule: potions are a bonus action."
         )
+        self.assertEqual(repeat, "repeat")
 
     async def test_a_player_or_a_finished_session_starts_nothing(self) -> None:
         text = "house rule: potions are a bonus action"
-        self.assertFalse(self.bot.sidebar_house_rule(self.table, PLAYER, text))
+        self.assertEqual(self.bot.sidebar_house_rule(self.table, PLAYER, text), "not-now")
         self.table.listening = False
-        self.assertFalse(self.bot.sidebar_house_rule(self.table, DM, text))
+        self.assertEqual(self.bot.sidebar_house_rule(self.table, DM, text), "not-now")
         self.assertEqual(self.posts, [])
 
 

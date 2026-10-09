@@ -509,7 +509,10 @@ alerts yet; those build on this.
   with the same buttons, limits (shared with what is said aloud) and conflict check, and the
   rule's "scenario" reads "Typed by the DM, <date>". It is not a sidebar question: no AI, no
   `[DM Sidebar]` line, nothing written to the transcript, and it works even while quick
-  answers are switched off. The reply is one line: "Sent to your DM screen to save." The
+  answers are switched off. The reply is short and says to press Save ("nothing is saved until
+  you do"); if it can't offer one it says why (a minute apart; already offered). A message that
+  starts with one of the phrases is a house rule, unless it ends in a question mark (then it
+  is a question for the sidebar, as before). The
   DM must have agreed to be recorded (else they are asked), and with several running games
   they pick which one by button. The bot still doesn't read messages in servers (narrowest
   intents); the **Add a house rule** form in `/dmbot houserules` is the other typed way.
