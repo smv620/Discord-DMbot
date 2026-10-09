@@ -244,3 +244,12 @@ class HelpText(unittest.TestCase):
         self.assertIn(f"**{STOP_LABEL}**", HELP_TEXT)
         self.assertIn("anyone in this server can read", HELP_TEXT.lower())
         self.assertIn("/consent give", HELP_TEXT)  # the fallback stays documented
+
+
+class UploadLimit(unittest.TestCase):
+    def test_a_boosted_server_takes_more_and_never_less_than_ten_megabytes(self) -> None:
+        from dmbot.ui import logic
+
+        self.assertEqual(logic.upload_limit(50 * 1024 * 1024), 50 * 1024 * 1024)
+        self.assertEqual(logic.upload_limit(8 * 1024 * 1024), logic.FILE_MAX)
+        self.assertEqual(logic.upload_limit(0), logic.FILE_MAX)

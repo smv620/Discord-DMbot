@@ -1010,7 +1010,13 @@ names panel nor the speech-to-text hints can be a fixed list.
     day on #598 because the per-line cap alone leaves one name able to gather tens of
     thousands of other names across lines, **at most 50 other names and 50 secret
     names per name and 5,000 other and secret names per upload**, counting only what
-    the upload adds so a Download all file always uploads again). **Names only:** lines with
+    the upload adds so a Download all file always uploads again). **A campaign too big
+    for one upload (over 2,000 lines or 256 KB) downloads as several files** (decided
+    2026-10-09, #685), named `names-01-of-12-…` (the number first, padded so they sort): each is within the
+    limits above counting its `#` notes, holds whole names (a name on several lines is
+    never split), starts with the instructions and a line saying it is one of N files that
+    can each be added on its own, in any order; the
+    ten files Discord takes in a message go ten to a message. **Names only:** lines with
     descriptions or other columns are refused as unclear, and DMbot never offers
     ready-made sourcebook name lists (IP rule). It writes only into the chosen
     campaign, through the normal memory rules (checks, change log), **saved in one go**
@@ -1281,6 +1287,29 @@ reads the campaign memory and never changes it.
 
   - **Only confirmed names and aliases can make a silent (high) fix.** A proposed name
     reaches at most medium, which always shows Undo.
+  - **A look-alike is not always a mishearing (decided 2026-10-09, #573).** Three rules
+    keep the Cleaner from merging two people into one:
+    1. **Two people in one line:** a look-alike word is never made into a name the same
+       line already says. With Ysolde in the line, "Isolde" stays "Isolde" (it is a
+       second person); the same holds for the options in a "Did they mean…?".
+    2. **Silent only when near-certain.** A fix by sound is silent only when the heard
+       word is spelled at least **0.95** alike to the name (`NEAR_CERTAIN`). Below that
+       (and above the old bars of 0.7 joined, 0.8 one word) it is a **medium** fix:
+       made, with a note and Undo in "✏️ Name fixes to check". With **How much DMbot
+       says: Quiet** it is not made. Measured on names-stress and the tests: a new
+       name that looks like a known one scores 0.83 ("Isolde"/Ysolde, "Cedric"/Cerric)
+       up to 0.93 ("Rothgar"/Hrothgar, which names-stress calls the likeliest wrong fix),
+       and a likely mishearing of a known name 0.91 to 0.94 ("Gorak"/Gorrak, "Beleros",
+       "Belle Ross"). The ranges overlap, so only near-identical spellings (0.95 and up)
+       stay silent; the rest are noted, and the DM decides. The cost is a few more lines
+       in "✏️ Name fixes to check". Under **Quiet**, noted fixes are not made, so
+       sound-alike names are left as heard: that is what Quiet promises (fewer misheard
+       names get fixed, no notes). The one-word rules (the name in the scene, 0.8) are
+       unchanged. This rests on about a dozen pairs: revisit it with the twin when more
+       real mishearings are on record. A one-letter slip in a short name scores about
+       0.83 to 0.86.
+    3. **Once the DM confirms a name it is known.** "Isolda" confirmed next to Ysolde is
+       never rewritten; "Isolde", sounding like both, is asked about, never made Ysolde.
   - "Did they mean…?" and Undo appear **only in the DM screen**, never in the transcript
     channel. The question leads with what was heard: "❓ **Mia said "Bell or us"**: did
     they mean… [Belleros] [Bellamy] [Type it…] [Keep as heard]". At most 3 options.
@@ -1432,7 +1461,8 @@ consent check just made still holds:
 - **Fixes with Undo (decided 2026-10-07 on #296):**
   - **Which fixes:** a misheard word that sounds like a name DMbot only *suggested*
     (spelled at least 0.9 alike, never secret, not next to a secret name) is fixed,
-    but never silently.
+    but never silently. So is a close look-alike of a *confirmed* name spelled less than
+    0.95 alike (decided on #573, see the Cleaner's "look-alike" rules above).
   - **Where they show:** only in the DM screen, in one "✏️ Name fixes to check" message
     edited in place: "DMbot changed these words in the transcript but isn't sure.
     Wrong? Press its Undo to put back what was heard." One numbered line and one
@@ -1639,10 +1669,38 @@ the internet through a Cloudflare Tunnel (`cloudflared` in compose, outbound onl
 published ports, so `CF-Connecting-IP` can be trusted), and until the customer website
 goes live (#498) the tunnel opens only `^/admin(/|$)`: Discord sign-in, `/me`, billing and
 the webhook stay closed. The admin page is served from the development branch's build at
-`dev.getdmbot.com` (noindex), because `main` is far behind and the admin cookie is only
-sent when the page and `api.getdmbot.com` share a site. When the site goes live,
+`dev.getdmbot.com` (noindex), because the admin cookie is only sent when the page and
+`api.getdmbot.com` share a site. *Corrected 2026-10-09 (#833):* the Cloudflare Pages
+project's production branch is `development`, so until go-live getdmbot.com, www and
+dev.getdmbot.com all serve that one build (noindex, the real API, admin paths only);
+`PUBLIC_DEV_API_BASE` is set for Production too. At go-live (#498) production moves to
+`main` after a promotion and `dev.getdmbot.com` moves to the `development` preview (with
+a bypass for Pages' preview login). When the site goes live,
 `WEB_SITE_URL` becomes `getdmbot.com` and the path limit comes off. Built in #836 (tunnel)
 and #837 (the dev site's API address).
+
+**The hours meter (#437 part 2), decided 2026-10-09 with Supervisor, built in slices.**
+*2a, recording:* listening minutes are written once a minute while a session runs and once
+more, rounded up, when it stops (a restart carries on from what is stored and counts none
+twice). Two tables, so no query crosses servers: `session_usage` (per campaign and
+session, server-isolated, deleted with the campaign; one row per owner the session had)
+and `owner_hours` (`owner_user_id`, `month_start`, `minutes`: numbers only, scoped to the
+owner like `entitlements`, readable by that owner across servers, written only through
+`Database.meter()`, which sets the server and the owner for that one write). Minutes count
+toward whoever owns the campaign when each is recorded, so a hand-over mid-session moves
+the later minutes; a campaign with no owner records nothing. `owner_hours` is not a
+campaign's data and never goes into a backup. Only time DMbot is actually listening counts: a restart gap is never billed (a resumed session adds to the minutes already stored, from the moment it is picked up again), and minutes while a campaign has no owner are kept in its session record under "nobody" and billed to no one, so whoever takes it on is billed only from then. The month: a paid plan's billing period;
+Try It its 30 days; a grant that is Guild-level, calendar months from the day it started
+(a 29th to 31st start falls on the month's last day); a grant overlapping a paid plan, the
+paid plan's month; the free list and "no limits" grants are recorded but
+never limited, in UTC calendar months. *2b, the checks (next):* `/dmbot start` refuses when the
+plan has ended, hours are used up or owned campaigns are over the cap ("paused" waits for
+the downgrade part); warnings at 80% and 90%; the cap finish. All of 2b acts only when
+`DMBOT_ENFORCE_PLANS` is on (default off; the meter records either way), which dev1 turns
+on with the website's go-live (#498) and notes in the testing log. The refusal for a plan
+that has ended says "Your plan has ended. Pick one at <WEB_SITE_URL>/account." (or "Pick
+one on DMbot's website." while it isn't set), shown only to the DM, never in public, and
+never telling anyone else why.
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find

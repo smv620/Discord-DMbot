@@ -4,7 +4,7 @@ import re
 import unittest
 from pathlib import Path
 
-from dmbot.devtools.replay.names import load_known
+from dmbot.devtools.replay.names import clean_lines, load_known
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import lookup_key
 from dmbot.memory.name_list import parse
@@ -27,6 +27,62 @@ def lines() -> dict[int, str]:
 def said(name: str, numbers: range) -> int:
     text = " ".join(lines()[n] for n in numbers)
     return len(re.findall(rf"\b{re.escape(name)}\b", text))
+
+
+class CleanerOnTheScriptTests(unittest.TestCase):
+    """What the real Cleaner does to the script's own lines, and to the lines as the
+    speech-to-text is likeliest to write them (#573)."""
+
+    def clean(self, *heard: str) -> list[str]:
+        return clean_lines(load_known(NAMES), [(i * 5.0, text) for i, text in enumerate(heard)])
+
+    def test_the_script_as_said_is_left_alone(self) -> None:
+        said_lines = [lines()[n] for n in range(1, 43)]
+        self.assertEqual(self.clean(*said_lines), said_lines)
+
+    def test_isolde_next_to_ysolde_stays_another_person(self) -> None:
+        heard = [
+            "The healer Ysolde has a student called Isolde.",
+            "Today Isolde heals the wounded, and Ysolde rests.",
+        ]
+        self.assertEqual(self.clean(*heard), heard)  # was: Isolde written as Ysolde
+
+    def test_rothgar_next_to_hrothgar_stays_another_person(self) -> None:
+        heard = [
+            "The blacksmith Hrothgar has a rival named Rothgar.",  # line 32, Hrothgar first
+            "Every market day, Rothgar sells cheaper shields than Hrothgar.",
+        ]
+        self.assertEqual(self.clean(*heard), heard)  # was: Hrothgar sells... than Hrothgar
+
+    def test_a_lone_rothgar_is_noted_not_silent(self) -> None:
+        from dmbot.transcript.cleaner import Vocabulary, clean
+
+        known = load_known(NAMES)
+        hrothgar = next(iter(known.lookup.by_key["hrothgar"])).entity_id
+        result = clean(
+            known.lookup,
+            "I think Rothgar sells shields.",
+            vocabulary=Vocabulary(),
+            scene={hrothgar},  # Hrothgar was said a moment ago, in another line
+        )
+        self.assertEqual([(f.heard, f.written, f.sure) for f in result.fixes],
+                         [("Rothgar", "Hrothgar", False)])  # fmt: skip
+        self.assertEqual(result.text, "I think Hrothgar sells shields.")  # noted, with Undo
+
+    def test_a_real_mishearing_is_still_fixed(self) -> None:
+        self.assertEqual(
+            self.clean("Then Belle Ross casts a spell.", "We meet Kazeth at dawn."),
+            ["Then Belleros casts a spell.", "We meet Ka'zeth at dawn."],
+        )
+
+    def test_which_fixes_are_silent_and_which_are_noted(self) -> None:
+        from dmbot.transcript.cleaner import clean
+
+        lookup = load_known(NAMES).lookup
+        (belle,) = clean(lookup, "Then Belle Ross casts a spell.").fixes
+        self.assertEqual((belle.written, belle.sure), ("Belleros", False))  # 0.94: noted
+        (kazeth,) = clean(lookup, "We meet Kazeth at dawn.").fixes
+        self.assertEqual((kazeth.written, kazeth.sure), ("Ka'zeth", True))  # same letters
 
 
 class NamesStressTests(unittest.TestCase):
