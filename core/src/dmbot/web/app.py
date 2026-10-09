@@ -428,7 +428,9 @@ def create_app(
 
     async def answer_offer(signed: tuple[Session, str], ref: str, what: offers.Answer) -> Response:
         session, _token = signed
-        outcome = await offers.answer(db, session, ref, what, now=clock())
+        outcome = await offers.answer(
+            db, session, ref, what, now=clock(), enforce_plans=settings.enforce_plans
+        )
         if outcome == "no_free_slot":
             raise HTTPException(status_code=409, detail="no_free_slot")
         if outcome == "gone":

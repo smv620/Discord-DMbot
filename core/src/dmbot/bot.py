@@ -175,6 +175,7 @@ IDLE_SWEEP_INTERVAL_S = 1
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
+GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
@@ -1234,9 +1235,36 @@ class DMBot(commands.AutoShardedBot):
             return None
         return hours.campaigns_refusal(
             room.cap,
+            room.owned,
             is_owner=starter_id == owner,
             site_url=self.settings.site_url,
             can_change_plan=room.can_change_plan,
+        )
+
+    async def create_refusal(self, guild_id: int, user_id: int) -> str | None:
+        """Why this person may not make one more campaign, or None (#437 part 2c). Only when
+        DMBOT_ENFORCE_PLANS is on, and only for a plan that works and has a cap they are
+        already at: someone with no plan can make a campaign (they pick a plan to start it),
+        and making one past the cap would lock all their campaigns out of starting. Fails
+        open, like the start check. (Two made at the same instant could both pass; the start
+        check still refuses them until one is paused.)"""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S):
+                room = await self.meter.campaign_room(guild_id, user_id, int(time.time()))
+        except Exception:
+            log.exception("Couldn't count the person's campaigns; allowing it")
+            return None
+        if not room.works or room.cap is None or room.fits(1):
+            return None
+        return hours.campaigns_refusal(
+            room.cap,
+            room.owned,
+            is_owner=True,
+            site_url=self.settings.site_url,
+            can_change_plan=room.can_change_plan,
+            creating=True,
         )
 
     async def start_campaign_session(

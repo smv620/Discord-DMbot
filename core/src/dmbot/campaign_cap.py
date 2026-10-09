@@ -3,8 +3,9 @@ part 2c; docs/PLAN.md, "Plans and pricing").
 
 Campaigns are isolated per server, so "how many does this person own, in every server" is
 read from `owner_campaigns`: two ids per row, kept in step with `campaigns` by a trigger
-(dmbot.schema, 0034), readable only with the owner set. This is the one place that counts:
-the start check, the hand-over and take-over checks, and the restore check all ask here.
+(dmbot.schema, 0034), counted by a function that answers only for the person set. This is
+the one place that counts: the start check, the hand-over and take-over checks, and the
+restore check all ask here.
 "Owned" counts every campaign for now; pausing one comes with the downgrade part.
 """
 
@@ -34,14 +35,9 @@ class Room:
 
 async def owned_count(conn: Conn, user_id: int) -> int:
     """How many campaigns this person owns, in every server. Inside a transaction the
-    caller already has open; the person is set for this one read only."""
-    async with entitlements.as_person(conn, user_id):
-        cur = await conn.execute(
-            "SELECT count(*) AS n FROM owner_campaigns WHERE owner_user_id = %s", (user_id,)
-        )
-        row = await cur.fetchone()
-    assert row is not None  # an aggregate always gives a row
-    return int(row["n"])
+    caller already has open (the bot's meter door, or the website's own: the function is
+    callable from both)."""
+    return await entitlements.owned_campaigns(conn, user_id)
 
 
 async def room(conn: Conn, user_id: int, now: int) -> Room:

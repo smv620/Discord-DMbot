@@ -394,6 +394,10 @@ class NewCampaignSettings(_Menu):
         if guild is None:
             await _tell(interaction, NOT_IN_SERVER)
             return
+        refused = await _bot(interaction).create_refusal(guild.id, interaction.user.id)
+        if refused is not None:
+            await _tell(interaction, refused)  # the form stays, to come back to after a pause
+            return
         try:
             campaign = await _bot(interaction).campaigns.create(
                 guild.id,

@@ -211,31 +211,29 @@ def more_hours(site_url: str, buys_hours: bool = True, renews: bool = False) -> 
     return "Ask the campaign's owner what to do next."
 
 
-_ORDINALS = ("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth")
-
-
 def campaigns_refusal(
-    cap: int, *, is_owner: bool, site_url: str = "", can_change_plan: bool = False
+    cap: int,
+    owned: int,
+    *,
+    is_owner: bool,
+    site_url: str = "",
+    can_change_plan: bool = False,
+    creating: bool = False,
 ) -> str | None:
-    """The plain words for a start refused because the owner has more campaigns than their
-    plan covers (#437 part 2c), or what anyone else is told. Like `refusal`: only the owner
-    hears why; the change-your-plan offer only goes to a plan that can change; the link goes
-    last. "Pause one" is the way out the downgrade part brings."""
+    """The plain words for a start (or, with `creating`, a new campaign) refused because the
+    owner has more campaigns than their plan covers (#437 part 2c), or what anyone else is
+    told. Like `refusal`: only the owner hears why, with both numbers; the change-your-plan
+    offer only goes to a plan that can change; the link goes last. "Pause one" is the way
+    out the downgrade part brings."""
     if not is_owner:
         return START_BLOCKED
-    if cap <= 0:
-        which = "one"
-    elif cap < len(_ORDINALS):
-        ordinal = _ORDINALS[cap]  # the cap'th campaign is covered; the next one is refused
-        which = f"{'an' if ordinal[0] in 'aeiou' else 'a'} {ordinal}"
-    else:
-        which = "another one"
     noun = "campaign" if cap == 1 else "campaigns"
-    text = f"Your plan covers {cap} {noun}. To start {which}"
+    text = f"Your plan covers {cap} {noun}, and you have {owned}."
+    action = "To make a new one" if creating else "To start this one"
     if can_change_plan:
         where = f"here: {site_url}/account" if site_url else "on DMbot's website"
-        return f"{text}, pause one or change your plan {where}"
-    return f"{text}, pause one."
+        return f"{text} {action}, pause one or change your plan {where}"
+    return f"{text} {action}, pause one."
 
 
 def warning_text(

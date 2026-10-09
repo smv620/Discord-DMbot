@@ -250,7 +250,10 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
         it: Any = SimpleNamespace(
             guild=SimpleNamespace(id=GUILD),
             user=SimpleNamespace(id=DM),
-            client=SimpleNamespace(campaigns=SimpleNamespace(create=create)),
+            client=SimpleNamespace(
+                campaigns=SimpleNamespace(create=create),
+                create_refusal=AsyncMock(return_value=None),
+            ),
         )
         with patch.object(cmds, "show_voice_step", AsyncMock()):
             await view._create(it)
@@ -264,6 +267,22 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
                 "dm_screen_level": "quiet",
             },
         )
+
+    async def test_create_is_refused_past_the_plans_campaign_cap(self) -> None:
+        view = cmds.NewCampaignSettings("Frostmaiden")
+        create = AsyncMock()
+        it = fake_interaction(
+            SimpleNamespace(  # type: ignore[arg-type]
+                campaigns=SimpleNamespace(create=create),
+                create_refusal=AsyncMock(
+                    return_value="Your plan covers 2 campaigns, and you have 2."
+                ),
+            )
+        )
+        await view._create(it)
+        create.assert_not_awaited()  # nothing is made, and the form stays up
+        self.assertIn("Your plan covers 2 campaigns", it.response.sent[0][0])
+        self.assertFalse(view.is_finished())
 
 
 class AnswerBeforeTheLock(unittest.IsolatedAsyncioTestCase):

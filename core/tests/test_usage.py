@@ -529,9 +529,38 @@ class PlanChecks(UsageTest):
         await self.valid_plan(campaign_cap=1)  # the owner has two (UsageTest makes them)
         self.assertEqual(
             await self.refusal(),
-            "Your plan covers 1 campaign. To start a second, pause one or change your plan "
-            f"here: {self.SITE}/account",
+            "Your plan covers 1 campaign, and you have 2. To start this one, pause one or "
+            f"change your plan here: {self.SITE}/account",
         )
+
+    async def test_making_a_campaign_past_the_cap_is_refused(self) -> None:
+        await self.valid_plan(campaign_cap=2)  # the owner has two already
+        self.assertEqual(
+            await self.bot.create_refusal(GUILD_A, OWNER),
+            "Your plan covers 2 campaigns, and you have 2. To make a new one, pause one or "
+            f"change your plan here: {self.SITE}/account",
+        )
+
+    async def test_making_a_campaign_with_room_is_allowed(self) -> None:
+        await self.valid_plan(campaign_cap=3)
+        self.assertIsNone(await self.bot.create_refusal(GUILD_A, OWNER))
+
+    async def test_making_a_campaign_is_not_refused_without_a_plan_or_with_no_cap(self) -> None:
+        # No plan yet: they can set one up and pick a plan to start it. The free list has no cap.
+        self.assertIsNone(await self.bot.create_refusal(GUILD_A, OWNER))
+        entitlements.configure_free_users([OWNER])
+        self.assertIsNone(await self.bot.create_refusal(GUILD_A, OWNER))
+
+    async def test_making_a_campaign_is_not_checked_when_plans_are_not_enforced(self) -> None:
+        await self.valid_plan(campaign_cap=2)
+        off = self.make_bot(enforce=False)
+        self.assertIsNone(await off.create_refusal(GUILD_A, OWNER))
+
+    async def test_a_failing_count_lets_a_campaign_be_made(self) -> None:
+        await self.valid_plan(campaign_cap=2)
+        broken = patch.object(usage.Meter, "campaign_room", new=AsyncMock(side_effect=OSError()))
+        with broken, self.assertLogs("dmbot.bot", "ERROR"):
+            self.assertIsNone(await self.bot.create_refusal(GUILD_A, OWNER))
 
     async def test_an_owner_at_the_cap_may_start_one_they_own(self) -> None:
         await self.valid_plan(campaign_cap=2)

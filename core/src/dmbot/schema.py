@@ -1249,6 +1249,37 @@ OWNER_CAMPAIGNS = (
     CREATE TRIGGER owner_campaigns_sync
         AFTER INSERT OR DELETE OR UPDATE OF owner_user_id ON campaigns
         FOR EACH ROW EXECUTE FUNCTION dmbot_sync_owner_campaigns();
+    -- A row trigger never sees TRUNCATE, which would leave the table counting campaigns that
+    -- are gone: so it is refused, and anything removing campaigns in bulk must use DELETE
+    -- (a server's removal does).
+    CREATE FUNCTION dmbot_refuse_campaigns_truncate() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        RAISE EXCEPTION 'Use DELETE on campaigns, not TRUNCATE (a trigger keeps owner_campaigns)';
+    END
+    $fn$;
+    CREATE TRIGGER campaigns_no_truncate
+        BEFORE TRUNCATE ON campaigns
+        FOR EACH STATEMENT EXECUTE FUNCTION dmbot_refuse_campaigns_truncate();
+
+    -- The one count anyone but the owner's own rows may see, for the website's accept of a
+    -- hand-over: its role has no grant on owner_campaigns, so it asks this. It returns only
+    -- how many campaigns the person set for this transaction owns (dmbot_current_user(), as
+    -- the table's own policy), takes no argument, and so cannot be pointed at anyone else.
+    CREATE FUNCTION dmbot_owned_campaigns() RETURNS BIGINT
+        LANGUAGE sql STABLE SECURITY DEFINER
+        AS $fn$
+        SELECT count(*) FROM owner_campaigns WHERE owner_user_id = dmbot_current_user()
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_owned_campaigns() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_owned_campaigns() FROM PUBLIC;
 
     -- The campaigns that exist now. Migrations run with no server set, so row-level security
     -- hides every row: the backfill opens the table it reads and the one it writes for

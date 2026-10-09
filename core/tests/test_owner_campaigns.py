@@ -345,24 +345,74 @@ class Enforced(OwnerCampaignsTest):
         self.assertEqual(await self.owned(ALICE), {a.id})
 
 
+class Door(OwnerCampaignsTest):
+    """The one way in: a count that answers only for the person set, the lock that makes
+    two checks for one person take turns, and the guard against TRUNCATE."""
+
+    async def test_the_second_check_for_one_person_waits_for_the_first(self) -> None:
+        # Deterministic (Supervisor, #927): the first check holds its transaction open inside
+        # `has_room_for_one_more`; the second must block on the per-person lock until the
+        # first commits, and then see the campaign the first one added. Without the lock the
+        # second returns at once, with the old count.
+        await self.give_plan(BOB, 1)
+        async with self.db.guild(GUILD_A) as one:
+            self.assertTrue(await campaign_cap.has_room_for_one_more(one, BOB, NOW))
+
+            async def second() -> bool:
+                async with self.db.guild(GUILD_B) as two:
+                    return await campaign_cap.has_room_for_one_more(two, BOB, NOW)
+
+            waiting = asyncio.ensure_future(second())
+            done, _ = await asyncio.wait({waiting}, timeout=0.5)
+            self.assertFalse(done, "the second check did not wait for the first")
+            await one.execute(
+                "INSERT INTO campaigns (id, guild_id, name, name_key, created_at,"
+                " target_ruleset, fallback_ruleset, owner_user_id)"
+                " VALUES ('c1', %s, 'N', 'n', 0, '2024', '2014', %s)",
+                (GUILD_A, BOB),
+            )
+        self.assertFalse(await asyncio.wait_for(waiting, 5))  # sees the new campaign: full
+
+    async def test_the_count_function_answers_only_for_the_person_set(self) -> None:
+        await self.store.create(GUILD_A, "Mine", ALICE)
+        await self.store.create(GUILD_B, "Bob's", BOB)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT dmbot_owned_campaigns() AS n")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)  # no person set: nobody's
+            self.assertEqual(await campaign_cap.owned_count(conn, ALICE), 1)
+            self.assertEqual(await campaign_cap.owned_count(conn, BOB), 1)
+            self.assertEqual(await campaign_cap.owned_count(conn, CAROL), 0)
+
+    async def test_the_person_switch_is_not_public(self) -> None:
+        self.assertFalse(hasattr(entitlements, "as_person"))
+
+    async def test_truncating_campaigns_is_refused(self) -> None:
+        await self.store.create(GUILD_A, "Mine", ALICE)
+        with self.assertRaisesRegex(pg_errors.RaiseException, "Use DELETE"):
+            async with self.db.guild(GUILD_A) as conn:
+                await conn.execute("TRUNCATE campaigns CASCADE")
+
+
 class Words(OwnerCampaignsTest):
-    def test_the_refusal_names_the_cap_and_the_way_out(self) -> None:
+    def test_the_refusal_names_the_cap_what_they_have_and_the_way_out(self) -> None:
         self.assertEqual(
             hours.campaigns_refusal(
-                2, is_owner=True, site_url="https://dmbot.example", can_change_plan=True
+                2, 3, is_owner=True, site_url="https://dmbot.example", can_change_plan=True
             ),
-            "Your plan covers 2 campaigns. To start a third, pause one or change your plan "
-            "here: https://dmbot.example/account",
+            "Your plan covers 2 campaigns, and you have 3. To start this one, pause one or "
+            "change your plan here: https://dmbot.example/account",
         )
         self.assertEqual(
-            hours.campaigns_refusal(1, is_owner=True, can_change_plan=True),
-            "Your plan covers 1 campaign. To start a second, pause one or change your plan "
-            "on DMbot's website",
+            hours.campaigns_refusal(1, 1, is_owner=True, can_change_plan=True, creating=True),
+            "Your plan covers 1 campaign, and you have 1. To make a new one, pause one or "
+            "change your plan on DMbot's website",
         )
 
     def test_a_plan_that_cant_change_is_not_offered_a_change(self) -> None:
-        text = hours.campaigns_refusal(3, is_owner=True)
-        self.assertEqual(text, "Your plan covers 3 campaigns. To start a fourth, pause one.")
+        text = hours.campaigns_refusal(3, 4, is_owner=True)
+        self.assertEqual(
+            text, "Your plan covers 3 campaigns, and you have 4. To start this one, pause one."
+        )
 
     def test_anyone_else_is_told_nothing_about_the_plan(self) -> None:
-        self.assertEqual(hours.campaigns_refusal(2, is_owner=False), hours.START_BLOCKED)
+        self.assertEqual(hours.campaigns_refusal(2, 3, is_owner=False), hours.START_BLOCKED)
