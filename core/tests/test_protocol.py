@@ -103,6 +103,13 @@ class ControlMessages(unittest.TestCase):
             ),
             Health(1, 2, 48, 50),
         )
+        self.assertEqual(
+            parse_ears_message(
+                '{"type":"health","guildId":"1","userId":"2","framesReceived":30,'
+                '"framesExpected":50,"decryptFailures":18,"decodeErrors":1,"linkDropped":4}'
+            ),
+            Health(1, 2, 30, 50, decrypt_failures=18, decode_errors=1, link_dropped=4),
+        )
 
     def test_rejects_invalid(self) -> None:
         for raw in [
@@ -122,6 +129,10 @@ class ControlMessages(unittest.TestCase):
             '{"type":"speaking","guildId":"1","userId":"x","event":"end","timestampMs":1}',
             '{"type":"speaking","guildId":"1","userId":"2","event":"later","timestampMs":1}',
             '{"type":"health","guildId":"1","userId":"2","framesReceived":-1,"framesExpected":1}',
+            '{"type":"health","guildId":"1","userId":"2","framesReceived":1,"framesExpected":1,'
+            '"decryptFailures":-1}',
+            '{"type":"health","guildId":"1","userId":"2","framesReceived":1,"framesExpected":1,'
+            '"linkDropped":"4"}',
             '{"type":"mystery"}',
         ]:
             self.assertIsNone(parse_ears_message(raw), raw)
@@ -141,6 +152,23 @@ class ControlMessages(unittest.TestCase):
 class HelloSecretHidden(unittest.TestCase):
     def test_secret_not_in_repr(self) -> None:
         self.assertNotIn("topsecret", repr(Hello(2, "topsecret")))
+
+
+class HealthFixture(unittest.TestCase):
+    def test_parses_what_ears_sends_with_every_count(self) -> None:
+        # The same JSON ears builds in ears/test/voice.test.ts.
+        parsed = parse_ears_message(json.dumps(FIXTURES["health"]["json"]))
+        self.assertEqual(
+            parsed, Health(111, 1001, 5, 23, decrypt_failures=4, decode_errors=1, link_dropped=2)
+        )
+
+    def test_a_null_count_is_zero_and_a_missing_one_too(self) -> None:
+        raw = {**FIXTURES["health"]["json"], "decryptFailures": None}
+        del raw["linkDropped"]
+        self.assertEqual(
+            parse_ears_message(json.dumps(raw)),
+            Health(111, 1001, 5, 23, decrypt_failures=0, decode_errors=1, link_dropped=0),
+        )
 
 
 class HelloFixture(unittest.TestCase):

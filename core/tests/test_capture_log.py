@@ -101,6 +101,21 @@ class CaptureLogTests(unittest.TestCase):
             "Capture check: 1 speaker(s); user 2: 1 x speech, 1.0 s, audio 40% (audio gaps)",
         )
 
+    def test_the_log_says_why_audio_went_missing(self) -> None:
+        # #43, #45: ears counts packets it couldn't decrypt or decode, and frames the busy
+        # link dropped. They are already out of "received"; the log line says which.
+        log = CaptureLog()
+        log.add_utterance(utt(1, 1.0))
+        log.add_health(1, 40, 50, decrypt_failures=8, decode_errors=1, link_dropped=1)
+        log.add_utterance(utt(2, 1.0))
+        log.add_health(2, 50, 50)
+        self.assertEqual(
+            log.log_line(),
+            "Capture check: 2 speaker(s); user 1: 1 x speech, 1.0 s, audio 80% (audio gaps) "
+            "(8 not decrypted, 1 decode errors, 1 dropped on the link); "
+            "user 2: 1 x speech, 1.0 s, audio 100%",
+        )
+
     def test_an_early_speaker_is_kept_and_a_complete_one_cleared(self) -> None:
         log = CaptureLog()
         log.add_health(1, 700, 1000)  # early: speech still being transcribed

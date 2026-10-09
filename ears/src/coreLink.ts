@@ -57,13 +57,15 @@ export class CoreLink extends EventEmitter<CoreLinkEvents> {
     if (this.isConnected) this.ws?.send(JSON.stringify(message));
   }
 
-  sendAudio(frame: Buffer): void {
+  /** Send one audio frame; false if it was dropped (no link, or too much waiting, #45). */
+  sendAudio(frame: Buffer): boolean {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > MAX_BUFFERED_BYTES) {
       this.droppedAudioFrames++;
-      return;
+      return false;
     }
     ws.send(frame, { binary: true });
+    return true;
   }
 
   private connect(): void {

@@ -81,6 +81,12 @@ interface SpeakerPipeline {
   retry?: NodeJS.Timeout; // a delayed re-listen
   warnedSilent: boolean; // logged "sending but nothing heard" for this pipeline
   silentPeriods: number; // watchdog periods in a row with packets arriving, none heard
+  /** Packets the voice library couldn't decrypt, not yet counted as lost (#43). */
+  undecrypted: number;
+  /** What this speaker's utterance lost, for the health report (#43, #45). */
+  decryptFailures: number;
+  decodeErrors: number;
+  linkDropped: number;
   failedTries: number; // tries since a packet was last heard: the step in RESUBSCRIBE_DELAYS_MS
 }
 
@@ -134,6 +140,8 @@ export class TableSession {
   private readonly warnedAt = new Map<string, number>();
   private lastDecryptLog = -Infinity;
   private decryptLinesSkipped = 0;
+  private decryptTurn = 0; // which of several speakers the next failed packet goes to
+  private strayDecryptFailures = 0; // failures while nobody who is recorded was sending
   private destroyed = false;
 
   constructor(private readonly options: TableSessionOptions) {
@@ -145,13 +153,13 @@ export class TableSession {
       adapterCreator: options.adapterCreator,
       selfDeaf: false, // must hear to transcribe
       selfMute: true, // the bot never speaks in voice
-      debug: options.debugAudio === true, // for the encryption handshake's lines (#631)
+      // Always on: the library says "Failed to decrypt a packet" only as a debug event, and
+      // that is how failed packets are counted (#43). Only its DAVE lines are ever used.
+      debug: true,
     });
-    if (options.debugAudio) {
-      this.connection.on("debug", (message: string) => {
-        this.onVoiceDebug(message);
-      });
-    }
+    this.connection.on("debug", (message: string) => {
+      this.onVoiceDebug(message);
+    });
 
     this.connection.receiver.speaking.on("start", (userId) => {
       this.onSpeakingStart(userId);
@@ -197,6 +205,12 @@ export class TableSession {
     if (this.destroyed) return;
     this.destroyed = true;
     for (const userId of [...this.speakers.keys()]) this.endSpeaker(userId, false);
+    if (this.options.debugAudio && this.strayDecryptFailures > 0) {
+      // Failed packets nobody recorded was sending for: a key change in the silence, say.
+      this.options.log.info(`dave: ${this.strayDecryptFailures} failed packet(s) with nobody recorded sending`, {
+        guildId: this.guildId,
+      });
+    }
     this.bots.clear();
     this.retries.clear();
     this.warnedAt.clear();
@@ -276,6 +290,10 @@ export class TableSession {
       accounted: Date.now(),
       warnedSilent: false,
       silentPeriods: 0,
+      undecrypted: 0,
+      decryptFailures: 0,
+      decodeErrors: 0,
+      linkDropped: 0,
       failedTries: 0,
     };
     this.speakers.set(userId, pipeline);
@@ -285,10 +303,17 @@ export class TableSession {
     pipeline.decoder.on("data", (pcm48k: Buffer) => {
       const now = Date.now();
       const pcm16k = pipeline.downsampler.push(pcm48k);
-      if (pcm16k.length > 0) link.sendAudio(encodeAudioFrame(this.guildId, userId, now, pcm16k));
+      // One decoder frame is one packet's audio, so one drop is one frame (an empty chunk,
+      // while the downsampler is still filling, is not a frame and is not sent).
+      if (pcm16k.length > 0 && !link.sendAudio(encodeAudioFrame(this.guildId, userId, now, pcm16k))) {
+        pipeline.linkDropped++; // it reached ears but not core (#45)
+        pipeline.tracker.dropped(1);
+      }
     });
     pipeline.decoder.on("error", (err: Error) => {
       this.options.log.warn(`decode error for user ${userId}: ${err.message}`, { guildId: this.guildId });
+      pipeline.decodeErrors++; // that packet's audio is gone, and the speaker ends (#45)
+      pipeline.tracker.dropped(1);
       this.endSpeaker(userId, true);
     });
     this.listen(userId, pipeline);
@@ -310,6 +335,7 @@ export class TableSession {
     stream.on("data", (packet: Buffer) => {
       if (!current()) return;
       const now = Date.now();
+      this.countUndecrypted(pipeline, now, true);
       pipeline.accounted = now;
       pipeline.silentPeriods = 0;
       pipeline.failedTries = 0;
@@ -353,8 +379,47 @@ export class TableSession {
    */
   private loseSince(pipeline: SpeakerPipeline, now: number): void {
     const gap = Math.round((now - pipeline.accounted) / FRAME_MS);
-    pipeline.tracker.lost(now, pipeline.tracker.paused() ? 1 : Math.max(1, gap));
+    // After a pause the quiet is the pause, but packets the library failed to decrypt were
+    // real speech (#43): those count, whatever the clock says.
+    const failed = pipeline.undecrypted;
+    pipeline.undecrypted = 0;
+    pipeline.tracker.lost(now, pipeline.tracker.paused() ? Math.max(1, failed) : Math.max(1, gap, failed));
     pipeline.accounted = now;
+  }
+
+  /**
+   * Packets the library failed to decrypt count as lost where the clock can't see them: after
+   * a pause (the gap looks like the pause), and at the end of an utterance. Elsewhere the gap
+   * they leave is already counted (`heard`: a packet was just heard).
+   */
+  private countUndecrypted(pipeline: SpeakerPipeline, now: number, heard: boolean): void {
+    const failed = pipeline.undecrypted;
+    if (failed === 0) return;
+    pipeline.undecrypted = 0;
+    if (!heard || pipeline.tracker.paused()) pipeline.tracker.lost(now, failed);
+  }
+
+  /**
+   * The library said it failed to decrypt a packet, without saying whose. Only people who are
+   * recorded are subscribed, so it was one of them: someone sending right now, preferring
+   * those nothing has been heard from lately. Several at once (a key change hits everyone)
+   * take turns: exact in total, approximate per person (for the first ~100 ms of a burst the
+   * failing speaker may still count as heard, so a healthy one can be charged a few).
+   */
+  private noteDecryptFailure(): void {
+    const now = Date.now();
+    const sending = [...this.speakers.entries()]
+      .filter(([userId]) => this.connection.receiver.speaking.users.has(userId))
+      .sort(([a], [b]) => (a < b ? -1 : 1));
+    const unheard = sending.filter(([, pipeline]) => now - pipeline.accounted > SPEAKING_DELAY_MS);
+    const candidates = unheard.length > 0 ? unheard : sending;
+    if (candidates.length === 0) {
+      this.strayDecryptFailures++;
+      return;
+    }
+    const [, pipeline] = candidates[this.decryptTurn++ % candidates.length] as [string, SpeakerPipeline];
+    pipeline.undecrypted++;
+    pipeline.decryptFailures++;
   }
 
   /** Tell core a speaker's audio keeps failing: at most once a minute per speaker. */
@@ -465,6 +530,8 @@ export class TableSession {
     if (!message.startsWith(prefix)) return;
     const text = message.slice(prefix.length);
     if (text.startsWith("Failed to decrypt a packet")) {
+      this.noteDecryptFailure();
+      if (!this.options.debugAudio) return;
       const now = Date.now();
       if (now - this.lastDecryptLog < DECRYPT_LOG_EVERY_MS) {
         this.decryptLinesSkipped++;
@@ -478,7 +545,7 @@ export class TableSession {
       });
       return;
     }
-    this.options.log.info(`dave: ${text}`, { guildId: this.guildId });
+    if (this.options.debugAudio) this.options.log.info(`dave: ${text}`, { guildId: this.guildId });
   }
 
   private endSpeaker(userId: string, report: boolean): void {
@@ -494,15 +561,28 @@ export class TableSession {
 
     const { link } = this.options;
     link.send({ type: "speaking", guildId: this.guildId, userId, event: "end", timestampMs: Date.now() });
+    this.countUndecrypted(pipeline, Date.now(), false);
     const health = pipeline.tracker.finish();
     if (report && health) {
       // Send only the protocol fields; pauses/pausedMs are local debug info.
       const { framesReceived, framesExpected } = health;
-      link.send({ type: "health", guildId: this.guildId, userId, framesReceived, framesExpected });
+      const { decryptFailures, decodeErrors, linkDropped } = pipeline;
+      link.send({
+        type: "health",
+        guildId: this.guildId,
+        userId,
+        framesReceived,
+        framesExpected,
+        ...(decryptFailures > 0 && { decryptFailures }),
+        ...(decodeErrors > 0 && { decodeErrors }),
+        ...(linkDropped > 0 && { linkDropped }),
+      });
       if (this.options.debugAudio) {
         this.options.log.info(
           `audio user=${userId} received=${framesReceived} expected=${framesExpected} ` +
             `pauses=${health.pauses} paused_ms=${health.pausedMs} ` +
+            `decrypt_failed=${pipeline.decryptFailures} decode_errors=${pipeline.decodeErrors} ` +
+            `link_dropped=${pipeline.linkDropped} ` +
             `link_dropped_total=${link.droppedAudioFrames}`,
           { guildId: this.guildId },
         );

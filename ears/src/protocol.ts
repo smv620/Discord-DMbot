@@ -59,13 +59,23 @@ export interface SpeakingMessage {
   timestampMs: number;
 }
 
-/** Per-speaker audio health for one utterance: how many 20 ms frames arrived vs expected. */
+/**
+ * Per-speaker audio health for one utterance: how many 20 ms frames arrived vs expected.
+ * Frames that didn't make it are already left out of `framesReceived`; the three counts
+ * below say why, for the log (#43, #45). Each is omitted when zero.
+ */
 export interface HealthMessage {
   type: "health";
   guildId: string;
   userId: string;
   framesReceived: number;
   framesExpected: number;
+  /** Packets the voice library couldn't decrypt (DAVE), counted as lost. */
+  decryptFailures?: number;
+  /** Packets the Opus decoder refused. */
+  decodeErrors?: number;
+  /** Frames dropped on the link to core because it was too busy. */
+  linkDropped?: number;
 }
 
 export type EarsMessage = HelloMessage | StatusMessage | SpeakingMessage | HealthMessage;

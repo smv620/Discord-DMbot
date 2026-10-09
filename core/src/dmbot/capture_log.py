@@ -69,6 +69,10 @@ class _SpeakerStats:
     seconds: float = 0.0
     frames_received: int = 0
     frames_expected: int = 0
+    # Why frames went missing, for the terminal log only (#43, #45)
+    decrypt_failures: int = 0
+    decode_errors: int = 0
+    link_dropped: int = 0
     checks_waited: int = 0  # checks since the latest health report, without speech
     checks_since_first: int = 0  # checks since the first one, without speech
 
@@ -113,10 +117,23 @@ class CaptureLog:
         stats.seconds += utterance.duration_s
 
     def add_health(
-        self, user_id: int, received: int, expected: int, now: float | None = None
+        self,
+        user_id: int,
+        received: int,
+        expected: int,
+        now: float | None = None,
+        *,
+        decrypt_failures: int = 0,
+        decode_errors: int = 0,
+        link_dropped: int = 0,
     ) -> None:
-        """One piece's audio health. `now`: a monotonic time in seconds (default: now)."""
+        """One piece's audio health. `now`: a monotonic time in seconds (default: now). The
+        counts say why frames are missing; they are already out of `received`, so the
+        percent means "core got the audio" and they only go in the log line."""
         stats = self._get(user_id)
+        stats.decrypt_failures += max(0, decrypt_failures)
+        stats.decode_errors += max(0, decode_errors)
+        stats.link_dropped += max(0, link_dropped)
         # Cap each report, so one over-counted clip can't hide a gap in another.
         received = max(0, min(received, expected))
         stats.frames_received += received
@@ -163,6 +180,17 @@ class CaptureLog:
             if s.frames_expected > 0:
                 percent, flagged = audio_health(s.frames_received, s.frames_expected)
                 part += f", audio {percent}%{' (audio gaps)' if flagged else ''}"
+            lost = [
+                f"{count} {what}"
+                for count, what in (
+                    (s.decrypt_failures, "not decrypted"),
+                    (s.decode_errors, "decode errors"),
+                    (s.link_dropped, "dropped on the link"),
+                )
+                if count
+            ]
+            if lost:
+                part += f" ({', '.join(lost)})"
             parts.append(part)
         if not parts:
             return None
