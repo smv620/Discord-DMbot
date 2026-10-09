@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-09 by CloudDev (ready to deploy: #937; earlier by dev1: core and web-api 85cc405 live, ears 21c5ff1; Test D next)
+Last updated: 2026-10-09 by dev1 (core 8d55974 live; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,18 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- CloudDev, PR #937 (#437 part 3, #919; skip if core on the server already includes commit
-  32e7bd4): core only, no migration or setting. Nothing visible while DMBOT_ENFORCE_PLANS is
-  off (it stays off until go-live, #498), so the check is only that core starts with no ERROR
-  and that these still work as before: 🤖 Find names on a pasted list, `/dmbot backup` and
-  `/dmbot restore`, and a transcript download button. With the setting on (go-live only): a
-  Try It owner is refused a copy and a transcript in plain words, a player is told to ask the
-  owner, and an ended plan is told "Your plan has ended, so DMbot can't <do that>".
+(nothing waiting)
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core and web-api 85cc405 (2026-10-09 18:28 UTC, migrations through 0034), ears 21c5ff1, web-api
+core 8d55974 (2026-10-09 19:20 UTC, migrations through 0035), web-api 85cc405, ears 21c5ff1, web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
 website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS is empty. The app stays
@@ -48,7 +42,11 @@ entry "Status log as it stood before it was trimmed"):
      decode_errors=, link_dropped=; `Capture check:` names the cause when audio went missing.
  11. Campaign cap (#927; plans off): create a campaign and start a session as usual; the
      ownerless test campaign may ask a DM to "Take it on" (press it: it is yours).
- 12. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
+ 12. Rules cards (#942): as a DM, ⚙️ Settings > Turn rules cards on; start listening and say
+     "I cast Fireball": a card with Heard: appears on the DM screen, nothing in the transcript.
+ 13. #937 with plans off: 🤖 Find names, /dmbot backup and restore, a transcript download
+     still work as before.
+ 14. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
 
 ------------------------------------------------------------------------------
 LATEST RESULTS
