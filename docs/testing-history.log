@@ -1551,3 +1551,47 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   - Check, with the next test (Test D) and DMBOT_DEBUG_AUDIO=1: the `audio user=...` lines
     carry decrypt_failed=, decode_errors=, link_dropped=; a speaker's `Capture check:` line
     names the cause when audio went missing; a clean session looks the same as before.
+
+==============================================================================
+2026-10-09  Server: deploy 21c5ff1, ears and core together (dev1)
+==============================================================================
+  - 17:27 UTC  development @ 21c5ff1: #921 (the DM's rules lookup: 📖 Look up a rule on
+    the ⚙️ Settings card and /dmbot rule; core only) and #925 (follow-ups to #914's audio
+    health counts; ears and core together). Neither had a status-log line yet (the author's
+    line goes in after the merge), so dev1 used the deploy notes in the PRs' own
+    descriptions. No migration, no new setting (scripts/update-env --check: nothing to add).
+  - Database backed up first (outside the repo; 34 tables); no session was live. Both images
+    built ahead; `up -d --no-build core ears` naming both services. Logs: "ears connected",
+    "Connected to 1 server(s)", "connected to core"; two ears "core link ... ECONNREFUSED"
+    warnings in the first seconds while core started; 0 errors. Tunnel token blank inside
+    core and ears; /health 404; the rules index module loads in core.
+  - Checks left for a person: #921's 2-minute check as a DM (Fireball, Goblin, Grappled, a
+    made-up name; a player's /dmbot rule) and #914/#925's audio-count lines with Test D
+    (DMBOT_DEBUG_AUDIO=1).
+
+==============================================================================
+2026-10-09  Queue line added by dev2 for #921 while dev1 deployed (kept from the status log)
+==============================================================================
+  Last updated: 2026-10-09 by dev2 (ready to deploy: #921; core and ears 010bd65 live; Test D next)
+  - dev2, PR #921 (#908): core only, no migration or setting. A campaign's DM can look up a
+    spell, a condition or a creature in the free rules (SRD), privately. Slash commands
+    re-sync when core restarts. Check, 2 minutes, on the test server as a DM: press
+    **Settings** on the DM screen, then **Look up a rule**; type Fireball (a card: name, level
+    and range line, the text, "Source: SRD 5.2.1, Spell Descriptions, p. 131"); again with
+    Goblin (it says "Goblin is now called Goblin Warrior in the newer rules"); again with
+    Grappled (a condition card, no facts line); again with a made-up word (it says it couldn't
+    find it in the free rules, and offers close names to press, none picked for you). Try
+    `/dmbot rule name:` and type "fire": names open as you type. If a house rule names the
+    thing, it shows first as "House rule N". As a player (not a DM) `/dmbot rule name:Fireball`
+    says only a campaign's DM can look up rules. Nothing appears in the channel or the
+    transcript. Core logs no ERROR.
+  Result: #921 is in the 17:27 build (21c5ff1), deployed from its PR's own deploy note; the
+  2-minute check as a DM is a small test for the owner (listed in the status log).
+
+==============================================================================
+2026-10-09  Queue lines other sessions added while dev1 deployed (kept from the status log)
+==============================================================================
+  - #925 (follow-ups to #914's counts): ears AND core together, no migration. Check with
+    DMBOT_DEBUG_AUDIO=1: nothing new on the DM screen; `Capture check:` says "1 decode error"
+    (singular); the counts in `audio user=` lines are as before. No separate test needed.
+  Result: all of these were in the 17:27 build (21c5ff1), deployed from their PRs' deploy notes.
