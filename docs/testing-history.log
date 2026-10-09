@@ -1183,3 +1183,17 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     page is part of the same Pages build, Supervisor to confirm it is live).
   - DMBOT_FREE_USERS is still empty on purpose (the always-free list is separate from
     grants made on the admin page).
+
+==============================================================================
+2026-10-09  Admin page: password sign-in, Change and Revoke all work (dev1, owner)
+==============================================================================
+  - 03:27 UTC  "Admin signed in with the password" (web-api log; no email, no address
+    kept here). So both sign-in ways work: Google (01:32, 03:10) and the password.
+  - 03:28-03:30 UTC  The owner gave, changed and revoked free access from the admin page;
+    the web-api log has one line per action (ids never printed here). Database, counts
+    only: access_log has grant x4, change x1, revoke x1; access_grants has 3 rows left
+    (levels guild and unlimited, none with an end date): the revoked one no longer counts
+    as a grant. No errors in the web-api or core logs.
+  - Left for #773's "done when": the owner's account starts a session with no plan on the
+    live site (needs the plan checks, #771 part 2).
+  - DMBOT_FREE_USERS (the always-free list in .env) is still empty on purpose.
