@@ -128,13 +128,22 @@ async def _tell(
     interaction: discord.Interaction, text: str, *, view: discord.ui.View | None = None
 ) -> None:
     """A private reply, whether or not this interaction has been answered already."""
-    extra: dict[str, discord.ui.View] = {} if view is None else {"view": view}
     if interaction.response.is_done():
-        await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS, **extra)
+        if view is None:
+            await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
+        else:
+            await interaction.followup.send(
+                text, view=view, ephemeral=True, allowed_mentions=NO_PINGS
+            )
     else:
-        await interaction.response.send_message(
-            text, ephemeral=True, allowed_mentions=NO_PINGS, **extra
-        )
+        if view is None:
+            await interaction.response.send_message(
+                text, ephemeral=True, allowed_mentions=NO_PINGS
+            )
+        else:
+            await interaction.response.send_message(
+                text, view=view, ephemeral=True, allowed_mentions=NO_PINGS
+            )
 
 
 async def _send(interaction: discord.Interaction, text: str, view: _Menu | None = None) -> None:
