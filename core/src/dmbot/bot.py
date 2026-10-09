@@ -3607,32 +3607,46 @@ class DMBot(commands.AutoShardedBot):
             if session is None or session.lines == 0:
                 return 0
             people = {table.dm_user_id, *table.dm_user_ids, *session.speakers}
-            # With the campaign's plan not including copies (Try It, #938), the buttons would
-            # be refused on every press: leave them out and tell the owner, once, why. Asked
-            # twice at most for the whole table: whether it is blocked (as nobody, who is
-            # never the owner), and what the owner is told.
-            blocked, owner_id, owner_note = False, None, None
-            campaign = (
-                await self.campaigns.get(gid, table.campaign_id)
-                if table.campaign_id is not None
-                else None
-            )
-            if campaign is not None:
-                blocked = await self.plan_gate("transcript", gid, campaign, 0) is not None
-                owner_id = campaign.owner_user_id
-                if blocked and owner_id is not None:
-                    owner_note = await self.plan_gate("transcript", gid, campaign, owner_id)
+            notice = await self._no_download_notice(table)
+            if notice is not None:
+                recipients, note = notice
+                sent = 0
+                for user_id in sorted(recipients):
+                    sent += await self._send_download(
+                        user_id, table, session_id, blocked=True, note=note
+                    )
+                log.info("Transcript not offered (plan): told %d person(s)", sent)
+                return sent
             sent = 0
             for user_id in sorted(people):
-                sent += await self._send_download(
-                    user_id,
-                    table,
-                    session_id,
-                    blocked=blocked,
-                    note=owner_note if user_id == owner_id else None,
-                )
+                sent += await self._send_download(user_id, table, session_id)
             log.info("Transcript download offered privately to %d of %d", sent, len(people))
             return sent
+
+    async def _no_download_notice(self, table: Table) -> tuple[set[int], str] | None:
+        """With the campaign's plan not including copies (Try It, #938) the download buttons
+        would be refused on every press. Players have nothing to act on, so only the owner is
+        told, once, why there is no transcript (or, with no owner, the DMs are told to take the
+        campaign on). Returns who to tell and what, or None when downloads are fine. Fails
+        open like `plan_gate`: any error leaves the buttons in place, since this runs after
+        the session was ended and must never stop the end-of-session message. The plan is
+        asked at most twice: whether it is blocked (as user 0, which no Discord account is,
+        so never the owner), and what the owner is told."""
+        if table.campaign_id is None:
+            return None
+        gid = table.guild_id
+        try:
+            campaign = await self.campaigns.get(gid, table.campaign_id)
+            if campaign is None or await self.plan_gate("transcript", gid, campaign, 0) is None:
+                return None
+            owner_id = campaign.owner_user_id
+            if owner_id is None:
+                return {table.dm_user_id, *table.dm_user_ids}, plan_rules.NO_OWNER
+            note = await self.plan_gate("transcript", gid, campaign, owner_id)
+            return {owner_id}, note or plan_rules.NO_OWNER
+        except Exception:
+            log.exception("Couldn't check whether the plan has downloads; offering them")
+            return None
 
     async def _send_download(
         self,
@@ -3652,7 +3666,7 @@ class DMBot(commands.AutoShardedBot):
                 return 0
             if blocked:
                 await user.send(
-                    ended_no_download_text(table.campaign_name, note),
+                    ended_no_download_text(table.campaign_name, note or plan_rules.NO_OWNER),
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
                 return 1
