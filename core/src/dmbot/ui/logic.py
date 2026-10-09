@@ -287,3 +287,9 @@ def backup_campaign_name(data: object) -> str | None:
 def dm_list(campaign: Campaign) -> str:
     """'<@1>, <@2>' for messages (sent with pings turned off)."""
     return ", ".join(f"<@{uid}>" for uid in sorted(campaign.dm_user_ids)) or "nobody"
+
+
+def upload_limit(guild_limit: int) -> int:
+    """The biggest file DMbot may send in this server: Discord's own number for it (a
+    boosted server takes more than 10 MB), never less than the standard 10 MB."""
+    return max(FILE_MAX, guild_limit)

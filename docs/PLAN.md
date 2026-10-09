@@ -319,13 +319,14 @@ in the repository; the files record its SHA-256): all 339 spells and the 15 cond
 `core/src/dmbot/rules/data/srd52/`, with `ATTRIBUTION.md` (the statement the SRD asks for,
 and the changes made) and the same statement in the README. Nothing from any other book
 is in the repository. Each entry has its source, section and page, so an alert can cite
-it ("SRD 5.2.1, Spell Descriptions, p. 131"). A name is matched without case, punctuation
-or apostrophes, and the 19 spells the 2024 books renamed are also found under their 2014
-names (`rules/aliases.py`, each with a comment; Feeblemind and Branding Smite included). `lookup(name, target, fallback)` tries the
-target ruleset, then the fallback; a fallback hit is tagged (`[Legacy 2014]` for 2014
-content). An older entry is used only when no newer one matches any name. The 2014 SRD 5.1
-(also CC-BY-4.0) is not loaded yet: the index takes more data folders with their own
-edition, and filing that is the follow-up. Not built: the rules advisor that uses it.
+it ("SRD 5.2.1, Spell Descriptions, p. 131"). A name is matched without case,
+punctuation or apostrophes, and the 19 spells the 2024 books renamed are also found under
+their 2014 names (`rules/aliases.py`, each with a comment; Feeblemind and Branding Smite
+included). `lookup(name, target, fallback)` tries the target ruleset, then the fallback;
+a fallback hit is tagged (`[Legacy 2014]` for 2014 content). An older entry is used only
+when no newer one matches any name. The 2014 SRD 5.1 (also CC-BY-4.0) is not loaded yet:
+the index takes more data folders with their own edition, and filing that is the
+follow-up (#873). Not built: the rules advisor that uses it.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
@@ -1004,7 +1005,13 @@ names panel nor the speech-to-text hints can be a fixed list.
     day on #598 because the per-line cap alone leaves one name able to gather tens of
     thousands of other names across lines, **at most 50 other names and 50 secret
     names per name and 5,000 other and secret names per upload**, counting only what
-    the upload adds so a Download all file always uploads again). **Names only:** lines with
+    the upload adds so a Download all file always uploads again). **A campaign too big
+    for one upload (over 2,000 lines or 256 KB) downloads as several files** (decided
+    2026-10-09, #685), named `names-01-of-12-…` (the number first, padded so they sort): each is within the
+    limits above counting its `#` notes, holds whole names (a name on several lines is
+    never split), starts with the instructions and a line saying it is one of N files that
+    can each be added on its own, in any order; the
+    ten files Discord takes in a message go ten to a message. **Names only:** lines with
     descriptions or other columns are refused as unclear, and DMbot never offers
     ready-made sourcebook name lists (IP rule). It writes only into the chosen
     campaign, through the normal memory rules (checks, change log), **saved in one go**
@@ -1275,6 +1282,29 @@ reads the campaign memory and never changes it.
 
   - **Only confirmed names and aliases can make a silent (high) fix.** A proposed name
     reaches at most medium, which always shows Undo.
+  - **A look-alike is not always a mishearing (decided 2026-10-09, #573).** Three rules
+    keep the Cleaner from merging two people into one:
+    1. **Two people in one line:** a look-alike word is never made into a name the same
+       line already says. With Ysolde in the line, "Isolde" stays "Isolde" (it is a
+       second person); the same holds for the options in a "Did they mean…?".
+    2. **Silent only when near-certain.** A fix by sound is silent only when the heard
+       word is spelled at least **0.95** alike to the name (`NEAR_CERTAIN`). Below that
+       (and above the old bars of 0.7 joined, 0.8 one word) it is a **medium** fix:
+       made, with a note and Undo in "✏️ Name fixes to check". With **How much DMbot
+       says: Quiet** it is not made. Measured on names-stress and the tests: a new
+       name that looks like a known one scores 0.83 ("Isolde"/Ysolde, "Cedric"/Cerric)
+       up to 0.93 ("Rothgar"/Hrothgar, which names-stress calls the likeliest wrong fix),
+       and a likely mishearing of a known name 0.91 to 0.94 ("Gorak"/Gorrak, "Beleros",
+       "Belle Ross"). The ranges overlap, so only near-identical spellings (0.95 and up)
+       stay silent; the rest are noted, and the DM decides. The cost is a few more lines
+       in "✏️ Name fixes to check". Under **Quiet**, noted fixes are not made, so
+       sound-alike names are left as heard: that is what Quiet promises (fewer misheard
+       names get fixed, no notes). The one-word rules (the name in the scene, 0.8) are
+       unchanged. This rests on about a dozen pairs: revisit it with the twin when more
+       real mishearings are on record. A one-letter slip in a short name scores about
+       0.83 to 0.86.
+    3. **Once the DM confirms a name it is known.** "Isolda" confirmed next to Ysolde is
+       never rewritten; "Isolde", sounding like both, is asked about, never made Ysolde.
   - "Did they mean…?" and Undo appear **only in the DM screen**, never in the transcript
     channel. The question leads with what was heard: "❓ **Mia said "Bell or us"**: did
     they mean… [Belleros] [Bellamy] [Type it…] [Keep as heard]". At most 3 options.
@@ -1426,7 +1456,8 @@ consent check just made still holds:
 - **Fixes with Undo (decided 2026-10-07 on #296):**
   - **Which fixes:** a misheard word that sounds like a name DMbot only *suggested*
     (spelled at least 0.9 alike, never secret, not next to a secret name) is fixed,
-    but never silently.
+    but never silently. So is a close look-alike of a *confirmed* name spelled less than
+    0.95 alike (decided on #573, see the Cleaner's "look-alike" rules above).
   - **Where they show:** only in the DM screen, in one "✏️ Name fixes to check" message
     edited in place: "DMbot changed these words in the transcript but isn't sure.
     Wrong? Press its Undo to put back what was heard." One numbered line and one

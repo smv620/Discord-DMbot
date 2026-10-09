@@ -296,6 +296,56 @@ class TheSrdOnly(unittest.TestCase):
         possessive = {e.name for e in index.srd().entries if "’s " in e.name}
         self.assertEqual(possessive, {"Arcanist’s Magic Aura", "Dragon’s Breath", "Hunter’s Mark"})
 
+    def test_every_entry_is_read_only_however_it_was_made(self) -> None:
+        details = {"level": 2}
+        made = Entry(
+            "spell", "Test", "2024", "SRD 5.2.1", "Spell Descriptions", 1, "words", details
+        )
+        details["level"] = 9  # the caller's own dict is a separate thing
+        self.assertEqual(made.details["level"], 2)
+        with self.assertRaises(TypeError):
+            made.details["level"] = 3  # type: ignore[index]
+
+    def test_stat_blocks_are_one_line_to_an_entry(self) -> None:
+        labels = re.compile(
+            r"^(AC|HP|Speed|Initiative|MOD SAVE|Str|Int|Skills|Resistances|Vulnerabilities"
+            r"|Immunities|Senses|Languages|CR|Gear) "
+        )
+        headings = re.compile(r"^(Traits|Actions|Bonus Actions|Reactions)$")
+        entry = re.compile(
+            r"^[A-Z][A-Za-z’' ]*(\([^)]*\))?\. "
+        )  # "Slam. ", "Fey Step (Fey Only). "
+        found = 0
+        for e in index.srd().entries:
+            lines = e.text.splitlines()
+            if "MOD SAVE MOD SAVE MOD SAVE" not in lines:
+                continue
+            found += 1
+            start = next(i for i, ln in enumerate(lines) if ln.startswith("AC "))
+            for ln in lines[start:]:
+                with self.subTest(e.name, line=ln[:50]):
+                    self.assertTrue(labels.match(ln) or headings.match(ln) or entry.match(ln))
+        self.assertEqual(found, 4)
+
+    def test_names_inside_a_sentence_and_table_columns_read_as_written(self) -> None:
+        by_name = {e.name: e.text for e in index.srd().entries}
+        self.assertIn(
+            "This creature uses the Otherworldly Steed stat block.", by_name["Find Steed"]
+        )
+        self.assertIn("The target must be either a Beast or Plant creature", by_name["Awaken"])
+        self.assertIn("the Awakened Shrub or Awakened Tree", by_name["Awaken"])
+        self.assertIn("over six Ghouls", by_name["Create Undead"])
+        weather = by_name["Control Weather"].splitlines()
+        self.assertIn("Temperature Wind", weather)
+        self.assertIn("Stage Condition Stage Condition", weather)
+        self.assertNotRegex(by_name["Control Weather"], r"[a-ce-z]\d |\d[A-Z]")  # kept apart
+        self.assertIn("Bat, Cat, Frog, Hawk, Lizard, Octopus", by_name["Find Familiar"])
+        # The tool puts no space before a full stop. (A few "name ." spaces are in the PDF
+        # itself, drawn as a piece that ends in a space; they are kept as the PDF has them.)
+        self.assertNotIn("Ghouls .", by_name["Create Undead"])
+        self.assertIn("not even Wish—can", by_name["Mind Blank"])
+        self.assertIn("Familiarity Mishap Area Target Target", by_name["Teleport"])
+
     def test_entry_details_cannot_be_changed_in_place(self) -> None:
         hit = index.srd().lookup("Fireball", "2024", kind="spell")
         assert hit is not None
