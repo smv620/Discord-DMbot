@@ -38,7 +38,30 @@ class Line:
 
     @property
     def text(self) -> str:
-        return "".join(p.text for p in self.pieces).replace("\n", "")
+        """The line's words. Pieces drawn from one starting point share its x; where the
+        next one starts further on than all of that text could reach, they are two columns
+        of a table with no space between them in the PDF ("Temperature" ... "Wind"), and a
+        space is put in."""
+        out = ""
+        origin: float | None = None
+        drawn = ""  # the text drawn from `origin` so far
+        previous: Piece | None = None
+        for piece in self.pieces:
+            if origin is not None and piece.x != origin:
+                if _column_gap(drawn, previous, piece, piece.x - origin):
+                    out += " "
+                origin, drawn = piece.x, ""
+            elif origin is None:
+                origin = piece.x
+            drawn += piece.text
+            out += piece.text.replace("\n", "")
+            previous = piece
+        return out
+
+    @property
+    def first_text(self) -> str:
+        """The words of the first piece that has any."""
+        return next((p.text.strip() for p in self.pieces if p.text.strip()), "")
 
     @property
     def fonts(self) -> list[str]:
@@ -52,6 +75,24 @@ class Line:
 
     def starts_with_font(self, name: str) -> bool:
         return self.first_font == name
+
+
+CHAR_WIDTH = 5.5  # more than any letter of the SRD's body or table fonts is wide, in points
+GAP_SLACK = 12.0
+
+
+def _column_gap(drawn: str, previous: Piece | None, right: Piece, distance: float) -> bool:
+    """`right` starts `distance` from where `drawn` began and neither side has a space at
+    the join, yet they are two columns, not one word in two fonts: it starts further on
+    than `drawn`'s words could reach, or it is in the same font as the piece before it
+    (one word is not drawn twice in one font from two places)."""
+    # A piece may end with the line break the PDF draws after it even when another column
+    # follows on the same line, so only a real space counts.
+    if drawn.rstrip("\n").endswith(" ") or right.text.startswith(" "):
+        return False
+    if previous is not None and previous.font == right.font:
+        return True
+    return distance > len(drawn.strip()) * CHAR_WIDTH + GAP_SLACK
 
 
 def lines_of(pieces: list[Piece], page: int = 0) -> list[Line]:

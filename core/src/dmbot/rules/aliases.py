@@ -13,8 +13,11 @@ must not be used while this one exists). A rule that kept its name needs no entr
 neither does one that was merged into another (that is a question for the rules advisor,
 not a name).
 
-Made by comparing every spell name in the 2014 SRD 5.1 with the 2024 SRD 5.2.1: the two
-renames that remain after the creator names are the last two entries.
+Made by comparing every spell name in the 2014 SRD 5.1 with the 2024 SRD 5.2.1. Most
+entries only drop a creator's name (the 2014 books' titles; the 5.1 SRD itself already
+printed the short ones). Four were renamed for real: Nystul's Magic Aura (now Arcanist's),
+Feeblemind (Befuddlement) and Branding Smite (Shining Smite), and Mordenkainen's Sword
+and Bigby's Hand, which gained "Arcane".
 """
 
 from __future__ import annotations
