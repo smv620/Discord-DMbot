@@ -175,6 +175,7 @@ IDLE_SWEEP_INTERVAL_S = 1
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
+GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
@@ -1222,7 +1223,12 @@ class DMBot(commands.AutoShardedBot):
         )
 
     async def plan_gate(
-        self, rule: plan_rules.Rule, guild_id: int, campaign: Campaign, user_id: int
+        self,
+        rule: plan_rules.Rule,
+        guild_id: int,
+        campaign: Campaign,
+        user_id: int,
+        action: plan_rules.Action | None = None,
     ) -> str | None:
         """Why `user_id` may not use the AI or make a copy or transcript of this campaign,
         in plain words for them, or None (#437 part 3). Judged by the campaign's owner's
@@ -1234,7 +1240,7 @@ class DMBot(commands.AutoShardedBot):
         access = None
         if owner is not None:
             try:
-                async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                async with asyncio.timeout(GATE_TIMEOUT_S):
                     access = await self.meter.access(guild_id, owner, int(time.time()))
             except Exception:  # a slow database (TimeoutError) too
                 log.exception("Couldn't check the plan; allowing it")
@@ -1245,17 +1251,20 @@ class DMBot(commands.AutoShardedBot):
             is_owner=user_id == owner,
             owner_known=owner is not None,
             site_url=self.settings.site_url,
+            action=action,
         )
 
     async def restore_gate(self, guild_id: int, user_id: int) -> str | None:
         """Why this person may not restore a copy, or None. They become the restored
         campaign's owner, so their own plan has to include copies (#437 part 3); the free
         slot is the store's check (`CampaignStore(restore_needs_slot=True)`). They are told
-        about their own plan, since it is theirs."""
+        about their own plan, since it is theirs. Replacing a campaign with a copy keeps that
+        campaign's owner, but the restorer's plan is checked all the same: loading a copy is
+        a copy feature, whoever ends up owning the result."""
         if not self.settings.enforce_plans or self.meter is None:
             return None
         try:
-            async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+            async with asyncio.timeout(GATE_TIMEOUT_S):
                 access = await self.meter.access(guild_id, user_id, int(time.time()))
         except Exception:
             log.exception("Couldn't check the plan; allowing it")

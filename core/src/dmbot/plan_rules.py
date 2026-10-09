@@ -35,23 +35,35 @@ def can_backup(access: Access | None) -> bool:
 
 
 def allowed(rule: Rule, access: Access | None) -> bool:
-    return can_use_ai(access) if rule == "ai" else can_backup(access)
+    rules = {"ai": can_use_ai, "backup": can_backup}  # explicit: a third rule can't inherit one
+    return rules[rule](access)
 
 
-ASK_OWNER_AI = (
-    "DMbot can't read documents for this campaign right now. Ask the campaign's owner to "
-    "take a look."
+Action = Literal["ai", "copy", "transcript", "restore"]
+
+# What a person pressed, in the words the refusal uses, so it names what they tried and not
+# a neighbour (UX review: "transcripts" is noise to someone loading a copy). Non-owners are
+# told the same thing whatever the cause, and where to go, so they learn nothing of the plan.
+_UNAVAILABLE = {
+    "ai": "Finding names with DMbot's AI isn't available for this campaign",
+    "copy": "Copies of this campaign aren't available",
+    "transcript": "Transcripts aren't available for this campaign",
+    "restore": "Loading a copy isn't available",
+}
+ASK_OWNER_AI = f"{_UNAVAILABLE['ai']}. Ask the campaign's owner to check DMbot's website."
+ASK_OWNER_BACKUP = f"{_UNAVAILABLE['copy']}. Ask the campaign's owner to check DMbot's website."
+ASK_OWNER_TRANSCRIPT = (
+    f"{_UNAVAILABLE['transcript']}. Ask the campaign's owner to check DMbot's website."
 )
-ASK_OWNER_BACKUP = (
-    "DMbot can't make copies or transcripts for this campaign right now. Ask the campaign's "
-    "owner to take a look."
-)
+_ASK_OWNER = {
+    "ai": ASK_OWNER_AI,
+    "copy": ASK_OWNER_BACKUP,
+    "transcript": ASK_OWNER_TRANSCRIPT,
+    "restore": f"{_UNAVAILABLE['restore']}. Ask the campaign's owner to check DMbot's website.",
+}
 # Nobody to ask: a campaign with no owner has no plan to use. A DM of the campaign can take
-# it on (the ⚙️ Settings card); anyone else needs one of them to.
-NO_OWNER = (
-    "This campaign has no owner yet, so it has no plan to do that with. One of its DMs "
-    "needs to take it on first."
-)
+# it on (the **Take it on** button); anyone else needs one of them to.
+NO_OWNER = "This campaign has no owner yet. One of its DMs needs to press **Take it on** first."
 
 
 def refusal(
@@ -61,20 +73,26 @@ def refusal(
     is_owner: bool,
     owner_known: bool = True,
     site_url: str = "",
+    action: Action | None = None,
 ) -> str | None:
     """The plain words for a refused action, or None if it may go ahead.
 
+    `action` is what the person pressed (default: the AI for "ai", a copy for "backup").
     The owner (or someone restoring a copy, who is about to become one) hears the reason and
-    the next step: their plan ended, or Try It has no copies. The link goes last so no full
-    stop is glued onto it. Everyone else is told to ask the owner."""
+    the next step; the link goes last so no full stop is glued onto it. Everyone else is
+    told it isn't available and to ask the owner. `Access` can't tell a plan that ended from
+    one never had, so the words fit both."""
     if allowed(rule, access):
         return None
+    what: Action = action or ("ai" if rule == "ai" else "copy")
     if not owner_known:
         return NO_OWNER
     if not is_owner:
-        return ASK_OWNER_AI if rule == "ai" else ASK_OWNER_BACKUP
+        return _ASK_OWNER[what]
     where = f"here: {account_link(site_url)}" if site_url else "on DMbot's website"
     if access is None or not access.works:
-        return f"Your plan has ended. Pick one {where}"
+        return f"You need a plan for that. Pick one {where}"
     # A plan that works but has no copies: Try It, the only one (plans.json).
-    return f"Copies and transcripts come with a paid plan. Pick one {where}"
+    if what == "restore":
+        return f"Nothing was loaded. Loading a copy needs a paid plan. Pick one {where}"
+    return f"Try It campaigns can't make copies or transcripts. A paid plan can. See plans {where}"

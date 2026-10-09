@@ -525,6 +525,8 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
     # is never lost if its DM disappears (owner decision, 2026-10-06; CLAUDE.md). Only of a
     # campaign whose owner's plan includes copies (#437 part 3); the owner hears why,
     # everyone else is told to ask the owner.
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True, thinking=True)  # before the plan check
     refused = await bot.plan_gate("backup", guild.id, campaign, interaction.user.id)
     if refused is not None:
         await _tell(interaction, refused)

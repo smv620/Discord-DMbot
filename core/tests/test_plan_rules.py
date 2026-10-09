@@ -5,12 +5,14 @@ refused with enforcement on and allowed with it off. The database tests need Pos
 
 from __future__ import annotations
 
+import asyncio
 import time
 import unittest
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+from dmbot import bot as bot_module
 from dmbot import entitlements, plan_rules
 from dmbot.bot import DMBot
 from dmbot.campaigns.store import encode_backup
@@ -25,6 +27,10 @@ from tests import test_usage as base
 from tests.test_dmbot_commands import attachment, fake_interaction
 
 SITE = "https://dmbot.example"
+TRY_IT_WORDS = (
+    "Try It campaigns can't make copies or transcripts. A paid plan can. "
+    f"See plans here: {SITE}/account"
+)
 FREE = Access("free", "Free access", None, None, True)
 GRANT = Access("grant", "Free access", None, None, True)
 TABLE = Access("paid", "Table", 18 * 60, 1, True)
@@ -57,17 +63,17 @@ class Rules(unittest.TestCase):
         self.assertIsNone(plan_rules.refusal("ai", TABLE, is_owner=True))
         self.assertIsNone(plan_rules.refusal("backup", FREE, is_owner=False))
 
-    def test_the_owner_of_an_ended_plan_is_told_to_pick_one(self) -> None:
+    def test_an_owner_without_a_working_plan_is_told_to_pick_one(self) -> None:
         for rule in ("ai", "backup"):
             self.assertEqual(
                 plan_rules.refusal(rule, ENDED, is_owner=True, site_url=SITE),
-                f"Your plan has ended. Pick one here: {SITE}/account",
+                f"You need a plan for that. Pick one here: {SITE}/account",
             )
 
     def test_a_try_it_owner_is_told_copies_need_a_paid_plan(self) -> None:
         self.assertEqual(
             plan_rules.refusal("backup", TRY_IT, is_owner=True, site_url=SITE),
-            f"Copies and transcripts come with a paid plan. Pick one here: {SITE}/account",
+            TRY_IT_WORDS,
         )
 
     def test_words_still_work_before_the_site_address_is_set(self) -> None:
@@ -85,6 +91,21 @@ class Rules(unittest.TestCase):
         for text in (plan_rules.ASK_OWNER_AI, plan_rules.ASK_OWNER_BACKUP):
             self.assertNotIn("plan", text)
             self.assertNotIn("Try It", text)
+
+    def test_each_action_is_named_in_what_it_says(self) -> None:
+        for action, word in (
+            ("ai", "Finding names"),
+            ("copy", "Copies"),
+            ("transcript", "Transcripts"),
+            ("restore", "Loading a copy"),
+        ):
+            text = plan_rules.refusal("backup", TRY_IT, is_owner=False, action=action)  # type: ignore[arg-type]
+            self.assertIn(word, text or "")
+        text = plan_rules.refusal("backup", TRY_IT, is_owner=True, site_url=SITE, action="restore")
+        self.assertEqual(
+            text,
+            f"Nothing was loaded. Loading a copy needs a paid plan. Pick one here: {SITE}/account",
+        )
 
     def test_a_campaign_with_no_owner_asks_for_a_dm_to_take_it_on(self) -> None:
         for is_owner in (True, False):
@@ -136,15 +157,15 @@ class Gate(base.UsageTest):
         self.assertIsNone(await self.gate("ai"))
         self.assertEqual(
             await self.gate("backup"),
-            f"Copies and transcripts come with a paid plan. Pick one here: {SITE}/account",
+            TRY_IT_WORDS,
         )
 
     async def test_an_ended_plan_is_refused_both(self) -> None:
         self.assertEqual(
-            await self.gate("ai"), f"Your plan has ended. Pick one here: {SITE}/account"
+            await self.gate("ai"), f"You need a plan for that. Pick one here: {SITE}/account"
         )
         self.assertEqual(
-            await self.gate("backup"), f"Your plan has ended. Pick one here: {SITE}/account"
+            await self.gate("backup"), f"You need a plan for that. Pick one here: {SITE}/account"
         )
 
     async def test_a_co_dm_is_shown_no_reason(self) -> None:
@@ -171,16 +192,34 @@ class Gate(base.UsageTest):
             self.assertIsNone(await self.gate("ai"))
             self.assertIsNone(await self.bot.restore_gate(base.GUILD_A, base.OWNER))
 
+    async def test_a_slow_database_lets_it_through_before_discords_deadline(self) -> None:
+        async def slow(*_: Any, **__: Any) -> None:
+            await asyncio.sleep(5)
+
+        with (
+            patch.object(Meter, "access", new=slow),
+            patch.object(bot_module, "GATE_TIMEOUT_S", 0.05),
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
+            self.assertIsNone(await self.gate("ai"))
+            self.assertIsNone(await self.bot.restore_gate(base.GUILD_A, base.OWNER))
+
+    async def test_the_meter_door_shows_only_that_owners_access(self) -> None:
+        await self.plan(base.OWNER)  # a paid plan for the owner, none for anyone else
+        mine = await Meter(self.db).access(base.GUILD_A, base.OWNER, int(time.time()))
+        other = await Meter(self.db).access(base.GUILD_A, base.OTHER, int(time.time()))
+        self.assertEqual((mine.kind, other.kind), ("paid", "none"))
+
     async def test_restoring_needs_the_restorers_own_plan_to_include_copies(self) -> None:
         # The restorer becomes the owner, so it is their plan that counts, not the old one's.
         self.assertEqual(
             await self.bot.restore_gate(base.GUILD_A, base.OTHER),
-            f"Your plan has ended. Pick one here: {SITE}/account",
+            f"You need a plan for that. Pick one here: {SITE}/account",
         )
         await self.plan(base.OTHER, plan="try-it")
         self.assertEqual(
             await self.bot.restore_gate(base.GUILD_A, base.OTHER),
-            f"Copies and transcripts come with a paid plan. Pick one here: {SITE}/account",
+            TRY_IT_WORDS,
         )
         await self.plan(base.NEW_OWNER)
         self.assertIsNone(await self.bot.restore_gate(base.GUILD_A, base.NEW_OWNER))
@@ -217,7 +256,9 @@ class Buttons(base.UsageTest):
         )
 
     def said(self, it: Any) -> str:
-        return str(it.response.sent[0][0])
+        if it.response.sent:
+            return str(it.response.sent[0][0])
+        return str(it.followup.send.await_args.args[0])  # after a defer
 
     # -- the copy -------------------------------------------------------------------------
 
@@ -226,15 +267,31 @@ class Buttons(base.UsageTest):
         it = self.it(self.bot)
         with patch.object(self.campaigns, "export", new=AsyncMock()) as export:
             await cmds.send_backup(it, self.a.id)
-        self.assertIn("Copies and transcripts come with a paid plan", self.said(it))
+        self.assertIn("Try It campaigns can't make copies or transcripts", self.said(it))
         export.assert_not_awaited()
-        it.followup.send.assert_not_awaited()
+        self.assertNotIn("file", it.followup.send.await_args.kwargs)
 
     async def test_a_player_is_told_to_ask_the_owner(self) -> None:
         await self.paid(plan="try-it")
         it = self.it(self.bot, base.OTHER)
         await cmds.send_backup(it, self.a.id)
         self.assertEqual(self.said(it), plan_rules.ASK_OWNER_BACKUP)
+
+    async def test_a_copy_press_is_answered_before_the_plan_is_checked(self) -> None:
+        order: list[str] = []
+        it = self.it(self.bot)
+
+        async def deferred(**_: Any) -> None:
+            order.append("defer")
+            it.response.done = True
+
+        async def gate(*_: Any, **__: Any) -> None:
+            order.append("gate")
+
+        it.response.defer = deferred
+        with patch.object(self.bot, "plan_gate", new=gate):
+            await cmds.send_backup(it, self.a.id)
+        self.assertEqual(order[:2], ["defer", "gate"])
 
     async def test_a_paid_campaign_is_downloaded_by_anyone(self) -> None:
         await self.paid()
@@ -257,7 +314,7 @@ class Buttons(base.UsageTest):
         file = await self.backup_file()
         it = self.it(self.bot, base.OTHER)
         await cmds.dmbot_restore.callback(it, file)  # type: ignore[call-arg]
-        self.assertIn("Your plan has ended", it.followup.send.await_args.args[0])
+        self.assertIn("You need a plan for that", it.followup.send.await_args.args[0])
         file.read.assert_not_awaited()  # the file isn't even downloaded
 
     async def test_restore_goes_ahead_for_a_paid_restorer(self) -> None:
@@ -275,7 +332,9 @@ class Buttons(base.UsageTest):
         with patch.object(self.campaigns, "import_backup", new=AsyncMock()) as restore:
             await choice.restore(it, None)
         restore.assert_not_awaited()
-        self.assertIn("Your plan has ended", it.response.edit_message.await_args.kwargs["content"])
+        self.assertIn(
+            "You need a plan for that", it.response.edit_message.await_args.kwargs["content"]
+        )
 
     async def test_enforcement_off_restores_for_anyone_as_before(self) -> None:
         it = self.it(self.make_bot(enforce=False), base.OTHER)
@@ -313,7 +372,7 @@ class Buttons(base.UsageTest):
         )
         bot.campaigns.get = self.campaigns.get
         got = await transcripts.make_file(bot, None, base.GUILD_A, "s" * 32, base.OTHER)
-        self.assertEqual(got, plan_rules.ASK_OWNER_BACKUP)
+        self.assertEqual(got, plan_rules.ASK_OWNER_TRANSCRIPT)  # names what they pressed
 
     # -- the AI ---------------------------------------------------------------------------
 
@@ -324,7 +383,7 @@ class Buttons(base.UsageTest):
         it = self.it(self.bot)
         with patch.object(self.campaigns, "record_confirmation", new=AsyncMock()) as confirm:
             await offer._read(it)
-        self.assertIn("Your plan has ended", self.said(it))
+        self.assertIn("You need a plan for that", self.said(it))
         confirm.assert_not_awaited()  # no right-to-use record for something that never ran
         self.bot.ai.complete.assert_not_awaited()  # type: ignore[union-attr]
         self.assertFalse(offer.is_finished())  # the menu stays, so the lines that fit can go in

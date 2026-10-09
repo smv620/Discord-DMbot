@@ -1747,7 +1747,8 @@ everyone who reads the screen and never says whose plan it is.
 rules, pure over the owner's `Access`, and the refusal words, next to `hours.py`'s so the bot
 and the site never disagree. **`can_use_ai`:** true for a working plan of any kind (paid, Try It
 within its period, a grant, the free list), false for an ended plan or a campaign with no owner.
-It guards the one place the AI spends tokens on a names list (🤖 Find names); the story-memory and
+It guards the one place a person's button press spends AI tokens (🤖 Find names; the AI that
+labels lines inside a session is covered by the start check); the story-memory and
 rules-advisor AI calls will call it when they exist. **`can_backup`:** true for a paid plan other
 than Try It, a grant or the free list (`backups` in `plans.json`), false for Try It, an ended plan
 and no owner. It guards `/dmbot backup`, every transcript download (`/transcript`, the
@@ -1760,7 +1761,9 @@ restorer) hears "Your plan has ended. Pick one here: <WEB_SITE_URL>/account" or,
 included, is told only to ask the campaign's owner, never anything about the plan. A refused
 Find names leaves the menu in place (so "Add the lines that fit" still works) and records no
 right-to-use confirmation, because nothing was read. Only when `DMBOT_ENFORCE_PLANS` is on; a
-database hiccup lets the action through, like the start check.
+database hiccup, or one slower than 2 seconds (a button must be answered within Discord's
+3), lets the action through, like the start check. A campaign with no owner has no plan, so it
+has no copies or AI until a DM takes it on (the issue's rule; a player is told a DM must).
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find

@@ -154,7 +154,7 @@ async def make_file(
         return GONE
     # Transcript downloads belong to the plans with copies (#437 part 3). Here, not in each
     # button, so /transcript, the end-of-session button and "as heard too" all obey it.
-    refused = await bot.plan_gate("backup", guild_id, campaign, user_id)
+    refused = await bot.plan_gate("backup", guild_id, campaign, user_id, "transcript")
     if refused is not None:
         return refused
     running = _running(bot, session)
