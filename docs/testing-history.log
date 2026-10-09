@@ -1595,3 +1595,23 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     DMBOT_DEBUG_AUDIO=1: nothing new on the DM screen; `Capture check:` says "1 decode error"
     (singular); the counts in `audio user=` lines are as before. No separate test needed.
   Result: all of these were in the 17:27 build (21c5ff1), deployed from their PRs' deploy notes.
+
+==============================================================================
+2026-10-09  Server: deploy 85cc405, core and web-api together (dev1)
+==============================================================================
+  - 18:28 UTC  development @ 85cc405: #927 (campaign cap, #437 part 2c: migration
+    0034_owner_campaigns, two triggers and a count function; web-api also reads
+    DMBOT_ENFORCE_PLANS). It was merged without a status-log line, so dev1 asked CloudDev on
+    the PR and deployed once the line appeared (core AND web-api, no ears). The rest of the
+    diff since 21c5ff1 was docs and logs.
+  - Database backed up first (outside the repo; 34 tables); no session was live;
+    scripts/update-env had nothing to add. Image already built; `up -d --no-build core
+    web-api` naming both services. Logs: "Database updated: 0034_owner_campaigns", "Free
+    access list: 0 ids" (core and web-api), "Connected to 1 server(s)", "ears connected"
+    (ears untouched, up since 17:27), web-api healthy; 0 errors. /health 404 and
+    /admin/auth/ways 200 unchanged.
+  - Counts as read from the server: campaigns 1, with an owner 0, owner_campaigns rows 0
+    (consistent: the one test campaign has no owner yet); owner_campaigns row security on
+    and forced; triggers on campaigns: campaigns_no_truncate, owner_campaigns_sync.
+  - DMBOT_ENFORCE_PLANS is still off. Still to do by a person: create a campaign and start
+    a session as usual; the hand-over from Discord (needs a 2nd account).
