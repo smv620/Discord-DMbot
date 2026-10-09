@@ -55,7 +55,7 @@ from dmbot.memory.name_list import (
     Parsed,
     header,
     parse,
-    render,
+    render_files,
     template,
 )
 from dmbot.ui import logic
@@ -1588,9 +1588,13 @@ class UndoListButton(
 # ---- 📤 Download all --------------------------------------------------------------------
 
 
-def download_text(names: CampaignLookup, campaign: Campaign, *, secrets: bool) -> tuple[str, int]:
-    """The campaign's confirmed names as a list file (the same format Add many reads).
-    Misheard spellings DMbot learned aren't other names, so they're left out."""
+def download_files(
+    names: CampaignLookup, campaign: Campaign, *, secrets: bool
+) -> tuple[list[str], int]:
+    """The campaign's confirmed names as list files (the same format Add many reads), and
+    how many names they hold. Misheard spellings DMbot learned aren't other names, so
+    they're left out. A big campaign comes as several files, each small enough to add again
+    (#685)."""
     by_entity: dict[str, list[NameEntry]] = {}
     for a in names.names:
         if a.confirmed and a.kind != "misheard":
@@ -1604,7 +1608,11 @@ def download_text(names: CampaignLookup, campaign: Campaign, *, secrets: bool) -
         others = tuple(a.text for a in mine if not a.secret and a.key != own)
         hidden = tuple(a.text for a in mine if a.secret) if secrets else ()
         out.append(OutName(e.name, e.type, others, hidden))
-    return render(out, campaign=campaign.name, secrets=secrets), len(out)
+    return render_files(out, campaign=campaign.name, secrets=secrets), len(out)
+
+
+# Discord takes this many files in one message.
+FILES_PER_MESSAGE = 10
 
 
 async def send_download(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -1616,7 +1624,7 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
     if names is None:
         return
     secrets = sees_secrets(campaign, interaction.user.id)
-    text, count = await asyncio.to_thread(download_text, names, campaign, secrets=secrets)
+    texts, count = await asyncio.to_thread(download_files, names, campaign, secrets=secrets)
     if not count:
         await _tell(
             interaction,
@@ -1625,13 +1633,43 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
         )
         return
     day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
-    warning = "⚠️ Includes secret names: don't share this file with players. " if secrets else ""
-    await interaction.followup.send(
-        f"📤 **All {count:,} name{'' if count == 1 else 's'} for {_md(campaign.name)}.** "
-        f"{warning}Names still waiting in 📝 Check new names aren't included. Edit it and add "
-        f"it again with {UPLOAD} (names DMbot already knows aren't added twice; they get any "
-        "new other names).",
-        file=_file(text, f"names-{_slug(campaign.name)}-{day}.txt"),
-        ephemeral=True,
-        allowed_mentions=NO_PINGS,
-    )
+    slug = _slug(campaign.name)
+    if len(texts) == 1:
+        files = [_file(texts[0], f"names-{slug}-{day}.txt")]
+    else:  # the number comes first and is the same width, so it shows and sorts on a phone
+        width = len(str(len(texts)))
+        files = [
+            _file(text, f"names-{i:0{width}}-of-{len(texts)}-{slug}-{day}.txt")
+            for i, text in enumerate(texts, 1)
+        ]
+    secret_warning = "⚠️ Includes secret names: don't share {} with players."
+    if len(files) == 1:
+        warning = secret_warning.format("this file") + " " if secrets else ""
+        intro = (
+            f"📤 **All {count:,} name{'' if count == 1 else 's'} for {_md(campaign.name)}.** "
+            f"{warning}Names still waiting in 📝 Check new names aren't included. Edit it and "
+            f"add it again with {UPLOAD} (names DMbot already knows aren't added twice; they "
+            "get any new other names)."
+        )
+    else:
+        messages = -(-len(files) // FILES_PER_MESSAGE)
+        more = f" ({messages} messages)" if messages > 1 else ""
+        intro = (
+            f"📤 **All {count:,} names for {_md(campaign.name)}, in {len(files)} files{more}.**\n"
+            + (secret_warning.format("these files") + "\n" if secrets else "")
+            + f"To add them again, upload them one at a time with {UPLOAD}, in any order. "
+            "Adding a file twice does no harm.\n"
+            "Names still waiting in 📝 Check new names aren't included."
+        )
+    for at in range(0, len(files), FILES_PER_MESSAGE):
+        batch = files[at : at + FILES_PER_MESSAGE]
+        await interaction.followup.send(
+            intro
+            if at == 0
+            else f"📤 **Files {at + 1} to {at + len(batch)} of {len(files)}** for "
+            f"{_md(campaign.name)}. Upload them the same way, one at a time."
+            + ("\n" + secret_warning.format("these files") if secrets else ""),
+            files=batch,
+            ephemeral=True,
+            allowed_mentions=NO_PINGS,
+        )

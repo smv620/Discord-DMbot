@@ -257,7 +257,7 @@ commands are only visible to the person who used them.
 | `/dmbot stop` | Stop listening and close the session. Replaces `/table leave` |
 | `/dmbot backup` · `/dmbot restore` | Download a complete copy of a campaign, secrets included (anyone in the server, so a campaign is never lost if its DM disappears; decided 2026-10-06, #229; whoever restores a copy becomes its DM); bring one back from a copy (restore needs a file, which only a command can take) |
 | `/dmbot help` | A short, friendly guide with buttons |
-| `/dmbot houserules` | List, add, edit, and remove house rules for the current campaign |
+| `/dmbot houserules` | List, add, edit, and remove house rules for the current campaign (built 2026-10-09, #865: anyone in the server reads the list; only the campaign's DMs get Add, Edit and Remove) |
 | `/dmbot optionalrules` | Turn optional rules (e.g. Xanathar's, Tasha's) on or off for the current campaign (built in #49: a catalog of rule names, one-line summaries and their books, never book text; each change noted in the DM screen) |
 | `/transcript` | Download a session transcript: **cleaned**, **as heard** (raw), or **both** (#125). Anyone in the server can use it. If DMbot is still recording, the DM is told "This transcript ends at 19:42. To get the whole session, stop with `/dmbot stop` first." and a player is told "This transcript ends at 19:42. You'll get a message with the full transcript when the DM ends the session." [Download anyway] [Cancel] |
 
@@ -319,13 +319,14 @@ in the repository; the files record its SHA-256): all 339 spells and the 15 cond
 `core/src/dmbot/rules/data/srd52/`, with `ATTRIBUTION.md` (the statement the SRD asks for,
 and the changes made) and the same statement in the README. Nothing from any other book
 is in the repository. Each entry has its source, section and page, so an alert can cite
-it ("SRD 5.2.1, Spell Descriptions, p. 131"). A name is matched without case, punctuation
-or apostrophes, and the 19 spells the 2024 books renamed are also found under their 2014
-names (`rules/aliases.py`, each with a comment; Feeblemind and Branding Smite included). `lookup(name, target, fallback)` tries the
-target ruleset, then the fallback; a fallback hit is tagged (`[Legacy 2014]` for 2014
-content). An older entry is used only when no newer one matches any name. The 2014 SRD 5.1
-(also CC-BY-4.0) is not loaded yet: the index takes more data folders with their own
-edition, and filing that is the follow-up. Not built: the rules advisor that uses it.
+it ("SRD 5.2.1, Spell Descriptions, p. 131"). A name is matched without case,
+punctuation or apostrophes, and the 19 spells the 2024 books renamed are also found under
+their 2014 names (`rules/aliases.py`, each with a comment; Feeblemind and Branding Smite
+included). `lookup(name, target, fallback)` tries the target ruleset, then the fallback;
+a fallback hit is tagged (`[Legacy 2014]` for 2014 content). An older entry is used only
+when no newer one matches any name. The 2014 SRD 5.1 (also CC-BY-4.0) is not loaded yet:
+the index takes more data folders with their own edition, and filing that is the
+follow-up (#873). Not built: the rules advisor that uses it.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
@@ -382,6 +383,44 @@ happened). Ways in:
 
 Only the DM can declare or change a house rule. A player may suggest one; it becomes a
 proposal when the DM clearly agrees out loud, then goes through the same approval.
+
+*Built, part 1: the store and `/dmbot houserules` (2026-10-09, #865):* no AI, voice or
+alerts yet; those build on this.
+- **Table `house_rules`** (migration 0031), per campaign, with row-level security like
+  every campaign table: the rule (at most 500 characters), `supersedes` (the book rule it
+  replaces, free text, optional), `scenario` (what happened, optional), `session_id`
+  (optional; nothing sets it yet), who created it, and when it was created and last
+  changed. At most 200 per campaign. The website's role has no grant on it. It goes in
+  backups (a section that validates every field of the untrusted file) and is deleted with
+  the campaign. A backup never carries `session_id`, which means nothing in another server.
+- **A rule's number is its own, for good (decided 2026-10-09, Supervisor):** alerts cite
+  "house rule 12", so a number never changes meaning. It is the campaign's next number
+  when the rule is made (`campaigns.house_rules_made` counts them, under the campaign's
+  lock), it is never used again, even after the rule is removed, and backups carry both
+  the numbers and the count of numbers used (so a copy goes on where the campaign was,
+  even if its newest rules were removed; a backup made without the count goes on after its
+  highest number). Restoring over a campaign keeps its own count if that is higher. The list shows each rule's own number, newest (highest) first,
+  so it has gaps after a removal, with one line saying each rule keeps its number; the
+  buttons and the menu use that number ("Edit 12").
+- **Two DMs, one rule:** each rule counts its changes (`version`). Edit and Remove say
+  which version the DM was shown; if another DM changed the rule meanwhile, nothing is
+  saved or removed, and the DM is told (Edit gives their words back to paste again).
+- **Who may change them:** only the campaign's DMs, not even server managers: the store
+  checks it in the same transaction as the change. Anyone in the server may list them,
+  as they may read transcripts.
+- **`/dmbot houserules`** answers privately, newest first. It opens the campaign being
+  played, else the one campaign the person is a DM of, else the server's only one, else
+  asks which. A DM gets **Add a house rule** (a form: "The rule" and "Instead of
+  (optional)", shown in the list as "(instead of: …)"), and Edit and Remove for the rules
+  on the page shown: buttons when the page shows four or fewer, a menu above that, and pages
+  (what fits in one message, at most ten rules). The DM stays on their page after a change.
+  Remove asks first, shows the rule, and says it can't be undone; after it, the words are
+  given back whole, to paste into **Add a house rule** if it was a mistake. A refused form
+  gives both boxes back, whole and as typed. Nothing is posted to the DM screen (the list
+  isn't DM-screen content).
+- **Replace means replace:** restoring a backup over a campaign replaces its house rules
+  with the backup's, as it does everything else; a backup made before this has none.
+- **Wording:** "house rule" only: no "precedence" or "hierarchy" in anything users read.
 
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
@@ -966,7 +1005,13 @@ names panel nor the speech-to-text hints can be a fixed list.
     day on #598 because the per-line cap alone leaves one name able to gather tens of
     thousands of other names across lines, **at most 50 other names and 50 secret
     names per name and 5,000 other and secret names per upload**, counting only what
-    the upload adds so a Download all file always uploads again). **Names only:** lines with
+    the upload adds so a Download all file always uploads again). **A campaign too big
+    for one upload (over 2,000 lines or 256 KB) downloads as several files** (decided
+    2026-10-09, #685), named `names-01-of-12-…` (the number first, padded so they sort): each is within the
+    limits above counting its `#` notes, holds whole names (a name on several lines is
+    never split), starts with the instructions and a line saying it is one of N files that
+    can each be added on its own, in any order; the
+    ten files Discord takes in a message go ten to a message. **Names only:** lines with
     descriptions or other columns are refused as unclear, and DMbot never offers
     ready-made sourcebook name lists (IP rule). It writes only into the chosen
     campaign, through the normal memory rules (checks, change log), **saved in one go**
@@ -1237,6 +1282,29 @@ reads the campaign memory and never changes it.
 
   - **Only confirmed names and aliases can make a silent (high) fix.** A proposed name
     reaches at most medium, which always shows Undo.
+  - **A look-alike is not always a mishearing (decided 2026-10-09, #573).** Three rules
+    keep the Cleaner from merging two people into one:
+    1. **Two people in one line:** a look-alike word is never made into a name the same
+       line already says. With Ysolde in the line, "Isolde" stays "Isolde" (it is a
+       second person); the same holds for the options in a "Did they mean…?".
+    2. **Silent only when near-certain.** A fix by sound is silent only when the heard
+       word is spelled at least **0.95** alike to the name (`NEAR_CERTAIN`). Below that
+       (and above the old bars of 0.7 joined, 0.8 one word) it is a **medium** fix:
+       made, with a note and Undo in "✏️ Name fixes to check". With **How much DMbot
+       says: Quiet** it is not made. Measured on names-stress and the tests: a new
+       name that looks like a known one scores 0.83 ("Isolde"/Ysolde, "Cedric"/Cerric)
+       up to 0.93 ("Rothgar"/Hrothgar, which names-stress calls the likeliest wrong fix),
+       and a likely mishearing of a known name 0.91 to 0.94 ("Gorak"/Gorrak, "Beleros",
+       "Belle Ross"). The ranges overlap, so only near-identical spellings (0.95 and up)
+       stay silent; the rest are noted, and the DM decides. The cost is a few more lines
+       in "✏️ Name fixes to check". Under **Quiet**, noted fixes are not made, so
+       sound-alike names are left as heard: that is what Quiet promises (fewer misheard
+       names get fixed, no notes). The one-word rules (the name in the scene, 0.8) are
+       unchanged. This rests on about a dozen pairs: revisit it with the twin when more
+       real mishearings are on record. A one-letter slip in a short name scores about
+       0.83 to 0.86.
+    3. **Once the DM confirms a name it is known.** "Isolda" confirmed next to Ysolde is
+       never rewritten; "Isolde", sounding like both, is asked about, never made Ysolde.
   - "Did they mean…?" and Undo appear **only in the DM screen**, never in the transcript
     channel. The question leads with what was heard: "❓ **Mia said "Bell or us"**: did
     they mean… [Belleros] [Bellamy] [Type it…] [Keep as heard]". At most 3 options.
@@ -1388,7 +1456,8 @@ consent check just made still holds:
 - **Fixes with Undo (decided 2026-10-07 on #296):**
   - **Which fixes:** a misheard word that sounds like a name DMbot only *suggested*
     (spelled at least 0.9 alike, never secret, not next to a secret name) is fixed,
-    but never silently.
+    but never silently. So is a close look-alike of a *confirmed* name spelled less than
+    0.95 alike (decided on #573, see the Cleaner's "look-alike" rules above).
   - **Where they show:** only in the DM screen, in one "✏️ Name fixes to check" message
     edited in place: "DMbot changed these words in the transcript but isn't sure.
     Wrong? Press its Undo to put back what was heard." One numbered line and one

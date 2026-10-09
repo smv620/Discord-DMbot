@@ -31,7 +31,7 @@ SANS_FONT = "GillSans"
 ITALIC_FONT = "Cambria-Italic"
 BODY_FAMILY = "Cambria"
 STAT_FAMILY = "Optima"  # stat blocks inside a spell; a line starting in plain Optima wraps on
-STAT_WRAPPED = "Optima-Regular"
+STAT_STARTS = ("Optima-Bold", "Optima-BoldItalic")  # a stat block entry begins in bold
 BOLD_LEAD_INS = ("Cambria-Bold", "Cambria-BoldItalic")
 
 LEVEL_LINE = re.compile(r"^Level (?P<level>\d) (?P<school>[A-Z][a-z]+) \((?P<classes>.+)\)$")
@@ -51,6 +51,12 @@ WORD = re.compile(r"[A-Za-z’']+")
 # ("dex 14", "WiS 3"): the name is written once, as "Dex".
 ABILITY_NAME = re.compile(r"\b(str|dex|con|int|wis|cha)\b(?= \d)", re.IGNORECASE)
 HYPHENATED = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)+")
+
+
+def is_lead_in(line: Line) -> bool:
+    """A paragraph's bold heading ("Audible Alarm."), which ends in a full stop; a bold
+    name link at the start of a wrapped line ("Steed" of "Otherworldly Steed") doesn't."""
+    return line.first_font in BOLD_LEAD_INS and line.first_text.endswith(".")
 
 
 def is_title(line: Line) -> bool:
@@ -130,22 +136,25 @@ def _paragraphs(lines: Sequence[Line], mender: Mender) -> str:
     for line in lines:
         raw = line.text
         body = line.first_font.startswith(BODY_FAMILY)
-        # A stat block line that starts in plain Optima carries on the line before it.
-        wrapped = line.starts_with_font(STAT_WRAPPED) and previous_stat
+        # A stat block line that doesn't start an entry (in bold) carries on the line
+        # before it, whether it starts in plain or italic Optima ("Constitution Saving /
+        # Throw:").
+        in_stat = line.first_font.startswith(STAT_FAMILY)
+        # ...and so does a bold entry name still inside its brackets: "Healing Touch
+        # (Celestial Only; Recharges after a Long" / "Rest)."
+        name = paragraphs[-1].split(". ", 1)[0] if paragraphs else ""  # before its first sentence
+        open_name = name.count("(") > name.count(")")
+        wrapped = in_stat and previous_stat and (line.first_font not in STAT_STARTS or open_name)
         fresh = not wrapped and (
             not paragraphs
             or not body
             or not previous_body
             or raw.startswith(" ")
-            or any(line.starts_with_font(f) for f in BOLD_LEAD_INS)
+            or is_lead_in(line)
         )
         cut = bool(paragraphs) and paragraphs[-1].endswith("-")  # a word cut at the line's end
         text = raw.strip() if fresh else raw.lstrip()
-        if (
-            cut
-            and not raw.startswith(" ")
-            and not any(line.starts_with_font(f) for f in BOLD_LEAD_INS)
-        ):
+        if cut and not raw.startswith(" ") and not is_lead_in(line):
             paragraphs[-1] = mender.join(paragraphs[-1], text)  # a table row or stat block too
         elif fresh:
             paragraphs.append(text)
@@ -154,7 +163,7 @@ def _paragraphs(lines: Sequence[Line], mender: Mender) -> str:
         else:
             paragraphs[-1] += " " + text
         previous_body = body
-        previous_stat = line.first_font.startswith(STAT_FAMILY)
+        previous_stat = in_stat
     return "\n".join(ABILITY_NAME.sub(_titled, _clean(p)) for p in paragraphs if p.strip())
 
 
