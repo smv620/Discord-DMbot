@@ -24,7 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import campaign_cap, entitlements, hours, install, usage
+from dmbot import campaign_cap, entitlements, hours, install, plan_rules, usage
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -1279,6 +1279,56 @@ class DMBot(commands.AutoShardedBot):
             can_change_plan=room.can_change_plan,
             creating=True,
         )
+
+    async def plan_gate(
+        self, action: plan_rules.Action, guild_id: int, campaign: Campaign, user_id: int
+    ) -> str | None:
+        """Why `user_id` may not do `action` (use the AI, make a copy or transcript, replace
+        the campaign from a copy) with this campaign, in plain words for them, or None
+        (#437 part 3). Judged by the campaign's owner's plan, so the whole table stops or goes
+        together. Only when DMBOT_ENFORCE_PLANS is on. Fails open like `plan_refusal`: a
+        database hiccup, or one slower than Discord's 3 seconds allow, must not lock the table
+        out."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        owner = campaign.owner_user_id
+        access = None
+        if owner is not None:
+            try:
+                async with asyncio.timeout(GATE_TIMEOUT_S):
+                    access = await self.meter.access(guild_id, owner, int(time.time()))
+            except Exception:  # a slow database (TimeoutError) too
+                log.exception("Couldn't check the plan; allowing it")
+                return None
+        return plan_rules.refusal(
+            action,
+            access,
+            is_owner=user_id == owner,
+            owner_known=owner is not None,
+            site_url=self.settings.site_url,
+        )
+
+    async def restore_gate(
+        self, guild_id: int, user_id: int, replacing: Campaign | None = None
+    ) -> str | None:
+        """Why this person may not load a copy, or None (#437 part 3). A copy loaded as a new
+        campaign makes them its owner, so it is their own plan that has to include copies
+        (the free slot is the store's check, `restore_needs_slot`), and they hear about it
+        since it is theirs. A copy loaded over a campaign that has an owner keeps that owner
+        (#609), so it is the campaign's owner's plan that counts, as for any copy: a co-DM
+        with no plan may restore their paid owner's campaign. Over a campaign with no owner
+        the restorer becomes it, which is the first case."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        if replacing is not None and replacing.owner_user_id is not None:
+            return await self.plan_gate("restore", guild_id, replacing, user_id)
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S):
+                access = await self.meter.access(guild_id, user_id, int(time.time()))
+        except Exception:
+            log.exception("Couldn't check the plan; allowing it")
+            return None
+        return plan_rules.refusal("restore", access, is_owner=True, site_url=self.settings.site_url)
 
     async def start_campaign_session(
         self, interaction: discord.Interaction, campaign_id: str, voice_id: int

@@ -635,12 +635,24 @@ class AIOffer(_Menu):
         self.add_item(_Button(self._cancel, label="Cancel", style=grey))
 
     async def _read(self, interaction: discord.Interaction) -> None:
+        # Answer Discord first (#88, #351): the plan check below is a database read with a
+        # limit of its own, and the three seconds Discord gives are not ours to spend. Every
+        # reply after this is a private follow-up or an edit of this message.
+        await interaction.response.defer()
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
             return
         ai = _bot(interaction).ai
         if ai is None:
             await _tell(interaction, "DMbot's AI was switched off. Nothing was added.")
+            return
+        # The one place the AI spends tokens on a names list: the campaign's owner's plan
+        # has to allow it (#437 part 3). The menu stays, so "Add the lines that fit" works.
+        refused = await _bot(interaction).plan_gate(
+            "ai", campaign.guild_id, campaign, interaction.user.id
+        )
+        if refused is not None:
+            await _tell(interaction, refused)
             return
         guild = campaign.guild_id
         day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
@@ -658,7 +670,7 @@ class AIOffer(_Menu):
             del _ai_reads[old]  # only today counts
         _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
         try:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for "
                 "a long document.",
                 view=None,

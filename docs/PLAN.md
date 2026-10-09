@@ -1809,6 +1809,39 @@ the DM screen because co-DMs need to know the table may stop; they name only the
 and the 90% one says "The campaign's owner can add more at <WEB_SITE_URL>/account", so it fits
 everyone who reads the screen and never says whose plan it is.
 
+*Built, part 3: AI and copies by plan (2026-10-09, #919):* `dmbot.plan_rules` holds the two
+rules, pure over the owner's `Access`, and the refusal words, next to `hours.py`'s so the bot
+and the site never disagree. **`can_use_ai`:** true for a working plan of any kind (paid, Try It
+within its period, a grant, the free list), false for an ended plan or a campaign with no owner.
+It guards the one place a person's button press spends AI tokens (🤖 Find names; the AI that
+labels lines inside a session is covered by the start check); the story-memory and
+rules-advisor AI calls will call it when they exist. **`can_backup`:** true for a paid plan other
+than Try It, a grant or the free list (`backups` in `plans.json`), false for Try It, an ended plan
+and no owner. It guards `/dmbot backup`, every transcript download (`/transcript`, the
+end-of-session button, "as heard too") and **restore**. Restore is judged on whose campaign it
+makes: a copy loaded as a *new* campaign makes the restorer its owner, so it is the *restorer's
+own* plan that has to include copies (and the free slot is the store's check, `restore_needs_slot`);
+a copy loaded *over* a campaign keeps that campaign's owner (#609), so it is the *owner's* plan
+that counts, and a co-DM with no plan may restore their paid owner's campaign. The check is made
+when the choice is made, since that is when it is known, after "Restoring…" has answered Discord.
+Both rules are read through the meter door (the owner's plan, scoped to the owner), so the whole
+table stops or goes together. A refusal is private to the person who pressed, and names what they
+pressed. The owner (or the restorer) hears, for an ended plan, "Your plan has ended, so DMbot
+can't <make copies | send transcripts | find names with its AI | load copies>. Pick one here:
+<WEB_SITE_URL>/account" (the same first words as the hours refusal; the data cannot tell an ended
+plan from one never had); for Try It, "Try It campaigns can't make copies or transcripts. A paid
+plan can. See plans here: <WEB_SITE_URL>/account", or when loading a copy "Nothing was loaded.
+Loading a copy needs a paid plan. Pick one here: ...". Anyone else, a co-DM included, is told
+only "<Copies of this campaign aren't available | Transcripts aren't available for this
+campaign | Finding names with DMbot's AI isn't available for this campaign | Loading a copy isn't
+available>. Ask the campaign's owner to take a look.", never anything about the plan. A campaign
+with no owner is told "This campaign has no owner yet. One of its DMs needs to press **Take it
+on** on the campaign's card in the DM screen first." A refused Find names answers Discord first,
+leaves the menu in place (so "Add the lines that fit" still works), does not count against the
+day's reads, and records no right-to-use confirmation, because nothing was read. Only when
+`DMBOT_ENFORCE_PLANS` is on; a database hiccup, or one slower than 2 seconds, lets the action through, like the start check. A campaign with no owner has no plan, so it
+has no copies or AI until a DM takes it on (the issue's rule; a player is told a DM must).
+
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
 names, later story memory and rules lookups), plus backup, restore and transcript
