@@ -5,7 +5,6 @@ import {
   minimumAge,
   notAffiliated,
   operator,
-  paymentGraceDays,
   paymentProvider,
 } from "../../content/legal";
 import { byId, formatPrice } from "../../content/pricing";
@@ -91,9 +90,9 @@ const firstMonth = {
       {"{{CHECK: confirm with the payment company's cancellation rules}}"}
     </li>
     <li>
-      If a payment fails, you have {paymentGraceDays} days to fix it before the plan stops (see
-      "What if a payment doesn't go through?" on the <a href="/pricing">Prices</a> page). After
-      that, campaigns are kept for {keepAfterStopPaying}, then deleted.
+      If a payment fails, there is a short grace period to fix it before the plan stops. Tap Fix
+      my payment in <a href="/account">My Account</a>. If the plan stops, campaigns are kept for
+      {keepAfterStopPaying}, then deleted.
     </li>
     <li>Refunds are explained on the <a href="/legal/refunds">Refunds</a> page.</li>
     <li>

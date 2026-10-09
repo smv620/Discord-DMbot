@@ -127,9 +127,17 @@ describe("the facts #433 asks for", () => {
     expect(privacy()).toContain("the game master can see who peeked");
   });
 
-  it("gives a failed payment the 7 days from the plan file", () => {
-    expect(facts.paymentGraceDays).toBe(7);
-    expect(terms()).toContain("you have 7 days to fix it");
+  it("tells people a failed payment has a short grace period, with no number of days", () => {
+    expect(terms()).toContain("there is a short grace period to fix it before the plan stops");
+    expect(terms()).toContain("Tap Fix my payment in My Account");
+    expect(terms()).not.toMatch(/\d+ days to fix it/);
+  });
+
+  it("names Lemon Squeezy as the payment company on every legal page", () => {
+    for (const page of ["terms", "privacy", "refunds"]) {
+      expect(text(doc(page).querySelector("main"))).toContain("Lemon Squeezy");
+    }
+    expect(terms()).not.toMatch(/PAYMENT PROVIDER|Paddle/);
   });
 
   it("uses one sign-in cookie and no tracking", () => {
