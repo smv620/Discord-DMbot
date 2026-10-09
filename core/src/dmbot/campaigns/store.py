@@ -1078,8 +1078,13 @@ class CampaignStore:
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
                         importer_id,
-                        info["rules_cards"],
                     )
+                    if info["rules_cards"]:  # a new campaign starts with them off
+                        await conn.execute(
+                            "UPDATE campaigns SET rules_cards = TRUE"
+                            " WHERE guild_id = %s AND id = %s",
+                            (guild_id, campaign_id),
+                        )
                 except pg_errors.UniqueViolation as exc:
                     # Another restore took the same name a moment ago.
                     raise CampaignError(
@@ -1173,14 +1178,13 @@ class CampaignStore:
         visibility: str,
         level: str,
         owner_user_id: int,
-        rules_cards: bool = False,
     ) -> str:
         campaign_id = uuid.uuid4().hex
         await conn.execute(
             "INSERT INTO campaigns (id, guild_id, name, name_key, created_at, last_played_at,"
             " target_ruleset, fallback_ruleset, optional_rules_default, dm_screen_visibility,"
-            " dm_screen_level, owner_user_id, rules_cards)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " dm_screen_level, owner_user_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 campaign_id,
                 guild_id,
@@ -1194,7 +1198,6 @@ class CampaignStore:
                 visibility,
                 level,
                 owner_user_id,
-                rules_cards,
             ),
         )
         return campaign_id
@@ -1231,7 +1234,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         transcript_channel_id=row_int(row, "transcript_channel_id"),
         dm_screen_level=row["dm_screen_level"],
         owner_user_id=row_int(row, "owner_user_id"),
-        rules_cards=bool(row["rules_cards"]),
+        rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
     )
 
 
