@@ -37,6 +37,23 @@ class RequestInTests(unittest.TestCase):
                 assert found is not None
                 self.assertEqual(found.question, question)
 
+    def test_a_one_word_topic_works(self) -> None:
+        found = request_in("Hold on, let me look up Fireball")
+        assert found is not None
+        self.assertEqual(found.question, "look up Fireball")
+        found = request_in("Hang on, I need to check grappling.")
+        assert found is not None
+        self.assertEqual(found.rest, "grappling")
+
+    def test_rules_are_not_housekeeping(self) -> None:
+        for text in [
+            "Hold on, I need to check the rules for flanking",
+            "Hold on, let me look up the grapple rules",
+            "Hold on, let me check the spell description",
+        ]:
+            with self.subTest(text=text):
+                self.assertIsNotNone(request_in(text))
+
     def test_only_up_to_the_end_of_the_sentence(self) -> None:
         found = request_in("Hold on, I need to check how grappling works. Anyway, you wait.")
         assert found is not None
@@ -49,6 +66,13 @@ class RequestInTests(unittest.TestCase):
             "Hold on, I need to find my dice",  # the DM's own things
             "Hold on, I need to check my notes",
             "Hold on, I need to find it",  # too little to look up
+            "Hold on, let me check the map",  # the DM's housekeeping
+            "Hold on, I need to find the page",
+            "Hold on, let me check the module",
+            "Hold on, let me look at the book",
+            "Hold on, I have to check the notes",
+            "Hold on, let me check that",
+            "Hold on, let me find something",
             "Hold on, he needs to find the key",  # someone else
             "Hold on",
             "I need to look up",

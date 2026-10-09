@@ -15,10 +15,10 @@ from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE
 if TYPE_CHECKING:
     import av
 
-MAX_MEMO_BYTES = 4_000_000  # a few minutes of voice message; far more than a question needs
-MAX_MEMO_S = 90.0
+MAX_MEMO_S = 30.0  # a question is short; a long memo would hold the speech worker
+MAX_MEMO_BYTES = 1_500_000  # about 30 s of Discord's Opus with room to spare
 MIN_MEMO_S = 0.4
-TOO_LONG = "Too long. Keep it under 90 seconds."
+TOO_LONG = f"Too long. Keep it under {int(MAX_MEMO_S)} seconds."
 
 
 class MemoError(RuntimeError):

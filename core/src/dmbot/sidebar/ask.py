@@ -29,9 +29,19 @@ _REQUEST = re.compile(
     rf"\b{_LEAD}{_SEP}(?:{_FILLER}{_SEP}){{0,2}}{_NEED}\s{{1,3}}{_VERB}\s{{1,3}}(?P<rest>.+)",
     re.IGNORECASE | re.DOTALL,
 )
-# What follows is about the DM's own things, not the game ("check my notes", "find my dice").
-_NOT_A_LOOKUP = re.compile(r"^(?:my|our|the (?:time|bathroom|snacks?))\b", re.IGNORECASE)
-MIN_WORDS = 2
+# What follows is about the DM's own things, not the game: "check my notes", "find the map",
+# "check the module", "find the page" (housekeeping), or nothing in particular ("find it").
+_NOT_A_LOOKUP = re.compile(
+    r"^(?:my|our)\b"
+    r"|^(?:the |this |that |a |an )?(?:map|maps|page|pages|module|modules|book|books|notes?"
+    r"|sheet|sheets|screen|door|time|bathroom|snacks?|dice|pencil|pen|laptop|phone)\b",
+    re.IGNORECASE,
+)
+_NOTHING_IN_PARTICULAR = frozenset(
+    {"it", "that", "this", "something", "someone", "anything", "them", "those"}
+    | {"these", "one", "there", "here"}
+)
+MIN_WORDS = 1
 MAX_QUESTION_CHARS = 240
 MAX_LINE_CHARS = 600  # a line is cut here before looking: speech never needs more
 ASK_EVERY_S = 60.0  # at most one question a minute from a table
@@ -60,8 +70,11 @@ def request_in(text: str, *, in_character: bool = False) -> Request | None:
     rest = found.group("rest").strip()
     rest = re.split(r"(?<=[.!?])\s", rest, maxsplit=1)[0]  # up to the end of the sentence
     rest = rest.strip(" ,;:-.!?")
-    if len(rest.split()) < MIN_WORDS or _NOT_A_LOOKUP.match(rest):
+    words = rest.split()
+    if len(words) < MIN_WORDS or _NOT_A_LOOKUP.match(rest):
         return None
+    if len(words) == 1 and words[0].casefold() in _NOTHING_IN_PARTICULAR:
+        return None  # a one-word topic ("fireball") is fine; "it" is not
     if len(rest) > MAX_QUESTION_CHARS:
         rest = rest[:MAX_QUESTION_CHARS].rsplit(" ", 1)[0]
     return Request(found.group("verb").casefold(), rest)

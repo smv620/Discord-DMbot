@@ -1947,11 +1947,15 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Couldn't handle a private message")
 
-    def has_consent(self, guild_id: int, user_id: int) -> bool:
+    def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return self.consent.has_consent(guild_id, user_id)
 
-    async def campaign(self, guild_id: int, campaign_id: str) -> Campaign | None:
+    async def sidebar_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None:
         return await self.campaigns.get(guild_id, campaign_id)
+
+    def sidebar_server_name(self, guild_id: int) -> str:
+        guild = self.get_guild(guild_id)
+        return guild.name if guild else "another server"
 
     def consent_request(self, table: Table) -> tuple[str, discord.ui.View]:
         """The question about recording, for someone who hasn't agreed yet."""
@@ -1984,14 +1988,18 @@ class DMBot(commands.AutoShardedBot):
             return text
         return self._clean(table, text, unsure=False).text
 
-    async def sidebar_send_dm(self, user_id: int, text: str) -> bool:
+    async def sidebar_send_dm(self, user_id: int, text: str) -> str:
+        """ "sent", "forbidden" (their messages from DMbot are closed) or "failed"."""
         try:
             user = self.get_user(user_id) or await self.fetch_user(user_id)
             await user.send(text, allowed_mentions=NO_PINGS)
+        except discord.Forbidden as exc:
+            log.info("Couldn't message user %s privately: %s", user_id, exc)
+            return "forbidden"
         except discord.HTTPException as exc:
             log.info("Couldn't message user %s privately: %s", user_id, exc)
-            return False
-        return True
+            return "failed"
+        return "sent"
 
     async def sidebar_tell_screen(self, table: Table, text: str) -> None:
         await self.post(table.screen_channel_id, text)

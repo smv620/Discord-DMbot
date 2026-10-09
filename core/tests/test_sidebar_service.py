@@ -14,7 +14,7 @@ from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, Line
 from tests.test_sidebar_memo import ogg_opus
 
-GUILD, OTHER_GUILD, DM, CO_DM, PLAYER = 1, 2, 7, 70, 8
+GUILD, OTHER_GUILD, DM, CO_DM, PLAYER, STARTER = 1, 2, 7, 70, 8, 99
 FIREBALL = "find if you need line of sight for fireball"
 
 
@@ -49,9 +49,8 @@ def make_table(guild: int = GUILD, campaign: str = "c1", name: str = "Frostmaide
         guild_id=guild,
         campaign_id=campaign,
         campaign_name=name,
-        dm_user_id=DM,
-        dm_user_ids=frozenset({CO_DM}),
-        is_dm=lambda user: user in (DM, CO_DM),
+        dm_user_id=STARTER,  # whoever pressed Start; not necessarily a campaign DM
+        dm_user_ids=frozenset({DM, CO_DM}),
         segmenter=SimpleNamespace(session=5),
         recent=Recent.new(),
         sidebar_limiter=AskLimiter(),
@@ -68,15 +67,19 @@ class FakeHost:
     heard_as: str | None = "find if you need line of sight for fireball"
     transcribed: int = 0
     can_dm: bool = True
+    refusal: str = "forbidden"
     withdraw_during_transcribe: bool = False
 
-    def has_consent(self, guild_id: int, user_id: int) -> bool:
+    def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return (guild_id, user_id) in self.agreed
 
     def name_of(self, guild_id: int, user_id: int) -> str:
         return {DM: "Sam", PLAYER: "Mia"}.get(user_id, "Someone")
 
-    async def campaign(self, guild_id: int, campaign_id: str) -> Any:
+    def sidebar_server_name(self, guild_id: int) -> str:
+        return {GUILD: "Table One", OTHER_GUILD: "Table Two"}.get(guild_id, "x")
+
+    async def sidebar_campaign(self, guild_id: int, campaign_id: str) -> Any:
         return SimpleNamespace(id=campaign_id, guild_id=guild_id)
 
     def consent_request(self, table: Any) -> tuple[str, Any]:
@@ -91,9 +94,9 @@ class FakeHost:
     def sidebar_clean(self, table: Any, text: str) -> str:
         return text.replace("Fire ball", "Fireball")
 
-    async def sidebar_send_dm(self, user_id: int, text: str) -> bool:
+    async def sidebar_send_dm(self, user_id: int, text: str) -> str:
         self.dms.append((user_id, text))
-        return self.can_dm
+        return "sent" if self.can_dm else self.refusal
 
     def sidebar_save(self, table: Any, line: Line) -> None:
         self.saved.append(line)
@@ -183,12 +186,24 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.host.agreed.add((GUILD, PLAYER))
         message = dm_message(PLAYER, "check how grappling works")
         await self.sidebar.on_dm_message(message)
-        self.assertEqual(sent(message), [service.NO_SESSION])
+        self.assertEqual(sent(message), [])  # not a campaign's DM: not even a note
         self.assertEqual((self.answerer.asked, self.host.saved), ([], []))
 
+    async def test_whoever_pressed_start_is_not_thereby_a_dm(self) -> None:
+        self.host.agreed.add((GUILD, STARTER))
+        message = dm_message(STARTER, "check how grappling works")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual((sent(message), self.answerer.asked, self.host.saved), ([], [], []))
+        self.assertFalse(
+            self.sidebar.ask_at_table(
+                self.host.tables[GUILD], STARTER, "Hold on, I need to check how grappling works."
+            )
+        )
+
     async def test_no_running_game_says_so_but_not_twice_in_a_row(self) -> None:
-        self.host.tables.clear()
-        first, second = dm_message(content="hello"), dm_message(content="hello again")
+        await self.sidebar.on_dm_message(dm_message(content="check how grappling works"))
+        self.host.tables.clear()  # the game is over; they are known as a DM now
+        first, second = dm_message(content="hello there"), dm_message(content="hello again")
         await self.sidebar.on_dm_message(first)
         await self.sidebar.on_dm_message(second)
         self.assertEqual(sent(first), [service.NO_SESSION])
@@ -222,11 +237,10 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         message = dm_message(voice=data)
         await self.sidebar.on_dm_message(message)
         self.assertEqual(self.host.transcribed, 1)
-        first, second = sent(message)[0], None
+        first = sent(message)[0]
         self.assertTrue(first.startswith("🎙️ “find if you need line of sight for fireball”\n"))
         self.assertIn("No: its origin", first)
         self.assertEqual([x.sidebar for x in self.host.saved], [SIDEBAR_QUESTION, SIDEBAR_ANSWER])
-        del second
 
     async def test_a_voice_message_that_is_not_audio_gets_plain_words(self) -> None:
         message = dm_message(voice=b"not audio at all" * 30)
@@ -270,6 +284,43 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(echo), service.ECHO_CHARS + 8)
         self.assertTrue(echo.endswith("…”"))
 
+    async def test_without_an_engine_nothing_is_downloaded_or_written_down(self) -> None:
+        self.sidebar.answerer = None
+        message = dm_message(voice=ogg_opus(1.0) or b"x")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), [service.NOT_YET])
+        message.attachments[0].read.assert_not_awaited()
+        self.assertEqual(self.host.transcribed, 0)
+
+    async def test_ok_and_thanks_are_not_questions(self) -> None:
+        for text in ("ok", "thanks", "👍"):
+            message = dm_message(content=text)
+            await self.sidebar.on_dm_message(message)
+            self.assertEqual(sent(message), [])
+        self.assertEqual((self.answerer.asked, self.host.saved), ([], []))
+        question = dm_message(content="grappling?")
+        await self.sidebar.on_dm_message(question)
+        self.assertEqual(len(self.answerer.asked), 1)
+
+    async def test_a_one_word_voice_message_is_not_a_question_either(self) -> None:
+        data = ogg_opus(1.0)
+        if data is None:
+            self.skipTest("this PyAV can't encode Opus")
+        self.host.heard_as = "thanks"
+        message = dm_message(voice=data)
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), [service.NO_WORDS])
+        self.assertEqual((self.answerer.asked, self.host.saved), ([], []))
+
+    async def test_a_long_answer_is_sent_in_pieces_that_fit(self) -> None:
+        self.answerer.answer_to_give = FakeAnswer(("A sentence of some length. " * 200).strip())
+        message = dm_message(content="check how grappling works")
+        await self.sidebar.on_dm_message(message)
+        pieces = sent(message)
+        self.assertGreater(len(pieces), 1)
+        self.assertTrue(all(len(x) <= service.MESSAGE_LIMIT for x in pieces))
+        self.assertEqual(" ".join(pieces), self.answerer.answer_to_give.text)
+
     async def test_no_words_heard(self) -> None:
         data = ogg_opus(1.0)
         if data is None:
@@ -300,9 +351,7 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.host.agreed.discard((GUILD, DM))
         self.answerer.gate.set()
         await task
-        self.assertEqual(sent(message), [])
-        self.assertEqual([x.sidebar for x in self.host.saved], [SIDEBAR_QUESTION])  # saved before
-        # ...but the buffer's own consent check (TranscriptBuffer.take) drops it unsaved.
+        self.assertEqual((sent(message), self.host.saved), ([], []))
 
     async def test_the_session_ending_meanwhile_sends_nothing(self) -> None:
         self.answerer.gate = asyncio.Event()
@@ -320,18 +369,20 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         message = dm_message(content="check how grappling works")
         await self.sidebar.on_dm_message(message)
         self.assertEqual(sent(message), [service.NOT_YET])
+        self.assertEqual(self.host.saved, [])
         self.sidebar.answerer = self.answerer
         self.answerer.error = RuntimeError("boom")
         failed = dm_message(content="check how grappling works")
         await self.sidebar.on_dm_message(failed)
         self.assertEqual(sent(failed), [service.FAILED])
+        self.assertEqual(self.host.saved, [])  # no orphan question after a failed answer
         self.answerer.error = None
         self.answerer.answer_to_give = FakeAnswer("You've used all your hours.", refused=True)
         self.host.saved.clear()
         refused = dm_message(content="check how grappling works")
         await self.sidebar.on_dm_message(refused)
         self.assertEqual(sent(refused), ["You've used all your hours."])
-        self.assertEqual([x.sidebar for x in self.host.saved], [SIDEBAR_QUESTION])  # no answer line
+        self.assertEqual(self.host.saved, [])  # the plan said no: nothing to remember
 
     async def test_an_answer_about_discord_or_dmbot_is_not_in_the_transcript(self) -> None:
         self.answerer.answer_to_give = FakeAnswer("Press ⚙️ Menu.", in_game=False)
@@ -353,10 +404,13 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_scene_goes_with_the_question(self) -> None:
         table = self.host.tables[GUILD]
-        table.recent.add(PLAYER, "I draw my bow.", 100.0)
+        self.host.agreed.add((GUILD, PLAYER))
+        table.recent.add(PLAYER, "I draw my bow.", 250.0)
+        table.recent.add(PLAYER, "ages ago", 1.0)
+        self.sidebar._monotonic = lambda: 300.0
         await self.sidebar.on_dm_message(dm_message(content="check how grappling works"))
         (_, _, scene) = self.answerer.asked[0]
-        self.assertTrue(scene == "" or "Mia: I draw my bow." in scene)
+        self.assertEqual(scene, "Mia: I draw my bow.")
 
 
 class TheRulesStayTrue(unittest.IsolatedAsyncioTestCase):
@@ -377,7 +431,7 @@ class TheRulesStayTrue(unittest.IsolatedAsyncioTestCase):
         self.table.recent.add(PLAYER, "Secret plan.", 200.0)
         self.host.agreed.discard((GUILD, PLAYER))
         scene = self.table.recent.scene(
-            lambda u: "x", 200.0, lambda u: self.host.has_consent(GUILD, u)
+            lambda u: "x", 200.0, lambda u: self.host.sidebar_has_consent(GUILD, u)
         )
         self.assertNotIn("Secret", scene)
 
@@ -388,7 +442,7 @@ class TheRulesStayTrue(unittest.IsolatedAsyncioTestCase):
         message = dm_message(content="check how grappling works")
         await self.sidebar.on_dm_message(message)
         view = message.channel.send.await_args_list[0].kwargs["view"]
-        other.is_dm = lambda user: False  # a handover happened meanwhile
+        other.dm_user_ids = frozenset()  # a handover happened meanwhile
         button = next(b for b in view.children if b.label == "Strahd")
         mine = SimpleNamespace(
             user=SimpleNamespace(id=DM), response=SimpleNamespace(edit_message=AsyncMock())
@@ -403,7 +457,7 @@ class TheRulesStayTrue(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(self.sidebar.on_dm_message(message))
         await asyncio.sleep(0)
         await asyncio.sleep(0)
-        self.table.is_dm = lambda user: False
+        self.table.dm_user_ids = frozenset()
         self.answerer.gate.set()
         await task
         self.assertEqual(sent(message), [])
@@ -537,8 +591,24 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         said = "Hold on, I need to check how grappling works."
         self.sidebar.ask_at_table(self.table, DM, said)
         await self.settle()
-        self.assertEqual([x.sidebar for x in self.host.saved], [SIDEBAR_QUESTION])  # no answer line
+        self.assertEqual(self.host.saved, [])  # nobody got an answer: nothing is written
         self.assertEqual(self.host.screen, [service.CANT_DM])  # and never the answer itself
+
+    async def test_other_failures_to_send_say_nothing_on_the_dm_screen(self) -> None:
+        self.host.can_dm = False
+        self.host.refusal = "failed"
+        self.sidebar.ask_at_table(self.table, DM, "Hold on, I need to check how grappling works.")
+        await self.settle()
+        self.assertEqual(self.host.screen, [])
+
+    async def test_no_engine_means_a_spoken_question_is_quietly_ignored(self) -> None:
+        self.sidebar.answerer = None
+        said = "Hold on, I need to check how grappling works."
+        self.assertFalse(self.sidebar.ask_at_table(self.table, DM, said))
+        self.assertEqual((self.host.dms, self.host.saved), ([], []))
+        self.sidebar.answerer = self.answerer
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, said))  # the minute was kept
+        await self.settle()
 
     async def test_a_spoken_question_the_limit_swallows_is_explained_privately_once(self) -> None:
         now = [1000.0]

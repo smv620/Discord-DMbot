@@ -1666,7 +1666,7 @@ table isn't left waiting while the DM looks something up.
     message from a campaign's DM, while a session of theirs runs. A voice message is read in
     memory (PyAV, now a normal dependency), written down by the table's speech-to-text with
     the campaign's names as hints, and dropped at once. Names are fixed the way table speech
-    is (only the sure ones). A DM who has not agreed to be recorded is asked first, with the
+    is (only the sure ones). Any of the campaign's DMs (not just whoever pressed Start) may use it. A DM who has not agreed to be recorded is asked first, with the
     consent button; nothing is downloaded or kept. If the DM runs several games, a button asks
     which. One question at a time. The reply shows what was heard (voice only).
   - **Said at the table:** a DM's own line, in the live transcript, that has a hold-on
@@ -1674,14 +1674,14 @@ table isn't left waiting while the DM looks something up.
     something (`dmbot.sidebar.ask`, with tests for lines that must not start one). At most one
     a minute per table. The answer goes to the DM's private chat, never a channel.
   - **Transcript lines:** the question and DMbot's in-game answer are saved with the line
-    kind `question` / `answer` (migration 0035; answers are saved under the DM's id so a
+    kind `question` / `answer` (migration 0036; answers are saved under the DM's id so a
     consent stop removes both), shown in the as-heard file for everyone who can read it as
     `(DM name) [DM Sidebar id=… via=… stt=…]:` and `(DMbot) [DM Sidebar reply-to=… model=…
     prompt=… sources=…]:`. Where each came from is stored as columns (how it came in, the
     speech-to-text, the question it answers, the AI model, the prompt version, the sources).
     Never in the cleaned file, the live channel, or the session counts. Backups hold no
     transcripts, so they hold no sidebar lines.
-  - **Cost limits:** a spoken question is one a minute per table; questions in the DM chat are
+  - **Cost limits:** nothing is downloaded, written down or asked while the answer engine (#934) is missing. A voice message may be up to 30 seconds. A spoken question is one a minute per table; questions in the DM chat are
     six a minute per DM (each can spend speech-to-text and AI money). A voice message's speech
     counts in the end-of-session "sent" line for outside engines, not in the hours meter.
   - **Not built yet:** a line the Cleaner tags as in character is not told apart from the DM

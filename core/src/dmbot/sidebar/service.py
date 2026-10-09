@@ -55,24 +55,26 @@ ANSWER_TIMEOUT_S = 25.0
 SCENE_SECONDS = 180.0
 SCENE_CHARS = 1_200
 RECENT_LINES = 40
+MIN_WORDS = 2  # "ok" or "thanks" is not a question
 READ_TIMEOUT_S = 30.0
 CHAT_PER_MINUTE = 6  # questions typed or spoken in the DM chat, per DM
 NOTE_KEEP = 1_000
-_DECODING = asyncio.Semaphore(2)
+DECODE_AT_ONCE = 2
+MESSAGE_LIMIT = 2_000  # Discord's
 NOTE_EVERY_S = 30.0  # the same kind of note to the same person, at most this often
 
 NO_SESSION = "No game is running with you as DM. Start one with /dmbot start, then ask again."
 NOT_YET = "Quick answers aren't switched on yet."
 NOT_SOON_AGAIN = "Still on your last question. One moment."
-ONE_A_MINUTE = "Too soon: I answer one spoken question a minute. Message me here to ask now."
+ONE_A_MINUTE = "One spoken question a minute. Message me here to ask now."
 FAILED = "I couldn't answer that. Try again, or type it here."
 NO_WORDS = "I couldn't make out any words. Try again."
 NOT_AGREED = (
-    "I can only listen once you agree to be recorded. Press the button below, then send it "
-    "again. Nothing you sent was kept."
+    "First, agree to be recorded with the button below. Then ask again. "
+    "I didn't keep your question."
 )
 CANT_DM = (
-    "I couldn't DM you an answer. Turn on direct messages from this server "
+    "I couldn't message you the answer privately. Allow direct messages from this server "
     "(server name, then Privacy Settings), then ask again."
 )
 WHICH = "Which game is this for?"
@@ -110,13 +112,14 @@ class Host(Protocol):
 
     @property
     def tables(self) -> Mapping[int, Table]: ...
-    def has_consent(self, guild_id: int, user_id: int) -> bool: ...
+    def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool: ...
     def name_of(self, guild_id: int, user_id: int) -> str: ...
-    async def campaign(self, guild_id: int, campaign_id: str) -> Campaign | None: ...
+    async def sidebar_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None: ...
+    def sidebar_server_name(self, guild_id: int) -> str: ...
     def consent_request(self, table: Table) -> tuple[str, discord.ui.View]: ...
     async def sidebar_transcribe(self, table: Table, utterance: Utterance) -> str | None: ...
     def sidebar_clean(self, table: Table, text: str) -> str: ...
-    async def sidebar_send_dm(self, user_id: int, text: str) -> bool: ...
+    async def sidebar_send_dm(self, user_id: int, text: str) -> str: ...  # sent, forbidden, failed
     def sidebar_save(self, table: Table, line: Line) -> None: ...
     def sidebar_stt(self) -> str: ...  # the speech-to-text in use: "engine model host"
     async def sidebar_tell_screen(self, table: Table, text: str) -> None: ...
@@ -166,14 +169,24 @@ class Recent:
 
 
 class SidebarService:
-    def __init__(self, host: Host, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        host: Host,
+        *,
+        clock: Callable[[], float] = time.time,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.host = host
+        self._monotonic = monotonic  # what Table.recent is timed with
         self.answerer: Answerer | None = None  # set when the answer engine (#934) exists
         self._clock = clock
         self._busy: set[int] = set()  # DMs with a question being answered
         self._noted: dict[tuple[int, str], float] = {}
         self._asked_at: dict[int, deque[float]] = {}  # per DM: when lately (chat path)
         self._tasks: set[asyncio.Task[None]] = set()
+        self._decoding = asyncio.Semaphore(DECODE_AT_ONCE)
+        self._known_dms: set[int] = set()  # seen as a campaign's DM since DMbot started
+        self._undelivered: dict[int, str] = {}  # why the last private message failed
 
     # ---- the DM's chat with DMbot ---------------------------------------------------
 
@@ -190,6 +203,8 @@ class SidebarService:
                 with contextlib.suppress(discord.HTTPException):
                     await message.channel.send(TYPE_INSTEAD, allowed_mentions=NO_PINGS)
             return
+        if typed and not _is_question(typed):
+            return  # "ok", "thanks", "👍": not a question, no AI call, nothing written down
         tables = self.tables_of(user_id)
 
         async def reply(text: str) -> bool:
@@ -200,8 +215,13 @@ class SidebarService:
             return True
 
         if not tables:
-            if self._note_ok(user_id, "nosession"):
+            # Only someone known to be a campaign's DM is told; anyone else gets nothing.
+            if user_id in self._known_dms and self._note_ok(user_id, "nosession"):
                 await reply(NO_SESSION)
+            return
+        if self.answerer is None:  # before any download or speech-to-text is paid for
+            if self._note_ok(user_id, "notyet"):
+                await reply(NOT_YET)
             return
         if len(tables) == 1:
             await self._from_message(tables[0], message, reply)
@@ -212,9 +232,12 @@ class SidebarService:
 
     def tables_of(self, user_id: int) -> list[Table]:
         """The running sessions this person is a DM of."""
-        return [
-            t for t in self.host.tables.values() if t.campaign_id is not None and t.is_dm(user_id)
+        mine = [
+            t for t in self.host.tables.values() if t.campaign_id is not None and _is_dm(t, user_id)
         ]
+        if mine:
+            self._known_dms.add(user_id)
+        return mine
 
     def _chat_ok(self, user_id: int) -> bool:
         """A few questions a minute in the DM chat: each one can spend speech-to-text and
@@ -239,7 +262,7 @@ class SidebarService:
     async def _from_message(self, table: Table, message: discord.Message, reply: Reply) -> None:
         user_id = message.author.id
         guild_id = table.guild_id
-        if not self.host.has_consent(guild_id, user_id):
+        if not self.host.sidebar_has_consent(guild_id, user_id):
             if not self._note_ok(user_id, "agree"):
                 return
             text, view = self.host.consent_request(table)
@@ -264,6 +287,9 @@ class SidebarService:
                 heard = await self._hear(table, user_id, message.attachments[0], reply)
                 if heard is None:
                     return
+                if not _is_question(heard):
+                    await reply(NO_WORDS)
+                    return
                 show = True
             else:
                 heard = message.content.strip()[:MAX_TYPED_CHARS]
@@ -283,7 +309,7 @@ class SidebarService:
             return None
         try:
             data = await asyncio.wait_for(attachment.read(), READ_TIMEOUT_S)
-            async with _DECODING:  # a few at a time: it is CPU work in a shared pool
+            async with self._decoding:  # a few at a time: it is CPU work in a shared pool
                 pcm = await asyncio.to_thread(memo.decode, data)
         except memo.MemoError as exc:
             await reply(str(exc))
@@ -328,8 +354,8 @@ class SidebarService:
         """The DM's line at the table: if it clearly asks for a look-up, answer it
         privately, in the background. Only the campaign's own DM's lines count, at most one
         a minute. True if a question was started."""
-        if not table.is_dm(user_id) or table.campaign_id is None:
-            return False
+        if self.answerer is None or table.campaign_id is None or not _is_dm(table, user_id):
+            return False  # no engine: quietly nothing, and the minute is not used up
         request = request_in(text, in_character=in_character)
         if request is None:
             return False
@@ -360,7 +386,9 @@ class SidebarService:
 
     async def _table_question(self, table: Table, user_id: int, request: Request) -> None:
         async def reply(text: str) -> bool:
-            return await self.host.sidebar_send_dm(user_id, text)
+            status = await self.host.sidebar_send_dm(user_id, text)
+            self._undelivered[user_id] = status
+            return status == "sent"
 
         try:
             await self._ask(table, user_id, request.question, reply, via=VIA_TABLE)
@@ -382,22 +410,58 @@ class SidebarService:
         return (
             self.host.tables.get(table.guild_id) is table
             and table.campaign_id is not None
-            and table.is_dm(user_id)
-            and self.host.has_consent(table.guild_id, user_id)
+            and _is_dm(table, user_id)
+            and self.host.sidebar_has_consent(table.guild_id, user_id)
         )
 
     async def _ask(self, table: Table, user_id: int, heard: str, reply: Reply, *, via: str) -> None:
-        """`via`: how the question came in (VIA_VOICE, VIA_TYPED or VIA_TABLE)."""
-        show_heard = via == VIA_VOICE
+        """`via`: how the question came in (VIA_VOICE, VIA_TYPED or VIA_TABLE). Nothing is
+        written to the transcript unless an answer reached the DM: no orphan questions."""
         guild_id, campaign_id = table.guild_id, table.campaign_id
         if campaign_id is None or not self._still(table, user_id):
             return
         answerer = self.answerer
         if answerer is None:
-            await reply(NOT_YET)
             return
         question = self.host.sidebar_clean(table, heard)
         asked_ms = int(self._clock() * 1000)
+        campaign = await self.host.sidebar_campaign(guild_id, campaign_id)
+        if campaign is None or not self._still(table, user_id):
+            return
+        now = self._monotonic()
+        scene = table.recent.scene(
+            lambda u: self.host.name_of(guild_id, u),
+            now,
+            lambda u: self.host.sidebar_has_consent(guild_id, u),
+        )
+        try:
+            answer = await asyncio.wait_for(
+                answerer.answer(campaign, question, scene=scene), ANSWER_TIMEOUT_S
+            )
+        except Exception:
+            log.exception("The sidebar couldn't answer")
+            await reply(FAILED)
+            return
+        if not self._still(table, user_id):
+            return
+        said = answer.text.strip()
+        if not said:
+            await reply(FAILED)
+            return
+        text = said
+        if via == VIA_VOICE:
+            echo = question if len(question) <= ECHO_CHARS else question[:ECHO_CHARS].rstrip() + "…"
+            text = f"🎙️ “{discord.utils.escape_markdown(echo)}”\n{said}"
+        self._undelivered.pop(user_id, None)
+        for part in _parts(text):
+            if not await reply(part):
+                # Only the table path, and only when Discord says their messages are closed:
+                # the DM screen is the one place left to say so.
+                if via == VIA_TABLE and self._undelivered.pop(user_id, "") == "forbidden":
+                    await self._cant_dm(table, user_id)
+                return
+        if answer.refused or not self._still(table, user_id):
+            return
         ref = uuid.uuid4().hex[:6]  # the reply says which question it answers
         stt = self.host.sidebar_stt() if via != VIA_TYPED else ""
         self.host.sidebar_save(
@@ -411,44 +475,14 @@ class SidebarService:
                 lineage=Lineage(ref=ref, via=via, stt=stt),
             ),
         )
-        campaign = await self.host.campaign(guild_id, campaign_id)
-        if campaign is None or not self._still(table, user_id):
-            return
-        now = time.monotonic()
-        scene = table.recent.scene(
-            lambda u: self.host.name_of(guild_id, u),
-            now,
-            lambda u: self.host.has_consent(guild_id, u),
-        )
-        try:
-            answer = await asyncio.wait_for(
-                answerer.answer(campaign, question, scene=scene), ANSWER_TIMEOUT_S
-            )
-        except Exception:
-            log.exception("The sidebar couldn't answer")
-            await reply(FAILED)
-            return
-        if not self._still(table, user_id):
-            return
-        text = answer.text.strip()
-        if not text:
-            await reply(FAILED)
-            return
-        if show_heard:
-            echo = question if len(question) <= ECHO_CHARS else question[:ECHO_CHARS].rstrip() + "…"
-            text = f"🎙️ “{discord.utils.escape_markdown(echo)}”\n{text}"
-        sent = await reply(text)
-        if not sent:
-            await self._cant_dm(table, user_id)
-            return
-        if answer.in_game and not answer.refused and self._still(table, user_id):
+        if answer.in_game:
             self.host.sidebar_save(
                 table,
                 Line(
                     int(self._clock() * 1000),
                     user_id,
-                    answer.text.strip(),
-                    answer.text.strip(),
+                    said,
+                    said,
                     sidebar=SIDEBAR_ANSWER,
                     lineage=Lineage(
                         reply_to=ref,
@@ -467,6 +501,29 @@ class SidebarService:
             await self.host.sidebar_tell_screen(table, CANT_DM)
 
 
+def _is_dm(table: Table, user_id: int) -> bool:
+    """One of the campaign's DMs (not just whoever pressed Start)."""
+    return user_id in table.dm_user_ids
+
+
+def _is_question(text: str) -> bool:
+    return len(text.split()) >= MIN_WORDS or "?" in text
+
+
+def _parts(text: str) -> list[str]:
+    """The text in pieces Discord will take, cut at line ends or spaces."""
+    out: list[str] = []
+    while len(text) > MESSAGE_LIMIT:
+        cut = text.rfind("\n", 0, MESSAGE_LIMIT)
+        if cut < MESSAGE_LIMIT // 2:
+            cut = text.rfind(" ", 0, MESSAGE_LIMIT)
+        if cut < MESSAGE_LIMIT // 2:
+            cut = MESSAGE_LIMIT
+        out.append(text[:cut].rstrip())
+        text = text[cut:].lstrip()
+    return [*out, text] if text else out
+
+
 class _PickView(discord.ui.View):
     """Which of the DM's running games a message is for, when there are several."""
 
@@ -482,14 +539,19 @@ class _PickView(discord.ui.View):
         self._message = message
         self._reply = reply
         self._by_id = {t.campaign_id: t for t in tables if t.campaign_id}
+        names = [t.campaign_name for t in self._by_id.values()]
         for table in list(self._by_id.values())[:5]:
-            self.add_item(_PickButton(table))
+            label = table.campaign_name or "This game"
+            if names.count(table.campaign_name) > 1:  # two games, one name: say where
+                label = f"{label} ({service.host.sidebar_server_name(table.guild_id)})"
+            self.add_item(_PickButton(table, label[:80]))
 
 
 class _PickButton(discord.ui.Button["_PickView"]):
-    def __init__(self, table: Table) -> None:
-        super().__init__(label=table.campaign_name[:80] or "This game")
+    def __init__(self, table: Table, label: str) -> None:
+        super().__init__(label=label)
         self._campaign_id = table.campaign_id or ""
+        self._name = table.campaign_name
 
     async def callback(self, interaction: discord.Interaction) -> None:
         view = self.view
@@ -498,10 +560,12 @@ class _PickButton(discord.ui.Button["_PickView"]):
             await interaction.response.send_message(NOT_YOURS, ephemeral=True)
             return
         table = view._by_id.get(self._campaign_id)
-        await interaction.response.edit_message(content=None, view=None)
+        await interaction.response.edit_message(
+            content=f"For {self._name or 'this game'}.", view=None
+        )
         view.stop()
         live = table is not None and view._service.host.tables.get(table.guild_id) is table
-        if table is None or not live or not table.is_dm(interaction.user.id):
+        if table is None or not live or not _is_dm(table, interaction.user.id):
             await view._reply(NO_SESSION)
             return
         await view._service._from_message(table, view._message, view._reply)
