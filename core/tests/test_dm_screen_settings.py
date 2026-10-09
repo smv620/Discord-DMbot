@@ -81,11 +81,13 @@ class SettingsCardTest(unittest.TestCase):
     def test_buttons_fit_a_phone_and_survive_a_restart(self) -> None:
         view = settings_view(campaign("quiet", vis="private"), None, DM)
         items: list[Any] = list(view.children)
-        self.assertEqual([i.row for i in items], [0, 0, 1, 1, 1, 2])  # 🤝 Take it on: no owner yet
+        self.assertEqual([i.row for i in items], [0, 0, 1, 1, 1, 2, 3])  # 🤝 Take it on, 📖 Look up
         labels = [i.item.label for i in items]
         self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
         self.assertEqual(labels[2], "✓ Only the DM")  # the current one, the same way
-        self.assertEqual([i.item.disabled for i in items], [True, False, True, False, False, False])
+        self.assertEqual(
+            [i.item.disabled for i in items], [True, False, True, False, False, False, False]
+        )
         for item in items:
             self.assertLessEqual(len(item.item.label), 25)
             template = type(item).__discord_ui_compiled_template__
@@ -95,6 +97,12 @@ class SettingsCardTest(unittest.TestCase):
         self.assertIsNotNone(
             SettingsButton.__discord_ui_compiled_template__.fullmatch(str(button.item.custom_id))
         )
+
+    def test_the_rules_line_is_only_for_the_campaigns_dms(self) -> None:
+        c = campaign()
+        for viewer, expected in ((DM, True), (PLAYER, False), (None, False)):
+            self.assertEqual("Look up a rule" in settings_text(c, None, viewer), expected, viewer)
+        self.assertIn("free rules (SRD)", settings_text(c, None, DM))
 
     def test_the_help_card_has_settings_between_sessions(self) -> None:
         ids = [str(i.item.custom_id) for i in card_view(campaign()).children]  # type: ignore[attr-defined]
