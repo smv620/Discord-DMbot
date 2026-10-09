@@ -1697,9 +1697,20 @@ table kept in step by a trigger on `campaigns`, since a person's campaigns span 
 "paused" waits for the downgrade part. All of 2b acts only when
 `DMBOT_ENFORCE_PLANS` is on (default off; the meter records either way), which dev1 turns
 on with the website's go-live (#498) and notes in the testing log. The refusal for a plan
-that has ended says "Your plan has ended. Pick one at <WEB_SITE_URL>/account." (or "Pick
-one on DMbot's website." while it isn't set), shown only to the DM, never in public, and
-never telling anyone else why.
+that has ended says "Your plan has ended. Pick one here: <WEB_SITE_URL>/account" (or "Pick
+one on DMbot's website" while it isn't set); one for used-up hours says so and offers what
+the owner's plan allows: a paid plan "add N hours or change your plan" (N is `extraHours` in
+`plans.json`, never typed in code) and says the hours "start again when your plan
+renews"; Try It "change your plan" only; a grant or the free list nothing to buy. It never
+names a date (Try It ends rather than renews, a renewal can be days late, and the day depends
+on the owner's time zone). Refusals are shown only to the person starting, never in public.
+Anyone but the owner is told only to ask the owner, so they never learn about the owner's plan
+or hours. A campaign with no owner can't start: a DM of it is given a **Take it on** button
+right under the refusal (the DM screen's card may not exist yet), anyone else is told one of
+its DMs must take it on. The DM-screen warnings (decided with Supervisor, 2026-10-09) stay on
+the DM screen because co-DMs need to know the table may stop; they name only the hours left,
+and the 90% one says "The campaign's owner can add more at <WEB_SITE_URL>/account", so it fits
+everyone who reads the screen and never says whose plan it is.
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find

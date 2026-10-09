@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
-from dmbot import hours
+from dmbot import hours, plans
 from dmbot.entitlements import NO_ACCESS, Access, Entitlement
 
 
@@ -148,7 +148,6 @@ class Words(unittest.TestCase):
 
 
 class Refusals(unittest.TestCase):
-    END = ts(2026, 4, 14, 10)
     SITE = "https://dmbot.example"
 
     def test_a_start_that_may_go_ahead_has_no_refusal(self) -> None:
@@ -166,50 +165,59 @@ class Refusals(unittest.TestCase):
             "Your plan has ended. Pick one on DMbot's website",
         )
 
-    def test_used_up_hours_name_the_day_they_come_back(self) -> None:
-        text = hours.refusal("out_of_hours", is_owner=True, site_url=self.SITE, month_end=self.END)
+    def test_a_paid_owner_is_offered_extra_hours_from_the_plan_facts(self) -> None:
+        # The amount is plans.json's, not typed here.
         self.assertEqual(
-            text,
-            "You've used all your hours this month. They come back on the 14th. To play now, "
-            "add 10 hours or change your plan here: https://dmbot.example/account",
+            hours.refusal(
+                "out_of_hours",
+                is_owner=True,
+                site_url=self.SITE,
+                can_change_plan=True,
+                renews=True,
+                extra_hours=plans.load().extra_hours,
+            ),
+            f"You've used all your hours this month. They start again when your plan renews. "
+            f"To play now, add {plans.load().extra_hours} hours or change your plan here: "
+            "https://dmbot.example/account",
         )
 
-    def test_the_day_is_the_renewal_day_not_the_day_before(self) -> None:
-        # A month ending 14 April 00:00 UTC renews on the 14th.
-        text = hours.refusal("out_of_hours", is_owner=True, month_end=ts(2026, 4, 14))
-        self.assertIn("come back on the 14th", text or "")
+    def test_try_it_can_change_its_plan_but_buys_no_hours_and_nothing_renews(self) -> None:
+        self.assertEqual(
+            hours.refusal("out_of_hours", is_owner=True, site_url=self.SITE, can_change_plan=True),
+            "You've used all your hours this month. To play now, change your plan here: "
+            "https://dmbot.example/account",
+        )
+
+    def test_a_grant_owner_is_offered_nothing_to_buy(self) -> None:
+        text = hours.refusal("out_of_hours", is_owner=True, site_url=self.SITE) or ""
+        self.assertEqual(text, "You've used all your hours this month.")
+
+    def test_no_date_is_ever_given(self) -> None:
+        # Try It ends rather than renews, a renewal can be days late, and the day depends on
+        # the owner's time zone: the message never names one.
+        text = hours.refusal(
+            "out_of_hours", is_owner=True, can_change_plan=True, renews=True, extra_hours=10
+        )
+        self.assertNotRegex(text or "", r"\d(st|nd|rd|th)\b")
 
     def test_anyone_else_is_never_told_why(self) -> None:
         for verdict in ("no_plan", "out_of_hours"):
             text = hours.refusal(
-                verdict,  # type: ignore[arg-type]
+                verdict,
                 is_owner=False,
                 site_url=self.SITE,
-                month_end=self.END,
+                can_change_plan=True,
+                renews=True,
+                extra_hours=10,
             )
             self.assertEqual(text, hours.START_BLOCKED)
-            for word in ("plan", "hours", "14th", "dmbot.example"):
+            for word in ("plan", "hours", "renew", "dmbot.example"):
                 self.assertNotIn(word, text or "")
 
-    def test_ordinals(self) -> None:
-        days = (1, 2, 3, 4, 11, 12, 13, 14, 21, 22, 23, 28, 30, 31)
-        want = [
-            "1st",
-            "2nd",
-            "3rd",
-            "4th",
-            "11th",
-            "12th",
-            "13th",
-            "14th",
-            "21st",
-            "22nd",
-            "23rd",
-            "28th",
-            "30th",
-            "31st",
-        ]
-        self.assertEqual([hours.ordinal(d) for d in days], want)
+    def test_the_no_owner_words_fit_with_and_without_the_button(self) -> None:
+        self.assertIn("Press **Take it on**", hours.NO_OWNER_ASK)
+        self.assertNotIn("Take it on**", hours.NO_OWNER)  # no button under this one
+        self.assertNotIn("Settings", hours.NO_OWNER_ASK + hours.NO_OWNER)  # the card may not exist
 
     def test_the_first_warning_says_what_an_hour_is(self) -> None:
         self.assertEqual(
@@ -220,7 +228,8 @@ class Refusals(unittest.TestCase):
     def test_the_second_says_where_to_add_more(self) -> None:
         self.assertEqual(
             hours.warning_text(60, 90, self.SITE),
-            "⏳ About 1 hour left this month. To add more, go to https://dmbot.example/account",
+            "⏳ About 1 hour left this month. The campaign's owner can add more at "
+            "https://dmbot.example/account",
         )
         self.assertIn("DMbot's website", hours.warning_text(60, 90))
 

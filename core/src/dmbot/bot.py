@@ -1202,7 +1202,8 @@ class DMBot(commands.AutoShardedBot):
             return None
         owner = campaign.owner_user_id
         if owner is None:
-            return hours.NO_OWNER
+            # A DM of the campaign gets a Take it on button with this (see the Start button).
+            return hours.NO_OWNER_ASK if starter_id in campaign.dm_user_ids else hours.NO_OWNER
         try:
             async with asyncio.timeout(METER_CALL_TIMEOUT_S):
                 check = await self.meter.check(guild_id, owner, int(time.time()))
@@ -1213,7 +1214,9 @@ class DMBot(commands.AutoShardedBot):
             check.verdict,
             is_owner=starter_id == owner,
             site_url=self.settings.site_url,
-            month_end=check.month.end,
+            can_change_plan=check.can_change_plan,
+            renews=check.renews,
+            extra_hours=check.extra_hours,
         )
 
     async def start_campaign_session(
@@ -3084,9 +3087,11 @@ class DMBot(commands.AutoShardedBot):
                     if final:
                         table.metering_closed = True
                 if warn is not None:
-                    # After the lock and the time limit: a slow Discord post can't undo
-                    # minutes already written. A warning that fails to post is not retried
-                    # (the mark was crossed once); losing one is accepted.
+                    # After the lock, so a slow Discord post doesn't hold the meter. It still
+                    # counts against the loop's time limit, but the minutes are already
+                    # written: a timeout cancels only the post. A warning that fails to
+                    # post is not retried (the mark was crossed once); losing one is
+                    # accepted.
                     await self._warn_hours(table, warn)
                 return True
             except Exception:
