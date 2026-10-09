@@ -1204,7 +1204,7 @@ class Lists(NamesTest):
             await name_lists.send_download(it, self.campaign.id)
         calls = it.followup.send.call_args_list
         self.assertEqual([len(c.kwargs["files"]) for c in calls], [10, 10, 3])
-        self.assertIn("in 23 files, 3 messages.**", calls[0].args[0])
+        self.assertIn("in 23 files (3 messages).**", calls[0].args[0])
         self.assertIn("**Files 11 to 20 of 23**", calls[1].args[0])
         self.assertIn("**Files 21 to 23 of 23**", calls[2].args[0])
         for later in calls[1:]:  # each carries the secrets warning in full
