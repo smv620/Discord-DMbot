@@ -38,8 +38,8 @@ CLEANED_NOTE = (
     "who agreed were recorded."
 )
 SIDEBAR_NOTE = (
-    "[DM Sidebar] lines are the DM's quick questions to DMbot and its answers. They are in "
-    "this file only for people the DM allows to read them."
+    "[DM Sidebar] lines are the DM's private questions to DMbot and its answers. Only "
+    "people allowed to read them get this file with them in."
 )
 SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
 HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."

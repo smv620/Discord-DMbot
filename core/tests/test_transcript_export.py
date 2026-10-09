@@ -238,7 +238,7 @@ class DmSidebarLines(unittest.TestCase):
                 "[0:00:20] (Dee): Run!",
             ],
         )
-        self.assertIn("only for people the DM allows", self.render(export.AS_HEARD, True))
+        self.assertIn("private questions to DMbot", self.render(export.AS_HEARD, True))
 
     def test_nobody_else_gets_them(self) -> None:
         text = self.render(export.AS_HEARD, False)

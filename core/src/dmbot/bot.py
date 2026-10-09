@@ -1990,6 +1990,9 @@ class DMBot(commands.AutoShardedBot):
             return False
         return True
 
+    async def sidebar_tell_screen(self, table: Table, text: str) -> None:
+        await self.post(table.screen_channel_id, text)
+
     def sidebar_save(self, table: Table, line: Line) -> None:
         """A sidebar line for the stored (raw) transcript; never the live channel."""
         if self.transcripts is not None and self.tables.get(table.guild_id) is table:

@@ -61,6 +61,7 @@ class FakeHost:
     agreed: set[tuple[int, int]] = field(default_factory=set)
     saved: list[Line] = field(default_factory=list)
     dms: list[tuple[int, str]] = field(default_factory=list)
+    screen: list[str] = field(default_factory=list)
     heard_as: str | None = "find if you need line of sight for fireball"
     transcribed: int = 0
     can_dm: bool = True
@@ -93,6 +94,9 @@ class FakeHost:
 
     def sidebar_save(self, table: Any, line: Line) -> None:
         self.saved.append(line)
+
+    async def sidebar_tell_screen(self, table: Any, text: str) -> None:
+        self.screen.append(text)
 
 
 def dm_message(
@@ -211,6 +215,34 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent(message), [service.TOO_LONG])
         message.attachments[0].read.assert_not_awaited()
 
+    async def test_the_consent_question_is_not_repeated_at_every_message(self) -> None:
+        self.host.agreed.clear()
+        first, second = (
+            dm_message(content="check how grappling works"),
+            dm_message(content="check how grappling works"),
+        )
+        await self.sidebar.on_dm_message(first)
+        await self.sidebar.on_dm_message(second)
+        self.assertEqual(len(sent(first)), 2)
+        self.assertEqual(sent(second), [])
+
+    async def test_a_picture_gets_one_short_note(self) -> None:
+        message = dm_message()
+        message.attachments = [SimpleNamespace(size=10)]
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), [service.TYPE_INSTEAD])
+
+    async def test_a_long_question_is_echoed_short(self) -> None:
+        data = ogg_opus(1.0)
+        if data is None:
+            self.skipTest("this PyAV can't encode Opus")
+        self.host.heard_as = "check " + "word " * 100
+        message = dm_message(voice=data)
+        await self.sidebar.on_dm_message(message)
+        echo = sent(message)[0].split("\n", 1)[0]
+        self.assertLessEqual(len(echo), service.ECHO_CHARS + 8)
+        self.assertTrue(echo.endswith("…”"))
+
     async def test_no_words_heard(self) -> None:
         data = ogg_opus(1.0)
         if data is None:
@@ -319,8 +351,11 @@ class SeveralGames(unittest.IsolatedAsyncioTestCase):
         stranger = SimpleNamespace(
             user=SimpleNamespace(id=PLAYER), response=SimpleNamespace(edit_message=AsyncMock())
         )
+        stranger.response.send_message = AsyncMock()
         await button.callback(stranger)
         self.assertEqual(answerer.asked, [])  # not theirs to press
+        stranger.response.send_message.assert_awaited_once()
+        stranger.response.edit_message.assert_not_awaited()  # the DM's picker is still there
         mine = SimpleNamespace(
             user=SimpleNamespace(id=DM), response=SimpleNamespace(edit_message=AsyncMock())
         )
@@ -384,12 +419,37 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual((self.host.dms, self.host.saved, self.answerer.asked), ([], [], []))
 
-    async def test_a_closed_private_chat_is_survived(self) -> None:
+    async def test_a_closed_private_chat_is_told_to_the_dm_screen_without_the_answer(self) -> None:
         self.host.can_dm = False
         said = "Hold on, I need to check how grappling works."
         self.sidebar.ask_at_table(self.table, DM, said)
         await self.settle()
         self.assertEqual([x.sidebar for x in self.host.saved], [SIDEBAR_QUESTION])  # no answer line
+        self.assertEqual(self.host.screen, [service.CANT_DM])  # and never the answer itself
+
+    async def test_a_spoken_question_the_limit_swallows_is_explained_privately_once(self) -> None:
+        now = [1000.0]
+        self.sidebar._clock = lambda: now[0]
+        said = "Hold on, I need to check how grappling works."
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, said))
+        await self.settle()
+        self.host.dms.clear()
+        now[0] += 5
+        self.assertFalse(self.sidebar.ask_at_table(self.table, DM, said))
+        self.assertFalse(self.sidebar.ask_at_table(self.table, DM, said))  # not told twice
+        await asyncio.gather(*self.sidebar._tasks)
+        self.assertEqual(self.host.dms, [(DM, service.ONE_A_MINUTE)])
+
+    async def test_a_spoken_question_while_one_is_being_answered_is_explained(self) -> None:
+        self.answerer.gate = asyncio.Event()
+        said = "Hold on, I need to check how grappling works."
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, said))
+        await asyncio.sleep(0)
+        self.assertFalse(self.sidebar.ask_at_table(self.table, DM, said))
+        await asyncio.sleep(0)
+        self.assertIn((DM, service.NOT_SOON_AGAIN), self.host.dms)
+        self.answerer.gate.set()
+        await self.settle()
 
 
 class TheScene(unittest.TestCase):

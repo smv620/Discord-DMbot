@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 MAX_MEMO_BYTES = 4_000_000  # a few minutes of voice message; far more than a question needs
 MAX_MEMO_S = 90.0
 MIN_MEMO_S = 0.4
+TOO_LONG = "Too long. Keep it under 90 seconds."
 
 
 class MemoError(RuntimeError):
@@ -33,13 +34,13 @@ def decode(data: bytes) -> bytes:
     import av
 
     if not data or len(data) > MAX_MEMO_BYTES:
-        raise MemoError("That voice message is too long. Keep it under a minute and a half.")
+        raise MemoError(TOO_LONG)
     resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
     chunks: list[bytes] = []
     try:
         with av.open(io.BytesIO(data), "r") as container:
             if not container.streams.audio:
-                raise MemoError("I couldn't hear anything in that file.")
+                raise MemoError("That file has no sound. Send a voice message instead.")
             for frame in container.decode(audio=0):
                 chunks.extend(_samples(out) for out in resampler.resample(frame))
                 if sum(map(len, chunks)) > MAX_MEMO_S * SAMPLE_RATE * BYTES_PER_SAMPLE:
@@ -51,7 +52,7 @@ def decode(data: bytes) -> bytes:
         raise MemoError("I couldn't read that voice message. Try sending it again.") from exc
     pcm = b"".join(chunks)
     if seconds(pcm) < MIN_MEMO_S:
-        raise MemoError("That voice message was too short to hear. Try again.")
+        raise MemoError("Too short to hear. Try again.")
     return pcm
 
 

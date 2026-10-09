@@ -18,6 +18,7 @@ Rules kept here:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections import deque
@@ -47,20 +48,25 @@ SCENE_CHARS = 1_200
 RECENT_LINES = 40
 NOTE_EVERY_S = 30.0  # the same kind of note to the same person, at most this often
 
-NO_SESSION = "No game is running with you as the DM right now. Start one, then ask me again."
-NOT_YET = "The quick answers aren't ready yet."
-NOT_SOON_AGAIN = "One question at a time: I'm still working on your last one."
-ONE_A_MINUTE = "One question a minute from the table. Ask again in a moment, or message me."
-FAILED = "I couldn't answer that one. Please try again."
+NO_SESSION = "No game is running with you as DM. Start one with /dmbot start, then ask again."
+NOT_YET = "Quick answers aren't switched on yet."
+NOT_SOON_AGAIN = "Still on your last question. One moment."
+ONE_A_MINUTE = "Too soon: I answer one spoken question a minute. Message me here to ask now."
+FAILED = "I couldn't answer that. Try again, or type it here."
 NO_WORDS = "I couldn't make out any words. Try again."
 NOT_AGREED = (
-    "I can only listen to you once you agree to being recorded. Press the button below, "
-    "then send it again. Your message wasn't kept."
+    "I can only listen once you agree to be recorded. Press the button below, then send it "
+    "again. Nothing you sent was kept."
 )
-CANT_DM = "I couldn't message you the answer. Check that you can get messages from this server."
+CANT_DM = (
+    "I couldn't DM you an answer. Turn on direct messages from this server "
+    "(server name, then Privacy Settings), then ask again."
+)
 WHICH = "Which game is this for?"
-TOO_LONG = "That voice message is too long. Keep it under a minute and a half."
-TYPE_INSTEAD = "I can read voice messages or typed questions here."
+TYPE_INSTEAD = "I can only read typed questions and voice messages."
+NOT_YOURS = "This isn't your question."
+TOO_LONG = memo.TOO_LONG
+ECHO_CHARS = 120
 
 
 class Answer(Protocol):
@@ -91,6 +97,7 @@ class Host(Protocol):
     def sidebar_clean(self, table: Table, text: str) -> str: ...
     async def sidebar_send_dm(self, user_id: int, text: str) -> bool: ...
     def sidebar_save(self, table: Table, line: Line) -> None: ...
+    async def sidebar_tell_screen(self, table: Table, text: str) -> None: ...
 
 
 Reply = Callable[[str], Awaitable[bool]]
@@ -144,6 +151,9 @@ class SidebarService:
         voice = message.flags.voice and bool(message.attachments)
         typed = message.content.strip() if not message.attachments else ""
         if not voice and not typed:
+            if message.attachments and self._note_ok(user_id, "kind"):
+                with contextlib.suppress(discord.HTTPException):
+                    await message.channel.send(TYPE_INSTEAD, allowed_mentions=NO_PINGS)
             return
         tables = self.tables_of(user_id)
 
@@ -182,6 +192,8 @@ class SidebarService:
         user_id = message.author.id
         guild_id = table.guild_id
         if not self.host.has_consent(guild_id, user_id):
+            if not self._note_ok(user_id, "agree"):
+                return
             text, view = self.host.consent_request(table)
             await reply(NOT_AGREED)
             try:
@@ -263,13 +275,30 @@ class SidebarService:
         request = request_in(text, in_character=in_character)
         if request is None:
             return False
-        if user_id in self._busy or not table.sidebar_limiter.allow(self._clock()):
-            return False  # last: it uses up the minute
+        if user_id in self._busy:
+            self._note_later(user_id, "busy", NOT_SOON_AGAIN)
+            return False
+        if not table.sidebar_limiter.allow(self._clock()):  # last: it uses up the minute
+            self._note_later(user_id, "limit", ONE_A_MINUTE)
+            return False
         self._busy.add(user_id)
         task = asyncio.create_task(self._table_question(table, user_id, request), name="sidebar")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return True
+
+    def _note_later(self, user_id: int, kind: str, text: str) -> None:
+        """A short private note about a spoken question that wasn't answered, at most one of
+        its kind every NOTE_EVERY_S: the DM is waiting and should know why."""
+        if not self._note_ok(user_id, kind):
+            return
+
+        async def send() -> None:
+            await self.host.sidebar_send_dm(user_id, text)
+
+        task = asyncio.create_task(send(), name="sidebar-note")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _table_question(self, table: Table, user_id: int, request: Request) -> None:
         async def reply(text: str) -> bool:
@@ -332,10 +361,11 @@ class SidebarService:
             await reply(FAILED)
             return
         if show_heard:
-            text = f"🎙️ “{discord.utils.escape_markdown(question)}”\n{text}"
+            echo = question if len(question) <= ECHO_CHARS else question[:ECHO_CHARS].rstrip() + "…"
+            text = f"🎙️ “{discord.utils.escape_markdown(echo)}”\n{text}"
         sent = await reply(text)
         if not sent:
-            await self._cant_dm(table)
+            await self._cant_dm(table, user_id)
             return
         if answer.in_game and not answer.refused and self._still(table, user_id):
             self.host.sidebar_save(
@@ -349,8 +379,12 @@ class SidebarService:
                 ),
             )
 
-    async def _cant_dm(self, table: Table) -> None:
+    async def _cant_dm(self, table: Table, user_id: int) -> None:
+        """The answer couldn't be sent. DMs are closed, so the DM screen is the only place
+        to say so: a line that never holds the question or the answer."""
         log.info("Couldn't send a sidebar answer to the DM")
+        if self._note_ok(user_id, "cantdm"):
+            await self.host.sidebar_tell_screen(table, CANT_DM)
 
 
 class _PickView(discord.ui.View):
@@ -380,9 +414,11 @@ class _PickButton(discord.ui.Button["_PickView"]):
     async def callback(self, interaction: discord.Interaction) -> None:
         view = self.view
         assert view is not None
+        if interaction.user.id != view._message.author.id:
+            await interaction.response.send_message(NOT_YOURS, ephemeral=True)
+            return
         table = view._by_id.get(self._campaign_id)
         await interaction.response.edit_message(content=None, view=None)
         view.stop()
-        if table is None or interaction.user.id != view._message.author.id:
-            return
-        await view._service._from_message(table, view._message, view._reply)
+        if table is not None:
+            await view._service._from_message(table, view._message, view._reply)
