@@ -265,7 +265,7 @@ class TriggerTests(unittest.TestCase):
         self.assertEqual((d.percent, d.lost), (90, 150))  # the loss is counted...
         self.assertFalse(check(AudioChecker(), d, FakeAI("no")).garbled)  # reads fine
         self.assertIsNone(clean.render(str, 10, confirm=lambda due: False))  # ...no warning
-        garbled = log_with_failures("I ... the ... north road and", 0.3)
+        garbled = log_with_failures("I go to the ... the ... north road and", 0.3)
         (d,) = garbled.due(10)
         self.assertTrue(check(AudioChecker(), d, FakeAI("no")).garbled)
 
