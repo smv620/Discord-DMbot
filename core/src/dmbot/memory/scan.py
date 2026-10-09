@@ -11,6 +11,8 @@ candidate is a capitalized word or run of words that:
 - never appears in lower case in the session ("Roll" next to "roll" is a word),
 - isn't a common word, a game term, or anything DMbot already has an answer for (known
   names, names the DM said aren't names, "keep as heard" words, people at the table),
+  and isn't part of a known name said whole in that sentence ("Oskar" in "Oskar Vane",
+  #399); the same word alone, away from any known name, is still offered,
 - was heard at least `MIN_TIMES` times.
 """
 
@@ -98,20 +100,43 @@ def _is_name_word(word: str, skip: frozenset[str], lower_words: set[str]) -> boo
     return word[:1].isupper() and name_key(word) not in skip and word.casefold() not in lower_words
 
 
+def _known_name_spans(words: list[str], skip: frozenset[str]) -> set[int]:
+    """The positions of words that belong to a many-word known name said whole here
+    ("Oskar Vane"), so that a word of it ("Oskar", whose other half "Vane" is also a
+    known name) isn't offered as a new name (#399)."""
+    keys = [name_key(w) for w in words]
+    covered: set[int] = set()
+    for known in skip:
+        parts = known.split()
+        size = len(parts)
+        if size < 2:
+            continue
+        for start in range(len(keys) - size + 1):
+            if keys[start : start + size] == parts:
+                covered.update(range(start, start + size))
+    return covered
+
+
 def _candidates(
     words: list[str], skip: frozenset[str], lower_words: set[str]
 ) -> list[tuple[str, bool]]:
     """Each run of name-like words as (text, said mid-sentence). Runs longer than
     MAX_WORDS are dropped, not chopped (no "Caer Dineval Ice"). A run that starts the
-    sentence also offers its tail, so "Ask Hrothgar" still finds Hrothgar."""
+    sentence also offers its tail, so "Ask Hrothgar" still finds Hrothgar. A known
+    name said whole ends a run: what's left on either side is still looked at."""
+    covered = _known_name_spans(words, skip)
+
+    def name_like(index: int) -> bool:
+        return index not in covered and _is_name_word(words[index], skip, lower_words)
+
     out = []
     i = 0
     while i < len(words):
-        if not _is_name_word(words[i], skip, lower_words):
+        if not name_like(i):
             i += 1
             continue
         j = i
-        while j < len(words) and _is_name_word(words[j], skip, lower_words):
+        while j < len(words) and name_like(j):
             j += 1
         if j - i <= MAX_WORDS:
             out.append((" ".join(words[i:j]), i > 0))

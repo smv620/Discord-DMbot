@@ -47,6 +47,37 @@ class Scan(unittest.TestCase):
         self.assertEqual(names(find_new_names(lines)), ["Hrothgar", "Mia"])  # without skips
         self.assertEqual(names(find_new_names(lines, skip_keys=["hrothgar", "Mia"])), [])
 
+    def test_a_word_of_a_known_name_said_whole_is_not_a_new_name(self) -> None:
+        # #399: Oskar Vane is known, and so is "Vane" on its own.
+        skip = ["Oskar Vane", "Vane"]
+        lines = ["Ilvaris and Oskar Vane meet in secret.", "Ilvaris and Oskar Vane meet in secret."]
+        self.assertEqual(find_new_names(lines, skip_keys=skip), [])
+        without = names(find_new_names(lines))  # no known names: the whole run is offered
+        self.assertIn("Oskar Vane", without)
+
+    def test_the_same_word_alone_is_still_offered(self) -> None:
+        # A new "Oskar" could be someone else, so away from the known name it stays.
+        skip = ["Oskar Vane", "Vane"]
+        lines = [
+            "Ilvaris and Oskar Vane meet in secret.",
+            "Ilvaris and Oskar Vane meet in secret.",
+            "Later we ask Oskar about the road.",
+            "We trust Oskar now.",
+        ]
+        found = find_new_names(lines, skip_keys=skip)
+        self.assertEqual([(s.name, s.times) for s in found], [("Oskar", 2)])  # only the lone ones
+
+    def test_names_either_side_of_a_known_name_are_still_found(self) -> None:
+        skip = ["Oskar Vane", "Vane"]
+        lines = [
+            "We find Brenn Oskar Vane Tolliver by night.",
+            "Then Brenn Oskar Vane Tolliver runs.",
+        ]
+        found = names(find_new_names(lines, skip_keys=skip))
+        self.assertIn("Brenn", found)
+        self.assertIn("Tolliver", found)
+        self.assertNotIn("Oskar", found)
+
     def test_possessives_count_as_the_name(self) -> None:
         lines = ["I meet Hrothgar's men.", "We see Hrothgar’s axe.", "I ask Ka'zeth twice."]
         self.assertEqual(names(find_new_names(lines)), ["Hrothgar"])
