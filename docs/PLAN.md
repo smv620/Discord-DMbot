@@ -312,6 +312,21 @@ repository, and the DM can remove it. It follows the rules edition and precedenc
 a shared book is matched to its edition (2024, 2014 or other) and is a sourcebook in the
 target or fallback ruleset, not a house rule.
 
+*Built, the rules index (2026-10-09, #866):* `dmbot.rules.index` looks a spell or a
+condition up by name. The data is the **SRD 5.2.1** (CC-BY-4.0), taken from Wizards of
+the Coast's own PDF by `python -m dmbot.devtools.srd` (the PDF is downloaded, never kept
+in the repository; the files record its SHA-256): all 339 spells and the 15 conditions, in
+`core/src/dmbot/rules/data/srd52/`, with `ATTRIBUTION.md` (the statement the SRD asks for,
+and the changes made) and the same statement in the README. Nothing from any other book
+is in the repository. Each entry has its source, section and page, so an alert can cite
+it ("SRD 5.2.1, Spell Descriptions, p. 131"). A name is matched without case, punctuation
+or apostrophes, and the 19 spells the 2024 books renamed are also found under their 2014
+names (`rules/aliases.py`, each with a comment; Feeblemind and Branding Smite included). `lookup(name, target, fallback)` tries the
+target ruleset, then the fallback; a fallback hit is tagged (`[Legacy 2014]` for 2014
+content). An older entry is used only when no newer one matches any name. The 2014 SRD 5.1
+(also CC-BY-4.0) is not loaded yet: the index takes more data folders with their own
+edition, and filing that is the follow-up. Not built: the rules advisor that uses it.
+
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
 running a legacy adventure such as *Rime of the Frostmaiden*. This covers spells, rules,
@@ -1595,11 +1610,11 @@ owner like `entitlements`, readable by that owner across servers, written only t
 `Database.meter()`, which sets the server and the owner for that one write). Minutes count
 toward whoever owns the campaign when each is recorded, so a hand-over mid-session moves
 the later minutes; a campaign with no owner records nothing. `owner_hours` is not a
-campaign's data and never goes into a backup. A session's minutes run from its start to its stop, so a gap while DMbot restarted and resumed it counts as listening (open question to Supervisor, #437). The month: a paid plan's billing period;
+campaign's data and never goes into a backup. Only time DMbot is actually listening counts: a restart gap is never billed (a resumed session adds to the minutes already stored, from the moment it is picked up again), and minutes while a campaign has no owner are kept in its session record under "nobody" and billed to no one, so whoever takes it on is billed only from then. The month: a paid plan's billing period;
 Try It its 30 days; a grant that is Guild-level, calendar months from the day it started
 (a 29th to 31st start falls on the month's last day); a grant overlapping a paid plan, the
-paid plan's month; the free list and "no limits" grants have no limit but are still
-recorded, in UTC calendar months. *2b, the checks, built in two steps:* (i) `/dmbot start` refuses when the plan has
+paid plan's month; the free list and "no limits" grants have no limit but are
+recorded (never limited), in UTC calendar months. *2b, the checks, built in two steps:* (i) `/dmbot start` refuses when the plan has
 ended or the hours are used up (a campaign with no owner is asked to be taken on first), and
 the DM screen warns when the hours pass 80% and 90% (said once each, "About 4 hours left
 this month"); a database hiccup lets the start go ahead rather than lock a table out;

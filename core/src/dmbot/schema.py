@@ -1099,7 +1099,9 @@ USAGE = (
         guild_id           BIGINT NOT NULL,
         campaign_id        TEXT NOT NULL,
         session_started_at BIGINT NOT NULL,
-        owner_user_id      BIGINT NOT NULL CHECK (owner_user_id > 0),
+        -- 0: nobody owned the campaign yet; those minutes are kept here so they are
+        -- never billed to whoever takes it on later, and never reach owner_hours.
+        owner_user_id      BIGINT NOT NULL CHECK (owner_user_id >= 0),
         minutes            INTEGER NOT NULL DEFAULT 0 CHECK (minutes >= 0),
         updated_at         BIGINT NOT NULL,
         PRIMARY KEY (guild_id, campaign_id, session_started_at, owner_user_id),
@@ -1185,7 +1187,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0028_character_sheets", CHARACTER_SHEETS),
     ("0029_sheet_player", SHEET_PLAYER),
     ("0030_access_grants", ACCESS_GRANTS),
-    ("0031_usage", USAGE),
+    ("0032_usage", USAGE),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
