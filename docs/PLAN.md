@@ -312,6 +312,21 @@ repository, and the DM can remove it. It follows the rules edition and precedenc
 a shared book is matched to its edition (2024, 2014 or other) and is a sourcebook in the
 target or fallback ruleset, not a house rule.
 
+*Built, the rules index (2026-10-09, #866):* `dmbot.rules.index` looks a spell or a
+condition up by name. The data is the **SRD 5.2.1** (CC-BY-4.0), taken from Wizards of
+the Coast's own PDF by `python -m dmbot.devtools.srd` (the PDF is downloaded, never kept
+in the repository; the files record its SHA-256): all 339 spells and the 15 conditions, in
+`core/src/dmbot/rules/data/srd52/`, with `ATTRIBUTION.md` (the statement the SRD asks for,
+and the changes made) and the same statement in the README. Nothing from any other book
+is in the repository. Each entry has its source, section and page, so an alert can cite
+it ("SRD 5.2.1, Spell Descriptions, p. 131"). A name is matched without case, punctuation
+or apostrophes, and the 17 spells the 2024 books renamed are also found under their 2014
+names (`rules/aliases.py`, each with a comment). `lookup(name, target, fallback)` tries the
+target ruleset, then the fallback; a fallback hit is tagged (`[Legacy 2014]` for 2014
+content). An older entry is used only when no newer one matches any name. The 2014 SRD 5.1
+(also CC-BY-4.0) is not loaded yet: the index takes more data folders with their own
+edition, and filing that is the follow-up. Not built: the rules advisor that uses it.
+
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
 running a legacy adventure such as *Rime of the Frostmaiden*. This covers spells, rules,
