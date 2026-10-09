@@ -3020,7 +3020,7 @@ class DMBot(commands.AutoShardedBot):
         if self.meter is None or table.campaign_id is None or table.started_at <= 0:
             return True
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
-            warn: usage.Standing | None = None
+            warn: tuple[usage.Standing, int] | None = None
             try:
                 async with table.meter_lock:
                     # A tick that was already waiting when the session stopped must not
@@ -3051,7 +3051,7 @@ class DMBot(commands.AutoShardedBot):
                             # over, never under, so the increments are kept simple.
                             table.metered_minutes += owed
                             if self.settings.enforce_plans and not final:
-                                warn = standing
+                                warn = (standing, campaign.owner_user_id)
                         # else: gone, or no owner yet: nobody's hours to spend
                     if final:
                         table.metering_closed = True
@@ -3059,7 +3059,8 @@ class DMBot(commands.AutoShardedBot):
                     # After the lock and the time limit: a slow Discord post can't undo
                     # minutes already written. A warning that fails to post is not retried
                     # (the mark was crossed once); losing one is accepted.
-                    await self._warn_hours(table, warn)
+                    await self._warn_hours(table, warn[0])
+                    await self._enforce_cap(table, *warn)
                 return True
             except Exception:
                 log.exception("Couldn't write down the listening minutes")
@@ -3074,6 +3075,37 @@ class DMBot(commands.AutoShardedBot):
             await self.post(
                 table.screen_channel_id, hours.warning_text(cap, mark, self.settings.site_url)
             )
+
+    async def _enforce_cap(self, table: Table, standing: usage.Standing, owner: int) -> None:
+        """At the cap, let this session finish (up to 2 hours, once a month), then stop it
+        (#437). Never touches a session that is under the cap. Needs the meter and
+        DMBOT_ENFORCE_PLANS; the caller has already left the meter lock, because stopping
+        starts the session's final charge."""
+        assert self.meter is not None
+        action = hours.cap_action(
+            standing.access, standing.used_after, standing.grace_session, table.started_at
+        )
+        if action == "start_grace":
+            got = await self.meter.start_grace(
+                table.guild_id, owner, standing.month, table.started_at
+            )
+            action = "in_grace" if got else "stop"
+            if got:
+                await self.post(
+                    table.screen_channel_id, hours.grace_started_text(self.settings.site_url)
+                )
+        if action == "stop":
+            await self._stop_for_hours(table)
+
+    async def _stop_for_hours(self, table: Table) -> None:
+        """End the session because the hours are used up: forget the saved session so it
+        doesn't come back after a restart, stop listening, and say why on the DM screen."""
+        async with self.session_lock(table.guild_id):
+            if self.tables.get(table.guild_id) is not table:
+                return  # already stopped by someone
+            await self.sessions.clear(table.guild_id, "the owner's hours are used up")
+            await self.stop_table(table.guild_id, "the owner's hours are used up")
+        await self.post(table.screen_channel_id, hours.stopped_text(self.settings.site_url))
 
     async def _meter_final(self, table: Table, ended_at: int) -> None:
         """The last, rounded-up minutes at a stop: tried a few times, since nothing else

@@ -202,3 +202,41 @@ def warning_text(left_minutes: int, mark: int = 80, site_url: str = "") -> str:
         return f"{text} (Hours are DMbot's listening time.)"
     where = f"{site_url}/account" if site_url else "DMbot's website"
     return f"{text} To add more, go to {where}"
+
+
+CapAction = Literal["none", "start_grace", "in_grace", "stop"]
+
+
+def cap_action(
+    access: Access, used: int, grace_session: int | None, session_started_at: int
+) -> CapAction:
+    """What to do about a running session when the owner's hours are at or past the cap
+    (#437). Under the cap, nothing. At the cap a session that has not had the month's
+    grace is given it ("start_grace": it may run up to GRACE_MINUTES more); the session
+    that was given it carries on until the grace is spent ("in_grace", then "stop"); any
+    other session stops at once, because the grace is once a month."""
+    cap = standing(access, used).cap_minutes
+    if cap is None or used < cap:
+        return "none"
+    if grace_session is None:
+        return "start_grace" if used < cap + GRACE_MINUTES else "stop"
+    if grace_session == session_started_at and used < cap + GRACE_MINUTES:
+        return "in_grace"
+    return "stop"
+
+
+def grace_started_text(site_url: str = "") -> str:
+    where = f"{site_url}/account" if site_url else "DMbot's website"
+    return (
+        "⏳ Your hours for this month are used up. This session can finish: DMbot keeps "
+        f"listening for up to 2 more hours. To play again after that, add 10 hours or "
+        f"change your plan at {where}"
+    )
+
+
+def stopped_text(site_url: str = "") -> str:
+    where = f"{site_url}/account" if site_url else "DMbot's website"
+    return (
+        "⏳ Your hours for this month are used up, so DMbot has stopped listening. "
+        f"To play again, add 10 hours or change your plan at {where}"
+    )

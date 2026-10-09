@@ -238,6 +238,40 @@ class Refusals(unittest.TestCase):
         self.assertIn("DMbot's website", hours.warning_text(60, 90))
 
 
+class CapActions(unittest.TestCase):
+    CAP = 600  # a 10-hour plan, in minutes
+
+    def act(self, used: int, grace: int | None = None, session: int = 5) -> str:
+        return hours.cap_action(paid(10), used, grace, session)
+
+    def test_under_the_cap_nothing_happens(self) -> None:
+        self.assertEqual(self.act(self.CAP - 1), "none")
+
+    def test_reaching_the_cap_gives_the_first_session_the_grace(self) -> None:
+        self.assertEqual(self.act(self.CAP), "start_grace")
+        self.assertEqual(self.act(self.CAP + 119), "start_grace")
+
+    def test_the_session_with_the_grace_carries_on_until_it_is_spent(self) -> None:
+        self.assertEqual(self.act(self.CAP + 30, grace=5), "in_grace")
+        self.assertEqual(self.act(self.CAP + 119, grace=5), "in_grace")
+        self.assertEqual(self.act(self.CAP + 120, grace=5), "stop")
+
+    def test_another_session_gets_no_grace_the_same_month(self) -> None:
+        self.assertEqual(self.act(self.CAP, grace=99, session=5), "stop")
+
+    def test_a_jump_past_the_whole_grace_stops_at_once(self) -> None:
+        self.assertEqual(self.act(self.CAP + 500), "stop")
+
+    def test_no_cap_never_acts(self) -> None:
+        free = Access("free", "Free access", None, None, True)
+        self.assertEqual(hours.cap_action(free, 10**6, None, 5), "none")
+
+    def test_the_texts_are_plain_and_send_people_to_the_site(self) -> None:
+        self.assertIn("up to 2 more hours", hours.grace_started_text("https://x.example"))
+        self.assertIn("https://x.example/account", hours.stopped_text("https://x.example"))
+        self.assertIn("DMbot's website", hours.stopped_text())
+
+
 class Standing(unittest.TestCase):
     def test_percent_and_left(self) -> None:
         s = hours.standing(paid(10), 300)

@@ -514,8 +514,9 @@ class PlanChecks(UsageTest):
         table = self.running_table(started=NOW - 20 * 60)
         with patch.object(self.bot, "post", new=AsyncMock()) as post:
             await self.bot.meter_table(table, NOW)  # +20: 100%
-        post.assert_awaited_once()
-        self.assertIn("To add more", post.await_args.args[1])  # type: ignore[union-attr]
+        warnings = [c.args[1] for c in post.await_args_list if "left this month" in c.args[1]]
+        self.assertEqual(len(warnings), 1)  # not one for 80 and another for 90
+        self.assertIn("To add more", warnings[0])
 
     async def test_the_final_charge_never_warns(self) -> None:
         from unittest.mock import AsyncMock, patch
@@ -587,6 +588,108 @@ class PlanChecks(UsageTest):
             self.assertLogs("dmbot.bot", "ERROR"),
         ):
             self.assertIsNone(await self.refusal())  # fails open
+
+    async def test_the_grace_goes_to_one_session_a_month(self) -> None:
+        await self.small_plan()
+        first = await usage.add_minutes(
+            self.db,
+            guild_id=GUILD_A,
+            campaign_id=self.a.id,
+            owner_user_id=OWNER,
+            session_started_at=START,
+            minutes=60,
+            now=NOW,
+        )
+        got = await asyncio.gather(
+            usage.start_grace(self.db, GUILD_A, OWNER, first.month, START),
+            usage.start_grace(self.db, GUILD_B, OWNER, first.month, START + 1),
+        )
+        self.assertEqual(sorted(got), [False, True])
+        again = await usage.add_minutes(
+            self.db,
+            guild_id=GUILD_A,
+            campaign_id=self.a.id,
+            owner_user_id=OWNER,
+            session_started_at=START,
+            minutes=1,
+            now=NOW,
+        )
+        self.assertIn(again.grace_session, (START, START + 1))
+
+    async def test_reaching_the_cap_lets_the_session_finish_and_says_so_once(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 58, started=START - 9)
+        table = self.running_table(started=NOW - 5 * 60)
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW)  # 58 + 5 = 63 minutes: at the cap
+            await self.bot.meter_table(table, NOW + 60)  # still in the grace
+        texts = [c.args[1] for c in post.await_args_list]
+        self.assertEqual(sum("2 more hours" in x for x in texts), 1)
+        self.assertIs(self.bot.tables.get(GUILD_A), table)  # still listening
+
+    async def test_when_the_grace_is_spent_the_session_is_stopped_and_forgotten(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 59, started=START - 9)
+        table = self.running_table(started=NOW - 10 * 60)
+        with (
+            patch.object(self.bot, "post", new=AsyncMock()) as post,
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+            patch.object(self.bot.sessions, "clear", new=AsyncMock()) as clear,
+        ):
+            await self.bot.meter_table(table, NOW)  # 69: in the grace
+            stop.assert_not_awaited()
+            await self.bot.meter_table(table, NOW + 120 * 60)  # 189 >= 60 + 120
+        stop.assert_awaited_once()
+        clear.assert_awaited_once()
+        self.assertIn("has stopped listening", post.await_args.args[1])  # type: ignore[union-attr]
+
+    async def test_a_second_session_the_same_month_stops_at_the_cap(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 60, started=START - 9)
+        async with self.db.meter(GUILD_A, OWNER) as conn:
+            await conn.execute("UPDATE owner_hours SET grace_session = %s", (START - 9,))
+        table = self.running_table(started=NOW - 120)  # a different session
+        with (
+            patch.object(self.bot, "post", new=AsyncMock()),
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+            patch.object(self.bot.sessions, "clear", new=AsyncMock()),
+        ):
+            await self.bot.meter_table(table, NOW)
+        stop.assert_awaited_once()
+
+    async def test_a_restart_in_the_grace_neither_repeats_the_notice_nor_stops(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 60, started=START - 9)
+        async with self.db.meter(GUILD_A, OWNER) as conn:
+            await conn.execute("UPDATE owner_hours SET grace_session = %s", (NOW - 300,))
+        table = self.running_table(started=NOW - 300)  # the session that was given it
+        with (
+            patch.object(self.bot, "post", new=AsyncMock()) as post,
+            patch.object(self.bot, "stop_table", new=AsyncMock()) as stop,
+        ):
+            await self.bot.meter_table(table, NOW)
+        stop.assert_not_awaited()
+        self.assertFalse(any("2 more hours" in c.args[1] for c in post.await_args_list))
+
+    async def test_nothing_is_stopped_when_checks_are_off(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        bot = self.make_bot(enforce=False)
+        await self.small_plan()
+        await self.add(GUILD_A, self.a.id, OWNER, 60, started=START - 9)
+        table = self.running_table(started=NOW - 300)
+        bot.tables[GUILD_A] = table
+        with patch.object(bot, "stop_table", new=AsyncMock()) as stop:
+            await bot.meter_table(table, NOW)
+        stop.assert_not_awaited()
 
     async def test_no_warning_when_checks_are_off(self) -> None:
         from unittest.mock import AsyncMock, patch
