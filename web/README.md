@@ -89,8 +89,9 @@ routes) and keeps nothing in the browser but the API's HttpOnly cookie. With
 `public/art/table-wide.webp` (computers) and `table-tall.webp` (phones) sit behind every page
 (`body::before` in `src/styles/global.css`, strength in `--art-opacity`). The owner supplied the
 artwork on 2026-10-09; its origin and licence are for the owner to confirm in the PR. The files
-are made by `scripts/make-art.py` (half the colour, brightest parts capped) so words on top stay
-above 4.5:1 contrast. To change the picture, run the script on the new file and check the ratio.
+are made by `scripts/make-art.py` (half the colour, brightest parts capped, the dice lifted so they
+stand out). Bare text over the art measured 4.7:1 or better on the home, prices and Q&A pages.
+To change the picture, run the script on the new file and look at those pages again.
 They are cached for a day (their names have no hash), so a new picture can take a day to show.
 
 ## Layout

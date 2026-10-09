@@ -42,12 +42,12 @@ describe("background artwork", () => {
     expect(headers).not.toMatch(/\/art\/\*\s+Cache-Control:[^\n]*immutable/);
   });
 
-  it("stays quiet: dark pages at most 0.7, light pages a faint haze", () => {
+  it("stays quiet: dark pages at most 0.9, light pages a faint haze", () => {
     const tokens = [...css.matchAll(/--art-opacity: ([\d.]+)/g)].map((m) => Number(m[1]));
     expect(tokens).toHaveLength(2);
     const [light, dark] = tokens as [number, number];
     expect(light).toBeLessThanOrEqual(0.2);
-    expect(dark).toBeLessThanOrEqual(0.7);
+    expect(dark).toBeLessThanOrEqual(0.9);
     expect(css.match(/body::before \{[^}]*opacity: var\(--art-opacity\)/)).not.toBeNull();
   });
 });

@@ -71,7 +71,7 @@
     --warn-soft: #3a2f12;
     --danger: #f97066;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.35);
-    --art-opacity: 0.65;
+    --art-opacity: 0.85;
     --page: radial-gradient(70rem 32rem at 50% -8rem, #1d3a31 0%, transparent 70%),
       linear-gradient(180deg, #13201c 0%, var(--bg) 40rem);
   }
@@ -104,11 +104,13 @@ body {
 }
 
 /*
- * The table artwork behind every page, kept quiet so words stay easy to read. It is a fixed
- * layer (it doesn't scroll or repaint), with its colour cut and its brightest parts capped
- * inside the files (scripts/make-art.py), so even the lightest pixel at --art-opacity leaves
- * muted text above 4.5:1. A mask fades it away from the text: the left side on wide screens,
- * the bottom on phones. Two crops: a wide one for computers and a tall one for phones.
+ * The table artwork behind every page, kept quiet where words sit so they stay easy to read.
+ * It is a fixed layer (it doesn't scroll or repaint), with its colour cut and its brightness
+ * capped inside the files (scripts/make-art.py); the dice are lifted so they stand out.
+ * A mask fades it away from the text: the left side on wide screens, the bottom on phones,
+ * and phones also run it at half strength because text spans their whole width. Bare text
+ * measured at 4.7:1 or better against it (first screen of the home, prices and Q&A pages).
+ * Two crops: a wide one for computers and a tall one for phones.
  * Decorative only, so it lives in CSS and screen readers never see it.
  * Keep body and html free of position, transform, filter, isolation and z-index: any of them
  * would put this layer behind the body's own background and hide it.
@@ -125,16 +127,18 @@ body::before {
   z-index: -1;
   pointer-events: none;
   background: url("/art/table-tall.webp") 78% 0 / cover no-repeat;
-  opacity: var(--art-opacity);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 80%);
-  mask-image: linear-gradient(to bottom, #000 0%, transparent 80%);
+  /* Phones put text across the whole width, so the picture is quieter there. */
+  opacity: calc(var(--art-opacity) * 0.5);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 100%);
 }
 
 @media (min-width: 48rem) {
   body::before {
     background: url("/art/table-wide.webp") right top / cover no-repeat;
-    -webkit-mask-image: linear-gradient(to right, transparent 25%, #000 75%);
-    mask-image: linear-gradient(to right, transparent 25%, #000 75%);
+    opacity: var(--art-opacity);
+    -webkit-mask-image: linear-gradient(to right, transparent 32%, #000 82%);
+    mask-image: linear-gradient(to right, transparent 32%, #000 82%);
   }
 }
 
