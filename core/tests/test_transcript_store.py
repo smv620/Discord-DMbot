@@ -68,17 +68,23 @@ class StoreTests(DatabaseTest):
             [(x.heard, x.sidebar) for x in lines],
             [("find flanking", "question"), ("table speech", ""), ("Optional. (sure)", "answer")],
         )
-        # An Undo, the off-topic filter or Put it back on the same second touches only speech.
-        self.assertEqual(await self.store.relabel_line(GUILD, sid, DM, asked.started_ms, "x"), 0)
-        self.assertEqual(
-            await self.store.set_topic(GUILD, sid, DM, asked.started_ms, "off_topic"), 0
-        )
-        self.assertEqual(
-            await self.store.set_topics(GUILD, sid, DM, [asked.started_ms], "off_topic"), 0
-        )
+        # An Undo, the off-topic filter or Put it back at the same moment as a sidebar line
+        # changes the speech line only: the question and the answer stay as they were.
+        key = asked.started_ms
+        self.assertEqual(await self.store.relabel_line(GUILD, sid, DM, key, "x"), 1)
+        self.assertEqual(await self.store.set_topic(GUILD, sid, DM, key, "off_topic"), 1)
+        self.assertEqual(await self.store.set_topics(GUILD, sid, DM, [key], "table_talk"), 1)
         again = await self.store.lines(GUILD, sid)
         self.assertEqual(
-            next((x.text, x.topic) for x in again if x.sidebar), ("find flanking", "game")
+            [(x.text, x.topic) for x in again if x.sidebar],
+            [("find flanking", "game"), ("Optional. (sure)", "game")],
+        )
+        speech = next(x for x in again if not x.sidebar)
+        self.assertEqual((speech.text, speech.topic), ("x", "table_talk"))
+        # With no speech at that moment, nothing at all is changed.
+        self.assertEqual(await self.store.relabel_line(GUILD, sid, DM, answer.started_ms, "x"), 0)
+        self.assertEqual(
+            await self.store.set_topics(GUILD, sid, DM, [answer.started_ms], "off_topic"), 0
         )
 
     async def test_a_resumed_session_keeps_its_transcript(self) -> None:
