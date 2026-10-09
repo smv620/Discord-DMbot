@@ -502,9 +502,21 @@ class BackupFiles(unittest.TestCase):
 
         from dmbot.campaigns import store as store_mod
 
-        small = patch.object(store_mod, "MAX_BACKUP_BYTES", 40)  # packed bigger than the text
-        with small, self.assertRaises(store_mod.BackupTooBig):
-            store_mod.encode_backup({"n": "".join(chr(33 + i % 90) for i in range(35))})
+        # The text is under the limit; only the packed copy (18 bytes of header and trailer
+        # plus text that will not squeeze) is over it.
+        data = {"n": "".join(chr(33 + (i * 37) % 90) for i in range(20))}
+        text = len(json.dumps(data, separators=(",", ":")).encode())
+        tight = patch.object(store_mod, "MAX_BACKUP_BYTES", text)
+        with tight, self.assertRaises(store_mod.BackupTooBig):
+            store_mod.encode_backup(data)  # the packed size is what trips
+        with patch.object(store_mod, "MAX_BACKUP_BYTES", text + 40):
+            self.assertEqual(store_mod.decode_backup(store_mod.encode_backup(data)), data)
+
+    def test_a_backup_with_a_key_that_is_not_text_is_refused_not_rewritten(self) -> None:
+        from dmbot.campaigns import store as store_mod
+
+        with self.assertRaises(TypeError):
+            store_mod.encode_backup({"a": {1: "x"}})  # type: ignore[dict-item]
 
     def test_no_copy_is_made_that_a_restore_would_refuse(self) -> None:
         from dmbot.campaigns import store as store_mod

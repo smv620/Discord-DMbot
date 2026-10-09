@@ -1242,18 +1242,24 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
     )
 
 
+# Built once: the C encoder behind .encode is what keeps a big copy fast.
+_ENCODER = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
+
+
 def _json_pieces(value: object, depth: int = 0) -> Iterator[str]:
     """`json.dumps(value, ensure_ascii=False, separators=(",", ":"))` in pieces: the first
     levels of objects are walked here and every list row or deeper value goes through
     json.dumps itself, so the work stays in the fast C encoder (iterencode is pure Python
     and about 5 times slower, holding the GIL the voice relay needs)."""
-    dump = json.JSONEncoder(ensure_ascii=False, separators=(",", ":")).encode
+    dump = _ENCODER.encode
     if isinstance(value, dict) and depth < 3:
         yield "{"
         for i, (key, item) in enumerate(value.items()):
+            if not isinstance(key, str):  # json would turn 1 into "1", True into "true"...
+                raise TypeError("a backup's keys are text")
             if i:
                 yield ","
-            yield dump(str(key)) + ":"
+            yield dump(key) + ":"
             yield from _json_pieces(item, depth + 1)
         yield "}"
     elif isinstance(value, list):
@@ -1286,7 +1292,7 @@ def encode_backup(backup: dict[str, Any]) -> bytes:
             packed.write(data)
     if out.tell() > MAX_BACKUP_BYTES:  # restore also refuses an upload this big
         raise BackupTooBig(CAMPAIGN_TOO_BIG)
-    return out.getvalue()
+    return out.getvalue()  # no second copy: CPython shares the buffer until it is written
 
 
 def decode_backup(raw: bytes) -> object:
