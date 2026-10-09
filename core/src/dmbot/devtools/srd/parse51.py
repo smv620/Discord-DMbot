@@ -8,9 +8,9 @@ The 5.1 PDF is laid out differently from 5.2.1's, and its text layer is rougher:
 - Words are cut by stray spaces in places ("hig her", "adva ntage", "t o"), and a letter is
   sometimes on the wrong side of a space ("the n ature"). A cut word is put back together
   when the whole word is one the SRD itself uses somewhere (the words of the 5.2.1 data and
-  the words this PDF uses often), or when neither piece is a word and one is very short. A
-  letter goes with the piece that makes a word of it, and a space is never taken out of two
-  words that are both known.
+  the words this PDF uses often), or when neither piece is a word and the PDF has the joined
+  word whole elsewhere. A letter goes with the piece that makes a word of it, and a space
+  is never taken out of two words that are both known.
 - In a few places the text layer has lost words altogether (a spell's "At Higher Levels"
   line reads "…one additional beast t level above 1st."). Those cannot be put back from
   the PDF; `strays()` counts the lone letters that mark them, and ATTRIBUTION.md says so.
@@ -51,12 +51,12 @@ WORD = re.compile(r"[A-Za-z’']+")
 HYPHENATED_WORD = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)+")
 # The ends of words that cut ones leave behind, so they are never words themselves.
 ENDINGS = frozenset(["ing", "ion", "ons", "ous", "ers", "ess", "ent", "ect", "ive"])
-SHORT = 3  # a piece of a cut word with no real word in it is this short or shorter
 COMMON = 4  # words this PDF uses at least this often count as words
 STRAY_WORDS = frozenset(["a", "i"])
 # Plain words the SRD 5.1 uses that neither the 5.2.1 data nor this PDF spells out whole
-# often enough to be known; they only let a cut one be put back together.
-EXTRA_WORDS = frozenset(["attacked", "bed", "defends", "dimly", "dread", "linen", "lit"])
+# often enough to be known. Some put a cut word back together ("attacked"); some only stop
+# a wrong join of two real words ("bed linen", "dimly lit").
+EXTRA_WORDS = frozenset(["attacked", "bed", "defends", "dimly", "dread", "linen", "lit", "strip"])
 SCHOOLS = (
     "abjuration conjuration divination enchantment evocation illusion necromancy transmutation"
 )
@@ -66,6 +66,7 @@ _SOFT = re.compile(r"[\xad‐‑]")
 _ORDINAL = re.compile(r"(?<=\d)(?:s t|n d|r d|t h)\b")  # "3r d" is "3rd"
 _END = re.compile(r"(.*?)([A-Za-z’']+)")  # a token that ends in letters: (the rest, them)
 _START = re.compile(r"[A-Za-z’']+")  # the letters a token starts with
+_DICE = re.compile(r"(?<=\b\d) (?=d(?:4|6|8|10|12|20|100)\b)")  # "3 d10" is "3d10"
 _BEFORE_PUNCTUATION = re.compile(r"(?<=[A-Za-z0-9)”’]) ([.,;:])(?=\s|$)")  # "turn ," is "turn,"
 _HYPHEN = re.compile(r"(?<=[A-Za-z0-9]) - ?(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])- (?=[a-z0-9])")
 
@@ -122,7 +123,8 @@ class Vocabulary:
         """Text made of lines run together: hyphens closed up across the line breaks,
         ordinals whole ("3rd"), cut words joined again."""
         text = _ORDINAL.sub(lambda m: m.group().replace(" ", ""), _HYPHEN.sub("-", text))
-        return self.repair(_BEFORE_PUNCTUATION.sub(r"\1", text))
+        text = _DICE.sub("", _BEFORE_PUNCTUATION.sub(r"\1", text))
+        return self.repair(text)
 
     def run_on(self, row: str, text: str) -> str:
         """`row` with the next line `text` after it. A hyphen the print put at a line break
@@ -141,13 +143,15 @@ class Vocabulary:
         """Whether `tokens[i]` and `tokens[i + 1]` are the two halves of one cut word.
 
         Either the whole is a word the SRD uses and the two aren't both words already; or
-        neither half is a word at all ("atta cked", "d ropping"). A half that is a word is
+        it is a word the PDF has whole elsewhere ("exc ess"). A half that is a word is
         not taken from the piece after it: in "the n ature" the "n" belongs to "ature"
         ("nature"), and "the"+"n" ("then") would leave "ature" behind."""
         end = _END.fullmatch(tokens[i])
         start = _START.match(tokens[i + 1])
         if end is None or start is None or any(c.isdigit() for c in end[1]):
             return False  # (a digit before it: an ordinal such as "4th", not a word)
+        if tokens[i + 1][start.end() : start.end() + 1].isdigit():
+            return False  # (a die such as "d4", not the start of a word)
         left, right = end[2], start.group()
         is_left, is_right = left.lower() in self.words, right.lower() in self.words
         whole = (left + right).lower()
@@ -161,8 +165,10 @@ class Vocabulary:
             return self.freq[whole] >= self.freq[taken]
         if whole in self.words:
             return not (is_left and is_right)
-        short = min(len(left), len(right)) <= SHORT
-        return self.cut and short and not is_left and not is_right and right[0].islower()
+        # Neither piece is a word: they are one word if the PDF has that word whole elsewhere
+        # ("exc ess", with "excess" on another page). Two words the SRD merely doesn't use
+        # ("gum arabic", "rotten egg") are never joined on a guess.
+        return self.cut and not (is_left and is_right) and whole in self.freq
 
     def repair(self, text: str) -> str:
         """The text with cut words joined again."""
@@ -200,7 +206,8 @@ def _paragraphs(lines: Sequence[Line], vocab: Vocabulary) -> str:
             continue
         font = line.first_font
         table = not (font.startswith(BODY_FAMILY) or font == "Symbol")
-        # A table line that starts in lower case is the rest of the line above it.
+        # A table line that starts in lower case is the rest of the line above it (one that
+        # starts with a capital would stay a row of its own; none in this PDF wraps that way).
         continued = table and after_table and text[:1].islower()
         fresh = not rows or font == LEAD_IN_FONT or text.startswith("•")
         fresh = fresh or (not continued and (table or not joinable))

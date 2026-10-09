@@ -132,17 +132,22 @@ class CutWords(unittest.TestCase):
         self.assertEqual(words.tidy("a s ymbol of this"), "a symbol of this")
         self.assertEqual(words.tidy("in t his"), "in this")  # not "int his"
 
-    def test_two_pieces_that_are_not_words_are_one_word_if_one_is_short(self) -> None:
-        words = vocab()
+    def test_two_pieces_that_are_not_words_are_one_word_only_if_the_pdf_has_it_whole(self) -> None:
+        words = vocab(text=("a great excess of Investigation and diseases",))
         self.assertEqual(words.tidy("the exc ess and dis eases"), "the excess and diseases")
         self.assertEqual(words.tidy("(Investigat ion)"), "(Investigation)")
-        # two long words that merely aren't known stay two
-        self.assertEqual(words.tidy("the foul mimicry"), "the foul mimicry")
 
-    def test_the_short_piece_rule_has_limits(self) -> None:
+    def test_two_real_words_the_srd_does_not_use_stay_two(self) -> None:
         words = vocab()
-        self.assertEqual(words.tidy("xpda dcab"), "xpda dcab")  # neither piece is short
-        self.assertEqual(words.tidy("the exc Ess"), "the exc Ess")  # a capital starts a new word
+        for text in (
+            "gum arabic", "rotten egg", "sealable lid", "nut shells", "red fox den",
+            "hind leg", "the foul mimicry", "a tiny reli quary",
+        ):  # fmt: skip
+            with self.subTest(text):
+                self.assertEqual(words.tidy(text), text)
+
+    def test_a_die_is_not_the_start_of_a_word(self) -> None:
+        self.assertEqual(vocab("ad").tidy("roll a d4 and 3 d10"), "roll a d4 and 3d10")
 
     def test_a_word_is_known_at_the_common_count_and_not_below_it(self) -> None:
         n = parse51.COMMON

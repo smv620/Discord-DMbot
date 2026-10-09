@@ -13,13 +13,13 @@ This work includes material taken from the System Reference Document 5.1 (“SRD
 The words are the SRD's. DMbot's own tool (`python -m dmbot.devtools.srd`) took them out of the PDF and:
 
 - removed the stray tabs, no-break spaces and soft hyphens in the PDF's text, and closed up the spaces around hyphens ("15 - foot- radius" is "15-foot-radius");
-- joined the lines of each paragraph, and put words back together where the PDF's text had cut them with a stray space ("hig her" is "higher", "atta cked" is "attacked"). A space is taken out when the joined word is one the SRD uses (the words of the 5.2.1 data and the words this PDF uses often), or when neither piece is a word and one is three letters or fewer. Where the PDF put a letter on the wrong side of a space, the letter is moved across ("the n ature" is "the nature", "a t arget" is "a target", "forth e duration" is "for the duration"). A hyphen at the end of a line is dropped when the word without it is one the SRD uses and the hyphenated word is not;
+- joined the lines of each paragraph, and put words back together where the PDF's text had cut them with a stray space ("hig her" is "higher", "atta cked" is "attacked"). A space is taken out when the joined word is one the SRD uses (the words of the 5.2.1 data and the words this PDF uses often), or when neither piece is a word and the PDF has the joined word whole elsewhere (“exc ess”, with “excess” on another page); two real words the SRD merely does not use (“gum arabic”, “rotten egg”) are never joined on a guess. Where the PDF put a letter on the wrong side of a space, the letter is moved across ("the n ature" is "the nature", "a t arget" is "a target", "forth e duration" is "for the duration"). A hyphen at the end of a line is dropped when the word without it is one the SRD uses and the hyphenated word is not;
 - closed the space the PDF leaves before a full stop, comma, semicolon or colon;
 - split the text into entries, and pulled each spell's level, school, casting time, range, components and duration out of its heading lines (this edition's spell heading has no list of classes, so these entries have none);
 - recorded the page each entry is on, so DMbot can name it ("SRD 5.1, Spell Descriptions, p. 114");
 - read "Component:" in Contagion's heading as "Components:".
 
-Tables inside a spell or condition are kept as plain lines of text, one line for each row (a row that the print wraps over two lines is joined).
+Tables inside a spell or condition are kept as plain lines of text, one line for each row (a row that the print wraps over two lines is joined, so the words of a wrapped cell come at the end of the row).
 
 ## Known defects of the PDF
 

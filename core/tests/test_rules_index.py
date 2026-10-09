@@ -26,6 +26,16 @@ ATTRIBUTION_51 = (
 FILES = ("ATTRIBUTION.md", "conditions.json", "spells.json")
 
 
+def all_text(entry: Entry) -> str:
+    """Everything an entry says in words: its text and its casting time, range, components
+    and duration."""
+    fields = ("casting_time", "range", "duration")
+    parts = [entry.text, *(str(entry.details[k]) for k in fields if k in entry.details)]
+    if "components" in entry.details:  # without the letters V, S and M
+        parts.append(re.sub(r"\b[VSM]\b,? ?", "", str(entry.details["components"])))
+    return "\n".join(parts)
+
+
 def srd_entries(edition: str) -> list[Entry]:
     """What `srd()` holds for one edition."""
     return [e for e in index.srd().entries if e.edition == edition]
@@ -524,7 +534,7 @@ class TheLegacyData(unittest.TestCase):
     def test_only_the_listed_defects_remain(self) -> None:
         # The PDF lost a few words; ATTRIBUTION.md lists what is left, and this fails if a
         # worse reading slips in or a listed defect goes away (then edit both).
-        text = {e.name: e.text for e in srd_entries("2014")}
+        text = {e.name: all_text(e) for e in srd_entries("2014")}
         left = {name: parse51.strays([t]) for name, t in text.items() if parse51.strays([t])}
         self.assertEqual(left, {"Animal Friendship": {"t": 1}})
         self.assertIn("beast t level above 1st", text["Animal Friendship"])
@@ -537,7 +547,7 @@ class TheLegacyData(unittest.TestCase):
         words = {w for w in words if "-" not in w}
         found = set()
         for e in srd_entries("2014"):
-            tokens = e.text.split()
+            tokens = all_text(e).split()
             for a, b in itertools.pairwise(tokens):
                 left, right = re.sub(r"[^A-Za-z’']", "", a), re.sub(r"[^A-Za-z’']", "", b)
                 if (
@@ -554,7 +564,10 @@ class TheLegacyData(unittest.TestCase):
             found,
             {
                 ("his", "mace"), ("his", "hammer"), ("her", "warhorse"), ("beggar", "she"),
-                ("she", "meets"), ("bed", "linen"), ("dimly", "lit"),
+                ("she", "meets"), ("bed", "linen"), ("dimly", "lit"), ("sealable", "lid"),
+                ("leadbased", "ink"), ("nut", "shells"), ("hind", "leg"), ("rotten", "egg"),
+                ("few", "grains"), ("sweet", "oil"), ("carved", "bar"), ("bag", "containing"),
+                ("gum", "arabic"),
             },
         )  # fmt: skip
 
@@ -564,12 +577,13 @@ class TheLegacyData(unittest.TestCase):
             "then ature", "At arget", "then earest", "or as ymbol", "as pecific", "off ood",
             "int he", "int his", "atta cked", "exc ess", "ins tantaneous", "Investigat ion",
             "dre ad", "def ends", "defe nds", "dis eases", "4thlevel",
-            "too r less", "forth e", "includin g", "y ou", "l ips",
+            "too r less", "forth e", "includin g", "y ou", "l ips", "reli quary", "3 d10", "st rip",
+            "gumarabic", "rottenegg", "sealablelid", "nutshells", "foxden", "hindleg",
         )  # fmt: skip
         for e in srd_entries("2014"):
             for bad in wrong:
                 with self.subTest(e.name, bad=bad):
-                    self.assertIsNone(re.search(rf"(?<!\w){re.escape(bad)}(?!\w)", e.text))
+                    self.assertIsNone(re.search(rf"(?<!\w){re.escape(bad)}(?!\w)", all_text(e)))
         by_name = {e.name: e.text for e in srd_entries("2014")}
         self.assertIn("the nature", by_name["Animal Shapes"])
         self.assertIn("A target takes 8d6", by_name["Circle of Death"])
