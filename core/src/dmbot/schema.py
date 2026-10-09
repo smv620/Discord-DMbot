@@ -1086,6 +1086,29 @@ ACCESS_GRANTS = (
     """
 )
 
+HOUSE_RULES = f"""
+    -- A campaign's house rules (#865; docs/PLAN.md, "House rules"): the rule, the book rule
+    -- it replaces (free text), and what happened to make it (free text, optional). Per
+    -- campaign, never shared between campaigns or servers; deleted with the campaign; in
+    -- its backups. Only the campaign's DMs change them (dmbot.rules.house checks that in
+    -- the same transaction); anyone in the server may list them. The website's role has no
+    -- grant on this table. session_id: the stored transcript session it came from, for the
+    -- later parts (an alert's Override, a rule declared aloud); nothing sets it yet, and a
+    -- backup never carries it (it means nothing in another server).
+    CREATE TABLE house_rules (
+        {_memory_scope()}
+        id         BIGINT GENERATED ALWAYS AS IDENTITY,
+        rule       TEXT NOT NULL CHECK (char_length(rule) BETWEEN 1 AND 500),
+        supersedes TEXT CHECK (supersedes IS NULL OR char_length(supersedes) BETWEEN 1 AND 500),
+        scenario   TEXT CHECK (scenario IS NULL OR char_length(scenario) BETWEEN 1 AND 500),
+        session_id TEXT,
+        created_by BIGINT NOT NULL CHECK (created_by > 0),
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id)
+    );
+    """ + _isolate("house_rules")
+
 # What the website's role may touch at all: its own tables, and only reads of the two
 # server tables /me needs. Everything else (consent, transcripts, memory...) is refused
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
@@ -1139,6 +1162,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0028_character_sheets", CHARACTER_SHEETS),
     ("0029_sheet_player", SHEET_PLAYER),
     ("0030_access_grants", ACCESS_GRANTS),
+    ("0031_house_rules", HOUSE_RULES),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -1156,6 +1180,7 @@ ISOLATED_TABLES = (
     "shared_confirmations",
     "campaign_handover_offers",
     "character_sheets",
+    "house_rules",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

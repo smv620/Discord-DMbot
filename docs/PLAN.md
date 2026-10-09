@@ -257,7 +257,7 @@ commands are only visible to the person who used them.
 | `/dmbot stop` | Stop listening and close the session. Replaces `/table leave` |
 | `/dmbot backup` · `/dmbot restore` | Download a complete copy of a campaign, secrets included (anyone in the server, so a campaign is never lost if its DM disappears; decided 2026-10-06, #229; whoever restores a copy becomes its DM); bring one back from a copy (restore needs a file, which only a command can take) |
 | `/dmbot help` | A short, friendly guide with buttons |
-| `/dmbot houserules` | List, add, edit, and remove house rules for the current campaign |
+| `/dmbot houserules` | List, add, edit, and remove house rules for the current campaign (built 2026-10-09, #865: anyone in the server reads the list; only the campaign's DMs get Add, Edit and Remove) |
 | `/dmbot optionalrules` | Turn optional rules (e.g. Xanathar's, Tasha's) on or off for the current campaign (built in #49: a catalog of rule names, one-line summaries and their books, never book text; each change noted in the DM screen) |
 | `/transcript` | Download a session transcript: **cleaned**, **as heard** (raw), or **both** (#125). Anyone in the server can use it. If DMbot is still recording, the DM is told "This transcript ends at 19:42. To get the whole session, stop with `/dmbot stop` first." and a player is told "This transcript ends at 19:42. You'll get a message with the full transcript when the DM ends the session." [Download anyway] [Cancel] |
 
@@ -367,6 +367,26 @@ happened). Ways in:
 
 Only the DM can declare or change a house rule. A player may suggest one; it becomes a
 proposal when the DM clearly agrees out loud, then goes through the same approval.
+
+*Built, part 1: the store and `/dmbot houserules` (2026-10-09, #865):* no AI, voice or
+alerts yet; those build on this.
+- **Table `house_rules`** (migration 0031), per campaign, with row-level security like
+  every campaign table: the rule (at most 500 characters), `supersedes` (the book rule it
+  replaces, free text, optional), `scenario` (what happened, optional), `session_id`
+  (optional; nothing sets it yet), who created it, and when it was created and last
+  changed. At most 200 per campaign. The website's role has no grant on it. It goes in
+  backups (a section that validates every field of the untrusted file) and is deleted with
+  the campaign. A backup never carries `session_id`, which means nothing in another server.
+- **Who may change them:** only the campaign's DMs, not even server managers: the store
+  checks it in the same transaction as the change. Anyone in the server may list them,
+  as they may read transcripts.
+- **`/dmbot houserules`** answers privately, newest first, numbered. It opens the campaign
+  being played, else the one campaign the person is a DM of, else the server's only one,
+  else asks which. A DM gets **Add a house rule** (a form: "The rule" and "Instead of
+  (optional)"), and Edit and Remove for each rule: buttons when there are four or fewer,
+  a menu above that, and pages of ten above that. Remove asks first and says it can't be
+  undone. Nothing is posted to the DM screen (the list isn't DM-screen content).
+- **Wording:** "house rule" only: no "precedence" or "hierarchy" in anything users read.
 
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
