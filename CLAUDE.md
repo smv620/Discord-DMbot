@@ -153,6 +153,10 @@ The sessions don't share memory, so **GitHub Issues are the shared log.**
 - **Fix PRs say `Fixes #N`** so the issue closes when the PR merges.
 - **The repo is public:** never put tokens, `.env` contents, or players' personal data
   in issues.
+  **Made-up test values are fine** (decided 2026-10-08, #516): emails at `example.com`,
+  `example.org` or `example.net` (reserved for this), invented Discord-shaped numbers and
+  fake names. Never a real domain (gmail.com included), a number copied from Discord, or
+  anything read from the live database.
 - In cloud sessions `gh issue …` and `gh pr …` may fail (GraphQL is blocked). Use the
   REST API through `gh api repos/smv620/Discord-DMbot/...` instead.
 
@@ -267,6 +271,11 @@ terminal output or Discord screenshots copied to it.
   pass" in a PR, or run them locally with Postgres (lesson from #544, 2026-10-08).
 - User-facing text (slash command descriptions, alerts, errors) is short, plain, and
   tells the user what to do next.
+- **Steps the owner follows give full clickable links** (owner, 2026-10-08): every site the
+  owner must open is a full address in the step itself, the first time it's named (for
+  example https://discord.com/developers/applications), then the menu path. Name the exact
+  button, and warn about a look-alike that does harm (OAuth2's Reset Secret, never the
+  bot's Reset Token).
 
 ## ears ↔ core protocol
 Defined in `ears/src/protocol.ts` and `core/src/dmbot/ears/protocol.py`. Keep the two
