@@ -16,11 +16,14 @@
  * Known limit: a speaker whose client sends no silence frames, and whose packets are
  * failing, has a short pause counted as lost (the receiver can't tell the two apart).
  *
- * Known limit: packets lost right after a pause are indistinguishable from the pause
- * itself (DAVE passes silence frames through undecrypted, so a decrypt failure on the
- * resumed speech looks exactly like this). At most ~800 ms per pause can hide this way,
- * since lost packets don't keep the receive stream alive. Exact detection needs RTP
- * sequence numbers or DAVE decrypt-failure counts (#43).
+ * Packets lost right after a pause look like the pause itself (DAVE passes silence frames
+ * through undecrypted, so a decrypt failure on the resumed speech looks exactly like it,
+ * and lost packets don't keep the receive stream alive). The voice library says each time
+ * it fails to decrypt a packet; the caller counts those (#43) and says how many were lost
+ * (`lost`), so they count even there.
+ *
+ * Audio that reached ears but not core (a decoder error, or a frame the link to core
+ * dropped, #45) is not "received" either: `dropped` takes it back out.
  */
 export const FRAME_MS = 20;
 
@@ -104,6 +107,14 @@ export class UtteranceTracker {
     this.silenceRun = 0;
     this.expected += Math.max(0, frames);
     this.lostAt = nowMs;
+  }
+
+  /**
+   * `frames` packets reached ears but their audio never reached core (a decoder error, or
+   * the link to core was too busy, #45): they no longer count as received.
+   */
+  dropped(frames: number): void {
+    this.received = Math.max(0, this.received - Math.max(0, frames));
   }
 
   /** Finish the utterance and return its health, or null if nothing arrived or was lost. */
