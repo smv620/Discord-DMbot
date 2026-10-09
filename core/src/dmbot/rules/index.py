@@ -1,10 +1,10 @@
 """The rules index: look a spell or a condition up by name (docs/PLAN.md, "Rules
 edition" and "Lookups must match renamed content"; #866).
 
-What is in it: the System Reference Document 5.2.1 (CC-BY-4.0, attribution in
-`data/srd52/ATTRIBUTION.md`), and nothing from any other book. Every entry carries what a
-rules alert must show: its source, the section and the page, and, for older content, its
-edition tag.
+What is in it: the System Reference Documents 5.2.1 and 5.1 (CC-BY-4.0, attribution in
+`data/srd52/ATTRIBUTION.md` and `data/srd51/ATTRIBUTION.md`), and nothing from any other
+book. Every entry carries what a rules alert must show: its source, the section and the
+page, and, for older content, its edition tag.
 
 - **Names:** an entry is found by its name with case, punctuation and apostrophes ignored
   ("Melf's acid arrow", "melfs acid arrow"), and by the older names the newest edition
@@ -13,8 +13,8 @@ edition tag.
   the name wins, so an older entry is used only when no newer one matches any name. A hit
   from the fallback is tagged (`[Legacy 2014]`). House rules and homebrew sit above all
   of this and are not in the index.
-- More data (the 2014 SRD 5.1, as legacy) is added by loading another folder of the same
-  shape, with its own `edition`; nothing here is specific to 2024.
+- More data is added by loading another folder of the same shape, with its own `edition`
+  (the 2014 SRD 5.1 is the legacy fallback); nothing here is specific to 2024.
 """
 
 from __future__ import annotations
@@ -177,5 +177,7 @@ def load_folder(folder: Path) -> list[Entry]:
 
 @functools.cache
 def srd() -> Index:
-    """The index of what DMbot ships: the SRD 5.2.1, with the renamed spells' older names."""
-    return Index(load_folder(DATA / "srd52"), aliases.SPELL_ALIASES)
+    """The index of what DMbot ships: the SRD 5.2.1 and, as legacy, the SRD 5.1, with the
+    renamed spells' older names."""
+    entries = load_folder(DATA / "srd52") + load_folder(DATA / "srd51")
+    return Index(entries, aliases.SPELL_ALIASES)

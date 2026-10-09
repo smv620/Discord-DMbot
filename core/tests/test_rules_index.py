@@ -11,9 +11,24 @@ import unittest
 from pathlib import Path
 
 from dmbot.campaigns.models import FALLBACK_NONE
-from dmbot.devtools.srd import build
+from dmbot.devtools.srd import build, parse51
 from dmbot.rules import aliases, index
 from dmbot.rules.index import DATA, Entry, Hit, Index, edition_tag, normalize
+
+ATTRIBUTION_51 = (
+    "This work includes material taken from the System Reference Document 5.1 (“SRD 5.1”) by "
+    "Wizards of the Coast LLC and available at "
+    "https://dnd.wizards.com/resources/systems-reference-document. The SRD 5.1 is licensed "
+    "under the Creative Commons Attribution 4.0 International License available at "
+    "https://creativecommons.org/licenses/by/4.0/legalcode."
+)
+FILES = ("ATTRIBUTION.md", "conditions.json", "spells.json")
+
+
+def srd_entries(edition: str) -> list[Entry]:
+    """What `srd()` holds for one edition."""
+    return [e for e in index.srd().entries if e.edition == edition]
+
 
 REPO = Path(__file__).resolve().parents[2]
 ATTRIBUTION = (
@@ -148,8 +163,8 @@ class TheShippedData(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.srd = index.srd()
-        cls.spells = [e for e in cls.srd.entries if e.kind == "spell"]
-        cls.conditions = [e for e in cls.srd.entries if e.kind == "condition"]
+        cls.spells = [e for e in srd_entries("2024") if e.kind == "spell"]
+        cls.conditions = [e for e in srd_entries("2024") if e.kind == "condition"]
 
     def test_every_spell_and_condition_of_the_srd_is_there(self) -> None:
         self.assertEqual((len(self.spells), len(self.conditions)), (339, 15))
@@ -201,7 +216,7 @@ class TheShippedData(unittest.TestCase):
         self.assertGreater(len(cantrips), 15)
 
     def test_every_entry_has_a_citation_and_words(self) -> None:
-        for e in self.srd.entries:
+        for e in srd_entries("2024"):
             with self.subTest(e.name):
                 self.assertEqual((e.source, e.edition), ("SRD 5.2.1", "2024"))
                 self.assertTrue(e.section)
@@ -235,7 +250,7 @@ class TheShippedData(unittest.TestCase):
 
 class OlderNames(unittest.TestCase):
     def test_every_current_name_is_in_the_data(self) -> None:
-        names = {normalize(e.name) for e in index.srd().entries if e.kind == "spell"}
+        names = {normalize(e.name) for e in srd_entries("2024") if e.kind == "spell"}
         for older, current in aliases.SPELL_ALIASES:
             with self.subTest(older):
                 self.assertIn(normalize(current), names)
@@ -264,7 +279,7 @@ class OlderNames(unittest.TestCase):
 
     def test_the_two_reworked_renames_find_the_2024_spell(self) -> None:
         # Renamed in 2024 along with a rewrite: still the newer version of the same spell,
-        # so once the 2014 data is added it must not be answered with the old one.
+        # so it must not be answered with the 2014 spell of the old name.
         for older, current in (("Feeblemind", "Befuddlement"), ("Branding Smite", "Shining Smite")):
             hit = index.srd().lookup(older, "2024", "2014", kind="spell")
             assert hit is not None
@@ -272,7 +287,7 @@ class OlderNames(unittest.TestCase):
             self.assertIn((older, current), aliases.SPELL_ALIASES)
 
     def test_a_name_in_neither_edition_is_a_miss_even_with_a_fallback(self) -> None:
-        # No 2014 data is shipped yet, so the fallback has nothing: a miss, not a guess.
+        # Neither edition has it, so the fallback finds nothing: a miss, not a guess.
         self.assertIsNone(index.srd().lookup("Sleet Storm of Ruin", "2024", "2014"))
 
 
@@ -293,7 +308,7 @@ class TheSrdOnly(unittest.TestCase):
     def test_no_title_carries_a_creators_name(self) -> None:
         # The possessives that are left are not people (a job, a dragon, a hunter): a title
         # like "Melf's Acid Arrow" in the data would show up here as an extra.
-        possessive = {e.name for e in index.srd().entries if "’s " in e.name}
+        possessive = {e.name for e in srd_entries("2024") if "’s " in e.name}
         self.assertEqual(possessive, {"Arcanist’s Magic Aura", "Dragon’s Breath", "Hunter’s Mark"})
 
     def test_every_entry_is_read_only_however_it_was_made(self) -> None:
@@ -316,7 +331,7 @@ class TheSrdOnly(unittest.TestCase):
             r"^[A-Z][A-Za-z’' ]*(\([^)]*\))?\. "
         )  # "Slam. ", "Fey Step (Fey Only). "
         found = 0
-        for e in index.srd().entries:
+        for e in srd_entries("2024"):
             lines = e.text.splitlines()
             if "MOD SAVE MOD SAVE MOD SAVE" not in lines:
                 continue
@@ -328,7 +343,7 @@ class TheSrdOnly(unittest.TestCase):
         self.assertEqual(found, 4)
 
     def test_names_inside_a_sentence_and_table_columns_read_as_written(self) -> None:
-        by_name = {e.name: e.text for e in index.srd().entries}
+        by_name = {e.name: e.text for e in srd_entries("2024")}
         self.assertIn(
             "This creature uses the Otherworldly Steed stat block.", by_name["Find Steed"]
         )
@@ -355,7 +370,7 @@ class TheSrdOnly(unittest.TestCase):
         self.assertIsInstance(hash(hit.entry), int)  # still usable in sets
 
     def test_the_text_is_the_srds_not_a_garbled_copy(self) -> None:
-        by_name = {e.name: e.text for e in index.srd().entries}
+        by_name = {e.name: e.text for e in srd_entries("2024")}
         self.assertIn("ten 10-foot-by-10-foot panels", by_name["Wall of Stone"])
         for name in ("Animate Objects", "Find Steed", "Giant Insect", "Summon Dragon"):
             text = by_name[name]
@@ -375,36 +390,42 @@ class TheSrdOnly(unittest.TestCase):
 class Provenance(unittest.TestCase):
     """Only the SRD, and the licence's conditions met."""
 
-    def test_the_data_folder_holds_only_the_srd_files(self) -> None:
-        names = sorted(p.name for p in DATA.rglob("*") if p.is_file())
-        self.assertEqual(names, ["ATTRIBUTION.md", "conditions.json", "spells.json"])
-        self.assertEqual([p.name for p in DATA.iterdir()], ["srd52"])
+    FOLDERS = (("srd52", "SRD 5.2.1", ATTRIBUTION), ("srd51", "SRD 5.1", ATTRIBUTION_51))
 
-    def test_the_attribution_is_the_one_the_srd_asks_for(self) -> None:
-        text = (DATA / "srd52" / "ATTRIBUTION.md").read_text(encoding="utf-8")
-        self.assertIn(ATTRIBUTION, text)
-        self.assertIn("Changes made", text)  # CC BY 4.0: say what was changed
+    def test_the_data_folder_holds_only_the_srd_files(self) -> None:
+        names = sorted(p.relative_to(DATA).as_posix() for p in DATA.rglob("*") if p.is_file())
+        expected = [f"{d}/{n}" for d in ("srd51", "srd52") for n in FILES]
+        self.assertEqual(names, expected)
+        self.assertEqual(sorted(p.name for p in DATA.iterdir()), ["srd51", "srd52"])
+
+    def test_each_attribution_is_the_one_its_srd_asks_for(self) -> None:
         readme = (REPO / "README.md").read_text(encoding="utf-8")
         quoted = re.sub(r"^> ?", "", readme, flags=re.MULTILINE).replace("<", "").replace(">", "")
-        self.assertIn(" ".join(ATTRIBUTION.split()), " ".join(quoted.split()))
+        for folder, _source, statement in self.FOLDERS:
+            with self.subTest(folder):
+                text = (DATA / folder / "ATTRIBUTION.md").read_text(encoding="utf-8")
+                self.assertIn(statement, text)
+                self.assertIn("Changes made", text)  # CC BY 4.0: say what was changed
+                self.assertIn(" ".join(statement.split()), " ".join(quoted.split()))
 
     def test_each_file_says_where_it_came_from(self) -> None:
-        documents = []
-        for name in ("spells.json", "conditions.json"):
-            data = json.loads((DATA / "srd52" / name).read_text(encoding="utf-8"))
-            documents.append(data["document"])
-            self.assertEqual((data["source"], data["licence"]), ("SRD 5.2.1", "CC-BY-4.0"))
-            self.assertTrue(data["document"]["url"].startswith("https://media.dndbeyond.com/"))
-            self.assertRegex(data["document"]["sha256"], r"^[0-9a-f]{64}$")
-        self.assertEqual(documents[0], documents[1])  # made from one file
+        for folder, source, _statement in self.FOLDERS:
+            documents = []
+            for name in ("spells.json", "conditions.json"):
+                data = json.loads((DATA / folder / name).read_text(encoding="utf-8"))
+                documents.append(data["document"])
+                self.assertEqual((data["source"], data["licence"]), (source, "CC-BY-4.0"))
+                self.assertTrue(data["document"]["url"].startswith("https://media.dndbeyond.com/"))
+                self.assertRegex(data["document"]["sha256"], r"^[0-9a-f]{64}$")
+            self.assertEqual(documents[0], documents[1], folder)  # made from one file
 
     def test_the_files_keep_the_tools_layout(self) -> None:
         # Only the layout: a hand edit of a spell's words would still pass. The real check
         # is running the tool on the PDF and seeing no change (ATTRIBUTION.md).
-        for name in ("spells.json", "conditions.json"):
-            path = DATA / "srd52" / name
-            text = path.read_text(encoding="utf-8")
-            self.assertEqual(build.dump(json.loads(text)), text, name)
+        for folder in ("srd52", "srd51"):
+            for name in ("spells.json", "conditions.json"):
+                text = (DATA / folder / name).read_text(encoding="utf-8")
+                self.assertEqual(build.dump(json.loads(text)), text, f"{folder}/{name}")
 
     def test_the_pdf_is_not_kept_in_the_repository(self) -> None:
         try:
@@ -433,3 +454,72 @@ class Provenance(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheLegacyData(unittest.TestCase):
+    """The 2014 SRD 5.1, as the legacy fallback (#873)."""
+
+    spells: list[Entry]
+    conditions: list[Entry]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.spells = [e for e in srd_entries("2014") if e.kind == "spell"]
+        cls.conditions = [e for e in srd_entries("2014") if e.kind == "condition"]
+
+    def test_every_spell_and_condition_of_the_srd_is_there(self) -> None:
+        self.assertEqual((len(self.spells), len(self.conditions)), (319, 15))
+        self.assertEqual(len({normalize(e.name) for e in self.spells}), 319)
+        newer = {e.name for e in srd_entries("2024") if e.kind == "condition"}
+        self.assertEqual({e.name for e in self.conditions}, newer)  # the same fifteen
+
+    def test_every_entry_is_cited_and_clean(self) -> None:
+        for e in srd_entries("2014"):
+            with self.subTest(e.name):
+                self.assertEqual((e.source, e.edition), ("SRD 5.1", "2014"))
+                self.assertGreater(e.page, 0)
+                self.assertLessEqual(e.page, 403)  # the SRD 5.1 has 403 pages
+                self.assertRegex(e.citation, r"^SRD 5\.1, [A-Za-z :-]+, p\. \d+$")
+                self.assertGreater(len(e.text), 40)
+                self.assertNotRegex(e.text, r"\w- \w|\w -\w|[\t\xa0\xad]", "noise was left in")
+                if e.kind == "spell":
+                    self.assertIn(e.details["level"], range(10))
+                    for key in ("school", "casting_time", "range", "components", "duration"):
+                        self.assertTrue(e.details[key], key)
+
+    def test_a_2014_spell_is_read_whole(self) -> None:
+        hit = index.srd().lookup("Sleet Storm", "2014", kind="spell")
+        assert hit is not None
+        self.assertEqual(hit.tag, "[Legacy 2014]")
+        self.assertEqual(hit.entry.details["level"], 3)
+        self.assertEqual(hit.entry.details["school"], "Conjuration")
+        self.assertIn("20-foot-tall cylinder", hit.entry.text)
+        self.assertTrue(hit.citation.endswith("[Legacy 2014]"))
+
+    def test_the_newer_spell_wins_and_an_old_name_still_finds_it(self) -> None:
+        for name in ("Fireball", "Melf's Acid Arrow", "Feeblemind"):
+            hit = index.srd().lookup(name, "2024", "2014", kind="spell")
+            assert hit is not None
+            self.assertEqual((hit.entry.edition, hit.tag), ("2024", ""), name)
+        # the two spells the 2024 rules renamed are found under their old names, as the new ones
+        self.assertEqual(
+            {e.name for e in self.spells} - {e.name for e in srd_entries("2024")},
+            {"Feeblemind", "Branding Smite"},
+        )
+        # a 2014 campaign gets the 2014 spell, tagged, and the fallback is the 2024 one
+        old = index.srd().lookup("Fireball", "2014", "2024", kind="spell")
+        assert old is not None
+        self.assertEqual((old.entry.edition, old.tag), ("2014", "[Legacy 2014]"))
+
+    def test_a_cantrip_and_a_ritual_are_read(self) -> None:
+        by_name = {e.name: e for e in self.spells}
+        self.assertEqual(by_name["Acid Splash"].details["level"], 0)
+        self.assertEqual(by_name["Detect Magic"].details["level"], 1)
+        self.assertIs(by_name["Detect Magic"].details["ritual"], True)
+        self.assertIs(by_name["Fireball"].details["ritual"], False)
+
+    def test_the_known_lost_words_stay_few(self) -> None:
+        # The PDF lost a few words (ATTRIBUTION.md); this keeps a worse reading from
+        # slipping in unnoticed.
+        left = parse51.strays(e.text for e in srd_entries("2014"))
+        self.assertLessEqual(sum(left.values()), 6, dict(left))
