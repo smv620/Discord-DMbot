@@ -1710,7 +1710,9 @@ the owner). Two different waits: the 7-day payment grace is a plan rule (a faile
 leaves 7 days to fix it); separately, a paid plan keeps working up to 3 days past its
 period end while the payment company's renewal arrives (a technical guard against a late
 webhook, not a plan rule; Try It ends exactly at its 30 days). Warnings on the DM screen
-at 80% and 90% of the hours; at the cap DMbot
+at 80% and 90% of the hours (decided 2026-10-09, #897: they name only the hours left,
+never the plan or anything about payment, because co-DMs, and players who may peek, read
+the DM screen; the 90% one says the campaign's owner can add more); at the cap DMbot
 finishes the session (up to 2 hours of grace, once a month), then refuses to start until
 renewal or a top-up. On a downgrade or lapse the first N campaigns started afterwards
 are active (N = new cap), the rest are paused with their data kept. Retention: 60 days
