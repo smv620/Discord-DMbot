@@ -8,6 +8,7 @@ from typing import Any
 
 from dmbot.devtools.srd import build, parse
 from dmbot.devtools.srd.pdf import COLUMN_SPLIT, FOOTER_Y, Line, Piece, lines_of
+from tests.monster_fixtures import goblin
 
 TITLE, ITALIC, BODY = "GillSans-SemiBold", "Cambria-Italic", "Cambria"
 BOLD_LEAD = "Cambria-BoldItalic"
@@ -390,14 +391,18 @@ class Building(unittest.TestCase):
         glossary = [say("Rules Glossary", TITLE, 12), say("Blinded [Condition]", TITLE, 12),
                     say("You can’t see.", BODY, 12)]  # fmt: skip
         toolbox = [say("Gameplay Toolbox", TITLE, 13)]
-        return [contents, *[[]] * 9, spells, glossary, toolbox]
+        creatures = [say("Monsters A–Z", TITLE, 14), *goblin()]
+        return [contents, *[[]] * 9, spells, glossary, toolbox, creatures]
 
     def document(self) -> dict[str, Any]:
         return {"title": "t", "url": "u", "sha256": "s", "pages": 13}
 
     def test_the_files_are_made_from_the_sections(self) -> None:
         files = build.build_files(self.pages(), self.document())
-        self.assertEqual(set(files), {"spells.json", "conditions.json"})
+        self.assertEqual(set(files), {"spells.json", "conditions.json", "monsters.json"})
+        creatures = files["monsters.json"]
+        self.assertEqual([e["name"] for e in creatures["entries"]], ["Goblin Warrior"])
+        self.assertNotIn("section", creatures)  # each creature names its own
         spells, conditions = files["spells.json"], files["conditions.json"]
         for data in (spells, conditions):
             self.assertEqual(
