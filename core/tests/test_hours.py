@@ -266,7 +266,7 @@ class CapActions(unittest.TestCase):
         self.assertEqual(hours.cap_action(free, 10**6, None, 5), "none")
 
     def test_the_texts_are_plain_and_send_people_to_the_site(self) -> None:
-        self.assertIn("up to 2 more hours", hours.grace_started_text("https://x.example"))
+        self.assertIn("up to 2 more hours", hours.grace_started_text(site_url="https://x.example"))
         self.assertIn("https://x.example/account", hours.stopped_text("https://x.example"))
         self.assertIn("DMbot's website", hours.stopped_text())
 

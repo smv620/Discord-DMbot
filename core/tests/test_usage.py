@@ -901,7 +901,7 @@ class PlanChecks(UsageTest):
         grace.assert_not_awaited()
         post.assert_not_awaited()
         month = usage.calendar_month(NOW)
-        self.assertIsNone(await self.grace_of(OWNER, warn[0].month if warn else month))  # type: ignore[index]
+        self.assertIsNone(await self.grace_of(OWNER, warn[0].month if warn else month))
 
     async def grace_of(self, owner: int, month: hours.Month) -> int | None:
         async with self.db.user(owner) as conn:
