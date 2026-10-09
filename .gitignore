@@ -237,6 +237,8 @@ Thumbs.db
 
 # Local data: recordings, transcripts, databases, logs
 data/
+# ...but the rules data DMbot ships (the SRD 5.2.1, #866) is part of the code
+!core/src/dmbot/rules/data/
 *.sqlite
 *.db
 logs/
