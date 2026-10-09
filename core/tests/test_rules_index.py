@@ -515,6 +515,12 @@ class TheLegacyData(unittest.TestCase):
         self.assertIs(by_name["Detect Magic"].details["ritual"], True)
         self.assertIs(by_name["Fireball"].details["ritual"], False)
 
+    def test_the_files_were_made_with_the_current_5_2_1_words(self) -> None:
+        # The 5.1 reading uses the 5.2.1 data's words: if that data changes, make these again.
+        for name in ("spells.json", "conditions.json"):
+            data = json.loads((DATA / "srd51" / name).read_text(encoding="utf-8"))
+            self.assertEqual(data["document"]["word_list_sha256"], build.word_list_sha256(), name)
+
     def test_only_the_listed_defects_remain(self) -> None:
         # The PDF lost a few words; ATTRIBUTION.md lists what is left, and this fails if a
         # worse reading slips in or a listed defect goes away (then edit both).

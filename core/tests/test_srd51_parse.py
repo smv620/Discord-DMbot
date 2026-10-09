@@ -139,6 +139,18 @@ class CutWords(unittest.TestCase):
         # two long words that merely aren't known stay two
         self.assertEqual(words.tidy("the foul mimicry"), "the foul mimicry")
 
+    def test_the_short_piece_rule_has_limits(self) -> None:
+        words = vocab()
+        self.assertEqual(words.tidy("xpda dcab"), "xpda dcab")  # neither piece is short
+        self.assertEqual(words.tidy("the exc Ess"), "the exc Ess")  # a capital starts a new word
+
+    def test_a_word_is_known_at_the_common_count_and_not_below_it(self) -> None:
+        n = parse51.COMMON
+        known = parse51.Vocabulary(COMMON_WORDS, [say("zebra")] * n)
+        unknown = parse51.Vocabulary(COMMON_WORDS, [say("zebra")] * (n - 1))
+        self.assertIn("zebra", known.words)
+        self.assertNotIn("zebra", unknown.words)
+
     def test_the_ends_of_cut_words_are_never_words_of_their_own(self) -> None:
         # "ing" is common in the PDF only because words are cut before it
         lines = [say("bark ing"), say("pass ing")] * 5
@@ -158,6 +170,30 @@ class CutWords(unittest.TestCase):
         self.assertEqual(words.run_on("a nine-", "course meal"), "a nine-course meal")
         self.assertEqual(words.run_on("a red-", "hot rod"), "a red-hot rod")
         self.assertEqual(words.run_on("a line", "wave"), "a line wave")
+
+
+class Tables(unittest.TestCase):
+    def test_a_wrapped_table_row_is_joined_and_a_new_row_is_not(self) -> None:
+        lines = [
+            say("d10 Behavior", "Optima"),
+            say("1 The creature uses all its movement to move in a", "Optima"),
+            say("random direction.", "Optima"),
+            say("2–6 The creature does nothing.", "Optima"),
+        ]
+        text = parse51._paragraphs(
+            lines,
+            vocab(
+                "movement", "random", "direction", "nothing", "uses", "all", "its", "does", "move"
+            ),
+        )
+        self.assertEqual(
+            text.split("\n"),
+            [
+                "d10 Behavior",
+                "1 The creature uses all its movement to move in a random direction.",
+                "2–6 The creature does nothing.",
+            ],
+        )
 
 
 class Spells(unittest.TestCase):

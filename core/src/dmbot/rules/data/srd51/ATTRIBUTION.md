@@ -25,7 +25,7 @@ Tables inside a spell or condition are kept as plain lines of text, one line for
 
 The PDF's text layer has lost a few words and letters altogether. One line is left with a stray letter where a word should be: Animal Friendship's “At Higher Levels” line reads “one additional beast t level above 1st”. It cannot be put back from the PDF and is not corrected by hand: the files hold what the PDF holds. Where a spell's wording matters, check it against the SRD 5.1 itself. A few plain words (“attacked”, “defends”, “dread”, “dimly”, “lit”, “bed”, “linen”) are listed in the tool as known words, because neither the 5.2.1 data nor this PDF spells them out often enough for the cut-word reading to know them.
 
-The `document` block of each file records the SHA-256 of the 5.2.1 data files whose words the tool used (`word_list_sha256`), so the same PDF gives the same files only against the same 5.2.1 data.
+The `document` block of each file records the SHA-256 of the 5.2.1 data files whose words the tool used (`word_list_sha256`), so the same PDF gives the same files only against the same 5.2.1 data (and the same tool: its short list of known words and its thresholds are in `parse51.py`).
 
 ## Making the files again
 
