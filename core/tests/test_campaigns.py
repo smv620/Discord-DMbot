@@ -516,7 +516,7 @@ class BackupFiles(unittest.TestCase):
         from dmbot.campaigns import store as store_mod
 
         with self.assertRaises(TypeError):
-            store_mod.encode_backup({"a": {1: "x"}})  # type: ignore[dict-item]
+            store_mod.encode_backup({"a": {1: "x"}})
 
     def test_no_copy_is_made_that_a_restore_would_refuse(self) -> None:
         from dmbot.campaigns import store as store_mod
