@@ -50,7 +50,7 @@ async def add_minutes(
     they were recorded in."""
     async with db.meter(guild_id, owner_user_id) as conn:
         month = await month_of(conn, owner_user_id, now)
-        if minutes > 0:
+        if minutes > 0:  # (nothing to add still names the month)
             await conn.execute(
                 "INSERT INTO session_usage (guild_id, campaign_id, session_started_at,"
                 " owner_user_id, minutes, updated_at) VALUES (%s, %s, %s, %s, %s, %s)"

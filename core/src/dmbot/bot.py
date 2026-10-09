@@ -171,6 +171,9 @@ STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
 IDLE_SWEEP_INTERVAL_S = 1
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
+METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
+METER_FINAL_RETRY_S = 2
+METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
 
@@ -313,8 +316,10 @@ class Table:
     started_at: int = 0  # Unix seconds; the same after a restart
     # Listening minutes already written to the hours meter (#437): the whole session so
     # far, rounded up, so a restart picks up from the stored number and counts none twice.
-    metered_minutes: int = 0
+    # None until first read (the stored number, so a restart counts none twice).
+    metered_minutes: int | None = None
     meter_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    metering_closed: bool = False  # the session ended: nothing more is billed
     listening_from: int = 0  # Unix seconds; since this process took the session on
     after_restart: bool = False  # listening_from is a restart (`resumed` resets on join)
     transcript_session_id: str | None = None  # set at the first save
@@ -1019,9 +1024,15 @@ class DMBot(commands.AutoShardedBot):
         # In the background: /dmbot stop must answer within Discord's 3 seconds. Kept
         # apart from other background work, so a shutdown right after a stop still
         # saves the end of the transcript.
-        task = asyncio.create_task(self.wind_down(table, int(time.time())), name="wind-down")
+        ended_at = int(time.time())
+        task = asyncio.create_task(self.wind_down(table, ended_at), name="wind-down")
         self._finishing.add(task)
         task.add_done_callback(self._finishing.discard)
+        # The last, rounded-up minutes of the hours meter (#437) in a task of their own, so
+        # a slow database can never hold up saving the transcript.
+        meter_task = asyncio.create_task(self._meter_final(table, ended_at), name="meter-final")
+        self._finishing.add(meter_task)
+        meter_task.add_done_callback(self._finishing.discard)
         return table
 
     async def wind_down(self, table: Table, ended_at: int) -> None:
@@ -1031,7 +1042,6 @@ class DMBot(commands.AutoShardedBot):
         wait is cut short, and saving comes first."""
         gid = table.guild_id
         session = table.segmenter.session
-        await self.meter_table(table, ended_at)  # the last, rounded-up minutes (#437)
         with log_context(guild_id=gid, campaign_id=table.campaign_id):
             try:
                 caught_up = await self.pipeline.drain(session, STOP_DRAIN_TIMEOUT_S)
@@ -1595,10 +1605,6 @@ class DMBot(commands.AutoShardedBot):
             transcript_channel_id=self._usable_transcript(guild, campaign),
             started_at=saved.started_at,
         )
-        if self.meter is not None:  # minutes recorded before the restart are not counted twice
-            table.metered_minutes = await self.meter.recorded(
-                guild.id, campaign.id, saved.started_at
-            )
         if campaign.transcript_channel_id is not None and table.transcript_channel_id is None:
             await self.post(
                 screen_id, screen_messages.transcript_stopped(campaign.transcript_channel_id)
@@ -2967,38 +2973,78 @@ class DMBot(commands.AutoShardedBot):
 
     async def _meter_loop(self) -> None:
         """Once a minute, write each running session's listening minutes to the hours
-        meter (#437), so a crash or restart loses at most the last minute."""
+        meter (#437), so a crash or restart loses at most the last minute. One table at a
+        time: with many servers, a burst of connections would starve the pool."""
         while True:
             await asyncio.sleep(METER_INTERVAL_S)
-            await asyncio.gather(*(self.meter_table(t) for t in list(self.tables.values())))
+            for table in list(self.tables.values()):
+                try:
+                    async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                        await self.meter_table(table)
+                except TimeoutError:  # a slow database delays this table, not the others
+                    log.error("The listening minutes took too long to write down")
 
-    async def meter_table(self, table: Table, now: int | None = None) -> None:
+    async def meter_table(
+        self, table: Table, now: int | None = None, *, final: bool = False
+    ) -> bool:
         """Record the minutes this session has run and not yet written down, for the
         campaign's owner right now (a hand-over mid-session moves the later minutes to
-        the new owner). Never raises: the meter must not stop a game."""
+        the new owner). `final` is the stop: it closes the meter for this session, so a
+        tick that was already waiting can never bill time after the end. Never raises
+        (the meter must not stop a game); returns whether it worked."""
         if self.meter is None or table.campaign_id is None or table.started_at <= 0:
-            return
+            return True
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
             try:
                 async with table.meter_lock:
+                    # A tick that was already waiting when the session stopped must not
+                    # bill time after its end: the stop settles the rest.
+                    if table.metering_closed or (
+                        not final and self.tables.get(table.guild_id) is not table
+                    ):
+                        return True
                     stamp = int(time.time()) if now is None else now
+                    if table.metered_minutes is None:  # first time (or after a restart)
+                        table.metered_minutes = await self.meter.recorded(
+                            table.guild_id, table.campaign_id, table.started_at
+                        )
                     owed = hours.minutes_owed(table.started_at, stamp, table.metered_minutes)
-                    if owed <= 0:
-                        return
-                    campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
-                    if campaign is None or campaign.owner_user_id is None:
-                        return  # gone, or no owner yet: nobody's hours to spend
-                    await self.meter.add(
-                        guild_id=table.guild_id,
-                        campaign_id=table.campaign_id,
-                        owner_user_id=campaign.owner_user_id,
-                        session_started_at=table.started_at,
-                        minutes=owed,
-                        now=stamp,
-                    )
-                    table.metered_minutes += owed
+                    if owed > 0:
+                        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+                        if campaign is not None and campaign.owner_user_id is not None:
+                            await self.meter.add(
+                                guild_id=table.guild_id,
+                                campaign_id=table.campaign_id,
+                                owner_user_id=campaign.owner_user_id,
+                                session_started_at=table.started_at,
+                                minutes=owed,
+                                now=stamp,
+                            )
+                            # If the commit succeeded but its reply was lost, the next tick
+                            # adds these minutes again; rare, and the cost is a few minutes
+                            # over, never under, so the increments are kept simple.
+                            table.metered_minutes += owed
+                        # else: gone, or no owner yet: nobody's hours to spend
+                    if final:
+                        table.metering_closed = True
+                    return True
             except Exception:
                 log.exception("Couldn't write down the listening minutes")
+                return False
+
+    async def _meter_final(self, table: Table, ended_at: int) -> None:
+        """The last, rounded-up minutes at a stop: tried a few times, since nothing else
+        will write them once the session is gone."""
+        for attempt in range(METER_FINAL_TRIES):
+            try:
+                async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                    if await self.meter_table(table, ended_at, final=True):
+                        return
+            except TimeoutError:
+                log.error("The listening minutes took too long to write down")
+            if attempt + 1 < METER_FINAL_TRIES:
+                await asyncio.sleep(METER_FINAL_RETRY_S)
+        table.metering_closed = True  # give up: a late tick must not bill past the end
 
     async def _idle_sweeper(self) -> None:
         while True:

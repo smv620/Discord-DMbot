@@ -1595,7 +1595,7 @@ owner like `entitlements`, readable by that owner across servers, written only t
 `Database.meter()`, which sets the server and the owner for that one write). Minutes count
 toward whoever owns the campaign when each is recorded, so a hand-over mid-session moves
 the later minutes; a campaign with no owner records nothing. `owner_hours` is not a
-campaign's data and never goes into a backup. The month: a paid plan's billing period;
+campaign's data and never goes into a backup. A session's minutes run from its start to its stop, so a gap while DMbot restarted and resumed it counts as listening (open question to Supervisor, #437). The month: a paid plan's billing period;
 Try It its 30 days; a grant that is Guild-level, calendar months from the day it started
 (a 29th to 31st start falls on the month's last day); a grant overlapping a paid plan, the
 paid plan's month; the free list and "no limits" grants have no limit but are still

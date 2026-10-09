@@ -5,6 +5,7 @@ Needs Postgres (skipped without it, like the other store tests)."""
 from __future__ import annotations
 
 import ast
+import asyncio
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -185,7 +186,7 @@ class TheBotMeters(UsageTest):
         )
 
     def table(self, started: int = START, guild: int = GUILD_A, campaign: str = "") -> Table:
-        return Table(
+        table = Table(
             guild_id=guild,
             voice_channel_id=2,
             screen_channel_id=3,
@@ -195,6 +196,8 @@ class TheBotMeters(UsageTest):
             campaign_name="Frostmaiden",
             started_at=started,
         )
+        self.bot.tables[guild] = table  # running, as a tick expects
+        return table
 
     async def test_a_tick_writes_the_minutes_so_far_rounded_up(self) -> None:
         table = self.table()  # 600 s ago
@@ -217,7 +220,6 @@ class TheBotMeters(UsageTest):
     async def test_a_restart_carries_on_without_counting_a_minute_twice(self) -> None:
         await self.bot.meter_table(self.table(), NOW)
         again = self.table()  # the same session, picked up by a new process
-        again.metered_minutes = await self.bot.meter.recorded(GUILD_A, self.a.id, START)  # type: ignore[union-attr]
         await self.bot.meter_table(again, NOW)
         self.assertEqual(await usage.session_minutes(self.db, GUILD_A, self.a.id, START), 10)
 
@@ -240,7 +242,7 @@ class TheBotMeters(UsageTest):
             )
         table = self.table()
         await self.bot.meter_table(table, NOW)
-        self.assertEqual(table.metered_minutes, 0)
+        self.assertEqual(table.metered_minutes, 0)  # read, nothing owed to anyone
 
     async def test_no_meter_no_recording(self) -> None:
         bot = DMBot(
@@ -251,7 +253,111 @@ class TheBotMeters(UsageTest):
         )
         table = self.table()
         await bot.meter_table(table, NOW)
-        self.assertEqual(table.metered_minutes, 0)
+        self.assertIsNone(table.metered_minutes)
+
+    async def test_a_tick_after_the_final_charge_bills_nothing(self) -> None:
+        table = self.table()
+        await self.bot.meter_table(table, NOW, final=True)
+        await self.bot.meter_table(table, NOW + 90)  # a tick that was waiting its turn
+        self.assertEqual(await usage.session_minutes(self.db, GUILD_A, self.a.id, START), 10)
+
+    async def test_a_tick_a_little_over_a_minute_in_charges_two_minutes(self) -> None:
+        table = self.table(started=NOW - 61)
+        await self.bot.meter_table(table, NOW)
+        self.assertEqual(table.metered_minutes, 2)  # rounded up, never down
+
+    async def test_two_ticks_at_once_charge_once(self) -> None:
+        import asyncio
+
+        table = self.table()
+        await asyncio.gather(*(self.bot.meter_table(table, NOW) for _ in range(5)))
+        self.assertEqual(await usage.session_minutes(self.db, GUILD_A, self.a.id, START), 10)
+
+    async def test_a_failed_read_after_a_restart_adds_nothing_and_is_retried(self) -> None:
+        from unittest.mock import patch
+
+        table = self.table()
+        broken = patch.object(usage.Meter, "recorded", side_effect=RuntimeError("down"))
+        with broken, self.assertLogs("dmbot.bot", "ERROR"):
+            self.assertFalse(await self.bot.meter_table(table, NOW))
+        self.assertIsNone(table.metered_minutes)  # not guessed as 0
+        self.assertTrue(await self.bot.meter_table(table, NOW))
+        self.assertEqual(await usage.session_minutes(self.db, GUILD_A, self.a.id, START), 10)
+
+    async def test_the_final_charge_is_retried_then_closes_the_meter(self) -> None:
+        from unittest.mock import patch
+
+        table = self.table()
+        calls = []
+
+        async def flaky(*args: object, **kwargs: object) -> bool:
+            calls.append(1)
+            return len(calls) == 3
+
+        with (
+            patch.object(self.bot, "meter_table", side_effect=flaky),
+            patch("dmbot.bot.METER_FINAL_RETRY_S", 0),
+        ):
+            await self.bot._meter_final(table, NOW)
+        self.assertEqual(len(calls), 3)
+
+        calls.clear()
+        with (
+            patch.object(self.bot, "meter_table", side_effect=_false),
+            patch("dmbot.bot.METER_FINAL_RETRY_S", 0),
+        ):
+            await self.bot._meter_final(table, NOW)
+        self.assertTrue(table.metering_closed)
+
+    async def test_a_stop_settles_the_session_in_its_own_task(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        table = self.table()
+        with (
+            patch.object(self.bot, "_meter_final", new=AsyncMock()) as final,
+            patch.object(self.bot, "wind_down", new=AsyncMock()),
+            patch.object(self.bot.ears, "send", new=AsyncMock()),
+        ):
+            await self.bot.stop_table(GUILD_A, "test")
+            await asyncio.gather(*self.bot._finishing)
+        final.assert_awaited_once()
+        self.assertIs(final.await_args.args[0], table)  # type: ignore[union-attr]
+
+    async def test_a_tick_for_a_session_that_has_stopped_bills_nothing(self) -> None:
+        table = self.table()
+        self.bot.tables.pop(GUILD_A)  # it has been stopped
+        await self.bot.meter_table(table, NOW)
+        self.assertEqual(await usage.session_minutes(self.db, GUILD_A, self.a.id, START), 0)
+
+    async def test_a_slow_database_cannot_hold_up_the_loop(self) -> None:
+        from unittest.mock import patch
+
+        async def forever(*args: object, **kwargs: object) -> bool:
+            await asyncio.Event().wait()  # never finishes
+            return True
+
+        a = self.table()
+        self.table(guild=GUILD_B, campaign=self.b.id)
+        seen = []
+
+        async def tick(table: Table, *args: object, **kwargs: object) -> bool:
+            seen.append(table.guild_id)
+            return await forever() if table is a else True
+
+        async def one_round(_: float) -> None:
+            if seen:
+                raise asyncio.CancelledError
+
+        with (
+            patch.object(self.bot, "meter_table", side_effect=tick),
+            patch("dmbot.bot.METER_CALL_TIMEOUT_S", 0.05),
+            patch("dmbot.bot.asyncio.sleep", side_effect=one_round),
+            self.assertLogs("dmbot.bot", "ERROR"),
+            self.assertRaises(asyncio.CancelledError),
+        ):
+            await self.bot._meter_loop()
+            await self.bot._meter_loop()
+        self.assertEqual(seen, [GUILD_A, GUILD_B])
 
     async def test_a_database_failure_never_stops_the_game(self) -> None:
         from unittest.mock import patch
@@ -259,6 +365,10 @@ class TheBotMeters(UsageTest):
         down = patch.object(usage.Meter, "add", side_effect=RuntimeError("down"))
         with down, self.assertLogs("dmbot.bot", "ERROR"):
             await self.bot.meter_table(self.table(), NOW)
+
+
+async def _false(*args: object, **kwargs: object) -> bool:
+    return False
 
 
 class OnlyUsageOpensTheMeter(unittest.TestCase):

@@ -61,6 +61,14 @@ class Months(unittest.TestCase):
         month = hours.month_from_anchor(anchor, ts(2026, 2, 28, 9))
         self.assertEqual((month.start, month.end), (ts(2026, 2, 28, 8), ts(2026, 3, 31, 8)))
 
+    def test_a_december_start_wraps_the_year_and_feb_29_is_clamped(self) -> None:
+        dec = ts(2026, 12, 15, 9)
+        self.assertEqual(hours.month_from_anchor(dec, ts(2027, 1, 20)).start, ts(2027, 1, 15, 9))
+        leap = ts(2024, 1, 31, 8)  # 2028 is a leap year too
+        self.assertEqual(
+            hours.month_from_anchor(leap, ts(2024, 2, 29, 9)).start, ts(2024, 2, 29, 8)
+        )
+
     def test_months_never_overlap_or_leave_a_gap(self) -> None:
         anchor = ts(2026, 1, 31, 8)
         now = anchor

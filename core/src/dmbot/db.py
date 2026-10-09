@@ -197,7 +197,9 @@ class Database:
         """The only way to add to an owner's hours (`owner_hours`) and to a campaign's
         session usage (`session_usage`), for the bot's hours meter (#437). It sets the
         server being played in and the campaign's owner for this one transaction, so both
-        rows are written together and neither can see another server or person."""
+        rows are written together and neither can see another server or person. (The
+        person set here also lets the meter read that owner's own plan and grant, which
+        it needs for the month; nothing else of theirs is used.)"""
         async with self._with(
             guild_id=str(int(guild_id)), user_id=str(int(owner_user_id)), meter="bot"
         ) as conn:
