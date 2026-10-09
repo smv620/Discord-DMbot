@@ -632,6 +632,44 @@ class DMScreenLevel(StoreTest):
         self.assertEqual(replaced.dm_screen_level, "normal")  # restore keeps the backup's
 
 
+class RulesCardsSetting(StoreTest):
+    """Rules cards on the DM screen when a spell or creature is named (#931): off by
+    default, changed by the store, and carried in a backup like the other settings."""
+
+    async def test_off_by_default_and_changed_per_campaign(self) -> None:
+        a, b = await self.make("A"), await self.make("B")
+        self.assertFalse(a.rules_cards)
+        a = await self.store.set_rules_cards(GUILD_A, a.id, True)
+        self.assertTrue(a.rules_cards)
+        other = await self.store.get(GUILD_A, b.id)
+        assert other is not None
+        self.assertFalse(other.rules_cards)  # the other campaign: unchanged
+        a = await self.store.set_rules_cards(GUILD_A, a.id, False)
+        self.assertFalse(a.rules_cards)
+        with self.assertRaisesRegex(CampaignError, "doesn't exist in this server"):
+            await self.store.set_rules_cards(GUILD_B, a.id, True)  # never across servers
+
+    async def test_backup_round_trip_and_old_backups(self) -> None:
+        c = await self.make("A")
+        c = await self.store.set_rules_cards(GUILD_A, c.id, True)
+        backup = json.loads(json.dumps(await self.store.export(GUILD_A, c.id)))
+        self.assertIs(backup["campaign"]["rules_cards"], True)
+        restored = await self.store.import_backup(GUILD_B, backup, DM)
+        self.assertTrue(restored.rules_cards)
+
+        old = json.loads(json.dumps(backup))
+        del old["campaign"]["rules_cards"]  # made before the setting existed
+        self.assertFalse((await self.store.import_backup(GUILD_B, old, DM)).rules_cards)
+
+        bad = json.loads(json.dumps(backup))
+        bad["campaign"]["rules_cards"] = "yes"
+        with self.assertRaisesRegex(CampaignError, "damaged"):
+            await self.store.import_backup(GUILD_B, bad, DM)
+
+        replaced = await self.store.import_backup(GUILD_A, old, DM, replace_campaign_id=c.id)
+        self.assertFalse(replaced.rules_cards)  # a replace takes the backup's, as other settings
+
+
 class SharedConfirmations(StoreTest):
     """Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule;
     #252)."""

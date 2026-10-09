@@ -43,6 +43,17 @@ NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 SETTINGS_LABEL = "Settings"
 RULE_LOOKUP_LABEL = "Look up a rule"
+RULES_CARDS_LABEL = "Rules cards"
+RULES_CARDS_OFF = (
+    "• **Rules cards:** Off. Turn it on and, when a spell, condition or creature is named at "
+    "the table, DMbot shows its card here. It only shows the free rules (SRD) and never "
+    "decides."
+)
+RULES_CARDS_ON = (
+    "• **Rules cards:** On. When a spell, condition or creature is named at the table, DMbot "
+    "shows its card here, at most one a minute. It only shows the free rules (SRD) and "
+    "never decides."
+)
 RULES_LINE = (
     "• **Rules:** press 📖 Look up a rule to read a spell, condition or creature from the "
     "free rules (SRD). Only you see it."
@@ -77,6 +88,7 @@ def settings_text(
             "• **Saved transcripts:** anyone in the server can read and download them with "
             "`/transcript`. (This can't be changed.)",
             *rules,
+            RULES_CARDS_ON if campaign.rules_cards else RULES_CARDS_OFF,
             handover.owner_line(campaign, offer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
             "now on.",
@@ -97,6 +109,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(item)
     if viewer in campaign.dm_user_ids:  # rules lookup is for the campaign's DMs (#908)
         view.add_item(RuleLookupButton(campaign.id))
+        view.add_item(RulesCardsButton(campaign.id, campaign.rules_cards))
     return view
 
 
@@ -238,6 +251,65 @@ class RuleLookupButton(
             await interaction.response.send_message(ONLY_DMS, ephemeral=True)
             return
         await interaction.response.send_modal(LookupForm(campaign))
+
+
+class RulesCardsButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:rulescards:{_ID}:(?P<to>on|off)",
+):
+    """📖 Rules cards: On or Off, one tap changes it (#931). Only the campaign's DMs have it;
+    a running session follows the change from now on."""
+
+    def __init__(self, campaign_id: str, on: bool) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=f"{RULES_CARDS_LABEL}: {'On' if on else 'Off'}",
+                emoji="📖",
+                style=discord.ButtonStyle.primary if on else discord.ButtonStyle.secondary,
+                row=3,
+                custom_id=f"dmbot:rulescards:{campaign_id}:{'off' if on else 'on'}",
+            )
+        )
+        self.campaign_id = campaign_id
+        self.turn_on = not on  # what a press does
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> RulesCardsButton:
+        return cls(match["campaign"], on=match["to"] == "off")  # "to off" means it is on now
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.rule_lookup import ONLY_DMS, may_look_up
+
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for rules cards")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if not may_look_up(campaign, interaction.user.id):  # the campaign's DMs, as for lookups
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        save = getattr(interaction.client, "set_rules_cards", None)
+        await interaction.response.defer()  # saving may take a moment
+        try:
+            if save is None:
+                raise RuntimeError("no running DMbot to save it")
+            saved: Campaign = await save(campaign.guild_id, campaign.id, self.turn_on)
+        except Exception:
+            log.exception("Couldn't change rules cards")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        await _redraw(interaction, saved)
 
 
 class LevelButton(

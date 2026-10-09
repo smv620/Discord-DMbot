@@ -128,6 +128,8 @@ class Campaign:
     # Whose plan the campaign uses (#437): its creator or restorer; None for campaigns
     # from before owners were recorded.
     owner_user_id: int | None = None
+    # Rules cards on the DM screen when a spell or creature is named (#931); off by default.
+    rules_cards: bool = False
 
     @property
     def last_active_at(self) -> int:

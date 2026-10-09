@@ -280,6 +280,7 @@ _SETTABLE = frozenset(
         "dm_screen_level",
         "channel_number",
         "transcript_channel_id",
+        "rules_cards",
     }
 )
 
@@ -555,6 +556,11 @@ class CampaignStore:
         """How much DMbot says in the DM screen: quiet, normal or chatty (#504)."""
         check_dm_screen_level(level)
         return await self._set(guild_id, campaign_id, "dm_screen_level", level)
+
+    async def set_rules_cards(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """Whether rules cards show on the DM screen when a spell or creature is named
+        (#931). Who may change it is checked by the caller (the campaign's DMs)."""
+        return await self._set(guild_id, campaign_id, "rules_cards", bool(on))
 
     async def set_last_voice_channel(
         self, guild_id: int, campaign_id: str, channel_id: int | None
@@ -982,6 +988,7 @@ class CampaignStore:
                 "optional_rules_default": campaign.optional_rules_default,
                 "dm_screen_visibility": campaign.dm_screen_visibility,
                 "dm_screen_level": campaign.dm_screen_level,
+                "rules_cards": campaign.rules_cards,
             },
             "sections": sections,
         }
@@ -1039,7 +1046,7 @@ class CampaignStore:
                 await conn.execute(
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
-                    " dm_screen_visibility = %s, dm_screen_level = %s,"
+                    " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
                     " owner_user_id = COALESCE(owner_user_id, %s)"
                     " WHERE guild_id = %s AND id = %s",
                     (
@@ -1049,6 +1056,7 @@ class CampaignStore:
                         info["last_played_at"],
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
+                        info["rules_cards"],
                         importer_id,
                         guild_id,
                         campaign_id,
@@ -1070,6 +1078,7 @@ class CampaignStore:
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
                         importer_id,
+                        info["rules_cards"],
                     )
                 except pg_errors.UniqueViolation as exc:
                     # Another restore took the same name a moment ago.
@@ -1164,13 +1173,14 @@ class CampaignStore:
         visibility: str,
         level: str,
         owner_user_id: int,
+        rules_cards: bool = False,
     ) -> str:
         campaign_id = uuid.uuid4().hex
         await conn.execute(
             "INSERT INTO campaigns (id, guild_id, name, name_key, created_at, last_played_at,"
             " target_ruleset, fallback_ruleset, optional_rules_default, dm_screen_visibility,"
-            " dm_screen_level, owner_user_id)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " dm_screen_level, owner_user_id, rules_cards)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 campaign_id,
                 guild_id,
@@ -1184,6 +1194,7 @@ class CampaignStore:
                 visibility,
                 level,
                 owner_user_id,
+                rules_cards,
             ),
         )
         return campaign_id
@@ -1220,6 +1231,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         transcript_channel_id=row_int(row, "transcript_channel_id"),
         dm_screen_level=row["dm_screen_level"],
         owner_user_id=row_int(row, "owner_user_id"),
+        rules_cards=bool(row["rules_cards"]),
     )
 
 
@@ -1387,6 +1399,10 @@ def _validate_backup(
     level = campaign.get("dm_screen_level", DEFAULT_DM_SCREEN_LEVEL)
     if not isinstance(level, str) or level not in DM_SCREEN_LEVELS:
         raise CampaignError(DAMAGED)
+    # Backups made before rules cards existed have them off.
+    rules_cards = campaign.get("rules_cards", False)
+    if not isinstance(rules_cards, bool):
+        raise CampaignError(DAMAGED)
 
     unknown = set(sections) - known_sections
     if unknown:
@@ -1404,5 +1420,6 @@ def _validate_backup(
         "optional_rules_default": optional_default,
         "dm_screen_visibility": visibility,
         "dm_screen_level": level,
+        "rules_cards": rules_cards,
     }
     return info, {name: list(rows) for name, rows in sections.items()}

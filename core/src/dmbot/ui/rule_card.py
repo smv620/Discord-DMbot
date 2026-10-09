@@ -25,6 +25,7 @@ HOUSE_LINE_MAX = 250  # one house rule, after escaping
 HOUSE_SHOWN = 3  # most house rules shown; the rest are counted
 FACTS_MAX = 400
 NAME_MAX = 100
+HEARD_MAX = 140  # the words heard, after escaping
 MIN_TEXT_ROOM = 200  # a first part with less room than this is only the heading
 
 FREE_RULES = "the free rules (SRD)"
@@ -205,7 +206,12 @@ def source(hit: Hit) -> str:
 
 
 def header(
-    hit: Hit, typed: str, rules: Sequence[HouseRule], *, house_max: int = HOUSE_LINE_MAX
+    hit: Hit,
+    typed: str,
+    rules: Sequence[HouseRule],
+    *,
+    house_max: int = HOUSE_LINE_MAX,
+    heard: str = "",
 ) -> str:
     """Everything above the text: house rules first, the name and facts, where it comes
     from, and any note about how it was found."""
@@ -218,6 +224,8 @@ def header(
     if line:
         lines.append(line)
     lines.append(f"_Source: {_md(source(hit))}_")
+    if heard:  # an alert from the table says what was heard (its confidence)
+        lines.append(f"_Heard: “{_fit(_md(heard), HEARD_MAX)}”_")
     asked = _fit(_md(" ".join(typed.split())), NAME_MAX)
     if hit.renamed and asked:
         lines.append(f"_{asked} is now called {called} in the newer rules._")
@@ -227,6 +235,18 @@ def header(
         lines.append(OLDER_NOTE)  # when 2014 is the campaign's own choice, the tag is enough
     lines.append(NOT_A_RULING)
     return "\n".join(lines)
+
+
+def alert_text(hit: Hit, said: str, heard: str, rules: Sequence[HouseRule]) -> str:
+    """The short card DMbot puts on the DM screen when a name is said at the table: the
+    heading of the lookup card (house rules first, name, facts, source, what was heard)
+    without the full text; **Read it all** gives that. Always fits a message."""
+    head = ""
+    for house_max in (HOUSE_LINE_MAX, 120, 60, 0):
+        head = header(hit, said, rules, house_max=house_max, heard=heard)
+        if len(head) <= PART_MAX:
+            break
+    return head
 
 
 def card_parts(hit: Hit, typed: str, rules: Sequence[HouseRule]) -> list[str]:

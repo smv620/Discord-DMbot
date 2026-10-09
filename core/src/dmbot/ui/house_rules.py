@@ -431,6 +431,29 @@ class AddForm(_RuleForm, title="Add a house rule"):
         return message
 
 
+class OverrideForm(AddForm, title="Add a house rule"):
+    """⚖️ Override on a rules card (#931): the same form as Add, with "Instead of" already
+    holding the name on the card. The card is in the DM screen, which this must not turn into
+    the list, so the answer is a private message."""
+
+    def __init__(self, campaign: Campaign, name: str) -> None:
+        super().__init__(campaign)
+        self.instead.default = name[:RULE_MAX]
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction)  # a new private message, not a change to the card
+        store = _store(interaction)
+        if store is None:
+            await _tell(interaction, NOT_READY)
+            return
+        try:
+            note = await self.save(store, interaction.user.id)
+        except HouseRuleError as exc:
+            await _tell(interaction, self.refusal(str(exc)) + self.typed())
+            return
+        await _tell(interaction, f"{note} Everyone in the server can read it: `/dmbot houserules`.")
+
+
 class EditForm(_RuleForm, title="Edit a house rule"):
     def __init__(self, campaign: Campaign, rule: HouseRule, page: int) -> None:
         super().__init__(campaign)
