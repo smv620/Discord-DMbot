@@ -1194,8 +1194,9 @@ class DMBot(commands.AutoShardedBot):
         if owner is None:
             return hours.NO_OWNER
         try:
-            check = await self.meter.check(guild_id, owner, int(time.time()))
-        except Exception:
+            async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                check = await self.meter.check(guild_id, owner, int(time.time()))
+        except Exception:  # a slow database (TimeoutError) too
             log.exception("Couldn't check the plan; starting anyway")
             return None
         return hours.refusal(
@@ -3019,6 +3020,7 @@ class DMBot(commands.AutoShardedBot):
         if self.meter is None or table.campaign_id is None or table.started_at <= 0:
             return True
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            warn: usage.Standing | None = None
             try:
                 async with table.meter_lock:
                     # A tick that was already waiting when the session stopped must not
@@ -3049,11 +3051,16 @@ class DMBot(commands.AutoShardedBot):
                             # over, never under, so the increments are kept simple.
                             table.metered_minutes += owed
                             if self.settings.enforce_plans and not final:
-                                await self._warn_hours(table, standing)
+                                warn = standing
                         # else: gone, or no owner yet: nobody's hours to spend
                     if final:
                         table.metering_closed = True
-                    return True
+                if warn is not None:
+                    # After the lock and the time limit: a slow Discord post can't undo
+                    # minutes already written. A warning that fails to post is not retried
+                    # (the mark was crossed once); losing one is accepted.
+                    await self._warn_hours(table, warn)
+                return True
             except Exception:
                 log.exception("Couldn't write down the listening minutes")
                 return False
@@ -3064,7 +3071,9 @@ class DMBot(commands.AutoShardedBot):
         mark = hours.warning_crossed(standing.access, standing.used_before, standing.used_after)
         cap = hours.standing(standing.access, standing.used_after).left_minutes
         if mark is not None and cap is not None:
-            await self.post(table.screen_channel_id, hours.warning_text(cap))
+            await self.post(
+                table.screen_channel_id, hours.warning_text(cap, mark, self.settings.site_url)
+            )
 
     async def _meter_final(self, table: Table, ended_at: int) -> None:
         """The last, rounded-up minutes at a stop: tried a few times, since nothing else

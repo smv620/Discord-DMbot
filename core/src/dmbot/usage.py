@@ -94,13 +94,18 @@ async def add_minutes(
             " updated_at = EXCLUDED.updated_at",
             (guild_id, campaign_id, session_started_at, owner_user_id, minutes, now),
         )
-        await conn.execute(
+        # The row lock this upsert takes serialises two campaigns of one owner ticking at
+        # once; the total it returns, not the earlier read, says where the hours stand now.
+        cur = await conn.execute(
             "INSERT INTO owner_hours (owner_user_id, month_start, minutes)"
             " VALUES (%s, %s, %s) ON CONFLICT (owner_user_id, month_start)"
-            " DO UPDATE SET minutes = owner_hours.minutes + EXCLUDED.minutes",
+            " DO UPDATE SET minutes = owner_hours.minutes + EXCLUDED.minutes"
+            " RETURNING minutes",
             (owner_user_id, s.month.start, minutes),
         )
-    return Standing(s.access, s.month, s.used_before, s.used_before + minutes)
+        row = await cur.fetchone()
+    after = int(row["minutes"]) if row else s.used_before + minutes
+    return Standing(s.access, s.month, after - minutes, after)
 
 
 async def minutes_this_month(conn: Conn, owner_user_id: int, month: hours.Month) -> int:

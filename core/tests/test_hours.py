@@ -162,67 +162,80 @@ class Words(unittest.TestCase):
 
 class Refusals(unittest.TestCase):
     END = ts(2026, 4, 14, 10)
+    SITE = "https://dmbot.example"
 
     def test_a_start_that_may_go_ahead_has_no_refusal(self) -> None:
         self.assertIsNone(hours.refusal("ok", is_owner=True))
 
     def test_an_ended_plan_sends_the_owner_to_the_site(self) -> None:
         self.assertEqual(
-            hours.refusal("no_plan", is_owner=True, site_url="https://dmbot.example"),
-            "Your plan has ended. Pick one at https://dmbot.example/account.",
+            hours.refusal("no_plan", is_owner=True, site_url=self.SITE),
+            "Your plan has ended. Pick one here: https://dmbot.example/account",
         )
 
     def test_without_a_site_address_it_says_where_in_words(self) -> None:
         self.assertEqual(
             hours.refusal("no_plan", is_owner=True),
-            "Your plan has ended. Pick one on DMbot's website.",
+            "Your plan has ended. Pick one on DMbot's website",
         )
 
     def test_used_up_hours_name_the_day_they_come_back(self) -> None:
+        text = hours.refusal("out_of_hours", is_owner=True, site_url=self.SITE, month_end=self.END)
         self.assertEqual(
-            hours.refusal(
-                "out_of_hours", is_owner=True, site_url="https://x.example", month_end=self.END
-            ),
-            "Your hours are used up until the 14th. Add 10 hours or change your plan at "
-            "https://x.example/account.",
+            text,
+            "You've used all your hours this month. They come back on the 14th. To play now, "
+            "add 10 hours or change your plan here: https://dmbot.example/account",
         )
+
+    def test_the_day_is_the_renewal_day_not_the_day_before(self) -> None:
+        # A month ending 14 April 00:00 UTC renews on the 14th.
+        text = hours.refusal("out_of_hours", is_owner=True, month_end=ts(2026, 4, 14))
+        self.assertIn("come back on the 14th", text or "")
 
     def test_anyone_else_is_never_told_why(self) -> None:
         for verdict in ("no_plan", "out_of_hours"):
             text = hours.refusal(
-                verdict, is_owner=False, site_url="https://x.example", month_end=self.END
-            )  # type: ignore[arg-type]
-            self.assertEqual(text, hours.NOT_THE_OWNER)
-            for word in ("plan has ended", "hours", "14th", "x.example"):
+                verdict,  # type: ignore[arg-type]
+                is_owner=False,
+                site_url=self.SITE,
+                month_end=self.END,
+            )
+            self.assertEqual(text, hours.START_BLOCKED)
+            for word in ("plan", "hours", "14th", "dmbot.example"):
                 self.assertNotIn(word, text or "")
 
     def test_ordinals(self) -> None:
-        got = [hours.ordinal(d) for d in (1, 2, 3, 4, 11, 12, 13, 14, 21, 22, 23, 28, 30, 31)]
-        self.assertEqual(
-            got,
-            [
-                "1st",
-                "2nd",
-                "3rd",
-                "4th",
-                "11th",
-                "12th",
-                "13th",
-                "14th",
-                "21st",
-                "22nd",
-                "23rd",
-                "28th",
-                "30th",
-                "31st",
-            ],
-        )
+        days = (1, 2, 3, 4, 11, 12, 13, 14, 21, 22, 23, 28, 30, 31)
+        want = [
+            "1st",
+            "2nd",
+            "3rd",
+            "4th",
+            "11th",
+            "12th",
+            "13th",
+            "14th",
+            "21st",
+            "22nd",
+            "23rd",
+            "28th",
+            "30th",
+            "31st",
+        ]
+        self.assertEqual([hours.ordinal(d) for d in days], want)
 
-    def test_the_warning_is_in_plain_words(self) -> None:
+    def test_the_first_warning_says_what_an_hour_is(self) -> None:
         self.assertEqual(
-            hours.warning_text(4 * 60 + 10),
+            hours.warning_text(4 * 60 + 10, 80),
             "⏳ About 4 hours left this month. (Hours are DMbot's listening time.)",
         )
+
+    def test_the_second_says_where_to_add_more(self) -> None:
+        self.assertEqual(
+            hours.warning_text(60, 90, self.SITE),
+            "⏳ About 1 hour left this month. To add more, go to https://dmbot.example/account",
+        )
+        self.assertIn("DMbot's website", hours.warning_text(60, 90))
 
 
 class Standing(unittest.TestCase):

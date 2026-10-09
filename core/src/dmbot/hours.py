@@ -159,8 +159,8 @@ def account_link(site_url: str) -> str:
     return f"{site_url}/account" if site_url else "DMbot's website"
 
 
-NOT_THE_OWNER = (
-    "DMbot can't start this campaign right now. Ask whoever set it up to check their plan."
+START_BLOCKED = (
+    "DMbot can't start this campaign right now. Ask the campaign's owner to take a look."
 )
 NO_OWNER = (
     "This campaign has no owner yet, so DMbot doesn't know whose hours it uses. Open "
@@ -172,28 +172,33 @@ def refusal(
     verdict: Verdict, *, is_owner: bool, site_url: str = "", month_end: int | None = None
 ) -> str | None:
     """The plain words for a refused start, or None if it may go ahead. Only the owner is
-    told why; anyone else starting the campaign is told to ask, and never learns about the
-    owner's plan or hours (#437)."""
+    told why; anyone else starting the campaign is told to ask the owner, in words that fit
+    every cause, so they never learn about the owner's plan or hours (#437). A link goes
+    last so no full stop is glued onto it."""
     if verdict == "ok":
         return None
     if not is_owner:
-        return NOT_THE_OWNER
-    where = account_link(site_url)
+        return START_BLOCKED
+    where = f"here: {site_url}/account" if site_url else "on DMbot's website"
     if verdict == "no_plan":
-        return (
-            f"Your plan has ended. Pick one at {where}."
-            if site_url
-            else ("Your plan has ended. Pick one on DMbot's website.")
-        )
-    until = (
-        f" until the {ordinal(datetime.fromtimestamp(month_end, UTC).day)}"
+        return f"Your plan has ended. Pick one {where}"
+    back = (
+        f" They come back on the {ordinal(datetime.fromtimestamp(month_end, UTC).day)}."
         if month_end is not None
         else ""
     )
-    return f"Your hours are used up{until}. Add 10 hours or change your plan at {where}."
+    return (
+        f"You've used all your hours this month.{back} "
+        f"To play now, add 10 hours or change your plan {where}"
+    )
 
 
-def warning_text(left_minutes: int) -> str:
-    """The DM-screen warning as hours run low: "About 4 hours left this month." """
+def warning_text(left_minutes: int, mark: int = 80, site_url: str = "") -> str:
+    """The DM-screen warning as hours run low: "About 4 hours left this month." The first
+    one (80%) says what an hour is; the 90% one says where to add more."""
     words = hours_left_words(left_minutes)
-    return f"⏳ {words[0].upper()}{words[1:]} left this month. (Hours are DMbot's listening time.)"
+    text = f"⏳ {words[0].upper()}{words[1:]} left this month."
+    if mark < 90:
+        return f"{text} (Hours are DMbot's listening time.)"
+    where = f"{site_url}/account" if site_url else "DMbot's website"
+    return f"{text} To add more, go to {where}"
