@@ -1533,3 +1533,21 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Result: with DMBOT_ENFORCE_PLANS off, the meter records and nothing is refused or warned.
   Migration 0033 applied at 16:28 with no errors. The "plans on" run belongs to go-live
   (#498), after #910's fixes (#911, merged) are live: they are, in 0c2c5ca.
+
+==============================================================================
+2026-10-09  Server: deploy 010bd65, ears and core together (dev1)
+==============================================================================
+  - 17:05 UTC  development @ 010bd65: #914 (audio health counts failed decrypts, decode
+    errors and link drops, #43 and #45; both services, additive protocol fields: old ears
+    with new core and new ears with old core both work; no migration, no setting). It had
+    no line in the status log, so dev1 used the deploy note in the PR's own description
+    ("ears AND core together") as the owner's instructions say. Plus docs and logs.
+  - Database backed up first (outside the repo; 34 tables); no session was live. Both
+    images built ahead; `up -d --no-build core ears` naming both services
+    (COMPOSE_PROFILES=web is set). Logs: "ears connected", "Connected to 1 server(s)",
+    "connected to core"; two ears "core link ... ECONNREFUSED" warnings in the first
+    seconds while core started; 0 errors. The tunnel token is blank inside core and ears
+    (checked without printing it); /health 404.
+  - Check, with the next test (Test D) and DMBOT_DEBUG_AUDIO=1: the `audio user=...` lines
+    carry decrypt_failed=, decode_errors=, link_dropped=; a speaker's `Capture check:` line
+    names the cause when audio went missing; a clean session looks the same as before.
