@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-09 by dev2 (ready to deploy: #921; core and ears 010bd65 live; Test D next)
+Last updated: 2026-10-09 by CloudDev (ready to deploy: #927, #921; core and ears 010bd65 live; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -24,6 +24,15 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 - #925 (follow-ups to #914's counts): ears AND core together, no migration. Check with
   DMBOT_DEBUG_AUDIO=1: nothing new on the DM screen; `Capture check:` says "1 decode error"
   (singular); the counts in `audio user=` lines are as before. No separate test needed.
+- CloudDev, PR #927 (#437 part 2c, the campaign cap): core AND web-api, with migration 0034
+  (adds the table `owner_campaigns`, two triggers and a count function; it copies the existing
+  owners in, so check it ran: core logs "Database updated: 0034_owner_campaigns"). Nothing
+  changes for anyone while DMBOT_ENFORCE_PLANS is off, and the web-api now also reads that
+  setting from docker-compose (default 0), so it needs recreating together with core.
+  Check, 2 minutes: core and web-api start with no ERROR; create a campaign and start a
+  session as usual; the hand-over from Discord still works (needs a 2nd account). With the
+  setting on (only at go-live, #498): an owner at their plan's campaign count is refused a
+  new campaign, a start and a hand-over, in plain words.
 
 ------------------------------------------------------------------------------
 LIVE NOW
