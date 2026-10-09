@@ -15,13 +15,14 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import gzip
+import io
 import json
 import logging
 import re
 import time
 import uuid
 import zlib
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from typing import Any, Literal, LiteralString, Protocol, cast
 
 from psycopg import errors as pg_errors
@@ -1241,14 +1242,57 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
     )
 
 
+# Built once: the C encoder behind .encode is what keeps a big copy fast.
+_ENCODER = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
+
+
+def _json_pieces(value: object, depth: int = 0) -> Iterator[str]:
+    """`json.dumps(value, ensure_ascii=False, separators=(",", ":"))` in pieces: the first
+    levels of objects are walked here and every list row or deeper value goes through
+    json.dumps itself, so the work stays in the fast C encoder (iterencode is pure Python
+    and about 5 times slower, holding the GIL the voice relay needs)."""
+    dump = _ENCODER.encode
+    if isinstance(value, dict) and depth < 3:
+        yield "{"
+        for i, (key, item) in enumerate(value.items()):
+            if not isinstance(key, str):  # json would turn 1 into "1", True into "true"...
+                raise TypeError("a backup's keys are text")
+            if i:
+                yield ","
+            yield dump(key) + ":"
+            yield from _json_pieces(item, depth + 1)
+        yield "}"
+    elif isinstance(value, list):
+        yield "["
+        for i, item in enumerate(value):
+            if i:
+                yield ","
+            yield dump(item)
+        yield "]"
+    else:
+        yield dump(value)
+
+
 def encode_backup(backup: dict[str, Any]) -> bytes:
     """Serialise a backup for the DM to download: compressed JSON (#164), so a big
     campaign still fits in one Discord file. Raises BackupTooBig rather than make a copy
-    a restore would refuse. Run off the event loop for big ones."""
-    text = json.dumps(backup, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    if len(text) > MAX_BACKUP_BYTES:
+    a restore would refuse, by its text or by its packed size (restore checks both). Run
+    off the event loop for big ones.
+
+    The JSON is fed to the compressor piece by piece, so the whole text (up to 25 MB) never
+    sits in memory next to its compressed copy, and the size check stops it early."""
+    out = io.BytesIO()
+    size = 0
+    with gzip.GzipFile(fileobj=out, mode="wb", compresslevel=6, mtime=0) as packed:
+        for piece in _json_pieces(backup):
+            data = piece.encode("utf-8")
+            size += len(data)
+            if size > MAX_BACKUP_BYTES:  # what decode_backup would refuse to unpack
+                raise BackupTooBig(CAMPAIGN_TOO_BIG)
+            packed.write(data)
+    if out.tell() > MAX_BACKUP_BYTES:  # restore also refuses an upload this big
         raise BackupTooBig(CAMPAIGN_TOO_BIG)
-    return gzip.compress(text, compresslevel=6, mtime=0)
+    return out.getvalue()  # no second copy: CPython shares the buffer until it is written
 
 
 def decode_backup(raw: bytes) -> object:
