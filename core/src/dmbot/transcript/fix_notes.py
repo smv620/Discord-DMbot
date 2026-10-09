@@ -2,8 +2,8 @@
 Discord, no database.
 
 A fix from a name DMbot only suggested, or a close look-alike of a known name, is made,
-but never silently: the DM screen keeps
-one "✏️ Name fixes to check" message, edited in place, with one line and one Undo each.
+but never silently: the DM screen keeps one "✏️ Name fixes to check" message, edited in
+place, with one line and one Undo each.
 Nothing about these guesses ever goes in the transcript channel. Undo puts the heard
 words back in that line (stored, waiting, or posted in the last ~30 s) and saves a
 "keep as heard" rule, so the same words aren't fixed again; "Allow again" takes the rule

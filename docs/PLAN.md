@@ -1237,7 +1237,9 @@ reads the campaign memory and never changes it.
        and a likely mishearing of a known name 0.91 to 0.94 ("Gorak"/Gorrak, "Beleros",
        "Belle Ross"). The ranges overlap, so only near-identical spellings (0.95 and up)
        stay silent; the rest are noted, and the DM decides. The cost is a few more lines
-       in "✏️ Name fixes to check". The one-word rules (the name in the scene, 0.8) are
+       in "✏️ Name fixes to check". Under **Quiet**, noted fixes are not made, so
+       sound-alike names are left as heard: that is what Quiet promises (fewer misheard
+       names get fixed, no notes). The one-word rules (the name in the scene, 0.8) are
        unchanged. This rests on about a dozen pairs: revisit it with the twin when more
        real mishearings are on record. A one-letter slip in a short name scores about
        0.83 to 0.86.
@@ -1394,7 +1396,8 @@ consent check just made still holds:
 - **Fixes with Undo (decided 2026-10-07 on #296):**
   - **Which fixes:** a misheard word that sounds like a name DMbot only *suggested*
     (spelled at least 0.9 alike, never secret, not next to a secret name) is fixed,
-    but never silently.
+    but never silently. So is a close look-alike of a *confirmed* name spelled less than
+    0.95 alike (decided on #573, see the Cleaner's "look-alike" rules above).
   - **Where they show:** only in the DM screen, in one "✏️ Name fixes to check" message
     edited in place: "DMbot changed these words in the transcript but isn't sure.
     Wrong? Press its Undo to put back what was heard." One numbered line and one

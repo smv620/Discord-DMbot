@@ -75,6 +75,15 @@ class CleanerOnTheScriptTests(unittest.TestCase):
             ["Then Belleros casts a spell.", "We meet Ka'zeth at dawn."],
         )
 
+    def test_which_fixes_are_silent_and_which_are_noted(self) -> None:
+        from dmbot.transcript.cleaner import clean
+
+        lookup = load_known(NAMES).lookup
+        (belle,) = clean(lookup, "Then Belle Ross casts a spell.").fixes
+        self.assertEqual((belle.written, belle.sure), ("Belleros", False))  # 0.94: noted
+        (kazeth,) = clean(lookup, "We meet Kazeth at dawn.").fixes
+        self.assertEqual((kazeth.written, kazeth.sure), ("Ka'zeth", True))  # same letters
+
 
 class NamesStressTests(unittest.TestCase):
     def test_the_lines_run_1_to_42(self) -> None:

@@ -333,9 +333,11 @@ class TrapsTest(unittest.TestCase):
         # Hrothgar is only suggested here, and "Hroth" is the DM's own spelling of him.
         names = lookup(corrections=(correction("Hroth", GUESS, FIX),))
         alone = clean(names, "then Hrothgarr roars", scene=EVERYONE)
-        self.assertEqual(len(alone.fixes), 1)  # fixed with Undo, as it always was
+        self.assertEqual(alone.text, "then Hrothgar roars")  # fixed with Undo, as always
+        self.assertEqual(alone.fixes[0].how, SOUND)
         both = clean(names, "then Hroth and Hrothgarr fight", scene=EVERYONE)
-        self.assertEqual([f.how for f in both.fixes if f.how == SOUND], [])
+        self.assertEqual(both.text, "then Hrothgar and Hrothgarr fight")  # "Hroth" only
+        self.assertEqual([f.heard for f in both.fixes], ["Hroth"])  # not made into him twice
 
     def test_a_name_the_dm_confirmed_is_never_merged_again(self) -> None:
         names = self.ysolde(isolda=True)

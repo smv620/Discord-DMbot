@@ -1,9 +1,10 @@
 """The Transcript Cleaner, first part: fix misheard names as each line is written down
 (docs/PLAN.md, "Transcript Cleaner"; #127). Pure: no Discord, no database, no AI.
 
-A fix here is silent only when it is near-certain (spelled at least 0.95 alike, or the
-same letters); a close look-alike is made with a note and Undo in the DM screen (`Fix.sure`
-False), and anything less is left as heard (a wrong fix is worse than a missed one):
+A fix here is silent only when it is near-certain (spelled at least 0.95 alike, the same
+letters, or the DM's own fix); a close look-alike is made with a note and Undo in the DM
+screen (`Fix.sure` False), and anything less is left as heard (a wrong fix is worse than a
+missed one):
 
 - **Same letters, other spelling:** "Kazeth" → "Ka'zeth", "Bryn shander" → "Bryn
   Shander" (`scene.find_mentions` finds them). A word in lower case is only fixed if
