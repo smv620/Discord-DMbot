@@ -2048,7 +2048,8 @@ class DMBot(commands.AutoShardedBot):
     def _clean(self, table: Table, heard: str, *, unsure: bool) -> Cleaned:
         """The line with misheard names fixed (#127), from the campaign's names as last
         loaded; as heard if cleaning fails. `unsure`: also fixes from names DMbot only
-        suggested (shown with Undo). No await: the consent check just made still holds."""
+        suggested and close look-alikes (shown with Undo). No await: the consent check just
+        made still holds."""
         assert table.name_lookup is not None
         try:
             result = clean(

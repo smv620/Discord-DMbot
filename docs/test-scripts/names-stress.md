@@ -132,7 +132,9 @@ cast, so DMbot has look-alikes to confuse them with.
 | Valzaren | Valzarin |
 
 Other names count only as spelled above. **Isolde is not OK for Isolda**: DMbot knows
-Ysolde, and Isolde sounds so much like it that DMbot may change it to Ysolde (#573).
+Ysolde, and Isolde sounds a lot like it. Since #573, DMbot leaves Isolde as heard when
+Ysolde is in the same line, and otherwise changes it only with a note and Undo on the DM
+screen, never silently.
 
 ## Scoring key
 

@@ -1,8 +1,10 @@
 """The Transcript Cleaner, first part: fix misheard names as each line is written down
 (docs/PLAN.md, "Transcript Cleaner"; #127). Pure: no Discord, no database, no AI.
 
-Every fix here is a silent one, so it only fixes what it's sure of, and leaves the
-words as heard otherwise (a wrong fix is worse than a missed one):
+A fix here is silent only when it is near-certain (spelled at least 0.95 alike, the same
+letters, or the DM's own fix); a close look-alike is made with a note and Undo in the DM
+screen (`Fix.sure` False), and anything less is left as heard (a wrong fix is worse than a
+missed one):
 
 - **Same letters, other spelling:** "Kazeth" → "Ka'zeth", "Bryn shander" → "Bryn
   Shander" (`scene.find_mentions` finds them). A word in lower case is only fixed if
@@ -19,9 +21,10 @@ words as heard otherwise (a wrong fix is worse than a missed one):
   and brands sound like campaign names too ("Mary" and Mara, 0.75). Words in lower
   case are never changed this way ("Bell or us" waits for the DM's answer, later).
 
-Only confirmed, non-secret names make a silent fix. A name DMbot only suggested makes at
-most an unsure one (`Fix.sure` False, spelled at least 0.9 alike), which the DM always
-sees with Undo (#296).
+Only confirmed, non-secret names make a silent fix, and only near-certain ones (#573). A
+close look-alike of a confirmed name, or a name DMbot only suggested (spelled at least 0.9
+alike), makes an unsure fix (`Fix.sure` False), which the DM always sees with Undo (#296).
+A look-alike word is never made into a name the same line already says (two people).
 Nothing is changed inside a secret name, a known name, a "keep as heard" word or the
 name of someone at the table, and no fix goes where the words, with the words around
 them, sound like a secret name ("Silas Vain" for the secret "Silas Vane"). The line is
@@ -59,6 +62,14 @@ ENTRIES_PER_NAME = 8  # of one entry's names sounding alike, the most weighed pe
 MIN_LIKENESS_ONE_WORD = 0.8
 # From a name DMbot only suggested: spelled very alike, and always shown with Undo.
 MIN_LIKENESS_UNSURE = 0.9
+# A fix by sound is silent only when the word is spelled this alike to the name (#573).
+# Below it, a look-alike may be another person, so it is fixed with a note and Undo in the
+# DM screen, never silently. The evidence (names-stress and the tests): a new name that
+# looks like a known one scores 0.83 ("Isolde"/Ysolde, "Cedric"/Cerric) up to 0.93
+# ("Rothgar"/Hrothgar, which names-stress calls the likeliest wrong fix), and a likely
+# mishearing of a known name scores 0.91 to 0.94 ("Gorak"/Gorrak, "Beleros", "Belle
+# Ross"). The two ranges overlap, so only near-identical spellings stay silent.
+NEAR_CERTAIN = 0.95
 # Runs of words checked against secret names, per line. Enough for any real campaign
 # (a few dozen); past it, the line's remaining fixes are dropped: no fix is the safe way.
 SECRET_CHECKS_PER_LINE = 400
@@ -77,7 +88,8 @@ class Fix:
     written: str
     entity_id: str
     how: str  # SPELLING, DM_FIX or SOUND
-    # False: from a name DMbot only suggested, so the DM screen shows it with Undo (#296)
+    # False: from a name DMbot only suggested, or a close look-alike of a confirmed name
+    # (#573): the fix is made and the DM screen shows it with Undo (#296)
     sure: bool = True
 
 
@@ -215,8 +227,9 @@ def clean(
     `vocabulary`: what this session's lines said about words (see `Vocabulary`), this
     line not included; `people`: display names of people at the table (and their first
     words), never changed; `scene`: entries said lately (see `SceneTracker.scene`);
-    `unsure`: also fixes from names DMbot only suggested, which the DM screen shows with
-    Undo (False when it won't show them: such a fix is never silent, #504)."""
+    `unsure`: also the fixes the DM screen shows with Undo: from names DMbot only
+    suggested, and close look-alikes (False when it won't show them: such a fix is never
+    silent, #504)."""
     words = list(WORD.finditer(heard))
     keys = [name_key(_stem(w.group())) for w in words]
     person_keys = {name_key(p) for p in people} | {
@@ -239,6 +252,7 @@ def clean(
 
     near = _SecretChecks()
     by_sound, asking = _by_sound(lookup, heard, words, known, vocabulary, scene)
+    by_sound, asking = _not_a_second_person(lookup, heard, by_sound, asking)
     fixes = [
         fix
         for fix in [*_known_names(lookup, heard, person_keys), *by_sound]
@@ -254,6 +268,26 @@ def clean(
     if near.ran_out:
         log.debug("Secret-name check ran out for a line: %d fix(es) kept", len(fixes))
     return Cleaned(text, tuple(fixes), questions)
+
+
+def _not_a_second_person(
+    lookup: CampaignLookup, heard: str, fixes: list[Fix], asking: list[Question]
+) -> tuple[list[Fix], list[Question]]:
+    """A look-alike word is never made into a name the same line already says: with
+    Ysolde in the line, "Isolde" is another person, not a mishearing of her (#573)."""
+    if not fixes and not asking:
+        return fixes, asking  # the usual line: nothing to check, so no second search
+    # Without "'s": "Ysolde's student Isolde" names Ysolde (only entity IDs are used here).
+    plain = re.sub(r"['’]s\b", "", heard)
+    said = {found.entity_id for found in find_mentions(lookup, plain, typed_names=True)}
+    if not said:
+        return fixes, asking
+    kept_questions = []
+    for q in asking:
+        options = tuple(o for o in q.options if o[0] not in said)
+        if len(options) > 1:
+            kept_questions.append(replace(q, options=options))
+    return [f for f in fixes if f.entity_id not in said], kept_questions
 
 
 def safe_answer(
@@ -451,6 +485,8 @@ def _by_sound(
             # A fix with Undo needs no scene: it's always shown to the DM.
             if found is not None and size == 1 and found.sure and not _one_word_ok(found, scene):
                 found = None
+            if found is not None and found.sure and likeness(said, found.written) < NEAR_CERTAIN:
+                found = replace(found, sure=False)  # a close look-alike: noted, with Undo
             if found is not None:
                 fixes.append(found)
                 i += size
