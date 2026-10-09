@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 from psycopg import errors
 
+from dmbot import campaign_cap
 from dmbot.campaigns.models import HandoverOffer
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
@@ -101,6 +102,43 @@ class WebOffers(DatabaseTest):
         elsewhere = await self.sign_in(BOB, [GORRAK])
         outside = await build_me(self.web, elsewhere, now=self.now)
         self.assertEqual(outside["offers"], {"incoming": [], "outgoing": []})
+
+    async def test_with_plans_enforced_an_owner_at_the_cap_cannot_accept(self) -> None:
+        # Try It covers one campaign and Bob already owns one: accepting a second on the site
+        # must be refused just as it is in Discord (#437 part 2c; Supervisor, #927).
+        await self.store.create(GORRAK.id, "Bob's own", BOB.id)
+        outcome = await offers.answer(
+            self.web, self.bob, self.ref, "accept", now=self.now, enforce_plans=True
+        )
+        self.assertEqual(outcome, "no_free_slot")
+        owner, _ = await self.owner_and_dms()
+        self.assertEqual(owner, ALICE.id)  # nothing changed
+
+    async def test_with_plans_enforced_an_owner_with_room_may_accept_and_the_count_follows(
+        self,
+    ) -> None:
+        outcome = await offers.answer(
+            self.web, self.bob, self.ref, "accept", now=self.now, enforce_plans=True
+        )
+        self.assertEqual(outcome, "accepted")
+        async with self.db.guild(THURSDAY.id) as conn:  # the bot's side counts the same
+            self.assertEqual(await campaign_cap.owned_count(conn, BOB.id), 1)
+            self.assertEqual(await campaign_cap.owned_count(conn, ALICE.id), 0)
+
+    async def test_not_enforced_an_owner_at_the_cap_may_accept(self) -> None:
+        await self.store.create(GORRAK.id, "Bob's own", BOB.id)
+        outcome = await offers.answer(self.web, self.bob, self.ref, "accept", now=self.now)
+        self.assertEqual(outcome, "accepted")
+
+    async def test_the_site_can_count_only_its_own_signed_in_person(self) -> None:
+        # The site's role has no grant on the table, only on the one function, which takes
+        # no argument and answers for the person set in the transaction.
+        await self.store.create(GORRAK.id, "Bob's own", BOB.id)
+        async with self.web.as_person(BOB.id, self.bob.id_hash).guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT dmbot_owned_campaigns() AS n")
+            self.assertEqual((await cur.fetchone() or {})["n"], 1)
+            with self.assertRaises(errors.InsufficientPrivilege):
+                await conn.execute("SELECT count(*) FROM owner_campaigns")
 
     async def test_only_the_person_offered_can_accept(self) -> None:
         self.assertEqual(

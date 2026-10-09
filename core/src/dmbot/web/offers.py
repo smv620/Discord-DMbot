@@ -19,7 +19,8 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from dmbot.campaigns.store import CampaignStore
+from dmbot import campaign_cap
+from dmbot.campaigns.store import CampaignStore, plan_works
 from dmbot.db import Database
 from dmbot.web.sessions import Session
 
@@ -34,7 +35,9 @@ def offer_ref(guild_id: int, offer_id: int) -> str:
     return f"{guild_id}-{offer_id}"
 
 
-async def answer(db: Database, session: Session, ref: str, what: Answer, *, now: int) -> Outcome:
+async def answer(
+    db: Database, session: Session, ref: str, what: Answer, *, now: int, enforce_plans: bool = False
+) -> Outcome:
     """Answer an offer as the signed-in person. "gone" covers every offer that isn't
     theirs to answer now: unknown, another person's, answered, withdrawn or expired."""
     match = _REF.fullmatch(ref)
@@ -43,7 +46,13 @@ async def answer(db: Database, session: Session, ref: str, what: Answer, *, now:
     guild_id, offer_id = int(match[1]), int(match[2])
     if guild_id not in {g.id for g in session.guilds}:
         return "gone"
-    store = CampaignStore(db.as_person(session.user_id, session.id_hash), clock=lambda: now)
+    # With plans enforced, accepting needs room under the cap, counted the way the bot counts
+    # it (campaign_cap), so a hand-over can't be a way round the cap.
+    store = CampaignStore(
+        db.as_person(session.user_id, session.id_hash),
+        clock=lambda: now,
+        has_free_slot=campaign_cap.has_room_for_one_more if enforce_plans else plan_works,
+    )
     # announce: the bot tells the other person in Discord (#737).
     if what == "accept":
         return await store.accept_handover(guild_id, offer_id, session.user_id, now, announce=True)

@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from dmbot import entitlements, hours, plans
+from dmbot import campaign_cap, entitlements, hours, plans
 from dmbot.db import Conn, Database
 
 
@@ -81,6 +81,16 @@ async def check_start(db: Database, guild_id: int, owner_user_id: int, now: int)
         extra_hours=plans.load().extra_hours if s.buys_hours else 0,
         renews=s.renews,
     )
+
+
+async def campaign_room(
+    db: Database, guild_id: int, owner_user_id: int, now: int
+) -> campaign_cap.Room:
+    """For `/dmbot start`: the owner's plan against the campaigns they own (#437 part 2c).
+    Reads only. Here because only this module opens the meter door; the counting and the
+    rules are in `dmbot.campaign_cap`."""
+    async with db.meter(guild_id, owner_user_id) as conn:
+        return await campaign_cap.room(conn, owner_user_id, now)
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,3 +284,6 @@ class Meter:
 
     async def check(self, guild_id: int, owner_user_id: int, now: int) -> StartCheck:
         return await check_start(self.db, guild_id, owner_user_id, now)
+
+    async def campaign_room(self, guild_id: int, owner_user_id: int, now: int) -> campaign_cap.Room:
+        return await campaign_room(self.db, guild_id, owner_user_id, now)

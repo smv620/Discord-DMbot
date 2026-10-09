@@ -367,6 +367,19 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     # once its own migration has run, since this runs after every migration.
     cur = await conn.execute("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
     existing = {r["tablename"] for r in await cur.fetchall()}
+    # The one function the site may call (the owner's own campaign count, schema.py 0034).
+    # REVOKE first, so a run on every start leaves exactly this; only once it exists.
+    cur = await conn.execute(
+        "SELECT 1 FROM pg_proc WHERE proname = 'dmbot_owned_campaigns'"
+        " AND pronamespace = current_schema()::regnamespace"
+    )
+    if await cur.fetchone() is not None:
+        await conn.execute(
+            sql.SQL("REVOKE ALL ON FUNCTION dmbot_owned_campaigns() FROM {}").format(role)
+        )
+        await conn.execute(
+            sql.SQL("GRANT EXECUTE ON FUNCTION dmbot_owned_campaigns() TO {}").format(role)
+        )
     for privileges, tables in WEB_ROLE_GRANTS:
         present = [t for t in tables if t in existing]
         if not present:

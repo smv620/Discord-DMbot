@@ -1738,9 +1738,29 @@ plan or payment, since co-DMs read the screen. The grace is the owner's: it is s
 their total across all their campaigns, and a campaign handed over mid-grace gives the new
 owner their own grace on their own hours. A stop that comes in between the minutes being
 written and the grace being given never spends the grace. All of it only when
-`DMBOT_ENFORCE_PLANS` is on. *2c (decided with Supervisor):* the campaign count, in an owner-scoped
-table kept in step by a trigger on `campaigns`, since a person's campaigns span servers;
-"paused" waits for the downgrade part. All of 2b acts only when
+`DMBOT_ENFORCE_PLANS` is on. *2c, the campaign cap (decided with Supervisor, 2026-10-09):* the count is
+read from `owner_campaigns` (`owner_user_id` and `campaign_id` only: no server, no name;
+scoped to the owner like `owner_hours`; no grant on the table for the website's role), because a person's campaigns span servers and `campaigns` is isolated per
+server. A `SECURITY DEFINER` trigger on `campaigns` (fixed `search_path`, nothing but one
+insert, delete or move) keeps it in step through create, restore, hand-over, delete and a
+server's data being removed; the migration backfills it, opening the tables it touches for
+itself. It is owner-level data, so it is not in a backup: a restore rebuilds it through the
+trigger (which refuses `TRUNCATE campaigns`, since a row trigger would not see it: bulk
+removal uses `DELETE`). The only way to read the count is `dmbot_owned_campaigns()`, a
+`SECURITY DEFINER` function (fixed `search_path`, no argument, EXECUTE for the bot's role and
+the website's only) that returns the number for the person set in the transaction and nothing
+else; the bot sets that person for one read only, through `dmbot.campaign_cap`, and the person
+switch itself is private to `dmbot.entitlements`. One function (`dmbot.campaign_cap`) counts
+for every check: `/dmbot start` refuses an owner who owns more campaigns than the plan covers
+("Your plan covers 2 campaigns, and you have 3. To start this one, pause one or change your
+plan", the cap from `plans.json`; the change-plan offer only for a plan that can change, and
+anyone but the owner only hears "ask the owner"); **making a new campaign past the cap is
+refused too** (same words, "To make a new one", so a third campaign never locks the first two
+out; someone with no plan yet may still make one, to start once they pick a plan); a hand-over,
+a take-over and a restore each need room for one more, **on the website as well** (the web
+API reads `DMBOT_ENFORCE_PLANS` like the bot, and its accept counts through the same
+function). Every owned campaign
+counts for now; "paused" waits for the downgrade part (a column is added then). All of 2b acts only when
 `DMBOT_ENFORCE_PLANS` is on (default off; the meter records either way), which dev1 turns
 on with the website's go-live (#498) and notes in the testing log. The refusal for a plan
 that has ended says "Your plan has ended. Pick one here: <WEB_SITE_URL>/account" (or "Pick

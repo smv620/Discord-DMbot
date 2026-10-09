@@ -24,7 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import entitlements, hours, install, usage
+from dmbot import campaign_cap, entitlements, hours, install, usage
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -182,6 +182,7 @@ IDLE_SWEEP_INTERVAL_S = 1
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
+GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
@@ -1210,9 +1211,9 @@ class DMBot(commands.AutoShardedBot):
         return None
 
     async def plan_refusal(self, guild_id: int, campaign: Campaign, starter_id: int) -> str | None:
-        """Why the campaign's owner's plan or hours don't allow a start, in plain words for
-        the person starting it, or None (#437). Only when DMBOT_ENFORCE_PLANS is on. Fails
-        open: a database hiccup must never lock a table out of its game."""
+        """Why the campaign's owner's plan, hours or campaign count don't allow a start, in
+        plain words for the person starting it, or None (#437). Only when DMBOT_ENFORCE_PLANS
+        is on. Fails open: a database hiccup must never lock a table out of its game."""
         if not self.settings.enforce_plans or self.meter is None:
             return None
         owner = campaign.owner_user_id
@@ -1225,13 +1226,58 @@ class DMBot(commands.AutoShardedBot):
         except Exception:  # a slow database (TimeoutError) too
             log.exception("Couldn't check the plan; starting anyway")
             return None
-        return hours.refusal(
+        refused = hours.refusal(
             check.verdict,
             is_owner=starter_id == owner,
             site_url=self.settings.site_url,
             can_change_plan=check.can_change_plan,
             renews=check.renews,
             extra_hours=check.extra_hours,
+        )
+        if refused is not None:
+            return refused
+        # The owner's plan and hours are fine; do they own more campaigns than the plan
+        # covers? (They can always start one they own within the cap: `fits(0)`.)
+        try:
+            async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                room = await self.meter.campaign_room(guild_id, owner, int(time.time()))
+        except Exception:
+            log.exception("Couldn't count the owner's campaigns; starting anyway")
+            return None
+        if room.fits(0) or room.cap is None:
+            return None
+        return hours.campaigns_refusal(
+            room.cap,
+            room.owned,
+            is_owner=starter_id == owner,
+            site_url=self.settings.site_url,
+            can_change_plan=room.can_change_plan,
+        )
+
+    async def create_refusal(self, guild_id: int, user_id: int) -> str | None:
+        """Why this person may not make one more campaign, or None (#437 part 2c). Only when
+        DMBOT_ENFORCE_PLANS is on, and only for a plan that works and has a cap they are
+        already at: someone with no plan can make a campaign (they pick a plan to start it),
+        and making one past the cap would lock all their campaigns out of starting. Fails
+        open, like the start check. (Two made at the same instant could both pass; the start
+        check still refuses them until one is paused.)"""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S):
+                room = await self.meter.campaign_room(guild_id, user_id, int(time.time()))
+        except Exception:
+            log.exception("Couldn't count the person's campaigns; allowing it")
+            return None
+        if not room.works or room.cap is None or room.fits(1):
+            return None
+        return hours.campaigns_refusal(
+            room.cap,
+            room.owned,
+            is_owner=True,
+            site_url=self.settings.site_url,
+            can_change_plan=room.can_change_plan,
+            creating=True,
         )
 
     async def start_campaign_session(
@@ -3674,7 +3720,15 @@ async def run(settings: Settings) -> None:
     try:
         transcriber = build_transcriber(settings.transcription)
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
-        campaigns = CampaignStore(db)
+        # With plans enforced, a hand-over, take-over or restore also needs room under the
+        # owner's campaign cap (#437 part 2c); otherwise a plan that works is enough.
+        campaigns = (
+            CampaignStore(
+                db, has_free_slot=campaign_cap.has_room_for_one_more, restore_needs_slot=True
+            )
+            if settings.enforce_plans
+            else CampaignStore(db)
+        )
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         # DMBot sets this too; passing it here means the store never starts out wrong.

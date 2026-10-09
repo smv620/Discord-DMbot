@@ -228,10 +228,13 @@ async def read(conn: Conn, user_id: int) -> Entitlement | None:
 
 @contextlib.asynccontextmanager
 async def _as_person(conn: Conn, user_id: int) -> AsyncIterator[None]:
-    """The person set for these reads only, then put back as it was."""
+    """The person set for these reads only, then put back as it was (the owner's plan
+    in `read`; the owner's campaign count in `owned_campaigns`). Private on purpose: code
+    holding a server's transaction must not be able to read anyone's rows with it. The two
+    reads that need it are the doors below."""
     if conn.info.transaction_status != pq.TransactionStatus.INTRANS:
         raise RuntimeError(
-            "entitlements.read and effective need an open transaction (use Database.guild)"
+            "Reading a person's rows here needs an open transaction (use Database.guild)"
         )
     cur = await conn.execute("SELECT current_setting('dmbot.user_id', true) AS before")
     before = await cur.fetchone()
@@ -286,3 +289,14 @@ async def _read_plan(conn: Conn, user_id: int) -> Entitlement | None:
         lapsed_at=row["lapsed_at"],
         plan_changed_at=row["plan_changed_at"],
     )
+
+
+async def owned_campaigns(conn: Conn, user_id: int) -> int:
+    """How many campaigns this person owns, in every server (#437 part 2c): the one door to
+    `owner_campaigns`, through a function that returns only a count (dmbot_owned_campaigns,
+    schema 0034), so the website's role can ask it too. Needs an open transaction."""
+    async with _as_person(conn, user_id):
+        cur = await conn.execute("SELECT dmbot_owned_campaigns() AS n")
+        row = await cur.fetchone()
+    assert row is not None  # a function call always gives a row
+    return int(row["n"])
