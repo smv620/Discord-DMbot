@@ -1762,8 +1762,15 @@ Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hour
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
 names, later story memory and rules lookups), plus backup, restore and transcript
 download (paid campaigns only; restoring needs a subscriber with a free slot, who becomes
-the owner). Two different waits: the 7-day payment grace is a plan rule (a failed payment
-leaves 7 days to fix it); separately, a paid plan keeps working up to 3 days past its
+the owner). **Campaign cap (decided 2026-10-09, #927):** with `DMBOT_ENFORCE_PLANS` on, making
+a campaign beyond the plan's cap is refused (same plain words and offers as the start
+refusal, "Your plan covers N campaigns, and you have M"), so one extra campaign can never
+lock the owner out of the ones that fit; the count is one owner-scoped table
+(`owner_campaigns`) read through one narrow function, by the bot and the website alike.
+Two different waits: the 7-day payment grace is a plan rule (a failed payment
+leaves 7 days to fix it), **and only for an account that has paid successfully before**
+(owner, 2026-10-09, #498, #922): a failed first payment gets no grace, the plan simply
+doesn't start; separately, a paid plan keeps working up to 3 days past its
 period end while the payment company's renewal arrives (a technical guard against a late
 webhook, not a plan rule; Try It ends exactly at its 30 days). Warnings on the DM screen
 at 80% and 90% of the hours (decided 2026-10-09, #897: they name only the hours left,
@@ -1913,11 +1920,15 @@ ones.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
-email guilds`); payments through a merchant-of-record hosted checkout (Paddle or Lemon
-Squeezy, owner's choice) with its customer portal for plan changes; the API is FastAPI in
+email guilds`); payments through a merchant-of-record hosted checkout, **Lemon Squeezy** (owner's
+choice, 2026-10-09, #498) with its customer portal for plan changes; the API is FastAPI in
 `core/src/dmbot/web/`, its own container, the only writer of the `entitlements` table via
 the provider's webhook. No D&D or Wizards trademarks or art: "for 5e-compatible tabletop
-games". Terms, privacy and refund pages before launch. Settings stay in Discord for now;
+games". Terms, privacy and refund pages before launch: **signed off by the owner on
+2026-10-09, which is their effective date** (#498). Also approved for go-live that day:
+rate limits at the proxy, the separate `dmbot_web` database role, and Cloudflare in front
+of the API. The Discord app stays private until the rest of #498 is done and the owner
+says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
 **Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
 Feedback and Ask a question, posted by the web API as GitHub Discussions in this
