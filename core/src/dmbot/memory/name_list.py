@@ -341,18 +341,82 @@ def lines_for(name: str, kind: str, others: Sequence[str], secrets: Sequence[str
     return out
 
 
+def _prelude(*, campaign: str, secrets: bool, part: tuple[int, int] | None = None) -> list[str]:
+    """The lines every download file starts with: the instructions (so each file is valid
+    on its own), then what it holds. `part` is (this file, how many) when a download comes
+    as several files, and each then says it can be added on its own."""
+    which = f" (file {part[0]} of {part[1]})" if part else ""
+    lines = [
+        header(secrets=secrets).rstrip("\n"),
+        "###",
+        f"### Names DMbot knows for {' '.join(campaign.split())}{which}",
+    ]
+    if secrets:
+        lines.append("### This file includes secret names. Don't share it with players.")
+    if part:
+        lines.append(
+            f"### This is one of {part[1]} files. Each can be added on its own, in any order."
+        )
+    return lines
+
+
 def render(names: Iterable[OutName], *, campaign: str, secrets: bool) -> str:
     """A download: the instructions, then one line per name, A to Z. Uploading it again
     adds nothing that's already known. A name with more other or secret names than a
     line holds goes on more lines, as a person would write it."""
-    lines = [
-        header(secrets=secrets).rstrip("\n"),
-        "###",
-        f"### Names DMbot knows for {' '.join(campaign.split())}",
-    ]
-    if secrets:
-        lines.append("### This file includes secret names. Don't share it with players.")
+    lines = _prelude(campaign=campaign, secrets=secrets)
     for n in sorted(names, key=lambda n: name_key(n.name)):
         hidden = n.secrets if secrets else ()
         lines += lines_for(n.name, KIND_OUT.get(n.kind, "other"), n.others, hidden)
     return "\n".join(lines) + "\n"
+
+
+def render_files(names: Iterable[OutName], *, campaign: str, secrets: bool) -> list[str]:
+    """A download as one or more files, each one the upload's own limits allow (#685):
+    at most MAX_LINES lines (the # notes count) and MAX_FILE_BYTES, so every file can be
+    added again. One file when it all fits, exactly as render() writes it. A name's lines
+    (more than a line's worth of other names goes on more lines) never split across files,
+    and every file starts with the instructions, so each is valid on its own and the
+    files can be added in any order."""
+    ordered = sorted(names, key=lambda n: name_key(n.name))
+    groups = [
+        lines_for(n.name, KIND_OUT.get(n.kind, "other"), n.others, n.secrets if secrets else ())
+        for n in ordered
+    ]
+    adds = [len(n.others) + (len(n.secrets) if secrets else 0) for n in ordered]
+
+    def budget(prelude: list[str]) -> tuple[int, int]:
+        joined = "\n".join(prelude)  # the instructions are many lines in one string
+        return joined.count("\n") + 1, len(joined.encode("utf-8")) + 1
+
+    def pack(part: tuple[int, int] | None) -> list[list[str]]:
+        # A file is full at the upload's line, size or names-added limit (#712), whichever
+        # comes first; a lone name is always accepted (its own size is capped elsewhere).
+        base_lines, base_bytes = budget(_prelude(campaign=campaign, secrets=secrets, part=part))
+        chunks: list[list[str]] = [[]]
+        used_lines, used_bytes, used_adds = base_lines, base_bytes, 0
+        for group, add in zip(groups, adds, strict=True):
+            size = sum(len(line.encode("utf-8")) + 1 for line in group)
+            if chunks[-1] and (
+                used_lines + len(group) > MAX_LINES
+                or used_bytes + size > MAX_FILE_BYTES
+                or used_adds + add > MAX_ADDED
+            ):
+                chunks.append([])
+                used_lines, used_bytes, used_adds = base_lines, base_bytes, 0
+            chunks[-1].extend(group)
+            used_lines += len(group)
+            used_bytes += size
+            used_adds += add
+        return chunks
+
+    chunks = pack(None)
+    if len(chunks) == 1:  # fits whole: exactly what render() writes
+        return [render(ordered, campaign=campaign, secrets=secrets)]
+    # The two "file i of n" lines make each file a little longer: plan with the widest
+    # numbers (99,999 files, far past what 10,000 names can make), then write the real ones.
+    chunks = pack((99_999, 99_999))
+    return [
+        "\n".join(_prelude(campaign=campaign, secrets=secrets, part=(i, len(chunks))) + body) + "\n"
+        for i, body in enumerate(chunks, 1)
+    ]
