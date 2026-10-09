@@ -1,11 +1,11 @@
 """`/transcript` and the download button sent privately when a session ends (#41, #125).
 
-Anyone in the server can download any of its campaigns' transcripts (decided
-2026-10-05): only people who agreed were recorded, and they were told the whole server
-can read it. Replies are private. Downloads are plain text files built on request from
-the stored lines, so a later fix (the Transcript Cleaner, Phase 2b) shows up in the next
-download. Building one takes database reads and name lookups, so the reply is deferred
-first (Discord wants an answer within 3 seconds).
+Anyone in the server can download the transcripts of a campaign whose plan includes copies
+(decided 2026-10-05; the plan rule is #437 part 3): only people who agreed were recorded, and
+they were told the whole server can read it. Replies are private. Downloads are plain text
+files built on request from the stored lines, so a later fix (the Transcript Cleaner,
+Phase 2b) shows up in the next download. Building one takes database reads and name
+lookups, so the reply is deferred first (Discord wants an answer within 3 seconds).
 """
 
 from __future__ import annotations
@@ -141,9 +141,10 @@ async def make_file(
     guild: discord.Guild | None,
     guild_id: int,
     session_id: str,
+    user_id: int,
     versions: tuple[str, ...] = (export.AS_HEARD,),
 ) -> list[discord.File] | str:
-    """The download, one file per version, or what to tell the person instead."""
+    """The download, one file per version, or what to tell the person (`user_id`) instead."""
     store = bot.transcripts
     if store is None:
         return NOT_AVAILABLE
@@ -151,6 +152,11 @@ async def make_file(
     campaign = await bot.campaigns.get(guild_id, session.campaign_id) if session else None
     if session is None or campaign is None:
         return GONE
+    # Transcript downloads belong to the plans with copies (#437 part 3). Here, not in each
+    # button, so /transcript, the end-of-session button and "as heard too" all obey it.
+    refused = await bot.plan_gate("transcript", guild_id, campaign, user_id)
+    if refused is not None:
+        return refused
     running = _running(bot, session)
     if running:  # save what's waiting, so the file is as full as it can be
         table = bot.tables.get(guild_id)
@@ -209,7 +215,9 @@ async def send_file(
         await interaction.response.defer(ephemeral=True, thinking=True)
     bot = _bot(interaction)
     try:
-        result = await make_file(bot, bot.get_guild(guild_id), guild_id, session_id, versions)
+        result = await make_file(
+            bot, bot.get_guild(guild_id), guild_id, session_id, interaction.user.id, versions
+        )
     except Exception:
         log.exception("Couldn't build a transcript download")
         await _tell(interaction, FAILED)
