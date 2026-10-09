@@ -31,10 +31,12 @@ C1 = "a1" * 16
 NOW = 1_700_000_000
 
 
-def campaign(on: bool = False, dms: frozenset[int] = frozenset({DM}), **kw: Any) -> Campaign:
+def campaign(
+    on: bool = False, dms: frozenset[int] = frozenset({DM}), vis: str = "peek", **kw: Any
+) -> Campaign:
     return Campaign(
         C1, GUILD, "Frostmaiden", NOW - 86400, NOW - 3600, "2024", "2014", True, dms, None,
-        50, "peek", rules_cards=on, **kw,
+        50, vis, rules_cards=on, **kw,
     )  # fmt: skip
 
 
@@ -166,7 +168,8 @@ class OnTheTable(TableTest):
         self.assertIn("📖 **Fireball** (spell)", post[1])
         self.assertIn("_Heard: “I cast Fireball at the…”_", post[1])  # the words heard
         self.assertIn("Source: SRD 5.2.1, Spell Descriptions", post[1])
-        self.assertIn("you decide what applies", post[1])
+        self.assertIn("You decide.", post[1])
+        self.assertLessEqual(len(post[1].splitlines()), 6)  # a card to glance at
         self.assertLessEqual(len(post[1]), 2000)
         labels = [str(b.item.label) for b in post[2].children]
         self.assertEqual(labels, ["Got it", "Ignore", "Override", "Read it all"])
@@ -222,7 +225,7 @@ class OnTheTable(TableTest):
         await self.say("the Orc charges")
         text = self.posts[0][1]
         self.assertIn("[Legacy 2014]", text)
-        self.assertIn("older 2014 rules", text)
+        self.assertIn("Source: SRD 5.1, Monsters, p. 339 [Legacy 2014]", text)
 
     async def test_no_card_for_everyday_words(self) -> None:
         await self.say("a light in the dark, the cat, a bat, he fell prone")
@@ -238,6 +241,73 @@ class OnTheTable(TableTest):
         self.rewind()
         await self.say("and Hold Person")
         self.assertEqual({channel for channel, _, _ in self.posts}, {SCREEN})
+
+
+class WhenThingsGoWrong(TableTest):
+    async def test_a_bug_in_the_cards_never_loses_the_transcript_line(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.audio.segmenter import Utterance
+
+        said = Utterance(GUILD, SPEAKER, 0, 0, bytes(32000), self.table.segmenter.session)
+        with patch.object(Spotter, "find", side_effect=RuntimeError("boom")):
+            self.bot._deliver_transcript(said, "Then I cast Fireball")
+        self.assertEqual(self.table.heard, [(SPEAKER, "Then I cast Fireball")])  # still kept
+        self.assertEqual(self.posts, [])
+
+    async def test_a_card_that_could_not_be_posted_gives_back_its_name_and_its_minute(self) -> None:
+        async def nowhere(channel_id: int, text: str, view: Any = None) -> None:
+            return None
+
+        self.bot.post_message = nowhere  # type: ignore[method-assign]
+        before = self.table.rules.last_at
+        await self.say("I cast Fireball")
+        self.assertEqual(self.table.rules.seen, set())
+        self.assertEqual(self.table.rules.last_at, before)
+        self.assertEqual(self.table.rules.shown, {})
+
+    async def test_a_speaker_who_said_no_meanwhile_gives_them_back_too(self) -> None:
+        self.bot._note_rules(self.table, SPEAKER, "I cast Fireball")
+        self.consented.discard(SPEAKER)
+        for task in list(asyncio.all_tasks() - {asyncio.current_task()}):
+            if task.get_name() == "rules-card":
+                await task
+        self.assertEqual(self.table.rules.seen, set())
+
+    async def test_house_rules_that_fail_or_hang_still_give_the_card(self) -> None:
+        from unittest.mock import patch
+
+        self.bot.house_rules = SimpleNamespace(list=AsyncMock(side_effect=RuntimeError("down")))  # type: ignore[assignment]
+        await self.say("I cast Fireball")
+        self.assertEqual(len(self.posts), 1)
+
+        async def hang(*_: Any) -> list[HouseRule]:
+            await asyncio.sleep(60)
+            return []
+
+        self.rewind()
+        self.bot.house_rules = SimpleNamespace(list=hang)  # type: ignore[assignment]
+        with patch("dmbot.bot.RULES_CARD_DB_S", 0.05):
+            await self.say("and Hold Person")
+        self.assertEqual(len(self.posts), 2)
+
+    async def test_the_card_shown_is_the_entry_spotted(self) -> None:
+        await self.say("the goblins attack")
+        self.assertIn("📖 **Goblin Warrior**", self.posts[0][1])
+        self.assertIn("Heard: “the goblins attack”", self.posts[0][1])
+        self.assertNotIn("you typed", self.posts[0][1])  # nobody typed anything
+
+    async def test_the_names_are_looked_up_off_the_loop_when_it_is_turned_on(self) -> None:
+        from unittest.mock import patch
+
+        self.campaigns[C1] = campaign(on=False)
+        self.table.rules_on = False
+        with patch.object(self.bot, "_warm_rules") as warm:
+            await self.bot.set_rules_cards(GUILD, C1, True)
+            warm.assert_called_once_with(self.table.rules_rulesets)
+            warm.reset_mock()
+            await self.bot.set_rules_cards(GUILD, C1, False)
+            warm.assert_not_called()
 
 
 class FromTheTranscript(TableTest):
@@ -305,6 +375,7 @@ class Buttons(TableTest):
         self.assertIsNone(new_view)
         self.assertTrue(content.startswith(text))
         self.assertIn("No more cards for Fireball this session.", content)
+        self.assertIn(rules_cards.STOP_ALL, content)  # and how to stop them all
         self.rewind()
         await self.say("Fireball once more")
         self.assertEqual(len(self.posts), 1)
@@ -428,12 +499,17 @@ class Setting(TableTest):
 
     async def test_it_is_off_until_a_dm_turns_it_on(self) -> None:
         text = settings_text(campaign(on=False), None, DM)
-        self.assertIn("**Rules cards:** Off", text)
-        self.assertIn("never decides", text)
+        self.assertIn("**Rules cards: Off.**", text)
+        self.assertIn("You decide what applies", text)
         self.assertIn("free rules (SRD)", text)
-        self.assertIn("**Rules cards:** On", settings_text(campaign(on=True), None, DM))
+        on = settings_text(campaign(on=True), None, DM)
+        self.assertIn("**Rules cards: On.**", on)
+        self.assertNotIn("Players can see", on)
+        self.assertIn(
+            "Players can see the cards", settings_text(campaign(on=True, vis="open"), None, DM)
+        )
         labels = {c.item.label for c in settings_view(campaign(), None, DM).children}  # type: ignore[attr-defined]
-        self.assertIn("Rules cards: Off", labels)
+        self.assertIn("Turn rules cards on", labels)
 
     async def test_the_button_is_only_for_the_campaigns_dms(self) -> None:
         for viewer, expected in ((DM, True), (PLAYER, False)):
@@ -441,7 +517,7 @@ class Setting(TableTest):
                 getattr(c, "item", c) for c in settings_view(campaign(), None, viewer).children
             ]
             labels = [str(getattr(i, "label", "")) for i in items]
-            self.assertEqual("Rules cards: Off" in labels, expected, viewer)
+            self.assertEqual("Turn rules cards on" in labels, expected, viewer)
 
     async def test_a_dm_press_turns_it_on_here_and_on_the_running_table(self) -> None:
         self.campaigns[C1] = campaign(on=False)
@@ -482,15 +558,12 @@ class Setting(TableTest):
 
 
 class Words(unittest.TestCase):
-    def test_the_setting_line_is_plain_and_says_it_never_decides(self) -> None:
-        for line in (
-            "• **Rules cards:** Off. Turn it on and, when a spell, condition or creature is "
-            "named at the table, DMbot shows its card here. It only shows the free rules (SRD) "
-            "and never decides.",
-        ):
-            self.assertEqual(line.count("(SRD)"), 1)
+    def test_the_words_are_plain(self) -> None:
         for text in (rules_cards.CLOSED, rules_cards.ONLY_DMS):
             self.assertNotRegex(text, r"(?i)\b(srd|ruleset|index|query|database)\b")
+        self.assertIn("press 📖 Look up a rule", rules_cards.CLOSED)  # what to do next
+        self.assertIn("Rules cards", rules_cards.STOP_ALL)  # how to stop them
+        self.assertEqual(rules_cards.ONLY_DMS.count("DMs"), 1)
 
 
 if __name__ == "__main__":

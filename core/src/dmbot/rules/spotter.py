@@ -17,7 +17,7 @@ Pure: it reads a line and returns what it found. `dmbot.dm_screen.rules_cards` p
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from dmbot.rules.index import Entry, normalize
@@ -57,6 +57,8 @@ WORDS_AFTER = 2
 HEARD_MAX = 120
 
 _WORD = re.compile(r"[A-Za-z0-9’']+")
+_EVERYDAY_KEYS: frozenset[str] = frozenset(normalize(name) for name in EVERYDAY)
+_STOPS = " .,;:!?\"'’“”"  # what may trail a line without being more words
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,10 +106,10 @@ class Spotter:
                 i += 1
                 continue
             length, entry = hit
-            mention = Mention(entry, *_said(line, tokens, i, length))
-            if mention.key not in seen:
-                seen.add(mention.key)
-                found.append(mention)
+            key = (entry.kind, normalize(entry.name))
+            if key not in seen:  # a repeat costs nothing more
+                seen.add(key)
+                found.append(Mention(entry, *_said(line, tokens, i, length)))
             i += length
         return found
 
@@ -157,9 +159,6 @@ def _allowed(entry: Entry, tokens: list[tuple[int, int, str]], i: int) -> bool:
     return entry.kind == "condition" and before in LEAD_IS
 
 
-_EVERYDAY_KEYS: frozenset[str] = frozenset(normalize(name) for name in EVERYDAY)
-
-
 def _said(line: str, tokens: list[tuple[int, int, str]], i: int, length: int) -> tuple[str, str]:
     """The words of the name as said, and with a few words around them (never cut so that
     the name itself is lost)."""
@@ -176,11 +175,3 @@ def _said(line: str, tokens: list[tuple[int, int, str]], i: int, length: int) ->
     if line[last:].strip(_STOPS):
         heard += "…"
     return said, heard
-
-
-_STOPS = " .,;:!?\"'’“”"
-
-
-def names(entries: Iterable[Entry]) -> set[str]:
-    """The display names of entries (for tests that check a list against the index)."""
-    return {e.name for e in entries}

@@ -439,6 +439,7 @@ class OverrideForm(AddForm, title="Add a house rule"):
     def __init__(self, campaign: Campaign, name: str) -> None:
         super().__init__(campaign)
         self.instead.default = name[:RULE_MAX]
+        self.rule.placeholder = f"What your table does instead of the book's {name}"[:100]
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction)  # a new private message, not a change to the card
@@ -451,7 +452,9 @@ class OverrideForm(AddForm, title="Add a house rule"):
         except HouseRuleError as exc:
             await _tell(interaction, self.refusal(str(exc)) + self.typed())
             return
-        await _tell(interaction, f"{note} Everyone in the server can read it: `/dmbot houserules`.")
+        await _tell(
+            interaction, f"{note} Everyone in the server can read it. See all: `/dmbot houserules`."
+        )
 
 
 class EditForm(_RuleForm, title="Edit a house rule"):

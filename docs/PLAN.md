@@ -379,7 +379,8 @@ and **📖 Read it all** (the full lookup card, privately). Names that are every
 condition, after "is" and its kin ("the goblin is grappled"); the list is in
 `dmbot.rules.spotter`, and a test checks every word on it is a name in the index. Not noisy:
 one card for each name each session, one card a minute (the rest are dropped, not queued), and
-nothing after `/dmbot stop`. Names only: no AI, no cost, so no `can_use_ai` check. It never
+nothing after `/dmbot stop`. The DM screen's level (Quiet, Normal, Chatty) does not govern
+it: turning the setting on is the DM's own choice and wins, even on Quiet. Names only: no AI, no cost, so no `can_use_ai` check. It never
 decides: the card says what the free rules say. Not built: AI checks of what was ruled, house
 rules proposed by voice, players' lookups.
 

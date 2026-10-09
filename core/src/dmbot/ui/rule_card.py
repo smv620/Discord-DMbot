@@ -229,7 +229,7 @@ def header(
     asked = _fit(_md(" ".join(typed.split())), NAME_MAX)
     if hit.renamed and asked:
         lines.append(f"_{asked} is now called {called} in the newer rules._")
-    elif asked and normalize(typed) != normalize(entry.name):
+    elif asked and not heard and normalize(typed) != normalize(entry.name):
         lines.append(f"_Showing {called} (you typed {asked})._")
     if hit.tag and hit.from_fallback and entry.edition == index.LEGACY:
         lines.append(OLDER_NOTE)  # when 2014 is the campaign's own choice, the tag is enough
@@ -237,16 +237,35 @@ def header(
     return "\n".join(lines)
 
 
+ALERT_FACTS_MAX = 200
+ALERT_HEARD_MAX = 80
+ALERT_HOUSE_MAX = 120
+ALERT_FOOTER = "_Free rules (SRD), as written. You decide._"
+
+
 def alert_text(hit: Hit, said: str, heard: str, rules: Sequence[HouseRule]) -> str:
-    """The short card DMbot puts on the DM screen when a name is said at the table: the
-    heading of the lookup card (house rules first, name, facts, source, what was heard)
-    without the full text; **Read it all** gives that. Always fits a message."""
-    head = ""
-    for house_max in (HOUSE_LINE_MAX, 120, 60, 0):
-        head = header(hit, said, rules, house_max=house_max, heard=heard)
-        if len(head) <= PART_MAX:
-            break
-    return head
+    """The short card DMbot puts on the DM screen when a name is said at the table: about
+    five lines to glance at. A house rule that names it first (one line, the rest counted),
+    the name, the facts, the source with its tag, what was heard, and a short reminder that
+    the DM decides. **Read it all** gives the lookup card with its full heading and text."""
+    entry = hit.entry
+    matches = house_matches(rules, names_for(entry, said))
+    lines = house_lines(matches[:1], ALERT_HOUSE_MAX) if matches else []
+    if len(matches) > 1:
+        more = len(matches) - 1
+        lines.append(f"🏠 …and {more} more: `/dmbot houserules`")
+    called = _fit(_md(entry.name), NAME_MAX)
+    lines.append(f"📖 **{called}** ({KIND_WORDS.get(entry.kind, entry.kind)})")
+    line = facts(entry)
+    if line:
+        lines.append(_fit(line, ALERT_FACTS_MAX))
+    lines.append(f"_Source: {_md(source(hit))}_")
+    asked = _fit(_md(" ".join(said.split())), NAME_MAX)
+    if hit.renamed and asked:
+        lines.append(f"_{asked} is now called {called} in the newer rules._")
+    lines.append(f"_Heard: “{_fit(_md(heard), ALERT_HEARD_MAX)}”_")
+    lines.append(ALERT_FOOTER)
+    return "\n".join(lines)
 
 
 def card_parts(hit: Hit, typed: str, rules: Sequence[HouseRule]) -> list[str]:

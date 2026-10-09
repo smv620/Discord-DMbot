@@ -43,17 +43,18 @@ NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 SETTINGS_LABEL = "Settings"
 RULE_LOOKUP_LABEL = "Look up a rule"
-RULES_CARDS_LABEL = "Rules cards"
 RULES_CARDS_OFF = (
-    "• **Rules cards:** Off. Turn it on and, when a spell, condition or creature is named at "
-    "the table, DMbot shows its card here. It only shows the free rules (SRD) and never "
-    "decides."
+    "• **Rules cards: Off.** When on, DMbot shows a short card here when someone at the table "
+    "names a spell, condition or creature. It only shows the free rules (SRD). You decide "
+    "what applies."
 )
 RULES_CARDS_ON = (
-    "• **Rules cards:** On. When a spell, condition or creature is named at the table, DMbot "
-    "shows its card here, at most one a minute. It only shows the free rules (SRD) and "
-    "never decides."
+    "• **Rules cards: On.** DMbot shows a short card when someone who agreed to be recorded "
+    "names a spell, condition or creature: at most one a minute, one for each name each "
+    "session. It only shows the free rules (SRD); you decide. Press the button to turn it off."
 )
+RULES_CARDS_OPEN = " Players can see the cards, because your DM screen is open."
+RULES_CARDS_ONLY_DMS = "Only this campaign's DMs can change this."
 RULES_LINE = (
     "• **Rules:** press 📖 Look up a rule to read a spell, condition or creature from the "
     "free rules (SRD). Only you see it."
@@ -67,6 +68,12 @@ SAVED = "Saved. Press ⚙️ Settings again to see your settings."
 
 def _tick(label: str, current: bool) -> str:
     return f"✓ {label}" if current else label
+
+
+def _rules_cards_line(campaign: Campaign) -> str:
+    if not campaign.rules_cards:
+        return RULES_CARDS_OFF
+    return RULES_CARDS_ON + (RULES_CARDS_OPEN if campaign.dm_screen_visibility == "open" else "")
 
 
 def settings_text(
@@ -88,7 +95,7 @@ def settings_text(
             "• **Saved transcripts:** anyone in the server can read and download them with "
             "`/transcript`. (This can't be changed.)",
             *rules,
-            RULES_CARDS_ON if campaign.rules_cards else RULES_CARDS_OFF,
+            _rules_cards_line(campaign),
             handover.owner_line(campaign, offer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
             "now on.",
@@ -263,8 +270,8 @@ class RulesCardsButton(
     def __init__(self, campaign_id: str, on: bool) -> None:
         super().__init__(
             discord.ui.Button(
-                label=f"{RULES_CARDS_LABEL}: {'On' if on else 'Off'}",
-                emoji="📖",
+                label=f"Turn rules cards {'off' if on else 'on'}",
+                emoji="🃏",
                 style=discord.ButtonStyle.primary if on else discord.ButtonStyle.secondary,
                 row=3,
                 custom_id=f"dmbot:rulescards:{campaign_id}:{'off' if on else 'on'}",
@@ -280,7 +287,7 @@ class RulesCardsButton(
         return cls(match["campaign"], on=match["to"] == "off")  # "to off" means it is on now
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        from dmbot.ui.rule_lookup import ONLY_DMS, may_look_up
+        from dmbot.ui.rule_lookup import may_look_up
 
         set_log_context(guild_id=interaction.guild_id)
         store = getattr(interaction.client, "campaigns", None)
@@ -297,7 +304,7 @@ class RulesCardsButton(
             await interaction.response.send_message(GONE, ephemeral=True)
             return
         if not may_look_up(campaign, interaction.user.id):  # the campaign's DMs, as for lookups
-            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            await interaction.response.send_message(RULES_CARDS_ONLY_DMS, ephemeral=True)
             return
         save = getattr(interaction.client, "set_rules_cards", None)
         await interaction.response.defer()  # saving may take a moment

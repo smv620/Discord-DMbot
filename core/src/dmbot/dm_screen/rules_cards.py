@@ -35,8 +35,12 @@ log = logging.getLogger(__name__)
 
 NO_PINGS = discord.AllowedMentions.none()
 GAP_S = 60.0  # at most one card in this many seconds, whichever names are said
-CLOSED = "That card is closed. Use `/dmbot rule` to look something up."
-ONLY_DMS = "Only this campaign's DM can use these buttons."
+CLOSED = (
+    "This card is from a finished session, so its buttons no longer work. To look something "
+    "up, press 📖 Look up a rule in ⚙️ Settings."
+)
+ONLY_DMS = "Only this campaign's DMs can use these buttons. You can still read the card."
+STOP_ALL = "To stop all cards: ⚙️ Settings, then Rules cards."
 FAILED = "Something went wrong. Try again in a moment."
 GOT_LABEL, IGNORE_LABEL, OVERRIDE_LABEL, READ_LABEL = "Got it", "Ignore", "Override", "Read it all"
 ACTIONS = {"got": "✅", "ign": "🙈", "ovr": "⚖️", "all": "📖"}
@@ -78,6 +82,13 @@ class RulesCards:
         card_id = uuid.uuid4().hex[:8]
         self.shown[card_id] = Shown(mention.entry.kind, mention.entry.name, mention.said)
         return card_id
+
+    def forget(self, card_id: str, last_at: float | None) -> None:
+        """The card could not be shown: the name and the minute are given back."""
+        card = self.shown.pop(card_id, None)
+        if card is not None:
+            self.seen.discard((card.kind, index.normalize(card.name)))
+            self.last_at = last_at
 
     def ignore(self, card_id: str) -> Shown | None:
         """No more cards for this card's name this session."""
@@ -161,7 +172,8 @@ async def press(interaction: discord.Interaction, guild_id: int, card_id: str, a
         table.rules.ignore(card_id)
         message = interaction.message
         words = message.content if message is not None else ""
-        note = f"\n🙈 No more cards for {discord.utils.escape_markdown(card.name)} this session."
+        name = discord.utils.escape_markdown(card.name)
+        note = f"\n🙈 No more cards for {name} this session. {STOP_ALL}"
         await interaction.response.edit_message(content=words + note, view=None)
     elif action == "ovr":
         from dmbot.ui.house_rules import OverrideForm

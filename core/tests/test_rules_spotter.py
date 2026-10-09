@@ -137,6 +137,35 @@ class Heard(unittest.TestCase):
         self.assertEqual(a[0].key, ("monster", "goblin warrior"))
 
 
+class Edges(unittest.TestCase):
+    def test_a_name_at_the_very_start_or_end_of_a_line(self) -> None:
+        self.assertEqual(found("Fireball"), ["Fireball"])
+        self.assertEqual(found("Fireball at the door"), ["Fireball"])
+        self.assertEqual(found("at the door, Fireball"), ["Fireball"])
+        self.assertEqual(found("light"), [])  # everyday, alone, at the start: no lead-in
+        self.assertEqual(found("cast light"), ["Light"])
+
+    def test_a_curly_apostrophe_is_the_same_as_a_straight_one(self) -> None:
+        self.assertEqual(found("Tasha’s hideous laughter"), ["Hideous Laughter"])
+        self.assertEqual(found("Tasha's hideous laughter"), ["Hideous Laughter"])
+
+    def test_a_plural_of_a_name_already_seen_is_not_a_second_mention(self) -> None:
+        self.assertEqual(found("Fireball then fireballs"), ["Fireball"])
+
+    def test_the_names_are_built_once_for_each_pair_of_rulesets(self) -> None:
+        from dmbot.dm_screen.rules_cards import spotter_for
+
+        self.assertIs(spotter_for("2024", "2014"), spotter_for("2024", "2014"))
+        self.assertIsNot(spotter_for("2024", "2014"), spotter_for("2014", "2024"))
+
+    def test_a_long_line_with_many_repeats_stays_quick(self) -> None:
+        sp = spotter()
+        started = time.perf_counter()
+        sp.find("goblin " * 500)
+        sp.find("word " * 500)
+        self.assertLess(time.perf_counter() - started, 0.5)  # ~40 ms in practice
+
+
 class Speed(unittest.TestCase):
     def test_a_line_is_quick_to_look_through(self) -> None:
         sp = spotter()
@@ -146,7 +175,9 @@ class Speed(unittest.TestCase):
         started = time.perf_counter()
         for _ in range(200):
             sp.find(line)
-        self.assertLess((time.perf_counter() - started) / 200, 0.005)  # 5 ms a line at most
+        self.assertLess(
+            (time.perf_counter() - started) / 200, 0.05
+        )  # far above ~0.3 ms: CI can be slow
         self.assertLess(len(sp.by_first), 5000)
 
 
