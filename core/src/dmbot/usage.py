@@ -83,6 +83,15 @@ async def check_start(db: Database, guild_id: int, owner_user_id: int, now: int)
     )
 
 
+async def access_of(
+    db: Database, guild_id: int, owner_user_id: int, now: int
+) -> entitlements.Access:
+    """What this owner's plan lets them do now, for the AI and backup rules
+    (dmbot.plan_rules). Reads only, through the owner-scoped meter door."""
+    async with db.meter(guild_id, owner_user_id) as conn:
+        return await entitlements.effective(conn, owner_user_id, now)
+
+
 @dataclass(frozen=True, slots=True)
 class StartCheck:
     """The answer to "may this campaign start", with what a refusal may offer the owner."""
@@ -274,3 +283,6 @@ class Meter:
 
     async def check(self, guild_id: int, owner_user_id: int, now: int) -> StartCheck:
         return await check_start(self.db, guild_id, owner_user_id, now)
+
+    async def access(self, guild_id: int, owner_user_id: int, now: int) -> entitlements.Access:
+        return await access_of(self.db, guild_id, owner_user_id, now)

@@ -1743,6 +1743,25 @@ the DM screen because co-DMs need to know the table may stop; they name only the
 and the 90% one says "The campaign's owner can add more at <WEB_SITE_URL>/account", so it fits
 everyone who reads the screen and never says whose plan it is.
 
+*Built, part 3: AI and copies by plan (2026-10-09, #919):* `dmbot.plan_rules` holds the two
+rules, pure over the owner's `Access`, and the refusal words, next to `hours.py`'s so the bot
+and the site never disagree. **`can_use_ai`:** true for a working plan of any kind (paid, Try It
+within its period, a grant, the free list), false for an ended plan or a campaign with no owner.
+It guards the one place the AI spends tokens on a names list (🤖 Find names); the story-memory and
+rules-advisor AI calls will call it when they exist. **`can_backup`:** true for a paid plan other
+than Try It, a grant or the free list (`backups` in `plans.json`), false for Try It, an ended plan
+and no owner. It guards `/dmbot backup`, every transcript download (`/transcript`, the
+end-of-session button, "as heard too") and **restore**, where it is judged on the *restorer's own*
+plan, since they become the owner; the free slot is the store's check (`restore_needs_slot`, 2c).
+Both are read through the meter door (the owner's plan, scoped to the owner), so the whole table
+stops or goes together. A refusal is private to the person who pressed: the owner (or the
+restorer) hears "Your plan has ended. Pick one here: <WEB_SITE_URL>/account" or, for Try It,
+"Copies and transcripts come with a paid plan. Pick one here: ..."; anyone else, a co-DM
+included, is told only to ask the campaign's owner, never anything about the plan. A refused
+Find names leaves the menu in place (so "Add the lines that fit" still works) and records no
+right-to-use confirmation, because nothing was read. Only when `DMBOT_ENFORCE_PLANS` is on; a
+database hiccup lets the action through, like the start check.
+
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
 names, later story memory and rules lookups), plus backup, restore and transcript

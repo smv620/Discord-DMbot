@@ -282,6 +282,7 @@ class AnswerBeforeTheLock(unittest.IsolatedAsyncioTestCase):
             stop_session=stop_session,
             session_lock=lambda _gid: lock,
             is_campaign_playing=AsyncMock(return_value=False),
+            restore_gate=AsyncMock(return_value=None),
             campaigns=SimpleNamespace(import_backup=AsyncMock(return_value=MagicMock(name="c"))),
         )
         return bot, lock
@@ -327,6 +328,7 @@ class RestoreEndsWithAnOutcome(unittest.IsolatedAsyncioTestCase):
         defaults: dict[str, Any] = {
             "session_lock": lambda _gid: asyncio.Lock(),
             "is_campaign_playing": AsyncMock(return_value=False),
+            "restore_gate": AsyncMock(return_value=None),
             "campaigns": SimpleNamespace(import_backup=AsyncMock(return_value=MagicMock())),
         }
         bot = SimpleNamespace(**{**defaults, **bot_kw})

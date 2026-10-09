@@ -24,7 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import entitlements, hours, install, usage
+from dmbot import entitlements, hours, install, plan_rules, usage
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -1220,6 +1220,47 @@ class DMBot(commands.AutoShardedBot):
             renews=check.renews,
             extra_hours=check.extra_hours,
         )
+
+    async def plan_gate(
+        self, rule: plan_rules.Rule, guild_id: int, campaign: Campaign, user_id: int
+    ) -> str | None:
+        """Why `user_id` may not use the AI or make a copy or transcript of this campaign,
+        in plain words for them, or None (#437 part 3). Judged by the campaign's owner's
+        plan, so the whole table stops or goes together. Only when DMBOT_ENFORCE_PLANS is
+        on. Fails open like `plan_refusal`: a database hiccup must not lock the table out."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        owner = campaign.owner_user_id
+        access = None
+        if owner is not None:
+            try:
+                async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                    access = await self.meter.access(guild_id, owner, int(time.time()))
+            except Exception:  # a slow database (TimeoutError) too
+                log.exception("Couldn't check the plan; allowing it")
+                return None
+        return plan_rules.refusal(
+            rule,
+            access,
+            is_owner=user_id == owner,
+            owner_known=owner is not None,
+            site_url=self.settings.site_url,
+        )
+
+    async def restore_gate(self, guild_id: int, user_id: int) -> str | None:
+        """Why this person may not restore a copy, or None. They become the restored
+        campaign's owner, so their own plan has to include copies (#437 part 3); the free
+        slot is the store's check (`CampaignStore(restore_needs_slot=True)`). They are told
+        about their own plan, since it is theirs."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        try:
+            async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                access = await self.meter.access(guild_id, user_id, int(time.time()))
+        except Exception:
+            log.exception("Couldn't check the plan; allowing it")
+            return None
+        return plan_rules.refusal("backup", access, is_owner=True, site_url=self.settings.site_url)
 
     async def start_campaign_session(
         self, interaction: discord.Interaction, campaign_id: str, voice_id: int

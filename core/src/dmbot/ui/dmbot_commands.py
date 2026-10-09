@@ -522,7 +522,13 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         await _tell(interaction, "That campaign isn't here any more.")
         return
     # Anyone in the server may download a complete copy, secrets included, so a campaign
-    # is never lost if its DM disappears (owner decision, 2026-10-06; CLAUDE.md).
+    # is never lost if its DM disappears (owner decision, 2026-10-06; CLAUDE.md). Only of a
+    # campaign whose owner's plan includes copies (#437 part 3); the owner hears why,
+    # everyone else is told to ask the owner.
+    refused = await bot.plan_gate("backup", guild.id, campaign, interaction.user.id)
+    if refused is not None:
+        await _tell(interaction, refused)
+        return
     dm = interaction.user.id in campaign.dm_user_ids
     name = discord.utils.escape_markdown(campaign.name)
     if not interaction.response.is_done():
@@ -650,6 +656,13 @@ class RestoreChoice(_Menu):
             await _tell(interaction, NOT_IN_SERVER)
             return
         bot = _bot(interaction)
+        # Asked again here: the person may have waited at the buttons while their plan
+        # changed (the check at /dmbot restore was minutes ago).
+        refused = await bot.restore_gate(guild.id, interaction.user.id)
+        if refused is not None:
+            await _replace(interaction, refused, None)
+            self.stop()
+            return
         # Answer first (#88, as #351): the session lock may be held for a few seconds
         # by a /dmbot start setting up the DM screen.
         await _replace(interaction, "Restoring…", None)
@@ -804,6 +817,11 @@ async def dmbot_restore(interaction: discord.Interaction, file: discord.Attachme
         await _tell(interaction, TOO_BIG)
         return
     await interaction.response.defer(ephemeral=True, thinking=True)
+    # The restorer becomes the owner, so their own plan has to include copies (#437 part 3).
+    refused = await _bot(interaction).restore_gate(guild.id, interaction.user.id)
+    if refused is not None:
+        await _tell(interaction, refused)
+        return
     try:
         raw = await file.read()
         data = await asyncio.to_thread(decode_backup, raw)

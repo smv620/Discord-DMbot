@@ -642,6 +642,14 @@ class AIOffer(_Menu):
         if ai is None:
             await _tell(interaction, "DMbot's AI was switched off. Nothing was added.")
             return
+        # The one place the AI spends tokens on a names list: the campaign's owner's plan
+        # has to allow it (#437 part 3). The menu stays, so "Add the lines that fit" works.
+        refused = await _bot(interaction).plan_gate(
+            "ai", campaign.guild_id, campaign, interaction.user.id
+        )
+        if refused is not None:
+            await _tell(interaction, refused)
+            return
         guild = campaign.guild_id
         day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
         if guild in _ai_busy:

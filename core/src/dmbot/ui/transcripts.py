@@ -141,9 +141,10 @@ async def make_file(
     guild: discord.Guild | None,
     guild_id: int,
     session_id: str,
+    user_id: int,
     versions: tuple[str, ...] = (export.AS_HEARD,),
 ) -> list[discord.File] | str:
-    """The download, one file per version, or what to tell the person instead."""
+    """The download, one file per version, or what to tell the person (`user_id`) instead."""
     store = bot.transcripts
     if store is None:
         return NOT_AVAILABLE
@@ -151,6 +152,11 @@ async def make_file(
     campaign = await bot.campaigns.get(guild_id, session.campaign_id) if session else None
     if session is None or campaign is None:
         return GONE
+    # Transcript downloads belong to the plans with copies (#437 part 3). Here, not in each
+    # button, so /transcript, the end-of-session button and "as heard too" all obey it.
+    refused = await bot.plan_gate("backup", guild_id, campaign, user_id)
+    if refused is not None:
+        return refused
     running = _running(bot, session)
     if running:  # save what's waiting, so the file is as full as it can be
         table = bot.tables.get(guild_id)
@@ -209,7 +215,9 @@ async def send_file(
         await interaction.response.defer(ephemeral=True, thinking=True)
     bot = _bot(interaction)
     try:
-        result = await make_file(bot, bot.get_guild(guild_id), guild_id, session_id, versions)
+        result = await make_file(
+            bot, bot.get_guild(guild_id), guild_id, session_id, interaction.user.id, versions
+        )
     except Exception:
         log.exception("Couldn't build a transcript download")
         await _tell(interaction, FAILED)
