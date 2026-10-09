@@ -7,7 +7,8 @@ houserules`; the rules advisor, voice and alerts build on it later.
 
 **A rule's number is its own, for good.** It is the campaign's next number when the rule
 is made, it is never used twice (not even after the rule is removed), and backups carry
-it. So "house rule 12" means the same rule today and next month, which alerts rely on.
+it, with the count of numbers used, so a copy goes on where the campaign was. So "house
+rule 12" means the same rule today and next month, which alerts rely on.
 
 Only the campaign's DMs may change anything: every change checks that in the same
 transaction, so a caller that forgets still can't write. Anyone in the server may list a
@@ -36,15 +37,16 @@ from dmbot.db import Conn, Database
 RULE_MAX = 500  # the rule, "instead of" and the scenario each; matches the table's checks
 HOUSE_RULES_MAX = 200  # per campaign, so a campaign (and its backup) stays a sensible size
 INT32_MAX = 2**31 - 1  # numbers are INTEGER
+NUMBER_MAX = INT32_MAX - 1  # so that the next number (one more) still fits
 INT64_MAX = 2**63 - 1
 
 NO_CAMPAIGN = "That campaign isn't here any more. Use `/dmbot houserules` to see the others."
 NOT_DM = (
-    "Only this campaign's DM can change its house rules. You can still read them with "
+    "Only this campaign's DMs can change its house rules. You can still read them with "
     "`/dmbot houserules`."
 )
 GONE = "That house rule isn't here any more."
-CHANGED = "Another DM changed that house rule meanwhile."
+CHANGED = "Another DM changed that house rule while you were looking."
 EMPTY = "The rule box was empty, so nothing was saved."
 FULL = (
     f"This campaign already has {HOUSE_RULES_MAX} house rules, so yours wasn't saved. "
@@ -289,6 +291,7 @@ async def _require_dm(
 # ---- backups ------------------------------------------------------------------------
 
 _KEYS = frozenset({"number", "rule", "instead", "scenario", "by", "created_at", "updated_at"})
+_MADE_KEYS = frozenset({"made"})  # the first row, when the campaign has made any rule
 
 
 def _timestamp(value: object) -> int:
@@ -298,7 +301,7 @@ def _timestamp(value: object) -> int:
 
 
 def _number(value: object) -> int:
-    if isinstance(value, int) and not isinstance(value, bool) and 0 < value <= INT32_MAX:
+    if isinstance(value, int) and not isinstance(value, bool) and 0 < value <= NUMBER_MAX:
         return value
     raise CampaignError(DAMAGED)
 
@@ -337,18 +340,34 @@ class _Checked:
     updated_at: int
 
 
+@dataclass(frozen=True, slots=True)
+class _Loaded:
+    """A backup's house rules after `check`: the rules, and how many numbers the campaign
+    had used (a backup from before this was recorded has none: the highest will do)."""
+
+    made: int | None
+    rules: list[_Checked]
+
+
 class HouseRulesSection:
-    """House rules in campaign backups (an `ExportSection`). Rules keep their numbers."""
+    """House rules in campaign backups (an `ExportSection`). Rules keep their numbers, and
+    a first row `{"made": N}` says how many numbers the campaign had used, so the copy
+    never gives a new rule a number an old one (since removed) had."""
 
     name = "house_rules"
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
+            "SELECT house_rules_made FROM campaigns WHERE guild_id = %s AND id = %s",
+            (guild_id, campaign_id),
+        )
+        made = await cur.fetchone()
+        cur = await conn.execute(
             "SELECT number, rule, supersedes, scenario, created_by, created_at, updated_at"
             " FROM house_rules WHERE guild_id = %s AND campaign_id = %s ORDER BY number",
             (guild_id, campaign_id),
         )
-        return [
+        rows: list[Any] = [
             {
                 "number": int(r["number"]),
                 "rule": r["rule"],
@@ -360,9 +379,16 @@ class HouseRulesSection:
             }
             for r in await cur.fetchall()
         ]
+        if made is not None and made["house_rules_made"] > 0:
+            rows.insert(0, {"made": int(made["house_rules_made"])})
+        return rows
 
-    def check(self, rows: list[Any]) -> list[_Checked]:
+    def check(self, rows: list[Any]) -> _Loaded:
         """Every row, validated; nothing is written until all of them are right."""
+        made: int | None = None
+        if rows and isinstance(rows[0], dict) and set(rows[0]) == _MADE_KEYS:
+            made = _number(rows[0]["made"])
+            rows = rows[1:]
         if len(rows) > HOUSE_RULES_MAX:
             raise CampaignError(DAMAGED)
         checked = []
@@ -390,43 +416,47 @@ class HouseRulesSection:
                     updated,
                 )
             )
-        return checked
+        if made is not None and numbers and made < max(numbers):
+            raise CampaignError(DAMAGED)  # it can't have used fewer numbers than it has
+        return _Loaded(made, checked)
 
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
         """`rows` as `check` returned them. The store calls `check` first (off the event
         loop, before its transaction) and passes the result here; a caller that has only
         the file's rows (a test, say) gets them checked here, so nothing unchecked is
         ever written."""
-        if not rows:
-            return
-        checked = rows if all(isinstance(r, _Checked) for r in rows) else self.check(rows)
-        async with conn.cursor() as cur:
-            await cur.executemany(
-                "INSERT INTO house_rules (guild_id, campaign_id, number, rule, supersedes,"
-                " scenario, created_by, created_at, updated_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                [
-                    (
-                        guild_id,
-                        campaign_id,
-                        r.number,
-                        r.rule,
-                        r.supersedes,
-                        r.scenario,
-                        r.created_by,
-                        r.created_at,
-                        r.updated_at,
-                    )
-                    for r in checked
-                ],
+        loaded = rows if isinstance(rows, _Loaded) else self.check(rows)
+        if loaded.rules:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    "INSERT INTO house_rules (guild_id, campaign_id, number, rule, supersedes,"
+                    " scenario, created_by, created_at, updated_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    [
+                        (
+                            guild_id,
+                            campaign_id,
+                            r.number,
+                            r.rule,
+                            r.supersedes,
+                            r.scenario,
+                            r.created_by,
+                            r.created_at,
+                            r.updated_at,
+                        )
+                        for r in loaded.rules
+                    ],
+                )
+        # The next number comes after every one the campaign had used. (Replacing a
+        # campaign keeps its own count if that is higher, so a number it once used is not
+        # used again.)
+        used = loaded.made or max((r.number for r in loaded.rules), default=0)
+        if used:
+            await conn.execute(
+                "UPDATE campaigns SET house_rules_made = GREATEST(house_rules_made, %s)"
+                " WHERE guild_id = %s AND id = %s",
+                (used, guild_id, campaign_id),
             )
-        # The next number comes after every one the copy has. (Replacing a campaign keeps
-        # its own count if that is higher, so a number it once used is not used again.)
-        await conn.execute(
-            "UPDATE campaigns SET house_rules_made = GREATEST(house_rules_made, %s)"
-            " WHERE guild_id = %s AND id = %s",
-            (max(r.number for r in checked), guild_id, campaign_id),
-        )
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
         await conn.execute(

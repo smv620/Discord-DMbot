@@ -380,10 +380,12 @@ alerts yet; those build on this.
 - **A rule's number is its own, for good (decided 2026-10-09, Supervisor):** alerts cite
   "house rule 12", so a number never changes meaning. It is the campaign's next number
   when the rule is made (`campaigns.house_rules_made` counts them, under the campaign's
-  lock), it is never used again, even after the rule is removed, and backups carry it. A
-  restored copy goes on after its highest number; restoring over a campaign keeps its own
-  count if that is higher. The list shows each rule's own number, newest (highest) first,
-  so it has gaps after a removal; the buttons and the menu use that number.
+  lock), it is never used again, even after the rule is removed, and backups carry both
+  the numbers and the count of numbers used (so a copy goes on where the campaign was,
+  even if its newest rules were removed; a backup made without the count goes on after its
+  highest number). Restoring over a campaign keeps its own count if that is higher. The list shows each rule's own number, newest (highest) first,
+  so it has gaps after a removal, with one line saying each rule keeps its number; the
+  buttons and the menu use that number ("Edit 12").
 - **Two DMs, one rule:** each rule counts its changes (`version`). Edit and Remove say
   which version the DM was shown; if another DM changed the rule meanwhile, nothing is
   saved or removed, and the DM is told (Edit gives their words back to paste again).

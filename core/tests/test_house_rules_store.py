@@ -351,6 +351,11 @@ class Isolation(HouseRulesTest):
         self.assertEqual(await self.numbers(other), [1])
 
 
+def rules_in(backup: dict[str, Any]) -> list[dict[str, Any]]:
+    """The rule rows of a backup (its first row may say how many numbers were used)."""
+    return [r for r in backup["sections"]["house_rules"] if "rule" in r]
+
+
 class Backups(HouseRulesTest):
     async def two_campaigns(self) -> Campaign:
         """A second campaign in the same server, each with rules of its own."""
@@ -367,7 +372,8 @@ class Backups(HouseRulesTest):
         )
         await self.add("Crits double the dice")
         backup = await self.campaigns.export(GUILD_A, self.campaign.id)
-        rows = backup["sections"]["house_rules"]
+        self.assertEqual(backup["sections"]["house_rules"][0], {"made": 2})  # numbers used
+        rows = rules_in(backup)
         self.assertEqual([r["rule"] for r in rows], ["Falling deals 2d6", "Crits double the dice"])
         self.assertEqual([r["number"] for r in rows], [1, 2])
         self.assertEqual(rows[0]["instead"], "1d6 per 10 feet")
@@ -386,18 +392,18 @@ class Backups(HouseRulesTest):
         # The original is untouched, and the copy's rules are its own.
         self.assertEqual(len(await self.rules.list(GUILD_A, self.campaign.id)), 2)
         again = await self.campaigns.export(GUILD_B, restored.id)
-        self.assertEqual(again["sections"]["house_rules"], rows)
+        self.assertEqual(again["sections"]["house_rules"], backup["sections"]["house_rules"])
 
     async def test_a_backup_holds_only_its_own_campaigns_rules(self) -> None:
         other = await self.two_campaigns()
         mine = await self.campaigns.export(GUILD_A, self.campaign.id)
         theirs = await self.campaigns.export(GUILD_A, other.id)
         self.assertEqual(
-            [r["rule"] for r in mine["sections"]["house_rules"]],
+            [r["rule"] for r in rules_in(mine)],
             ["Frostmaiden: crits double the dice", "Frostmaiden: potions are a bonus action"],
         )
         self.assertEqual(
-            [r["rule"] for r in theirs["sections"]["house_rules"]],
+            [r["rule"] for r in rules_in(theirs)],
             ["Strahd: garlic works", "Strahd: no long rests in Barovia"],
         )
 
@@ -457,6 +463,56 @@ class Backups(HouseRulesTest):
         self.assertEqual(await self.numbers(restored), [4, 2, 1])
         self.assertEqual(await self.add("Five", campaign=restored, who=PLAYER), 5)
 
+    async def test_numbers_used_by_removed_rules_are_not_used_again_by_a_copy(self) -> None:
+        # Rules 1 to 5 were made; 4 and 5 were removed. The backup holds 1 to 3, yet "house
+        # rule 4" and "house rule 5" once meant something: a copy goes on at 6.
+        for n in range(5):
+            await self.add(f"Rule {n + 1}")
+        for number in (5, 4):
+            await self.rules.remove(GUILD_A, self.campaign.id, DM, number)
+        backup = await self.campaigns.export(GUILD_A, self.campaign.id)
+        self.assertEqual(backup["sections"]["house_rules"][0], {"made": 5})
+        restored = await self.campaigns.import_backup(GUILD_B, backup, PLAYER)
+        self.assertEqual(await self.numbers(restored), [3, 2, 1])
+        self.assertEqual(await self.add("Next", campaign=restored, who=PLAYER), 6)
+
+    async def test_a_campaign_with_all_its_rules_removed_remembers_its_numbers(
+        self,
+    ) -> None:
+        one, two = await self.add("One"), await self.add("Two")
+        await self.rules.remove(GUILD_A, self.campaign.id, DM, one)
+        await self.rules.remove(GUILD_A, self.campaign.id, DM, two)
+        backup = await self.campaigns.export(GUILD_A, self.campaign.id)
+        self.assertEqual(backup["sections"]["house_rules"], [{"made": 2}])
+        restored = await self.campaigns.import_backup(GUILD_B, backup, PLAYER)
+        self.assertEqual(await self.numbers(restored), [])
+        self.assertEqual(await self.add("Three", campaign=restored, who=PLAYER), 3)
+
+    async def test_a_campaign_that_never_had_a_rule_has_nothing_to_remember(self) -> None:
+        backup = await self.campaigns.export(GUILD_A, self.campaign.id)
+        self.assertEqual(backup["sections"]["house_rules"], [])
+
+    async def test_a_backup_made_before_the_count_was_kept_goes_on_after_its_highest(self) -> None:
+        await self.add("One")
+        await self.add("Two")
+        backup = await self.campaigns.export(GUILD_A, self.campaign.id)
+        backup["sections"]["house_rules"] = rules_in(backup)  # no count row, as an older file
+        restored = await self.campaigns.import_backup(GUILD_B, backup, PLAYER)
+        self.assertEqual(await self.add("Three", campaign=restored, who=PLAYER), 3)
+
+    async def test_a_bad_count_of_numbers_used_refuses_the_backup(self) -> None:
+        await self.add("One")
+        await self.add("Two")
+        good = await self.campaigns.export(GUILD_A, self.campaign.id)
+        rows = rules_in(good)
+        for made in (0, -1, True, "2", 1, 2**31 - 1, 2**31, None, 1.5):
+            with self.subTest(made=made):
+                backup = copy.deepcopy(good)
+                backup["sections"]["house_rules"] = [{"made": made}, *rows]
+                with self.assertRaisesRegex(CampaignError, "damaged"):
+                    await self.campaigns.import_backup(GUILD_B, backup, PLAYER)
+        self.assertEqual(await self.campaigns.list_campaigns(GUILD_B), [])
+
     async def test_a_backup_from_before_house_rules_restores_with_none(self) -> None:
         await self.add("Crits double the dice")
         backup = await self.campaigns.export(GUILD_A, self.campaign.id)
@@ -481,7 +537,8 @@ class Backups(HouseRulesTest):
     async def test_a_damaged_row_refuses_the_whole_backup(self) -> None:
         await self.add("Crits double the dice")
         good = await self.campaigns.export(GUILD_A, self.campaign.id)
-        row = good["sections"]["house_rules"][0]  # number 1
+        row = rules_in(good)[0]  # number 1; the file also starts with how many were used
+        used = {"made": 9}
         # Each variant is a good row (number 2) with one thing wrong, after a good row 1: so
         # only that one thing can be why the file is refused.
         base = {**row, "number": 2}
@@ -515,13 +572,13 @@ class Backups(HouseRulesTest):
             {**base, "number": 2**31},
         ]
         okay = copy.deepcopy(good)
-        okay["sections"]["house_rules"] = [row, base]  # the same, with nothing wrong
+        okay["sections"]["house_rules"] = [used, row, base]  # the same, with nothing wrong
         restored = await self.campaigns.import_backup(GUILD_B, okay, PLAYER)
         self.assertEqual(await self.numbers(restored), [2, 1])
         for n, bad in enumerate(damaged):
             with self.subTest(n=n, bad=bad):
                 backup = copy.deepcopy(good)
-                backup["sections"]["house_rules"] = [row, bad]
+                backup["sections"]["house_rules"] = [used, row, bad]
                 with self.assertRaises(CampaignError) as caught:
                     await self.campaigns.import_backup(GUILD_B, backup, PLAYER)
                 self.assertIn("damaged", str(caught.exception))

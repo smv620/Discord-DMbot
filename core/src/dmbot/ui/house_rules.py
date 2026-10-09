@@ -69,6 +69,7 @@ READ_INTRO = (
     "makes up a house rule."
 )
 CHANGED_MIND = "Changed your mind? Press **Add a house rule** and paste it."
+NUMBERS_STAY = "_Each rule keeps its number, even when others are removed._"
 
 ADD_LABEL = "➕ Add a house rule"
 NEWER_LABEL = "◀ Newer"
@@ -140,6 +141,8 @@ def list_text(
     shown = pages(rules)
     if not rules:
         lines.append(NONE_YET_DM if is_dm else NONE_YET_PLAYER)
+    if rules:
+        lines.append(NUMBERS_STAY)
     for place in shown[page]:
         lines.append(entry_text(rules[place]))
     if len(shown) > 1:
@@ -259,7 +262,7 @@ class ListMenu(_Menu):
     async def _picked(self, interaction: discord.Interaction) -> None:
         wanted = int(self.pick.values[0])
         rule = next((r for r in self.rules if r.number == wanted), None)
-        if rule is None:  # not on the list any more
+        if rule is None:  # not one of this page's (Discord only sends what the menu offered)
             await _redraw(interaction, self.campaign, note=STALE, page=self.page)
             return
         text = f"📜 **House rule {rule.number}**\n{entry_words(rule)}"
@@ -272,11 +275,15 @@ class RuleMenu(_Menu):
     def __init__(self, campaign: Campaign, rule: HouseRule, page: int) -> None:
         super().__init__()
         self.campaign, self.page = campaign, page
-        self.add_item(_Button(partial(open_edit, campaign, rule, page), label=EDIT_LABEL))
+        # Labelled with the number, as in the list's own buttons ("Edit 12"), so the texts
+        # that say "press Edit 12" are right wherever the DM is.
+        self.add_item(
+            _Button(partial(open_edit, campaign, rule, page), label=f"{EDIT_LABEL} {rule.number}")
+        )
         self.add_item(
             _Button(
                 partial(ask_remove, campaign, rule, page),
-                label=REMOVE_LABEL,
+                label=f"{REMOVE_LABEL} {rule.number}",
                 style=discord.ButtonStyle.danger,
             )
         )
@@ -296,7 +303,11 @@ async def ask_remove(
     campaign: Campaign, rule: HouseRule, page: int, interaction: discord.Interaction
 ) -> None:
     """Never remove at once: say which rule, and that it can't be undone."""
-    text = f"Remove this house rule?\n{entry_text(rule)}\nThis can't be undone."
+    text = (
+        f"Remove house rule {rule.number}?\n{entry_text(rule)}\n"
+        "You'll get the words back to copy if you change your mind. Its number won't be "
+        "used again."
+    )
     await _show(interaction, text, ConfirmRemove(campaign, rule, page))
 
 
@@ -327,9 +338,9 @@ class ConfirmRemove(_Menu):
             note = {house.GONE: ALREADY_GONE, house.CHANGED: CHANGED_REMOVE}.get(str(exc), str(exc))
         else:
             note = f"🗑 Removed house rule {gone.number}."
+        if gone is not None:  # the words in full, to copy back if it was a mistake: first,
+            await _tell(interaction, removed_words(gone))  # so they're never lost
         await _redraw(interaction, c, note=note, page=self.page)
-        if gone is not None:  # the words in full, to copy back if it was a mistake
-            await _tell(interaction, removed_words(gone))
 
     async def _keep(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page)
@@ -384,6 +395,10 @@ class _RuleForm(discord.ui.Modal):
             note = await self.save(store, interaction.user.id)
         except HouseRuleError as exc:
             await _tell(interaction, self.refusal(str(exc)) + self.typed())
+            if str(exc) in (house.CHANGED, house.GONE):
+                # The list on screen is out of date (its buttons would use the old version
+                # and be refused again): draw it as it is now.
+                await _redraw(interaction, self.campaign, page=self.page)
             return
         await _redraw(interaction, self.campaign, note=note, page=self.page)
 

@@ -269,6 +269,13 @@ class Text(unittest.TestCase):
         self.assertIn("2. Rule number 2", text)
         self.assertNotIn("3. Rule number 3", text)
 
+    def test_one_line_says_numbers_stay(self) -> None:
+        for is_dm in (True, False):
+            text = ui.list_text(campaign(), [rule(2), rule(1)], 0, is_dm=is_dm)
+            self.assertIn("_Each rule keeps its number, even when others are removed._", text)
+        empty = ui.list_text(campaign(), [], 0, is_dm=True)
+        self.assertNotIn("keeps its number", empty)  # nothing to explain yet
+
     def test_numbers_show_gaps_where_rules_were_removed(self) -> None:
         # A removed rule's number is gone for good, so the list has a hole, not a renumbering.
         text = ui.list_text(campaign(), [rule(9), rule(4), rule(1)], 0, is_dm=False)
@@ -601,7 +608,36 @@ class Editing(UITest):
         self.assertIn("**Edit 1**", told)  # what to press next
         self.assertIn("My words, written from the old view", told)  # and the words back
         self.assertEqual((await self.mine())[0].rule, "The other DM's words")
-        self.assertEqual(it.edited, [])
+
+    async def test_after_that_the_list_is_drawn_again_so_edit_works(self) -> None:
+        # The list on screen held the old version: its Edit button would be refused again.
+        self.store.seed("c1", 1)
+        (existing,) = await self.mine()
+        form = ui.EditForm(self.campaigns["c1"], existing, 0)
+        await self.store.edit(GUILD, "c1", DM, 1, "The other DM's words")
+        form.rule._value = "Mine"
+        it = await self.submit(form)
+        text, view = self.shown(it)  # the list, redrawn as it is now
+        self.assertIn("1. The other DM's words", text)
+        again = self.it()
+        await self.press(view, "Edit 1").callback(again)
+        fresh = again.response.modal
+        self.assertEqual(fresh.children[0].default, "The other DM's words")
+        fresh.rule._value = "Mine, written on their version"
+        done = await self.submit(fresh)
+        self.assertTrue(self.shown(done)[0].startswith("✏️ Changed house rule 1."))
+        self.assertEqual((await self.mine())[0].rule, "Mine, written on their version")
+
+    async def test_a_rule_removed_meanwhile_redraws_so_its_buttons_go(self) -> None:
+        self.store.seed("c1", 2)
+        existing = (await self.mine())[1]  # number 1
+        self.store.rules["c1"] = [r for r in self.store.rules["c1"] if r.number != 1]
+        form = ui.EditForm(self.campaigns["c1"], existing, 0)
+        form.rule._value = "Too late"
+        it = await self.submit(form)
+        text, view = self.shown(it)
+        self.assertNotIn("Rule number 1", text)
+        self.assertEqual(self.labels(view), [ui.ADD_LABEL, "Edit 2", "Remove 2"])
 
     async def test_a_rule_removed_meanwhile_says_what_to_do(self) -> None:
         self.store.seed("c1", 1)
@@ -641,7 +677,7 @@ class Editing(UITest):
         picked = self.it()
         await menu._picked(picked)
         edit = self.it()
-        await self.press(self.shown(picked)[1], ui.EDIT_LABEL).callback(edit)
+        await self.press(self.shown(picked)[1], "Edit 12").callback(edit)
         form = edit.response.modal
         form.rule._value = "Changed on page two"
         text = self.shown(await self.submit(form))[0]
@@ -656,9 +692,10 @@ class Removing(UITest):
         it = self.it()
         await self.press(view, "Remove 1").callback(it)
         text, confirm = self.shown(it)
-        self.assertIn("Remove this house rule?", text)
+        self.assertIn("Remove house rule 1?", text)
         self.assertIn("1. Rule number 1", text)
-        self.assertIn("This can't be undone.", text)
+        self.assertIn("You'll get the words back to copy if you change your mind.", text)
+        self.assertIn("Its number won't be used again.", text)
         self.assertEqual(self.labels(confirm), [ui.YES_REMOVE_LABEL, ui.KEEP_LABEL])
         self.assertEqual(len(await self.mine()), 2)  # nothing yet
         self.assertEqual([c for c in self.store.calls if c[0] == "remove"], [])
@@ -680,6 +717,18 @@ class Removing(UITest):
         self.assertIn("A *rule* to be removed", told)
         self.assertIn("Instead of:\n```\nThe book rule\n```", told)
         self.assertTrue(told.endswith(ui.CHANGED_MIND))
+
+    async def test_the_words_go_out_before_the_list_is_drawn_again(self) -> None:
+        # If drawing the list fails, the removed rule's words must not be lost with it.
+        self.store.seed("c1", 1)
+        (existing,) = await self.mine()
+        confirm = ui.ConfirmRemove(self.campaigns["c1"], existing, 0)
+        self.bot.campaigns.get = AsyncMock(side_effect=RuntimeError("Discord or database down"))
+        yes = self.it()
+        with self.assertRaises(RuntimeError):
+            await self.press(confirm, ui.YES_REMOVE_LABEL).callback(yes)
+        self.assertEqual(await self.mine(), [])  # it was removed…
+        self.assertIn("🗑 Removed house rule 1:", self.told(yes))  # …and the words were sent
 
     async def test_keep_it_leaves_everything(self) -> None:
         self.store.seed("c1", 1)
@@ -735,7 +784,7 @@ class Removing(UITest):
         picked = self.it()
         await menu._picked(picked)
         ask = self.it()
-        await self.press(self.shown(picked)[1], ui.REMOVE_LABEL).callback(ask)
+        await self.press(self.shown(picked)[1], "Remove 12").callback(ask)
         keep = self.it()
         await self.press(self.shown(ask)[1], ui.KEEP_LABEL).callback(keep)
         self.assertIn("Page 2 of 3", self.shown(keep)[0])
@@ -757,17 +806,17 @@ class PickingFromTheMenu(UITest):
         it, _ = await self.picked(5)
         text, menu = self.shown(it)
         self.assertEqual(text, "📜 **House rule 5**\nRule number 5")  # not "5. Rule number 5"
-        self.assertEqual(self.labels(menu), [ui.EDIT_LABEL, ui.REMOVE_LABEL, ui.BACK_LABEL])
+        self.assertEqual(self.labels(menu), ["Edit 5", "Remove 5", ui.BACK_LABEL])  # as in the list
 
     async def test_edit_and_remove_work_from_there(self) -> None:
         it, _ = await self.picked(5)
         menu = self.shown(it)[1]
         edit = self.it()
-        await self.press(menu, ui.EDIT_LABEL).callback(edit)
+        await self.press(menu, "Edit 5").callback(edit)
         self.assertEqual(edit.response.modal.children[0].default, "Rule number 5")
         ask = self.it()
-        await self.press(menu, ui.REMOVE_LABEL).callback(ask)
-        self.assertIn("Remove this house rule?", self.shown(ask)[0])
+        await self.press(menu, "Remove 5").callback(ask)
+        self.assertIn("Remove house rule 5?", self.shown(ask)[0])
         self.assertIn("5. Rule number 5", self.shown(ask)[0])
 
     async def test_back_returns_to_the_list(self) -> None:
@@ -789,7 +838,7 @@ class PickingFromTheMenu(UITest):
         menu = self.shown(it)[1]
         self.store.rules["c1"].pop()  # the newest one is removed while the menu is open
         ask = self.it()
-        await self.press(menu, ui.REMOVE_LABEL).callback(ask)
+        await self.press(menu, "Remove 6").callback(ask)
         yes = self.it()
         await self.press(self.shown(ask)[1], ui.YES_REMOVE_LABEL).callback(yes)
         self.assertTrue(self.shown(yes)[0].startswith(ui.ALREADY_GONE))
