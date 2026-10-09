@@ -1615,3 +1615,43 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     and forced; triggers on campaigns: campaigns_no_truncate, owner_campaigns_sync.
   - DMBOT_ENFORCE_PLANS is still off. Still to do by a person: create a campaign and start
     a session as usual; the hand-over from Discord (needs a 2nd account).
+
+==============================================================================
+2026-10-09  Server: deploy 8d55974, core only (dev1)
+==============================================================================
+  - 19:20 UTC  development @ 8d55974, core: #937 (plan rules part 3: Find names, backup,
+    transcript download and restore judged on the plan, only when DMBOT_ENFORCE_PLANS is on;
+    CloudDev's queue line), #942 (rules cards: a campaign setting, off by default, that puts
+    a card on the DM screen when a spell, condition or creature is named; migration
+    0035_rules_cards; its PR page said "rebuild core") and #949 (the end-of-session message
+    drops download buttons when the plan has none; plans-on only). Docs and logs besides.
+  - Migration 0035_rules_cards: one column, campaigns.rules_cards BOOLEAN NOT NULL DEFAULT
+    FALSE. Read before deploying. After: column present, default false, 0 campaigns on.
+  - Database backed up first (outside the repo; 35 tables); no session was live;
+    scripts/update-env had nothing to add. Core built ahead; `up -d --no-build core` naming
+    the service (web-api and ears untouched: web-api 85cc405, ears 21c5ff1). Logs: "Database
+    updated: 0035_rules_cards", "Connected to 1 server(s)", "ears connected"; 0 errors;
+    /health 404.
+  - DMBOT_ENFORCE_PLANS still off. For a person: #942's 5-minute check as a DM with the
+    setting on; #937's "still work as before" (Find names on a pasted list, backup and
+    restore, a transcript download).
+
+==============================================================================
+2026-10-09  Queue lines other sessions added while dev1 deployed (kept from the status log)
+==============================================================================
+  - dev2, PR #942 (#931): core with **migration 0035_rules_cards** (a new column
+    `campaigns.rules_cards`, off by default; the migration runs when core starts, so rebuild
+    core; keep the migration list sorted with #944's 0036 if that lands too). No setting. Rules
+    cards from the table: when a spell, condition or creature is named at a live table, a short
+    card goes on the DM screen, if the DM turned it on. A 5-minute live check with the setting
+    on, as a DM: press **Settings** on the DM screen, then **Turn rules cards on** (the card's
+    line says "Rules cards: On"); start listening; say "I cast Fireball": a card on the DM
+    screen with "Heard: …", the source and "You decide", and nothing in the transcript channel;
+    wait a minute; say "the goblin is grappled": the **Goblin Warrior** card appears and takes
+    that minute (the first name not yet shown wins), so a minute later say "it is grappled" for
+    the Grappled card; say "a light in the dark" or "what a nightmare": nothing. Press **Got it**
+    (buttons go), **Read it all** (the full rule, privately), **Ignore** on another card (it says
+    how to stop all cards) and **Override** (the Add a house rule form with Fireball already in
+    "Instead of"). A player pressing a button is refused. Turn it off again with **Turn rules
+    cards off**. Core logs no ERROR.
+  Result: all of these were in the 17:27 build (21c5ff1), deployed from their PRs' deploy notes.
