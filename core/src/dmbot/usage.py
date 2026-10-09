@@ -57,6 +57,8 @@ async def standing_of(
     used = await minutes_this_month(conn, owner_user_id, month) if read_used else 0
     known = plans.load().get(plan.plan) if plan is not None and access.kind == "paid" else None
     buys_hours = bool(known and known.price_cents)  # Try It is free and buys nothing
+    # Not known to be cancelled: the plan row doesn't record a cancel at period end yet, so a
+    # plan that will lapse still reads as renewing until the payment events store that.
     renews = buys_hours and plan is not None and plan.status == "active"
     return Standing(access, month, used, used, buys_hours, renews)
 
