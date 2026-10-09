@@ -153,7 +153,13 @@ from dmbot.ui.names import ReviewButton, after_session_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.sheets import MySheetButton
-from dmbot.ui.transcripts import DownloadButton, download_view, ended_text, transcript_command
+from dmbot.ui.transcripts import (
+    DownloadButton,
+    download_view,
+    ended_no_download_text,
+    ended_text,
+    transcript_command,
+)
 
 log = logging.getLogger(__name__)
 
@@ -3601,19 +3607,55 @@ class DMBot(commands.AutoShardedBot):
             if session is None or session.lines == 0:
                 return 0
             people = {table.dm_user_id, *table.dm_user_ids, *session.speakers}
+            # With the campaign's plan not including copies (Try It, #938), the buttons would
+            # be refused on every press: leave them out and tell the owner, once, why. Asked
+            # twice at most for the whole table: whether it is blocked (as nobody, who is
+            # never the owner), and what the owner is told.
+            blocked, owner_id, owner_note = False, None, None
+            campaign = (
+                await self.campaigns.get(gid, table.campaign_id)
+                if table.campaign_id is not None
+                else None
+            )
+            if campaign is not None:
+                blocked = await self.plan_gate("transcript", gid, campaign, 0) is not None
+                owner_id = campaign.owner_user_id
+                if blocked and owner_id is not None:
+                    owner_note = await self.plan_gate("transcript", gid, campaign, owner_id)
             sent = 0
             for user_id in sorted(people):
-                sent += await self._send_download(user_id, table, session_id)
+                sent += await self._send_download(
+                    user_id,
+                    table,
+                    session_id,
+                    blocked=blocked,
+                    note=owner_note if user_id == owner_id else None,
+                )
             log.info("Transcript download offered privately to %d of %d", sent, len(people))
             return sent
 
-    async def _send_download(self, user_id: int, table: Table, session_id: str) -> int:
+    async def _send_download(
+        self,
+        user_id: int,
+        table: Table,
+        session_id: str,
+        *,
+        blocked: bool = False,
+        note: str | None = None,
+    ) -> int:
         """1 if the private message went out; people with private messages off use
-        `/transcript` instead."""
+        `/transcript` instead. `blocked`: the plan has no downloads, so no buttons; `note` is
+        the line for the owner only."""
         try:
             user = self.get_user(user_id) or await self.fetch_user(user_id)
             if user.bot:
                 return 0
+            if blocked:
+                await user.send(
+                    ended_no_download_text(table.campaign_name, note),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+                return 1
             await user.send(
                 ended_text(table.campaign_name),
                 view=download_view(table.guild_id, session_id),

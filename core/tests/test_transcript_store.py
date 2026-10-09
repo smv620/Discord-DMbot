@@ -365,6 +365,50 @@ class BotTests(DatabaseTest):
         session = await self.store.session(GUILD, sid or "")
         assert session is not None and session.ended_at is not None
 
+    async def end_with_gate(self, gate: Any) -> dict[int, Any]:
+        await self.consent.grant(GUILD, PLAYER)
+        table = self.table()
+        self.said(table, PLAYER, "Hello.")
+        users: dict[int, Any] = {}
+
+        def get_user(uid: int) -> Any:
+            return users.setdefault(uid, SimpleNamespace(id=uid, bot=False, send=AsyncMock()))
+
+        self.bot.get_user = get_user  # type: ignore[method-assign]
+        self.bot.plan_gate = gate  # type: ignore[method-assign]
+        del self.bot.tables[GUILD]
+        await self.bot.finish_transcript(table)
+        return users
+
+    async def test_a_plan_without_downloads_leaves_the_buttons_out(self) -> None:
+        # Try It with plans enforced (#938): the gate refuses, so no buttons that would be
+        # refused on every press. The owner (the DM here) is told why; the others are not.
+        async def gate(action: str, guild: int, campaign: Any, user: int) -> str | None:
+            assert action == "transcript"
+            return "Try It campaigns don't keep downloads." if user == DM else "Ask the owner."
+
+        users = await self.end_with_gate(gate)
+        owner = users[DM].send.await_args
+        self.assertIn("has ended", owner.args[0])
+        self.assertIn("Try It campaigns don't keep downloads.", owner.args[0])
+        self.assertNotIn("view", owner.kwargs)
+        player = users[PLAYER].send.await_args
+        self.assertEqual(player.args[0], "The session for **Frostmaiden** has ended.")
+        self.assertNotIn("view", player.kwargs)
+        self.assertNotIn("/transcript", player.args[0])  # that would be refused too
+
+    async def test_a_plan_with_downloads_keeps_the_buttons_and_adds_no_line(self) -> None:
+        users = await self.end_with_gate(AsyncMock(return_value=None))
+        for user in users.values():
+            call = user.send.await_args
+            self.assertEqual(len(call.kwargs["view"].children), 3)
+            self.assertIn("Download the transcript", call.args[0])
+
+    async def test_the_plan_is_asked_at_most_twice_for_the_whole_table(self) -> None:
+        gate = AsyncMock(return_value="no")
+        await self.end_with_gate(gate)
+        self.assertLessEqual(gate.await_count, 2)
+
     async def test_nothing_said_sends_nothing(self) -> None:
         table = self.table()
         self.bot.get_user = MagicMock()  # type: ignore[method-assign]

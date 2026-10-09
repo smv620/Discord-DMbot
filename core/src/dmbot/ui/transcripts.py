@@ -86,6 +86,14 @@ def ended_text(campaign_name: str) -> str:
     )
 
 
+def ended_no_download_text(campaign_name: str, owner_note: str | None = None) -> str:
+    """The same message when the campaign's plan has no downloads (#938): no buttons and no
+    promise of `/transcript`. Only the owner gets a second line, saying why and what to do;
+    everyone else just hears that the session ended."""
+    text = f"The session for **{discord.utils.escape_markdown(campaign_name)}** has ended."
+    return f"{text}\n{owner_note}" if owner_note else text
+
+
 def still_recording_text(is_dm: bool, so_far: str) -> str:
     if is_dm:
         return (
