@@ -52,13 +52,16 @@ the DM decides.**
   subscribes only to consenting, non-bot users, decodes Opus to 16 kHz mono PCM, and
   streams frames to core. It holds no game logic.
 - **Audio health** (the "audio NN%" in capture checks) compares Opus packets received
-  with packets expected per utterance. Speaker pauses, which clients mark with five
-  silence frames, are excluded. Known limit: packets lost right after a pause, such as
-  DAVE decrypt failures on resumed speech, look like part of the pause and aren't
-  counted (up to ~800 ms per pause). Exact detection is tracked in #43. RTP sequence
-  numbers would be exact, but `@discordjs/voice` strips the RTP header before the
-  receive stream, so reading them needs its internal UDP socket. Packet arrival plus
-  silence frames was chosen instead, as the public-API option.
+  with packets expected per utterance, and means "core got the audio". Speaker pauses,
+  which clients mark with five silence frames, are excluded. Three kinds of loss are
+  counted besides the gaps (decided 2026-10-09, #43, #45): packets the voice library
+  **fails to decrypt** (DAVE; it says so in a debug event, counted per speaker, including
+  right after a pause, where the gap would look like the pause), packets the **Opus
+  decoder refuses**, and frames the **link to core drops** when it is busy. They are left
+  out of "received", and the health message carries each count (omitted when zero) so the
+  terminal log can say why. They lower the percent, but the DM screen is not told more
+  often: only lines that read garbled (or a large loss) warn the DM (#699). Not counted:
+  packets that arrive while someone never seen before is looked up (rare, #270).
 - **core** (Python): everything else — slash commands, consent records, transcription,
   AI analysis, storage, integrations. Developed in PyCharm.
 - Both use the same Discord bot token. ears requests only the voice-state intent.
