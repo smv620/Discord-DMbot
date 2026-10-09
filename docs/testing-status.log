@@ -9,7 +9,9 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- #925 (follow-ups to #914's counts): ears AND core together, no migration. Check with
+  DMBOT_DEBUG_AUDIO=1: nothing new on the DM screen; `Capture check:` says "1 decode error"
+  (singular); the counts in `audio user=` lines are as before. No separate test needed.
 
 ------------------------------------------------------------------------------
 LIVE NOW
