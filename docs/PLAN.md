@@ -1675,31 +1675,48 @@ table isn't left waiting while the DM looks something up.
   fields stored as columns, not only text.
 - **Cost:** every answer spends AI tokens, so it goes through `can_use_ai` (#919).
 
-*Built, part 1: the answer engine (#934, CloudDev, 2026-10-09):* `dmbot.sidebar` (no
-Discord, no voice). `bot.sidebar.answer(campaign, question, scene=..., asker_id=...)` returns an
-`Answer`: `text` (short, with its source and "sure"), `in_game`, `refused`, `model`,
-`prompt_version`, `sources` (everything the AI was given, in short words: rules entries like
-"SRD 5.2.1 p. 131", "house rule 3", "campaign names", "the scene", "DMbot help"), `parts` (a
-long answer as messages) and `seconds`. How it keeps to the owner's rules: **the length limit is in
-code** (at most 2 sentences and 200 characters, the source and "sure" outside it, unless the DM
-asked for the full text); a Yes/No question must start with "Yes." or "No." (or say plainly it
-can't: "Your call."); greetings and "let me know" offers are stripped; a reply that breaks a rule
-is sent back **once** with what to fix, and if it is still too long it is cut at a sentence end.
-The fast model (the same smallest model as the off-topic filter), a few hundred tokens out,
-timed and logged (a warning over 5 seconds, a hard stop at 20). **Context is this one campaign
-only:** the rules entries and house rules the question names, the confirmed names it mentions
-(never secret or unconfirmed ones, since replies can reach the raw transcript), the caller's last
-few minutes of scene (cut again to 1,500 characters) and, only for questions about DMbot or Discord,
-the reviewed digest `sidebar/about_dmbot.md`. The question's words are matched against the rules
-index first; only the matching entries are sent, each cut to 1,200 characters. Content a DM shared
-counts only with its right-to-use confirmation; none is stored as text yet, so none is sent. Off
-topic gets the fixed line "I can only help with the game, DMbot or Discord here." The full text
-comes only when asked ("description", "full text", "read me the whole…") and is the same card
-`/dmbot rule` shows, in parts, with the SRD's own page to read outside Discord, with no AI call. Every call goes through
-`plan_gate("ai", …)` (#919): with plans enforced a refusal comes back as `refused=True` with the
-plain words. `tests/sidebar_brevity_cases.py` holds 17 real table questions; CI runs them with a
-fake AI, and `python -m dmbot.devtools.sidebar_check` runs the same ones against the real model
-(it needs the server's key; dev1 runs it) and prints the answers and times.
+*Built, part 1: the answer engine (#934, CloudDev, 2026-10-09):* `dmbot.sidebar` (no Discord, no
+voice). `bot.sidebar.answer(campaign, question, asker_id=..., scene=...)` returns an `Answer`:
+`text` (short, with its source and "sure"), `in_game`, `refused`, `model`, `prompt_version`,
+`sources` (everything the AI was given, in short words: "SRD 5.2.1 p. 131", "house rule 3",
+"campaign names", "the scene", "DMbot help"), `parts` (a long answer as messages) and `seconds`.
+`asker_id` has no default: it decides the wording of a plan refusal.
+- **Brevity is enforced in code.** At most 2 sentences and 200 characters (the source and "sure"
+  come after, outside the limit), unless the DM asked for the full text. A yes-or-no question
+  starts "Yes." or "No." (or says plainly it can't: "Your call."; a choice question with "or" is
+  not a yes-or-no one). Greetings and "let me know" offers are stripped; "Sure, it can." becomes
+  "Yes, it can.". A reply that breaks a rule is sent back **once** with what to fix, unless the
+  first call was already slow (over 3 seconds) or the retry fails; what is still too long is cut
+  at a sentence end. A paragraph is never sent.
+- **Speed.** The smallest model (the off-topic filter's), at most 150 tokens out. One call is
+  limited to 6 seconds and the whole answer to 8; a warning is logged over 5. A stuck call ends
+  in "That took too long. Ask again." The names are waited for at most 1 second; if they or the
+  house rules can't be read, the answer goes ahead without them and the reason is logged.
+- **Context is this one campaign only:** the rules entries and house rules the question names
+  (a possessive like "Fireball's" counts), the confirmed names it mentions (never secret or
+  unconfirmed names, and nothing but the name for someone who has a secret name, since replies can
+  reach the raw transcript, #933), the caller's last few minutes of scene (cut to 1,500
+  characters, fenced as the players' words, which are information and never instructions) and,
+  only for questions about DMbot or Discord, the reviewed digest `sidebar/about_dmbot.md`.
+  Only matching entries are sent, each cut to 1,200 characters. Homebrew is not stored yet, so
+  none is sent; content a DM shared counts only with its right-to-use confirmation and none is
+  stored as text yet, so none is sent.
+- **Sources are DMbot's, not the model's.** The shown source is taken from what the model was
+  given: an SRD answer cites the entry's own page and carries `[Legacy 2014]` when it is a 2014
+  entry; a house rule is named as given; "DMbot help", campaign names and anything the model made
+  up show no source; a source the answer already says is not repeated.
+- **Off topic** gets the fixed line "I can only help with the game, DMbot or Discord here."
+- **The full text comes only when asked** ("spell description", "full text", "read me the
+  whole…") and only for a rule DMbot has: it is the card `/dmbot rule` shows, in parts, with the
+  SRD's own page to read outside Discord, with no AI call. Asked for something it doesn't have,
+  the question is answered short like any other.
+- **Plan.** Every call goes through `plan_gate("ai", …)` (#919): with plans enforced a refusal
+  comes back as `refused=True` with the plain words. Like the start check it fails open if the
+  database can't be read, so during an outage a lapsed plan can still spend a few cents.
+- **Tests.** `tests/sidebar_brevity_cases.py` holds 17 real table questions; CI runs them with a
+  fake AI and counts the sentences by hand. `python -m dmbot.devtools.sidebar_check` runs the same
+  ones against the real model (it needs the server's key, so dev1 runs it) and prints the
+  answers and times.
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste

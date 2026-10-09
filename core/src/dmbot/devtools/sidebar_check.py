@@ -84,7 +84,7 @@ async def run(path: Path) -> int:
     try:
         for number, case in enumerate(cases, start=1):
             started = time.monotonic()
-            got = await sidebar.answer(sample_campaign(), case.question)
+            got = await sidebar.answer(sample_campaign(), case.question, asker_id=1)
             took = time.monotonic() - started
             body = got.text.rsplit(" (", 1)[0] if got.text.endswith(")") else got.text
             ok = brevity.within_limit(body) or len(got.parts) > 1

@@ -21,6 +21,57 @@ class Sentences(unittest.TestCase):
         self.assertEqual(brevity.sentences("   "), [])
 
 
+class HandCounted(unittest.TestCase):
+    """Counted by eye, so the counter cannot agree with its own mistakes."""
+
+    def test_words_ending_like_an_abbreviation_still_end_a_sentence(self) -> None:
+        self.assertEqual(
+            len(brevity.sentences("Yes, you can stop. It costs an action. Then roll.")), 3
+        )
+        self.assertEqual(len(brevity.sentences("Drop it. Grab the map. Run.")), 3)
+
+    def test_no_at_the_start_is_an_answer_not_an_abbreviation(self) -> None:
+        self.assertEqual(len(brevity.sentences("No. It needs sight. It also needs range.")), 3)
+        self.assertEqual(len(brevity.sentences("Yes. It needs sight. It also needs range.")), 3)
+
+    def test_no_before_a_number_is_an_abbreviation(self) -> None:
+        self.assertEqual(len(brevity.sentences("See No. 5 for it. Done.")), 2)
+
+    def test_three_sentences_starting_with_no_are_too_many(self) -> None:
+        problems = brevity.violations(
+            "can it", "No. It needs sight. It also needs range.", full_text=False
+        )
+        self.assertIn("use at most 2 sentences", problems)
+
+
+class PaddingKeepsMeaning(unittest.TestCase):
+    def test_absolutely_not_stays_not(self) -> None:
+        self.assertEqual(brevity.strip_padding("Absolutely not."), "Absolutely not.")
+        self.assertEqual(
+            brevity.strip_padding("Certainly not, it fails."), "Certainly not, it fails."
+        )
+
+    def test_sure_with_a_comma_becomes_yes(self) -> None:
+        self.assertEqual(brevity.strip_padding("Sure, it can."), "Yes, it can.")
+
+    def test_ordinary_rules_sentences_are_kept(self) -> None:
+        text = "Yes. Anything else in the area takes damage. If you want more damage, upcast it."
+        self.assertEqual(brevity.strip_padding(text), text)
+
+    def test_a_real_offer_is_removed(self) -> None:
+        self.assertEqual(
+            brevity.strip_padding(
+                "Yes. Would you like me to read the spell? Is there anything else?"
+            ),
+            "Yes.",
+        )
+
+
+class Choices(unittest.TestCase):
+    def test_a_choice_question_is_not_a_yes_no_question(self) -> None:
+        self.assertFalse(brevity.is_yes_no_question("is it advantage or disadvantage when prone"))
+
+
 class FullText(unittest.TestCase):
     def test_the_words_that_ask_for_the_whole_thing(self) -> None:
         for question in (
@@ -28,11 +79,17 @@ class FullText(unittest.TestCase):
             "read me the whole rule on grappling",
             "give me the full text of Prone",
             "what's the goblin stat block",
+            "read me the whole spell",
         ):
             self.assertTrue(brevity.asks_for_full_text(question), question)
 
     def test_an_ordinary_question_does_not(self) -> None:
-        for question in ("how much damage does fireball do", "does prone give disadvantage"):
+        for question in (
+            "how much damage does fireball do",
+            "does prone give disadvantage",
+            "what's the description of the room",
+            "does the description say 60 ft",
+        ):
             self.assertFalse(brevity.asks_for_full_text(question), question)
 
 

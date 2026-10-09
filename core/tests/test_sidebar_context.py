@@ -74,8 +74,8 @@ class MentionedNames(unittest.TestCase):
             None, None, False, 0,
         )  # fmt: skip
         lookup = CampaignLookup.build(data(relations=(link,)))
-        (line,) = context.mentioned_names("what about Belleros", lookup)
-        self.assertIn("Linked to: Cerric", line)
+        (line,) = context.mentioned_names("what about Cerric", lookup)
+        self.assertIn("Linked to: Belleros", line)
 
     def test_no_lookup_no_names(self) -> None:
         self.assertEqual(context.mentioned_names("what about Belleros", None), [])
@@ -94,6 +94,55 @@ class MentionedNames(unittest.TestCase):
         self.assertIn("CAMPAIGN NAMES", built.prompt)
         self.assertIn("campaign names", built.sources)
         self.assertNotIn("hooded stranger", built.prompt)
+
+
+class Possessives(unittest.TestCase):
+    def test_a_possessive_still_finds_the_entry(self) -> None:
+        for question in ("Does Fireball's radius go through walls", "what is a Goblin\u2019s AC"):
+            self.assertTrue(context.mentioned_rules(question, INDEX, "2024", "2014"), question)
+
+
+class SecretIdentities(unittest.TestCase):
+    def test_a_person_with_a_secret_name_gets_no_description_or_links(self) -> None:
+        # Belleros has a secret alias (the hooded stranger): only his name is given.
+        described = replace(data().entities[0], description="Secretly the lich's brother.")
+        lookup = CampaignLookup.build(data(entities=(described, *data().entities[1:])))
+        (line,) = context.mentioned_names("what about Belleros", lookup)
+        self.assertEqual(line, "Belleros (npc)")
+        self.assertNotIn("lich", line)
+
+    def test_someone_without_a_secret_name_keeps_the_description(self) -> None:
+        described = replace(data().entities[1], description="A cheerful baker.")
+        lookup = CampaignLookup.build(
+            data(entities=(data().entities[0], described, data().entities[2]))
+        )
+        (line,) = context.mentioned_names("what about Cerric", lookup)
+        self.assertIn("A cheerful baker.", line)
+
+
+class AboutDMbot(unittest.TestCase):
+    def test_the_digest_is_sent_for_questions_about_dmbot_not_for_game_ones(self) -> None:
+        for question in (
+            "how do I stop DMbot recording me",
+            "is this being recorded",
+            "what does /dmbot names do",
+            "can players read the transcript",
+        ):
+            self.assertTrue(context.asks_about_dmbot(question), question)
+        for question in ("how do I handle a grapple", "what is the plan for the heist"):
+            self.assertFalse(context.asks_about_dmbot(question), question)
+
+    def test_the_digest_says_what_it_must(self) -> None:
+        text = context.about_dmbot()
+        for phrase in (
+            "/consent give",
+            "Anthropic",
+            "[DM Sidebar]",
+            "holds the DM's secrets",
+            "never decides",
+            "Legacy 2014",
+        ):
+            self.assertIn(phrase, text)
 
 
 class HouseRulesChosen(unittest.TestCase):
@@ -148,7 +197,7 @@ class RealStoreIsolation(DatabaseTest):
 
         ai = FakeAI([reply("Yes. House rule 1.", "House rule 1")])
         built = Sidebar(ai, INDEX, gate=gate, houses=houses, names=names)
-        await built.answer(replace(mine), "do you need line of sight for fireball")
+        await built.answer(replace(mine), "do you need line of sight for fireball", asker_id=7)
         self.assertIn("clear line of sight", ai.prompts[0])
         self.assertNotIn("OTHER-CAMPAIGN-ONLY", ai.prompts[0])
 

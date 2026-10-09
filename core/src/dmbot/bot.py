@@ -183,6 +183,7 @@ IDLE_SWEEP_INTERVAL_S = 1
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
+NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
@@ -1300,9 +1301,9 @@ class DMBot(commands.AutoShardedBot):
         async def names(campaign: Campaign) -> CampaignLookup | None:
             if self.lookup is None:
                 return None
-            return await self.lookup.get(campaign.guild_id, campaign.id)
+            return await self.lookup.get_within(campaign.guild_id, campaign.id, NAMES_WAIT_S)
 
-        return Sidebar(self.topic_ai, rules_index.srd(), gate=gate, houses=houses, names=names)
+        return Sidebar(self.topic_ai, rules_index.srd, gate=gate, houses=houses, names=names)
 
     async def plan_gate(
         self, action: plan_rules.Action, guild_id: int, campaign: Campaign, user_id: int

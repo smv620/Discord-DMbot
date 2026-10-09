@@ -16,9 +16,11 @@ MAX_CHARS = 200
 
 # Words in the DM's question that mean "give me the whole thing".
 _FULL_TEXT = re.compile(
-    r"\b(description|full text|full description|whole (spell|rule|text|thing|description|entry)|"
-    r"entire (spell|rule|text|description|entry)|read (me )?(out )?(the )?(whole|full|entire)|"
-    r"word for word|exact (text|wording)|stat ?block|complete (text|description|entry))\b",
+    r"\b((spell|rule|condition|monster|creature|full|complete|entire|whole) description|"
+    r"description of (the |a |an )?(spell|rule|condition|monster|creature)|"
+    r"full text|text of (the )?(spell|rule|condition)|"
+    r"(whole|entire) (spell|rule|text|thing|entry)|read (me )?(out )?(the )?(whole|full|entire)|"
+    r"word for word|exact (text|wording)|stat ?block|complete (text|entry))\b",
     re.IGNORECASE,
 )
 # A question that a plain yes or no answers: "do you need…", "can a…", "if you need…".
@@ -35,18 +37,26 @@ _ANSWERS_FIRST = re.compile(
 
 # Padding to strip: whole sentences that only fill space.
 _PAD_SENTENCE = re.compile(
-    r"(let me know|hope (this|that) helps|feel free|happy to help|glad to help|anything else|"
-    r"if you (need|want|would like) (more|anything|further|me to)|i can (also )?(help|explain|"
-    r"give|read)|would you like)",
+    r"\b(let me know|hope (this|that) helps|feel free|(happy|glad) to help|"
+    r"is there anything else|would you like( me)?( to)?|"
+    r"if you (need|want|would like) (me to|more detail|further|to know more)|"
+    r"i can (also )?(explain|elaborate|read|give you))\b",
     re.IGNORECASE,
 )
 _PAD_OPENER = re.compile(
-    r"^\s*((great|good|excellent|fair|nice|interesting) (question|point)|sure thing|certainly|"
-    r"of course|absolutely|sure)\s*[!.,:\-–—]*\s*",
+    r"^\s*((great|good|excellent|fair|nice|interesting) (question|point)|sure thing)"
+    r"\s*[!.,:\-–—]*\s*",
     re.IGNORECASE,
 )
-# Dots that do not end a sentence.
-_ABBREVIATIONS = ("p.", "pp.", "e.g.", "i.e.", "vs.", "etc.", "no.", "cf.", "approx.", "lvl.")
+# "Sure, it can." says yes: keep the yes.
+_YES_OPENER = re.compile(
+    r"^\s*(sure|certainly|of course|absolutely)\s*[,!]\s*(?=[a-z])", re.IGNORECASE
+)
+_BARE_OPENER = re.compile(r"^\s*(sure|certainly|of course|absolutely)\s*[,!]\s*", re.IGNORECASE)
+# Words whose dot does not end a sentence. Matched as the whole last word of a piece, so "stop."
+# and "map." still end one. ("No." is handled apart: at the start of an answer it is the answer;
+# only "No. 5" is an abbreviation.)
+_ABBREVIATIONS = frozenset({"p.", "pp.", "e.g.", "i.e.", "vs.", "etc.", "cf.", "approx.", "lvl."})
 
 
 def asks_for_full_text(question: str) -> bool:
@@ -55,7 +65,8 @@ def asks_for_full_text(question: str) -> bool:
 
 
 def is_yes_no_question(question: str) -> bool:
-    return bool(_YES_NO.match(question))
+    """A question a plain yes or no answers. A choice ("advantage or disadvantage?") is not."""
+    return bool(_YES_NO.match(question)) and not re.search(r"\bor\b", question, re.IGNORECASE)
 
 
 def starts_with_the_answer(text: str) -> bool:
@@ -71,12 +82,12 @@ def sentences(text: str) -> list[str]:
     out: list[str] = []
     start = 0
     for match in re.finditer(r"[.!?]+[\"')\]]*\s+(?=[A-Z0-9\"'(\[])", text):
-        end = match.end()
         piece = text[start : match.start() + len(match.group().rstrip())]
-        if piece.lower().endswith(_ABBREVIATIONS):
+        last = piece.split()[-1].lower() if piece.split() else ""
+        if last in _ABBREVIATIONS or (last == "no." and text[match.end()].isdigit()):
             continue
         out.append(piece.strip())
-        start = end
+        start = match.end()
     tail = text[start:].strip()
     if tail:
         out.append(tail)
@@ -86,6 +97,8 @@ def sentences(text: str) -> list[str]:
 def strip_padding(text: str) -> str:
     """Drop a greeting and sentences that only offer more or fill space."""
     text = _PAD_OPENER.sub("", " ".join(text.split()), count=1)
+    text = _YES_OPENER.sub("Yes, ", text, count=1)
+    text = _BARE_OPENER.sub("", text, count=1)  # "Sure, 8d6 fire damage." (no yes in it)
     kept = [s for s in sentences(text) if not _PAD_SENTENCE.search(s)]
     return " ".join(kept).strip()
 
@@ -130,6 +143,20 @@ def within_limit(text: str) -> bool:
 
 
 def join_source(text: str, source: str | None, sure: str | None) -> str:
-    """The answer with its source and confidence in a few words: `(SRD 5.2.1 p. 241, sure)`."""
+    """The answer with its source and confidence in a few words: `(SRD 5.2.1 p. 131, sure)`.
+    Not repeated when the answer already says it: a source named in the text is left out, and
+    "not sure" is left out of an answer that already says the rules don't say. The limit on
+    length is for the answer itself; this suffix comes after it (so a message can be about 35
+    characters over 200, which is fine on a phone)."""
+    if source and source.lower() in text.lower():
+        source = None
+    if (
+        sure == "not sure"
+        and starts_with_the_answer(text)
+        and not re.match(r"\s*(yes|no)\b", text, re.I)
+    ):
+        sure = None
+    elif not source and sure == "sure":
+        sure = None  # "(sure)" alone says nothing
     pieces = [p for p in (source, sure) if p]
     return f"{text} ({', '.join(pieces)})" if pieces else text
