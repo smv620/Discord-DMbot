@@ -42,6 +42,10 @@ NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 SETTINGS_LABEL = "Settings"
 RULE_LOOKUP_LABEL = "Look up a rule"
+RULES_LINE = (
+    "• **Rules:** press 📖 Look up a rule to read a spell, condition or creature from the "
+    "free rules (SRD). Only you see it."
+)
 ONLY_DM = "Only this campaign's DM (or a server manager) can open or change its settings."
 GONE = messages.DM_CAMPAIGN_GONE
 FAILED = "Sorry, that didn't save. Please try again."
@@ -53,12 +57,16 @@ def _tick(label: str, current: bool) -> str:
     return f"✓ {label}" if current else label
 
 
-def settings_text(campaign: Campaign, offer: HandoverOffer | None = None) -> str:
-    """The settings card (only the person who opened it sees it)."""
+def settings_text(
+    campaign: Campaign, offer: HandoverOffer | None = None, viewer: int | None = None
+) -> str:
+    """The settings card (only the person who opened it sees it). `viewer`: who it's for;
+    the line about looking up rules is only for the campaign's DMs, who have its button."""
     level = campaign.dm_screen_level
     recommended = " (recommended)" if level == DEFAULT_DM_SCREEN_LEVEL else ""
     what = DM_SCREEN_LEVELS.get(level, level)
     who = messages.WHO_CAN_SEE.get(campaign.dm_screen_visibility, "")
+    rules = [RULES_LINE] if viewer is not None and viewer in campaign.dm_user_ids else []
     return "\n".join(
         [
             f"⚙️ **Settings for {discord.utils.escape_markdown(campaign.name)}**",
@@ -67,8 +75,7 @@ def settings_text(campaign: Campaign, offer: HandoverOffer | None = None) -> str
             f"• **Who can see the DM screen:** {who}",
             "• **Saved transcripts:** anyone in the server can read and download them with "
             "`/transcript`. (This can't be changed.)",
-            "• **Rules:** press 📖 Look up a rule to read a spell, condition or creature from "
-            "the free rules (SRD). Only you see it.",
+            *rules,
             handover.owner_line(campaign, offer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
             "now on.",
@@ -93,7 +100,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
 
 
 def _card(campaign: Campaign, viewer: int) -> tuple[str, discord.ui.View]:
-    return settings_text(campaign), settings_view(campaign, None, viewer)
+    return settings_text(campaign, None, viewer), settings_view(campaign, None, viewer)
 
 
 handover.use_settings_card(_card)  # it redraws this card after an offer is taken back
@@ -136,7 +143,7 @@ async def _redraw(interaction: discord.Interaction, campaign: Campaign) -> None:
     offer = await _open_offer(interaction, campaign.id)
     try:
         await interaction.edit_original_response(
-            content=settings_text(campaign, offer),
+            content=settings_text(campaign, offer, interaction.user.id),
             view=settings_view(campaign, offer, interaction.user.id),
             allowed_mentions=NO_PINGS,
         )
@@ -177,7 +184,7 @@ class SettingsButton(
         if campaign is None:
             return
         await interaction.response.send_message(
-            settings_text(campaign, offer),
+            settings_text(campaign, offer, interaction.user.id),
             view=settings_view(campaign, offer, interaction.user.id),
             ephemeral=True,
             allowed_mentions=NO_PINGS,

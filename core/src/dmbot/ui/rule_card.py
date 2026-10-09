@@ -29,7 +29,8 @@ MIN_TEXT_ROOM = 200  # a first part with less room than this is only the heading
 
 FREE_RULES = "the free rules (SRD)"
 NOT_A_RULING = "_From the free rules (SRD). DMbot reads it out; you decide what applies._"
-OLDER_NOTE = "_These are the older 2014 rules: the newer rules have nothing under this name._"
+OLDER_NOTE = "_Older 2014 rules: the newer rules don't have this._"
+ONLY_FREE_RULES = "_Only the free rules are in DMbot so far, not your own books._"
 KIND_WORDS = {"spell": "spell", "condition": "condition", "monster": "creature"}
 
 _ORDINALS = {1: "1st", 2: "2nd", 3: "3rd"}
@@ -97,19 +98,24 @@ def house_matches(rules: Iterable[HouseRule], names: Iterable[str]) -> list[Hous
     return sorted(found, key=lambda r: r.number)
 
 
-def house_lines(matches: Sequence[HouseRule]) -> list[str]:
-    """ "🏠 House rule 12: ..." for each (the first few), and a count of the rest."""
+def house_lines(matches: Sequence[HouseRule], line_max: int = HOUSE_LINE_MAX) -> list[str]:
+    """ "🏠 House rule 12: ..." for each (the first few, each cut to `line_max`), and a count
+    of the rest. With no room (`line_max` 0), only a count."""
+    if not matches:
+        return []
+    if line_max <= 0:
+        plural = "s" if len(matches) != 1 else ""
+        return [f"🏠 {len(matches)} house rule{plural} name this: `/dmbot houserules`"]
     lines = []
     for rule in matches[:HOUSE_SHOWN]:
         words = _md(rule.rule)
         if rule.supersedes:
             words += f" (instead of: {_md(rule.supersedes)})"
-        lines.append(_fit(f"🏠 **House rule {rule.number}:** {words}", HOUSE_LINE_MAX))
+        lines.append(_fit(f"🏠 **House rule {rule.number}:** {words}", line_max))
     extra = len(matches) - HOUSE_SHOWN
     if extra > 0:
-        lines.append(
-            f"🏠 …and {extra} more house rule{'s' if extra != 1 else ''}: `/dmbot houserules`"
-        )
+        plural = "s" if extra != 1 else ""
+        lines.append(f"🏠 …and {extra} more house rule{plural}: `/dmbot houserules`")
     return lines
 
 
@@ -179,26 +185,25 @@ def _words(sentence: str, limit: int) -> list[str]:
     return out
 
 
-def header(hit: Hit, typed: str, rules: Sequence[HouseRule]) -> str:
+def header(
+    hit: Hit, typed: str, rules: Sequence[HouseRule], *, house_max: int = HOUSE_LINE_MAX
+) -> str:
     """Everything above the text: house rules first, the name and facts, where it comes
     from, and any note about how it was found."""
     entry = hit.entry
-    lines = house_lines(house_matches(rules, names_for(entry, typed)))
+    lines = house_lines(house_matches(rules, names_for(entry, typed)), house_max)
     kind = KIND_WORDS.get(entry.kind, entry.kind)
-    lines.append(f"📖 **{_fit(_md(entry.name), NAME_MAX)}** ({kind})")
+    called = _fit(_md(entry.name), NAME_MAX)
+    lines.append(f"📖 **{called}** ({kind})")
     line = facts(entry)
     if line:
         lines.append(line)
     lines.append(f"_Source: {_md(hit.citation)}_")
-    asked = " ".join(typed.split())
+    asked = _fit(_md(" ".join(typed.split())), NAME_MAX)
     if hit.renamed and asked:
-        lines.append(
-            f"_{_fit(_md(asked), NAME_MAX)} is now called {_fit(_md(entry.name), NAME_MAX)}._"
-        )
-    elif normalize(asked) != normalize(entry.name) and asked:
-        lines.append(
-            f"_You typed {_fit(_md(asked), NAME_MAX)}; this is {_fit(_md(entry.name), NAME_MAX)}._"
-        )
+        lines.append(f"_{asked} is now called {called} in the newer rules._")
+    elif asked and normalize(typed) != normalize(entry.name):
+        lines.append(f"_Showing {called} (you typed {asked})._")
     if hit.tag:
         lines.append(OLDER_NOTE)
     lines.append(NOT_A_RULING)
@@ -207,8 +212,13 @@ def header(hit: Hit, typed: str, rules: Sequence[HouseRule]) -> str:
 
 def card_parts(hit: Hit, typed: str, rules: Sequence[HouseRule]) -> list[str]:
     """The card as messages, each short enough for Discord: the first has the heading and
-    as much of the text as fits; the others carry on with the text."""
-    head = header(hit, typed, rules)
+    as much of the text as fits; the others carry on with the text. Many long house rules
+    are cut shorter, then only counted, so the heading never fills a message."""
+    head = ""
+    for house_max in (HOUSE_LINE_MAX, 120, 60, 0):
+        head = header(hit, typed, rules, house_max=house_max)
+        if len(head) <= PART_MAX - MIN_TEXT_ROOM:
+            break
     text = _md(hit.entry.text)
     room = PART_MAX - len(head) - 1
     rest = PART_MAX - CONTINUED_MAX
@@ -230,21 +240,18 @@ def no_match_text(typed: str, rules: Sequence[HouseRule], has_suggestions: bool)
     asked = _fit(_md(" ".join(typed.split())), NAME_MAX)
     lines = house_lines(house_matches(rules, [typed]))
     lines.append(f"DMbot couldn't find **{asked}** in {FREE_RULES}.")
-    lines.append(
-        "Only the free rules are in DMbot so far, not the books you own, so many things "
-        "won't be here."
-    )
     if has_suggestions:
         lines.append("**Did you mean…?** Press a name to read it.")
     else:
         lines.append("Check the spelling, or try a shorter name.")
+    lines.append(ONLY_FREE_RULES)
     return "\n".join(lines)
 
 
 def choice_label(entry: Entry) -> str:
     """How a name shows in the list that opens as the DM types: `Fireball (spell)`, and
-    `Orc (creature, older 2014 rules)` for a name only the 2014 rules have."""
+    `Orc (creature) [Legacy 2014]` for a name only the 2014 rules have."""
     kind = KIND_WORDS.get(entry.kind, entry.kind)
-    older = ", older 2014 rules" if entry.edition == index.LEGACY else ""
-    label = f"{entry.name} ({kind}{older})"
+    older = f" [Legacy {entry.edition}]" if entry.edition == index.LEGACY else ""
+    label = f"{entry.name} ({kind}){older}"
     return label if len(label) <= NAME_MAX else label[: NAME_MAX - 1] + "…"

@@ -98,6 +98,12 @@ class SettingsCardTest(unittest.TestCase):
             SettingsButton.__discord_ui_compiled_template__.fullmatch(str(button.item.custom_id))
         )
 
+    def test_the_rules_line_is_only_for_the_campaigns_dms(self) -> None:
+        c = campaign()
+        for viewer, expected in ((DM, True), (PLAYER, False), (None, False)):
+            self.assertEqual("Look up a rule" in settings_text(c, None, viewer), expected, viewer)
+        self.assertIn("free rules (SRD)", settings_text(c, None, DM))
+
     def test_the_help_card_has_settings_between_sessions(self) -> None:
         ids = [str(i.item.custom_id) for i in card_view(campaign()).children]  # type: ignore[attr-defined]
         self.assertIn(f"dmbot:settings:{CAMPAIGN}", ids)

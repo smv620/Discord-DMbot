@@ -13,6 +13,8 @@ The card itself is built in `dmbot.ui.rule_card`, which has no Discord in it.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from functools import partial
 
@@ -50,13 +52,14 @@ BOX_MAX = 100
 READ_REST_LABEL = "Read the rest"
 NOT_READY = "Rules lookup isn't available right now. Please try again in a moment."
 NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with `/dmbot start`."
-ONLY_DMS = "Only this campaign's DM can look up rules for now."
-ONLY_DMS_ANY = "Only a campaign's DM can look up rules for now."
+ONLY_DMS = "Only this campaign's DM can look up rules for now. Ask your DM."
+ONLY_DMS_ANY = "Only a campaign's DM can look up rules for now. Ask your DM."
 CAMPAIGN_GONE = "That campaign isn't here any more. Use `/dmbot rule` again."
 WHICH_CAMPAIGN = "**Which campaign is this for?** Pick one and DMbot looks it up."
 EMPTY = "Type a spell, a condition or a creature, then try again."
 TOO_LONG = f"That's too long for a name. Use at most {BOX_MAX} characters."
 NAMES_MORE = 25  # most choices Discord shows as a person types
+TYPEAHEAD_WAIT_S = 1.0  # the longest the list waits for the database
 
 
 def may_look_up(campaign: Campaign, user_id: int) -> bool:
@@ -110,13 +113,24 @@ async def look_up(
     await _send(interaction, parts[0], Card(parts, 1) if len(parts) > 1 else None)
 
 
-class Card(_Menu):
+class _KeepsItsText(_Menu):
+    """A menu under a card or a list of names: when it times out only the buttons go; the
+    words stay, because the DM may still be reading them."""
+
+    async def on_timeout(self) -> None:
+        if self.origin is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await self.origin.edit_original_response(view=None)
+
+
+class Card(_KeepsItsText):
     """The card's later parts: a **Read the rest** button sends the next one, privately."""
 
     def __init__(self, parts: list[str], next_part: int) -> None:
         super().__init__()
         self.parts, self.next_part = parts, next_part
-        self.add_item(_Button(self._more, label=READ_REST_LABEL, style=discord.ButtonStyle.primary))
+        label = f"{READ_REST_LABEL} ({next_part + 1} of {len(parts)})"
+        self.add_item(_Button(self._more, label=label, style=discord.ButtonStyle.primary))
 
     async def _more(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction)
@@ -125,21 +139,24 @@ class Card(_Menu):
         await _send(interaction, self.parts[self.next_part], view)
 
 
-class Suggestions(_Menu):
+class Suggestions(_KeepsItsText):
     """ "Did you mean…?": close names as buttons. Pressing one reads it; nothing is picked
     for the DM."""
 
     def __init__(self, campaign: Campaign, close: list[index.Entry]) -> None:
         super().__init__()
-        shown: list[str] = []
-        for entry in close:
-            if entry.name not in shown:
-                shown.append(entry.name)
-        for name in shown[: logic.SELECT_OPTIONS_MAX]:
+        shown: dict[tuple[str, str], index.Entry] = {}
+        for entry in close:  # one button for each name and kind (a spell and a creature can share)
+            shown.setdefault((entry.name, entry.kind), entry)
+        names = [name for name, _ in shown]
+        for (name, kind), entry in list(shown.items())[: logic.SELECT_OPTIONS_MAX]:
+            label = name
+            if names.count(name) > 1:  # say which, when the same name is two things
+                label = f"{name} ({rule_card.KIND_WORDS.get(kind, kind)})"
             self.add_item(
                 _Button(
-                    partial(look_up_name, campaign, name),
-                    label=logic.shorten(name, logic.PHONE_LABEL_MAX * 3),
+                    partial(look_up_name, campaign, entry.name),
+                    label=logic.shorten(label, logic.PHONE_LABEL_MAX * 3),
                 )
             )
 
@@ -211,18 +228,36 @@ async def _typeahead(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:
     """Names that begin as the DM types, newest rules first (at most 25)."""
-    target, fallback = DEFAULT_TARGET, DEFAULT_FALLBACK
-    guild = interaction.guild
-    bot = _bot(interaction)
-    if guild is not None:
-        playing = bot.active_campaign_id(guild.id)
-        campaign = await bot.campaigns.get(guild.id, playing) if playing else None
-        if campaign is not None and may_look_up(campaign, interaction.user.id):
-            target, fallback = campaign.target_ruleset, campaign.fallback_ruleset
+    target, fallback = await _rulesets(interaction)
     found = index.srd().typeahead(current, target, fallback, limit=NAMES_MORE)
     return [
         app_commands.Choice(name=rule_card.choice_label(e), value=e.name[:BOX_MAX]) for e in found
     ]
+
+
+async def _rulesets(interaction: discord.Interaction) -> tuple[str, str]:
+    """The ruleset order for the list of names: the playing campaign's, if the person is its
+    DM. Discord waits 3 seconds for the list, so the database gets one: slower, or broken,
+    and the defaults are used (the names are the same, only the order differs)."""
+    guild = interaction.guild
+    bot = _bot(interaction)
+    if guild is None:
+        return DEFAULT_TARGET, DEFAULT_FALLBACK
+    try:
+        playing = bot.active_campaign_id(guild.id)
+        campaign = (
+            await asyncio.wait_for(bot.campaigns.get(guild.id, playing), TYPEAHEAD_WAIT_S)
+            if playing
+            else None
+        )
+    except Exception:
+        log.warning(
+            "Couldn't read the campaign for the rule list; used the defaults", exc_info=True
+        )
+        return DEFAULT_TARGET, DEFAULT_FALLBACK
+    if campaign is not None and may_look_up(campaign, interaction.user.id):
+        return campaign.target_ruleset, campaign.fallback_ruleset
+    return DEFAULT_TARGET, DEFAULT_FALLBACK
 
 
 @dmbot_group.command(

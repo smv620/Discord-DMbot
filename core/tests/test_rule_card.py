@@ -61,24 +61,24 @@ class Header(unittest.TestCase):
 
     def test_an_exact_name_says_nothing_extra(self) -> None:
         text = rule_card.header(hit("Fireball"), "  FIREBALL ", [])
-        self.assertNotIn("You typed", text)
+        self.assertNotIn("you typed", text)
         self.assertNotIn("now called", text)
         self.assertNotIn("older", text)
 
     def test_the_older_rules_are_tagged_and_said_plainly(self) -> None:
         text = rule_card.header(hit("Orc"), "Orc", [])
         self.assertIn("SRD 5.1, Monsters, p. 339 [Legacy 2014]", text)
-        self.assertIn("older 2014 rules: the newer rules have nothing under this name", text)
+        self.assertIn("Older 2014 rules: the newer rules don't have this.", text)
 
     def test_an_older_name_says_what_it_is_called_now(self) -> None:
         text = rule_card.header(hit("Goblin"), "goblin", [])
         self.assertIn("📖 **Goblin Warrior** (creature)", text)
-        self.assertIn("_goblin is now called Goblin Warrior._", text)
+        self.assertIn("_goblin is now called Goblin Warrior in the newer rules._", text)
         self.assertNotIn("[Legacy 2014]", text)
 
     def test_another_way_of_saying_it_is_told_not_called_a_rename(self) -> None:
         text = rule_card.header(hit("Deep Gnome", "2014", "none"), "Deep Gnome", [])
-        self.assertIn("You typed Deep Gnome; this is Gnome, Deep (Svirfneblin).", text)
+        self.assertIn("_Showing Gnome, Deep (Svirfneblin) (you typed Deep Gnome)._", text)
         self.assertNotIn("is now called", text)
 
     def test_what_the_dm_typed_never_formats_the_card(self) -> None:
@@ -198,11 +198,35 @@ class Splitting(unittest.TestCase):
         self.assertIn("A bright streak flashes", "".join(parts))
 
 
+class Worst(unittest.TestCase):
+    def test_the_heading_never_fills_a_message(self) -> None:
+        # The longest facts line, many long house rules, a long name typed: still fits.
+        rules = [rule(n, "Vampire " + "*" * 500, "*" * 500) for n in range(1, 9)]
+        for name in ("Vampire", "Wish", "Ancient Red Dragon", "Gnome, Deep (Svirfneblin)"):
+            found = hit(name, "2014", "none") if name != "Wish" else hit(name)
+            parts = rule_card.card_parts(
+                found, "*" * 100, [*rules, rule(9, f"{name} " + "*" * 500)]
+            )
+            with self.subTest(name):
+                self.assertTrue(all(len(p) <= 2000 for p in parts))
+                self.assertGreaterEqual(len(parts[0]) - len(rule_card.header(found, "x", [])), 0)
+
+    def test_house_rules_are_cut_shorter_then_only_counted(self) -> None:
+        rules = [rule(n, "Fireball " + "*" * 400, "*" * 400) for n in range(1, 4)]
+        full = rule_card.house_lines(rules)
+        short = rule_card.house_lines(rules, 60)
+        none = rule_card.house_lines(rules, 0)
+        self.assertTrue(all(len(x) <= 60 for x in short))
+        self.assertGreater(len(full[0]), len(short[0]))
+        self.assertEqual(none, ["🏠 3 house rules name this: `/dmbot houserules`"])
+        self.assertEqual(rule_card.house_lines([], 0), [])
+
+
 class NoMatch(unittest.TestCase):
     def test_it_says_so_plainly_and_nothing_is_guessed(self) -> None:
         text = rule_card.no_match_text("Frobnicate", [], False)
         self.assertIn("DMbot couldn't find **Frobnicate** in the free rules (SRD).", text)
-        self.assertIn("Only the free rules are in DMbot so far", text)
+        self.assertIn("Only the free rules are in DMbot so far, not your own books.", text)
         self.assertIn("Check the spelling", text)
         self.assertNotIn("Did you mean", text)
 
@@ -224,9 +248,7 @@ class NoMatch(unittest.TestCase):
 class Names(unittest.TestCase):
     def test_a_choice_says_what_kind_and_whether_it_is_older(self) -> None:
         self.assertEqual(rule_card.choice_label(hit("Fireball").entry), "Fireball (spell)")
-        self.assertEqual(
-            rule_card.choice_label(hit("Orc").entry), "Orc (creature, older 2014 rules)"
-        )
+        self.assertEqual(rule_card.choice_label(hit("Orc").entry), "Orc (creature) [Legacy 2014]")
         self.assertLessEqual(
             len(rule_card.choice_label(hit("Gnome, Deep (Svirfneblin)").entry)), 100
         )

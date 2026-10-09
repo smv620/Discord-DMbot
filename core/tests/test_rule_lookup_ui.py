@@ -4,7 +4,10 @@ and no match offers names without picking one."""
 
 from __future__ import annotations
 
+import asyncio
+import time
 import unittest
+import unittest.mock
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -13,9 +16,11 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen.settings import RuleLookupButton, settings_view
+from dmbot.rules import index
 from dmbot.rules.house import HouseRule
 from dmbot.ui import rule_card
 from dmbot.ui import rule_lookup as ui
+from dmbot.ui.dmbot_commands import _answer_first as answer_first
 from tests.test_memory_names import FakeResponse
 
 GUILD, DM, OTHER_DM, PLAYER = 1, 7, 9, 8
@@ -237,7 +242,8 @@ class ReadTheRest(LookupTest):
         it = await self.command("Vampire")
         first, view, _ = self.sent(it)
         self.assertIn("📖 **Vampire** (creature)", first)
-        self.assertEqual(self.labels(view), [ui.READ_REST_LABEL])
+        self.assertEqual(len(self.labels(view)), 1)
+        self.assertRegex(self.labels(view)[0], rf"^{ui.READ_REST_LABEL} \(2 of \d+\)$")
         texts = [first]
         while view is not None:
             pressed = self.it()
@@ -322,6 +328,38 @@ class SettingsButton(LookupTest):
 
 
 class Typeahead(LookupTest):
+    async def test_a_database_that_fails_or_hangs_gives_the_default_order(self) -> None:
+        self.campaigns[C1] = campaign(target="2014", fallback="2024")
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        self.bot.campaigns.get = AsyncMock(side_effect=RuntimeError("down"))
+        values = [c.value for c in await ui._typeahead(it, "goblin")]
+        self.assertEqual(values[0], "Goblin Warrior")
+
+        async def hang(*_: Any) -> None:
+            await asyncio.sleep(60)
+
+        self.bot.campaigns.get = hang
+        with unittest.mock.patch.object(ui, "TYPEAHEAD_WAIT_S", 0.05):
+            values = [c.value for c in await ui._typeahead(it, "goblin")]
+        self.assertEqual(values[0], "Goblin Warrior")
+
+    async def test_outside_a_server_and_with_nothing_playing_it_still_answers(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        it.guild = None
+        self.assertTrue(await ui._typeahead(it, "fire"))
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        self.playing = None
+        self.assertTrue(await ui._typeahead(it, "fire"))
+
+    async def test_odd_input_is_safe_and_quick(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        for typed in ("x" * 300, "  ", "!!!", "'", "(((", "fire" * 40):
+            await ui._typeahead(it, typed)  # no error
+        started = time.perf_counter()
+        for typed in ("", "f", "fire", "goblin", "zzz"):
+            await ui._typeahead(it, typed)
+        self.assertLess(time.perf_counter() - started, 0.5)  # 5 keystrokes, with room to spare
+
     async def test_names_that_begin_as_typed_at_most_25_each_marked(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)
         choices = await ui._typeahead(it, "fire")
@@ -343,6 +381,69 @@ class Typeahead(LookupTest):
         it = self.it(PLAYER, kind=discord.InteractionType.autocomplete)
         values = [c.value for c in await ui._typeahead(it, "goblin")]
         self.assertEqual(values[0], "Goblin Warrior")  # the defaults, not this campaign's
+
+
+class Timeout(LookupTest):
+    async def test_a_timed_out_card_keeps_its_words_and_loses_only_its_buttons(self) -> None:
+        for view in (ui.Card(["one", "two"], 1), ui.Suggestions(campaign(), [])):
+            origin = self.it()
+            view.origin = origin
+            await view.on_timeout()
+            call = origin.edit_original_response.await_args
+            self.assertEqual(call.kwargs, {"view": None})  # no new content: the text stays
+
+    async def test_a_timeout_with_the_message_gone_is_quiet(self) -> None:
+        view = ui.Card(["one", "two"], 1)
+        origin = self.it()
+        origin.edit_original_response = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "x")
+        )
+        view.origin = origin
+        await view.on_timeout()
+
+
+class SuggestionButtons(LookupTest):
+    async def test_the_same_name_of_two_kinds_is_two_buttons_that_say_which(self) -> None:
+        def entry(kind: str) -> index.Entry:
+            return index.Entry(kind, "Sleep", "2024", "SRD 5.2.1", "x", 1, "text", {})
+
+        view = ui.Suggestions(campaign(), [entry("spell"), entry("condition"), entry("spell")])
+        self.assertEqual(self.labels(view), ["Sleep (spell)", "Sleep (condition)"])
+
+    async def test_a_name_that_is_only_one_thing_is_bare(self) -> None:
+        near = index.srd().suggest("Firball", "2024", "2014")
+        self.assertIn("Fireball", self.labels(ui.Suggestions(campaign(), near)))
+
+
+class ReadTheRestParts(LookupTest):
+    async def test_the_last_part_has_no_button_and_each_press_sends_one_part(self) -> None:
+        parts = ["first", "second", "third", "fourth"]
+        view: Any = ui.Card(parts, 1)
+        seen = []
+        while view is not None:
+            pressed = self.it()
+            await view.children[0].callback(pressed)
+            text, view, _ = self.sent(pressed)
+            seen.append(text)
+        self.assertEqual(seen, ["second", "third", "fourth"])
+
+
+class Order(LookupTest):
+    async def test_discord_is_answered_before_the_slow_steps(self) -> None:
+        calls: list[str] = []
+
+        async def answer(interaction: Any, **kw: Any) -> None:
+            calls.append("answered")
+            await answer_first(interaction, **kw)
+
+        async def slow_get(guild_id: int, cid: str) -> Campaign:
+            calls.append("database")
+            return self.campaigns[cid]
+
+        self.bot.campaigns.get = slow_get
+        with unittest.mock.patch("dmbot.ui.rule_lookup._answer_first", answer):
+            await ui.look_up(self.it(), C1, "fireball", guild_id=GUILD)
+        self.assertEqual(calls[:2], ["answered", "database"])
 
 
 class Words(unittest.TestCase):

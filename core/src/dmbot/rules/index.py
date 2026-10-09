@@ -141,6 +141,7 @@ class Index:
         self.entries: tuple[Entry, ...] = tuple(entries)
         self._by_edition: dict[str, dict[str, list[Entry]]] = {}
         self._alias_keys: set[tuple[str, str]] = set()  # (edition, key) added by an alias
+        self._pools: dict[tuple[str, str], tuple[dict[str, Entry], list[str]]] = {}
         for entry in self.entries:
             self._add(entry.edition, normalize(entry.name), entry)
             if entry.kind == "monster":
@@ -188,13 +189,21 @@ class Index:
     def _pool(self, target: str, fallback: str) -> dict[str, Entry]:
         """Every name an entry is found by (in the target ruleset, then the fallback) and
         the entry it leads to; a name in both editions leads to the target's."""
-        pool: dict[str, Entry] = {}
-        for edition in (target, fallback):
-            if edition == FALLBACK_NONE:
-                continue
-            for key, entries in self._by_edition.get(edition, {}).items():
-                pool.setdefault(key, entries[0])
-        return pool
+        cached = self._pools.get((target, fallback))
+        if cached is None:  # the index never changes, so the answer can be kept
+            pool: dict[str, Entry] = {}
+            for edition in (target, fallback):
+                if edition == FALLBACK_NONE:
+                    continue
+                for key, entries in self._by_edition.get(edition, {}).items():
+                    pool.setdefault(key, entries[0])
+            cached = (pool, sorted(pool))
+            self._pools[(target, fallback)] = cached
+        return cached[0]
+
+    def _sorted_keys(self, target: str, fallback: str) -> list[str]:
+        self._pool(target, fallback)
+        return self._pools[(target, fallback)][1]
 
     def suggest(
         self, typed: str, target: str, fallback: str = FALLBACK_NONE, *, limit: int = 5
@@ -209,9 +218,11 @@ class Index:
         begins = sorted(k for k in pool if k.startswith(key))
         near = difflib.get_close_matches(key, list(pool), n=limit * 3, cutoff=SUGGEST_CUTOFF)
         found: list[Entry] = []
+        seen: set[int] = set()  # the pool's entries are shared: who they are is enough
         for k in [*begins, *near]:
             entry = pool[k]
-            if entry not in found:
+            if id(entry) not in seen:
+                seen.add(id(entry))
                 found.append(entry)
             if len(found) == limit:
                 break
@@ -225,15 +236,18 @@ class Index:
         in alphabetical order. With nothing typed, the target ruleset's first names."""
         key = normalize(typed)
         pool = self._pool(target, fallback)
-        keys = sorted(pool)
+        keys = self._sorted_keys(target, fallback)
         if key:
             begins = [k for k in keys if k.startswith(key)]
-            words = [k for k in keys if k not in begins and f" {key}" in f" {k}"]
-            keys = begins + words
+            starts = set(begins)
+            keys = begins + [k for k in keys if k not in starts and f" {key}" in f" {k}"]
         found: list[Entry] = []
+        seen: set[int] = set()
         for k in keys:
-            if pool[k] not in found:
-                found.append(pool[k])
+            entry = pool[k]
+            if id(entry) not in seen:
+                seen.add(id(entry))
+                found.append(entry)
         found.sort(key=lambda e: e.edition != target)  # stable: the target's names first
         return found[:limit]
 
