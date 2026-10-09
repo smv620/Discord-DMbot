@@ -35,22 +35,30 @@ log = logging.getLogger(__name__)
 
 NO_PINGS = discord.AllowedMentions.none()
 CLOSED = (
-    "This proposal is closed (the session ended or DMbot restarted). To add the rule, use "
-    "`/dmbot houserules`."
+    "This offer has ended (the session is over, or DMbot restarted). To add the rule, press "
+    "**Add a house rule** in `/dmbot houserules`."
 )
 ONLY_DMS = "Only this campaign's DMs can use these buttons."
-FAILED = "Something went wrong. Try again in a moment."
+FAILED = (
+    "Couldn't save that. Nothing was changed. Press the button again, or use `/dmbot houserules`."
+)
 NOT_SAVED = (
     "_Nothing is saved unless you press **Save**. Everyone in the server can read house rules._"
 )
-CLASH_SHOWN = 3  # most existing rules named under a proposal
-CLASH_LINE_MAX = 200
+KEEPS_ALL = "**Save as new rule** keeps them all. To change one, use `/dmbot houserules`."
+NOT_SAVED_CLASH = (
+    "_Nothing is saved unless you press a button. Everyone in the server can read house rules._"
+)
+UNCHECKED = "_DMbot couldn't look at your house rules just now, so it didn't check for a repeat._"
+EXPIRES = "_These buttons stop working when the session ends._"
+CLASH_SHOWN = 2  # most existing rules named under a proposal
+CLASH_LINE_MAX = 120
 LABELS = {
-    "save": ("Save", "✅", discord.ButtonStyle.primary),
+    "save": ("Save rule", "✅", discord.ButtonStyle.primary),
     "edit": ("Edit", "✏️", discord.ButtonStyle.secondary),
     "cancel": ("Cancel", "✖️", discord.ButtonStyle.secondary),
-    "both": ("Keep both", "✅", discord.ButtonStyle.primary),
-    "replace": ("Replace rule {n}", "🔁", discord.ButtonStyle.secondary),
+    "both": ("Save as new rule", "✅", discord.ButtonStyle.primary),
+    "replace": ("Replace rule {n}", "🔁", discord.ButtonStyle.danger),
 }
 
 
@@ -78,24 +86,41 @@ def _md(text: str, limit: int) -> str:
 
 def proposal_text(proposal: Proposal) -> str:
     said = proposal.said
-    lines = [f"🏠 **New house rule?** “{_md(said.rule, 600)}”"]
+    lines = [f"🏠 **Save as a house rule?** You said: “{_md(said.rule, 600)}”"]
     if said.cut:
-        lines.append("_Only the first 500 characters fit; the rest is left out._")
+        lines.append("_Only the first 500 characters fit; the rest is left out. Press **Edit**._")
     if proposal.clashes:
-        lines.append("It may be about the same thing as:")
         for clash in proposal.clashes[:CLASH_SHOWN]:
-            lines.append(f"• House rule {clash.number}: {_md(clash.words, CLASH_LINE_MAX)}")
+            lines.append(f"House rule {clash.number} mentions the same thing: "
+                         f"“{_md(clash.words, CLASH_LINE_MAX)}”")  # fmt: skip
         if len(proposal.clashes) > CLASH_SHOWN:
-            lines.append(f"• …and {len(proposal.clashes) - CLASH_SHOWN} more: `/dmbot houserules`")
-        lines.append(f"Keep both, or replace house rule {proposal.clashes[0].number}?")
+            lines.append(f"…and {len(proposal.clashes) - CLASH_SHOWN} more: `/dmbot houserules`")
+        if len(proposal.clashes) == 1:
+            n = proposal.clashes[0].number
+            lines.append(
+                f"**Save as new rule** keeps both. **Replace rule {n}** swaps its words for these."
+            )
+        else:
+            lines.append(
+                "**Save as new rule** keeps them all. To change one, use `/dmbot houserules`."
+            )
+        lines.append(NOT_SAVED_CLASH)
     else:
+        if proposal.unchecked:
+            lines.append(UNCHECKED)
         lines.append(NOT_SAVED)
+    lines.append(EXPIRES)
     return "\n".join(lines)
 
 
 def proposal_view(guild_id: int, proposal_id: str, proposal: Proposal) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    actions = ["both", "replace", "cancel"] if proposal.clashes else ["save", "edit", "cancel"]
+    if not proposal.clashes:
+        actions = ["save", "edit", "cancel"]
+    elif len(proposal.clashes) == 1:  # replacing is offered only when it is clear what goes
+        actions = ["both", "replace", "cancel"]
+    else:
+        actions = ["both", "edit", "cancel"]
     for action in actions:
         number = proposal.clashes[0].number if proposal.clashes else 0
         view.add_item(HouseVoiceButton(guild_id, proposal_id, action, number))
@@ -169,17 +194,24 @@ async def press(
         await interaction.response.send_message(ONLY_DMS, ephemeral=True)
         return
     if action == "cancel":
-        table.house_voice.proposals.pop(proposal_id, None)
+        if table.house_voice.proposals.pop(proposal_id, None) is None:
+            await interaction.response.send_message(CLOSED, ephemeral=True)
+            return
         await _finish(interaction, "_Cancelled. Nothing was saved._")
         return
     if action == "edit":
-        from dmbot.ui.house_rules import ProposalForm
+        from dmbot.ui.house_rules import ProposalForm  # (that module imports this one's peers)
 
-        await interaction.response.send_modal(ProposalForm(campaign, proposal))
+        await interaction.response.send_modal(ProposalForm(campaign, proposal, proposal_id))
         return
     store = bot.house_rules
     if store is None:
         await interaction.response.send_message(FAILED, ephemeral=True)
+        return
+    # Claimed before the first await, so a second press (or another DM) finds it gone and
+    # nothing is saved twice; given back if the save is refused.
+    if table.house_voice.proposals.pop(proposal_id, None) is None:
+        await interaction.response.send_message(CLOSED, ephemeral=True)
         return
     try:
         if action == "replace":
@@ -195,10 +227,12 @@ async def press(
                 session_id=proposal.session_id,
             )
             note = f"✅ Saved as house rule {saved.number}."
-    except HouseRuleError as exc:
-        await interaction.response.send_message(str(exc), ephemeral=True)
-        return
-    table.house_voice.proposals.pop(proposal_id, None)
+    except BaseException as exc:
+        table.house_voice.proposals[proposal_id] = proposal
+        if isinstance(exc, HouseRuleError):
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        raise
     await _finish(interaction, note)
 
 
@@ -221,4 +255,7 @@ async def _replace(store: Any, campaign: Any, user_id: int, proposal: Proposal) 
         current.supersedes,
         unchanged_since=clash.version,
     )
-    return f"🔁 House rule {changed.number} now says this."
+    return (
+        f"🔁 House rule {changed.number} now says this. "
+        f"It used to say: “{_md(current.rule, CLASH_LINE_MAX)}”"
+    )

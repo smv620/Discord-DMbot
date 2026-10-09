@@ -224,9 +224,13 @@ class Proposing(TableTest):
         await self.deliver("house rule: potions are a bonus action")
         (post,) = self.posts
         self.assertEqual(post[0], SCREEN)
-        self.assertIn("🏠 **New house rule?** “Potions are a bonus action”", post[1])
+        self.assertIn(
+            "🏠 **Save as a house rule?** You said: “Potions are a bonus action”", post[1]
+        )
         self.assertIn("Nothing is saved unless you press **Save**", post[1])
-        self.assertEqual([str(b.item.label) for b in post[2].children], ["Save", "Edit", "Cancel"])
+        self.assertEqual(
+            [str(b.item.label) for b in post[2].children], ["Save rule", "Edit", "Cancel"]
+        )
         self.assertEqual(self.store.added, [])  # not saved until a press
         self.assertLessEqual(len(post[1]), 2000)
 
@@ -282,7 +286,7 @@ class Proposing(TableTest):
         (line,) = self.table.unsaved.take(lambda _user: True)
         self.assertEqual(line.heard, "house rule: potions are a bonus action")  # as said
         self.assertEqual({channel for channel, _, _ in self.posts}, {SCREEN})
-        self.assertNotIn("New house rule", line.text)
+        self.assertNotIn("house rule?", line.text)
 
 
 class Pressing(TableTest):
@@ -293,7 +297,7 @@ class Pressing(TableTest):
     async def test_save_writes_the_next_house_rule_with_where_it_came_from(self) -> None:
         view = await self.proposal()
         it = self.interaction(content=self.posts[0][1])
-        await self.button(view, "Save").callback(it)
+        await self.button(view, "Save rule").callback(it)
         (added,) = self.store.added
         self.assertEqual(added["rule"].rule, "Potions are a bonus action")
         self.assertRegex(added["scenario"], r"^Said at the table, \d{4}-\d{2}-\d{2}$")
@@ -301,7 +305,7 @@ class Pressing(TableTest):
         content, new_view = it.response.edited[0]
         self.assertIsNone(new_view)
         self.assertIn("✅ Saved as house rule 1.", content)
-        self.assertTrue(content.startswith("🏠 **New house rule?**"))
+        self.assertTrue(content.startswith("🏠 **Save as a house rule?**"))
         self.assertEqual(self.table.house_voice.proposals, {})
 
     async def test_cancel_saves_nothing_and_takes_the_buttons_away(self) -> None:
@@ -334,9 +338,9 @@ class Pressing(TableTest):
 
     async def test_an_edit_by_someone_who_is_not_a_dm_saves_nothing(self) -> None:
         view = await self.proposal()
+        (proposal_id,) = self.table.house_voice.proposals
         form = house_ui.ProposalForm(
-            campaign(),
-            self.table.house_voice.proposals[next(iter(self.table.house_voice.proposals))],
+            campaign(), self.table.house_voice.proposals[proposal_id], proposal_id
         )
         form.rule._value = "Potions are a free action"
         form.instead._value = ""
@@ -348,7 +352,7 @@ class Pressing(TableTest):
 
     async def test_a_player_is_refused_every_button(self) -> None:
         view = await self.proposal()
-        for label in ("Save", "Edit", "Cancel"):
+        for label in ("Save rule", "Edit", "Cancel"):
             it = self.interaction(PLAYER)
             it.response.send_modal = AsyncMock()
             await self.button(view, label).callback(it)
@@ -363,7 +367,7 @@ class Pressing(TableTest):
         view = await self.proposal()
         self.campaigns[C1] = campaign(dms=frozenset({PLAYER}))
         it = self.interaction(DM)
-        await self.button(view, "Save").callback(it)
+        await self.button(view, "Save rule").callback(it)
         self.assertEqual(it.response.sent[0][0], screen.ONLY_DMS)
         self.assertEqual(self.store.added, [])
 
@@ -371,12 +375,12 @@ class Pressing(TableTest):
         view = await self.proposal()
         del self.bot.tables[GUILD]
         it = self.interaction()
-        await self.button(view, "Save").callback(it)
+        await self.button(view, "Save rule").callback(it)
         self.assertEqual(it.response.sent[0][0], screen.CLOSED)
         self.bot.tables[GUILD] = self.table
         it = self.interaction()
         it.guild_id = 99  # another server's press
-        await self.button(view, "Save").callback(it)
+        await self.button(view, "Save rule").callback(it)
         self.assertEqual(it.response.sent[0][0], screen.CLOSED)
         it = self.interaction()
         await HouseVoiceButton(GUILD, "deadbeef", "save").callback(it)
@@ -387,7 +391,7 @@ class Pressing(TableTest):
         view = await self.proposal()
         self.store.add = AsyncMock(side_effect=HouseRuleError(house.FULL))  # type: ignore[method-assign]
         it = self.interaction()
-        await self.button(view, "Save").callback(it)
+        await self.button(view, "Save rule").callback(it)
         self.assertEqual(it.response.sent[0][0], house.FULL)
         self.assertEqual(it.response.edited, [])  # the buttons stay for another try
 
@@ -406,19 +410,20 @@ class Conflicts(TableTest):
         self.store.seed("Nobody may rest in a dungeon")
         await self.deliver("house rule: Fireball is a bonus action")
         (post,) = self.posts
-        self.assertIn("It may be about the same thing as:", post[1])
-        self.assertIn("• House rule 1: Fireball burns scrolls", post[1])
+
+        self.assertIn("House rule 1 mentions the same thing: “Fireball burns scrolls”", post[1])
         self.assertNotIn("House rule 2", post[1])  # not about Fireball
-        self.assertIn("Keep both, or replace house rule 1?", post[1])
+        self.assertIn("**Replace rule 1** swaps its words", post[1])
         self.assertEqual(
-            [str(b.item.label) for b in post[2].children], ["Keep both", "Replace rule 1", "Cancel"]
+            [str(b.item.label) for b in post[2].children],
+            ["Save as new rule", "Replace rule 1", "Cancel"],
         )
 
     async def test_no_clash_when_the_words_name_nothing_in_common(self) -> None:
         self.store.seed("Fireball burns scrolls")
         await self.deliver("house rule: potions are a bonus action")
         self.assertEqual(
-            [str(b.item.label) for b in self.posts[0][2].children], ["Save", "Edit", "Cancel"]
+            [str(b.item.label) for b in self.posts[0][2].children], ["Save rule", "Edit", "Cancel"]
         )
 
     async def test_another_campaigns_rules_never_clash(self) -> None:
@@ -433,7 +438,7 @@ class Conflicts(TableTest):
         self.store.seed("Fireball burns scrolls")
         await self.deliver("house rule: Fireball is a bonus action")
         it = self.interaction(content=self.posts[0][1])
-        await self.button(self.posts[0][2], "Keep both").callback(it)
+        await self.button(self.posts[0][2], "Save as new rule").callback(it)
         self.assertEqual(len(self.store.rules), 2)
         self.assertIn("✅ Saved as house rule 2.", it.response.edited[0][0])
 
@@ -446,6 +451,7 @@ class Conflicts(TableTest):
         self.assertEqual((rule.number, rule.rule), (1, "Fireball is a bonus action"))
         self.assertEqual(rule.supersedes, "Fireball only damages")  # kept
         self.assertIn("🔁 House rule 1 now says this.", it.response.edited[0][0])
+        self.assertIn("It used to say: “Fireball burns scrolls”", it.response.edited[0][0])
 
     async def test_replace_is_refused_if_another_dm_changed_the_rule_meanwhile(self) -> None:
         self.store.seed("Fireball burns scrolls")
@@ -471,9 +477,72 @@ class Conflicts(TableTest):
             self.store.seed(f"Fireball variant {n}")
         await self.deliver("house rule: Fireball is a bonus action")
         text = self.posts[0][1]
-        self.assertEqual(text.count("• House rule"), screen.CLASH_SHOWN)
-        self.assertIn("…and 2 more", text)
+        self.assertEqual(text.count("mentions the same thing"), screen.CLASH_SHOWN)
+        self.assertIn("…and 3 more", text)
+        self.assertEqual(
+            [str(b.item.label) for b in self.posts[0][2].children],
+            ["Save as new rule", "Edit", "Cancel"],  # no Replace when it is unclear which
+        )
         self.assertLessEqual(len(text), 2000)
+
+
+class Races(TableTest):
+    async def test_two_presses_of_save_write_one_rule(self) -> None:
+        await self.deliver("house rule: potions are a bonus action")
+        view = self.posts[0][2]
+        real = self.store.add
+
+        async def slow(*args: Any, **kwargs: Any) -> HouseRule:
+            await asyncio.sleep(0)
+            return await real(*args, **kwargs)
+
+        self.store.add = slow  # type: ignore[method-assign]
+        first, second = self.interaction(), self.interaction()
+        await asyncio.gather(
+            self.button(view, "Save rule").callback(first),
+            self.button(view, "Save rule").callback(second),
+        )
+        self.assertEqual(len(self.store.added), 1)
+        self.assertEqual(len(first.response.edited) + len(second.response.edited), 1)
+        closed = first.response.sent or second.response.sent
+        self.assertEqual(closed[0][0], screen.CLOSED)
+
+    async def test_a_refused_save_gives_the_proposal_back(self) -> None:
+        await self.deliver("house rule: potions are a bonus action")
+        self.store.add = AsyncMock(side_effect=HouseRuleError(house.FULL))  # type: ignore[method-assign]
+        await self.button(self.posts[0][2], "Save rule").callback(self.interaction())
+        self.assertEqual(len(self.table.house_voice.proposals), 1)
+
+    async def test_an_edit_saved_twice_writes_one_rule(self) -> None:
+        await self.deliver("house rule: potions are a bonus action")
+        (proposal_id,) = self.table.house_voice.proposals
+        proposal = self.table.house_voice.proposals[proposal_id]
+        forms = [house_ui.ProposalForm(campaign(), proposal, proposal_id) for _ in range(2)]
+        submits = [self.interaction(), self.interaction()]
+        for form in forms:
+            form.rule._value, form.instead._value = "Potions are free", ""
+        for form, submit in zip(forms, submits, strict=True):
+            await form.on_submit(submit)
+        self.assertEqual(len(self.store.added), 1)
+        self.assertEqual(submits[1].response.sent[0][0], screen.CLOSED)
+        self.assertEqual(self.table.house_voice.proposals, {})
+
+
+class Trouble(TableTest):
+    async def test_unreadable_house_rules_are_said_not_hidden(self) -> None:
+        self.store.list = AsyncMock(side_effect=TimeoutError)  # type: ignore[method-assign]
+        await self.deliver("house rule: potions are a bonus action")
+        self.assertIn(screen.UNCHECKED, self.posts[0][1])
+
+    async def test_a_post_that_raises_gives_back_the_words(self) -> None:
+        async def broken(channel_id: int, text: str, view: Any = None) -> None:
+            raise RuntimeError("boom")
+
+        self.bot.post_message = broken  # type: ignore[method-assign]
+        await self.deliver("house rule: potions are a bonus action")
+        self.assertEqual(
+            (self.table.house_voice.seen, self.table.house_voice.proposals), (set(), {})
+        )
 
 
 class Registration(unittest.TestCase):

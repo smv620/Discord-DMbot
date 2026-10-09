@@ -77,6 +77,7 @@ class Proposal:
     clashes: tuple[Clash, ...] = ()
     scenario: str = ""
     session_id: str | None = None
+    unchecked: bool = False  # the campaign's house rules couldn't be read, so no clash check
 
 
 @dataclass(slots=True)

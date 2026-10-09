@@ -492,9 +492,14 @@ alerts yet; those build on this.
   is saved until a DM presses Save. Edit opens the same form as Add, with the rule filled
   in. A saved rule records `scenario` ("Said at the table, <date>") and `session_id`.
 - **Simple conflicts:** the rule-card name matcher finds this campaign's rules that name
-  the same spell, condition or creature; the proposal shows them and offers **Keep both**,
-  **Replace rule N** (the old rule keeps its number and its "instead of") or Cancel. A
-  rule changed by another DM meanwhile is never replaced. The wording stays "house rule".
+  the same spell, condition or creature; the proposal shows up to two and says what each
+  button does. With one clash: **Save as new rule** (keeps both), **Replace rule N** (the
+  old rule keeps its number and its "instead of"; the note says what it used to say) or
+  Cancel. With several: Save as new rule, Edit or Cancel, never Replace (it would be unclear
+  which goes). A rule changed by another DM meanwhile is never replaced.
+- **One save only:** a proposal is claimed before the save, so two presses (or two DMs)
+  write one rule; it is given back if the save is refused. If the campaign's rules couldn't
+  be read, the proposal says it didn't check for a repeat.
 - **Limits:** one proposal a minute, and the same words once a session. If the post fails
   the words and the minute are given back.
 - **Every press** re-checks that the person is a DM of that campaign now; a proposal is

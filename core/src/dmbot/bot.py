@@ -2085,10 +2085,13 @@ class DMBot(commands.AutoShardedBot):
         if text:
             try:  # a card is never worth a lost line: nothing below may be skipped
                 self._note_rules(table, utterance.user_id, str(cleaned or text))
+            except Exception:
+                log.exception("Rules cards: couldn't look at a line")
+            try:
                 if utterance.user_id in table.dm_user_ids:  # only a DM can start a proposal
                     self._note_house_rule(table, utterance.user_id, str(cleaned or text))
             except Exception:
-                log.exception("Rules cards: couldn't look at a line")
+                log.exception("House rules by voice: couldn't look at a line")
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
             table.unsaved.add(
@@ -2180,15 +2183,21 @@ class DMBot(commands.AutoShardedBot):
         """Post the proposal in the DM screen only. A proposal that can't be shown gives its
         words and its minute back."""
         rules: list[HouseRule] = []
+        unchecked = True
         if self.house_rules is not None and table.campaign_id is not None:
             try:  # this campaign's own house rules and no other's
                 async with asyncio.timeout(RULES_CARD_DB_S):
                     rules = await self.house_rules.list(table.guild_id, table.campaign_id)
+                unchecked = False
+            except TimeoutError:
+                log.warning("Reading house rules for a proposal took too long")
             except Exception:
                 log.exception("Couldn't read house rules for a proposal")
-        clashing = house_voice_screen.clashes(proposal.said, rules, *table.rules_rulesets)
+        clashing = await asyncio.to_thread(  # the first build of the names takes ~0.15 s
+            house_voice_screen.clashes, proposal.said, rules, *table.rules_rulesets
+        )
         proposal = house_voice.Proposal(
-            proposal.said, clashing, proposal.scenario, proposal.session_id
+            proposal.said, clashing, proposal.scenario, proposal.session_id, unchecked
         )
         # After the awaits: the DM's words are shown, so they must still be recorded and the
         # session still running.
@@ -2200,11 +2209,15 @@ class DMBot(commands.AutoShardedBot):
             table.house_voice.forget(proposal_id, before, now)
             return
         table.house_voice.proposals[proposal_id] = proposal
-        posted = await self.post_message(
-            table.screen_channel_id,
-            house_voice_screen.proposal_text(proposal),
-            house_voice_screen.proposal_view(table.guild_id, proposal_id, proposal),
-        )
+        try:
+            posted = await self.post_message(
+                table.screen_channel_id,
+                house_voice_screen.proposal_text(proposal),
+                house_voice_screen.proposal_view(table.guild_id, proposal_id, proposal),
+            )
+        except Exception:
+            log.exception("Couldn't post a house rule proposal")
+            posted = None
         if posted is None:
             table.house_voice.forget(proposal_id, before, now)
 
