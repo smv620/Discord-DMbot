@@ -144,3 +144,56 @@ def hours_left_words(left_minutes: int) -> str:
         return "about half an hour"
     amount = f"{whole}½" if half else str(whole)
     return f"about {amount} {'hour' if halves == 2 else 'hours'}"
+
+
+def ordinal(day: int) -> str:
+    """14 -> "14th": the day a month ends, in the words used in messages."""
+    if 10 <= day % 100 <= 20:
+        return f"{day}th"
+    return f"{day}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th') }"
+
+
+def account_link(site_url: str) -> str:
+    """Where a message sends someone to pick or change a plan; plain words until the
+    website's address is set (#437)."""
+    return f"{site_url}/account" if site_url else "DMbot's website"
+
+
+NOT_THE_OWNER = (
+    "DMbot can't start this campaign right now. Ask whoever set it up to check their plan."
+)
+NO_OWNER = (
+    "This campaign has no owner yet, so DMbot doesn't know whose hours it uses. Open "
+    "⚙️ Settings, press **Take it on**, then start again."
+)
+
+
+def refusal(
+    verdict: Verdict, *, is_owner: bool, site_url: str = "", month_end: int | None = None
+) -> str | None:
+    """The plain words for a refused start, or None if it may go ahead. Only the owner is
+    told why; anyone else starting the campaign is told to ask, and never learns about the
+    owner's plan or hours (#437)."""
+    if verdict == "ok":
+        return None
+    if not is_owner:
+        return NOT_THE_OWNER
+    where = account_link(site_url)
+    if verdict == "no_plan":
+        return (
+            f"Your plan has ended. Pick one at {where}."
+            if site_url
+            else ("Your plan has ended. Pick one on DMbot's website.")
+        )
+    until = (
+        f" until the {ordinal(datetime.fromtimestamp(month_end, UTC).day)}"
+        if month_end is not None
+        else ""
+    )
+    return f"Your hours are used up{until}. Add 10 hours or change your plan at {where}."
+
+
+def warning_text(left_minutes: int) -> str:
+    """The DM-screen warning as hours run low: "About 4 hours left this month." """
+    words = hours_left_words(left_minutes)
+    return f"⏳ {words[0].upper()}{words[1:]} left this month. (Hours are DMbot's listening time.)"

@@ -1599,9 +1599,13 @@ campaign's data and never goes into a backup. A session's minutes run from its s
 Try It its 30 days; a grant that is Guild-level, calendar months from the day it started
 (a 29th to 31st start falls on the month's last day); a grant overlapping a paid plan, the
 paid plan's month; the free list and "no limits" grants have no limit but are still
-recorded, in UTC calendar months. *2b, the checks (next):* `/dmbot start` refuses when the
-plan has ended, hours are used up or owned campaigns are over the cap ("paused" waits for
-the downgrade part); warnings at 80% and 90%; the cap finish. All of 2b acts only when
+recorded, in UTC calendar months. *2b, the checks, built in two steps:* (i) `/dmbot start` refuses when the plan has
+ended or the hours are used up (a campaign with no owner is asked to be taken on first), and
+the DM screen warns when the hours pass 80% and 90% (said once each, "About 4 hours left
+this month"); a database hiccup lets the start go ahead rather than lock a table out;
+(ii) the cap finish. *2c (decided with Supervisor):* the campaign count, in an owner-scoped
+table kept in step by a trigger on `campaigns`, since a person's campaigns span servers;
+"paused" waits for the downgrade part. All of 2b acts only when
 `DMBOT_ENFORCE_PLANS` is on (default off; the meter records either way), which dev1 turns
 on with the website's go-live (#498) and notes in the testing log. The refusal for a plan
 that has ended says "Your plan has ended. Pick one at <WEB_SITE_URL>/account." (or "Pick

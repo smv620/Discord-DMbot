@@ -13,6 +13,7 @@ The meter records for everyone. Whether a refusal follows is a separate switch
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from dmbot import entitlements, hours
@@ -28,12 +29,45 @@ def calendar_month(now: int) -> hours.Month:
     return hours.Month(int(start.timestamp()), int(nxt.timestamp()))
 
 
-async def month_of(conn: Conn, owner_user_id: int, now: int) -> hours.Month:
-    """The month this owner's hours belong to now. Needs an open transaction."""
+@dataclass(frozen=True, slots=True)
+class Standing:
+    """An owner's hours at one moment: what they may do, the month the hours belong to,
+    and the minutes recorded in it (before and after what was just added)."""
+
+    access: entitlements.Access
+    month: hours.Month
+    used_before: int
+    used_after: int
+
+
+async def standing_of(conn: Conn, owner_user_id: int, now: int) -> Standing:
+    """The owner's access, month and recorded minutes. Needs an open transaction with the
+    owner set (Database.meter)."""
     plan, grant, access = await entitlements.inputs(conn, owner_user_id, now)
-    return hours.month_for(access, plan, grant.granted_at if grant else None, now) or (
+    month = hours.month_for(access, plan, grant.granted_at if grant else None, now) or (
         calendar_month(now)
     )
+    used = await minutes_this_month(conn, owner_user_id, month)
+    return Standing(access, month, used, used)
+
+
+async def month_of(conn: Conn, owner_user_id: int, now: int) -> hours.Month:
+    """The month this owner's hours belong to now. Needs an open transaction."""
+    return (await standing_of(conn, owner_user_id, now)).month
+
+
+async def check_start(db: Database, guild_id: int, owner_user_id: int, now: int) -> StartCheck:
+    """May this owner's campaign start listening? Reads only; the bot refuses with
+    `hours.refusal` when the verdict isn't "ok"."""
+    async with db.meter(guild_id, owner_user_id) as conn:
+        s = await standing_of(conn, owner_user_id, now)
+    return StartCheck(hours.start_verdict(s.access, s.used_before), s.month)
+
+
+@dataclass(frozen=True, slots=True)
+class StartCheck:
+    verdict: hours.Verdict
+    month: hours.Month
 
 
 async def add_minutes(
@@ -45,27 +79,28 @@ async def add_minutes(
     session_started_at: int,
     minutes: int,
     now: int,
-) -> hours.Month:
-    """Add listening minutes for this owner, in both tables at once. Returns the month
-    they were recorded in."""
+) -> Standing:
+    """Add listening minutes for this owner, in both tables at once. Returns where their
+    hours stand now (the month they were recorded in, and the minutes before and after)."""
     async with db.meter(guild_id, owner_user_id) as conn:
-        month = await month_of(conn, owner_user_id, now)
-        if minutes > 0:  # (nothing to add still names the month)
-            await conn.execute(
-                "INSERT INTO session_usage (guild_id, campaign_id, session_started_at,"
-                " owner_user_id, minutes, updated_at) VALUES (%s, %s, %s, %s, %s, %s)"
-                " ON CONFLICT (guild_id, campaign_id, session_started_at, owner_user_id)"
-                " DO UPDATE SET minutes = session_usage.minutes + EXCLUDED.minutes,"
-                " updated_at = EXCLUDED.updated_at",
-                (guild_id, campaign_id, session_started_at, owner_user_id, minutes, now),
-            )
-            await conn.execute(
-                "INSERT INTO owner_hours (owner_user_id, month_start, minutes)"
-                " VALUES (%s, %s, %s) ON CONFLICT (owner_user_id, month_start)"
-                " DO UPDATE SET minutes = owner_hours.minutes + EXCLUDED.minutes",
-                (owner_user_id, month.start, minutes),
-            )
-    return month
+        s = await standing_of(conn, owner_user_id, now)
+        if minutes <= 0:
+            return s
+        await conn.execute(
+            "INSERT INTO session_usage (guild_id, campaign_id, session_started_at,"
+            " owner_user_id, minutes, updated_at) VALUES (%s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT (guild_id, campaign_id, session_started_at, owner_user_id)"
+            " DO UPDATE SET minutes = session_usage.minutes + EXCLUDED.minutes,"
+            " updated_at = EXCLUDED.updated_at",
+            (guild_id, campaign_id, session_started_at, owner_user_id, minutes, now),
+        )
+        await conn.execute(
+            "INSERT INTO owner_hours (owner_user_id, month_start, minutes)"
+            " VALUES (%s, %s, %s) ON CONFLICT (owner_user_id, month_start)"
+            " DO UPDATE SET minutes = owner_hours.minutes + EXCLUDED.minutes",
+            (owner_user_id, s.month.start, minutes),
+        )
+    return Standing(s.access, s.month, s.used_before, s.used_before + minutes)
 
 
 async def minutes_this_month(conn: Conn, owner_user_id: int, month: hours.Month) -> int:
@@ -109,7 +144,7 @@ class Meter:
         session_started_at: int,
         minutes: int,
         now: int,
-    ) -> hours.Month:
+    ) -> Standing:
         return await add_minutes(
             self.db,
             guild_id=guild_id,
@@ -122,3 +157,6 @@ class Meter:
 
     async def recorded(self, guild_id: int, campaign_id: str, started_at: int) -> int:
         return await session_minutes(self.db, guild_id, campaign_id, started_at)
+
+    async def check(self, guild_id: int, owner_user_id: int, now: int) -> StartCheck:
+        return await check_start(self.db, guild_id, owner_user_id, now)

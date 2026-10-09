@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import time
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,15 +41,17 @@ class UsageTest(DatabaseTest):
     async def add(
         self, guild: int, campaign_id: str, owner: int, minutes: int, started: int = START
     ) -> hours.Month:
-        return await usage.add_minutes(
-            self.db,
-            guild_id=guild,
-            campaign_id=campaign_id,
-            owner_user_id=owner,
-            session_started_at=started,
-            minutes=minutes,
-            now=NOW,
-        )
+        return (
+            await usage.add_minutes(
+                self.db,
+                guild_id=guild,
+                campaign_id=campaign_id,
+                owner_user_id=owner,
+                session_started_at=started,
+                minutes=minutes,
+                now=NOW,
+            )
+        ).month
 
     async def owner_minutes(self, owner: int, month: hours.Month) -> int:
         async with self.db.user(owner) as conn:
@@ -369,6 +372,118 @@ class TheBotMeters(UsageTest):
 
 async def _false(*args: object, **kwargs: object) -> bool:
     return False
+
+
+class PlanChecks(UsageTest):
+    SITE = "https://dmbot.example"
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot = self.make_bot(enforce=True)
+
+    def make_bot(self, *, enforce: bool) -> DMBot:
+        return DMBot(
+            Settings(discord_token="t", ears_secret="s", enforce_plans=enforce, site_url=self.SITE),
+            ConsentStore(self.db),
+            self.campaigns,
+            SessionStore(self.db),
+            meter=usage.Meter(self.db),
+        )
+
+    async def campaign(self) -> object:
+        return await self.campaigns.get(GUILD_A, self.a.id)
+
+    async def refusal(self, starter: int = OWNER, bot: DMBot | None = None) -> str | None:
+        campaign = await self.campaign()
+        return await (bot or self.bot).plan_refusal(GUILD_A, campaign, starter)  # type: ignore[arg-type]
+
+    async def test_off_by_default_nobody_is_refused(self) -> None:
+        self.assertIsNone(await self.refusal(bot=self.make_bot(enforce=False)))
+
+    async def test_an_owner_with_no_plan_is_told_to_pick_one(self) -> None:
+        self.assertEqual(
+            await self.refusal(), f"Your plan has ended. Pick one at {self.SITE}/account."
+        )
+
+    async def test_a_co_dm_is_not_told_about_the_owners_plan(self) -> None:
+        self.assertEqual(await self.refusal(starter=NEW_OWNER), hours.NOT_THE_OWNER)
+
+    async def test_a_plan_with_hours_left_may_start(self) -> None:
+        await self.give_plan(OWNER, period_start=NOW - 1000, period_end=int(time.time()) + 5000)
+        self.assertIsNone(await self.refusal())
+
+    async def test_used_up_hours_are_refused_until_the_period_ends(self) -> None:
+        # (The plan covers the fixed NOW the minutes are recorded at and the real now of the check.)
+        await self.give_plan(
+            OWNER, period_start=NOW - 1000, period_end=int(time.time()) + 5000, hours_cap=1
+        )
+        await self.add(GUILD_A, self.a.id, OWNER, 60)
+        text = await self.refusal()
+        self.assertIsNotNone(text)
+        self.assertIn("Your hours are used up until the", text or "")
+        self.assertIn(f"{self.SITE}/account", text or "")
+
+    async def test_a_free_account_has_no_limit(self) -> None:
+        entitlements.configure_free_users([OWNER])
+        await self.add(GUILD_A, self.a.id, OWNER, 10_000)
+        self.assertIsNone(await self.refusal())
+
+    async def test_a_campaign_with_no_owner_is_asked_to_be_taken_on(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = NULL WHERE id = %s", (self.a.id,)
+            )
+        self.assertEqual(await self.refusal(), hours.NO_OWNER)
+
+    async def test_a_database_failure_lets_the_game_start(self) -> None:
+        from unittest.mock import patch
+
+        broken = patch.object(usage.Meter, "check", side_effect=RuntimeError("down"))
+        with broken, self.assertLogs("dmbot.bot", "ERROR"):
+            self.assertIsNone(await self.refusal())
+
+    async def test_crossing_80_percent_warns_the_dm_screen_once(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        await self.give_plan(OWNER, period_start=NOW - 1000, period_end=NOW + 5000, hours_cap=1)
+        await self.add(GUILD_A, self.a.id, OWNER, 47, started=START - 9)  # 78% used
+        table = Table(
+            guild_id=GUILD_A,
+            voice_channel_id=2,
+            screen_channel_id=77,
+            dm_user_id=OWNER,
+            segmenter=Segmenter(GUILD_A),
+            campaign_id=self.a.id,
+            campaign_name="F",
+            started_at=NOW - 120,
+        )
+        self.bot.tables[GUILD_A] = table
+        with patch.object(self.bot, "post", new=AsyncMock()) as post:
+            await self.bot.meter_table(table, NOW)  # +2 minutes: 81%
+            await self.bot.meter_table(table, NOW + 60)  # +1 more: still past, said once
+        post.assert_awaited_once()
+        self.assertEqual(post.await_args.args[0], 77)  # type: ignore[union-attr]
+        self.assertIn("left this month", post.await_args.args[1])  # type: ignore[union-attr]
+
+    async def test_no_warning_when_checks_are_off(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        bot = self.make_bot(enforce=False)
+        await self.give_plan(OWNER, period_start=NOW - 1000, period_end=NOW + 5000, hours_cap=1)
+        table = Table(
+            guild_id=GUILD_A,
+            voice_channel_id=2,
+            screen_channel_id=77,
+            dm_user_id=OWNER,
+            segmenter=Segmenter(GUILD_A),
+            campaign_id=self.a.id,
+            campaign_name="F",
+            started_at=NOW - 55 * 60,
+        )
+        bot.tables[GUILD_A] = table
+        with patch.object(bot, "post", new=AsyncMock()) as post:
+            await bot.meter_table(table, NOW)
+        post.assert_not_awaited()
 
 
 class OnlyUsageOpensTheMeter(unittest.TestCase):
