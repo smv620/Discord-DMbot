@@ -5,6 +5,7 @@ restore, start) count from it."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from psycopg import errors as pg_errors
@@ -279,6 +280,36 @@ class Enforced(OwnerCampaignsTest):
         self.assertEqual(
             await self.strict.accept_handover(GUILD_A, offer2.id, CAROL, NOW), "accepted"
         )
+
+    async def test_two_hand_overs_at_once_cannot_push_a_buyer_over_the_cap(self) -> None:
+        await self.give_plan(BOB, 2)
+        await self.store.create(GUILD_B, "Bob's own", BOB)  # one short of the cap
+        first = await self.store.create(GUILD_A, "First", ALICE)
+        second = await self.store.create(GUILD_A, "Second", CAROL)
+        offers = [
+            await self.store.offer_handover(
+                GUILD_A, c.id, by, BOB, NOW, from_name="Seller", to_name="Bob"
+            )
+            for c, by in ((first, ALICE), (second, CAROL))
+        ]
+        results = await asyncio.gather(
+            *(self.strict.accept_handover(GUILD_A, o.id, BOB, NOW) for o in offers)
+        )
+        self.assertEqual(sorted(results), ["accepted", "no_free_slot"])
+        self.assertEqual(len(await self.owned(BOB)), 2)  # at the cap, not over it
+        await self.assert_in_step(ALICE, BOB, CAROL)
+
+    async def test_the_sync_setting_is_put_back_as_it_was(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("SELECT set_config('dmbot.owner_sync', 'before', true)")
+            await conn.execute(
+                "INSERT INTO campaigns (id, guild_id, name, name_key, created_at,"
+                " target_ruleset, fallback_ruleset, owner_user_id)"
+                " VALUES ('c1', %s, 'N', 'n', 0, '2024', '2014', %s)",
+                (GUILD_A, ALICE),
+            )
+            cur = await conn.execute("SELECT current_setting('dmbot.owner_sync') AS v")
+            self.assertEqual((await cur.fetchone() or {})["v"], "before")
 
     async def test_taking_on_needs_room(self) -> None:
         await self.give_plan(BOB, 1)

@@ -58,4 +58,11 @@ async def room(conn: Conn, user_id: int, now: int) -> Room:
 async def has_room_for_one_more(conn: Conn, user_id: int, now: int) -> bool:
     """The campaign store's free-slot check when plans are enforced (CampaignStore's
     `has_free_slot`): handing over, taking on and restoring each make one more."""
+    # One at a time per person, until this transaction ends: two hand-overs (or a hand-over
+    # and a restore) to someone one short of their cap each count before the other has
+    # written, and both would pass. The campaign lock is taken first by every caller, and
+    # this is the only lock after it, so they cannot wait on each other.
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"dmbot.owner_slots:{user_id}",)
+    )
     return (await room(conn, user_id, now)).fits(1)

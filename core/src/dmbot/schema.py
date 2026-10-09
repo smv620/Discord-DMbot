@@ -1203,11 +1203,13 @@ OWNER_CAMPAIGNS = (
     -- over, deleted or removed with its server. The trigger runs inside a server-scoped
     -- transaction (or the website's, for an accepted hand-over) but writes an owner-scoped
     -- table, and the caller may have no grant on it: so the function runs with its owner's
-    -- rights (SECURITY DEFINER), with a search_path fixed when it is made, and does nothing
-    -- but this one insert, delete or move.
+    -- rights (SECURITY DEFINER), with a search_path fixed below, and does nothing but this
+    -- one insert, delete or move.
     CREATE FUNCTION dmbot_sync_owner_campaigns() RETURNS trigger
-        LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT
+        LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
     BEGIN
         PERFORM set_config('dmbot.owner_sync', 'trigger', true);
         IF TG_OP = 'INSERT' THEN
@@ -1230,10 +1232,19 @@ OWNER_CAMPAIGNS = (
                     VALUES (NEW.owner_user_id, NEW.id) ON CONFLICT DO NOTHING;
             END IF;
         END IF;
-        PERFORM set_config('dmbot.owner_sync', '', true);
+        PERFORM set_config('dmbot.owner_sync', before, true);
         RETURN NULL;
     END
     $fn$;
+    -- Fixed: the system catalogue, this schema (the one the migration runs in), and the
+    -- temporary schema last, so nothing a caller makes can stand in for a name used above.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_sync_owner_campaigns() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
     REVOKE ALL ON FUNCTION dmbot_sync_owner_campaigns() FROM PUBLIC;
     CREATE TRIGGER owner_campaigns_sync
         AFTER INSERT OR DELETE OR UPDATE OF owner_user_id ON campaigns

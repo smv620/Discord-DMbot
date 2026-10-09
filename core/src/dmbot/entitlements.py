@@ -232,7 +232,7 @@ async def as_person(conn: Conn, user_id: int) -> AsyncIterator[None]:
     in `read`; the owner's campaign count in `usage.owned_count`)."""
     if conn.info.transaction_status != pq.TransactionStatus.INTRANS:
         raise RuntimeError(
-            "entitlements.read and effective need an open transaction (use Database.guild)"
+            "Reading a person's rows here needs an open transaction (use Database.guild)"
         )
     cur = await conn.execute("SELECT current_setting('dmbot.user_id', true) AS before")
     before = await cur.fetchone()
