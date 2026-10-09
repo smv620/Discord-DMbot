@@ -1652,11 +1652,13 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
             "get any new other names)."
         )
     else:
+        messages = -(-len(files) // FILES_PER_MESSAGE)
+        more = f", {messages} messages" if messages > 1 else ""
         intro = (
-            f"📤 **All {count:,} names for {_md(campaign.name)}: {len(files)} files.**\n"
+            f"📤 **All {count:,} names for {_md(campaign.name)}, in {len(files)} files{more}.**\n"
             + (secret_warning.format("these files") + "\n" if secrets else "")
-            + f"One file is too small to hold them all. Add each one with {UPLOAD}, in any "
-            "order. Adding one twice does no harm.\n"
+            + f"To add them again, upload them one at a time with {UPLOAD}, in any order. "
+            "Adding a file twice does no harm.\n"
             "Names still waiting in 📝 Check new names aren't included."
         )
     for at in range(0, len(files), FILES_PER_MESSAGE):
@@ -1664,9 +1666,9 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
         await interaction.followup.send(
             intro
             if at == 0
-            else f"📤 Files {at + 1} to {at + len(batch)} of {len(files)} for "
-            f"{_md(campaign.name)}. Add them with {UPLOAD}."
-            + (" ⚠️ Secret names inside." if secrets else ""),
+            else f"📤 **Files {at + 1} to {at + len(batch)} of {len(files)}** for "
+            f"{_md(campaign.name)}. Upload them the same way, one at a time."
+            + ("\n" + secret_warning.format("these files") if secrets else ""),
             files=batch,
             ephemeral=True,
             allowed_mentions=NO_PINGS,

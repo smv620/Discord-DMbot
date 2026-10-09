@@ -230,6 +230,45 @@ class BigDownload(unittest.TestCase):
             self.assertEqual(parsed.refused, [])
             self.assertLessEqual(sum(len(x.others) for x in parsed.lines), MAX_ADDED)
 
+    def test_secret_names_count_toward_the_add_cap_of_each_file(self) -> None:
+        names = [
+            OutName(f"Name {i:05}", "npc", ("a", "b", "c"), ("x", "y", "z")) for i in range(1000)
+        ]
+        files = render_files(names, campaign="Frostmaiden", secrets=True)
+        self.assertGreater(len(files), 1)  # 6,000 added is more than one upload takes
+        for text in files:
+            parsed = parse(text, secrets=True)
+            self.assertEqual(parsed.refused, [])
+            added = sum(len(x.others) + len(x.secrets) for x in parsed.lines)
+            self.assertLessEqual(added, MAX_ADDED)
+
+    def test_a_name_on_several_lines_that_would_pass_the_line_limit_opens_the_next_file(
+        self,
+    ) -> None:
+        from dmbot.memory.name_list import _prelude
+
+        base = "\n".join(_prelude(campaign="Frostmaiden", secrets=False, part=None))
+        room = MAX_LINES - (base.count("\n") + 1)
+        many = tuple(f"Bell {i}" for i in range(45))  # three lines
+        names = [OutName(f"Name {i:05}", "npc", (), ()) for i in range(room - 2)]  # 2 lines left
+        names.append(OutName("Zzz Belleros", "npc", many, ()))
+        files = render_files(names, campaign="Frostmaiden", secrets=False)
+        self.assertEqual(len(files), 2)
+        for text in files:
+            self.assertLessEqual(len(text.splitlines()), MAX_LINES)
+        self.assertNotIn("Zzz Belleros", files[0])
+        self.assertEqual(files[1].count("\nZzz Belleros | NPC"), 3)
+
+    def test_the_file_number_notes_fit_in_the_size_limit(self) -> None:
+        # Names of one length, so a file stops within a few bytes of the limit: the lines
+        # saying "file i of n" must have been counted, or the file would pass it.
+        names = [OutName(f"N{i:07}", "npc", ("o" * 130,), ()) for i in range(6_000)]
+        files = render_files(names, campaign="Frostmaiden", secrets=False)
+        self.assertGreater(len(files), 1)
+        sizes = [len(text.encode()) for text in files]
+        self.assertLessEqual(max(sizes), MAX_FILE_BYTES)
+        self.assertGreater(max(sizes), MAX_FILE_BYTES - 120)  # and no more room is wasted
+
     def test_no_names_is_one_header_only_file(self) -> None:
         files = render_files([], campaign="Frostmaiden", secrets=False)
         self.assertEqual(files, [render([], campaign="Frostmaiden", secrets=False)])

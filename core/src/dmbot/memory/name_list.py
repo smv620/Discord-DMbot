@@ -341,16 +341,22 @@ def lines_for(name: str, kind: str, others: Sequence[str], secrets: Sequence[str
     return out
 
 
-def _prelude(*, campaign: str, secrets: bool, part: str = "") -> list[str]:
+def _prelude(*, campaign: str, secrets: bool, part: tuple[int, int] | None = None) -> list[str]:
     """The lines every download file starts with: the instructions (so each file is valid
-    on its own), then what it holds."""
+    on its own), then what it holds. `part` is (this file, how many) when a download comes
+    as several files, and each then says it can be added on its own."""
+    which = f" (file {part[0]} of {part[1]})" if part else ""
     lines = [
         header(secrets=secrets).rstrip("\n"),
         "###",
-        f"### Names DMbot knows for {' '.join(campaign.split())}{part}",
+        f"### Names DMbot knows for {' '.join(campaign.split())}{which}",
     ]
     if secrets:
         lines.append("### This file includes secret names. Don't share it with players.")
+    if part:
+        lines.append(
+            f"### This is one of {part[1]} files. Each can be added on its own, in any order."
+        )
     return lines
 
 
@@ -363,11 +369,6 @@ def render(names: Iterable[OutName], *, campaign: str, secrets: bool) -> str:
         hidden = n.secrets if secrets else ()
         lines += lines_for(n.name, KIND_OUT.get(n.kind, "other"), n.others, hidden)
     return "\n".join(lines) + "\n"
-
-
-# Room kept in every file for the " (file 12 of 20)" note, whose digits aren't known until
-# the files are counted.
-_PART_NOTE_BYTES = 40
 
 
 def render_files(names: Iterable[OutName], *, campaign: str, secrets: bool) -> list[str]:
@@ -383,16 +384,17 @@ def render_files(names: Iterable[OutName], *, campaign: str, secrets: bool) -> l
         for n in ordered
     ]
     adds = [len(n.others) + (len(n.secrets) if secrets else 0) for n in ordered]
-    prelude = _prelude(campaign=campaign, secrets=secrets)
-    joined = "\n".join(prelude)
-    base_lines = joined.count("\n") + 1  # the instructions are many lines in one string
-    base_bytes = len(joined.encode("utf-8")) + 1
 
-    def pack(reserve: int) -> list[list[str]]:
+    def budget(prelude: list[str]) -> tuple[int, int]:
+        joined = "\n".join(prelude)  # the instructions are many lines in one string
+        return joined.count("\n") + 1, len(joined.encode("utf-8")) + 1
+
+    def pack(part: tuple[int, int] | None) -> list[list[str]]:
         # A file is full at the upload's line, size or names-added limit (#712), whichever
         # comes first; a lone name is always accepted (its own size is capped elsewhere).
+        base_lines, base_bytes = budget(_prelude(campaign=campaign, secrets=secrets, part=part))
         chunks: list[list[str]] = [[]]
-        used_lines, used_bytes, used_adds = base_lines, base_bytes + reserve, 0
+        used_lines, used_bytes, used_adds = base_lines, base_bytes, 0
         for group, add in zip(groups, adds, strict=True):
             size = sum(len(line.encode("utf-8")) + 1 for line in group)
             if chunks[-1] and (
@@ -401,22 +403,20 @@ def render_files(names: Iterable[OutName], *, campaign: str, secrets: bool) -> l
                 or used_adds + add > MAX_ADDED
             ):
                 chunks.append([])
-                used_lines, used_bytes, used_adds = base_lines, base_bytes + reserve, 0
+                used_lines, used_bytes, used_adds = base_lines, base_bytes, 0
             chunks[-1].extend(group)
             used_lines += len(group)
             used_bytes += size
             used_adds += add
         return chunks
 
-    chunks = pack(0)
+    chunks = pack(None)
     if len(chunks) == 1:  # fits whole: exactly what render() writes
         return [render(ordered, campaign=campaign, secrets=secrets)]
-    chunks = pack(_PART_NOTE_BYTES)  # the "(file i of n)" note makes each file a little longer
+    # The two "file i of n" lines make each file a little longer: plan with the widest
+    # numbers (99,999 files, far past what 10,000 names can make), then write the real ones.
+    chunks = pack((99_999, 99_999))
     return [
-        "\n".join(
-            _prelude(campaign=campaign, secrets=secrets, part=f" (file {i} of {len(chunks)})")
-            + body
-        )
-        + "\n"
+        "\n".join(_prelude(campaign=campaign, secrets=secrets, part=(i, len(chunks))) + body) + "\n"
         for i, body in enumerate(chunks, 1)
     ]

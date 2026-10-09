@@ -2,6 +2,7 @@
 names DMbot suggests after a session, and names as speech-to-text hints."""
 
 import asyncio
+import hashlib
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -1115,9 +1116,10 @@ class Lists(NamesTest):
         files = sent.kwargs["files"]
         self.assertGreater(len(files), 1)
         self.assertIn(f"All 41 names for {self.campaign.name}", sent.args[0])
-        self.assertIn(f": {len(files)} files.**", sent.args[0])
-        self.assertIn("One file is too small to hold them all", sent.args[0])
+        self.assertIn(f"in {len(files)} files.**", sent.args[0])
+        self.assertIn("upload them one at a time", sent.args[0])
         self.assertIn("in any order", sent.args[0])
+        self.assertNotIn("too small", sent.args[0])
         self.assertIn("Includes secret names: don't share these files", sent.args[0])
         self.assertEqual(len({f.filename for f in files}), len(files))
         bodies = [f.fp.getvalue().decode() for f in files]
@@ -1128,6 +1130,67 @@ class Lists(NamesTest):
             sent_back = await self.add_many(body)
             self.assertNotIn("Nothing was added", sent_back[0].args[0])
             self.assertIn("already known", sent_back[0].args[0])
+
+    async def test_the_files_add_every_name_into_an_empty_campaign(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.ui import name_lists
+
+        # Names unlike each other: Add many joins look-alikes ("Place 01", "Place 02"), as it
+        # should, which would hide what this test is for.
+        def word(n: int, tag: str) -> str:
+            return (
+                hashlib.sha256(f"{tag}{n}".encode())
+                .hexdigest()[:10]
+                .translate(str.maketrans("0123456789", "qzxwvkjyrp"))
+            )
+
+        for n in range(40):
+            await ui.save_name(
+                self.memory,
+                self.campaign,
+                word(n, "name"),
+                "place",
+                [word(n, "other")],
+                [word(n, "secret")],
+            )
+        before = await self.names()
+        self.fresh()
+        it = self.it()
+        with patch("dmbot.memory.name_list.MAX_LINES", 70):
+            await name_lists.send_download(it, self.campaign.id)
+        files = it.followup.send.call_args.kwargs["files"]
+        self.assertGreater(len(files), 1)
+        second = await self.campaigns.create(GUILD, "Second", DM)
+        for f in reversed(files):  # any order
+            into = self.it()
+            await name_lists.import_list(into, second.id, f.fp.getvalue().decode())
+            self.assertIn("Added", into.followup.send.call_args_list[0].args[0])
+        got = {
+            e.name: e for e in await self.memory.entities(GUILD, second.id, statuses=[CONFIRMED])
+        }
+        self.assertEqual(set(got), set(before))
+
+        def pairs(aliases: list[Any]) -> set[tuple[str, bool]]:
+            return {(a.text, a.secret) for a in aliases}
+
+        self.assertEqual(
+            pairs(await self.memory.aliases(GUILD, second.id, include_secret=True)),
+            pairs(await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)),
+        )
+        self.assertEqual(await self.names(), before)  # the source is unchanged
+
+    async def test_a_full_campaigns_files_all_pass_the_uploads_own_checks(self) -> None:
+        from dmbot.memory.name_list import MAX_NAMES, OutName, render_files
+        from dmbot.ui import name_lists
+
+        names = [OutName(f"Name {i:05}", "npc", (f"Nick {i:05}",), ()) for i in range(MAX_NAMES)]
+        files = render_files(names, campaign="Frostmaiden", secrets=True)
+        self.assertGreater(len(files), 1)
+        for text in files:
+            read, problem = name_lists.read_upload(text.encode("utf-8"))
+            self.assertIsNone(problem)
+            self.assertEqual(read, text)
 
     async def test_more_than_ten_files_go_in_more_than_one_message(self) -> None:
         from unittest.mock import patch
@@ -1141,10 +1204,11 @@ class Lists(NamesTest):
             await name_lists.send_download(it, self.campaign.id)
         calls = it.followup.send.call_args_list
         self.assertEqual([len(c.kwargs["files"]) for c in calls], [10, 10, 3])
-        self.assertIn(": 23 files.**", calls[0].args[0])
-        self.assertIn("Files 11 to 20 of 23", calls[1].args[0])
-        self.assertIn("Files 21 to 23 of 23", calls[2].args[0])
-        self.assertIn("Secret names inside", calls[1].args[0])  # this one is the DM's
+        self.assertIn("in 23 files, 3 messages.**", calls[0].args[0])
+        self.assertIn("**Files 11 to 20 of 23**", calls[1].args[0])
+        self.assertIn("**Files 21 to 23 of 23**", calls[2].args[0])
+        for later in calls[1:]:  # each carries the secrets warning in full
+            self.assertIn("Includes secret names: don't share these files", later.args[0])
         names = [f.filename for c in calls for f in c.kwargs["files"]]
         self.assertEqual(names, sorted(names))  # numbered the same width: they sort in order
         self.assertTrue(names[0].startswith("names-01-of-23-"))
