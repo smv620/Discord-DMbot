@@ -190,15 +190,18 @@ async def start_grace(
     month: hours.Month,
     session_started_at: int,
 ) -> bool:
-    """Give this session the month's grace, if no session has had it yet. True if it got
-    it; False if another session did first (two campaigns reaching the cap together). The
+    """Give this session the month's grace, if no other session has had it. True if this
+    session holds it (now, or already: asking twice is fine, because a tick that read the
+    row just before the last one committed would otherwise stop the session that owns the
+    grace); False if another session has it (two campaigns reaching the cap together). The
     row it updates exists: the minutes that put the owner at the cap were just added to it."""
     async with db.meter(guild_id, owner_user_id) as conn:
         cur = await conn.execute(
             "UPDATE owner_hours SET grace_session = %s"
-            " WHERE owner_user_id = %s AND month_start = %s AND grace_session IS NULL"
+            " WHERE owner_user_id = %s AND month_start = %s"
+            " AND (grace_session IS NULL OR grace_session = %s)"
             " RETURNING grace_session",
-            (session_started_at, owner_user_id, month.start),
+            (session_started_at, owner_user_id, month.start, session_started_at),
         )
         return await cur.fetchone() is not None
 

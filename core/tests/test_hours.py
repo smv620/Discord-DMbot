@@ -228,10 +228,41 @@ class Refusals(unittest.TestCase):
     def test_the_second_says_where_to_add_more(self) -> None:
         self.assertEqual(
             hours.warning_text(60, 90, self.SITE),
-            "⏳ About 1 hour left this month. The campaign's owner can add more at "
+            "⏳ About 1 hour left this month. The campaign's owner can add more hours at "
             "https://dmbot.example/account",
         )
         self.assertIn("DMbot's website", hours.warning_text(60, 90))
+
+
+class MoreHours(unittest.TestCase):
+    """How more hours can be had follows what the owner can do (#437): only an owner who
+    can buy hours is sent to the website."""
+
+    SITE = "https://dmbot.example"
+
+    def test_an_owner_who_can_buy_hours_is_sent_to_the_website(self) -> None:
+        self.assertEqual(
+            hours.more_hours(self.SITE),
+            "The campaign's owner can add more hours at https://dmbot.example/account",
+        )
+
+    def test_a_try_it_owner_is_not_offered_what_they_cant_do(self) -> None:
+        text = hours.more_hours(self.SITE, buys_hours=False)
+        self.assertEqual(text, "Ask the campaign's owner what to do next.")
+        for make in (hours.stopped_text, hours.stop_soon_text):
+            self.assertNotIn("add more hours", make(self.SITE, False))
+            self.assertNotIn("/account", make(self.SITE, False))
+        self.assertNotIn("add more hours", hours.grace_started_text(1700000000, self.SITE, False))
+        self.assertNotIn("add more hours", hours.warning_text(60, 90, self.SITE, False))
+        self.assertIn(
+            "Ask the campaign's owner what to do next", hours.warning_text(60, 90, self.SITE, False)
+        )
+
+    def test_hours_that_start_again_are_said_so_when_they_cant_be_bought(self) -> None:
+        self.assertEqual(
+            hours.more_hours(self.SITE, buys_hours=False, renews=True),
+            "Hours start again when the plan renews.",
+        )
 
 
 class CapActions(unittest.TestCase):
@@ -266,7 +297,7 @@ class CapActions(unittest.TestCase):
         self.assertEqual(hours.cap_action(free, 10**6, None, 5), "none")
 
     def test_the_texts_are_plain_and_send_people_to_the_site(self) -> None:
-        self.assertIn("up to 2 more hours", hours.grace_started_text(site_url="https://x.example"))
+        self.assertIn("up to 2 hours", hours.grace_started_text(site_url="https://x.example"))
         self.assertIn("https://x.example/account", hours.stopped_text("https://x.example"))
         self.assertIn("DMbot's website", hours.stopped_text())
 
