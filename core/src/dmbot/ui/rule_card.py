@@ -205,7 +205,11 @@ def source(hit: Hit) -> str:
 
 
 def header(
-    hit: Hit, typed: str, rules: Sequence[HouseRule], *, house_max: int = HOUSE_LINE_MAX
+    hit: Hit,
+    typed: str,
+    rules: Sequence[HouseRule],
+    *,
+    house_max: int = HOUSE_LINE_MAX,
 ) -> str:
     """Everything above the text: house rules first, the name and facts, where it comes
     from, and any note about how it was found."""
@@ -226,6 +230,38 @@ def header(
     if hit.tag and hit.from_fallback and entry.edition == index.LEGACY:
         lines.append(OLDER_NOTE)  # when 2014 is the campaign's own choice, the tag is enough
     lines.append(NOT_A_RULING)
+    return "\n".join(lines)
+
+
+ALERT_FACTS_MAX = 200
+ALERT_HEARD_MAX = 80
+ALERT_HOUSE_MAX = 120
+ALERT_FOOTER = "_Free rules (SRD), as written. You decide._"
+
+
+def alert_text(hit: Hit, said: str, heard: str, rules: Sequence[HouseRule]) -> str:
+    """The short card DMbot puts on the DM screen when a name is said at the table: about
+    five lines to glance at. A house rule that names it first (one line, the rest counted),
+    the name, the facts, the source with its tag, what was heard, and a short reminder that
+    the DM decides. **Read it all** gives the lookup card with its full heading and text."""
+    entry = hit.entry
+    matches = house_matches(rules, names_for(entry, said))
+    lines = house_lines(matches[:1], ALERT_HOUSE_MAX) if matches else []
+    if len(matches) > 1:
+        more = len(matches) - 1
+        plural = "s" if more != 1 else ""
+        lines.append(f"🏠 {more} more house rule{plural}: `/dmbot houserules`")
+    called = _fit(_md(entry.name), NAME_MAX)
+    lines.append(f"📖 **{called}** ({KIND_WORDS.get(entry.kind, entry.kind)})")
+    line = facts(entry)
+    if line:
+        lines.append(_fit(line, ALERT_FACTS_MAX))
+    lines.append(f"_Source: {_md(source(hit))}_")
+    asked = _fit(_md(" ".join(said.split())), NAME_MAX)
+    if hit.renamed and asked:
+        lines.append(f"_{asked} is now called {called} in the newer rules._")
+    lines.append(f"_Heard: “{_fit(_md(heard), ALERT_HEARD_MAX)}”_")
+    lines.append(ALERT_FOOTER)
     return "\n".join(lines)
 
 

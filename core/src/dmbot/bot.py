@@ -65,6 +65,7 @@ from dmbot.dm_screen import (
     VisibilityButton,
     ensure_dm_screen,
     peek_view,
+    rules_cards,
 )
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
@@ -87,6 +88,7 @@ from dmbot.dm_screen.name_questions import (
 from dmbot.dm_screen.settings import (
     LevelButton,
     RuleLookupButton,
+    RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
 )
@@ -121,7 +123,8 @@ from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
 from dmbot.rules import index as rules_index
-from dmbot.rules.house import HouseRulesSection, HouseRuleStore
+from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
+from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.transcript import fix_notes, left_out
 from dmbot.transcript import questions as name_questions
@@ -145,6 +148,7 @@ from dmbot.transcription.base import PlaceholderTranscriber, Transcriber, confid
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, speech_sent_line
 from dmbot.ui import logic as ui_logic
+from dmbot.ui import rule_card
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
@@ -161,6 +165,7 @@ from dmbot.ui.transcripts import (
     transcript_command,
 )
 
+RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
 log = logging.getLogger(__name__)
 
 SUMMARY_INTERVAL_S = 15
@@ -313,6 +318,11 @@ class Table:
     campaign_name: str = ""
     dm_user_ids: frozenset[int] = frozenset()
     screen_level: str = DEFAULT_DM_SCREEN_LEVEL  # how much DMbot says in the DM screen
+    # Rules cards when a spell or creature is named (#931): on or off, the rulesets to look
+    # for names in, and what was shown, ignored and when (so, at most, one a minute).
+    rules_on: bool = False
+    rules_rulesets: tuple[str, str] = ("2024", "2014")
+    rules: rules_cards.RulesCards = field(default_factory=rules_cards.RulesCards)
     resumed: bool = False  # picked up again after a restart
     announce_resume: bool = True  # post "listening again" when voice is back
     # Asked privately about recording (or reminded) this session: at most once each.
@@ -521,7 +531,11 @@ class DMBot(commands.AutoShardedBot):
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
         self.add_dynamic_items(
-            SettingsButton, LevelButton, SettingsVisibilityButton, RuleLookupButton
+            SettingsButton,
+            LevelButton,
+            SettingsVisibilityButton,
+            RuleLookupButton,
+            RulesCardsButton,
         )
         # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
         self.add_dynamic_items(
@@ -542,6 +556,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(DownloadButton)
         self.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton, FixUndoButton)
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
+        self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
         # A player's 📜 My character sheet, in their private messages (#723).
         self.add_dynamic_items(MySheetButton)
         if self.settings.dev_guild_id:
@@ -1454,9 +1469,13 @@ class DMBot(commands.AutoShardedBot):
             campaign_name=campaign.name,
             dm_user_ids=campaign.dm_user_ids,
             screen_level=campaign.dm_screen_level,
+            rules_on=campaign.rules_cards,
+            rules_rulesets=(campaign.target_ruleset, campaign.fallback_ruleset),
             transcript_channel_id=transcript_id,
             started_at=started_at,
         )
+        if table.rules_on:
+            self._warm_rules(table.rules_rulesets)
         # Save before joining, so a restart can always pick the session up again.
         try:
             await self.sessions.save(
@@ -1774,11 +1793,15 @@ class DMBot(commands.AutoShardedBot):
             campaign_name=campaign.name,
             dm_user_ids=campaign.dm_user_ids,
             screen_level=campaign.dm_screen_level,
+            rules_on=campaign.rules_cards,
+            rules_rulesets=(campaign.target_ruleset, campaign.fallback_ruleset),
             resumed=True,
             announce_resume=not recently,
             transcript_channel_id=self._usable_transcript(guild, campaign),
             started_at=saved.started_at,
         )
+        if table.rules_on:
+            self._warm_rules(table.rules_rulesets)
         if campaign.transcript_channel_id is not None and table.transcript_channel_id is None:
             await self.post(
                 screen_id, screen_messages.transcript_stopped(campaign.transcript_channel_id)
@@ -2054,6 +2077,11 @@ class DMBot(commands.AutoShardedBot):
             # After cleaning, so a line is never evidence about itself; even when the names
             # couldn't be loaded, a word said in lower case is a real word next time.
             table.vocabulary.note(utterance.user_id, text)
+        if text:
+            try:  # a card is never worth a lost line: nothing below may be skipped
+                self._note_rules(table, utterance.user_id, str(cleaned or text))
+            except Exception:
+                log.exception("Rules cards: couldn't look at a line")
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
             table.unsaved.add(
@@ -2081,6 +2109,90 @@ class DMBot(commands.AutoShardedBot):
                 cleaned or text,
                 utterance.start_ms,
             )
+
+    def _note_rules(self, table: Table, user_id: int, line: str) -> None:
+        """A spell, condition or creature named at the table (#931): a short card for the DM
+        screen, if the campaign turned that on. Names only, no AI. Limits: one card a name a
+        session, one a minute (the rest are dropped), and nothing once the session is over.
+        The card is posted in the background; the speech pipeline never waits for it."""
+        if (
+            not table.rules_on
+            or not table.listening
+            or self.tables.get(table.guild_id) is not table
+        ):
+            return
+        mentions = rules_cards.spotter_for(*table.rules_rulesets).find(line)
+        if mentions and table.name_lookup is not None:
+            # A character, NPC or place of this campaign called Sprite or Raven is a name
+            # the table uses, not a rules question.
+            known = table.name_lookup.by_key
+            mentions = [
+                m
+                for m in mentions
+                if name_key(m.said) not in known and name_key(m.entry.name) not in known
+            ]
+        mention = table.rules.pick(mentions, time.monotonic()) if mentions else None
+        if mention is None:
+            return
+        before = table.rules.last_at  # given back if the card can't be shown
+        card_id = table.rules.remember(mention, time.monotonic())
+        self._track(self._post_rules_card(table, user_id, mention, card_id, before), "rules-card")
+
+    def _warm_rules(self, rulesets: tuple[str, str]) -> None:
+        """Build the names to look for off the event loop (about 0.15 s), so the first line
+        of a session with rules cards on doesn't wait for it."""
+        self._track(asyncio.to_thread(rules_cards.spotter_for, *rulesets), "rules-cards-warm")
+
+    async def _post_rules_card(
+        self, table: Table, user_id: int, mention: Mention, card_id: str, before: float | None
+    ) -> None:
+        """Post the card in the DM screen only (never the transcript, never to players).
+        A card that can't be shown gives its name and its minute back."""
+        target, fallback = table.rules_rulesets
+        srd = rules_index.srd()
+        entry = mention.entry
+        hit = srd.lookup(mention.said, target, fallback, kind=entry.kind)
+        if hit is None or hit.entry != entry:  # the entry spotted is the entry shown
+            hit = srd.lookup(entry.name, target, fallback, kind=entry.kind)
+        rules: list[HouseRule] = []
+        if hit is None:
+            table.rules.forget(card_id, before)
+            return
+        if self.house_rules is not None and table.campaign_id is not None:
+            try:  # this campaign's own house rules and no other's
+                async with asyncio.timeout(RULES_CARD_DB_S):
+                    rules = await self.house_rules.list(table.guild_id, table.campaign_id)
+            except Exception:
+                log.exception("Couldn't read house rules for a rules card")
+        # After the awaits: the words heard are shown, so the speaker must still be recorded,
+        # and the session must still be running with the setting on.
+        if (
+            not self.consent.has_consent(table.guild_id, user_id)
+            or not table.rules_on
+            or not table.listening
+            or self.tables.get(table.guild_id) is not table
+        ):
+            table.rules.forget(card_id, before)
+            return
+        text = rule_card.alert_text(hit, mention.said, mention.heard, rules)
+        posted = await self.post_message(
+            table.screen_channel_id, text, rules_cards.card_view(table.guild_id, card_id)
+        )
+        if posted is None:
+            table.rules.forget(card_id, before)
+
+    async def set_rules_cards(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """Turn rules cards on or off for a campaign (#931): saved, and a running session
+        (or one still finishing) follows from now on. Under the session lock, like the
+        level, so a session starting meanwhile can't miss it."""
+        campaign = await self.campaigns.set_rules_cards(guild_id, campaign_id, on)
+        async with self.session_lock(guild_id):
+            for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+                if table is not None and table.campaign_id == campaign_id:
+                    table.rules_on = campaign.rules_cards
+                    if table.rules_on:
+                        self._warm_rules(table.rules_rulesets)
+        return campaign
 
     def _topic_pending(self, table: Table, utterance: Utterance, text: str, named: int) -> bool:
         """The off-topic filter (#52): a line not plainly about the game waits for the

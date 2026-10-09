@@ -7,6 +7,8 @@ a level can turn off (questions, fix notes, notices) asks `allows` first, with i
 Alerts (transcription stopped or working again, hours warnings) always post and don't
 ask: the DM needs them to know the bot is working. So does "🙈 Left out as off-topic"
 (#677): it's the DM's only chance to undo, and one message edited in place never pings.
+Rules cards (#931) are not governed by the level: turning the setting on in ⚙️ Settings is
+the DM's own choice, and it wins, even on Quiet (one card a minute at most).
 The level is read when a session starts; ⚙️ Settings changes it mid-session too
 (`DMBot.set_screen_level`, #515).
 """
