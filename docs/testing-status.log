@@ -9,6 +9,17 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev2, PR #869 (#865): core with **migration 0031** (a new table `house_rules` and a new
+  column `campaigns.house_rules_made`; the migration runs when core starts, so rebuild
+  core). No setting. `/dmbot houserules`: a campaign's house rules, which everyone in the
+  server can read and only the campaign's DMs can add, edit or remove. Each rule keeps its
+  own number for good. Check, as the DM: the list says "No house rules yet" with an **Add a
+  house rule** button; add two (a form with "The rule" and "Instead of (optional)") and the
+  list shows "2." above "1." and "Each rule keeps its number, even when others are
+  removed."; Remove 1 asks first, then says "Removed house rule 1." and sends the words to
+  copy; add one more and it is **3**, not 1. As a player: the same list, no buttons. In the
+  logs: migration 0031 applied, no error. The website's database role has no access to the
+  table, so web-api needs nothing.
 - dev2, PR #875 (#866): core only, no migration or setting. The rules index: DMbot now
   ships the System Reference Document 5.2.1's 339 spells and 15 conditions (CC-BY-4.0;
   the attribution is in the README and core/src/dmbot/rules/data/srd52/ATTRIBUTION.md)
