@@ -17,7 +17,10 @@ if (process.env.PUBLIC_API_BASE === "mock" && process.env.CF_PAGES_BRANCH === "m
 // read PUBLIC_API_BASE, so point it at PUBLIC_DEV_API_BASE before Astro loads its env.
 if (process.env.CF_PAGES_BRANCH === "development" && !process.env.PUBLIC_DEV_API_BASE?.trim()) {
   // Without it dev.getdmbot.com would quietly ship the pretend API and look like it works.
-  throw new Error("The development branch needs PUBLIC_DEV_API_BASE (the real API's address).");
+  throw new Error(
+    "The development branch needs PUBLIC_DEV_API_BASE. Add it as a Preview variable in Cloudflare " +
+      'Pages (docs/DEPLOY.md, "Put the test website online").',
+  );
 }
 const apiBase = effectiveApiBase(process.env);
 if (apiBase !== undefined) process.env.PUBLIC_API_BASE = apiBase;

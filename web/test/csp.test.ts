@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { apiOrigin, effectiveApiBase, inlineScriptHashes, isDevSite, MOCK_MARKER, mockLeaks } from "../scripts/csp.mjs";
+import { addDevHeaders, apiOrigin, effectiveApiBase, inlineScriptHashes, isDevSite, MOCK_MARKER, mockLeaks } from "../scripts/csp.mjs";
 import { MOCK_MARKER as APP_MARKER } from "../src/account/mock";
 
 const hash = (body: string): string =>
@@ -59,6 +59,27 @@ describe("effectiveApiBase (the development site, #837)", () => {
   it("never switches production, and falls back when the variable is empty", () => {
     expect(effectiveApiBase({ CF_PAGES_BRANCH: "main", PUBLIC_API_BASE: "/api", PUBLIC_DEV_API_BASE: real })).toBe("/api");
     expect(effectiveApiBase({ CF_PAGES_BRANCH: "development", PUBLIC_API_BASE: "mock", PUBLIC_DEV_API_BASE: " " })).toBe("mock");
+  });
+});
+
+describe("addDevHeaders (noindex for the development site only)", () => {
+  const headers = "# note\n/*\n  X-Frame-Options: DENY\n\n/admin\n  X-Robots-Tag: noindex, nofollow\n";
+
+  it("never marks the live site (main) or a preview as noindex", () => {
+    expect(isDevSite({ CF_PAGES_BRANCH: "main" })).toBe(false);
+    expect(addDevHeaders(headers, { CF_PAGES_BRANCH: "main" })).toBe(headers);
+    expect(addDevHeaders(headers, { CF_PAGES_BRANCH: "webdev/837" })).toBe(headers);
+    expect(addDevHeaders(headers, {})).toBe(headers);
+  });
+
+  it("adds noindex once, inside the /* block, for the development branch", () => {
+    const out = addDevHeaders(headers, { CF_PAGES_BRANCH: "development" });
+    expect(out).toContain("/*\n  X-Robots-Tag: noindex, nofollow\n  X-Frame-Options: DENY");
+    expect(out.match(/\/\*\n {2}X-Robots-Tag/g)).toHaveLength(1);
+  });
+
+  it("refuses a headers file with no /* block", () => {
+    expect(() => addDevHeaders("/admin\n  X: y\n", { CF_PAGES_BRANCH: "development" })).toThrow(/"\/\*" block/);
   });
 });
 

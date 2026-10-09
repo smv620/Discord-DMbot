@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  addDevHeaders,
   apiOrigin,
   effectiveApiBase,
   htmlFiles,
@@ -40,13 +41,11 @@ if (turnstile) {
 const origin = apiOrigin(effectiveApiBase(process.env));
 if (origin) headers = headers.replace("connect-src 'self';", `connect-src 'self' ${origin};`);
 // The development site is a test copy: keep it out of search results (#837).
-if (isDevSite(process.env)) {
-  // Anchored to the site-wide block; if it ever changes the build must fail, not drop noindex.
-  if (!/^\/\*\r?\n/m.test(headers)) {
-    console.error('dist/_headers must contain a "/*" block to add noindex to');
-    process.exit(1);
-  }
-  headers = headers.replace(/^\/\*\r?\n/m, (block) => `${block}  X-Robots-Tag: noindex, nofollow\n`);
+try {
+  headers = addDevHeaders(headers, process.env);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
 }
 writeFileSync(headersFile, headers);
 console.log(
