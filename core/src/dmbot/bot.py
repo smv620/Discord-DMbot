@@ -3031,6 +3031,10 @@ class DMBot(commands.AutoShardedBot):
                 if warn is not None:
                     self._start_follow_up(table, warn)
 
+    def _forget_follow_up(self, guild_id: int, task: asyncio.Task[None]) -> None:
+        if self._follow_ups.get(guild_id) is task:  # not a newer one's entry
+            del self._follow_ups[guild_id]
+
     def _start_follow_up(self, table: Table, warn: tuple[usage.Standing, int]) -> None:
         """Act on where the hours stand in a task of its own, one at a time per server: a
         slow Discord post, database call or held session lock must not hold up the other
@@ -3042,6 +3046,9 @@ class DMBot(commands.AutoShardedBot):
         task = self._track(self._meter_follow_up(table, warn), "hours follow-up")
         if task is not None:
             self._follow_ups[table.guild_id] = task
+            # Finished tasks aren't kept: one entry per server that has ever been metered
+            # would otherwise sit here for as long as DMbot runs.
+            task.add_done_callback(partial(self._forget_follow_up, table.guild_id))
 
     async def meter_table(
         self, table: Table, now: int | None = None, *, final: bool = False
@@ -3133,10 +3140,19 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
             if self.tables.get(table.guild_id) is not table or table.metering_closed:
                 return  # stopped since the minutes were written: say and do nothing
-            try:
-                await self._warn_hours(table, warn[0])
-            except Exception:
-                log.exception("Couldn't warn about the hours")
+            standing = warn[0]
+            # A tick that passes 90% and the cap together says only the cap's notice: "less
+            # than half an hour left" followed at once by "used up" would contradict itself.
+            if (
+                hours.cap_action(
+                    standing.access, standing.used_after, standing.grace_session, table.started_at
+                )
+                == "none"
+            ):
+                try:
+                    await self._warn_hours(table, standing)
+                except Exception:
+                    log.exception("Couldn't warn about the hours")
             try:
                 await self._enforce_cap(table, *warn)
             except Exception:
@@ -3149,7 +3165,10 @@ class DMBot(commands.AutoShardedBot):
         cap = hours.standing(standing.access, standing.used_after).left_minutes
         if mark is not None and cap is not None:
             await self.post(
-                table.screen_channel_id, hours.warning_text(cap, mark, self.settings.site_url)
+                table.screen_channel_id,
+                hours.warning_text(
+                    cap, mark, self.settings.site_url, standing.buys_hours, standing.renews
+                ),
             )
 
     async def _enforce_cap(self, table: Table, standing: usage.Standing, owner: int) -> None:
@@ -3168,9 +3187,13 @@ class DMBot(commands.AutoShardedBot):
             async with self.session_lock(table.guild_id):
                 if self.tables.get(table.guild_id) is not table:
                     return
-                got = await self.meter.start_grace(
-                    table.guild_id, owner, standing.month, table.started_at
-                )
+                # Bounded like every other call made under this lock: a slow database
+                # must not hold up /dmbot stop and Start for the server. A timeout is
+                # logged by the caller and the session keeps going; the next tick asks again.
+                async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                    got = await self.meter.start_grace(
+                        table.guild_id, owner, standing.month, table.started_at
+                    )
             action = "in_grace" if got else "stop"
             if got:
                 ends_at = hours.grace_ends_at(
@@ -3178,7 +3201,9 @@ class DMBot(commands.AutoShardedBot):
                 )
                 await self.post(
                     table.screen_channel_id,
-                    hours.grace_started_text(ends_at, self.settings.site_url),
+                    hours.grace_started_text(
+                        ends_at, self.settings.site_url, standing.buys_hours, standing.renews
+                    ),
                 )
         elif action == "in_grace" and hours.stop_warning_due(
             standing.access,
@@ -3187,21 +3212,38 @@ class DMBot(commands.AutoShardedBot):
             standing.used_before,
             standing.used_after,
         ):
-            await self.post(table.screen_channel_id, hours.stop_soon_text(self.settings.site_url))
+            await self.post(
+                table.screen_channel_id,
+                hours.stop_soon_text(self.settings.site_url, standing.buys_hours, standing.renews),
+            )
         if action == "stop":
-            await self._stop_for_hours(table)
+            await self._stop_for_hours(table, standing)
 
-    async def _stop_for_hours(self, table: Table) -> None:
-        """End the session because the hours are used up: stop listening, forget the saved
-        session so it doesn't come back after a restart, and say why on the DM screen. The
-        session is forgotten only once it has really stopped: if stopping fails, the next
-        tick tries again and the saved session is still there."""
+    async def _stop_for_hours(self, table: Table, standing: usage.Standing) -> None:
+        """End the session because the hours are used up: forget the saved session, stop
+        listening, and say why on the DM screen. Same order as `/dmbot stop`: the saved
+        session goes first, so if that fails the session keeps going (the table is still
+        there, and the next tick tries again) rather than stopping now and coming back by
+        surprise after a restart. Once it is stopped the notice is always posted."""
         async with self.session_lock(table.guild_id):
             if self.tables.get(table.guild_id) is not table:
                 return  # already stopped by someone
+            try:
+                # Bounded: this runs under the session lock, which /dmbot stop and Start wait
+                # on. A timeout is an error here too, so the next tick tries again.
+                async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                    await self.sessions.clear(table.guild_id, "the owner's hours are used up")
+            except Exception:
+                log.exception("Couldn't clear the saved session; will try to stop again")
+                return
+            # As in /dmbot stop, if stopping itself fails after this, the saved session is
+            # already gone: a restart before the next tick then ends the session, which is
+            # what the hours ask for anyway.
             await self.stop_table(table.guild_id, "the owner's hours are used up")
-            await self.sessions.clear(table.guild_id, "the owner's hours are used up")
-        await self.post(table.screen_channel_id, hours.stopped_text(self.settings.site_url))
+        await self.post(
+            table.screen_channel_id,
+            hours.stopped_text(self.settings.site_url, standing.buys_hours, standing.renews),
+        )
 
     async def _meter_final(self, table: Table, ended_at: int) -> None:
         """The last, rounded-up minutes at a stop: tried a few times, since nothing else
