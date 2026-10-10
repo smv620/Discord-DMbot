@@ -61,4 +61,4 @@ def words(minutes: int) -> str:
         if minutes % size == 0 or size == 1:
             count = minutes // size if size > 1 else minutes
             return f"{count} {name}{'' if count == 1 else 's'}"
-    return f"{minutes} minutes"  # unreachable; keeps the type checker content
+    raise AssertionError("size 1 always returns")  # pragma: no cover

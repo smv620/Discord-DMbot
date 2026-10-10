@@ -399,6 +399,12 @@ class ClockButton(
             if self.action == "timer":
                 from dmbot.dm_screen import effects as timers
 
+                # Players don't get the form: checked first, inside the 3 seconds a form allows.
+                async with asyncio.timeout(2):
+                    campaign = await client.campaigns.get(guild.id, self.campaign_id)
+                    if campaign is None or interaction.user.id not in campaign.dm_user_ids:
+                        await _reply(interaction, "Only this campaign's DMs can use the clock.")
+                        return
                 await interaction.response.send_modal(timers.TimerForm(self.campaign_id))
                 return
             if self.action in ("set", "open"):

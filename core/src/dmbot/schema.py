@@ -1397,6 +1397,10 @@ RETENTION = """
 """
 
 GAME_EFFECTS = f"""
+    -- The game clock counts the timers it has numbered, so a number is never used twice even
+    -- after a timer is ended (an old "has likely ended" message can't act on a newer timer).
+    ALTER TABLE game_clocks ADD COLUMN effects_made INTEGER NOT NULL DEFAULT 0
+        CHECK (effects_made >= 0);
     -- Timed effects the DM starts on a campaign's game clock (#998; docs/PLAN.md, "TimeBot"):
     -- Bless, Mage Armor and the like. Per campaign, never shared between campaigns or servers;
     -- deleted with the campaign; in its backups. Only the campaign's DMs start or end them

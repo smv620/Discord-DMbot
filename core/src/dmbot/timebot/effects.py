@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.timebot import clock as game
+from dmbot.timebot.durations import words
 from dmbot.timebot.store import NOT_A_DM
 
 MAX_RUNNING = 20
@@ -47,8 +48,6 @@ class Effect:
 
     def ended_line(self) -> str:
         who = f" on {self.target}" if self.target else ""
-        from dmbot.timebot.durations import words
-
         mind = " (concentration)" if self.concentration else ""
         return f"⏳ {self.name}{who} has likely ended ({words(self.minutes)}){mind}."
 
@@ -66,7 +65,9 @@ def _effect(row: dict[str, Any]) -> Effect:
 
 
 def clean(text: str, limit: int) -> str:
-    return " ".join(text.split())[:limit]
+    """One line, no control characters (a NUL would be refused by the database), cut to size."""
+    kept = "".join(c if c.isprintable() or c.isspace() else " " for c in text)
+    return " ".join(kept.split())[:limit]
 
 
 class EffectStore:
@@ -97,15 +98,15 @@ class EffectStore:
             running = await self._list(conn, guild_id, campaign_id)
             if len(running) >= MAX_RUNNING:
                 raise CampaignError(TOO_MANY)
-            number = max((e.number for e in running), default=0) + 1
+            # The clock's own counter, which only goes up: a number is never reused.
             cur = await conn.execute(
-                "SELECT COALESCE(MAX(number), 0) + 1 AS n FROM game_effects"
-                " WHERE guild_id = %s AND campaign_id = %s",
-                (guild_id, campaign_id),
+                "UPDATE game_clocks SET effects_made = GREATEST(effects_made,"
+                " %s) + 1 WHERE guild_id = %s AND campaign_id = %s RETURNING effects_made",
+                (max((e.number for e in running), default=0), guild_id, campaign_id),
             )
             row = await cur.fetchone()
             assert row is not None
-            number = max(number, int(row["n"]))
+            number = int(row["effects_made"])
             ends = min(game.MAX_MINUTE, now + minutes)
             await conn.execute(
                 "INSERT INTO game_effects (guild_id, campaign_id, number, name, target,"
@@ -149,15 +150,24 @@ class EffectStore:
             await self._require_dm(conn, guild_id, campaign_id, user_id)
             now = await self._lock_clock(conn, guild_id, campaign_id)
             cur = await conn.execute(
-                "UPDATE game_effects SET ends_minute = %s, told = FALSE"
-                " WHERE guild_id = %s AND campaign_id = %s AND number = %s"
+                "UPDATE game_effects SET ends_minute = LEAST(%s, GREATEST(ends_minute, %s) + %s),"
+                " told = FALSE WHERE guild_id = %s AND campaign_id = %s AND number = %s"
                 " RETURNING number, name, target, minutes, concentration, ends_minute, told",
-                (min(game.MAX_MINUTE, now + EXTRA_MINUTES), guild_id, campaign_id, number),
+                (game.MAX_MINUTE, now, EXTRA_MINUTES, guild_id, campaign_id, number),
             )
             row = await cur.fetchone()
             if row is None:
                 raise CampaignError(GONE)
             return _effect(row)
+
+    async def untell(self, guild_id: int, campaign_id: str, number: int) -> None:
+        """The "has likely ended" line could not be posted: say it next time."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE game_effects SET told = FALSE WHERE guild_id = %s AND campaign_id = %s"
+                " AND number = %s",
+                (guild_id, campaign_id, number),
+            )
 
     @staticmethod
     async def _require_dm(conn: Conn, guild_id: int, campaign_id: str, user_id: int) -> None:
@@ -232,10 +242,12 @@ class EffectsSection:
             name, target = row["name"], row["target"]
             if not isinstance(name, str) or not 1 <= len(name) <= NAME_MAX:
                 raise CampaignError(DAMAGED)
+            name = clean(name, NAME_MAX)
+            if not name:
+                raise CampaignError(DAMAGED)
             if target is not None and (not isinstance(target, str) or len(target) > TARGET_MAX):
                 raise CampaignError(DAMAGED)
-            if not target:
-                target = None
+            target = clean(target, TARGET_MAX) or None if target else None
             for key in ("minutes", "ends"):
                 if type(row[key]) is not int or not 0 <= row[key] <= game.MAX_MINUTE:
                     raise CampaignError(DAMAGED)
@@ -243,12 +255,11 @@ class EffectsSection:
                 raise CampaignError(DAMAGED)
             if type(row["told"]) is not bool:
                 raise CampaignError(DAMAGED)
-            out.append({**row, "target": target})
+            out.append({**row, "name": name, "target": target})
         return out
 
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
-        checked = self.check(rows) if rows and not isinstance(rows[0], dict) else rows
-        checked = self.check(list(checked)) if checked else []
+        checked = self.check(list(rows)) if rows else []  # the store checked once; this is safe
         for number, row in enumerate(checked, start=1):
             await conn.execute(
                 "INSERT INTO game_effects (guild_id, campaign_id, number, name, target, minutes,"
@@ -264,6 +275,13 @@ class EffectsSection:
                     row["ends"],
                     row["told"],
                 ),
+            )
+
+        if checked:
+            await conn.execute(
+                "UPDATE game_clocks SET effects_made = GREATEST(effects_made, %s)"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (len(checked), guild_id, campaign_id),
             )
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:

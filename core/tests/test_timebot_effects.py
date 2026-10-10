@@ -108,8 +108,13 @@ class Fake:
         )
         self.posted: list[tuple[int, str, Any]] = []
 
-    async def post_message(self, channel_id: int, text: str, view: Any = None) -> None:
+    fail_posts = False
+
+    async def post_message(self, channel_id: int, text: str, view: Any = None) -> Any:
+        if self.fail_posts:
+            return None
         self.posted.append((channel_id, text, view))
+        return SimpleNamespace(id=1)
 
     def get_channel(self, channel_id: int) -> None:
         return None
@@ -240,6 +245,91 @@ class Timers(DatabaseTest):
         self.assertEqual(len(lines), 1 + 5 + 1)
         self.assertIn("T6", lines[1])  # the one that ends first
         self.assertIn("and 2 more", lines[-1])
+
+    async def test_going_back_makes_a_timer_fire_again(self) -> None:
+        await self.set_clock()
+        await self.effects.start(GUILD_A, self.a.id, DM, "Bless", None, 10, True)
+        campaign = await self.campaigns.get(GUILD_A, self.a.id)
+        assert campaign is not None
+        await ui.press(self.client, GUILD_A, self.a.id, DM, "h1")
+        await fx.announce_due(self.client, campaign, NOON + 60)
+        self.assertEqual(len(self.client.posted), 1)
+        await ui.press(self.client, GUILD_A, self.a.id, DM, "set", set_to=NOON + 5)  # back
+        await ui.press(self.client, GUILD_A, self.a.id, DM, "h1")
+        await fx.announce_due(self.client, campaign, NOON + 65)
+        self.assertEqual(len(self.client.posted), 2)  # said again, not lost
+
+    async def test_a_line_that_could_not_be_posted_is_said_next_time(self) -> None:
+        await self.set_clock()
+        await self.effects.start(GUILD_A, self.a.id, DM, "Bless", None, 1, True)
+        campaign = await self.campaigns.get(GUILD_A, self.a.id)
+        assert campaign is not None
+        self.client.fail_posts = True
+        await fx.announce_due(self.client, campaign, NOON + 5)
+        self.client.fail_posts = False
+        await fx.announce_due(self.client, campaign, NOON + 6)
+        self.assertEqual(len(self.client.posted), 1)
+
+    async def test_still_going_never_shortens_a_timer_that_is_not_due(self) -> None:
+        await self.set_clock()
+        effect = await self.effects.start(GUILD_A, self.a.id, DM, "Torch", None, 600, False)
+        more = await self.effects.extend(GUILD_A, self.a.id, DM, effect.number)
+        self.assertEqual(more.ends, NOON + 600 + 10)
+
+    async def test_a_number_is_never_used_twice(self) -> None:
+        await self.set_clock()
+        first = await self.effects.start(GUILD_A, self.a.id, DM, "A", None, 5, False)
+        second = await self.effects.start(GUILD_A, self.a.id, DM, "B", None, 5, False)
+        await self.effects.end(GUILD_A, self.a.id, DM, second.number)
+        third = await self.effects.start(GUILD_A, self.a.id, DM, "C", None, 5, False)
+        self.assertEqual((first.number, second.number, third.number), (1, 2, 3))
+
+    async def test_twenty_five_at_once_gives_exactly_twenty_with_distinct_numbers(self) -> None:
+        import asyncio
+
+        await self.set_clock()
+        results = await asyncio.gather(
+            *(
+                self.effects.start(GUILD_A, self.a.id, DM, f"T{n}", None, 60, False)
+                for n in range(25)
+            ),
+            return_exceptions=True,
+        )
+        made = [r for r in results if not isinstance(r, BaseException)]
+        self.assertEqual(len(made), MAX_RUNNING)
+        self.assertEqual(
+            len({e.number for e in made if not isinstance(e, BaseException)}), MAX_RUNNING
+        )
+
+    async def test_a_failed_redraw_still_answers_the_dm(self) -> None:
+        await self.set_clock()
+        it = self.interaction()
+        self.client.clocks = cast(
+            Any, SimpleNamespace(get=AsyncMock(side_effect=RuntimeError("down")))
+        )
+        await fx.start_timer(it, self.a.id, "Bless", "", "")
+        self.assertEqual(len(await self.effects.running(GUILD_A, self.a.id)), 1)  # saved
+        it.followup.send.assert_awaited()  # and the DM was told
+
+    async def test_odd_names_are_cleaned(self) -> None:
+        await self.set_clock()
+        effect = await self.effects.start(
+            GUILD_A, self.a.id, DM, "Bl\x00ess\n  now", None, 5, False
+        )
+        self.assertEqual(effect.name, "Bl ess now")
+        with self.assertRaises(CampaignError):
+            EffectsSection().check(
+                [
+                    {
+                        "name": "  ",
+                        "target": None,
+                        "minutes": 1,
+                        "concentration": False,
+                        "ends": 5,
+                        "told": False,
+                    }
+                ]
+            )
 
     async def test_the_buttons_fit_discord(self) -> None:
         for action in ("end", "more"):

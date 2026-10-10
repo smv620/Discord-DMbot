@@ -82,6 +82,14 @@ class ClockStore:
                     int(self._now()),
                 ),
             )
+            if before is not None and after.minute < before.minute:
+                # The clock went back (Undo, or the time set earlier): a timer whose end is
+                # ahead again will be said again when the clock passes it.
+                await conn.execute(
+                    "UPDATE game_effects SET told = FALSE WHERE guild_id = %s AND campaign_id = %s"
+                    " AND ends_minute > %s AND told",
+                    (guild_id, campaign_id, after.minute),
+                )
             return before, after
 
     async def set_message(

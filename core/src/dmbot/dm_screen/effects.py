@@ -116,12 +116,25 @@ async def start_timer(
     except CampaignError as exc:
         await _reply(interaction, str(exc))
         return
-    stored = await client.clocks.get(campaign.guild_id, campaign.id)
-    if stored is not None:
-        from dmbot.dm_screen import clock as clock_screen
+    # The timer is saved. Showing it can fail; the DM must still be told it started, or they
+    # would press again and start a second one.
+    line = effect.name
+    try:
+        stored = await client.clocks.get(campaign.guild_id, campaign.id)
+        if stored is not None:
+            line = effect.line(stored.clock.minute)
+            await _show_clock(client, campaign, stored)
+    except Exception:
+        log.exception("The timer started but the clock message couldn't be redrawn")
+    await _reply(interaction, STARTED.format(line=line))
 
-        await clock_screen.show(client, campaign, stored)
-        await _reply(interaction, STARTED.format(line=effect.line(stored.clock.minute)))
+
+async def _show_clock(client: Any, campaign: Campaign, stored: Any) -> None:
+    # Imported here: dm_screen.clock imports this package's pure parts, and its buttons open
+    # this module's form, so a top-level import would be a cycle.
+    from dmbot.dm_screen import clock as clock_screen
+
+    await clock_screen.show(client, campaign, stored)
 
 
 async def announce_due(client: Any, campaign: Campaign, minute: int) -> None:
@@ -139,7 +152,10 @@ async def announce_due(client: Any, campaign: Campaign, minute: int) -> None:
         view = discord.ui.View(timeout=None)
         view.add_item(EffectButton(campaign.id, effect.number, "end"))
         view.add_item(EffectButton(campaign.id, effect.number, "more"))
-        await client.post_message(campaign.dm_screen_channel_id, effect.ended_line(), view)
+        posted = await client.post_message(campaign.dm_screen_channel_id, effect.ended_line(), view)
+        if posted is None:  # it was not said: say it next time rather than lose it
+            with contextlib.suppress(Exception):
+                await store.untell(campaign.guild_id, campaign.id, effect.number)
 
 
 class EffectButton(
@@ -198,9 +214,7 @@ class EffectButton(
             await interaction.edit_original_response(content=note, view=None)
         stored = await client.clocks.get(guild.id, campaign.id)
         if stored is not None:
-            from dmbot.dm_screen import clock as clock_screen
-
-            await clock_screen.show(client, campaign, stored)
+            await _show_clock(client, campaign, stored)
 
 
 async def _reply(interaction: discord.Interaction, text: str) -> None:
