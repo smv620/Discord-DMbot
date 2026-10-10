@@ -7,6 +7,9 @@ import datetime as dt
 from collections.abc import Sequence
 
 from dmbot.devtools.costs import model, prices
+from dmbot.transcription.base import MIN_UTTERANCE_S
+
+OUTPUT_TOKENS_PER_LABEL = 3  # the same as measure.OUTPUT_TOKENS_PER_LABEL (a test checks)
 
 
 def money(value: float) -> str:
@@ -23,12 +26,14 @@ def render(
     questions: int,
     cases: Sequence[model.PerHour],
     args: argparse.Namespace,
+    audio_check: model.Usage | None = None,
     *,
     today: dt.date | None = None,
 ) -> str:
     today = today or dt.date.today()
     measured, total_minutes = model.per_feature(sessions)
     table_minutes = sum(s.table_s for s in sessions) / 60
+    density = total_minutes / table_minutes if table_minutes else 0.0
     out: list[str] = [
         "# What a table costs DMbot to serve",
         "",
@@ -37,10 +42,14 @@ def render(
         "",
         "## Cost per table-hour",
         "",
-        "Dollars for one hour of a table, by how much the table talks. Speech-to-text and the "
-        "AI are measured on the digital twin's sessions and priced at the providers' list prices "
-        "(below). The three cases scale the twin's speech to a real table: the twin reads its "
-        "scripts almost without pauses, and real play has more quiet.",
+        "Dollars for one hour of a table, by how much speech is sent to speech-to-text in that "
+        "hour. The three cases are the 36, 48 and 60 speech-minutes an hour that PLAN.md "
+        "assumed before; no real table has been measured yet (run 8 will). 60 is a ceiling: "
+        f"every minute of the hour spoken. The twin's own sessions are {density:.0%} speech "
+        f"(about {density * 60:.0f} minutes an hour), which only shows the typical case is "
+        "not far off. The "
+        "AI parts use ratios measured on the twin (below), scaled to each case, and "
+        "everything is priced at the providers' list prices.",
         "",
         "| Case | Speech sent (min/hour) | Speech-to-text | Off-topic filter | DM sidebar "
         "| Hosting | Total |",
@@ -50,7 +59,7 @@ def render(
         hosting = money(case.hosting) if case.hosting is not None else "not included"
         out.append(
             f"| {case.case} | {case.speech_minutes:.0f} | {money(case.stt)} "
-            f"| {money(case.ai.get(model.SCALED_BY_SPEECH[0], 0.0))} "
+            f"| {money(case.ai.get(model.FILTER, 0.0))} "
             f"| {money(case.ai.get(model.SIDEBAR, 0.0))} | {hosting} "
             f"| **{money(case.total)}** |"
         )
@@ -84,18 +93,17 @@ def render(
         "|---|---|---|---|---|---|---|",
     ]
     for s in sessions:
-        use = s.ai.get(model.SCALED_BY_SPEECH[0], model.Usage())
+        use = s.ai.get(model.FILTER, model.Usage())
         how = "recording, cut as core cuts it" if s.measured_audio else "script, timed by its words"
         out.append(
             f"| {s.name} | {minutes(s.table_s)} | {minutes(s.speech_s)} | {s.lines} "
             f"| {use.calls:.0f} | {use.input_tokens:.0f} / {use.output_tokens:.0f} | {how} |"
         )
-    filter_use = measured.get(model.SCALED_BY_SPEECH[0], model.Usage())
-    density = total_minutes / table_minutes if table_minutes else 0.0
+    filter_use = measured.get(model.FILTER, model.Usage())
     out += [
         "",
         f"- **Speech sent** is what Deepgram bills: the pieces core would send, without those "
-        f"under {model.MIN_PIECE_S} s. The twin sent {total_minutes:.1f} speech-minutes in "
+        f"under {MIN_UTTERANCE_S} s. The twin sent {total_minutes:.1f} speech-minutes in "
         f"{table_minutes:.1f} minutes of table time ({density:.0%}); a real table is "
         "assumed to be quieter, see the cases above.",
         f"- **Off-topic filter:** {filter_use.calls:.0f} calls for {total_minutes:.1f} "
@@ -144,9 +152,17 @@ def render(
         "- **Tokens** are counted by size (about 3.5 characters each), not by the AI service, "
         "so they are estimates. The AI is a small part of the total; the speech-to-text is "
         "most of it.",
-        "- **Not counted:** the audio check (it asks the AI only when a speaker's audio is "
-        "breaking up), reading a names file, the after-session scan, rules cards (no AI), "
+        "- **No AI at all** (checked in the code): the Transcript Cleaner, the after-session "
+        "name scan and the rules cards. Only four things ask the AI: the off-topic filter, "
+        "the DM sidebar, the audio check and reading a names file.",
+        "- **Not counted:** reading a names file (the DM does it on purpose, now and then), "
         "payments, the website, backups, bandwidth.",
+        *_audio_check_lines(audio_check),
+        "- **Estimates inside the measure:** the filter's windows are timed by when each line "
+        "was said (live, by when its text arrived, a little later) and its short answers are "
+        f"counted at {OUTPUT_TOKENS_PER_LABEL} tokens a line; it does not model the filter "
+        "resting after AI failures. The sidebar's answers come from the test cases' prepared "
+        "replies, so its output tokens are the cases', not a real model's.",
         "- **Hosting** is the server's monthly cost split over the table-hours a month; it is "
         "an input, not a measure.",
         "",
@@ -161,3 +177,14 @@ def render(
         "",
     ]
     return "\n".join(out)
+
+
+def _audio_check_lines(usage: model.Usage | None) -> list[str]:
+    if usage is None:
+        return []
+    return [
+        "- **Audio check ceiling:** it asks the AI only while a speaker's audio is breaking up, "
+        f"at most once a minute for each speaker: {usage.calls:.0f} calls an hour at the very "
+        f"most, about {money(model.ai_dollars(usage))} an hour for that speaker. Normal play "
+        "asks for none, so it is left out of the totals."
+    ]

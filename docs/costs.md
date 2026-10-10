@@ -4,7 +4,7 @@ Made by `python -m dmbot.devtools.replay --measure` on 2026-10-10 (#945). It nee
 
 ## Cost per table-hour
 
-Dollars for one hour of a table, by how much the table talks. Speech-to-text and the AI are measured on the digital twin's sessions and priced at the providers' list prices (below). The three cases scale the twin's speech to a real table: the twin reads its scripts almost without pauses, and real play has more quiet.
+Dollars for one hour of a table, by how much speech is sent to speech-to-text in that hour. The three cases are the 36, 48 and 60 speech-minutes an hour that PLAN.md assumed before; no real table has been measured yet (run 8 will). 60 is a ceiling: every minute of the hour spoken. The twin's own sessions are 76% speech (about 46 minutes an hour), which only shows the typical case is not far off. The AI parts use ratios measured on the twin (below), scaled to each case, and everything is priced at the providers' list prices.
 
 | Case | Speech sent (min/hour) | Speech-to-text | Off-topic filter | DM sidebar | Hosting | Total |
 |---|---|---|---|---|---|---|
@@ -48,7 +48,10 @@ No discount, credit or volume plan is counted. Core sends each piece of speech a
 - **How much a real table talks:** low 36, typical 48, high 60 speech-minutes sent per table-hour. That is the range PLAN.md assumed before (about 36 to 60); nothing has measured a real table yet.
 - **Sidebar use:** 6 questions an hour, a guess.
 - **Tokens** are counted by size (about 3.5 characters each), not by the AI service, so they are estimates. The AI is a small part of the total; the speech-to-text is most of it.
-- **Not counted:** the audio check (it asks the AI only when a speaker's audio is breaking up), reading a names file, the after-session scan, rules cards (no AI), payments, the website, backups, bandwidth.
+- **No AI at all** (checked in the code): the Transcript Cleaner, the after-session name scan and the rules cards. Only four things ask the AI: the off-topic filter, the DM sidebar, the audio check and reading a names file.
+- **Not counted:** reading a names file (the DM does it on purpose, now and then), payments, the website, backups, bandwidth.
+- **Audio check ceiling:** it asks the AI only while a speaker's audio is breaking up, at most once a minute for each speaker: 60 calls an hour at the very most, about $0.020 an hour for that speaker. Normal play asks for none, so it is left out of the totals.
+- **Estimates inside the measure:** the filter's windows are timed by when each line was said (live, by when its text arrived, a little later) and its short answers are counted at 3 tokens a line; it does not model the filter resting after AI failures. The sidebar's answers come from the test cases' prepared replies, so its output tokens are the cases', not a real model's.
 - **Hosting** is the server's monthly cost split over the table-hours a month; it is an input, not a measure.
 
 ## What run 8 should confirm

@@ -3,9 +3,13 @@ small made-up sessions. No network and no key."""
 
 import argparse
 import asyncio
+import io
 import math
+import tempfile
 import unittest
+import wave
 from collections.abc import Sequence
+from pathlib import Path
 
 import numpy as np
 
@@ -70,8 +74,8 @@ class Arithmetic(unittest.TestCase):
     def sessions(self) -> list[model.Session]:
         filter_use = model.Usage(10, 4_000, 300, HAIKU)
         return [
-            model.Session("one", 600, 300, 20, {model.SCALED_BY_SPEECH[0]: filter_use}),
-            model.Session("two", 600, 300, 20, {model.SCALED_BY_SPEECH[0]: filter_use}),
+            model.Session("one", 600, 300, 20, {model.FILTER: filter_use}),
+            model.Session("two", 600, 300, 20, {model.FILTER: filter_use}),
         ]
 
     def test_a_table_hour_adds_speech_filter_and_sidebar(self) -> None:
@@ -82,7 +86,7 @@ class Arithmetic(unittest.TestCase):
         minutes = 36.0
         filter_calls = 2 * minutes
         per_call = model.ai_dollars(model.Usage(1, 400, 30, HAIKU))  # 4,000 and 300 over 10 calls
-        self.assertAlmostEqual(low.ai[model.SCALED_BY_SPEECH[0]], filter_calls * per_call)
+        self.assertAlmostEqual(low.ai[model.FILTER], filter_calls * per_call)
         self.assertAlmostEqual(low.stt, minutes * 0.0043)
         six = model.ai_dollars(model.Usage(6, 6_000, 300, HAIKU))
         self.assertAlmostEqual(low.ai[model.SIDEBAR], six)
@@ -115,7 +119,7 @@ class Tool(unittest.TestCase):
         self.assertEqual(seconds[0], 1.0)
         self.assertLess(seconds[1], 0.25)  # counted, but never sent to speech-to-text
         lines = [measure.Line(u.start_ms / 1000, u.duration_s, "word " * 3) for u in heard]
-        self.assertEqual(len([x for x in lines if x.seconds >= 0.25]), 2)
+        self.assertEqual(len(measure.sent_lines(lines)), 2)
 
     def test_a_long_piece_is_cut_at_fifteen_seconds(self) -> None:
         heard = measure.utterances(quiet(0.2) + tone(20.0) + quiet(2.0))
@@ -165,6 +169,7 @@ class Tool(unittest.TestCase):
 
     def test_the_sidebar_is_measured_on_its_seventeen_questions(self) -> None:
         usage, questions = asyncio.run(measure.sidebar_usage())
+        self.assertEqual(questions, len(measure.CASES_MODULE().CASES))
         self.assertGreaterEqual(questions, 17)
         self.assertGreaterEqual(usage.calls, 1.0)  # some questions needed a second try
         self.assertLess(usage.calls, 2.0)
@@ -172,14 +177,40 @@ class Tool(unittest.TestCase):
         self.assertTrue(usage.estimated)
 
 
+class FromARecording(unittest.TestCase):
+    def test_pieces_too_short_to_send_are_counted_by_core_but_not_paid_for(self) -> None:
+        pcm = quiet(0.5) + tone(2.0) + quiet(2.0) + tone(0.1) + quiet(2.0) + tone(1.0) + quiet(1.5)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(BYTES_PER_SAMPLE)
+            w.setframerate(SAMPLE_RATE)
+            w.writeframes(pcm)
+        script = parse_script("## Part 1\n\n**[DM]:** " + "word " * 30 + "\n")
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "made-up.wav"
+            path.write_bytes(buf.getvalue())
+            session = measure.session_from_recording(path, script)
+        self.assertEqual(session.lines, 2)  # the 0.1 s blip is not sent
+        self.assertAlmostEqual(session.speech_s, 3.0, delta=0.1)
+        self.assertGreater(session.table_s, session.speech_s)
+        self.assertTrue(session.measured_audio)
+
+    def test_the_ceiling_for_the_audio_check_is_one_ask_a_minute(self) -> None:
+        ceiling = measure.audio_check_ceiling()
+        self.assertEqual(ceiling.calls, 60)
+        self.assertGreater(ceiling.input_tokens, 0)
+        self.assertLess(model.ai_dollars(ceiling), 0.05)
+
+
 class Report(unittest.TestCase):
     def render(self, **kw: float | None) -> str:
         filter_use = model.Usage(10, 4_000, 300, HAIKU)
-        sessions = [model.Session("one", 600, 300, 20, {model.SCALED_BY_SPEECH[0]: filter_use})]
+        sessions = [model.Session("one", 600, 300, 20, {model.FILTER: filter_use})]
         sidebar = model.Usage(1.2, 860, 50, HAIKU)
         cases = model.table_hour(sessions, sidebar=sidebar, **kw)  # type: ignore[arg-type]
         args = argparse.Namespace()
-        return report.render(sessions, sidebar, 17, cases, args)
+        return report.render(sessions, sidebar, 17, cases, args, measure.audio_check_ceiling())
 
     def test_it_says_what_it_measured_and_what_it_assumed(self) -> None:
         text = self.render()
@@ -193,8 +224,29 @@ class Report(unittest.TestCase):
             "2026-10-09",
             "What run 8 should confirm",
             "estimates",
+            "No AI at all",
+            "Audio check ceiling",
         ):
             self.assertIn(needed, text)
+
+    def test_the_cases_are_plans_assumption_not_a_claim_about_the_twin(self) -> None:
+        text = self.render()
+        self.assertIn("that PLAN.md assumed before", text)
+        self.assertIn("60 is a ceiling", text)
+
+    def test_the_filter_row_is_the_measured_ratio_times_the_case(self) -> None:
+        # 10 calls, 4,000 tokens in and 300 out over 5 speech-minutes: 2 calls a minute.
+        text = self.render()
+        per_minute = model.ai_dollars(model.Usage(10, 4_000, 300, HAIKU)) / 5
+        self.assertIn(f"| {report.money(per_minute * 36)} |", text)
+        self.assertIn(f"| {report.money(per_minute * 60)} |", text)
+
+    def test_the_report_and_the_tool_count_the_filters_answers_the_same_way(self) -> None:
+        self.assertEqual(report.OUTPUT_TOKENS_PER_LABEL, measure.OUTPUT_TOKENS_PER_LABEL)
+
+    def test_usage_of_two_models_is_not_added(self) -> None:
+        with self.assertRaises(ValueError):
+            model.Usage(1, 1, 1, HAIKU) + model.Usage(1, 1, 1, "another-model")
 
     def test_hosting_shows_when_given(self) -> None:
         text = self.render(hosting_monthly=30.0, table_hours_per_month=100.0)
@@ -207,6 +259,12 @@ def _args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 class Command(unittest.TestCase):
+    def test_outside_a_checkout_it_says_so(self) -> None:
+        from unittest.mock import patch
+
+        with patch.object(measure, "TEST_SCRIPTS", Path("/nonexistent/test-scripts")):
+            self.assertEqual(measure.main([]), 2)
+
     def test_flags(self) -> None:
         args = _args(["--hosting-monthly", "25", "--table-hours-per-month", "80"])
         self.assertEqual((args.hosting_monthly, args.table_hours_per_month), (25.0, 80.0))

@@ -12,6 +12,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
+from dmbot.ai import DEFAULT_MODEL
 from dmbot.devtools.costs import prices
 
 # Speech-minutes sent to speech-to-text per table-hour at a real table. PLAN.md's earlier
@@ -20,11 +21,8 @@ from dmbot.devtools.costs import prices
 SPEECH_MINUTES_PER_HOUR = {"low": 36.0, "typical": 48.0, "high": 60.0}
 # The DM sidebar (#935): questions asked in a table-hour. An assumption, not a measure.
 SIDEBAR_QUESTIONS_PER_HOUR = 6.0
-# A piece of speech shorter than this is counted but never sent to speech-to-text.
-MIN_PIECE_S = 0.25
-# Off-topic filter and audio check scale with how much is said; the sidebar with questions.
-SCALED_BY_SPEECH = ("off-topic filter",)
-SIDEBAR = "DM sidebar"
+FILTER = "off-topic filter"  # scales with how much is said
+SIDEBAR = "DM sidebar"  # scales with the questions asked
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,10 +32,12 @@ class Usage:
     calls: float = 0.0
     input_tokens: float = 0.0
     output_tokens: float = 0.0
-    model: str = "claude-haiku-4-5-20251001"
+    model: str = DEFAULT_MODEL
     estimated: bool = True  # tokens counted by size, not by the AI service
 
     def __add__(self, other: Usage) -> Usage:
+        if other.model != self.model:
+            raise ValueError("can't add the use of two different models")
         return Usage(
             self.calls + other.calls,
             self.input_tokens + other.input_tokens,

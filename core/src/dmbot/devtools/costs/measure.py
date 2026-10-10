@@ -23,6 +23,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 from dmbot.ai import DEFAULT_MODEL, Reply
 from dmbot.audio.segmenter import Segmenter, Utterance
@@ -40,7 +41,7 @@ GUILD, SPEAKER = 1, 1001
 WORDS_PER_SECOND = 2.5  # a script read at 150 words a minute (the speed of ordinary talk)
 GAP_S = 1.0  # between lines, for a script nobody recorded
 OUTPUT_TOKENS_PER_LABEL = 3  # "1 game\n": the filter answers one short line per line
-FILTER = "off-topic filter"
+FILTER = cm.FILTER
 PAIRS = {  # recording -> its script
     "DMOnlyAudio.m4a": "dm-only.md",
     "dm-and-player.m4a": "dm-and-player.md",
@@ -103,6 +104,12 @@ def utterances(pcm: bytes) -> list[Utterance]:
     return out
 
 
+def sent_lines(lines: Sequence[Line]) -> list[Line]:
+    """The lines that reach speech-to-text, and so the filter: shorter ones are counted by
+    core but never written down."""
+    return [x for x in lines if x.seconds >= MIN_UTTERANCE_S]
+
+
 def words_for(script: Script, seconds: Sequence[float]) -> list[str]:
     """The script's words dealt out to the pieces by how long each lasts."""
     words = [w.text for w in script.words]
@@ -129,13 +136,13 @@ def session_from_recording(path: Path, script: Script) -> cm.Session:
         Line(u.start_ms / 1000 - start, u.duration_s, t) for u, t in zip(heard, texts, strict=True)
     ]
     table_s = heard[-1].end_ms / 1000 - start
-    sent = [x for x in lines if x.seconds >= MIN_UTTERANCE_S]
+    sent = sent_lines(lines)
     return cm.Session(
         path.name,
         table_s,
         sum(x.seconds for x in sent),
         len(sent),
-        {FILTER: filter_usage(lines)},
+        {FILTER: filter_usage(sent)},
         measured_audio=True,
     )
 
@@ -152,13 +159,13 @@ def session_from_script(script: Script) -> cm.Session:
         seconds = len(sentence.split()) / WORDS_PER_SECOND
         lines.append(Line(at, seconds, sentence))
         at += seconds + GAP_S
-    sent = [x for x in lines if x.seconds >= MIN_UTTERANCE_S]
+    sent = sent_lines(lines)
     return cm.Session(
         script.name,
         at - GAP_S,
         sum(x.seconds for x in sent),
         len(sent),
-        {FILTER: filter_usage(lines)},
+        {FILTER: filter_usage(sent)},
         measured_audio=False,
     )
 
@@ -193,7 +200,28 @@ def filter_usage(lines: Sequence[Line]) -> cm.Usage:
     return cm.Usage(calls, input_tokens, output_tokens, DEFAULT_MODEL, True)
 
 
+def audio_check_ceiling() -> cm.Usage:
+    """The most the audio check can ask in an hour for one speaker: once a minute
+    (`audio_check.AI_EVERY_S`), only while their audio is breaking up, each time with the
+    last minute of their lines (taken here as ten lines of twelve words). Normal play asks
+    for none, so this is a ceiling, not an estimate of use."""
+    from dmbot import audio_check
+
+    lines = [" ".join(["word"] * 12) for _ in range(10)]
+    per_call_in = cm.estimate_tokens(audio_check.SYSTEM) + cm.estimate_tokens(
+        "\n".join(f"{n}. {x}" for n, x in enumerate(lines, 1))
+    )
+    calls = 3600 / audio_check.AI_EVERY_S
+    return cm.Usage(calls, calls * per_call_in, calls * audio_check.ANSWER_TOKENS)
+
+
 # ---- the sidebar, on its 17 questions ---------------------------------------------------
+
+
+def CASES_MODULE() -> ModuleType:
+    from dmbot.devtools import sidebar_check
+
+    return sidebar_check.load_cases(CASES)
 
 
 async def sidebar_usage() -> tuple[cm.Usage, int]:
@@ -204,7 +232,7 @@ async def sidebar_usage() -> tuple[cm.Usage, int]:
     from dmbot.rules.index import srd
     from dmbot.sidebar.answer import Sidebar
 
-    cases = sidebar_check.load_cases(CASES).CASES
+    cases = CASES_MODULE().CASES
     total = RecordingAI()
     for case in cases:
         ai = RecordingAI(case.replies)
@@ -244,6 +272,13 @@ def measure_sessions(scripts: Path = TEST_SCRIPTS) -> list[cm.Session]:
 
 
 async def run(args: argparse.Namespace) -> int:
+    if not TEST_SCRIPTS.is_dir() or not CASES.is_file():
+        print(
+            "replay --measure: run this from a repo checkout (pip install -e), which has "
+            "docs/test-scripts and core/tests",
+            file=sys.stderr,
+        )
+        return 2
     sessions = measure_sessions()
     sidebar, questions = await sidebar_usage()
     cases = cm.table_hour(
@@ -252,7 +287,7 @@ async def run(args: argparse.Namespace) -> int:
         hosting_monthly=args.hosting_monthly,
         table_hours_per_month=args.table_hours_per_month,
     )
-    text = report.render(sessions, sidebar, questions, cases, args)
+    text = report.render(sessions, sidebar, questions, cases, args, audio_check_ceiling())
     if args.write:
         args.write.write_text(text, encoding="utf-8")
         print(f"Wrote {args.write}")
