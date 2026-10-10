@@ -75,6 +75,8 @@ class FakeHost:
     can_dm: bool = True
     refusal: str = "forbidden"
     withdraw_during_transcribe: bool = False
+    house_rules: list[tuple[int, int, str]] = field(default_factory=list)
+    house_rule_result: str = "started"
 
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return (guild_id, user_id) in self.agreed
@@ -112,6 +114,10 @@ class FakeHost:
 
     async def sidebar_tell_screen(self, table: Any, text: str) -> None:
         self.screen.append(text)
+
+    def sidebar_house_rule(self, table: Any, user_id: int, text: str) -> str:
+        self.house_rules.append((table.guild_id, user_id, text))
+        return self.house_rule_result
 
 
 def dm_message(
@@ -673,6 +679,144 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         self.assertIn((DM, service.NOT_SOON_AGAIN), self.host.dms)
         self.answerer.gate.set()
         await self.settle()
+
+
+class TypedHouseRules(unittest.IsolatedAsyncioTestCase):
+    """A typed "house rule: …" in the DM's private chat (#960): the same proposal as one
+    said aloud; not a question, so no AI and no sidebar line."""
+
+    RULE = "house rule: potions are a bonus action"
+
+    def setUp(self) -> None:
+        self.host = FakeHost(tables={GUILD: make_table()}, agreed={(GUILD, DM), (GUILD, CO_DM)})
+        self.answerer = FakeAnswerer()
+        self.sidebar = SidebarService(self.host)
+        self.sidebar.answerer = self.answerer
+
+    async def test_a_dms_typed_rule_goes_to_the_dm_screen_with_one_short_reply(self) -> None:
+        message = dm_message(content=self.RULE)
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(self.host.house_rules, [(GUILD, DM, self.RULE)])
+        self.assertEqual(sent(message), [service.HOUSE_SENT])
+        self.assertIn("Press **Save**", service.HOUSE_SENT)
+
+    async def test_it_is_not_a_question_no_ai_and_nothing_written_down(self) -> None:
+        await self.sidebar.on_dm_message(dm_message(content=self.RULE))
+        self.assertEqual(self.answerer.asked, [])
+        self.assertEqual(self.host.saved, [])
+        self.assertEqual(self.host.dms, [])
+
+    async def test_it_works_before_the_answers_are_switched_on(self) -> None:
+        self.sidebar.answerer = None
+        message = dm_message(content=self.RULE)
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), [service.HOUSE_SENT])
+
+    async def test_a_second_dm_of_the_campaign_may_too(self) -> None:
+        await self.sidebar.on_dm_message(dm_message(CO_DM, self.RULE))
+        self.assertEqual(self.host.house_rules, [(GUILD, CO_DM, self.RULE)])
+
+    async def test_a_players_typed_rule_never_becomes_a_proposal(self) -> None:
+        self.host.agreed.add((GUILD, PLAYER))
+        message = dm_message(PLAYER, self.RULE)
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(self.host.house_rules, [])
+        self.assertEqual(sent(message), [])  # a stranger gets nothing
+
+    async def test_a_known_dm_with_no_game_is_told_and_nothing_is_offered(self) -> None:
+        self.sidebar.tables_of(DM)  # seen as a DM
+        self.host.tables.clear()
+        message = dm_message(content=self.RULE)
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), [service.HOUSE_NO_SESSION])
+        self.assertEqual(self.host.house_rules, [])
+
+    async def test_a_dm_who_has_not_agreed_is_asked_and_nothing_is_offered(self) -> None:
+        self.host.agreed.discard((GUILD, DM))
+        message = dm_message(content=self.RULE)
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(self.host.house_rules, [])
+        self.assertEqual(sent(message)[0], service.HOUSE_NOT_AGREED)
+
+    async def test_each_reason_it_was_not_offered_has_its_own_words(self) -> None:
+        for result, words in (
+            ("too-soon", service.HOUSE_SOON),
+            ("repeat", service.HOUSE_REPEAT),
+            ("not-now", service.HOUSE_NOT_NOW),
+        ):
+            self.host.house_rule_result = result
+            self.sidebar._noted.clear()  # (a refusal is said once in a while)
+            message = dm_message(content=self.RULE)
+            await self.sidebar.on_dm_message(message)
+            self.assertEqual(sent(message), [words])
+
+    async def test_other_typed_words_are_still_questions_or_nothing(self) -> None:
+        for text in ("the house rules say we can", "ok", "thanks"):
+            await self.sidebar.on_dm_message(dm_message(content=text))
+        self.assertEqual(self.host.house_rules, [])  # no proposal from any of them
+        self.assertEqual([q for _, q, _ in self.answerer.asked], ["the house rules say we can"])
+
+    async def test_a_question_that_starts_like_a_rule_is_still_a_question(self) -> None:
+        await self.sidebar.on_dm_message(
+            dm_message(content="for this table, how does grappling work?")
+        )
+        self.assertEqual(self.host.house_rules, [])
+        self.assertEqual(len(self.answerer.asked), 1)
+
+    async def test_a_stranger_gets_nothing_and_nothing_is_kept(self) -> None:
+        message = dm_message(PLAYER, self.RULE)
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual((sent(message), self.host.house_rules, self.sidebar._noted), ([], [], {}))
+
+    async def test_a_long_message_is_cut_before_it_is_read(self) -> None:
+        await self.sidebar.on_dm_message(dm_message(content=self.RULE + " word" * 1000))
+        ((_, _, text),) = self.host.house_rules
+        self.assertLessEqual(len(text), service.MESSAGE_LIMIT)
+
+    async def test_refusals_are_not_said_for_every_message(self) -> None:
+        self.host.house_rule_result = "too-soon"
+        messages = [dm_message(content=self.RULE) for _ in range(20)]
+        for message in messages:
+            await self.sidebar.on_dm_message(message)
+        self.assertEqual(sum(len(sent(m)) for m in messages), 1)
+
+    async def test_with_several_games_the_dm_picks_which_one(self) -> None:
+        self.host.tables[OTHER_GUILD] = make_table(OTHER_GUILD, "c2", "Strahd")
+        self.host.agreed.add((OTHER_GUILD, DM))
+        message = dm_message(content=self.RULE)
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), [service.HOUSE_WHICH])
+        self.assertEqual(self.host.house_rules, [])  # nothing yet
+        view = message.channel.send.await_args_list[0].kwargs["view"]
+        button = next(b for b in view.children if b.label == "Strahd")
+        stranger = SimpleNamespace(
+            user=SimpleNamespace(id=PLAYER), response=SimpleNamespace(edit_message=AsyncMock())
+        )
+        stranger.response.send_message = AsyncMock()
+        await button.callback(stranger)
+        self.assertEqual(self.host.house_rules, [])  # not theirs to press
+        mine = SimpleNamespace(
+            user=SimpleNamespace(id=DM), response=SimpleNamespace(edit_message=AsyncMock())
+        )
+        await button.callback(mine)
+        self.assertEqual(self.host.house_rules, [(OTHER_GUILD, DM, self.RULE)])
+        self.assertEqual(self.answerer.asked, [])
+        self.assertEqual(sent(message)[-1], service.HOUSE_SENT)
+
+    async def test_a_dm_removed_before_the_pick_is_told(self) -> None:
+        self.host.tables[OTHER_GUILD] = make_table(OTHER_GUILD, "c2", "Strahd")
+        self.host.agreed.add((OTHER_GUILD, DM))
+        message = dm_message(content=self.RULE)
+        await self.sidebar.on_dm_message(message)
+        view = message.channel.send.await_args_list[0].kwargs["view"]
+        button = next(b for b in view.children if b.label == "Strahd")
+        self.host.tables[OTHER_GUILD].dm_user_ids = frozenset({CO_DM})
+        mine = SimpleNamespace(
+            user=SimpleNamespace(id=DM), response=SimpleNamespace(edit_message=AsyncMock())
+        )
+        await button.callback(mine)
+        self.assertEqual(self.host.house_rules, [])
+        self.assertEqual(sent(message)[-1], service.HOUSE_NO_SESSION)
 
 
 class TheScene(unittest.TestCase):

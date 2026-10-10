@@ -1655,3 +1655,32 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     "Instead of"). A player pressing a button is refused. Turn it off again with **Turn rules
     cards off**. Core logs no ERROR.
   Result: all of these were in the 17:27 build (21c5ff1), deployed from their PRs' deploy notes.
+
+==============================================================================
+<<<<<<< HEAD
+2026-10-10  Server: core restarted for a new Anthropic API key (dev1, owner's request)
+==============================================================================
+  - The owner replaced ANTHROPIC_API_KEY with scripts/set-key and asked for core to be
+    restarted. No session was live. `docker compose up -d --no-build --force-recreate core`
+    naming only core (ears, web-api and the tunnel untouched). Logs: "Connected to 1
+    server(s)", "ears connected", 0 errors; core's environment holds a key (yes/no only
+    checked, never the value); /health 404.
+  - Not verified yet: the new key itself. Nothing in the logs uses it until an AI feature
+    runs (🤖 Find names, the off-topic filter, the Transcript Cleaner's second look). A
+    short 🤖 Find names on a pasted paragraph, or Test D with the off-topic filter, will
+    show it; an authentication error would appear in the core log.
+=======
+2026-10-10  Server: DMBOT_FREE_USERS set (dev1, owner's request)
+==============================================================================
+  - The owner gave the Discord ID of the primary admin (their own account) in chat. dev1
+    added it to DMBOT_FREE_USERS in .env with a script that prints no values (a copy of
+    .env first: .env.backup-...-before-free-users, secrets: owner to delete it), then
+    recreated core and web-api together as the setting's note says, naming both services.
+    The condition from the queue ("#825's account page live first") was met on 2026-10-09
+    (Supervisor, #833). No session was live.
+  - Logs (no id kept here): "Free access list: 1 id" in core and web-api, "Connected to 1
+    server(s)", "ears connected", 0 errors; /health 404, /admin/auth/ways 200. Ears untouched.
+  - DMBOT_ENFORCE_PLANS is still off, so nothing changes at the table yet. With it on, that
+    account has no hours or campaign limits. Check for a person: the admin page lists the id
+    as "Always free" (https://dev.getdmbot.com/admin, signed in).
+>>>>>>> 9593d19 (logs: DMBOT_FREE_USERS set for the owner's account)

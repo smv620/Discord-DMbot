@@ -67,9 +67,15 @@ _PAID_KINDS = ("subscription_started", "subscription_renewed", "extra_hours_boug
 
 async def _has_paid(conn: Conn, user_id: int) -> bool:
     """This person has an earlier successful payment on record. Called before the event
-    being applied is recorded, so a failure never counts as its own earlier payment."""
+    being applied is recorded, so a failure never counts as its own earlier payment.
+
+    Per person, not per subscription or company: a payment under any of their
+    subscriptions counts. A row with no kind was recorded before kinds were kept; it counts
+    as paid, so the old behaviour (grace, and lapsing when the plan ends) carries on for
+    them rather than a plan that never lapses."""
     cur = await conn.execute(
-        "SELECT 1 FROM payment_events WHERE user_id = %s AND kind = ANY(%s) LIMIT 1",
+        "SELECT 1 FROM payment_events WHERE user_id = %s AND (kind IS NULL OR kind = ANY(%s))"
+        " LIMIT 1",
         (user_id, list(_PAID_KINDS)),
     )
     return await cur.fetchone() is not None
@@ -289,9 +295,9 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
         if not paid:
             # No payment on record: the plan never started, so there is nothing to give
             # grace to and nothing to lapse. The row stays as it was.
-            log.warning(
+            log.error(
                 "Payment event %s (%s) for user %s, who has no earlier payment on record:"
-                " no grace, nothing changed",
+                " no grace, nothing changed: needs a person to look at it",
                 event.event_id,
                 event.kind,
                 event.user_id,
