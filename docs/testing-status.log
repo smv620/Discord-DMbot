@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-10 by dev1 (core adb179a, web-api 75a62d0; Test D next)
+Last updated: 2026-10-10 by dev1 (core edf0013, web-api 75a62d0; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,34 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- CloudDev, #985 (#964, plan rules part 5): retention. Migration **0039** (core only; two columns on
-  campaigns with defaults, runs by itself at start). A daily job at 03:00 UTC warns an owner 14 and 3
-  days before a campaign's delete date and deletes it after the last warning. **Nothing happens
-  unless DMBOT_ENFORCE_PLANS is on** (off: one dry-run line with counts in the core log). A run that
-  would delete more than 10% of all campaigns stops and logs an error. Check: core log shows migration
-  0039 applied; with enforcement off, a "Retention dry run" line each night around 03:00 UTC.
-- CloudDev, #997 (#992): sidebar accuracy fixes, core only, no migration (prompt version sidebar-2).
-  `DMBOT_SIDEBAR` stays 0. After deploy dev1 runs `python -m dmbot.devtools.sidebar_check` again and
-  posts the 17 answers on #954; the check now also reports MISSING / MUST NOT SAY for the cases that
-  matter (#1, #5, #8, #14, #17). Supervisor reads them before the sidebar is turned on.
-- dev2, PR #988 (adb179a, #969 part 2: the linked house-rules file). Core only. Migration **0040**
-  (new table `house_rules_file`, runs by itself at start). Nothing the DM sees until a file is
-  connected. Live check (about 5 minutes, one person, a Google Doc): put "1. Potions are a bonus
-  action" and "2. No flanking" in a Google Doc set to "Anyone with the link can view". In Discord:
-  ⚙️ Settings > 📄 House-rules file > 🔗 Connect a file, paste the Doc's address. DMbot says
-  "Connected: docs.google.com" and offers "2 to add": press Review, Accept the first, Skip the
-  second. Add a third line in the Doc, stop and start a session: the DM screen shows "1 to add"
-  (and the skipped one); press Accept all changes and check /dmbot houserules. Press Not now on
-  a later change and start another session: nothing is said until the Doc changes again.
-  Also check: 📎 Upload a file (one time) with a .txt file of the rules; 📄 shows only the site,
-  never the link. The download after every change and the 📥 Download rules button (#983) are
-  already live: check them in the same run.
-
+(nothing waiting)
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core adb179a (2026-10-10 04:2x UTC, migrations through 0040), web-api 75a62d0, ears 21c5ff1, web-api
+core d7c3aca (2026-10-10 03:58 UTC, migrations through 0039), web-api 75a62d0, ears 21c5ff1, web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
 website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS is empty again (set by mistake for a few hours on 2026-10-10, see the history).
@@ -76,12 +54,7 @@ entry "Status log as it stood before it was trimmed"):
      DMBOT_SIDEBAR=1 for a short test with a voice message and a typed question.
  17. Retention (#985, plans off): after its first 03:00 UTC run (2026-10-11), the core log has
      ONE dry-run line with counts and no ERROR; nothing is warned or deleted.
- 18. House-rules file (#988): put two rules in a Google Doc (anyone with the link can view),
-     ⚙️ Settings > 📄 House-rules file > 🔗 Connect a file; the comparison shows 2 to add;
-     Review > Accept one and Skip the other.
- 19. The DM sidebar stays OFF (DMBOT_SIDEBAR=0) until Supervisor has read a clean re-test:
-     13 of 18 passed on 2026-10-10 (answers on #954).
- 20. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
+ 18. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
 
 ------------------------------------------------------------------------------
 LATEST RESULTS
