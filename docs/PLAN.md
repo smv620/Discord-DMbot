@@ -1425,8 +1425,9 @@ names panel nor the speech-to-text hints can be a fixed list.
 **Campaign memory rules (the ontology) (decided 2026-10-05).** EntityBot alone builds and
 maintains the ontology; there is no human graph engineer. So it is small, strict,
 versioned and self-checking:
-1. **A fixed core, defined in code:** types (character, split into player character and
-   NPC; creature; place; faction; item; spell; deity; event; concept) and relationships
+1. **A fixed core, defined in code:** types (**one kind for each entry, what it
+   fundamentally is, #1034**: character, place, group, item, event, idea; see "Entity kinds"
+   in docs/STORY_MEMORY.md) and relationships
    (`located_in`, `member_of`, `ally_of`, `enemy_of`, kin, `owns`, `knows`, `serves`,
    `appears_in`). EntityBot can extend the core but never change it; core changes come
    only in code releases, after review.
@@ -1449,6 +1450,30 @@ versioned and self-checking:
 9. **Limited growth:** a cap on new terms per session (about 5), and health numbers
    tracked (duplicates, orphans, unused terms, how often the DM is asked).
 10. **Plain words for users,** always.
+
+*Built, #1034 (2026-10-10): entity kinds.* An entry's kind says what it fundamentally is; roles
+and categories are never kinds.
+- **Kinds:** `character` (always unique: PCs, NPCs, gods, named monsters, a named horse),
+  `place`, `faction` (shown as "group"), `item`, `event`, `concept` (shown as "idea"). The older
+  `npc`, `player_character`, `deity`, `creature` and `spell` are deprecated in the ontology
+  (`replaced_by` character, or concept for a spell): no new entry takes one.
+- **Role:** `player_character`, `npc` or `god`, on a character, one at a time (`memory_entities.role`;
+  it moves to `memory_states` when that table is built). Only a player character has a player.
+- **Links to the rules** (`memory_rule_links`): species (shown only as the 2014 name, tagged
+  `[Legacy 2014]`), creature type, stat block, class, background, by source and name; a name the
+  rules data doesn't have keeps its words and shows "not in DMbot's rules". One species and one
+  creature type for each character, any number of classes. A card reads "Snot: character · NPC ·
+  goblin (humanoid) · Goblin Warrior". Rules vocabulary (species, creature type, class, background,
+  feat, spell, skill, ability) lives in the rules data, never in campaign memory; unnamed monsters
+  ("three goblins") are not entries.
+- **Compatibility:** callers may still say npc, player_character, deity or creature: the store
+  turns it into a character with that role (a spell is refused: look it up with `/dmbot rule`).
+  Lists and menus keep their familiar words.
+- **A campaign's own kinds** can't be a role or a rules category (a block list with a plain
+  message). **Migration 0043** moves what exists: npc, player character and god become a
+  character with that role; a named creature becomes a character, and a spell an idea, both marked
+  "needs a look" for the DM (nothing is deleted); a campaign's own kinds and relationships that
+  named an older kind name its replacement. Older backups are mapped the same way on load.
 
 *Proposed additions (2026-10-06, docs/STORY_MEMORY.md, not yet decided):* a core v2
 with story threads, promises, clues and state facts (`condition`: alive, dead, missing…,

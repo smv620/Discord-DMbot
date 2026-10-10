@@ -10,11 +10,20 @@ from typing import Any
 from dmbot.campaigns.models import CampaignError
 from dmbot.memory import backup
 from dmbot.memory.kinds import LEGACY_TAG, NOT_IN_RULES, kind_key, kind_phrase, links_text
-from dmbot.memory.models import CONFIRMED, Entity, MemoryRuleError, RuleLink
+from dmbot.memory.lookup import CampaignLookup, LookupData
+from dmbot.memory.models import (
+    CONFIRMED,
+    Alias,
+    Entity,
+    MemoryRuleError,
+    RuleLink,
+    name_key,
+)
 from dmbot.memory.name_documents import instructions
 from dmbot.memory.name_list import parse
 from dmbot.memory.ontology import BLOCKED_KINDS, NOT_A_KIND, SPELL_NOT_KEPT, Ontology, TypeTerm
 from dmbot.memory.scan import find_new_names
+from dmbot.ui.name_card import card_text
 
 E1, E2, E3 = "1" * 32, "2" * 32, "3" * 32
 
@@ -105,6 +114,42 @@ class Phrases(unittest.TestCase):
         self.assertEqual(entity("place").kind_key, "place")
         self.assertTrue(entity(role="player_character").is_player_character)
         self.assertFalse(entity(role="npc").is_player_character)
+
+
+class Cards(unittest.TestCase):
+    def lookup(self, who: Entity, links: list[RuleLink]) -> CampaignLookup:
+        alias = Alias("a" * 32, who.id, who.name, name_key(who.name), "full", None, False,
+                      CONFIRMED, (), "dm", 0)  # fmt: skip
+        return CampaignLookup.build(LookupData(1, (who,), (alias,), (), (), (), (), tuple(links)))
+
+    def test_the_name_card_shows_kind_role_species_type_and_stat_block(self) -> None:
+        links = [
+            link("species", "goblin", n=1),
+            link("creature_type", "humanoid", n=2),
+            link("stat_block", "Goblin Warrior", n=3),
+        ]
+        text = card_text(self.lookup(entity(role="npc"), links), E1, [], secrets=False)
+        assert text is not None
+        self.assertIn("**Snot** · character · NPC · goblin (humanoid) · Goblin Warrior", text)
+
+    def test_a_player_character_card_says_who_plays_it(self) -> None:
+        who = entity(role="player_character", name="Testa", played_by=7)
+        text = card_text(self.lookup(who, []), E1, [], secrets=False, player="Mia")
+        assert text is not None
+        self.assertIn("**Testa** · character · player character · played by **Mia**", text)
+
+    def test_a_god_and_a_place(self) -> None:
+        auril = card_text(self.lookup(entity(role="god", name="Auril"), []), E1, [], secrets=False)
+        place = card_text(self.lookup(entity("place", name="Tower"), []), E1, [], secrets=False)
+        assert auril is not None and place is not None
+        self.assertIn("**Auril** · character · god", auril)
+        self.assertIn("**Tower** · place", place)
+
+    def test_the_lookup_keeps_the_links_of_live_entries_only(self) -> None:
+        stray = RuleLink("9" * 32, E2, "species", "srd52", "elf", None, True, 1)
+        got = self.lookup(entity(role="npc"), [link("species", "goblin"), stray])
+        self.assertEqual([x.name for x in got.links[E1]], ["goblin"])
+        self.assertNotIn(E2, got.links)
 
 
 class BlockList(unittest.TestCase):
