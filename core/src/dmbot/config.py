@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dmbot.ai import DEFAULT_MODEL
+from dmbot.ai import DEFAULT_MODELS, AIModels
 from dmbot.entitlements import parse_free_users
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS
 from dmbot.sharding import ShardConfigError, ShardSettings, parse_shards
@@ -40,7 +41,10 @@ class Settings:
     log_level: str = "INFO"
     # AI text calls (reading a document into a names list). Empty: switched off.
     ai_key: str = field(default="", repr=False)
-    ai_model: str = DEFAULT_MODEL
+    # The model each AI tier uses (#1006): FAST, CAREFUL and DEEP. `ai_model_notice` is a
+    # line to log at start-up when the old setting name was used.
+    ai_models: AIModels = DEFAULT_MODELS
+    ai_model_notice: str = ""
     # How long Undo works on campaign memory; older change-log entries are deleted (#164).
     memory_keep_days: int = 30
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
@@ -124,6 +128,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
 
+    ai_models, ai_notice = parse_ai_models(get)
+
     admin_primary = _admin_id(get, "DMBOT_ADMIN_PRIMARY_ID")
     admin_secondary = _admin_id(get, "DMBOT_ADMIN_SECONDARY_ID")
 
@@ -145,7 +151,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         log_format=log_format,
         log_level=log_level,
         ai_key=get("ANTHROPIC_API_KEY"),
-        ai_model=get("AI_MODEL") or DEFAULT_MODEL,
+        ai_models=ai_models,
+        ai_model_notice=ai_notice,
         memory_keep_days=keep_days,
         free_users=free_users,
         enforce_plans=enforce_raw in ("1", "true", "on"),
@@ -169,6 +176,52 @@ def parse_server_ids(raw: str) -> frozenset[int]:
             "separated by commas. Fix it in .env and start again."
         )
     return frozenset(int(p) for p in ids)
+
+
+MODEL_NAME = re.compile(r"^claude-[a-z0-9][a-z0-9._-]{1,80}$")
+OLD_MODEL_NOTICE = (
+    "Your .env still has AI_MODEL. It works for now, as AI_MODEL_FAST (the model for all the "
+    "quick jobs, not only Find names as before), but please rename it to AI_MODEL_FAST, "
+    "keeping the same value. A future update will stop reading AI_MODEL."
+)
+BOTH_MODEL_NOTICE = (
+    "Your .env has both AI_MODEL and AI_MODEL_FAST. Only AI_MODEL_FAST is used; delete the "
+    "AI_MODEL line."
+)
+
+
+def _unquote(raw: str) -> str:
+    """A value without the spaces and quotes a phone adds around it."""
+    return raw.strip().strip("\"'").strip()
+
+
+def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
+    """The model for each AI tier, from `AI_MODEL_FAST`, `AI_MODEL_CAREFUL` and
+    `AI_MODEL_DEEP` (empty: that tier's default). The old `AI_MODEL`, if set, stands for
+    FAST for now; the second value is the line to log about that (or ""). A value that
+    isn't a Claude model name stops start-up, naming the setting (never the value)."""
+    old = get("AI_MODEL")
+    notice = ""
+    chosen: dict[str, str] = {}
+    for tier, name in (
+        ("fast", "AI_MODEL_FAST"),
+        ("careful", "AI_MODEL_CAREFUL"),
+        ("deep", "AI_MODEL_DEEP"),
+    ):
+        raw, shown = _unquote(get(name)), name  # (a phone adds quotes)
+        if tier == "fast":
+            if old and raw:
+                notice = BOTH_MODEL_NOTICE
+            elif old:
+                raw, shown, notice = _unquote(old), "AI_MODEL", OLD_MODEL_NOTICE
+        if raw and not MODEL_NAME.match(raw):
+            raise ConfigError(
+                f"{shown} in .env isn't a Claude model name. Use something like "
+                f"{getattr(DEFAULT_MODELS, tier)} (no quotes or spaces), or leave it empty to "
+                "use that one."
+            )
+        chosen[tier] = raw or getattr(DEFAULT_MODELS, tier)
+    return AIModels(**chosen), notice
 
 
 def _admin_id(get: Callable[[str], str], name: str) -> int | None:

@@ -5,7 +5,6 @@ import {
   minimumAge,
   notAffiliated,
   operator,
-  paymentGraceDays,
   paymentProvider,
 } from "../../content/legal";
 import { byId, formatPrice } from "../../content/pricing";
@@ -91,9 +90,10 @@ const firstMonth = {
       {"{{CHECK: confirm with the payment company's cancellation rules}}"}
     </li>
     <li>
-      If a payment fails, you have {paymentGraceDays} days to fix it before the plan stops (see
-      "What if a payment doesn't go through?" on the <a href="/pricing">Prices</a> page). After
-      that, campaigns are kept for {keepAfterStopPaying}, then deleted.
+      If a renewal payment fails, there is a short grace period to fix it before the plan stops.
+      Tap Fix my payment in <a href="/account">My Account</a>. If your first payment doesn't go
+      through, the plan doesn't start until it does. If the plan stops, campaigns are
+      kept for {keepAfterStopPaying}, then deleted.
     </li>
     <li>Refunds are explained on the <a href="/legal/refunds">Refunds</a> page.</li>
     <li>
@@ -164,5 +164,8 @@ const firstMonth = {
   </p>
 
   <h2>The law that applies</h2>
-  <p>{"{{CHECK: governing law and courts, set by the owner}}"}</p>
+  <p>
+    The laws of the State of Ohio, USA, apply to these terms, and any dispute about them is heard
+    in the courts of the State of Ohio, USA.
+  </p>
 </LegalPage>

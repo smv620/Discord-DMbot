@@ -18,8 +18,11 @@ export const operator = {
   email: "{{CONTACT EMAIL}}",
 };
 
-export const paymentProvider =
-  "{{PAYMENT PROVIDER: Paddle or Lemon Squeezy, once the owner chooses}}";
+/** The payment company, chosen by the owner (2026-10-09). It is the seller (merchant of record). */
+export const paymentProvider = "Lemon Squeezy";
+
+/** The day the owner signed the legal pages off (2026-10-09); shown on all three. */
+export const effectiveDate = "9 October 2026";
 
 export const minimumAge = 13;
 

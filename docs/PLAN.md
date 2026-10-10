@@ -594,6 +594,38 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   to the DM; nothing is stored.
 - The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
+**AI models by task (decided 2026-10-10, built #1006).** Every AI call names a *tier*, never
+a model.
+- **Which job uses which:** **FAST** (the small model, Haiku today) for simple jobs:
+  transcript cleaning, the off-topic filter, Find names, rules checks and lookups, the audio
+  check and the DM sidebar. **CAREFUL** (the middle model, Sonnet) for house-rule changes.
+  **DEEP** (the strongest, Opus) for PlotBot (phase 5c; nothing uses it yet).
+  `dmbot.ai.FEATURE_TIERS` lists every job's tier; a test checks no other file names a model.
+  Model names change, so the tiers are the stable thing.
+- **The settings:** `AI_MODEL_FAST`, `AI_MODEL_CAREFUL`, `AI_MODEL_DEEP`, each with a
+  default; a malformed one (not a `claude-…` name) stops start-up naming the setting. The
+  old `AI_MODEL` stands for FAST, with a line in the log, and is removed in a later update.
+  Note that it now covers every quick job (before, it only chose the model for Find names;
+  the filter and the sidebar were always on the small one).
+- **If a model isn't available** (not found, or a `permission_error` for this key) the call
+  goes to the next tier down (DEEP, CAREFUL, FAST). It is noted once in the log, naming the
+  setting to check, and only when a lower tier then answered (so a bad key is not blamed on a
+  model). The model is tried again after 15 minutes, so fixing the name or the access needs
+  no restart. A 403 that isn't a `permission_error` (a blocked request) never counts.
+  Running out of money never falls back (it messages the admins, #972).
+- **One model for each job:** a job stays on one model, because Anthropic keeps cached
+  prompts separately for each model; switching a job's model back and forth throws the
+  cache away.
+- **DEEP work runs in batches:** PlotBot and the after-session continuity pass run at a
+  break, at the end of a session, or when the DM asks; never on every transcript line.
+  The strongest model costs several times what the small one does.
+- **Changing a tier's model:** a tier's model changes only after its checks pass on the new
+  model (for the sidebar, `python -m dmbot.devtools.sidebar_check`). Moving a job to
+  another tier is a change to `FEATURE_TIERS` and its own issue.
+- **Logging:** the start-up line shows the three models in use (or that AI is off). Each
+  call logs one line: tier, model, tokens in and out, tokens read from the cache; never
+  content. `python -m dmbot.devtools.sidebar_check` prints the model that answered.
+
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
 is chosen by `TRANSCRIBER=` in config.
@@ -1345,7 +1377,7 @@ names panel nor the speech-to-text hints can be a fixed list.
     are never logged. A list DMbot can read all of is added straight away; anything else
     (a document, **anything from a link**, or a list with any line that doesn't fit)
     goes to the AI (Anthropic, `ANTHROPIC_API_KEY`,
-    `AI_MODEL`, a cheap model by default), which writes the names list. The DM first
+    `AI_MODEL_FAST`, the small model by default), which writes the names list. The DM first
     confirms the right to use the material and that its text goes to Anthropic (one
     press, logged with who and when: the IP rule), then sees the list (the start in the
     message, all of it as a file to edit) and adds it with **Add these names**. The
