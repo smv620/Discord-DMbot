@@ -535,9 +535,31 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   everyone can see it." A problem sending it never undoes the change. A **📥 Download**
   button on the `/dmbot houserules` list gives anyone in the server the same file (they may
   read the list already); it holds this campaign's house rules only.
-- **Still to build (second half):** a linked file read at every session start and compared
-  with DMbot's copy (Accept all / Review / Ignore until the file changes), and **📎 Upload a
-  file** for DMs without a link.
+
+*Built, part 3b: the linked file and the upload (2026-10-10, #969):*
+- **Link a file** (the campaign's DMs only): ⚙️ Settings → **House-rules file**, the list's
+  **📄 House-rules file** button, or `/dmbot houserules link:`. Stored per campaign in
+  `house_rules_file` (migration 0038, deleted with the campaign, no grant for the website).
+  A share link can be private, so it is never logged, never shown back (only the site it is
+  on, such as docs.google.com), and not in backups. Unlink and **🔄 Check it now** are in the
+  same menu.
+- **At every session start** DMbot reads the linked file in the background (`dmbot.fetch`:
+  Google Docs, Drive, Dropbox, OneDrive; every address checked; plain text only) and
+  compares it with the campaign's rules by number. If anything differs, one short note on
+  the DM screen with **Accept all**, **Review** (one at a time: Accept, Skip, or Accept the
+  rest) and **Ignore until the file changes**. Nothing changes without a press; every press
+  re-checks that the person is a DM, and the store checks again for each change (a rule
+  another DM changed meanwhile is left alone and said). A new rule keeps its number from the
+  file if that number was never used in this campaign; otherwise it takes the next free
+  number and the DM is told. The same words under another number are not a change (DMbot
+  keeps its own numbers). After accepting, the DM gets the updated file (part 3).
+- **Never a mass removal by mistake:** a file with no readable rule is not compared (it would
+  offer to remove every rule); the DM is told instead. A file that can't be read gets one
+  short note and the session goes on with DMbot's copy. "Ignore until the file changes"
+  remembers a fingerprint of the rules (not the title or notes).
+- **📎 Upload a file** does the same comparison from an uploaded `.txt` file, shown privately
+  to the DM; nothing is stored.
+- The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and

@@ -26,6 +26,9 @@ class FakeStore:
         self.made = made if made is not None else max((r.number for r in rules), default=0)
         self.scenarios: list[str | None] = []
 
+    async def list(self, guild_id: int, cid: str) -> list[HouseRule]:
+        return sorted(self.rules, key=lambda r: -r.number)
+
     def _check(self, user_id: int) -> None:
         if user_id != DM:
             raise HouseRuleError(house.NOT_DM)

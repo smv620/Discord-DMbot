@@ -264,17 +264,26 @@ async def press(
 
 
 async def compare_text(
-    bot: Any, campaign: Campaign, text: str, send: Send, *, from_link: bool
+    bot: Any,
+    campaign: Campaign,
+    text: str,
+    send: Send,
+    *,
+    from_link: bool,
+    respect_ignore: bool = True,
 ) -> str | None:
     """Compare a file's text with the campaign's house rules and, if they differ, offer
     the buttons through `send`. Returns words for the DM when there is nothing to offer
-    (the files match, or the file can't be used), else None."""
+    (the files match, or the file can't be used), else None. A version of a linked file the
+    DM chose to ignore is skipped unless `respect_ignore` is off (the DM asked to look)."""
+    if len(text) > house_file.MAX_FILE_CHARS:  # (parse would refuse it too)
+        return TOO_BIG
     parsed = await asyncio.to_thread(house_file.parse, text)
     unreadable = len(parsed.problems)
     if not parsed.rules:
         return no_rules(unreadable)
     fingerprint = house_file_sync.fingerprint(parsed.rules)
-    if from_link:
+    if from_link and respect_ignore:
         links = bot.house_file_links
         link = await links.get(campaign.guild_id, campaign.id) if links is not None else None
         if link is not None and link.ignored == fingerprint:
@@ -286,7 +295,7 @@ async def compare_text(
     diff = house_file.compare(mine, parsed.rules)
     items = house_file_sync.items_of(diff)
     if not items:
-        return SAME if not from_link else None
+        return SAME
     pending = Pending(
         campaign.guild_id,
         campaign.id,
@@ -325,7 +334,9 @@ async def check_linked(bot: Any, campaign: Campaign, send: Send, *, quiet_if_sam
         text, problem = await read_link(bot, campaign)
         words = problem
         if text is not None:
-            words = await compare_text(bot, campaign, text, send, from_link=True)
+            words = await compare_text(
+                bot, campaign, text, send, from_link=True, respect_ignore=quiet_if_same
+            )
             if words == SAME and quiet_if_same:
                 words = None
         if words:
