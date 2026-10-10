@@ -1901,6 +1901,15 @@ both editions' entries, the older tagged `[Legacy 2014]` ("is the 2014 goblin di
 Goblin and Goblin Warrior). `sidebar_check` now also checks each case's must-say and must-not-say
 words. Not done: adding general rules or class features to the index.
 
+*Built, accuracy part 3 (#1005, CloudDev, 2026-10-10; prompt version `sidebar-3`):* (1) **Each fact cites
+its own source:** a house rule is cited only when it says what the answer says (the answer's real
+words, bar one, must be in the rule); otherwise the cite is dropped and the answer gets "(not in
+DMbot's rules, check your book)
+and is never "sure" ("a spell attack can crit on a 20" is not house rule 3).
+(2) **Older edition always tagged and named:** when the AI was given a `[Legacy 2014]` entry, the source names
+both entries by their own names and pages ("Goblin Warrior SRD 5.2.1 p. 290; Goblin SRD 5.1 p. 315
+[Legacy 2014]"). Brevity is unchanged; tags and sources are added after the cut.
+
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
 keys. DMbot runs on the operator's keys and bills **by hours and campaigns** through the

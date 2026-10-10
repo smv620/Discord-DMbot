@@ -44,14 +44,14 @@ CASES: tuple[Case, ...] = (
             reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "not sure"),
             reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "not sure"),
         ),
-        ("point you choose",),
+        ("point you choose", "choose a point"),
         calls=2,
         must_not=("don't say", "your call"),
     ),
     Case(
         "hold on, I need to find if you need line of sight for fireball",
         (reply("No. It starts at a point you choose within range.", "SRD 5.2.1 p. 131"),),
-        ("point you choose",),
+        ("point you choose", "choose a point"),
         yes_no=True,
         must_not=("don't say",),
     ),
@@ -124,7 +124,7 @@ CASES: tuple[Case, ...] = (
                 "SRD 5.2.1 p. 182",
             ),
         ),
-        ("speed is 0",),
+        ("speed is 0", "speed becomes 0"),
         calls=2,
     ),
     Case(
@@ -141,8 +141,14 @@ CASES: tuple[Case, ...] = (
     ),
     Case(
         "what do I know about Belleros",
-        (reply("Belleros is an NPC and the hooded stranger's friend.", "campaign names"),),
-        ("belleros",),
+        (reply("I don't have that. Your call.", "none", "not sure"),),
+        ("your call",),
+    ),
+    Case(  # the older fireball is named as such and cites its own page (#1005)
+        "does fireball go around corners in 2014",
+        (reply("Yes. In 2014 it spreads around corners.", "SRD 5.1 p. 144"),),
+        ("[Legacy 2014]", "spreads around corners"),
+        yes_no=True,
     ),
     Case(
         "who does Belleros work for",

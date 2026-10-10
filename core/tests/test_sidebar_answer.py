@@ -279,6 +279,60 @@ class Editions(unittest.TestCase):
         self.assertFalse(context.wants_both_editions("how much damage does fireball do"))
 
 
+class AccuracyPart3(unittest.TestCase):
+    """#1005: each fact cites its own source; the older edition is always tagged and named."""
+
+    def test_a_house_rule_is_not_cited_for_more_than_it_says(self) -> None:
+        rule = house(3, "Criticals deal maximum damage plus the roll.")
+        ai = FakeAI(
+            [reply("Yes. A spell attack can crit on a 20, dealing max damage.", "house rule 3")]
+        )
+        got = run(
+            engine(ai, houses={"c" * 32: [rule]}).answer(
+                campaign(), "is there a rule for a critical hit on a spell attack"
+            )
+        )
+        self.assertIn("not in DMbot's rules", got.text)
+        self.assertNotIn("house rule 3", got.text.lower())
+        self.assertNotIn("sure", got.text)
+
+    def test_a_house_rule_is_cited_for_what_it_says(self) -> None:
+        rule = house(3, "Criticals deal maximum damage plus the roll.")
+        ai = FakeAI([reply("Criticals deal maximum damage plus the roll.", "house rule 3")])
+        got = run(engine(ai, houses={"c" * 32: [rule]}).answer(campaign(), "what do criticals do"))
+        self.assertIn("house rule 3", got.text.lower())
+
+    def test_the_older_goblin_is_tagged_and_the_current_one_named(self) -> None:
+        ai = FakeAI([reply("Yes, the 2014 one is weaker.", "SRD 5.1 p. 315")])
+        got = run(engine(ai).answer(campaign(), "is the 2014 goblin different"))
+        self.assertIn("[Legacy 2014]", got.text)
+        self.assertIn("Goblin Warrior", got.text)
+        self.assertIn("SRD 5.1 p. 315", got.text)
+        self.assertIn("SRD 5.2.1 p. 290", got.text)
+
+    def test_a_house_rule_source_is_not_replaced_by_the_legacy_pair(self) -> None:
+        rule = house(3, "The goblin is weaker in this game.")
+        ai = FakeAI([reply("Yes. The goblin is weaker in this game.", "house rule 3")])
+        got = run(
+            engine(ai, houses={"c" * 32: [rule]}).answer(campaign(), "is the 2014 goblin different")
+        )
+        self.assertIn("house rule 3", got.text.lower())
+        self.assertNotIn("SRD", got.text)
+
+    def test_no_source_means_no_legacy_pair(self) -> None:
+        ai = FakeAI([reply("I don't have that. Your call.", "none", "not sure")])
+        got = run(engine(ai).answer(campaign(), "is the 2014 goblin different"))
+        self.assertNotIn("SRD", got.text)
+
+    def test_a_plain_question_gets_no_legacy_tag(self) -> None:
+        ai = FakeAI([reply("8d6 fire damage, half on a successful save.", "SRD 5.2.1 p. 131")])
+        got = run(engine(ai).answer(campaign(), "how much damage does fireball do"))
+        self.assertNotIn("Legacy", got.text)
+
+    def test_the_prompt_version_moved_on(self) -> None:
+        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-3")
+
+
 class FireballExample(unittest.TestCase):
     """PLAN's example: one sentence plus its source."""
 
@@ -452,7 +506,7 @@ class Lineage(unittest.TestCase):
         ai = FakeAI([reply("No.", "SRD 5.2.1 p. 131")])
         got = run(engine(ai).answer(campaign(), "do you need line of sight for fireball"))
         self.assertEqual(got.model, "fake-fast-model")
-        self.assertEqual(got.prompt_version, "sidebar-2")
+        self.assertEqual(got.prompt_version, "sidebar-3")
         self.assertEqual(got.sources, ("SRD 5.2.1 p. 131",))
         self.assertGreaterEqual(got.seconds, 0)
 
