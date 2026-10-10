@@ -6,6 +6,10 @@
 The engine and its settings come from the environment, as for the bot (TRANSCRIBER,
 DEEPGRAM_API_KEY, ...); --transcriber overrides TRANSCRIBER. Prints the scored record;
 --log also appends it to docs/testing-history.log as a "Twin run".
+
+    python -m dmbot.devtools.replay --measure [--write docs/costs.md]
+
+measures what a table costs per hour from the repo's recordings and scripts (#945).
 """
 
 from __future__ import annotations
@@ -458,7 +462,13 @@ async def main_async(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    return asyncio.run(main_async(parse_args(argv)))
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--measure" in args:  # cost per table-hour (#945): no recording, script or key
+        from dmbot.devtools.costs import measure
+
+        args.remove("--measure")
+        return measure.main(args)
+    return asyncio.run(main_async(parse_args(args)))
 
 
 if __name__ == "__main__":

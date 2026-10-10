@@ -26,6 +26,7 @@ from discord.ext import commands
 
 from dmbot import campaign_cap, entitlements, hours, install, plan_rules, retention, usage
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
+from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
 from dmbot.campaigns import Campaign, CampaignStore
@@ -484,10 +485,29 @@ class DMBot(commands.AutoShardedBot):
                 server_name=lambda gid: g.name if (g := self.get_guild(gid)) else "your server",
                 site_url=settings.site_url,
             )
+
+        # Tells the two admins when the AI account is out of funds, and logs a daily usage
+        # line (#972). Every AI client below reports to it.
+        admins: dict[str, int] = {}
+        for role, user_id in (
+            ("primary", settings.admin_primary_id),
+            ("secondary", settings.admin_secondary_id),
+        ):
+            if user_id is not None and user_id not in admins.values():  # the same person twice
+                admins[role] = user_id
+        self.ai_watch = AIWatch(admins=admins, state_dir=settings.data_dir, send=self._tell_admin)
         # AI text calls (a document into a names list); None when no key is set.
-        self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None
+        self.ai = (
+            AnthropicClient(settings.ai_key, settings.ai_model, watch=self.ai_watch)
+            if settings.ai_key
+            else None
+        )
         # The off-topic filter (#52) always uses the smallest model, whatever AI_MODEL is.
-        self.topic_ai = AnthropicClient(settings.ai_key, DEFAULT_MODEL) if settings.ai_key else None
+        self.topic_ai = (
+            AnthropicClient(settings.ai_key, DEFAULT_MODEL, watch=self.ai_watch)
+            if settings.ai_key
+            else None
+        )
         # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
         # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
         # without an AI key.
@@ -630,6 +650,9 @@ class DMBot(commands.AutoShardedBot):
         if self._closing:  # SIGTERM and the normal exit can both call this
             return
         self._closing = True
+        # A notice to the admins that is on its way gets a moment to finish (#972).
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(self.ai_watch.wait(), 3)
         document_reader.shutdown()  # files being read: end them, don't wait out their limit
         # Stopped sessions stop waiting for their last words and finish now (saving
         # first), alongside everything below.
@@ -1276,6 +1299,12 @@ class DMBot(commands.AutoShardedBot):
                 await self.retention.run_once(int(time.time()))
             except Exception:
                 log.exception("The daily retention job failed")
+
+    async def _tell_admin(self, user_id: int, text: str) -> None:
+        """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
+        the watch tries again later and doesn't count it as told."""
+        user = self.get_user(user_id) or await self.fetch_user(user_id)
+        await user.send(text, allowed_mentions=discord.AllowedMentions.none())
 
     def session_lock(self, guild_id: int) -> asyncio.Lock:
         """Held while a session starts or stops, or a campaign is replaced, per server."""

@@ -13,6 +13,9 @@ and there is a sandbox account.
 What every real adapter must do (#497):
 - Compare signatures as bytes (`hmac.compare_digest` on bytes), never str against str: a
   header with non-ASCII text must be a refusal, not a crash. FakeProvider.verify shows how.
+- Send `subscription_started` only once the first payment has gone through. A first payment
+  that fails is sent as `payment_failed` (or not at all): the writer gives the 7-day grace
+  only to someone with an earlier successful payment on record (#922).
 - A change the company schedules for the next billing date (a downgrade at renewal) is
   sent as `subscription_started` only when it takes effect, at the renewal.
 - `occurred_at` is when the change happened at the company, never when it was delivered:
@@ -45,7 +48,7 @@ log = logging.getLogger(__name__)
 EventKind = Literal[
     "subscription_started",  # a new paid plan, or a plan change (a new plan id)
     "subscription_renewed",  # paid for the next period
-    "payment_failed",  # the 7-day grace starts
+    "payment_failed",  # the 7-day grace starts, if they have paid before (#922)
     "subscription_ended",  # stopped paying, or cancelled at the period's end
     "extra_hours_bought",  # +10 hours for this period
 ]

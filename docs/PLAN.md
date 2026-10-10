@@ -517,6 +517,28 @@ alerts yet; those build on this.
   they pick which one by button. The bot still doesn't read messages in servers (narrowest
   intents); the **Add a house rule** form in `/dmbot houserules` is the other typed way.
 
+*Built, part 3: the house-rules file, first half (2026-10-10, #969):* the owner's decision is
+that house rules must be readable offline, so DMbot keeps a plain-text file of record.
+- **The format** (`dmbot.rules.house_file`, pure): a title line, `#` help lines, then one
+  rule per line, `12. <rule> (instead of: <book rule>)`. Reading and writing go both ways
+  without loss (a rule that itself contains " (instead of: " is written with square
+  brackets). A line that is not a rule is reported with its line number, never guessed at;
+  over 200 rules, a rule over 500 characters, a number used twice or a number too big are
+  reported, not kept. `compare` says what was added, changed or removed against DMbot's copy
+  by rule number, and calls the same words under another number "moved".
+  Reading costs time in proportion to the file (it will be run on files fetched or
+  uploaded): a file over 200,000 characters is refused unread, a line over 2,000 is refused
+  unread, reading stops at the 201st rule, and at most 20 problems are listed (then a count).
+- **Download after every change:** after any change a DM makes in Discord (Add, Edit,
+  Remove, an Override, a rule said or typed) the DM gets the updated
+  `house-rules-<campaign>.txt` as a private message: "Put this in your house-rules file so
+  everyone can see it." A problem sending it never undoes the change. A **📥 Download**
+  button on the `/dmbot houserules` list gives anyone in the server the same file (they may
+  read the list already); it holds this campaign's house rules only.
+- **Still to build (second half):** a linked file read at every session start and compared
+  with DMbot's copy (Accept all / Review / Ignore until the file changes), and **📎 Upload a
+  file** for DMs without a link.
+
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
 is chosen by `TRANSCRIBER=` in config.
@@ -1816,6 +1838,18 @@ keys. DMbot runs on the operator's keys and bills **by hours and campaigns** thr
 customer website (`web/`, #431–#435); the plan rules in the bot are #437. The "who pays
 for this call" seam stays, pointing at the operator's keys.
 
+*Built, out of funds (2026-10-10, #972):* when the AI account has no credit or reaches its
+spend limit, every AI call (Find names, the off-topic filter, the sidebar, the cleaner) raises
+`AIOutOfFunds`, and the DM hears "DMbot's AI is paused right now (its account needs topping
+up). Nothing was changed. You can keep playing; the AI features come back once it's fixed."
+Two named admins, `DMBOT_ADMIN_PRIMARY_ID` (the owner) and `DMBOT_ADMIN_SECONDARY_ID` (a
+backup), each a Discord user ID of 17 to 20 digits or empty (anything else stops start-up,
+naming the setting and never the value), get one private message with full context, at most
+once a day each, remembered in a small file in the data folder (`ai_notice.json`) so a restart
+doesn't repeat it; a failed send to one doesn't stop the other, and with neither set it is
+only logged. The error line is logged at most once an hour, and once a day one INFO line gives
+the last 24 hours' AI calls and tokens (counts only). In `dmbot.ai_watch`.
+
 **Plans and pricing (owner decisions, 2026-10-07).** The plan belongs to one Discord user
 (the DM); every campaign has one owner whose hours and campaign count it uses; co-DMs
 need no plan; "Hand over this campaign" offers ownership to another member of the
@@ -2028,7 +2062,7 @@ plan; a campaign with **no owner** is kept by Try It's rule (DMbot doesn't know 
 plan), and its DMs get the warnings. A paused campaign follows the same rules, and a campaign
 in a running session is skipped. The owner gets a private message 14 days and 3 days before
 (`deletionWarningDaysBefore`), each once: the stage and the date it was sent for are kept on the
-campaign (`retention_warned_stage`, `retention_warned_for`, migration 0038), so a restart doesn't
+campaign (`retention_warned_stage`, `retention_warned_for`, migration 0039), so a restart doesn't
 repeat one and playing a session (which moves the date) starts them over. Deletion is the
 existing `CampaignStore.delete`, then the owner is told once; the log has counts only. The job
 runs per server (the bot's own servers), reading across servers only the owner's plan, through
