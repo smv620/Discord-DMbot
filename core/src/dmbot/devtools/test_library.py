@@ -200,49 +200,57 @@ async def main_async(args: argparse.Namespace) -> int:
     speech_s = 0.0
     unkept = 0
     trouble = False
-    for path in cases(folder):
-        try:
-            session = load(path)
-        except SessionError as exc:
-            trouble = True
-            note(
-                f"{path.name}: refused ({exc}). Don't copy this folder; delete it and "
-                "save the session again with the recorder.",
-                "a saved session was refused (not a usable session)",
+    try:
+        for path in cases(folder):
+            try:
+                session = load(path)
+            except SessionError as exc:
+                trouble = True
+                note(
+                    f"{path.name}: refused ({exc}). Don't copy this folder; delete it and "
+                    "save the session again with the recorder.",
+                    "a saved session was refused (not a usable session)",
+                )
+                continue
+            if not session.kept:
+                unkept += 1  # unkept sessions are not part of the library
+                continue
+            name = public_name(session)
+            label = f"{name} [{path.name}]"
+            if not session.complete:
+                note(
+                    f"{label}: skipped, {why_incomplete(session)}", f"{name}: skipped (incomplete)"
+                )
+                continue
+            try:
+                result = await run(
+                    session,
+                    build_transcriber(settings),
+                    realtime=not args.no_timing,
+                    outside=settings.sends_audio_out,
+                )
+            except (TranscriberUnavailable, OSError, audio.DecodeError) as exc:
+                trouble = True
+                note(
+                    f"{label}: could not run ({exc}). Check the speech-to-text engine and the "
+                    "files in that folder, then run again.",
+                    f"{name}: could not run",
+                )
+                continue
+            speech_s += result.sent_s
+            diff: Diff = compare(
+                session.produced, today_lines(result), result.alerts, session.expected
             )
-            continue
-        if not session.kept:
-            unkept += 1  # unkept sessions are not part of the library
-            continue
-        name = public_name(session)
-        label = f"{name} [{path.name}]"
-        if not session.complete:
-            note(f"{label}: skipped, {why_incomplete(session)}", f"{name}: skipped (incomplete)")
-            continue
-        try:
-            result = await run(
-                session,
-                build_transcriber(settings),
-                realtime=not args.no_timing,
-                outside=settings.sends_audio_out,
-            )
-        except (TranscriberUnavailable, OSError, audio.DecodeError) as exc:
-            trouble = True
-            note(
-                f"{label}: could not run ({exc}). Check the speech-to-text engine and the "
-                "files in that folder, then run again.",
-                f"{name}: could not run",
-            )
-            continue
-        speech_s += result.sent_s
-        diff: Diff = compare(session.produced, today_lines(result), result.alerts, session.expected)
-        verdicts[diff.verdict] = verdicts.get(diff.verdict, 0) + 1
-        note(f"{label}: {summary(diff)}", f"{name}: {summary(diff)}")
-        rechecked, detail = await recheck_case(args, session, result, sidebar)
-        for flag, counts in rechecked:
-            totals[flag] = totals.get(flag, recheck.Counts()) + counts
-            note(f"  {flag}: {counts.line()}")
-        lines.extend(f"    {x}" for x in detail)  # on screen only: never in the log
+            verdicts[diff.verdict] = verdicts.get(diff.verdict, 0) + 1
+            note(f"{label}: {summary(diff)}", f"{name}: {summary(diff)}")
+            rechecked, detail = await recheck_case(args, session, result, sidebar)
+            for flag, counts in rechecked:
+                totals[flag] = totals.get(flag, recheck.Counts()) + counts
+                note(f"  {flag}: {counts.line()}")
+            lines.extend(f"    {x}" for x in detail)  # on screen only: never in the log
+    finally:
+        if ai_client is not None:
+            await ai_client.close()  # type: ignore[attr-defined]
     total = ", ".join(f"{n} {v}" for v, n in sorted(verdicts.items())) or "no cases run"
     note(f"total: {total}")
     if unkept:
@@ -255,8 +263,6 @@ async def main_async(args: argparse.Namespace) -> int:
     for flag, counts in totals.items():
         note(f"total {flag}: {counts.line()}")
     note(dollars_line(speech_s, settings.sends_audio_out, counting))
-    if ai_client is not None:
-        await ai_client.close()  # type: ignore[attr-defined]
     print("\n".join(lines))
     if args.log:
         header = [f"commit: {commit(args.commit, tool='test_library')}   engine: {settings.engine}"]

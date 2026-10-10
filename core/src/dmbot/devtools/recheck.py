@@ -225,8 +225,9 @@ async def recheck_sidebar(
             result.detail.append(f"sidebar question {number}: could not be answered")
             continue
         if not saved:
-            result.counts += Counts(changed=1)
-            result.detail.append(f"sidebar question {number}: no answer was saved to compare")
+            # An answer that was not about the game is not saved: nothing to compare, so not
+            # counted either way.
+            result.detail.append(f"sidebar question {number}: no saved answer to compare")
             continue
         check = compare_answer(saved, new)
         result.counts += Counts(**{check.verdict: 1})
