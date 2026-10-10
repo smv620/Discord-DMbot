@@ -160,7 +160,7 @@ class RuleLink:
     id: str
     entity_id: str
     kind: str  # LINK_KINDS
-    source: str  # "srd52", "srd51", "homebrew", ...; "" when not known
+    rules_source: str  # "srd52", "srd51", "homebrew", ...; "" when not known
     name: str
     edition: str | None  # "2014" is shown as [Legacy 2014]
     known: bool

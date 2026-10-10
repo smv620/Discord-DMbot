@@ -1233,7 +1233,7 @@ MEMORY_KINDS = (
         entity_id  TEXT NOT NULL,
         kind       TEXT NOT NULL
             CHECK (kind IN ('species', 'creature_type', 'stat_block', 'class', 'background')),
-        source     TEXT NOT NULL CHECK (char_length(source) <= 40),
+        rules_source TEXT NOT NULL CHECK (char_length(rules_source) <= 40),
         name       TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 100),
         edition    TEXT CHECK (edition IS NULL OR edition IN ('2014', '2024')),
         known      BOOLEAN NOT NULL,
@@ -1247,7 +1247,7 @@ MEMORY_KINDS = (
     CREATE UNIQUE INDEX memory_rule_links_one_type
         ON memory_rule_links (guild_id, campaign_id, entity_id) WHERE kind = 'creature_type';
     CREATE UNIQUE INDEX memory_rule_links_no_repeat
-        ON memory_rule_links (guild_id, campaign_id, entity_id, kind, source, name);
+        ON memory_rule_links (guild_id, campaign_id, entity_id, kind, rules_source, name);
     """
     + _isolate("memory_rule_links")
     + """

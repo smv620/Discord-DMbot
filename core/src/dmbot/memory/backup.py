@@ -26,6 +26,7 @@ from dmbot.memory._changes import (
     FLAGS,
     PREDICATES,
     RELATIONS,
+    RULE_LINKS,
     SHEETS,
     TYPES,
     Table,
@@ -41,8 +42,12 @@ from dmbot.memory.models import (
     FIX,
     KEEP,
     LINE_REF_MAX,
+    LINK_EDITIONS,
+    LINK_KINDS,
+    LINK_SOURCE_MAX,
     LIST_MAX,
     NAME_MAX,
+    ROLES,
     SOURCES,
     is_id,
 )
@@ -66,6 +71,7 @@ _TAGS: dict[str, Table] = {
     "type": TYPES,
     "predicate": PREDICATES,
     "entity": ENTITIES,
+    "rule_link": RULE_LINKS,
     "alias": ALIASES,
     "relation": RELATIONS,
     "correction": CORRECTIONS,
@@ -85,13 +91,16 @@ _TEXT_LIMITS = {
     "detail": DETAIL_MAX,
     "line_ref": LINE_REF_MAX,
     "parent": 40,
+    "rules_source": LINK_SOURCE_MAX,
     "replaced_by": 40,
     "type": 40,
     "predicate": 40,
 }
 _CHOICES: dict[str, Sequence[str]] = {
     "status": (*ENTITY_STATUSES, ACTIVE, DEPRECATED, "open", "resolved"),
-    "kind": (*ALIAS_KINDS, *FLAG_KINDS),
+    "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS),
+    "role": ROLES,
+    "edition": LINK_EDITIONS,
     "action": (FIX, KEEP),
     "source": SOURCES,
 }
@@ -101,9 +110,11 @@ _INTS = {"played_by", "created_at", "from_session_at", "to_session_at", "from_ga
          "to_game_time", "max_per_subject"}  # fmt: skip
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
           "mention_ids"}  # fmt: skip
-_NULLABLE = {"played_by", "merged_into", "used_by", "other_id", "entity_id", "replaced_by",
-             "parent", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-             "max_per_subject"}  # fmt: skip
+_NULLABLE = {
+    "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
+    "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
+    "to_game_time", "max_per_subject",
+}  # fmt: skip
 
 
 def _valid(column: str, value: object) -> bool:
@@ -120,7 +131,7 @@ def _valid(column: str, value: object) -> bool:
             and len(value) <= LIST_MAX
             and all(isinstance(v, str) and 0 < len(v) <= DESCRIPTION_MAX for v in value)
         )
-    if column in ("secret", "is_symmetric"):
+    if column in ("secret", "is_symmetric", "needs_look", "known"):
         return isinstance(value, bool)
     if column == "confidence":
         return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
@@ -218,6 +229,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """A backup's memory rows, every value checked, grouped by table tag. Untrusted:
     raises CampaignError(DAMAGED) on anything out of shape."""
     by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
+    rows = _from_before_kinds(rows)
     for raw in rows:
         if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
             raise CampaignError(DAMAGED)
@@ -245,6 +257,62 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         r for r in by_tag["sheet"] if entities[r["entity_id"]]["played_by"] == r["player_id"]
     ]
     return by_tag
+
+
+# The older kinds, as a backup from before #1034 holds them → (kind now, role, needs a look).
+_OLD_KINDS: dict[str, tuple[str, str | None, bool]] = {
+    "player_character": ("character", "player_character", False),
+    "npc": ("character", "npc", False),
+    "deity": ("character", "god", False),
+    "creature": ("character", None, True),
+    "spell": ("concept", None, True),
+}
+_OLD_PARENTS = {k: v[0] for k, v in _OLD_KINDS.items()}
+
+
+def _from_before_kinds(rows: list[Any]) -> list[Any]:
+    """A backup from before #1034 (its entries have no role) read as the migration reads
+    the database: npc, player character and god become a character with that role, a named
+    creature a character and a spell an idea, both marked "needs a look"; a campaign's own
+    kinds and relationships that named an older kind name its replacement. Nothing is
+    dropped. A current backup passes through as it is."""
+    entities = [r for r in rows if isinstance(r, dict) and r.get("table") == "entity"]
+    if not entities or all("role" in r for r in entities):
+        return rows
+    out: list[Any] = []
+    for raw in rows:
+        if not isinstance(raw, dict):
+            out.append(raw)
+            continue
+        table = raw.get("table")
+        if table == "entity" and "role" not in raw:
+            kind, role, look = _OLD_KINDS.get(str(raw.get("type")), (raw.get("type"), None, False))
+            raw = {**raw, "type": kind, "role": role, "needs_look": look}
+        elif table == "type" and raw.get("parent") in _OLD_PARENTS:
+            raw = {**raw, "parent": _OLD_PARENTS[raw["parent"]]}
+        elif table == "predicate":
+            raw = {
+                **raw,
+                **{
+                    column: _renamed(raw.get(column))
+                    for column in ("subject_types", "object_types")
+                    if column in raw
+                },
+            }
+        out.append(raw)
+    return out
+
+
+def _renamed(kinds: Any) -> Any:
+    """A list of kinds with the older ones replaced, each once."""
+    if not isinstance(kinds, list):
+        return kinds
+    seen: list[Any] = []
+    for kind in kinds:
+        now = _OLD_PARENTS.get(kind, kind) if isinstance(kind, str) else kind
+        if now not in seen:
+            seen.append(now)
+    return seen
 
 
 def _checked_sheet(raw: dict[str, Any]) -> dict[str, Any]:
@@ -318,6 +386,19 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
         (_predicate_term(r) for r in by_tag["predicate"]),
     )
     if any(r["type"] not in onto.types for r in by_tag["entity"]):
+        raise CampaignError(DAMAGED)
+    # A role belongs to a character; only a player character has a player; a link is on a
+    # character that is in the file.
+    if any(
+        (r["role"] is not None and not onto.is_a(r["type"], "character"))
+        or (r["played_by"] is not None and r["role"] != "player_character")
+        for r in by_tag["entity"]
+    ):
+        raise CampaignError(DAMAGED)
+    characters = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "character")}
+    if any(r["entity_id"] not in characters for r in by_tag["rule_link"]):
+        raise CampaignError(DAMAGED)
+    if any(r["known"] != bool(r["rules_source"]) for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
     if any(r["predicate"] not in onto.predicates for r in by_tag["relation"]):
         raise CampaignError(DAMAGED)

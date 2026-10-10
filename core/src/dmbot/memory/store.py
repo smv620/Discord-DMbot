@@ -139,7 +139,7 @@ def _entity(r: dict[str, Any]) -> Entity:
 
 def _rule_link(r: dict[str, Any]) -> RuleLink:
     return RuleLink(
-        r["id"], r["entity_id"], r["kind"], r["source"], r["name"], r["edition"], r["known"],
+        r["id"], r["entity_id"], r["kind"], r["rules_source"], r["name"], r["edition"], r["known"],
         r["created_at"],
     )  # fmt: skip
 
@@ -818,7 +818,7 @@ class MemoryStore:
             else:
                 for old in await w.select(
                     RULE_LINKS,
-                    " AND entity_id = %s AND kind = %s AND source = %s AND name = %s",
+                    " AND entity_id = %s AND kind = %s AND rules_source = %s AND name = %s",
                     [entity_id, kind, rules_source, name],
                 ):
                     return Written(_rule_link(old), w.batch)  # already linked
@@ -828,7 +828,7 @@ class MemoryStore:
                     "id": new_id(),
                     "entity_id": entity_id,
                     "kind": kind,
-                    "source": rules_source,
+                    "rules_source": rules_source,
                     "name": name,
                     "edition": edition,
                     "known": known,
@@ -1694,14 +1694,17 @@ async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
     that species or creature type, or the very same link (then they stay behind, unseen)."""
     mine = await w.select(RULE_LINKS, " AND entity_id = %s", [keep_id])
     has_one = {r["kind"] for r in mine if r["kind"] in (SPECIES, CREATURE_TYPE)}
-    has_same = {(r["kind"], r["source"], r["name"]) for r in mine}
+    has_same = {(r["kind"], r["rules_source"], r["name"]) for r in mine}
     for link in await w.select(RULE_LINKS, " AND entity_id = %s", [gone_id]):
-        if link["kind"] in has_one or (link["kind"], link["source"], link["name"]) in has_same:
+        if (
+            link["kind"] in has_one
+            or (link["kind"], link["rules_source"], link["name"]) in has_same
+        ):
             continue
         await w.update(RULE_LINKS, link["id"], {"entity_id": keep_id})
         if link["kind"] in (SPECIES, CREATURE_TYPE):
             has_one.add(link["kind"])
-        has_same.add((link["kind"], link["source"], link["name"]))
+        has_same.add((link["kind"], link["rules_source"], link["name"]))
 
 
 def _check_role(onto: Ontology, type_key: str, role: str | None, played_by: int | None) -> None:

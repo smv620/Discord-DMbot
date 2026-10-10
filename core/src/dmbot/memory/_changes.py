@@ -62,7 +62,7 @@ ENTITIES = Table(
 RULE_LINKS = Table(
     "memory_rule_links",
     "id",
-    ("id", "entity_id", "kind", "source", "name", "edition", "known", "created_at"),
+    ("id", "entity_id", "kind", "rules_source", "name", "edition", "known", "created_at"),
 )
 # What a column holds in change-log rows written before the column existed.
 OLD_LOG_DEFAULTS: dict[str, dict[str, Any]] = {
