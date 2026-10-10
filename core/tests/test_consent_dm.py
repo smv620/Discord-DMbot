@@ -182,6 +182,9 @@ def test_stop_in_the_menu_is_grey_and_only_yes_is_red() -> None:
     assert button(c.menu_view(GUILD).children[0]).style == discord.ButtonStyle.secondary
 
 
+CONSENT_LABEL_MAX = 28  # "I'm 16 or older, record me" is 26; a longer one needs a decision
+
+
 def test_every_label_fits() -> None:
     views = [
         c.menu_view(GUILD),
@@ -194,7 +197,7 @@ def test_every_label_fits() -> None:
             label = str(button(item).label or "")
             # Short labels sit well on a phone; the consent button says its whole promise
             # ("I'm 16 or older, record me", #1018), so it gets a little more.
-            limit = 30 if label == CONSENT_LABEL else 25
+            limit = CONSENT_LABEL_MAX if label == CONSENT_LABEL else 25
             assert 0 < len(label) <= limit, label
 
 
@@ -998,7 +1001,7 @@ class ConsentDMTests(DatabaseTest):
 
     async def test_i_consent_in_the_menu_shows_the_current_request_first(self) -> None:
         # The reviewer's case: a yes under older wording counts as not recorded, and the
-        # menu shows no terms, so its I consent must show them before anything is saved.
+        # menu shows no terms, so its consent button must show them before anything is saved.
         await self.consent.grant(GUILD, PLAYER)
         await self.age_consent(PLAYER)
         self.consent = ConsentStore(self.db)
@@ -1049,7 +1052,7 @@ class ConsentDMTests(DatabaseTest):
 
     async def test_yes_then_quick_no_leaves_ears_without_them(self) -> None:
         lock = self.consent._lock(GUILD)
-        await lock.acquire()  # "I consent" is still saving...
+        await lock.acquire()  # the consent button is still saving...
         yes = asyncio.create_task(
             self.bot.give_consent(GUILD, PLAYER, "private_message", outside_to=None)
         )
@@ -1100,7 +1103,7 @@ class ConsentDMTests(DatabaseTest):
         assert custom_ids(edit["view"])[0] == f"dmbot:consent:yes:1:v{TERMS_VERSION}"
 
     async def test_a_button_from_the_last_version_asks_again_and_saves_nothing(self) -> None:
-        # #52: an "I consent" sent under the previous wording (before the AI note).
+        # #52: a consent button sent under the previous wording.
         old_id = f"dmbot:consent:yes:1:v{TERMS_VERSION - 1}"
         match = c.ConsentButton.__discord_ui_compiled_template__.fullmatch(old_id)
         assert match is not None
@@ -1112,6 +1115,18 @@ class ConsentDMTests(DatabaseTest):
         assert edit["content"].startswith(c.STALE_INTRO)
         assert c.AI_NOTE in edit["content"]  # the current wording, with the AI note
         assert custom_ids(edit["view"])[0] == f"dmbot:consent:yes:1:v{TERMS_VERSION}"
+
+    async def test_a_button_from_before_the_minimum_age_asks_again_and_saves_nothing(self) -> None:
+        # #1018: version 3 had no age; its button must not save a yes (a fixed number, so a
+        # later bump can't make this test quietly mean something else).
+        match = c.ConsentButton.__discord_ui_compiled_template__.fullmatch("dmbot:consent:yes:1:v3")
+        assert match is not None
+        old = await c.ConsentButton.from_custom_id(MagicMock(), MagicMock(), match)
+        press = self.button_press(PLAYER)
+        await old.callback(press)
+        assert await self.consent.granted_at(GUILD, PLAYER) is None
+        edit = press.edit_original_response.await_args.kwargs
+        assert "You must be 16 or older to be recorded." in edit["content"]
 
     async def test_a_marked_button_id_is_parsed_back_with_its_engine(self) -> None:
         custom_id = str(c.ConsentButton(123, outside="deepgram").custom_id)

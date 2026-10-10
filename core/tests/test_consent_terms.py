@@ -16,7 +16,7 @@ from dmbot.ui.logic import HELP_TEXT
 # The "What's new" note for people asked again (consent_dm.RENEWED) explains a change
 # rather than adding terms, so it isn't part of the fingerprint.
 PINNED_VERSION = 4  # #1018: "You must be 16 or older to be recorded." and the button says so
-PINNED_FINGERPRINT = "0aaf5ad5441f6e5b7ec1a57be1fbaa3fa70f77151d39c80d4f537f38a037c02e"
+PINNED_FINGERPRINT = "297682882bac77d772afdb77d6f46169d1f1d67864d82037366227dcc3f71f69"
 
 
 def fingerprint() -> str:
@@ -62,16 +62,30 @@ class TermsVersion(unittest.TestCase):
             request_text("Server", voice=None, dm=None, cloud=True, renewed=True),  # /consent give
         ):
             self.assertIn("You must be 16 or older to be recorded.", text)
-            self.assertIn(f"**{CONSENT_LABEL}:**", text)
+            # A younger player is told what to do and that they can still play.
+            self.assertIn("Younger than 16? Press **No thanks**. You can still play.", text)
+            self.assertIn(f"Press **{CONSENT_LABEL}** and DMbot records what you say", text)
         self.assertIn("16", CONSENT_LABEL)
         self.assertLessEqual(len(CONSENT_LABEL), 80)  # Discord's limit for a button
         self.assertIn(f"**{CONSENT_LABEL}**", HELP_TEXT)
-        self.assertIn("16 or older", HELP_TEXT)
+        self.assertIn("Only people 16 or older are recorded", HELP_TEXT)
 
     def test_the_note_for_people_asked_again_says_why(self) -> None:
         self.assertIn("16 or older", RENEWED)
         self.assertIn("asking you again", RENEWED)
-        self.assertIn("won't record you until you say yes", RENEWED)
+        self.assertIn("won't record you until you press the button", RENEWED)
+        self.assertIn("Younger than 16? Press **No thanks** and keep playing.", RENEWED)
+
+    def test_no_age_or_birthdate_is_kept_anywhere(self) -> None:
+        # Pressing the button is the confirmation (#1018): no column for it.
+        from dmbot import schema
+
+        create = next(
+            m for name, m in schema.MIGRATIONS if name == "0001_initial"
+        )  # the consent table is made here
+        block = create[create.index("CREATE TABLE consent") :].split(");", 1)[0].casefold()
+        for word in ("age", "birth", "dob"):
+            self.assertNotRegex(block, rf"\b{word}\w*\b")
 
     def test_nobody_is_asked_for_an_age_or_a_birthdate(self) -> None:
         text = request_text("Server", voice=None, dm=None, cloud=False).casefold()

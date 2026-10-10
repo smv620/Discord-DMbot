@@ -2,11 +2,12 @@
 
 When a session starts, and whenever someone joins the table's voice channel, DMbot
 privately messages each person once per session:
-- not yet consented in this server: what DMbot does, with [✅ I consent] [No thanks];
+- not yet consented in this server: what DMbot does, with the consent button ("I'm 16 or
+  older, record me") and [No thanks];
 - already consented (consent carries over per server): a reminder of when, with
   [⚙️ Menu].
 
-The ⚙️ Menu (#807) offers 📜 My character sheet, Stop recording me (or I consent, for
+The ⚙️ Menu (#807) offers 📜 My character sheet, Stop recording me (or the consent button, for
 someone who stopped) and Close. Stop recording me first shows one warning, with [Yes,
 stop recording me] [Keep recording]; a 🛑 button on a message from before the menu shows
 that warning too. One warning, one tap: never a second ask, a wait or a reason box.
@@ -28,7 +29,7 @@ from typing import Any, Literal, Protocol
 import discord
 
 from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, TERMS_VERSION, ConsentMethod
-from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, MIN_AGE
+from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, MIN_AGE, UNDER_LINE
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def cloud_note(company: str | None = None) -> str:
 
 
 CLOUD_NOTE = cloud_note()
-# Shown when someone presses I consent on a message whose wording is out of date, or
+# Shown when someone presses the consent button on a message whose wording is out of date, or
 # that named another company (or none) than the one in use now.
 STALE_INTRO = (
     "🔄 **DMbot's consent message has changed since this one,** so please read the "
@@ -104,9 +105,9 @@ def _date(timestamp: int) -> str:
 # Says what changed in the current consent.TERMS_VERSION; rewrite it when that goes up.
 # It explains rather than adds terms, so it isn't part of the pinned wording.
 RENEWED = (
-    f"**What's new:** you must be {MIN_AGE} or older to be recorded, and the button now says "
-    "so. You agreed before this change, so DMbot is asking you again. It won't record you "
-    "until you say yes."
+    f"**What's new:** DMbot now only records people who are {MIN_AGE} or older, so it is "
+    "asking you again. It won't record you until you press the button below. "
+    f"Younger than {MIN_AGE}? Press **{DECLINE_LABEL}** and keep playing."
 )
 # The AI that reads the text, said once for every helper (#52; TERMS_VERSION 3).
 AI_NOTE = (
@@ -152,10 +153,11 @@ def request_text(
         "DMbot listens and gives the DM private notes. It never talks in the game and never "
         "decides anything. Your DM does.",
         AGE_LINE,
-        f"• **{CONSENT_LABEL}:** DMbot records what you say and turns it into text. "
+        UNDER_LINE,
+        f"• Press **{CONSENT_LABEL}** and DMbot records what you say and turns it into text. "
         "Anyone in this server can read and download that text. It stays there even if you "
         f"stop later. {AI_NOTE}",
-        f"• **{DECLINE_LABEL}:** DMbot ignores your voice. You can still play as normal.",
+        f"• Press **{DECLINE_LABEL}** and DMbot ignores your voice. You can still play as normal.",
         "DMbot is just for your game. Please don't use it or its text for anything else.",
         "A yes is remembered for this server. If you say no, DMbot asks again next session.",
     ]
@@ -260,7 +262,7 @@ def not_recorded_menu_text(server: str) -> str:
     """A stale Keep recording on a lasting message, which keeps its ⚙️ Menu."""
     return (
         f"DMbot isn't recording you in **{_plain(server)}**. To start again, press "
-        f"⚙️ {MENU_LABEL} below, then {CONSENT_LABEL}."
+        f"⚙️ {MENU_LABEL} below, then **{CONSENT_LABEL}**."
     )
 
 
@@ -740,7 +742,7 @@ class StartButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:consent:start:{_GUILD}",
 ):
-    """✅ I consent, in the menu of someone DMbot isn't recording: shows the full current
+    """✅ The consent button, in the menu of someone DMbot isn't recording: shows the full current
     request in its place, so a yes is only ever saved to wording they've just read."""
 
     def __init__(self, guild_id: int) -> None:
@@ -823,7 +825,7 @@ def options_view(
     guild_id: int, campaign_id: str | None, *, recording: bool, sheets: bool
 ) -> discord.ui.View:
     """The menu's buttons, only those that apply: 📜 (when sheets are on), Stop recording
-    me (or I consent, for someone who stopped), and Close."""
+    me (or the consent button, for someone who stopped), and Close."""
     view = discord.ui.View(timeout=None)
     if sheets:
         view.add_item(sheet_button(guild_id, campaign_id))

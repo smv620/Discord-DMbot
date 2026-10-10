@@ -629,7 +629,8 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   **Minimum age 16 (owner, 2026-10-10); the consent button confirms it** (#1018): the request
   says "You must be 16 or older to be recorded.", no age or birthdate is stored, and the
   terms version went up (4), so earlier yeses are asked again at the next join. Someone under
-  16 has no button for it: they don't press it and nothing of theirs is captured.
+  16 has nothing to press (the request tells them to press No thanks and keep playing): they
+  are not asked for an age and nothing of theirs is captured.
 - **Consent carries over** between sessions, per server. In **every session**, a consented
   person gets one short private reminder with the date they consented, plus a
   **⚙️ Menu** button (#33, #34; the menu replaced a red 🛑 button, below). Rejoining in
@@ -653,7 +654,7 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   - **in place on lasting messages** (2026-10-08, #807): on the per-session reminder and
     the "you said yes" message, ⚙️ Menu swaps that message's buttons for the menu, Stop
     puts the warning at the top of that message's text, Yes leaves it reading "🛑
-    Stopped…" with ✅ I consent, and Keep or Close restore it exactly. So a reminder never
+    Stopped…" with the ✅ consent button, and Keep or Close restore it exactly. So a reminder never
     keeps saying "recording you" after a stop. The warning is in the text, never an embed,
     because Discord hides embeds for people who turn previews off;
   - ⚙️ Menu and `/consent revoke` answer from the in-memory consent first, never waiting

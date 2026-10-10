@@ -2,7 +2,7 @@
 
 For testing on your own. You read every **[DM]** line out loud. It takes about a minute.
 
-**Before you start:** join the voice channel and press **I consent** in your private message
+**Before you start:** join the voice channel and press **I'm 16 or older, record me** in your private message
 from DMbot.
 
 - Don't read the words in **[ ]** or **(( ))** out loud. They tell you what to do.
