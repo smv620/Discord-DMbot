@@ -114,49 +114,73 @@ class LongLines(unittest.TestCase):
 
 
 class WakePhrase(unittest.TestCase):
-    """#1040: "Hey DMbot, ..." or "DMbot, ..." at the start of the line, however speech-to-text
-    writes the name."""
+    """#1040: "Hey DMbot, ..." anywhere in the DM's line (people run it into what came before),
+    however speech-to-text writes the name; the question is what follows it."""
 
     QUESTION = "what's the range of fireball"
+    NAMES = ("DMbot", "dmbot", "DM bot", "D.M. bot", "D M bot", "DM-bot", "Dee em bot", "the M bot")
+
+    def question(self, said: str) -> str | None:
+        got = request_in(said)
+        return got.question if got else None
 
     def test_every_spelling_at_the_start_of_a_line(self) -> None:
-        for name in (
-            "DMbot",
-            "dmbot",
-            "DM bot",
-            "D.M. bot",
-            "D M bot",
-            "DM-bot",
-            "Dee em bot",
-            "the M bot",
-        ):
+        for name in self.NAMES:
             for lead in ("", "Hey ", "hey, ", "Okay "):
                 with self.subTest(f"{lead}{name}"):
-                    got = request_in(f"{lead}{name}, {self.QUESTION}?")
-                    self.assertIsNotNone(got)
-                    assert got is not None
-                    self.assertEqual(got.question, self.QUESTION)
+                    self.assertEqual(
+                        self.question(f"{lead}{name}, {self.QUESTION}?"), self.QUESTION
+                    )
 
-    def test_no_comma_is_fine_for_a_question(self) -> None:
-        got = request_in("Hey DM bot what is the casting time of shield")
-        assert got is not None
-        self.assertEqual(got.question, "what is the casting time of shield")
+    def test_in_the_middle_and_near_the_end_of_a_long_line(self) -> None:
+        story = "so they walk down the hall and the torches flicker and they are in the cave"
+        for name in self.NAMES:
+            with self.subTest(name):
+                self.assertEqual(
+                    self.question(f"{story}, hey {name} {self.QUESTION}"), self.QUESTION
+                )
+        long_line = "and then the party goes on and on " * 12 + f"hey DMbot {self.QUESTION}"
+        self.assertLess(len(long_line), 600)
+        self.assertEqual(self.question(long_line), self.QUESTION)
 
-    def test_the_name_in_the_middle_of_a_line_does_nothing(self) -> None:
+    def test_hey_wakes_it_without_a_pause_but_a_bare_name_needs_one_or_a_question_word(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self.question("so hey DM bot what is the casting time of shield"),
+            "what is the casting time of shield",
+        )
+        self.assertEqual(self.question("and then DMbot, what's the range"), "what's the range")
+        self.assertEqual(self.question("DMbot is fireball a good idea"), "is fireball a good idea")
+        self.assertEqual(
+            self.question("DMbot check how grappling works"), "check how grappling works"
+        )
+        self.assertEqual(self.question("I told DMbot what's the range of fireball"), self.QUESTION)
+
+    def test_a_story_or_a_mention_does_nothing(self) -> None:
         for said in (
-            "and then DMbot, what's the range of fireball",
-            "I told DMbot what's the range of fireball",
-            "so the goblin says hey DMbot what's the range",
+            "and DMbot said earlier the range was long",
+            "the DMbot screen is on",
+            "DMbot said the goblin is fast",
+            "DM bot was wrong about the range",
+            "I like the dmbot app",
+            "DMbot later told us nothing",
         ):
             with self.subTest(said):
                 self.assertIsNone(request_in(said))
 
-    def test_a_story_about_dmbot_does_nothing(self) -> None:
-        self.assertIsNone(request_in("DMbot said the goblin is fast"))
-        self.assertIsNone(request_in("DM bot was wrong about the range"))
+    def test_two_in_one_line_the_last_one_asks(self) -> None:
+        said = "hey DMbot what about fireball, no wait, hey DMbot what's the range of shield"
+        self.assertEqual(self.question(said), "what's the range of shield")
+
+    def test_a_bad_last_mention_falls_back_to_the_real_call_before_it(self) -> None:
+        self.assertEqual(
+            self.question("hey DMbot what about prone and DMbot said nothing"),
+            "what about prone and DMbot said nothing",
+        )
 
     def test_nothing_after_the_name_is_not_a_question(self) -> None:
-        for said in ("Hey DMbot", "Hey DMbot.", "DMbot, it", "DMbot,"):
+        for said in ("Hey DMbot", "Hey DMbot.", "Hey DMbot, it", "DMbot,"):
             with self.subTest(said):
                 self.assertIsNone(request_in(said))
 
@@ -172,9 +196,14 @@ class WakePhrase(unittest.TestCase):
         import time
 
         started = time.perf_counter()
-        request_in("hey " * 3000 + "dmbot")
-        request_in("dmbot " + ", " * 3000)
-        self.assertLess(time.perf_counter() - started, 0.05)
+        for text in (
+            "hey " * 3000 + "dmbot",
+            "dmbot " + ", " * 3000,
+            "dee em bot " * 600,
+            "the m bot hey " * 500,
+        ):
+            request_in(text)
+        self.assertLess(time.perf_counter() - started, 0.1)
 
 
 class AskLimiterTests(unittest.TestCase):

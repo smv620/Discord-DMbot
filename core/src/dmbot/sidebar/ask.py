@@ -3,11 +3,11 @@ no Discord, no database, no AI.
 
 Two clear ways to ask. The DM says they need to look something up ("hold on, I need to find
 if you need line of sight for fireball"): a hold-on lead-in, then "I need to / I have to / let
-me", then find, look up or check, then something. Or the DM calls DMbot at the start of the
-line ("Hey DMbot, what's the range of fireball?"), and the rest is the question. So "I need to
-find the map" said on its own, "...and then DMbot said...", a player's line, or a line the
-Cleaner tagged as in character never starts one. The phrases live here, in one place, with
-tests.
+me", then find, look up or check, then something. Or the DM calls DMbot anywhere in the line
+("...so they're in the cave, hey DMbot what's the range of fireball"), and the text after it is
+the question. So "I need to find the map" said on its own, "...and DMbot said earlier...", a
+player's line, or a line the Cleaner tagged as in character never starts one. The phrases
+live here, in one place, with tests.
 """
 
 from __future__ import annotations
@@ -43,16 +43,23 @@ _NOTHING_IN_PARTICULAR = frozenset(
     {"it", "that", "this", "something", "someone", "anything", "them", "those"}
     | {"these", "one", "there", "here"}
 )
-# How speech-to-text writes "DMbot": one letter-by-letter spelling per alternative, matched
-# only at the very start of the line (so the name in the middle of a sentence never wakes it).
+# How speech-to-text writes "DMbot": one letter-by-letter spelling per alternative, matched on
+# word boundaries anywhere in the line (people talking fast run it into what came before).
 _NAME = (
     r"(?:d\.?\s?m\.?[\s-]?bot"  # DMbot, dmbot, DM bot, D.M. bot, D M bot, DM-bot
     r"|dee[\s,.-]{1,3}em[\s,.-]{1,3}bot"  # Dee em bot
     r"|the\s+m\s+bot)"  # "the M bot"
 )
-_WAKE = re.compile(
-    rf"^\s{{0,3}}(?:(?:hey|hi|okay|ok)\b[\s,.!-]{{0,4}})?{_NAME}\b(?P<sep>[\s,.:;!?-]{{1,6}})(?P<rest>.+)",
-    re.IGNORECASE | re.DOTALL,
+_CALL = re.compile(
+    rf"(?<!\w)(?P<greeting>(?:hey|hi|okay|ok)[\s,.!-]{{1,4}})?{_NAME}\b(?P<sep>[\s,.:;!?-]{{0,6}})",
+    re.IGNORECASE,
+)
+# A bare "DMbot" (no "hey") is only a call when a pause or comma follows, or the next word
+# opens a question or a request to it: "DMbot, what...", "DMbot is fireball...", "DMbot check...".
+_ASKING = re.compile(
+    r"^(?:what|what's|whats|how|how's|is|are|does|do|can|could|will|would|should|when|where|who"
+    r"|why|which|check|find|look|tell|give|show|list|explain|remind)\b",
+    re.IGNORECASE,
 )
 # "DMbot said the goblin ..." (no comma) is a story about DMbot, not a question to it.
 _STORY_VERBS = re.compile(
@@ -86,10 +93,10 @@ def request_in(text: str, *, in_character: bool = False) -> Request | None:
     NPC's or a character's (the Cleaner tagged it so): never a request."""
     if in_character:
         return None
-    woken = _WAKE.match(text[:MAX_LINE_CHARS])
-    if woken is not None:
-        return _called(woken)
-    found = _REQUEST.search(text[:MAX_LINE_CHARS])
+    line = text[:MAX_LINE_CHARS]
+    if (called := _called(line)) is not None:
+        return called
+    found = _REQUEST.search(line)
     if found is None:
         return None
     rest = found.group("rest").strip()
@@ -105,21 +112,27 @@ def request_in(text: str, *, in_character: bool = False) -> Request | None:
     return Request(found.group("verb").casefold(), rest)
 
 
-def _called(woken: re.Match[str]) -> Request | None:
-    """The question after "Hey DMbot, ...", or None if there is none (a bare "Hey DMbot", one
-    word like "it") or the line is a story about DMbot."""
-    rest = woken.group("rest").strip()
-    if not re.search(r"[,:;.!?-]", woken.group("sep")) and _STORY_VERBS.match(rest):
-        return None
-    rest = rest.strip(" ,;:-.!?")
-    words = rest.split()
-    if len(words) < MIN_WORDS:
-        return None
-    if len(words) == 1 and words[0].casefold() in _NOTHING_IN_PARTICULAR:
-        return None
-    if len(rest) > MAX_QUESTION_CHARS:
-        rest = rest[:MAX_QUESTION_CHARS].rsplit(" ", 1)[0]
-    return Request("", rest)
+def _called(line: str) -> Request | None:
+    """The question after the last real call of DMbot in the line, up to the end of it. A
+    call is "Hey DMbot" anywhere, or a bare "DMbot" followed by a pause or a question word;
+    a story about DMbot ("...and DMbot said earlier...", "the DMbot screen") is not one."""
+    for match in reversed(list(_CALL.finditer(line))):
+        rest = line[match.end() :].strip()
+        punctuated = bool(re.search(r"[,:;.!?-]", match.group("sep")))
+        if not punctuated and _STORY_VERBS.match(rest):
+            continue
+        if not match.group("greeting") and not punctuated and not _ASKING.match(rest):
+            continue  # a bare name needs a pause, or a word that asks
+        rest = rest.strip(" ,;:-.!?")
+        words = rest.split()
+        if len(words) < MIN_WORDS:
+            continue
+        if len(words) == 1 and words[0].casefold() in _NOTHING_IN_PARTICULAR:
+            continue
+        if len(rest) > MAX_QUESTION_CHARS:
+            rest = rest[:MAX_QUESTION_CHARS].rsplit(" ", 1)[0]
+        return Request("", rest)
+    return None
 
 
 class AskLimiter:

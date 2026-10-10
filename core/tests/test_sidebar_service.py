@@ -646,10 +646,17 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((self.sidebar._tasks, self.host.dms, self.answerer.asked), (set(), [], []))
 
-    async def test_the_name_in_the_middle_of_a_sentence_starts_nothing(self) -> None:
+    async def test_the_phrase_in_the_middle_of_a_line_asks_what_follows_it(self) -> None:
+        said = "so they're in the cave, hey DMbot what's the range of fireball"
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, said))
+        await self.settle()
+        self.assertEqual(self.answerer.asked[0][1], "what's the range of fireball")
+
+    async def test_a_story_about_dmbot_starts_nothing(self) -> None:
         self.assertFalse(
-            self.sidebar.ask_at_table(self.table, DM, "and then DMbot, what's the range of it")
+            self.sidebar.ask_at_table(self.table, DM, "and DMbot said earlier it was far")
         )
+        self.assertFalse(self.sidebar.ask_at_table(self.table, DM, "the DMbot screen is on"))
 
     async def test_one_question_at_a_time_with_the_wake_phrase_too(self) -> None:
         self.answerer.gate = asyncio.Event()

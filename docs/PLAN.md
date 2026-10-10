@@ -1999,13 +1999,15 @@ and is never "sure" ("a spell attack can crit on a 20" is not house rule 3).
 both entries by their own names and pages ("Goblin Warrior SRD 5.2.1 p. 290; Goblin SRD 5.1 p. 315
 [Legacy 2014]"). Brevity is unchanged; tags and sources are added after the cut.
 
-*Built, wake phrase (#1040, CloudDev, 2026-10-10):* besides "Hold on, I need to find…", the campaign's DM can
-start a question with **"Hey DMbot, …" or "DMbot, …" at the very start of the line**; the rest is the question.
-Only the DM (a player's line does nothing), never in the middle of a sentence ("…and then DMbot said…"), never a
-line tagged in character, and a line like "DMbot said the goblin…" (no comma) is a story, not a question. Speech-to-text
-spellings matched at the start only: DMbot, DM bot, D.M. bot, D M bot, DM-bot, Dee em bot, the M bot (the list is a
-constant in `sidebar/ask.py`). The answer stays private (the DM's chat only) and the raw transcript keeps its
-`[DM Sidebar]` lines.
+*Built, wake phrase (#1040, CloudDev, 2026-10-10; corrected by the owner the same day):* besides "Hold on, I
+need to find…", the campaign's DM can call **"Hey DMbot, …" anywhere in a line** (people talking fast run it into
+what came before: "…so they're in the cave, hey DMbot what's the range of fireball"); the text after it, to the
+end of the line, is the question. A **bare "DMbot"** also calls it, but only when a pause or comma follows or the
+next word asks ("DMbot, what…", "DMbot is fireball…", "DMbot check…"); "…and DMbot said earlier…" or "the DMbot
+screen" do not. With two calls in a line, the last real one asks. Only the DM (a player's line does nothing), never a
+line tagged in character. Speech-to-text spellings, matched on word boundaries: DMbot, DM bot, D.M. bot, D M bot,
+DM-bot, Dee em bot, the M bot (a constant in `sidebar/ask.py`). The answer stays private (the DM's chat only) and
+the raw transcript keeps its `[DM Sidebar]` lines.
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
