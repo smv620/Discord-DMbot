@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from dmbot.rules.house import RULE_MAX
 
 GAP_S = 60.0  # at most one proposal in this many seconds; the rest are dropped
+# Why a typed house rule did or did not become a proposal (#960): each has its own reply
+STARTED, TOO_SOON, REPEAT, NOT_NOW = "started", "too-soon", "repeat", "not-now"
 MIN_WORDS = 2
 
 _DELIM = r"\s*[:;,\-–—]\s*"  # after a phrase that could start any sentence
@@ -98,6 +100,12 @@ class HouseVoice:
         if said.key in self.seen:
             return None
         return said
+
+    def why_not(self, said: Said, now: float) -> str:
+        """TOO_SOON or REPEAT: the reason `pick` would drop these words."""
+        if said.key in self.seen:
+            return REPEAT
+        return TOO_SOON
 
     def remember(self, said: Said, now: float, proposal_id: str, proposal: Proposal) -> None:
         self.seen.add(said.key)

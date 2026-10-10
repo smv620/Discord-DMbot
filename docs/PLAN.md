@@ -504,9 +504,18 @@ alerts yet; those build on this.
   the words and the minute are given back.
 - **Every press** re-checks that the person is a DM of that campaign now; a proposal is
   forgotten when the session ends or the bot restarts, and an old button says so.
-- **Not built: typed proposals ("House rule: …" in the DM screen).** The bot doesn't read
-  messages (the narrowest Discord intents), so typing uses the **Add a house rule** form in
-  `/dmbot houserules`, with the same save step.
+- **Typed proposals (built 2026-10-09, #960):** a DM types the same phrases to DMbot in
+  their private chat (the DM sidebar's way in). It is the same proposal on the DM screen,
+  with the same buttons, limits (shared with what is said aloud) and conflict check, and the
+  rule's "scenario" reads "Typed by the DM, <date>". It is not a sidebar question: no AI, no
+  `[DM Sidebar]` line, nothing written to the transcript, and it works even while quick
+  answers are switched off. The reply is short and says to press Save ("nothing is saved until
+  you do"); if it can't offer one it says why (a minute apart; already offered). A message that
+  starts with one of the phrases is a house rule, unless it ends in a question mark (then it
+  is a question for the sidebar, as before). The
+  DM must have agreed to be recorded (else they are asked), and with several running games
+  they pick which one by button. The bot still doesn't read messages in servers (narrowest
+  intents); the **Add a house rule** form in `/dmbot houserules` is the other typed way.
 
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
