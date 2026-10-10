@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-09 by dev1 (core 8d55974 live; Test D next)
+Last updated: 2026-10-10 by dev1 (DMBOT_FREE_USERS holds the owner's id; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,7 +9,41 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting)
+- #959 (7cc1c5c, dev2): House rules by voice (#953). No migration. When a DM says "house rule: ..."
+  (or "new house rule", "for this table, ...", "our rule is ..."), a proposal with Save / Edit /
+  Cancel appears in #dm-screen; nothing is saved without a press. Live check (about 2 minutes,
+  the DM and one more person not needed): say "house rule: potions are a bonus action" at the
+  table, press Save in #dm-screen, then see it in /dmbot houserules ("Said at the table"). Also
+  say it again within a minute (nothing new should appear).
+- #949 (core only, no migration): the end-of-session private message has no download
+  buttons when the owner's plan has no downloads (Try It, plans enforced). Nothing visible
+  while DMBOT_ENFORCE_PLANS is off.
+- #954 (core only, no migration): the DM sidebar answer engine. Nothing the DM sees until
+  #944 (below) is on. Before the sidebar is turned on, dev1 runs
+  `python -m dmbot.devtools.sidebar_check` with the server's key and pastes the 17 answers
+  and times on #954 for Supervisor.
+- dev3, PR #944 (#935, the DM sidebar's ways in; the answers are #954): core only. Migration
+  **0036** (runs by itself at start). **Rebuild the core image**: `av` (PyAV) is now a normal
+  dependency (reads voice messages). New Discord intent `dm_messages` (needs nothing in the
+  developer portal). New setting **`DMBOT_SIDEBAR`**, default 0 = off: leave it at 0 until the
+  sidebar's 17 test answers have been run (`python -m dmbot.devtools.sidebar_check`) and read
+  (#954). With 0, a DM's message gets "Quick answers aren't switched on yet." and nothing is
+  downloaded or paid for. Live check (5 minutes, DM + ears running, DMBOT_SIDEBAR=1 and an AI
+  key): (1) from a phone, send DMbot a voice message in the private chat (under 30 seconds):
+  "do you need line of sight for fireball"; the reply shows what was heard and a short answer;
+  (2) type a question there; (3) at the table the DM says "hold on, I need to find if you need
+  line of sight for fireball": the answer arrives privately, once a minute at most; (4) with two
+  running games, a button asks which ("For <game>."); (5) the as-heard download has
+  `[DM Sidebar id=… via=… stt=…]` and `(DMbot) [DM Sidebar reply-to=… model=… sources=…]` lines
+  (everyone can read them); the cleaned download and the live transcript channel do not. A
+  player who sends DMbot a message gets nothing. Core logs no ERROR.
+- dev2, PR #971 (8f7bf1a, #960; needs #959 and #944 on): typed house rules. Core only, no
+  migration. A DM types "house rule: ..." to DMbot in the private chat and gets the same
+  Save / Edit / Cancel proposal on the DM screen. No AI, works with quick answers off. Live
+  check (about 2 minutes, one person, a game running): type "house rule: potions are a bonus
+  action" to DMbot in the private chat; DMbot answers "It's on your DM screen now..."; press
+  Save in #dm-screen; /dmbot houserules shows it as "Typed by the DM". Typing the same words
+  again says it was already offered.
 
 ------------------------------------------------------------------------------
 LIVE NOW
@@ -17,7 +51,7 @@ LIVE NOW
 core 8d55974 (2026-10-09 19:20 UTC, migrations through 0035), web-api 85cc405, ears 21c5ff1, web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
-website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS is empty. The app stays
+website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS holds one id, the owner's own (set 2026-10-10 at the owner's request). The app stays
 private (no install link) until the website launches.
 
 ------------------------------------------------------------------------------

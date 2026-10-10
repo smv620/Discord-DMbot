@@ -504,9 +504,18 @@ alerts yet; those build on this.
   the words and the minute are given back.
 - **Every press** re-checks that the person is a DM of that campaign now; a proposal is
   forgotten when the session ends or the bot restarts, and an old button says so.
-- **Not built: typed proposals ("House rule: …" in the DM screen).** The bot doesn't read
-  messages (the narrowest Discord intents), so typing uses the **Add a house rule** form in
-  `/dmbot houserules`, with the same save step.
+- **Typed proposals (built 2026-10-09, #960):** a DM types the same phrases to DMbot in
+  their private chat (the DM sidebar's way in). It is the same proposal on the DM screen,
+  with the same buttons, limits (shared with what is said aloud) and conflict check, and the
+  rule's "scenario" reads "Typed by the DM, <date>". It is not a sidebar question: no AI, no
+  `[DM Sidebar]` line, nothing written to the transcript, and it works even while quick
+  answers are switched off. The reply is short and says to press Save ("nothing is saved until
+  you do"); if it can't offer one it says why (a minute apart; already offered). A message that
+  starts with one of the phrases is a house rule, unless it ends in a question mark (then it
+  is a question for the sidebar, as before). The
+  DM must have agreed to be recorded (else they are asked), and with several running games
+  they pick which one by button. The bot still doesn't read messages in servers (narrowest
+  intents); the **Add a house rule** form in `/dmbot houserules` is the other typed way.
 
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
@@ -1934,15 +1943,15 @@ the website's only) that returns the number for the person set in the transactio
 else; the bot sets that person for one read only, through `dmbot.campaign_cap`, and the person
 switch itself is private to `dmbot.entitlements`. One function (`dmbot.campaign_cap`) counts
 for every check: `/dmbot start` refuses an owner who owns more campaigns than the plan covers
-("Your plan covers 2 campaigns, and you have 3. To start this one, pause one or change your
-plan", the cap from `plans.json`; the change-plan offer only for a plan that can change, and
+("Your plan covers 2 campaigns, and you have 3. To start this one, pause another one or change
+your plan", the cap from `plans.json`; the change-plan offer only for a plan that can change, and
 anyone but the owner only hears "ask the owner"); **making a new campaign past the cap is
 refused too** (same words, "To make a new one", so a third campaign never locks the first two
 out; someone with no plan yet may still make one, to start once they pick a plan); a hand-over,
 a take-over and a restore each need room for one more, **on the website as well** (the web
 API reads `DMBOT_ENFORCE_PLANS` like the bot, and its accept counts through the same
-function). Every owned campaign
-counts for now; "paused" waits for the downgrade part (a column is added then). All of 2b acts only when
+function). Every unpaused owned
+campaign counts (pausing is built, part 4 below). All of 2b acts only when
 `DMBOT_ENFORCE_PLANS` is on (default off; the meter records either way), which dev1 turns
 on with the website's go-live (#498) and notes in the testing log. The refusal for a plan
 that has ended says "Your plan has ended. Pick one here: <WEB_SITE_URL>/account" (or "Pick
@@ -1996,6 +2005,32 @@ leaves the menu in place (so "Add the lines that fit" still works), does not cou
 day's reads, and records no right-to-use confirmation, because nothing was read. Only when
 `DMBOT_ENFORCE_PLANS` is on; a database hiccup, or one slower than 2 seconds, lets the action through, like the start check. A campaign with no owner has no plan, so it
 has no copies or AI until a DM takes it on (the issue's rule; a player is told a DM must).
+
+*Built, part 4: pause and unpause (2026-10-09, #957), the last go-live blocker for plan
+rules:* `campaigns.paused` (migration 0037) with `owner_campaigns.paused` kept in step by the
+same trigger; the count function counts only unpaused campaigns. A paused campaign keeps all
+its data, stays downloadable while the plan allows downloads, **can't start** (even with
+plans not enforced: "This campaign is paused, so it can't start. Open ⚙️ Settings and press
+▶️ **Unpause** to use it again. Everything in it is kept."; anyone but the owner is told to
+ask the owner) and takes no place on the owner's plan. The owner, and only the owner, gets
+⏸️ **Pause this campaign** / ▶️ **Unpause** on the ⚙️ Settings card (co-DMs see the state line
+and are told only the owner can change it); the store checks the owner again, and a campaign
+DMbot is listening to can't be paused until it is stopped. An unpause that would go over the
+cap is refused in the cap words ("... To unpause this one, pause another one (⚙️ Settings,
+then ⏸️ **Pause this campaign**) or change your plan ..."; every refusal that offers "pause
+one" now names that button). **A plan that shrinks or ends pauses what is over its cap:**
+`dmbot_pause_over_cap(keep)` pauses the owner's campaigns beyond the `keep` most recently
+played (ties by newest created), in every server, for the person set only, under the
+per-owner lock, and returns what it paused. The cap kept to is the plan's, or Try It's one
+campaign once the plan has ended. **Where it runs (chosen):** in the bot when it next reads
+the plan (a start, a new campaign, an unpause), not in the website's webhook path: the bot
+is the one that can message the owner, a change that lands while the bot is down is still
+settled on the next read, and the webhook stays free of bot logic. The owner gets one private
+message naming the paused campaigns and how to change it (pause others, or change the
+plan); because the function pauses each campaign once, there is no second message. If the
+private message can't be sent, the start refusal still says the campaign is paused. Fails
+open like the other plan checks. **Enforcement (`DMBOT_ENFORCE_PLANS`) may go on only after
+this is live** (migration 0037, core and web-api).
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
