@@ -13,6 +13,7 @@ of money never falls back. Each call logs one line: tier, model, tokens, never c
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import json
 import logging
@@ -37,6 +38,16 @@ class AIModelTier(enum.Enum):
 
 
 # What a refused tier falls back to: the next one down.
+REQUEST_TIMEOUT_S = 120  # one request on the fast tier
+# The middle and strongest models write more slowly: a long answer (Find names on a big
+# document) needs longer. The session's own limit is the longest of them.
+SLOW_TIER_TIMEOUT_S = 240
+TIER_TIMEOUT_S = {
+    AIModelTier.FAST: REQUEST_TIMEOUT_S,
+    AIModelTier.CAREFUL: SLOW_TIER_TIMEOUT_S,
+    AIModelTier.DEEP: SLOW_TIER_TIMEOUT_S,
+}
+
 NEXT_DOWN = {AIModelTier.DEEP: AIModelTier.CAREFUL, AIModelTier.CAREFUL: AIModelTier.FAST}
 
 
@@ -103,7 +114,6 @@ DEFAULT_MODELS = AIModels(
     careful="claude-sonnet-5-5",
     deep="claude-opus-5-5",
 )
-REQUEST_TIMEOUT_S = 120
 CONNECT_TIMEOUT_S = 15
 
 
@@ -275,7 +285,7 @@ class AnthropicClient:
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
+                timeout=aiohttp.ClientTimeout(total=SLOW_TIER_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
             )
         return self._session
 
@@ -347,7 +357,10 @@ class AnthropicClient:
             "content-type": "application/json",
         }
         try:
-            async with self._get_session().post(API_URL, json=body, headers=headers) as resp:
+            async with (
+                asyncio.timeout(TIER_TIMEOUT_S[tier]),
+                self._get_session().post(API_URL, json=body, headers=headers) as resp,
+            ):
                 if resp.status != 200:
                     # Read the reason once: out of funds is told apart from a bad key, a
                     # rate limit or a bad request by what the service says (never the key).

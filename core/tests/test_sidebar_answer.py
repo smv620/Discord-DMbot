@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 import unittest
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -414,24 +415,51 @@ class CarefulSecondTry(unittest.TestCase):
         fast, careful = FakeAI([self.BAD]), self.careful(self.GOOD)
         built = engine(fast, second=careful, clock=lambda: float(next(ticks)))
         got = run(built.answer(campaign(), self.QUESTION))
-        self.assertEqual(len(careful.prompts), 0)
+        self.assertEqual((len(careful.prompts), len(fast.prompts)), (0, 1))  # no Haiku repeat
         self.assertEqual(got.model, "fake-fast-model")
         self.assertIn("not in DMbot's rules", got.text)  # today's behaviour
 
-    def test_a_slow_careful_try_is_cut_off_and_the_quick_answer_stands(self) -> None:
+    def test_a_slow_careful_try_is_cut_off_inside_the_budget_and_the_quick_answer_stands(
+        self,
+    ) -> None:
         class Slow(FakeAI):
             async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Any:
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)
                 return await super().complete(system, text, max_tokens=max_tokens)
 
         slow = Slow([self.GOOD], model="fake-careful-model")
         fast = FakeAI([self.BAD])
+        started = time.monotonic()
         with (
-            patch.object(sidebar, "TOTAL_BUDGET_S", 4.5),
-            patch.object(sidebar, "SECOND_TRY_NEEDS_S", 0.2),
+            patch.object(sidebar, "TOTAL_BUDGET_S", 2.0),
+            patch.object(sidebar, "SECOND_TRY_NEEDS_S", 0.1),
         ):
             got = run(engine(fast, second=slow).answer(campaign(), self.QUESTION))
-        self.assertEqual(got.model, "fake-fast-model")  # inside the budget, no TOO_SLOW error
+        self.assertLess(time.monotonic() - started, 2.0)  # the answer came back in time
+        self.assertEqual(got.model, "fake-fast-model")  # no TOO_SLOW error, no lost answer
+        self.assertIn("not in DMbot's rules", got.text)
+
+    def test_the_same_model_repeat_is_also_held_inside_the_budget(self) -> None:
+        class Slow(FakeAI):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Any:
+                if self.prompts:  # the repeat is slow; the first call is quick
+                    await asyncio.sleep(10)
+                return await super().complete(system, text, max_tokens=max_tokens)
+
+        empty = reply("The rules don't say.", "none")
+        fast = Slow([empty, self.GOOD])
+        started = time.monotonic()
+        with patch.object(sidebar, "TOTAL_BUDGET_S", 2.5):
+            got = run(engine(fast).answer(campaign(), "how does fireball work"))
+        self.assertLess(time.monotonic() - started, 2.5)
+        self.assertTrue(got.text)  # an answer, not a TOO_SLOW error
+
+    def test_an_empty_careful_answer_leaves_the_quick_answer_alone(self) -> None:
+        fast = FakeAI([self.BAD])
+        got = run(
+            engine(fast, second=self.careful(reply("", "none"))).answer(campaign(), self.QUESTION)
+        )
+        self.assertEqual(got.model, "fake-fast-model")
         self.assertIn("not in DMbot's rules", got.text)
 
     def test_a_failed_careful_try_keeps_the_quick_answer(self) -> None:
@@ -439,7 +467,11 @@ class CarefulSecondTry(unittest.TestCase):
             async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Any:
                 raise AIError("busy")
 
-        got = run(engine(FakeAI([self.BAD]), second=Failing([])).answer(campaign(), self.QUESTION))
+        got = run(
+            engine(FakeAI([self.BAD]), second=Failing([], model="fake-careful-model")).answer(
+                campaign(), self.QUESTION
+            )
+        )
         self.assertEqual(got.model, "fake-fast-model")
 
     def test_out_of_funds_on_the_careful_tier_asks_no_other_tier(self) -> None:
@@ -448,10 +480,29 @@ class CarefulSecondTry(unittest.TestCase):
                 self.prompts.append(text)
                 raise AIOutOfFunds("no credit")
 
-        fast, broke = FakeAI([self.BAD]), Broke([])
+        fast, broke = FakeAI([self.BAD]), Broke([], model="fake-careful-model")
         got = run(engine(fast, second=broke).answer(campaign(), self.QUESTION))
         self.assertEqual((len(fast.prompts), len(broke.prompts)), (1, 1))  # no third call
         self.assertEqual(got.model, "fake-fast-model")
+
+    def test_a_careful_client_on_the_same_model_is_not_a_second_try(self) -> None:
+        # The careful model isn't available, so its client fell back to the quick model.
+        fast = FakeAI([self.BAD])
+        same = FakeAI([self.GOOD], model="fake-fast-model")
+        got = run(engine(fast, second=same).answer(campaign(), self.QUESTION))
+        self.assertEqual((len(fast.prompts), len(same.prompts)), (1, 0))
+        self.assertIn("not in DMbot's rules", got.text)  # as without a careful tier
+
+    def test_the_second_try_says_in_the_log_what_it_did(self) -> None:
+        with self.assertLogs("dmbot.sidebar.answer", "INFO") as logged:
+            run(
+                engine(FakeAI([self.BAD]), second=self.careful(self.GOOD)).answer(
+                    campaign(), self.QUESTION
+                )
+            )
+        line = next(m for m in logged.output if "second try" in m)
+        self.assertIn("fake-careful-model", line)
+        self.assertIn("used", line)
 
     def test_the_second_try_is_the_second_tier_handle(self) -> None:
         from dmbot.ai import FEATURE_TIERS, AIModelTier, Feature
