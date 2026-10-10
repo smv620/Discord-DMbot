@@ -1,7 +1,8 @@
 ---
 // Shared frame for the legal pages: draft banner, "The short version" box, and the
-// effective-date footer. The owner (or a lawyer) signs these off; until then they are drafts.
-import { operator } from "../content/legal";
+// effective-date footer. The effective date is set, but placeholders for the owner's name,
+// address and other details are still marked in the text, so the banner stays and says so.
+import { effectiveDate, operator } from "../content/legal";
 import Base from "../layouts/Base.astro";
 
 interface Props {
@@ -19,8 +20,8 @@ const summaryLines = Array.isArray(summary) ? summary : [summary];
 <Base title={title} description={description}>
   <article class="legal prose">
     <p class="draft" role="note">
-      Draft for review. These words are not final yet and don't apply until an effective date
-      is set below.
+      Draft for review. These words may still change. If we change them, we'll tell signed-in
+      users before the change starts.
     </p>
     <h1>{heading}</h1>
     <section class="short" aria-labelledby="short-heading">
@@ -29,7 +30,7 @@ const summaryLines = Array.isArray(summary) ? summary : [summary];
     </section>
     <slot />
     <footer class="effective">
-      <p>Effective date: {"{{EFFECTIVE DATE: to be set by the owner}}"}</p>
+      <p>Effective date: {effectiveDate}</p>
       <p>
         Questions? Write to {operator.email}. You can also delete your account and data from
         <a href="/account">My Account</a>.

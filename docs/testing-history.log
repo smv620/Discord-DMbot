@@ -1833,3 +1833,62 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     name Goblin Warrior (#15), two checker wording misses and one that does not name the NPC.
     Table and my reading posted on #954 for Supervisor. DMBOT_SIDEBAR stays 0.
   - For a person: #988's 5-minute check with a Google Doc (listed in the status log).
+
+==============================================================================
+2026-10-10  Queue lines other sessions added to the status log while dev1 deployed (kept)
+==============================================================================
+  - dev2, PR #988 (adb179a, #969 part 2: the linked house-rules file). Core only. Migration **0040**
+    (new table `house_rules_file`, runs by itself at start). Nothing the DM sees until a file is
+    connected. Live check (about 5 minutes, one person, a Google Doc): put "1. Potions are a bonus
+    action" and "2. No flanking" in a Google Doc set to "Anyone with the link can view". In Discord:
+    ⚙️ Settings > 📄 House-rules file > 🔗 Connect a file, paste the Doc's address. DMbot says
+    "Connected: docs.google.com" and offers "2 to add": press Review, Accept the first, Skip the
+    second. Add a third line in the Doc, stop and start a session: the DM screen shows "1 to add"
+    (and the skipped one); press Accept all changes and check /dmbot houserules. Press Not now on
+    a later change and start another session: nothing is said until the Doc changes again.
+    Also check: 📎 Upload a file (one time) with a .txt file of the rules; 📄 shows only the site,
+    never the link. The download after every change and the 📥 Download rules button (#983) are
+    already live: check them in the same run.
+  Result: these PRs were already deployed by dev1 (see the deploy entries around this date); the lines were added after the deploy.
+
+==============================================================================
+2026-10-10  Queue lines other sessions added to the status log while dev1 deployed (kept)
+==============================================================================
+  core adb179a (2026-10-10 04:2x UTC, migrations through 0040), web-api 75a62d0, ears 21c5ff1, web-api
+   18. House-rules file (#988): put two rules in a Google Doc (anyone with the link can view),
+       ⚙️ Settings > 📄 House-rules file > 🔗 Connect a file; the comparison shows 2 to add;
+       Review > Accept one and Skip the other.
+   19. The DM sidebar stays OFF (DMBOT_SIDEBAR=0) until Supervisor has read a clean re-test:
+       13 of 18 passed on 2026-10-10 (answers on #954).
+   20. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
+  Result: these PRs were already deployed by dev1 (see the deploy entries around this date); the lines were added after the deploy.
+
+==============================================================================
+2026-10-10  Server: deploy edf0013, core only (dev1)
+==============================================================================
+  - 04:4x UTC  development @ edf0013, core: TimeBot part 1 (#965, #994: the campaign's game
+    clock: ⚙️ Settings > Game clock, one pinned message edited in place with +10 min, +1 hour,
+    Short rest, Long rest, Skip to dawn and Set time…; only a campaign's DMs can press the
+    buttons). No queue line; its PR page said "migration 0041, core only. Visible to a DM as
+    a new Game clock button on ⚙️ Settings".
+  - Migration 0041_game_clocks: one table game_clocks (one row per campaign, row security on
+    and forced, 0 rows; in backups). Backup first (36 tables); no session was live;
+    scripts/update-env had nothing to add; `up -d --no-build core` naming the service
+    (web-api and ears untouched). Logs: "Database updated: 0041_game_clocks", "Connected to
+    1 server(s)", "ears connected"; 0 errors; /health 404.
+  - #974 closed by Supervisor: the owner confirmed the new Anthropic key works (usage in
+    the Console matches the sidebar check) and disabled the old key. The secondary admin id
+    is optional and still to come.
+  - Queue lines other sessions added while dev1 deployed, kept (CloudDev's #985 and #997 were
+    already live; see the 03:58 and 04:2x entries):
+  - CloudDev, #985 (#964, plan rules part 5): retention. Migration **0039** (core only; two columns on
+    campaigns with defaults, runs by itself at start). A daily job at 03:00 UTC warns an owner 14 and 3
+    days before a campaign's delete date and deletes it after the last warning. **Nothing happens
+    unless DMBOT_ENFORCE_PLANS is on** (off: one dry-run line with counts in the core log). A run that
+    would delete more than 10% of all campaigns stops and logs an error. Check: core log shows migration
+    0039 applied; with enforcement off, a "Retention dry run" line each night around 03:00 UTC.
+  - CloudDev, #997 (#992): sidebar accuracy fixes, core only, no migration (prompt version sidebar-2).
+    `DMBOT_SIDEBAR` stays 0. After deploy dev1 runs `python -m dmbot.devtools.sidebar_check` again and
+    posts the 17 answers on #954; the check now also reports MISSING / MUST NOT SAY for the cases that
+    matter (#1, #5, #8, #14, #17). Supervisor reads them before the sidebar is turned on.
+  Result: those were already deployed before the lines were added.

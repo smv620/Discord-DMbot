@@ -49,7 +49,7 @@ describe.each(pages.map(([name]) => [name]))("legal/%s", (name) => {
     for (const line of lines) expect(line.length).toBeGreaterThan(0);
     expect(text(main?.querySelector(".draft") ?? null)).toMatch(/^Draft for review/);
     expect(text(main?.querySelector(".effective") ?? null)).toContain(
-      "{{EFFECTIVE DATE: to be set by the owner}}",
+      "Effective date: 9 October 2026",
     );
   });
 
@@ -127,9 +127,18 @@ describe("the facts #433 asks for", () => {
     expect(privacy()).toContain("the game master can see who peeked");
   });
 
-  it("gives a failed payment the 7 days from the plan file", () => {
-    expect(facts.paymentGraceDays).toBe(7);
-    expect(terms()).toContain("you have 7 days to fix it");
+  it("tells people a failed payment has a short grace period, with no number of days", () => {
+    expect(terms()).toContain("If a renewal payment fails, there is a short grace period to fix it before the plan stops");
+    expect(terms()).toContain("If your first payment doesn't go through, the plan doesn't start until it does");
+    expect(terms()).toContain("Tap Fix my payment in My Account");
+    expect(terms()).not.toMatch(/\d+ days to fix it/);
+  });
+
+  it("names Lemon Squeezy as the payment company on every legal page", () => {
+    for (const page of ["terms", "privacy", "refunds"]) {
+      expect(text(doc(page).querySelector("main"))).toContain("Lemon Squeezy");
+    }
+    expect(terms()).not.toMatch(/PAYMENT PROVIDER|Paddle/);
   });
 
   it("uses one sign-in cookie and no tracking", () => {
@@ -150,5 +159,11 @@ describe("the facts #433 asks for", () => {
 
   it("says where the background artwork came from, on the terms page", () => {
     expect(terms()).toContain("The background artwork was made with Gemini and Claude, from our own prompts.");
+  });
+
+  it("names the State of Ohio, USA, for the law and the courts", () => {
+    expect(terms()).toContain("The laws of the State of Ohio, USA, apply to these terms");
+    expect(terms()).toContain("heard in the courts of the State of Ohio, USA");
+    expect(terms()).not.toContain("governing law and courts");
   });
 });
