@@ -203,6 +203,11 @@ class Index:
             self._pools[(target, fallback)] = cached
         return cached[0]
 
+    def names_pool(self, target: str, fallback: str = FALLBACK_NONE) -> Mapping[str, Entry]:
+        """Every name an entry is found by in the target ruleset, then the fallback, and the
+        entry it leads to (a name in both leads to the target's). Read only: shared."""
+        return MappingProxyType(self._pool(target, fallback))
+
     def _sorted_keys(self, target: str, fallback: str) -> list[str]:
         self._pool(target, fallback)
         return self._pools[(target, fallback)][1]

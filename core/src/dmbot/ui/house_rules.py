@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from functools import partial
+from typing import TYPE_CHECKING
 
 import discord
 
@@ -23,6 +24,9 @@ from dmbot.campaigns import Campaign
 from dmbot.logs import set_log_context
 from dmbot.rules import house
 from dmbot.rules.house import RULE_MAX, HouseRule, HouseRuleError, HouseRuleStore
+
+if TYPE_CHECKING:
+    from dmbot.rules.house_voice import Proposal
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
@@ -429,6 +433,87 @@ class AddForm(_RuleForm, title="Add a house rule"):
         if message == house.EMPTY:
             return f"{message} Press **{ADD_LABEL[2:]}** and type the rule."
         return message
+
+
+class OverrideForm(AddForm, title="Add a house rule"):
+    """⚖️ Override on a rules card (#931): the same form as Add, with "Instead of" already
+    holding the name on the card. The card is in the DM screen, which this must not turn into
+    the list, so the answer is a private message."""
+
+    def __init__(self, campaign: Campaign, name: str) -> None:
+        super().__init__(campaign)
+        self.instead.default = name[:RULE_MAX]
+        self.rule.placeholder = f"What your table does instead of the book's {name}"[:100]
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction)  # a new private message, not a change to the card
+        store = _store(interaction)
+        if store is None:
+            await _tell(interaction, NOT_READY)
+            return
+        try:
+            note = await self.save(store, interaction.user.id)
+        except HouseRuleError as exc:
+            await _tell(interaction, self.refusal(str(exc)) + self.typed())
+            return
+        await _tell(
+            interaction, f"{note} Everyone in the server can read it. See all: `/dmbot houserules`."
+        )
+
+
+class ProposalForm(AddForm, title="Edit before saving"):
+    """✏️ Edit on a house rule DMbot offered after the DM said it (#953): the Add form with
+    the words filled in. Saving is the DM's press of Submit; the proposal on the DM screen
+    then says what was saved (and loses its buttons)."""
+
+    def __init__(self, campaign: Campaign, proposal: Proposal, proposal_id: str) -> None:
+        super().__init__(campaign)
+        self.proposal, self.proposal_id = proposal, proposal_id
+        self.rule.default = proposal.said.rule
+
+    def refusal(self, message: str) -> str:
+        if message == house.EMPTY:
+            return f"{message} Press **Edit** on the offer and type the rule."
+        return message
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        from dmbot.dm_screen.house_voice import CLOSED
+
+        store = _store(interaction)
+        c = self.campaign
+        table = _bot(interaction).tables.get(c.guild_id)
+        proposals = table.house_voice.proposals if table is not None else {}
+        # Claimed first, so two DMs submitting at once save one rule; given back if refused.
+        if store is None or proposals.pop(self.proposal_id, None) is None:
+            await interaction.response.send_message(
+                NOT_READY if store is None else CLOSED, ephemeral=True
+            )
+            return
+        try:
+            saved = await store.add(
+                c.guild_id,
+                c.id,
+                interaction.user.id,  # the store checks again that this is one of the DMs
+                self.rule.value,
+                self.instead.value,
+                scenario=self.proposal.scenario,
+                session_id=self.proposal.session_id,
+            )
+        except BaseException as exc:
+            proposals[self.proposal_id] = self.proposal
+            if isinstance(exc, HouseRuleError):
+                await interaction.response.send_message(
+                    self.refusal(str(exc)) + self.typed(), ephemeral=True
+                )
+                return
+            raise
+        note = f"✅ Saved as house rule {saved.number}."
+        if interaction.message is None:
+            await interaction.response.send_message(note, ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            content=f"{interaction.message.content}\n{note}", view=None
+        )
 
 
 class EditForm(_RuleForm, title="Edit a house rule"):

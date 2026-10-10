@@ -658,7 +658,7 @@ class WithdrawOfferButton(
         ):
             await self._ended(interaction, campaign)
             return
-        await _redraw_card(interaction, campaign)
+        await redraw_card(interaction, campaign)
         await _say(interaction, WITHDRAWN.format(campaign=md(campaign.name)))
         await _tell_person(
             guild,
@@ -672,11 +672,11 @@ class WithdrawOfferButton(
         if campaign is not None:
             fresh = await _store(interaction).get(self.guild_id, campaign.id)
             if fresh is not None:
-                await _redraw_card(interaction, fresh)
+                await redraw_card(interaction, fresh)
         await _say(interaction, ENDED.format(days=HANDOVER_DAYS))
 
 
-async def _redraw_card(interaction: discord.Interaction, campaign: Campaign) -> None:
+async def redraw_card(interaction: discord.Interaction, campaign: Campaign) -> None:
     """⚙️ Settings as the campaign is now, with no offer waiting (best effort)."""
     if _settings_card is None:  # settings.py sets it on import: a bug if it's missing
         log.warning("No ⚙️ Settings card to redraw after a hand-over offer")

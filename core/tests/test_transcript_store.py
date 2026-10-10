@@ -15,7 +15,8 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
-from dmbot.transcript.models import Line
+from dmbot.transcript import export
+from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, VIA_VOICE, Line, Lineage
 from dmbot.transcript.store import TranscriptStore
 from dmbot.ui import transcripts as ui
 from tests.pg import DatabaseTest
@@ -43,6 +44,65 @@ class StoreTests(DatabaseTest):
         self.assertEqual(len(ids), 2)
         lines = await self.store.lines(GUILD, sid)
         self.assertEqual([(x.heard, x.text) for x in lines], [("first",) * 2, ("second",) * 2])
+
+    async def test_sidebar_lines_are_kept_apart_and_never_edited(self) -> None:
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        asked_from = Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host")
+        answered_from = Lineage(
+            reply_to="a1b2c3", model="m-1", prompt="p-1", sources=("SRD p. 1", "house rule 3")
+        )
+        asked = Line(
+            START * 1000 + 5000,
+            DM,
+            "find flanking",
+            "find flanking",
+            0,
+            "game",
+            SIDEBAR_QUESTION,
+            asked_from,
+        )
+        answer = Line(
+            START * 1000 + 7000,
+            DM,
+            "Optional. (sure)",
+            "Optional. (sure)",
+            0,
+            "game",
+            SIDEBAR_ANSWER,
+            answered_from,
+        )
+        await self.store.add_lines(GUILD, sid, [asked, answer, line(5, DM, "table speech")])
+        # They are not speech: the session counts one line and one speaker, as without them.
+        (counted,) = await self.store.sessions(GUILD, self.campaign.id)
+        self.assertEqual(counted.lines, 1)
+        lines = await self.store.lines(GUILD, sid)
+        self.assertEqual(
+            [(x.heard, x.sidebar) for x in lines],
+            [("find flanking", "question"), ("table speech", ""), ("Optional. (sure)", "answer")],
+        )
+        # Where each came from is kept as columns, and table speech has none.
+        by_kind = {x.sidebar: x for x in lines}
+        self.assertEqual(by_kind["question"].lineage, asked_from)
+        self.assertEqual(by_kind["answer"].lineage, answered_from)
+        self.assertEqual(by_kind[""].lineage, Lineage())
+        # An Undo, the off-topic filter or Put it back at the same moment as a sidebar line
+        # changes the speech line only: the question and the answer stay as they were.
+        key = asked.started_ms
+        self.assertEqual(await self.store.relabel_line(GUILD, sid, DM, key, "x"), 1)
+        self.assertEqual(await self.store.set_topic(GUILD, sid, DM, key, "off_topic"), 1)
+        self.assertEqual(await self.store.set_topics(GUILD, sid, DM, [key], "table_talk"), 1)
+        again = await self.store.lines(GUILD, sid)
+        self.assertEqual(
+            [(x.text, x.topic) for x in again if x.sidebar],
+            [("find flanking", "game"), ("Optional. (sure)", "game")],
+        )
+        speech = next(x for x in again if not x.sidebar)
+        self.assertEqual((speech.text, speech.topic), ("x", "table_talk"))
+        # With no speech at that moment, nothing at all is changed.
+        self.assertEqual(await self.store.relabel_line(GUILD, sid, DM, answer.started_ms, "x"), 0)
+        self.assertEqual(
+            await self.store.set_topics(GUILD, sid, DM, [answer.started_ms], "off_topic"), 0
+        )
 
     async def test_a_resumed_session_keeps_its_transcript(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
@@ -365,6 +425,125 @@ class BotTests(DatabaseTest):
         session = await self.store.session(GUILD, sid or "")
         assert session is not None and session.ended_at is not None
 
+    async def end_with_gate(self, gate: Any, allows: Any = None) -> dict[int, Any]:
+        await self.consent.grant(GUILD, PLAYER)
+        table = self.table()
+        self.said(table, PLAYER, "Hello.")
+        users: dict[int, Any] = {}
+
+        def get_user(uid: int) -> Any:
+            return users.setdefault(uid, SimpleNamespace(id=uid, bot=False, send=AsyncMock()))
+
+        self.bot.get_user = get_user  # type: ignore[method-assign]
+        self.bot.plan_gate = gate  # type: ignore[method-assign]
+        if allows is not None:
+            self.bot.plan_allows = allows  # type: ignore[method-assign]
+        del self.bot.tables[GUILD]
+        await self.bot.finish_transcript(table)
+        return users
+
+    async def test_a_plan_without_downloads_tells_only_the_owner_and_sends_no_buttons(
+        self,
+    ) -> None:
+        # Try It with plans enforced (#938): the gate refuses, so no buttons that every press
+        # would refuse. Players have nothing to act on, so only the owner (the DM here) is told.
+        async def gate(action: str, guild: int, campaign: Any, user: int) -> str | None:
+            assert action == "transcript"
+            return "Try It campaigns don't keep downloads." if user == DM else "Ask the owner."
+
+        users = await self.end_with_gate(gate, AsyncMock(return_value=False))
+        self.assertEqual(set(users), {DM})  # the player was not messaged at all
+        call = users[DM].send.await_args
+        self.assertIn("Its transcript is kept, but this campaign's plan", call.args[0])
+        self.assertIn("doesn't include downloads", call.args[0])
+        self.assertIn("Try It campaigns don't keep downloads.", call.args[0])
+        self.assertNotIn("view", call.kwargs)
+        self.assertNotIn("/transcript", call.args[0])  # that would be refused too
+
+    async def test_the_owner_is_told_even_if_they_were_not_at_the_table(self) -> None:
+        campaign = await self.campaigns.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        outsider = 999
+        self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
+            return_value=SimpleNamespace(
+                id=campaign.id, owner_user_id=outsider, dm_user_ids=campaign.dm_user_ids
+            )
+        )
+
+        async def gate(action: str, guild: int, campaign: Any, user: int) -> str | None:
+            return "Pick a plan." if user == outsider else "Ask the owner."
+
+        users = await self.end_with_gate(gate, AsyncMock(return_value=False))
+        self.assertEqual(set(users), {outsider})
+        self.assertIn("Pick a plan.", users[outsider].send.await_args.args[0])
+
+    async def test_with_no_owner_the_dms_are_told_to_take_it_on_and_players_are_not(self) -> None:
+        campaign = await self.campaigns.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
+            return_value=SimpleNamespace(
+                id=campaign.id, owner_user_id=None, dm_user_ids=campaign.dm_user_ids
+            )
+        )
+        users = await self.end_with_gate(
+            AsyncMock(return_value="no owner"), AsyncMock(return_value=False)
+        )
+        self.assertEqual(set(users), {DM})
+        self.assertIn("Take it on", users[DM].send.await_args.args[0])
+
+    async def test_a_plan_with_downloads_keeps_the_buttons_and_adds_no_line(self) -> None:
+        users = await self.end_with_gate(AsyncMock(return_value=None), AsyncMock(return_value=True))
+        for user in users.values():
+            call = user.send.await_args
+            self.assertEqual(len(call.kwargs["view"].children), 3)
+            self.assertIn("Download the transcript", call.args[0])
+
+    async def test_the_plan_is_asked_at_most_twice_for_the_whole_table(self) -> None:
+        gate, allows = AsyncMock(return_value="no"), AsyncMock(return_value=False)
+        await self.end_with_gate(gate, allows)
+        self.assertEqual((allows.await_count, gate.await_count), (1, 1))  # blocked?; owner's line
+
+    async def test_the_real_gate_tells_only_the_owner_who_is_not_at_the_table(self) -> None:
+        import dataclasses
+
+        from dmbot.entitlements import Access
+
+        outsider = 999
+        campaign = await self.campaigns.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
+            return_value=SimpleNamespace(
+                id=campaign.id, owner_user_id=outsider, dm_user_ids=campaign.dm_user_ids
+            )
+        )
+        self.bot.settings = dataclasses.replace(
+            self.bot.settings, enforce_plans=True, site_url="https://dmbot.example"
+        )
+        try_it = Access("paid", "Try It", 480, 1, False)  # plans.json: Try It has no backups
+        self.bot.meter = SimpleNamespace(access=AsyncMock(return_value=try_it))  # type: ignore[assignment]
+        users = await self.end_with_gate(self.bot.plan_gate)  # the real gate and check
+        self.assertEqual(set(users), {outsider})
+        text = users[outsider].send.await_args.args[0]
+        self.assertIn("Try It campaigns can't make copies or transcripts", text)
+        self.assertIn("https://dmbot.example/account", text)
+
+    async def test_a_failing_plan_check_still_sends_the_downloads(self) -> None:
+        self.campaigns.get = AsyncMock(side_effect=OSError("down"))  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            users = await self.end_with_gate(
+                AsyncMock(return_value="no"), AsyncMock(return_value=False)
+            )
+        self.assertEqual(set(users), {DM, PLAYER})
+        for user in users.values():
+            self.assertIn("view", user.send.await_args.kwargs)
+
+    async def test_a_missing_campaign_keeps_the_downloads(self) -> None:
+        self.campaigns.get = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        users = await self.end_with_gate(
+            AsyncMock(return_value="no"), AsyncMock(return_value=False)
+        )
+        self.assertEqual(set(users), {DM, PLAYER})
+
     async def test_nothing_said_sends_nothing(self) -> None:
         table = self.table()
         self.bot.get_user = MagicMock()  # type: ignore[method-assign]
@@ -407,6 +586,50 @@ class BotTests(DatabaseTest):
         button = next(b for b in view.children if b.label == label)
         await button.callback(it)
         return it
+
+    async def test_everyone_who_can_read_the_raw_file_sees_the_sidebar_lines_and_nobody_the_cleaned(
+        self,
+    ) -> None:
+        sid = await self.finished_session()
+        asked = Line(
+            START * 1000 + 50_000,
+            DM,
+            "find if flanking is optional",
+            "find if flanking is optional",
+            0,
+            "game",
+            SIDEBAR_QUESTION,
+            Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host"),
+        )
+        answer = Line(
+            START * 1000 + 52_000,
+            DM,
+            "Yes, it is optional. (sure)",
+            "Yes, it is optional. (sure)",
+            0,
+            "game",
+            SIDEBAR_ANSWER,
+            Lineage(reply_to="a1b2c3", model="m-1", prompt="p-1", sources=("SRD p. 1",)),
+        )
+        await self.store.add_lines(GUILD, sid, [asked, answer])
+        result = await ui.make_file(
+            self.bot, self.guild, GUILD, sid, PLAYER, (export.AS_HEARD, export.CLEANED)
+        )
+        assert not isinstance(result, str)
+        heard, cleaned = (f.fp.read().decode() for f in result)
+        self.assertIn(
+            "(Sam) [DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]: "
+            "find if flanking is optional",
+            heard,
+        )
+        self.assertIn(
+            "(DMbot) [DM Sidebar reply-to=a1b2c3 model=m-1 prompt=p-1 sources=SRD-p.-1]: "
+            "Yes, it is optional. (sure)",
+            heard,
+        )
+        self.assertNotIn("Sidebar", cleaned)
+        self.assertNotIn("flanking", cleaned)
+        self.assertIn("We ride at dawn.", cleaned)
 
     async def test_both_versions_come_as_two_files(self) -> None:
         sid = await self.finished_session()

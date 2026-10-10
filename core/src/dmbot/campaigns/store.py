@@ -280,6 +280,7 @@ _SETTABLE = frozenset(
         "dm_screen_level",
         "channel_number",
         "transcript_channel_id",
+        "rules_cards",
     }
 )
 
@@ -298,6 +299,11 @@ OFFER_WAITING = (
 NO_ROOM_TO_RESTORE = (
     "Your plan has no room for another campaign, so nothing was restored. Pause one or "
     "change your plan, then restore it again."
+)
+NOT_THE_OWNER_PAUSE = "Only the campaign's owner can pause or unpause it."
+NO_ROOM_TO_UNPAUSE = (
+    "Your plan has no room to unpause this campaign. Pause one of your other campaigns first "
+    "(open it, then ⚙️ Settings and ⏸️ **Pause this campaign**)."
 )
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
@@ -555,6 +561,33 @@ class CampaignStore:
         """How much DMbot says in the DM screen: quiet, normal or chatty (#504)."""
         check_dm_screen_level(level)
         return await self._set(guild_id, campaign_id, "dm_screen_level", level)
+
+    async def set_rules_cards(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """Whether rules cards show on the DM screen when a spell or creature is named
+        (#931). Who may change it is checked by the caller (the campaign's DMs)."""
+        return await self._set(guild_id, campaign_id, "rules_cards", bool(on))
+
+    async def set_paused(
+        self, guild_id: int, campaign_id: str, user_id: int, paused: bool, now: int
+    ) -> Campaign:
+        """Pause or unpause a campaign (#957). Only its owner may: it is their plan's room
+        that changes. Unpausing is a campaign more under the cap, so it needs room (checked
+        here as the backstop; the bot checks first to give the plan's own words). Raises
+        CampaignError in plain words."""
+        async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, guild_id, campaign_id)
+            campaign = await self._require(conn, guild_id, campaign_id)
+            if campaign.owner_user_id is None or campaign.owner_user_id != user_id:
+                raise CampaignError(NOT_THE_OWNER_PAUSE)
+            if campaign.paused == paused:
+                return campaign
+            if not paused and not await self._has_free_slot(conn, user_id, now):
+                raise CampaignError(NO_ROOM_TO_UNPAUSE)
+            await conn.execute(
+                "UPDATE campaigns SET paused = %s WHERE guild_id = %s AND id = %s",
+                (paused, guild_id, campaign_id),
+            )
+            return await self._require(conn, guild_id, campaign_id)
 
     async def set_last_voice_channel(
         self, guild_id: int, campaign_id: str, channel_id: int | None
@@ -982,6 +1015,7 @@ class CampaignStore:
                 "optional_rules_default": campaign.optional_rules_default,
                 "dm_screen_visibility": campaign.dm_screen_visibility,
                 "dm_screen_level": campaign.dm_screen_level,
+                "rules_cards": campaign.rules_cards,
             },
             "sections": sections,
         }
@@ -1039,7 +1073,7 @@ class CampaignStore:
                 await conn.execute(
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
-                    " dm_screen_visibility = %s, dm_screen_level = %s,"
+                    " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
                     " owner_user_id = COALESCE(owner_user_id, %s)"
                     " WHERE guild_id = %s AND id = %s",
                     (
@@ -1049,6 +1083,7 @@ class CampaignStore:
                         info["last_played_at"],
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
+                        info["rules_cards"],
                         importer_id,
                         guild_id,
                         campaign_id,
@@ -1071,6 +1106,12 @@ class CampaignStore:
                         info["dm_screen_level"],
                         importer_id,
                     )
+                    if info["rules_cards"]:  # a new campaign starts with them off
+                        await conn.execute(
+                            "UPDATE campaigns SET rules_cards = TRUE"
+                            " WHERE guild_id = %s AND id = %s",
+                            (guild_id, campaign_id),
+                        )
                 except pg_errors.UniqueViolation as exc:
                     # Another restore took the same name a moment ago.
                     raise CampaignError(
@@ -1220,6 +1261,8 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         transcript_channel_id=row_int(row, "transcript_channel_id"),
         dm_screen_level=row["dm_screen_level"],
         owner_user_id=row_int(row, "owner_user_id"),
+        rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
+        paused=bool(row.get("paused", False)),
     )
 
 
@@ -1387,6 +1430,10 @@ def _validate_backup(
     level = campaign.get("dm_screen_level", DEFAULT_DM_SCREEN_LEVEL)
     if not isinstance(level, str) or level not in DM_SCREEN_LEVELS:
         raise CampaignError(DAMAGED)
+    # Backups made before rules cards existed have them off.
+    rules_cards = campaign.get("rules_cards", False)
+    if not isinstance(rules_cards, bool):
+        raise CampaignError(DAMAGED)
 
     unknown = set(sections) - known_sections
     if unknown:
@@ -1404,5 +1451,6 @@ def _validate_backup(
         "optional_rules_default": optional_default,
         "dm_screen_visibility": visibility,
         "dm_screen_level": level,
+        "rules_cards": rules_cards,
     }
     return info, {name: list(rows) for name, rows in sections.items()}

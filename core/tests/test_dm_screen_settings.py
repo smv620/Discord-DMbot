@@ -81,12 +81,15 @@ class SettingsCardTest(unittest.TestCase):
     def test_buttons_fit_a_phone_and_survive_a_restart(self) -> None:
         view = settings_view(campaign("quiet", vis="private"), None, DM)
         items: list[Any] = list(view.children)
-        self.assertEqual([i.row for i in items], [0, 0, 1, 1, 1, 2, 3])  # 🤝 Take it on, 📖 Look up
+        self.assertEqual(
+            [i.row for i in items], [0, 0, 1, 1, 1, 2, 3, 3]
+        )  # 🤝 Take it on, 📖 Look up, 📖 Rules cards
         labels = [i.item.label for i in items]
         self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
         self.assertEqual(labels[2], "✓ Only the DM")  # the current one, the same way
         self.assertEqual(
-            [i.item.disabled for i in items], [True, False, True, False, False, False, False]
+            [i.item.disabled for i in items],
+            [True, False, True, False, False, False, False, False],
         )
         for item in items:
             self.assertLessEqual(len(item.item.label), 25)

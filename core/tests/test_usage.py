@@ -475,6 +475,12 @@ class PlanChecks(UsageTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.bot = self.make_bot(enforce=True)
+        # These test the refusal words for an owner over the cap. Settling (#957) would pause
+        # the extras first, which tests/test_pause.py covers; here the over-cap state is
+        # what a failed or skipped settle leaves.
+        patcher = patch.object(DMBot, "_settle_cap", AsyncMock())
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def make_bot(self, *, enforce: bool) -> DMBot:
         return DMBot(
@@ -529,16 +535,16 @@ class PlanChecks(UsageTest):
         await self.valid_plan(campaign_cap=1)  # the owner has two (UsageTest makes them)
         self.assertEqual(
             await self.refusal(),
-            "Your plan covers 1 campaign, and you have 2. To start this one, pause one or "
-            f"change your plan here: {self.SITE}/account",
+            "Your plan covers 1 campaign, and you have 2. To start this one, "
+            f"{hours.PAUSE_WAY} or change your plan here: {self.SITE}/account",
         )
 
     async def test_making_a_campaign_past_the_cap_is_refused(self) -> None:
         await self.valid_plan(campaign_cap=2)  # the owner has two already
         self.assertEqual(
             await self.bot.create_refusal(GUILD_A, OWNER),
-            "Your plan covers 2 campaigns, and you have 2. To make a new one, pause one or "
-            f"change your plan here: {self.SITE}/account",
+            "Your plan covers 2 campaigns, and you have 2. To make a new one, "
+            f"{hours.PAUSE_WAY} or change your plan here: {self.SITE}/account",
         )
 
     async def test_making_a_campaign_with_room_is_allowed(self) -> None:
