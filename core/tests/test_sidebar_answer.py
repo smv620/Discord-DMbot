@@ -329,6 +329,27 @@ class AccuracyPart3(unittest.TestCase):
         got = run(engine(ai).answer(campaign(), "how much damage does fireball do"))
         self.assertNotIn("Legacy", got.text)
 
+    def test_an_srd_page_is_not_cited_for_what_it_does_not_say(self) -> None:
+        # The real model cited the Fireball page for walls (#1015).
+        ai = FakeAI([reply("No. A solid wall blocks the blast.", "SRD 5.2.1 p. 131", "sure")])
+        got = run(engine(ai).answer(campaign(), "can fireball hit someone behind a wall"))
+        self.assertIn("not in DMbot's rules", got.text)
+        self.assertNotIn("SRD 5.2.1 p. 131", got.text)
+        self.assertNotIn("sure", got.text)
+
+    def test_an_srd_page_is_still_cited_for_what_it_says(self) -> None:
+        for question, said in (
+            ("do you need line of sight for fireball", "No. It starts at a point you choose."),
+            ("how much damage does fireball do", "8d6 fire damage, half on a save."),
+            ("does fireball set things on fire", "Yes. Flammable objects in it start burning."),
+        ):
+            with self.subTest(question):
+                got = run(
+                    engine(FakeAI([reply(said, "SRD 5.2.1 p. 131")])).answer(campaign(), question)
+                )
+                self.assertIn("SRD 5.2.1 p. 131", got.text)
+                self.assertNotIn("not in DMbot's rules", got.text)
+
     def test_the_prompt_version_moved_on(self) -> None:
         self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-3")
 
