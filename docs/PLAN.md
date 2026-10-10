@@ -2020,6 +2020,23 @@ private message can't be sent, the start refusal still says the campaign is paus
 open like the other plan checks. **Enforcement (`DMBOT_ENFORCE_PLANS`) may go on only after
 this is live** (migration 0037, core and web-api).
 
+*Built, part 5: retention (2026-10-10, #964):* `dmbot.retention`, a daily job at 03:00 UTC (the
+bot's own loop; safe to run twice). A campaign's **delete date** is its last session plus its
+owner's plan's `keepAfterLastSession` (Try It 60 days, Table 6 months, the others a year), or
+the plan's lapse plus 120 days, whichever is first; free access and grants keep like the top
+plan; a campaign with **no owner** is kept by Try It's rule (DMbot doesn't know a last owner's
+plan), and its DMs get the warnings. A paused campaign follows the same rules, and a campaign
+in a running session is skipped. The owner gets a private message 14 days and 3 days before
+(`deletionWarningDaysBefore`), each once: the stage and the date it was sent for are kept on the
+campaign (`retention_warned_stage`, `retention_warned_for`, migration 0038), so a restart doesn't
+repeat one and playing a session (which moves the date) starts them over. Deletion is the
+existing `CampaignStore.delete`, then the owner is told once; the log has counts only. The job
+runs per server (the bot's own servers), reading across servers only the owner's plan, through
+`usage.retention_standing`'s owner-scoped door; a plan that can't be read means that campaign is
+left alone. **Safety:** behind `DMBOT_ENFORCE_PLANS` (off: no warnings, no deletion, one dry-run
+log line with counts); a run that would delete more than 10% of all campaigns (and more than
+3, so a small deployment isn't stuck on one old campaign) stops and logs an error instead.
+
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
 names, later story memory and rules lookups), plus backup, restore and transcript

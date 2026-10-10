@@ -589,6 +589,18 @@ class CampaignStore:
             )
             return await self._require(conn, guild_id, campaign_id)
 
+    async def set_retention_warned(
+        self, guild_id: int, campaign_id: str, stage: int, delete_at: int
+    ) -> None:
+        """Remember that the retention warning of this stage went out for this delete date
+        (#964), so it isn't sent twice."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET retention_warned_stage = %s, retention_warned_for = %s"
+                " WHERE guild_id = %s AND id = %s",
+                (stage, delete_at, guild_id, campaign_id),
+            )
+
     async def set_last_voice_channel(
         self, guild_id: int, campaign_id: str, channel_id: int | None
     ) -> Campaign:
@@ -1263,6 +1275,12 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         owner_user_id=row_int(row, "owner_user_id"),
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
         paused=bool(row.get("paused", False)),
+        retention_warned_stage=int(row.get("retention_warned_stage", 0) or 0),
+        retention_warned_for=(
+            int(row["retention_warned_for"])
+            if row.get("retention_warned_for") is not None
+            else None
+        ),  # older schemas (tests) have none
     )
 
 
