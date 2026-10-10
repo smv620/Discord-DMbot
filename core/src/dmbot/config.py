@@ -53,6 +53,10 @@ class Settings:
     # The DM sidebar's ways in (#935) use the answer engine (#934) only when this is on.
     # Off until the sidebar's 17 test answers have been read (#954).
     sidebar_on: bool = False
+    # Test recordings (#1019): servers where people who agreed to it have their voices saved
+    # for DMbot's own tests, and where the files go. Empty: nothing is ever saved.
+    test_recording_guilds: frozenset[int] = frozenset()
+    test_recordings_dir: Path = Path("/var/lib/dmbot/test-recordings")
     # Who is messaged when DMbot's AI account is out of funds (#972): the owner and a backup
     # admin, by Discord user ID. None: not set (the problem is only logged). Never logged.
     admin_primary_id: int | None = field(default=None, repr=False)
@@ -123,6 +127,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     admin_primary = _admin_id(get, "DMBOT_ADMIN_PRIMARY_ID")
     admin_secondary = _admin_id(get, "DMBOT_ADMIN_SECONDARY_ID")
 
+    try:
+        test_guilds = parse_server_ids(get("DMBOT_TEST_RECORDING_GUILDS"))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
     return Settings(
         discord_token=get("DISCORD_TOKEN"),
         ears_secret=get("EARS_SHARED_SECRET"),
@@ -144,7 +153,22 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         admin_primary_id=admin_primary,
         admin_secondary_id=admin_secondary,
+        test_recording_guilds=test_guilds,
+        test_recordings_dir=Path(
+            get("DMBOT_TEST_RECORDINGS_DIR") or "/var/lib/dmbot/test-recordings"
+        ),
     )
+
+
+def parse_server_ids(raw: str) -> frozenset[int]:
+    """`DMBOT_TEST_RECORDING_GUILDS`: Discord server ids, comma-separated. Raises ValueError."""
+    ids = [part.strip() for part in raw.split(",") if part.strip()]
+    if not all(p.isascii() and p.isdigit() and 0 < int(p) < 2**63 for p in ids):
+        raise ValueError(
+            "DMBOT_TEST_RECORDING_GUILDS must be Discord server numbers (digits only), "
+            "separated by commas. Fix it in .env and start again."
+        )
+    return frozenset(int(p) for p in ids)
 
 
 def _admin_id(get: Callable[[str], str], name: str) -> int | None:

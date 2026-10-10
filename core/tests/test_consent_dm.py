@@ -151,8 +151,10 @@ def test_buttons_carry_the_server() -> None:
 
 
 def test_the_menu_shows_only_what_applies() -> None:
-    def ids(**kw: bool) -> list[str]:
-        return custom_ids(c.options_view(GUILD, None, **kw))
+    def ids(*, recording: bool, sheets: bool, test_voice: str | None = None) -> list[str]:
+        return custom_ids(
+            c.options_view(GUILD, None, recording=recording, sheets=sheets, test_voice=test_voice)
+        )
 
     sheet, stop, close = "dmbot:sheet:1:-", "dmbot:consent:stop:1:-", "dmbot:consent:close:1:-"
     assert ids(recording=True, sheets=True) == [sheet, stop, close]
