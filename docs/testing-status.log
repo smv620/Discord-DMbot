@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-10 by dev1 (core 40b3c79, web-api 75a62d0; Test D passed; sidebar test next)
+Last updated: 2026-10-10 by dev1 (core 40b3c79, sidebar ON; Test E done; game clock test next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -38,14 +38,14 @@ TimeBot #994 and #1008, sidebar accuracy #997 and #1010), web-api 75a62d0, ears 
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
 website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS is empty again (set by mistake for a few hours on 2026-10-10, see the history).
-DMBOT_SIDEBAR is 0 (off): Supervisor said "sidebar may go on" on #954 (18 of 19 passed); dev1 cannot edit .env (blocked), so it waits for the owner to switch it (see the history, 2026-10-10 05:5x). DMBOT_ADMIN_PRIMARY_ID is set; DMBOT_ADMIN_SECONDARY_ID waits for the owner. The app stays
+DMBOT_SIDEBAR is 1 (ON since 2026-10-10 05:47 UTC: Supervisor said "sidebar may go on" on #954 after 18 of 19; the owner set it, dev1 cannot edit .env). If a live answer is wrong AND says "sure", post it on #954 and set it back to 0. DMBOT_ADMIN_PRIMARY_ID is set; DMBOT_ADMIN_SECONDARY_ID waits for the owner. The app stays
 private (no install link) until the website launches.
 
 ------------------------------------------------------------------------------
-NEXT TEST: the DM sidebar at the table (docs/next-test-step.md)
+NEXT TEST: the game clock and timers (docs/next-test-step.md)
 ------------------------------------------------------------------------------
-Needs DMBOT_SIDEBAR=1 first (owner or dev1 once allowed), then one person, ~5 minutes. Test D passed on
-2026-10-10 (no false warning with a TV on); see the history.
+Needs the owner, one person, ~5 minutes (#994, #1008). Test E (sidebar) result is in the history: all three ways in
+answered; bugs #1039 (range not sent) and suggestions #1040.
 
 SMALL TESTS AFTER THAT (one at a time; each one's "Check:" note is in the history log,
 entry "Status log as it stood before it was trimmed"):
@@ -70,7 +70,7 @@ entry "Status log as it stood before it was trimmed"):
  14. House rules: typed to DMbot in the private chat (#971) and said at the table (#959), then
      /dmbot houserules shows them (needs the quick-answers side: #944).
  15. ⏸️ Pause / ▶️ Unpause a campaign on ⚙️ Settings (#962; owner only; plans off).
- 16. The DM sidebar (#944, #954): next test (see above).
+ 16. The DM sidebar (#944, #954): Test E done 2026-10-10; re-check range questions after #1039 is fixed.
  17. Retention (#985, plans off): after its first 03:00 UTC run (2026-10-11), the core log has
      ONE dry-run line with counts and no ERROR; nothing is warned or deleted.
  18. House-rules file (#988): put two rules in a Google Doc (anyone with the link can view),
