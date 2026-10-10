@@ -205,6 +205,8 @@ BLOCKED_KINDS = frozenset(
         # creature types
         "aberration", "celestial", "construct", "dragon", "elemental", "fey", "fiend", "giant",
         "humanoid", "monstrosity", "ooze", "plant", "undead",
+        # the usual monsters (a named one is a character with a stat block)
+        "goblin", "hobgoblin", "bugbear", "kobold", "gnoll", "lizardfolk", "troll", "ogre",
     }
 )  # fmt: skip
 NOT_A_KIND = (

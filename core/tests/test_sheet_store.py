@@ -14,7 +14,6 @@ from dmbot.db import Database, drop_schema
 from dmbot.memory import sheets
 from dmbot.memory.sheet_refresh import refresh
 from dmbot.memory.sheet_store import SheetRefused, SheetStore
-from dmbot.memory.store import MemoryStore
 from dmbot.schema import MIGRATIONS
 from tests.pg import TEST_URL, DatabaseTest
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, MemoryTest
@@ -348,14 +347,21 @@ class Backfill0029(DatabaseTest):
         await drop_schema(TEST_URL, self.schema)
         self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
         campaigns = CampaignStore(self.db, clock=lambda: 1)
-        memory = MemoryStore(self.db, clock=lambda: 1)
         c = (await campaigns.create(GUILD_A, "Frozen Wastes", DM)).id
-        played = await memory.add_entity(
-            GUILD_A, c, name="Testa", type="player_character", source="dm", played_by=PLAYER
-        )
-        unplayed = await memory.add_entity(GUILD_A, c, name="Belleros", type="npc", source="dm")
+        # Written straight into the tables as they were then: the store writes the columns
+        # of today, which this older schema doesn't have yet.
+        played, unplayed = "a" * 32, "b" * 32
         async with self.db.guild(GUILD_A) as conn:
-            for entity in (played.value.id, unplayed.value.id):
+            for entity, name, kind, player in (
+                (played, "Testa", "player_character", PLAYER),
+                (unplayed, "Belleros", "npc", None),
+            ):
+                await conn.execute(
+                    "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name,"
+                    " description, status, source, created_at, played_by)"
+                    " VALUES (%s, %s, %s, %s, %s, '', 'confirmed', 'dm', 1, %s)",
+                    (GUILD_A, c, entity, kind, name, player),
+                )
                 await conn.execute(
                     "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url)"
                     " VALUES (%s, %s, %s, %s)",
@@ -365,7 +371,7 @@ class Backfill0029(DatabaseTest):
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute("SELECT entity_id, player_id FROM character_sheets")
             rows = {r["entity_id"]: r["player_id"] for r in await cur.fetchall()}
-        self.assertEqual(rows, {played.value.id: PLAYER})  # kept, with its player
+        self.assertEqual(rows, {played: PLAYER})  # kept, with its player
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
