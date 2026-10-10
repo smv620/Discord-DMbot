@@ -430,6 +430,95 @@ class Payments(DatabaseTest):
         got = await self.plan()
         self.assertEqual((got.plan, got.status), ("table", "active"))
 
+    # Grace only for someone who has paid before (#922)
+
+    async def plan_with_no_payment_on_record(self) -> None:
+        """A paid plan whose payment the database has no record of (the writer never makes
+        one; rows from before payment kinds were recorded look like this)."""
+        async with self.db.plan_writer(ALICE.id) as conn:
+            await conn.execute(
+                "INSERT INTO entitlements (user_id, plan, status, hours_cap, extra_hours,"
+                " campaign_cap, period_start, period_end, plan_changed_at, provider,"
+                " provider_customer_id, provider_subscription_id, last_event_at, updated_at)"
+                " VALUES (%(u)s, 'table', 'active', 18, 0, 1, %(s)s, %(e)s, %(s)s, 'fake',"
+                " 'cus_1', 'sub_1', %(s)s, %(s)s)",
+                {"u": ALICE.id, "s": self.now, "e": self.now + 30 * DAY},
+            )
+
+    async def test_a_failed_first_payment_starts_no_plan_and_gives_no_grace(self) -> None:
+        response = await self.send(kind="payment_failed", subscription_id="sub_1")
+        self.assertEqual(response.status_code, 503)  # nothing to apply it to: retried later
+        self.assertIsNone(await entitlements.get(self.db, ALICE.id))
+        self.assertIsNone((await self.client.get("/me")).json()["plan"])
+
+    async def test_a_failure_with_no_payment_on_record_gives_no_grace_and_lapses_nothing(
+        self,
+    ) -> None:
+        await self.plan_with_no_payment_on_record()
+        for kind in ("payment_failed", "subscription_ended"):
+            response = await self.send(kind=kind, subscription_id="sub_1", occurred_at=self.now + 5)
+            self.assertEqual(response.status_code, 200)
+            got = await self.plan()
+            self.assertEqual((got.status, got.grace_ends_at, got.lapsed_at), ("active", None, None))
+
+    async def test_a_failed_renewal_after_a_payment_gets_the_grace(self) -> None:
+        await self.start_table()
+        await self.start_table(
+            kind="subscription_renewed",
+            occurred_at=self.now + 30 * DAY,
+            period_start=self.now + 30 * DAY,
+            period_end=self.now + 60 * DAY,
+        )
+        await self.send(
+            kind="payment_failed", occurred_at=self.now + 60 * DAY, subscription_id="sub_1"
+        )
+        got = await self.plan()
+        self.assertEqual((got.status, got.grace_ends_at), ("grace", self.now + 67 * DAY))
+
+    async def test_a_failure_on_a_second_subscription_after_an_earlier_paid_one_gets_grace(
+        self,
+    ) -> None:
+        await self.start_table()  # paid: sub_1
+        await self.send(
+            kind="subscription_ended", occurred_at=self.now + 5, subscription_id="sub_1"
+        )
+        await self.start_table(
+            subscription_id="sub_2",
+            occurred_at=self.now + 10,
+            period_start=self.now + 10,
+            period_end=self.now + 40 * DAY,
+        )
+        await self.send(kind="payment_failed", occurred_at=self.now + 20, subscription_id="sub_2")
+        got = await self.plan()
+        self.assertEqual((got.status, got.grace_ends_at), ("grace", self.now + 20 + 7 * DAY))
+
+    async def test_a_replayed_failure_changes_nothing_and_each_event_is_recorded_with_its_kind(
+        self,
+    ) -> None:
+        await self.start_table()
+        body = json.dumps(
+            {
+                "id": "evt-fail",
+                "user_id": ALICE.id,
+                "occurred_at": self.now + 10,
+                "kind": "payment_failed",
+                "subscription_id": "sub_1",
+            }
+        ).encode()
+        headers = {"x-fake-signature": self.provider.sign(body)}
+        for _ in range(3):
+            await self.client.post("/webhooks/fake", content=body, headers=headers)
+        got = await self.plan()
+        self.assertEqual((got.status, got.grace_ends_at), ("grace", self.now + 10 + 7 * DAY))
+        async with self.db.plan_writer(ALICE.id) as conn:
+            cur = await conn.execute(
+                "SELECT kind, count(*) AS n FROM payment_events WHERE user_id = %s"
+                " GROUP BY kind ORDER BY kind",
+                (ALICE.id,),
+            )
+            rows = [(row["kind"], row["n"]) for row in await cur.fetchall()]
+        self.assertEqual(rows, [("payment_failed", 1), ("subscription_started", 1)])
+
     async def test_a_renewal_ends_the_grace(self) -> None:
         await self.start_table()
         await self.send(kind="payment_failed", occurred_at=self.now + 10)
