@@ -94,6 +94,13 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_ENFORCE_PLANS must be 1"):
             load_settings({**BASE, "DMBOT_ENFORCE_PLANS": "yes please"})
 
+    def test_the_sidebar_is_off_unless_switched_on(self) -> None:
+        self.assertFalse(load_settings(BASE).sidebar_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_SIDEBAR": "1"}).sidebar_on)
+        self.assertFalse(load_settings({**BASE, "DMBOT_SIDEBAR": "off"}).sidebar_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_SIDEBAR must be 1"):
+            load_settings({**BASE, "DMBOT_SIDEBAR": "maybe"})
+
     def test_the_site_address_loses_its_trailing_slash(self) -> None:
         s = load_settings({**BASE, "WEB_SITE_URL": "https://dmbot.example/"})
         self.assertEqual(s.site_url, "https://dmbot.example")

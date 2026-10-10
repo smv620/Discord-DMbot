@@ -35,6 +35,7 @@ from dmbot.campaigns.models import (
 )
 from dmbot.dm_screen import handover, messages
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
+from dmbot.dm_screen.pause import pause_buttons, pause_line
 from dmbot.logs import set_log_context
 
 log = logging.getLogger(__name__)
@@ -43,6 +44,20 @@ NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 SETTINGS_LABEL = "Settings"
 RULE_LOOKUP_LABEL = "Look up a rule"
+RULES_CARDS_OFF = (
+    "• **Rules cards: Off.** When on, DMbot shows a short card on the DM screen when someone "
+    "at the table names a spell, condition or creature. It only shows the free rules (SRD). "
+    "You decide what applies."
+)
+RULES_CARDS_ON = (
+    "• **Rules cards: On.** When someone who agreed to be recorded names a spell, condition "
+    "or creature, DMbot shows a short card on the DM screen (one a minute at most). It only "
+    "shows the free rules (SRD); you decide."
+)
+RULES_CARDS_STOP = " Tap 🃏 Turn rules cards off to stop them."
+RULES_CARDS_PEEK = " Players who peek can see them too."
+RULES_CARDS_OPEN = " Players can see them too, because your DM screen is open."
+RULES_CARDS_ONLY_DMS = "Only this campaign's DMs can change this."
 RULES_LINE = (
     "• **Rules:** press 📖 Look up a rule to read a spell, condition or creature from the "
     "free rules (SRD). Only you see it."
@@ -56,6 +71,16 @@ SAVED = "Saved. Press ⚙️ Settings again to see your settings."
 
 def _tick(label: str, current: bool) -> str:
     return f"✓ {label}" if current else label
+
+
+def _rules_cards_line(campaign: Campaign, viewer: int | None) -> str:
+    if not campaign.rules_cards:
+        return RULES_CARDS_OFF
+    who = {"peek": RULES_CARDS_PEEK, "open": RULES_CARDS_OPEN}.get(
+        campaign.dm_screen_visibility, ""
+    )
+    stop = RULES_CARDS_STOP if viewer is not None and viewer in campaign.dm_user_ids else ""
+    return RULES_CARDS_ON + who + stop
 
 
 def settings_text(
@@ -77,7 +102,9 @@ def settings_text(
             "• **Saved transcripts:** anyone in the server can read and download them with "
             "`/transcript`. (This can't be changed.)",
             *rules,
+            _rules_cards_line(campaign, viewer),
             handover.owner_line(campaign, offer),
+            pause_line(campaign, viewer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
             "now on.",
         ]
@@ -95,8 +122,11 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(SettingsVisibilityButton(campaign.id, visibility, current=current))
     for item in handover.owner_buttons(campaign, offer, viewer):
         view.add_item(item)
+    for item in pause_buttons(campaign, viewer):
+        view.add_item(item)
     if viewer in campaign.dm_user_ids:  # rules lookup is for the campaign's DMs (#908)
         view.add_item(RuleLookupButton(campaign.id))
+        view.add_item(RulesCardsButton(campaign.id, campaign.rules_cards))
     return view
 
 
@@ -238,6 +268,65 @@ class RuleLookupButton(
             await interaction.response.send_message(ONLY_DMS, ephemeral=True)
             return
         await interaction.response.send_modal(LookupForm(campaign))
+
+
+class RulesCardsButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:rulescards:{_ID}:(?P<to>on|off)",
+):
+    """📖 Rules cards: On or Off, one tap changes it (#931). Only the campaign's DMs have it;
+    a running session follows the change from now on."""
+
+    def __init__(self, campaign_id: str, on: bool) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=f"Turn rules cards {'off' if on else 'on'}",
+                emoji="🃏",
+                style=discord.ButtonStyle.primary if on else discord.ButtonStyle.secondary,
+                row=3,
+                custom_id=f"dmbot:rulescards:{campaign_id}:{'off' if on else 'on'}",
+            )
+        )
+        self.campaign_id = campaign_id
+        self.turn_on = not on  # what a press does
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> RulesCardsButton:
+        return cls(match["campaign"], on=match["to"] == "off")  # "to off" means it is on now
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.rule_lookup import may_look_up
+
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for rules cards")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if not may_look_up(campaign, interaction.user.id):  # the campaign's DMs, as for lookups
+            await interaction.response.send_message(RULES_CARDS_ONLY_DMS, ephemeral=True)
+            return
+        save = getattr(interaction.client, "set_rules_cards", None)
+        await interaction.response.defer()  # saving may take a moment
+        try:
+            if save is None:
+                raise RuntimeError("no running DMbot to save it")
+            saved: Campaign = await save(campaign.guild_id, campaign.id, self.turn_on)
+        except Exception:
+            log.exception("Couldn't change rules cards")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        await _redraw(interaction, saved)
 
 
 class LevelButton(

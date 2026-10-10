@@ -83,6 +83,15 @@ async def check_start(db: Database, guild_id: int, owner_user_id: int, now: int)
     )
 
 
+async def access_of(
+    db: Database, guild_id: int, owner_user_id: int, now: int
+) -> entitlements.Access:
+    """What this owner's plan lets them do now, for the AI and backup rules
+    (dmbot.plan_rules). Reads only, through the owner-scoped meter door."""
+    async with db.meter(guild_id, owner_user_id) as conn:
+        return await entitlements.effective(conn, owner_user_id, now)
+
+
 async def campaign_room(
     db: Database, guild_id: int, owner_user_id: int, now: int
 ) -> campaign_cap.Room:
@@ -91,6 +100,50 @@ async def campaign_room(
     rules are in `dmbot.campaign_cap`."""
     async with db.meter(guild_id, owner_user_id) as conn:
         return await campaign_cap.room(conn, owner_user_id, now)
+
+
+@dataclass(frozen=True, slots=True)
+class PausedCampaign:
+    """A campaign DMbot paused because its owner's plan has less room now (#957)."""
+
+    campaign_id: str
+    guild_id: int
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class Settled:
+    """What `settle_cap` did: the cap kept to, whether the plan can be changed on the
+    website (for the note's words), and the campaigns it paused (usually none)."""
+
+    cap: int
+    can_change_plan: bool
+    paused: list[PausedCampaign]
+
+
+async def settle_cap(
+    db: Database, guild_id: int, owner_user_id: int, now: int, live: list[str] | None = None
+) -> Settled | None:
+    """Pause the owner's campaigns over their plan's cap, most recently played kept (#957).
+
+    Run when the plan is read for a start, a create or an unpause, not from the website's
+    webhook: the bot is the one that tells the owner privately, the check costs one small
+    query, and a change that arrives while the bot is down is still settled by the next
+    read. The cap is the plan's, or Try It's when the plan has ended (they fall back to it).
+    The database function does the pausing for this owner only, in every server they own
+    campaigns in; it is the one door that writes across servers, and returns what it
+    paused so the caller can tell them once."""
+    async with db.meter(guild_id, owner_user_id) as conn:
+        access = await entitlements.effective(conn, owner_user_id, now)
+        keep = access.campaign_cap if access.works else plans.load().by_id["try-it"].campaigns
+        if keep is None:  # no limit
+            return None
+        cur = await conn.execute("SELECT * FROM dmbot_pause_over_cap(%s, %s)", (keep, live or []))
+        paused = [
+            PausedCampaign(str(r["campaign_id"]), int(r["server_id"]), str(r["campaign_name"]))
+            for r in await cur.fetchall()
+        ]
+        return Settled(keep, access.works and access.kind == "paid", paused)
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,5 +338,13 @@ class Meter:
     async def check(self, guild_id: int, owner_user_id: int, now: int) -> StartCheck:
         return await check_start(self.db, guild_id, owner_user_id, now)
 
+    async def access(self, guild_id: int, owner_user_id: int, now: int) -> entitlements.Access:
+        return await access_of(self.db, guild_id, owner_user_id, now)
+
     async def campaign_room(self, guild_id: int, owner_user_id: int, now: int) -> campaign_cap.Room:
         return await campaign_room(self.db, guild_id, owner_user_id, now)
+
+    async def settle_cap(
+        self, guild_id: int, owner_user_id: int, now: int, live: list[str] | None = None
+    ) -> Settled | None:
+        return await settle_cap(self.db, guild_id, owner_user_id, now, live)

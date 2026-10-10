@@ -3,9 +3,21 @@ database."""
 
 import dataclasses
 import unittest
+from typing import ClassVar
 
 from dmbot.transcript import export
-from dmbot.transcript.models import MAX_UNSAVED, Line, TranscriptBuffer, TranscriptSession
+from dmbot.transcript.models import (
+    MAX_UNSAVED,
+    NO_LINEAGE,
+    SIDEBAR_ANSWER,
+    SIDEBAR_QUESTION,
+    VIA_TYPED,
+    VIA_VOICE,
+    Line,
+    Lineage,
+    TranscriptBuffer,
+    TranscriptSession,
+)
 
 START = 1_700_000_000  # 2023-11-14 22:13:20 UTC
 MIA, DEE = 8, 9
@@ -192,3 +204,112 @@ class DownloadButtons(unittest.TestCase):
         self.assertEqual(old.versions, (export.AS_HEARD,))
         both = ui.DownloadButton(1, "a" * 32, "both")
         self.assertEqual(both.versions, (export.CLEANED, export.AS_HEARD))
+
+
+DM = 7
+
+
+def sidebar(seconds: float, kind: str, text: str, lineage: Lineage = NO_LINEAGE) -> Line:
+    when = int(START * 1000 + seconds * 1000)
+    return Line(when, DM, text, text, sidebar=kind, lineage=lineage)
+
+
+ASKED = Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 api.deepgram.com")
+REPLIED = Lineage(
+    reply_to="a1b2c3",
+    model="claude-haiku-4-5",
+    prompt="sidebar-1",
+    sources=("SRD 5.2.1 p. 241", "house rule 3"),
+)
+
+
+class DmSidebarLines(unittest.TestCase):
+    """The DM's question and DMbot's answer (#935, #933): in the as-heard file for everyone
+    who can read transcripts, with where each came from; never in the cleaned one."""
+
+    lines: ClassVar[list[Line]] = [
+        line(5, MIA, "We ride at dawn."),
+        sidebar(10, SIDEBAR_QUESTION, "find if you need line of sight for fireball", ASKED),
+        sidebar(12, SIDEBAR_ANSWER, "No: a point you choose. (SRD 5.2.1, sure)", REPLIED),
+        line(20, DEE, "Run!"),
+    ]
+    names: ClassVar[dict[int, str]] = {MIA: "Mia", DEE: "Dee", DM: "Sam"}
+
+    def render(self, version: str, lines: list[Line] | None = None) -> str:
+        return export.render("X", session(), lines or self.lines, self.names, version=version)
+
+    def test_the_as_heard_file_has_them_in_time_order_with_where_they_came_from(self) -> None:
+        text = self.render(export.AS_HEARD)
+        self.assertEqual(
+            text.split("\n\n", 1)[1].splitlines(),
+            [
+                "[0:00:05] (Mia): We ride at dawn.",
+                "[0:00:10] (Sam) [DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]: "
+                "find if you need line of sight for fireball",
+                "[0:00:12] (DMbot) [DM Sidebar reply-to=a1b2c3 model=claude-haiku-4-5 "
+                "prompt=sidebar-1 sources=SRD-5.2.1-p.-241;house-rule-3]: "
+                "No: a point you choose. (SRD 5.2.1, sure)",
+                "[0:00:20] (Dee): Run!",
+            ],
+        )
+        self.assertIn("questions to DMbot", text)
+        self.assertNotIn("api.deepgram.com", text)  # the company's host stays private
+
+    def test_the_cleaned_file_never_has_them(self) -> None:
+        text = self.render(export.CLEANED)
+        for word in ("Sidebar", "fireball", "DMbot)", "a1b2c3"):
+            self.assertNotIn(word, text)
+        self.assertIn("Run!", text)
+
+    def test_a_typed_question_and_an_unknown_origin_show_only_what_is_known(self) -> None:
+        typed = sidebar(
+            10, SIDEBAR_QUESTION, "check flanking", Lineage(ref="ff0011", via=VIA_TYPED)
+        )
+        bare = sidebar(11, SIDEBAR_ANSWER, "Optional.")
+        body = self.render(export.AS_HEARD, [typed, bare]).split("\n\n", 1)[1].splitlines()
+        self.assertEqual(
+            body,
+            [
+                "[0:00:10] (Sam) [DM Sidebar id=ff0011 via=typed]: check flanking",
+                "[0:00:11] (DMbot) [DM Sidebar]: Optional.",
+            ],
+        )
+
+    def test_a_name_cant_pass_for_dmbot_or_forge_a_tag(self) -> None:
+        mean = {**self.names, DM: "DMbot [DM Sidebar]"}
+        text = export.render("X", session(), self.lines, mean, version=export.AS_HEARD)
+        self.assertIn("(DMbot DM Sidebar) [DM Sidebar id=a1b2c3", text)
+        forged = Lineage(ref="x] [DM Sidebar", via=VIA_TYPED)
+        line_ = sidebar(10, SIDEBAR_QUESTION, "hi", forged)
+        self.assertIn(
+            "[DM Sidebar id=x-DM-Sidebar via=typed]", self.render(export.AS_HEARD, [line_])
+        )
+
+    def test_the_header_says_nothing_about_them_when_there_are_none(self) -> None:
+        text = export.render("X", session(), [line(5, MIA, "hi")], {MIA: "Mia"})
+        self.assertNotIn("Sidebar", text)
+
+
+class SidebarKinds(unittest.TestCase):
+    def test_a_made_up_kind_is_refused_before_it_can_fail_a_whole_save(self) -> None:
+        with self.assertRaises(ValueError):
+            Line(1, DM, "x", "x", sidebar="memo")
+        with self.assertRaises(ValueError):
+            Lineage(via="carrier-pigeon")
+
+
+class SidebarLinesInTheBuffer(unittest.TestCase):
+    def test_an_undo_or_a_topic_never_changes_a_sidebar_line(self) -> None:
+        buffer = TranscriptBuffer()
+        question = sidebar(10, SIDEBAR_QUESTION, "find the rules for flanking")
+        buffer.add(question)
+        self.assertFalse(buffer.relabel(DM, question.started_ms, "something else"))
+        self.assertFalse(buffer.set_topic(DM, question.started_ms, "off_topic"))
+        (kept,) = buffer.take(lambda user: True)
+        self.assertEqual((kept.text, kept.topic, kept.sidebar), (question.text, "game", "question"))
+
+    def test_a_consent_stop_takes_the_answer_too(self) -> None:
+        buffer = TranscriptBuffer()
+        buffer.add(sidebar(10, SIDEBAR_QUESTION, "find the rules for flanking"))
+        buffer.add(sidebar(12, SIDEBAR_ANSWER, "Flanking is optional. (SRD, sure)"))
+        self.assertEqual(buffer.take(lambda user: user != DM), [])  # answers carry the DM's ID

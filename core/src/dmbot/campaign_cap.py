@@ -6,7 +6,7 @@ read from `owner_campaigns`: two ids per row, kept in step with `campaigns` by a
 (dmbot.schema, 0034), counted by a function that answers only for the person set. This is
 the one place that counts: the start check, the hand-over and take-over checks, and the
 restore check all ask here.
-"Owned" counts every campaign for now; pausing one comes with the downgrade part.
+"Owned" counts the campaigns that are not paused (#957): a paused one takes no place.
 """
 
 from __future__ import annotations

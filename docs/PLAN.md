@@ -361,7 +361,31 @@ never cut, with a **Read the rest** button. No match: "couldn't find that in the
 private, never in a channel or a transcript; players looking up rules is a later question),
 and **precedence is shown, not decided**: a house rule of that campaign (and no other's) that
 names the thing comes first as "🏠 House rule 12: …", then the book, and the DM decides what
-applies. Not built: alerts from what is said at the table, the AI, shared rulebooks.
+applies. Not built: the AI, shared rulebooks.
+
+**Built: rules cards from the table (#931), the first rules alert.** A campaign setting,
+**🃏 Rules cards**, in ⚙️ Settings (**off by default**; only the campaign's DMs change it; it
+travels in a backup with the campaign's other settings). When on, a live session looks at
+each cleaned line of people who agreed and, when a spell, condition or creature of the
+campaign's rulesets is named (whole names only, plurals count, the longest name first), puts
+a short card on the DM screen only: never in the transcript, never to players; it follows the
+DM screen's visibility like every other post there. The card is the lookup card's top half: a
+house rule that names it first ("🏠 House rule 12: …"), the name, the facts line, the source
+with its tag, and what was heard ("Heard: “casts Fireball”", the confidence every rules alert
+gives), with **✅ Got it**, **🙈 Ignore** (no more cards for that name this session),
+**⚖️ Override** (the Add a house rule form with "Instead of" filled in; the answer is private)
+and **📖 Read it all** (the full lookup card, privately). Names that are everyday words
+(Light, Fly, Shield, Prone, Nightmare, Tough Boss, …) only count after "cast", "casts" or
+"casting" right before a spell, or "is", "are", "was" or "were" right before a condition ("the
+goblin is grappled"); an everyday creature (Wolf, Bat, Guard, Nightmare, …) never gets a card
+from the table (the DM looks it up with 📖); a name the campaign itself uses for a character, NPC
+or place (a PC called Sprite) is skipped; the list is in
+`dmbot.rules.spotter`, and a test checks every word on it is a name in the index. Not noisy:
+one card for each name each session, one card a minute (the rest are dropped, not queued), and
+nothing after `/dmbot stop`. The DM screen's level (Quiet, Normal, Chatty) does not govern
+it: turning the setting on is the DM's own choice and wins, even on Quiet. Names only: no AI, no cost, so no `can_use_ai` check. It never
+decides: the card says what the free rules say. Not built: AI checks of what was ruled, house
+rules proposed by voice, players' lookups.
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
@@ -456,6 +480,42 @@ alerts yet; those build on this.
 - **Replace means replace:** restoring a backup over a campaign replaces its house rules
   with the backup's, as it does everything else; a backup made before this has none.
 - **Wording:** "house rule" only: no "precedence" or "hierarchy" in anything users read.
+
+*Built, part 2: by voice, no AI (2026-10-09, #953):*
+- **What starts a proposal:** a line from one of the campaign's DMs (nobody else's) that
+  begins with "house rule" (then `:`, `,` or `-`), "new house rule", "for this table"
+  (then `:`, `,` or `-`), or "our rule is" / "our house rule is". The words after it, at
+  least two, are the rule (cut at 500 characters on a word, and the proposal says so).
+  "The house rules say…" and questions start nothing. No AI reads the line.
+- **The proposal** goes to `#dm-screen` only, never to a channel, never into the
+  transcript: 🏠 **New house rule?** with the words, and **Save / Edit / Cancel**. Nothing
+  is saved until a DM presses Save. Edit opens the same form as Add, with the rule filled
+  in. A saved rule records `scenario` ("Said at the table, <date>") and `session_id`.
+- **Simple conflicts:** the rule-card name matcher finds this campaign's rules that name
+  the same spell, condition or creature; the proposal shows up to two and says what each
+  button does. With one clash: **Save as new rule** (keeps both), **Replace rule N** (the
+  old rule keeps its number and its "instead of"; the note says what it used to say) or
+  Cancel. With several: Save as new rule, Edit or Cancel, never Replace (it would be unclear
+  which goes). A rule changed by another DM meanwhile is never replaced.
+- **One save only:** a proposal is claimed before the save, so two presses (or two DMs)
+  write one rule; it is given back if the save is refused. If the campaign's rules couldn't
+  be read, the proposal says it didn't check for a repeat.
+- **Limits:** one proposal a minute, and the same words once a session. If the post fails
+  the words and the minute are given back.
+- **Every press** re-checks that the person is a DM of that campaign now; a proposal is
+  forgotten when the session ends or the bot restarts, and an old button says so.
+- **Typed proposals (built 2026-10-09, #960):** a DM types the same phrases to DMbot in
+  their private chat (the DM sidebar's way in). It is the same proposal on the DM screen,
+  with the same buttons, limits (shared with what is said aloud) and conflict check, and the
+  rule's "scenario" reads "Typed by the DM, <date>". It is not a sidebar question: no AI, no
+  `[DM Sidebar]` line, nothing written to the transcript, and it works even while quick
+  answers are switched off. The reply is short and says to press Save ("nothing is saved until
+  you do"); if it can't offer one it says why (a minute apart; already offered). A message that
+  starts with one of the phrases is a house rule, unless it ends in a question mark (then it
+  is a question for the sidebar, as before). The
+  DM must have agreed to be recorded (else they are asked), and with several running games
+  they pick which one by button. The bot still doesn't read messages in servers (narrowest
+  intents); the **Add a house rule** form in `/dmbot houserules` is the other typed way.
 
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
@@ -577,7 +637,7 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
 **Transcripts vs. the DM screen (decided 2026-10-04).**
 | Content | Who sees it |
 |---|---|
-| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons and all other DM-screen content never appear in the transcript channel or a transcript. The DM sidebar is the one exception (owner, 2026-10-09): its lines go into the raw transcript, tagged, and never the cleaned one; who may read them is #933. |
+| **Transcripts** (what was said at the table) | **Anyone in the Discord server** (decided 2026-10-05): live in the transcript channel (#124), and as downloads, raw or cleaned (#41, #125). Only people who agreed are ever recorded, and the consent request tells them the whole server can read it. **View only:** "Did they mean…?" prompts, Undo buttons and all other DM-screen content never appear in the transcript channel or a transcript. The DM sidebar is the one exception (owner, 2026-10-09): its lines go into the raw transcript, tagged with their data lineage, and never the cleaned one. The raw transcript is unedited and unredacted for everyone who may read transcripts, spoilers included (#933). |
 | **DM screen** (rules alerts, house-rule prompts, NPC and plot notes) | The DM, plus players only as the campaign's **DM-screen visibility** allows (below). The bot never *sends* DM-screen content to players. |
 
 **DM-screen visibility (decided 2026-10-04).** Each campaign's DM picks one; if none is
@@ -1657,10 +1717,98 @@ table isn't left waiting while the DM looks something up.
   channel.
 - **Transcripts:** the DM's sidebar lines are added to the **raw** transcript with the tag
   `[DM Sidebar]`, and DMbot's replies about in-game content are added under the speaker
-  name `DMbot`. Both are always kept out of the **cleaned** transcript. Who can read those
-  raw lines: see the open question on #933 (until it is answered, they are in the DM's own
-  raw download only, never in the live transcript channel or a player's download).
+  name `DMbot`. Both are always kept out of the **cleaned** transcript. **The raw transcript
+  is unedited and unredacted, sidebar included, for everyone who may read transcripts**
+  (owner, 2026-10-09, #933): a player who downloads the raw copy gets spoilers, and that is
+  accepted. Its purpose is to be the complete data DMbot is improved from as the project
+  evolves; the cleaned transcript is the one for reading. Sidebar lines are not posted
+  live in the transcript channel (they would interrupt the table), only written to the
+  raw record.
+- **Data lineage on every sidebar line** (owner, 2026-10-09, #933): each line records
+  where it came from, so later work knows what data came from where: `via` = `voice-memo`,
+  `typed`, or `table-trigger` (said aloud at the table); for a memo or trigger, the
+  speech-to-text engine and model; for a DMbot reply, the AI model, the prompt version,
+  and the sources it used (rules entries, house rule numbers, memory facts, transcript
+  span); and the id of the question a reply answers. In the raw text a line reads
+  `[time] (DM name) [DM Sidebar via=voice-memo stt=<engine>]: …` and
+  `[time] (DMbot) [DM Sidebar reply-to=<id> model=<model> sources=<…>]: …`, with the same
+  fields stored as columns, not only text.
 - **Cost:** every answer spends AI tokens, so it goes through `can_use_ai` (#919).
+- **Built (#935, the ways in; the answers are #934):**
+  - **In the DM's chat with DMbot** (`dmbot.sidebar.service`): a voice message or a typed
+    message from a campaign's DM, while a session of theirs runs. A voice message is read in
+    memory (PyAV, now a normal dependency), written down by the table's speech-to-text with
+    the campaign's names as hints, and dropped at once. Names are fixed the way table speech
+    is (only the sure ones). Any of the campaign's DMs (not just whoever pressed Start) may use it. A DM who has not agreed to be recorded is asked first, with the
+    consent button; nothing is downloaded or kept. If the DM runs several games, a button asks
+    which. One question at a time. The reply shows what was heard (voice only).
+  - **Said at the table:** a DM's own line, in the live transcript, that has a hold-on
+    lead-in, then "I need to / I have to / let me", then find, look up or check, then
+    something (`dmbot.sidebar.ask`, with tests for lines that must not start one). At most one
+    a minute per table. The answer goes to the DM's private chat, never a channel.
+  - **Transcript lines:** the question and DMbot's in-game answer are saved with the line
+    kind `question` / `answer` (migration 0036; answers are saved under the DM's id so a
+    consent stop removes both), shown in the as-heard file for everyone who can read it as
+    `(DM name) [DM Sidebar id=… via=… stt=…]:` and `(DMbot) [DM Sidebar reply-to=… model=…
+    prompt=… sources=…]:`. Where each came from is stored as columns (how it came in, the
+    speech-to-text, the question it answers, the AI model, the prompt version, the sources).
+    Never in the cleaned file, the live channel, or the session counts. Backups hold no
+    transcripts, so they hold no sidebar lines.
+  - **Cost limits:** nothing is downloaded, written down or asked while the answer engine (#934) is missing. A voice message may be up to 30 seconds. A spoken question is one a minute per table; questions in the DM chat are
+    six a minute per DM (each can spend speech-to-text and AI money). A voice message's speech
+    counts in the end-of-session "sent" line for outside engines, not in the hours meter.
+  - **Switch:** the ways in answer only when `DMBOT_SIDEBAR=1` (default 0, and it needs
+    `ANTHROPIC_API_KEY`); off, a DM gets "Quick answers aren't switched on yet." and the table
+    trigger stays quiet. Turn it on after the sidebar's test answers have been read (#954). One
+    question at a time per campaign.
+  - **Not built yet:** a line the Cleaner tags as in character is not told apart from the DM
+    speaking (the `in_character` flag exists, nothing sets it); only the "hold on" lead-in
+    guards against it.
+  - **Limits:** DMs reach only the first shard's process, so a table on another shard's process
+    is not found (single process today).
+
+*Built, part 1: the answer engine (#934, CloudDev, 2026-10-09):* `dmbot.sidebar` (no Discord, no
+voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)` returns an `Answer`:
+`text` (short, with its source and "sure"), `in_game`, `refused`, `model`, `prompt_version`,
+`sources` (everything the AI was given, in short words: "SRD 5.2.1 p. 131", "house rule 3",
+"campaign names", "the scene", "DMbot help"), `parts` (a long answer as messages) and `seconds`.
+`asker_id` has no default: it decides the wording of a plan refusal.
+- **Brevity is enforced in code.** At most 2 sentences and 200 characters (the source and "sure"
+  come after, outside the limit), unless the DM asked for the full text. A yes-or-no question
+  starts "Yes." or "No." (or says plainly it can't: "Your call."; a choice question with "or" is
+  not a yes-or-no one). Greetings and "let me know" offers are stripped; "Sure, it can." becomes
+  "Yes, it can.". A reply that breaks a rule is sent back **once** with what to fix, unless the
+  first call was already slow (over 3 seconds) or the retry fails; what is still too long is cut
+  at a sentence end. A paragraph is never sent.
+- **Speed.** The smallest model (the off-topic filter's), at most 150 tokens out. One call is
+  limited to 6 seconds and the whole answer to 8; a warning is logged over 5. A stuck call ends
+  in "That took too long. Ask again." The names are waited for at most 1 second; if they or the
+  house rules can't be read, the answer goes ahead without them and the reason is logged.
+- **Context is this one campaign only:** the rules entries and house rules the question names
+  (a possessive like "Fireball's" counts), the confirmed names it mentions (never secret or
+  unconfirmed names, and nothing but the name for someone who has a secret name, since replies can
+  reach the raw transcript, #933), the caller's last few minutes of scene (cut to 1,500
+  characters, fenced as the players' words, which are information and never instructions) and,
+  only for questions about DMbot or Discord, the reviewed digest `sidebar/about_dmbot.md`.
+  Only matching entries are sent, each cut to 1,200 characters. Homebrew is not stored yet, so
+  none is sent; content a DM shared counts only with its right-to-use confirmation and none is
+  stored as text yet, so none is sent.
+- **Sources are DMbot's, not the model's.** The shown source is taken from what the model was
+  given: an SRD answer cites the entry's own page and carries `[Legacy 2014]` when it is a 2014
+  entry; a house rule is named as given; "DMbot help", campaign names and anything the model made
+  up show no source; a source the answer already says is not repeated.
+- **Off topic** gets the fixed line "I can only help with the game, DMbot or Discord here."
+- **The full text comes only when asked** ("spell description", "full text", "read me the
+  whole…") and only for a rule DMbot has: it is the card `/dmbot rule` shows, in parts, with the
+  SRD's own page to read outside Discord, with no AI call. Asked for something it doesn't have,
+  the question is answered short like any other.
+- **Plan.** Every call goes through `plan_gate("ai", …)` (#919): with plans enforced a refusal
+  comes back as `refused=True` with the plain words. Like the start check it fails open if the
+  database can't be read, so during an outage a lapsed plan can still spend a few cents.
+- **Tests.** `tests/sidebar_brevity_cases.py` holds 17 real table questions; CI runs them with a
+  fake AI and counts the sentences by hand. `python -m dmbot.devtools.sidebar_check` runs the same
+  ones against the real model (it needs the server's key, so dev1 runs it) and prints the
+  answers and times.
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
@@ -1783,15 +1931,15 @@ the website's only) that returns the number for the person set in the transactio
 else; the bot sets that person for one read only, through `dmbot.campaign_cap`, and the person
 switch itself is private to `dmbot.entitlements`. One function (`dmbot.campaign_cap`) counts
 for every check: `/dmbot start` refuses an owner who owns more campaigns than the plan covers
-("Your plan covers 2 campaigns, and you have 3. To start this one, pause one or change your
-plan", the cap from `plans.json`; the change-plan offer only for a plan that can change, and
+("Your plan covers 2 campaigns, and you have 3. To start this one, pause another one or change
+your plan", the cap from `plans.json`; the change-plan offer only for a plan that can change, and
 anyone but the owner only hears "ask the owner"); **making a new campaign past the cap is
 refused too** (same words, "To make a new one", so a third campaign never locks the first two
 out; someone with no plan yet may still make one, to start once they pick a plan); a hand-over,
 a take-over and a restore each need room for one more, **on the website as well** (the web
 API reads `DMBOT_ENFORCE_PLANS` like the bot, and its accept counts through the same
-function). Every owned campaign
-counts for now; "paused" waits for the downgrade part (a column is added then). All of 2b acts only when
+function). Every unpaused owned
+campaign counts (pausing is built, part 4 below). All of 2b acts only when
 `DMBOT_ENFORCE_PLANS` is on (default off; the meter records either way), which dev1 turns
 on with the website's go-live (#498) and notes in the testing log. The refusal for a plan
 that has ended says "Your plan has ended. Pick one here: <WEB_SITE_URL>/account" (or "Pick
@@ -1808,6 +1956,69 @@ its DMs must take it on. The DM-screen warnings (decided with Supervisor, 2026-1
 the DM screen because co-DMs need to know the table may stop; they name only the hours left,
 and the 90% one says "The campaign's owner can add more at <WEB_SITE_URL>/account", so it fits
 everyone who reads the screen and never says whose plan it is.
+
+*Built, part 3: AI and copies by plan (2026-10-09, #919):* `dmbot.plan_rules` holds the two
+rules, pure over the owner's `Access`, and the refusal words, next to `hours.py`'s so the bot
+and the site never disagree. **`can_use_ai`:** true for a working plan of any kind (paid, Try It
+within its period, a grant, the free list), false for an ended plan or a campaign with no owner.
+It guards the one place a person's button press spends AI tokens (🤖 Find names; the AI that
+labels lines inside a session is covered by the start check); the story-memory and
+rules-advisor AI calls will call it when they exist. **`can_backup`:** true for a paid plan other
+than Try It, a grant or the free list (`backups` in `plans.json`), false for Try It, an ended plan
+and no owner. It guards `/dmbot backup`, every transcript download (`/transcript`, the
+end-of-session button, "as heard too") and **restore**. Restore is judged on whose campaign it
+makes: a copy loaded as a *new* campaign makes the restorer its owner, so it is the *restorer's
+own* plan that has to include copies (and the free slot is the store's check, `restore_needs_slot`);
+a copy loaded *over* a campaign keeps that campaign's owner (#609), so it is the *owner's* plan
+that counts, and a co-DM with no plan may restore their paid owner's campaign. The check is made
+when the choice is made, since that is when it is known, after "Restoring…" has answered Discord.
+Both rules are read through the meter door (the owner's plan, scoped to the owner), so the whole
+table stops or goes together. A refusal is private to the person who pressed, and names what they
+pressed. The owner (or the restorer) hears, for an ended plan, "Your plan has ended, so DMbot
+can't <make copies | send transcripts | find names with its AI | load copies>. Pick one here:
+<WEB_SITE_URL>/account" (the same first words as the hours refusal; the data cannot tell an ended
+plan from one never had); for Try It, "Try It campaigns can't make copies or transcripts. A paid
+plan can. See plans here: <WEB_SITE_URL>/account", or when loading a copy "Nothing was loaded.
+Loading a copy needs a paid plan. Pick one here: ...". Anyone else, a co-DM included, is told
+only "<Copies of this campaign aren't available | Transcripts aren't available for this
+campaign | Finding names with DMbot's AI isn't available for this campaign | Loading a copy isn't
+available>. Ask the campaign's owner to take a look.", never anything about the plan. A campaign
+with no owner is told "This campaign has no owner yet. One of its DMs needs to press **Take it
+on** on the campaign's card in the DM screen first." When the plan has no downloads (#938), the end-of-session private message is not sent to
+players at all (they could not act on it, and a download button would be refused on every
+press): only the owner is messaged, once, "The session for X has ended. Its transcript
+is kept, but this campaign's plan doesn't include downloads." plus the owner's line above; with no owner, the campaign's DMs get the
+no-owner line instead. If the plan check fails the buttons go out as usual. A refused Find names answers Discord first,
+leaves the menu in place (so "Add the lines that fit" still works), does not count against the
+day's reads, and records no right-to-use confirmation, because nothing was read. Only when
+`DMBOT_ENFORCE_PLANS` is on; a database hiccup, or one slower than 2 seconds, lets the action through, like the start check. A campaign with no owner has no plan, so it
+has no copies or AI until a DM takes it on (the issue's rule; a player is told a DM must).
+
+*Built, part 4: pause and unpause (2026-10-09, #957), the last go-live blocker for plan
+rules:* `campaigns.paused` (migration 0037) with `owner_campaigns.paused` kept in step by the
+same trigger; the count function counts only unpaused campaigns. A paused campaign keeps all
+its data, stays downloadable while the plan allows downloads, **can't start** (even with
+plans not enforced: "This campaign is paused, so it can't start. Open ⚙️ Settings and press
+▶️ **Unpause** to use it again. Everything in it is kept."; anyone but the owner is told to
+ask the owner) and takes no place on the owner's plan. The owner, and only the owner, gets
+⏸️ **Pause this campaign** / ▶️ **Unpause** on the ⚙️ Settings card (co-DMs see the state line
+and are told only the owner can change it); the store checks the owner again, and a campaign
+DMbot is listening to can't be paused until it is stopped. An unpause that would go over the
+cap is refused in the cap words ("... To unpause this one, pause another one (⚙️ Settings,
+then ⏸️ **Pause this campaign**) or change your plan ..."; every refusal that offers "pause
+one" now names that button). **A plan that shrinks or ends pauses what is over its cap:**
+`dmbot_pause_over_cap(keep)` pauses the owner's campaigns beyond the `keep` most recently
+played (ties by newest created), in every server, for the person set only, under the
+per-owner lock, and returns what it paused. The cap kept to is the plan's, or Try It's one
+campaign once the plan has ended. **Where it runs (chosen):** in the bot when it next reads
+the plan (a start, a new campaign, an unpause), not in the website's webhook path: the bot
+is the one that can message the owner, a change that lands while the bot is down is still
+settled on the next read, and the webhook stays free of bot logic. The owner gets one private
+message naming the paused campaigns and how to change it (pause others, or change the
+plan); because the function pauses each campaign once, there is no second message. If the
+private message can't be sent, the start refusal still says the campaign is paused. Fails
+open like the other plan checks. **Enforcement (`DMBOT_ENFORCE_PLANS`) may go on only after
+this is live** (migration 0037, core and web-api).
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
