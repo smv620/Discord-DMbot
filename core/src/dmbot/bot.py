@@ -24,7 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import campaign_cap, entitlements, hours, install, plan_rules, usage
+from dmbot import campaign_cap, entitlements, hours, install, plan_rules, retention, usage
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
@@ -127,6 +127,7 @@ from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
+from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
@@ -477,6 +478,21 @@ class DMBot(commands.AutoShardedBot):
         # The hours meter (#437 part 2): listening minutes are written here; None records
         # nothing (tests and tools that run no real sessions).
         self.meter = meter
+        # The daily job that warns about and deletes campaigns past their keep date (#964).
+        # Needs the meter (the owners' plans); without one nothing is ever deleted.
+        self.retention: RetentionJob | None = None
+        if meter is not None:
+            self.retention = RetentionJob(
+                campaigns=campaigns,
+                standing_of=meter.retention_standing,
+                guild_ids=lambda: [g.id for g in self.guilds],
+                running=lambda: {t.campaign_id for t in self.tables.values() if t.campaign_id},
+                send=self._dm_user,
+                enforce=settings.enforce_plans,
+                server_name=lambda gid: g.name if (g := self.get_guild(gid)) else "your server",
+                site_url=settings.site_url,
+            )
+
         # Tells the two admins when the AI account is out of funds, and logs a daily usage
         # line (#972). Every AI client below reports to it.
         admins: dict[str, int] = {}
@@ -626,6 +642,7 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self._idle_sweeper(), "idle-sweep"),
             self._watched(self._summary_poster(), "summaries"),
             self._watched(self._meter_loop(), "hours-meter"),
+            *([self._watched(self._retention_loop(), "retention")] if self.retention else []),
             *(
                 [asyncio.create_task(self.lookup.follow(self.memory.listen), name="names")]
                 if self.lookup is not None and self.memory is not None
@@ -1269,6 +1286,28 @@ class DMBot(commands.AutoShardedBot):
             return True
         saved = await self.sessions.get(guild_id)
         return saved is not None and saved.campaign_id == campaign_id
+
+    async def _dm_user(self, user_id: int, text: str) -> bool:
+        """A private message that may fail (messages off, left Discord): False if it did."""
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S * 2):
+                user = self.get_user(user_id) or await self.fetch_user(user_id)
+                await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+        except Exception:
+            return False
+        return True
+
+    async def _retention_loop(self) -> None:
+        """Once a day, after hours (UTC), warn about and delete campaigns past their keep
+        date (#964). Safe to run twice; a failed run is logged and tried again tomorrow."""
+        assert self.retention is not None
+        while True:
+            now = int(time.time())
+            await asyncio.sleep(max(60, retention.next_run_after(now) - now))
+            try:
+                await self.retention.run_once(int(time.time()))
+            except Exception:
+                log.exception("The daily retention job failed")
 
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so

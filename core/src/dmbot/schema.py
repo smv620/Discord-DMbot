@@ -1383,6 +1383,15 @@ PAUSE = """
     REVOKE ALL ON FUNCTION dmbot_pause_over_cap(INTEGER, TEXT[]) FROM PUBLIC;
 """
 
+RETENTION = """
+    -- Which retention warning a campaign has had (#964), so a restart doesn't repeat one:
+    -- the stage (0 none, 1 the 14-day warning, 2 the 3-day one) and the delete date it was
+    -- sent for. Playing a session moves the date, so the warnings start over. Columns with
+    -- defaults: no rows change, so no row-level-security policy is needed.
+    ALTER TABLE campaigns ADD COLUMN retention_warned_stage INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE campaigns ADD COLUMN retention_warned_for BIGINT;
+"""
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -1563,6 +1572,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0036_transcript_sidebar", TRANSCRIPT_SIDEBAR),
     ("0037_pause", PAUSE),
     ("0038_payment_event_kind", PAYMENT_EVENT_KIND),
+    ("0039_retention", RETENTION),
     ("0040_house_rules_file", HOUSE_RULES_FILE),
 )
 

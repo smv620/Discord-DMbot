@@ -1684,3 +1684,79 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     account has no hours or campaign limits. Check for a person: the admin page lists the id
     as "Always free" (https://dev.getdmbot.com/admin, signed in).
 >>>>>>> 9593d19 (logs: DMBOT_FREE_USERS set for the owner's account)
+
+==============================================================================
+2026-10-10  Server: deploy 75a62d0, core and web-api together (dev1)
+==============================================================================
+  - 03:20 UTC  development @ 75a62d0, core AND web-api (ears untouched, still 21c5ff1):
+    #944/#954 (the DM sidebar: ways in and answer engine; DMBOT_SIDEBAR=0 so off), #959 and
+    #971 (house rules by voice and typed), #962 (pause and unpause a campaign), #949, #977
+    (tells the admins when the AI account is out of funds), #981 (payments: grace only after
+    an earlier successful payment), #983 (house-rules file, part 1), #979 (a dev tool).
+    #962, #977 and #983 had no queue line; their PR pages carried deploy notes
+    ("migration 0037, core and web-api"; "core only, no migration"; "no migration").
+  - Migrations 0036_transcript_sidebar, 0037_pause, 0038_payment_event_kind: one column on
+    transcript_lines, paused on campaigns and owner_campaigns (default false, trigger kept in
+    step), kind on payment_events (nullable). Read before deploying; all three applied; the
+    columns are present.
+  - Core image rebuilt for a new dependency (PyAV, reads the DM's voice messages). Backup
+    first (35 tables); no session was live. scripts/update-env added DMBOT_ADMIN_PRIMARY_ID,
+    DMBOT_ADMIN_SECONDARY_ID and DMBOT_SIDEBAR (0). `up -d --no-build core web-api` naming
+    both. Logs: "Database updated: 0036_transcript_sidebar, 0037_pause,
+    0038_payment_event_kind", "Free access list: 0 ids" (both), "Connected to 1 server(s)",
+    "ears connected", web-api healthy; 0 errors; no settings error; /health 404 and
+    /admin/auth/ways 200.
+  - Settings: DMBOT_ADMIN_PRIMARY_ID set to the owner's Discord id (#974 step 5; never
+    written here). DMBOT_FREE_USERS: dev1 had set it at 2026-10-10 about 01:00 UTC from the
+    owner's chat message (the id was meant for the primary admin setting, which did not exist
+    yet); it was emptied again in this deploy, as the standing rule says. DMBOT_SIDEBAR=0.
+    DMBOT_ENFORCE_PLANS=0. A .env copy exists for each .env change (secrets): owner to delete.
+  - New key (#974): the owner's new Anthropic key was loaded by the earlier core restart; the
+    17 sidebar test questions (python -m dmbot.devtools.sidebar_check, one-off container) ran
+    with it: 17 of 17 kept to the length rules, 0.7 to 2.1 s, no authentication error. Answers
+    posted on #954 for Supervisor. The owner confirms "last used" in the Anthropic Console and
+    then disables the old key (#974).
+  - The queue lines that were in the status log, kept here:
+  - WebDev, PR #981 (#922, part 1): payments, web-api only. Migration **0038** (runs by itself at
+    start; a metadata-only `ADD COLUMN kind` on `payment_events`, no rows change). After a failed
+    payment, the 7-day grace now goes only to someone with an earlier successful payment on record
+    (events with no kind, from before this, count as paid). A first payment that fails starts no
+    plan; a plan with no payment behind it is never lapsed. Nothing changes for anyone today (no
+    real payment company is connected yet). Check: the web-api log shows migration 0038 applied and
+    no errors on start; `docker compose exec` is not needed. The Lemon Squeezy adapter must send
+    `subscription_started` only once the first payment has succeeded (written in payments.py).
+  - #959 (7cc1c5c, dev2): House rules by voice (#953). No migration. When a DM says "house rule: ..."
+    (or "new house rule", "for this table, ...", "our rule is ..."), a proposal with Save / Edit /
+    Cancel appears in #dm-screen; nothing is saved without a press. Live check (about 2 minutes,
+    the DM and one more person not needed): say "house rule: potions are a bonus action" at the
+    table, press Save in #dm-screen, then see it in /dmbot houserules ("Said at the table"). Also
+    say it again within a minute (nothing new should appear).
+  - #949 (core only, no migration): the end-of-session private message has no download
+    buttons when the owner's plan has no downloads (Try It, plans enforced). Nothing visible
+    while DMBOT_ENFORCE_PLANS is off.
+  - #954 (core only, no migration): the DM sidebar answer engine. Nothing the DM sees until
+    #944 (below) is on. Before the sidebar is turned on, dev1 runs
+    `python -m dmbot.devtools.sidebar_check` with the server's key and pastes the 17 answers
+    and times on #954 for Supervisor.
+  - dev3, PR #944 (#935, the DM sidebar's ways in; the answers are #954): core only. Migration
+    **0036** (runs by itself at start). **Rebuild the core image**: `av` (PyAV) is now a normal
+    dependency (reads voice messages). New Discord intent `dm_messages` (needs nothing in the
+    developer portal). New setting **`DMBOT_SIDEBAR`**, default 0 = off: leave it at 0 until the
+    sidebar's 17 test answers have been run (`python -m dmbot.devtools.sidebar_check`) and read
+    (#954). With 0, a DM's message gets "Quick answers aren't switched on yet." and nothing is
+    downloaded or paid for. Live check (5 minutes, DM + ears running, DMBOT_SIDEBAR=1 and an AI
+    key): (1) from a phone, send DMbot a voice message in the private chat (under 30 seconds):
+    "do you need line of sight for fireball"; the reply shows what was heard and a short answer;
+    (2) type a question there; (3) at the table the DM says "hold on, I need to find if you need
+    line of sight for fireball": the answer arrives privately, once a minute at most; (4) with two
+    running games, a button asks which ("For <game>."); (5) the as-heard download has
+    `[DM Sidebar id=… via=… stt=…]` and `(DMbot) [DM Sidebar reply-to=… model=… sources=…]` lines
+    (everyone can read them); the cleaned download and the live transcript channel do not. A
+    player who sends DMbot a message gets nothing. Core logs no ERROR.
+  - dev2, PR #971 (8f7bf1a, #960; needs #959 and #944 on): typed house rules. Core only, no
+    migration. A DM types "house rule: ..." to DMbot in the private chat and gets the same
+    Save / Edit / Cancel proposal on the DM screen. No AI, works with quick answers off. Live
+    check (about 2 minutes, one person, a game running): type "house rule: potions are a bonus
+    action" to DMbot in the private chat; DMbot answers "It's on your DM screen now..."; press
+    Save in #dm-screen; /dmbot houserules shows it as "Typed by the DM". Typing the same words
+    again says it was already offered.
