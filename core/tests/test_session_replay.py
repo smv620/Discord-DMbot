@@ -135,10 +135,11 @@ class Replaying(unittest.TestCase):
         self.assertEqual([x.text for x in diff.lost], ["gone line"])
         self.assertEqual(diff.alerts_lost, ["old alert"])
         self.assertEqual(diff.verdict, "changed")
+        self.assertIn("alert lost", "\n".join(sr.report(diff, sr.load(folder))))
         text = "\n".join(sr.report(diff, sr.load(folder)))
         self.assertIn("then: the red door", text)
-        self.assertIn("alert lost: old alert", text)
-        self.assertIn("cannot compare them", text)
+        self.assertIn("alert lost (rules alerts are not replayed): old alert", text)
+        self.assertIn("not compared", text)
 
     def test_same_when_nothing_changed(self) -> None:
         folder = make_case(self.root, "2026-10-10-0104-eeee")
@@ -180,6 +181,19 @@ class Guards(unittest.TestCase):
 
     def test_made_up_ids_and_timestamps_pass_the_guard(self) -> None:
         sr.load(make_case(self.root, "2026-10-10-0201-gggg"))  # 1001, 1002, ms values
+
+    def test_odd_manifests_are_a_session_error_not_a_crash(self) -> None:
+        for i, text in enumerate(("[]", '{"version": 1, "speakers": []}', "not json")):
+            with self.subTest(text):
+                folder = self.root / f"odd-{i}"
+                folder.mkdir()
+                (folder / "session.json").write_text(text, encoding="utf-8")
+                with self.assertRaises(sr.SessionError):
+                    sr.load(folder)
+        folder = make_case(self.root, "2026-10-10-0203-iiii")
+        (folder / "kept.json").write_text("[]", encoding="utf-8")
+        with self.assertRaises(sr.SessionError):
+            sr.load(folder)
 
     def test_a_file_name_cannot_leave_the_folder(self) -> None:
         folder = make_case(self.root, "2026-10-10-0202-hhhh")
@@ -237,7 +251,7 @@ class Library(unittest.TestCase):
         make_case(self.root, "2026-10-10-0301-bbbb")  # not kept: not in the library
         code, out = self.run_library()
         self.assertEqual(code, 0)
-        self.assertIn("two-speaker-live: same: 2 same", out)
+        self.assertIn("two-speaker-live [2026-10-10-0300-aaaa]: same: 2 same", out)
         self.assertNotIn("0301", out)
         self.assertIn("total: 1 same", out)
         self.assertIn("speech-to-text", out)
@@ -253,8 +267,8 @@ class Library(unittest.TestCase):
             skip_files=("u0001.flac",),
         )
         _, out = self.run_library()
-        self.assertIn("lost-a-speaker: skipped (incomplete)", out)
-        self.assertIn("file-gone: skipped (incomplete)", out)
+        self.assertIn("lost-a-speaker [2026-10-10-0302-cccc]: skipped, marked incomplete", out)
+        self.assertIn("file-gone [2026-10-10-0303-dddd]: skipped, 1 audio files are missing", out)
         self.assertIn("no cases run", out)
 
     def test_a_case_with_a_discord_id_is_refused_and_the_rest_still_run(self) -> None:
@@ -267,7 +281,7 @@ class Library(unittest.TestCase):
         make_case(self.root, "2026-10-10-0305-ffff", kept={"name": "good"})
         _, out = self.run_library()
         self.assertIn("2026-10-10-0304-eeee: refused", out)
-        self.assertIn("good: same", out)
+        self.assertIn("good [2026-10-10-0305-ffff]: same", out)
 
     def test_the_history_entry_has_names_and_counts_never_transcript_text(self) -> None:
         make_case(self.root, "2026-10-10-0306-gggg", kept={"name": "two-speaker-live"})
@@ -279,6 +293,28 @@ class Library(unittest.TestCase):
         self.assertIn("two-speaker-live: same: 2 same", logged)
         for words in ("hello there", "Fireball card"):
             self.assertNotIn(words, logged)
+
+    def test_the_log_never_holds_a_folder_name_or_an_error_text(self) -> None:
+        make_case(
+            self.root,
+            "player-name-folder",
+            kept={"name": "bad"},
+            manifest_extra={"n": "999999999999999999"},
+        )
+        make_case(
+            self.root, "2026-10-10-0307-hhhh", kept={"name": "gone"}, skip_files=("u0000.flac",)
+        )
+        make_case(self.root, "2026-10-10-0308-iiii", kept={"name": "corrupt"})
+        (self.root / "2026-10-10-0308-iiii" / "u0000.flac").write_bytes(b"not audio")
+        self.history.write_text("", encoding="utf-8")
+        code, out = self.run_library("--log")
+        self.assertEqual(code, 1)  # a refused or unrunnable case is noticed by a script
+        self.assertIn("player-name-folder: refused", out)  # on screen, for dev1
+        logged = self.history.read_text(encoding="utf-8")
+        self.assertNotIn("player-name-folder", logged)
+        self.assertNotIn("2026-10-10-0308", logged)
+        self.assertIn("corrupt: could not run", logged)
+        self.assertIn("a saved session was refused", logged)
 
     def test_a_hand_typed_name_that_is_not_plain_stays_out_of_the_log(self) -> None:
         session = sr.Session(

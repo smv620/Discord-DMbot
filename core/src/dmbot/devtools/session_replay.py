@@ -123,13 +123,20 @@ def load(folder: Path) -> Session:
     except OSError as exc:
         raise SessionError(f"{folder.name}: no session.json ({exc.strerror})") from exc
     kept_text = ""
-    if (folder / "kept.json").is_file():
-        kept_text = (folder / "kept.json").read_text(encoding="utf-8")
+    try:
+        if (folder / "kept.json").is_file():
+            kept_text = (folder / "kept.json").read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SessionError(f"{folder.name}: kept.json can't be read ({exc.strerror})") from exc
     if DISCORD_ID.search(text) or DISCORD_ID.search(kept_text):
         raise SessionError(f"{folder.name}: the manifest holds a number shaped like a Discord id")
     try:
         data = json.loads(text)
         kept = json.loads(kept_text) if kept_text else {}
+        if not isinstance(data, dict) or not isinstance(kept, dict):
+            raise SessionError(f"{folder.name}: session.json is not in the saved format")
+        if not isinstance(data.get("speakers", {}), dict):
+            raise SessionError(f"{folder.name}: session.json is not in the saved format")
         if data.get("version") != VERSION:
             raise SessionError(f"{folder.name}: unknown manifest version")
         utterances = tuple(
@@ -143,7 +150,7 @@ def load(folder: Path) -> Session:
         speakers = {int(k): str(v) for k, v in data.get("speakers", {}).items()}
         produced = _produced(data.get("produced"))
         expected = _produced(kept["expected"]) if "expected" in kept else None
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
         if isinstance(exc, SessionError):
             raise
         raise SessionError(f"{folder.name}: session.json is not in the saved format") from exc
@@ -151,6 +158,10 @@ def load(folder: Path) -> Session:
         if Path(u.file).name != u.file:  # a file in this folder only, never a path out of it
             raise SessionError(f"{folder.name}: {u.file!r} is not a plain file name")
     missing = tuple(u.file for u in utterances if not (folder / u.file).is_file())
+    try:
+        name, incomplete = str(kept.get("name", "")), bool(kept.get("incomplete", False))
+    except AttributeError as exc:  # unreachable once kept is a dict; keeps mypy and readers calm
+        raise SessionError(f"{folder.name}: kept.json is not in the saved format") from exc
     return Session(
         folder=folder,
         speakers=speakers,
@@ -158,9 +169,9 @@ def load(folder: Path) -> Session:
         changes=changes,
         produced=produced,
         expected=expected,
-        name=str(kept.get("name", "")),
+        name=name,
         kept=bool(kept),
-        incomplete=bool(kept.get("incomplete", False)),
+        incomplete=incomplete,
         missing=missing,
     )
 
@@ -175,8 +186,9 @@ def pieces(session: Session) -> list[audio.Piece]:
             (u.start_ms + i // audio.FRAME_BYTES * audio.FRAME_MS, pcm[i : i + audio.FRAME_BYTES])
             for i in range(0, len(pcm) - audio.FRAME_BYTES + 1, audio.FRAME_BYTES)
         )
-        if frames:
-            out.append(audio.Piece(frames, u.speaker))
+        if not frames:  # a file that decodes to nothing is damaged, not silent
+            raise audio.DecodeError(f"{u.file} holds no sound")
+        out.append(audio.Piece(frames, u.speaker))
     return out
 
 
@@ -283,7 +295,7 @@ def _with_verdict(diff: Diff) -> Diff:
         elif diff.changed or diff.added or diff.lost:
             diff.verdict = "changed"
         return diff
-    if diff.changed or diff.added or diff.lost or diff.alerts_gained or diff.alerts_lost:
+    if diff.changed or diff.added or diff.lost:
         diff.verdict = "changed"
     return diff
 
@@ -316,11 +328,13 @@ def report(diff: Diff, session: Session) -> list[str]:
         out.append(f"  lost {names.get(lost.speaker, lost.speaker)}: {lost.text}")
     for added in diff.added:
         out.append(f"  added {names.get(added.speaker, added.speaker)}: {added.text}")
+    # Alerts are shown, not judged: the twin makes only the pipeline's own (a failed
+    # transcription), never the rules engine's, so a live session's rules alerts always
+    # read as lost.
     out += [f"  alert gained: {a}" for a in diff.alerts_gained]
-    out += [f"  alert lost: {a}" for a in diff.alerts_lost]
+    out += [f"  alert lost (rules alerts are not replayed): {a}" for a in diff.alerts_lost]
     if session.produced.cards or session.produced.sidebar:
-        out.append("  (rules cards and sidebar answers are kept as saved; this replay does not")
-        out.append("   run the rules or the AI, so it cannot compare them)")
+        out.append("  (Rules cards and sidebar answers are not replayed, so not compared.)")
     return out
 
 
@@ -373,7 +387,12 @@ async def main_async(args: argparse.Namespace) -> int:
         )
         return 2
     if not session.complete:
-        print(f"replay: {session.folder.name} is not complete; nothing replayed", file=sys.stderr)
+        from dmbot.devtools.test_library import why_incomplete
+
+        print(
+            f"replay: {session.folder.name} can't be replayed: {why_incomplete(session)}",
+            file=sys.stderr,
+        )
         return 2
     try:
         result = await run(

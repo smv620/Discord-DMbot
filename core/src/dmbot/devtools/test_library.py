@@ -27,6 +27,7 @@ from pathlib import Path
 
 from dmbot.devtools.common import HISTORY, commit, history_entry
 from dmbot.devtools.costs import model
+from dmbot.devtools.replay import audio
 from dmbot.devtools.session_replay import (
     Diff,
     Session,
@@ -57,6 +58,20 @@ def cases(folder: Path) -> list[Path]:
 
 def public_name(session: Session) -> str:
     return session.name if _PLAIN_NAME.fullmatch(session.name) else "(unnamed case)"
+
+
+def why_incomplete(session: Session) -> str:
+    """What is wrong with a case that can't be replayed, and what to do."""
+    if session.missing:
+        return (
+            f"{len(session.missing)} audio files are missing ({session.missing[0]}...). "
+            "Keep a different session."
+        )
+    if session.incomplete:
+        return (
+            "marked incomplete (a speaker pressed Stop saving my voice). Keep a different session."
+        )
+    return "it holds no speech. Keep a different session."
 
 
 def dollars_line(speech_s: float, sends_out: bool) -> str:
@@ -96,20 +111,35 @@ async def main_async(args: argparse.Namespace) -> int:
         print(f"test_library: no {args.history.parent} here; give --history", file=sys.stderr)
         return 2
     with_nice(NICE)
-    lines: list[str] = []
+    lines: list[str] = []  # on screen: folder names and the reasons
+    logged: list[str] = []  # in the public log: case names, verdicts and counts only
+
+    def note(shown: str, public: str | None = None) -> None:
+        lines.append(shown)
+        logged.append(shown if public is None else public)
+
     verdicts: dict[str, int] = {}
     speech_s = 0.0
+    unkept = 0
+    trouble = False
     for path in cases(folder):
         try:
             session = load(path)
         except SessionError as exc:
-            lines.append(f"{path.name}: refused ({exc})")
+            trouble = True
+            note(
+                f"{path.name}: refused ({exc}). Don't copy this folder; delete it and "
+                "save the session again with the recorder.",
+                "a saved session was refused (not a usable session)",
+            )
             continue
         if not session.kept:
-            continue  # unkept sessions are not part of the library
-        label = public_name(session)
+            unkept += 1  # unkept sessions are not part of the library
+            continue
+        name = public_name(session)
+        label = f"{name} [{path.name}]"
         if not session.complete:
-            lines.append(f"{label}: skipped (incomplete)")
+            note(f"{label}: skipped, {why_incomplete(session)}", f"{name}: skipped (incomplete)")
             continue
         try:
             result = await run(
@@ -118,24 +148,36 @@ async def main_async(args: argparse.Namespace) -> int:
                 realtime=not args.no_timing,
                 outside=settings.sends_audio_out,
             )
-        except (TranscriberUnavailable, OSError) as exc:
-            lines.append(f"{label}: could not run ({exc})")
+        except (TranscriberUnavailable, OSError, audio.DecodeError) as exc:
+            trouble = True
+            note(
+                f"{label}: could not run ({exc}). Check the speech-to-text engine and the "
+                "files in that folder, then run again.",
+                f"{name}: could not run",
+            )
             continue
         speech_s += result.sent_s
         diff: Diff = compare(session.produced, today_lines(result), result.alerts, session.expected)
         verdicts[diff.verdict] = verdicts.get(diff.verdict, 0) + 1
-        lines.append(f"{label}: {summary(diff)}")
+        note(f"{label}: {summary(diff)}", f"{name}: {summary(diff)}")
     total = ", ".join(f"{n} {v}" for v, n in sorted(verdicts.items())) or "no cases run"
-    lines.append(f"total: {total}")
-    lines.append(dollars_line(speech_s, settings.sends_audio_out))
+    note(f"total: {total}")
+    if unkept:
+        lines.append(
+            f"{unkept} saved sessions are not kept, so not replayed. Keep one with: "
+            "python -m dmbot.devtools.test_library keep FOLDER --name NAME --note NOTE"
+        )
+    if verdicts.keys() & {"changed", "worse"}:
+        lines.append("To read the words: scripts/replay --session FOLDER --transcriber ENGINE")
+    note(dollars_line(speech_s, settings.sends_audio_out))
     print("\n".join(lines))
     if args.log:
         header = [f"commit: {commit(args.commit, tool='test_library')}   engine: {settings.engine}"]
-        entry = history_entry(header + lines, title="saved live tests", kind="Library run")
+        entry = history_entry(header + logged, title="saved live tests", kind="Library run")
         with args.history.open("a", encoding="utf-8") as history:
             history.write(entry)
-        print(f"\nAppended to {args.history}")
-    return 0
+        print(f"\nAppended to {args.history}. Commit it.")
+    return 1 if trouble else 0
 
 
 def with_nice(increment: int) -> None:
