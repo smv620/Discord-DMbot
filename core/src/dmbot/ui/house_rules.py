@@ -19,6 +19,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 import discord
+from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.logs import set_log_context
@@ -225,6 +226,8 @@ class ListMenu(_Menu):
             self.add_item(_Button(self._older, label=OLDER_LABEL))
         if rules:  # nothing to download before the first rule
             self.add_item(_Button(self._download, label=file_ui.DOWNLOAD_LABEL))
+        if is_dm:
+            self.add_item(_Button(self._file, label=file_ui.FILE_LABEL))
         if not is_dm or not rules:
             return
         on_page = [rules[place] for place in shown[page]]
@@ -263,6 +266,9 @@ class ListMenu(_Menu):
     async def _download(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction)  # a new private message; the list stays as it is
         await file_ui.send_download(interaction, self.campaign)
+
+    async def _file(self, interaction: discord.Interaction) -> None:
+        await file_ui.open_menu(interaction, self.campaign)
 
     async def _newer(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page - 1)
@@ -600,7 +606,10 @@ class CampaignChoice(_Menu):
     name="houserules",
     description="See this campaign's house rules (its DM can add, edit or remove them)",
 )
-async def dmbot_house_rules(interaction: discord.Interaction) -> None:
+@app_commands.describe(
+    link="DMs only: the share link of your house-rules file, to compare it with DMbot's rules"
+)
+async def dmbot_house_rules(interaction: discord.Interaction, link: str | None = None) -> None:
     guild = interaction.guild
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
@@ -618,6 +627,9 @@ async def dmbot_house_rules(interaction: discord.Interaction) -> None:
         current = mine[0]
     if current is None and len(everyone) == 1:
         current = everyone[0]
+    if link is not None and current is not None:
+        await file_ui.link_file(interaction, current, link)  # (the DMs only: it checks)
+        return
     if current is not None:
         await show_list(interaction, current, first=True)
         return

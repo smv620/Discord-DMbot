@@ -64,6 +64,7 @@ from dmbot.dm_screen import (
     StopListeningButton,
     VisibilityButton,
     ensure_dm_screen,
+    house_sync,
     peek_view,
     rules_cards,
 )
@@ -88,6 +89,7 @@ from dmbot.dm_screen.name_questions import (
 )
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.settings import (
+    HouseFileButton,
     LevelButton,
     RuleLookupButton,
     RulesCardsButton,
@@ -127,6 +129,7 @@ from dmbot.memory.store import MemoryStore
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
+from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar.answer import Sidebar
@@ -436,6 +439,7 @@ class DMBot(commands.AutoShardedBot):
         sheets: SheetStore | None = None,
         house_rules: HouseRuleStore | None = None,
         meter: usage.Meter | None = None,
+        house_file_links: HouseFileLinkStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -466,6 +470,9 @@ class DMBot(commands.AutoShardedBot):
         self.sheets = sheets
         # A campaign's house rules, for `/dmbot houserules` (#865); None without a database.
         self.house_rules = house_rules
+        # The linked house-rules file (#969), and what is waiting for a DM's press.
+        self.house_file_links = house_file_links
+        self.house_syncs = house_sync.Pendings()
         # The hours meter (#437 part 2): listening minutes are written here; None records
         # nothing (tests and tools that run no real sessions).
         self.meter = meter
@@ -559,6 +566,7 @@ class DMBot(commands.AutoShardedBot):
             SettingsVisibilityButton,
             RuleLookupButton,
             RulesCardsButton,
+            HouseFileButton,
         )
         # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
         self.add_dynamic_items(
@@ -580,6 +588,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(DownloadButton)
         self.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton, FixUndoButton)
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
+        self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
         # A player's 📜 My character sheet, in their private messages (#723).
@@ -1641,6 +1650,7 @@ class DMBot(commands.AutoShardedBot):
             return False, SAVE_FAILED
         if transcript_problem:
             await self.post(screen_id, transcript_problem)
+        self._check_house_file(campaign, screen_id)
         transcript_line = (
             f"📜 Transcript (anyone in the server can read it): <#{transcript_id}>\n"
             if transcript_id
@@ -2366,6 +2376,21 @@ class DMBot(commands.AutoShardedBot):
         before = table.rules.last_at  # given back if the card can't be shown
         card_id = table.rules.remember(mention, time.monotonic())
         self._track(self._post_rules_card(table, user_id, mention, card_id, before), "rules-card")
+
+    def _check_house_file(self, campaign: Campaign, screen_id: int) -> None:
+        """At a session start: read the campaign's linked house-rules file, if any, and put
+        what differs on the DM screen (#969). In the background; it never holds up the
+        session, and says nothing when there is no link or nothing to change."""
+        if self.house_file_links is None:
+            return
+
+        async def send(text: str, view: discord.ui.View) -> bool:
+            posted = await self.post_message(screen_id, text, view if view.children else None)
+            return posted is not None
+
+        self._track(
+            house_sync.check_linked(self, campaign, send, quiet_if_same=True), "house-file-check"
+        )
 
     def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> str:
         """A house rule typed to DMbot in the DM's private chat (#960): the same proposal,
@@ -4300,6 +4325,7 @@ async def run(settings: Settings) -> None:
             SheetStore(db),
             HouseRuleStore(db),
             usage.Meter(db),
+            HouseFileLinkStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
