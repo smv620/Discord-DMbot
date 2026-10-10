@@ -11,7 +11,15 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from dmbot.ai import OUT_OF_FUNDS, AIError, AIOutOfFunds, AnthropicClient, is_out_of_funds
+from dmbot.ai import (
+    OUT_OF_FUNDS,
+    AIError,
+    AIModels,
+    AIModelTier,
+    AIOutOfFunds,
+    AnthropicClient,
+    is_out_of_funds,
+)
 from dmbot.ai_watch import ADMIN_NOTICE, NOTICE_EVERY_S, STATE_FILE, AIWatch
 from dmbot.config import ConfigError, load_settings
 from tests.test_ai import FakeResponse, FakeSession
@@ -111,12 +119,12 @@ class Watching(unittest.IsolatedAsyncioTestCase):
 
     def client(self, watch: AIWatch, status: int, body: str) -> AnthropicClient:
         session: Any = FakeSession(FakeResponse(status, body))
-        return AnthropicClient("sk-secret", "m", session=session, watch=watch)
+        return AnthropicClient("sk-secret", AIModels.same("m"), session=session, watch=watch)
 
     async def test_the_call_raises_and_both_admins_are_told(self) -> None:
         watch = self.watch({"primary": PRIMARY, "secondary": SECONDARY})
         with self.assertLogs("dmbot.ai_watch", "ERROR"), self.assertRaises(AIOutOfFunds) as caught:
-            await self.client(watch, 400, LOW).complete("s", "t")
+            await self.client(watch, 400, LOW).complete("s", "t", tier=AIModelTier.FAST)
         self.assertEqual(str(caught.exception), OUT_OF_FUNDS)
         await watch.wait()
         self.assertEqual({u for u, _ in self.sent}, {PRIMARY, SECONDARY})
@@ -129,7 +137,7 @@ class Watching(unittest.IsolatedAsyncioTestCase):
     async def test_a_bad_request_is_a_plain_failure_and_tells_nobody(self) -> None:
         watch = self.watch({"primary": PRIMARY})
         with self.assertLogs("dmbot.ai", "ERROR"), self.assertRaises(AIError) as caught:
-            await self.client(watch, 400, BAD).complete("s", "t")
+            await self.client(watch, 400, BAD).complete("s", "t", tier=AIModelTier.FAST)
         self.assertNotIsInstance(caught.exception, AIOutOfFunds)
         await watch.wait()
         self.assertEqual(self.sent, [])
@@ -204,10 +212,10 @@ class Watching(unittest.IsolatedAsyncioTestCase):
     async def test_a_402_is_out_of_funds_and_a_plain_429_is_not(self) -> None:
         watch = self.watch({"primary": PRIMARY})
         with self.assertLogs("dmbot.ai", "ERROR"), self.assertRaises(AIOutOfFunds):
-            await self.client(watch, 402, "").complete("s", "t")
+            await self.client(watch, 402, "").complete("s", "t", tier=AIModelTier.FAST)
         plain = json.dumps({"error": {"type": "rate_limit_error", "message": "slow down"}})
         with self.assertLogs("dmbot.ai", "WARNING"), self.assertRaises(AIError) as caught:
-            await self.client(watch, 429, plain).complete("s", "t")
+            await self.client(watch, 429, plain).complete("s", "t", tier=AIModelTier.FAST)
         self.assertNotIsInstance(caught.exception, AIOutOfFunds)
 
     async def test_a_damaged_state_file_counts_as_empty_and_an_unwritable_folder_is_fine(
@@ -268,7 +276,7 @@ class Watching(unittest.IsolatedAsyncioTestCase):
     async def test_the_client_reports_its_token_counts(self) -> None:
         watch = self.watch({})
         body = {"content": [], "usage": {"input_tokens": 20, "output_tokens": 3}}
-        await self.client(watch, 200, json.dumps(body)).complete("s", "t")
+        await self.client(watch, 200, json.dumps(body)).complete("s", "t", tier=AIModelTier.FAST)
         self.assertEqual(next(iter(watch._calls))[1:], (20, 3))
 
 

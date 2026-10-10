@@ -45,9 +45,9 @@ class Prices(unittest.TestCase):
         self.assertIn("claude-some-new-model", str(caught.exception))
 
     def test_the_model_core_uses_has_a_price(self) -> None:
-        from dmbot.ai import DEFAULT_MODEL
+        from dmbot.ai import DEFAULT_MODELS
 
-        prices.price_of(DEFAULT_MODEL)
+        prices.price_of(DEFAULT_MODELS.fast)
 
 
 class Arithmetic(unittest.TestCase):

@@ -4,7 +4,7 @@ import json
 import unittest
 from typing import Any
 
-from dmbot.ai import AIError, AnthropicClient
+from dmbot.ai import AIError, AIModels, AIModelTier, AnthropicClient
 
 
 class FakeResponse:
@@ -42,7 +42,7 @@ class FakeSession:
 class Client(unittest.IsolatedAsyncioTestCase):
     def client(self, status: int, body: Any) -> tuple[AnthropicClient, FakeSession]:
         session = FakeSession(FakeResponse(status, body))
-        return AnthropicClient("sk-secret", "m", session=session), session  # type: ignore[arg-type]
+        return AnthropicClient("sk-secret", AIModels.same("m"), session=session), session  # type: ignore[arg-type]
 
     async def test_an_answer(self) -> None:
         body = {
@@ -51,7 +51,7 @@ class Client(unittest.IsolatedAsyncioTestCase):
             "usage": {"input_tokens": 120, "output_tokens": 7},
         }
         ai, session = self.client(200, body)
-        reply = await ai.complete("rules", "doc")
+        reply = await ai.complete("rules", "doc", tier=AIModelTier.FAST)
         self.assertEqual((reply.text, reply.cut), ("A | NPC\nB", True))
         self.assertEqual((reply.input_tokens, reply.output_tokens), (120, 7))
         self.assertEqual(session.sent["json"]["system"], "rules")
@@ -59,13 +59,13 @@ class Client(unittest.IsolatedAsyncioTestCase):
 
     async def test_odd_usage_counts_as_none(self) -> None:
         ai, _ = self.client(200, {"content": [], "usage": {"input_tokens": "lots"}})
-        reply = await ai.complete("rules", "doc")
+        reply = await ai.complete("rules", "doc", tier=AIModelTier.FAST)
         self.assertEqual((reply.input_tokens, reply.output_tokens), (0, 0))
         ai, _ = self.client(200, {"content": [], "usage": {"input_tokens": True}})  # a bool
-        reply = await ai.complete("rules", "doc")
+        reply = await ai.complete("rules", "doc", tier=AIModelTier.FAST)
         self.assertEqual(reply.input_tokens, 0)
         ai, _ = self.client(200, {"content": [], "usage": None})  # not a crash
-        reply = await ai.complete("rules", "doc")
+        reply = await ai.complete("rules", "doc", tier=AIModelTier.FAST)
         self.assertEqual((reply.input_tokens, reply.output_tokens), (0, 0))
 
     async def test_errors_in_plain_words(self) -> None:
@@ -79,7 +79,7 @@ class Client(unittest.IsolatedAsyncioTestCase):
         ]:
             ai, _ = self.client(status, body)
             with self.assertRaisesRegex(AIError, words):
-                await ai.complete("rules", "doc")
+                await ai.complete("rules", "doc", tier=AIModelTier.FAST)
 
 
 if __name__ == "__main__":

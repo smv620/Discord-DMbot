@@ -20,7 +20,7 @@ from typing import Any, cast
 import discord
 
 from dmbot import fetch
-from dmbot.ai import AIError, AnthropicClient, Reply
+from dmbot.ai import AIError, Reply, TierClient
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
 from dmbot.memory.document_reader import read_document
@@ -731,7 +731,7 @@ class AIOffer(_Menu):
 AI_AT_ONCE = asyncio.Semaphore(3)  # AI requests running at once, across all servers
 
 
-async def ai_names_list(ai: AnthropicClient, text: str, *, secrets: bool) -> tuple[str, bool]:
+async def ai_names_list(ai: TierClient, text: str, *, secrets: bool) -> tuple[str, bool]:
     """The AI's names list for a document (pieces read side by side, merged so each name
     appears once), and whether any answer was cut off."""
     system = instructions(secrets=secrets)
