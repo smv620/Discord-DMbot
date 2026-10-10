@@ -1510,6 +1510,20 @@ reads the campaign memory and never changes it.
   it (never queued, never in Redis, never logged, never stored). **Consent is re-checked
   right before every re-listen request**, and the audio is dropped at once on revoke.
   Re-listen is added after the first version, once close calls can be measured.
+- **Test recordings (owner, 2026-10-10; #1019, #1020): the one exception to "audio is
+  never stored".** Recording a DM and a player separately can't keep the timings lined up
+  (#534), so multi-speaker tests are run live in Discord and every live test is saved, so a
+  successful one can be replayed later to re-check new features. The limits:
+  - **Test servers only:** servers listed in `DMBOT_TEST_RECORDING_GUILDS` (empty by
+    default), and a line on the DM screen says the session is saved.
+  - **A second consent:** only people who also pressed **Save my voice for tests** are saved.
+    **Stop saving my voice** deletes their files at once.
+  - **Never on GitHub, never in backups:** the files sit in a private folder on DMbot's server
+    (`DMBOT_TEST_RECORDINGS_DIR`), with made-up speaker ids and no Discord ids or names.
+  - **Kept or deleted:** a session dev1 marks as a kept case stays as a replayable test.
+    Everything else is deleted after 7 days.
+  - **Replay:** the twin replays a kept case at its real timings, and a library run replays
+    every kept case and reports what changed. It logs counts only, never what players said.
 - **Learning is immediate:** a confirmed correction becomes a `misheard` alias and
   reaches the Cleaner within about a second. Earlier lines of the same session with the
   same mishearing are re-checked from "as heard" and fixed, with each change logged.
