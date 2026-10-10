@@ -597,22 +597,43 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
 **AI models by task (decided 2026-10-10, built #1006).** Every AI call names a *tier*, never
 a model.
 - **Which job uses which:** **FAST** (the small model, Haiku today) for simple jobs:
-  transcript cleaning, the off-topic filter, Find names, rules checks and lookups, the audio
-  check and the DM sidebar. **CAREFUL** (the middle model, Sonnet) for house-rule changes.
-  **DEEP** (the strongest, Opus) for PlotBot (phase 5c; nothing uses it yet).
+  transcript cleaning, the off-topic filter, rules checks and lookups, the audio check and
+  the DM sidebar's first answer. **CAREFUL** (the middle model, Sonnet) for **Find names**
+  (its proposals go into the campaign's memory; it runs per batch, not per line), house-rule
+  changes, and the sidebar's second try (below). **DEEP** (the strongest, Opus) for PlotBot
+  (phase 5c; nothing uses it yet).
   `dmbot.ai.FEATURE_TIERS` lists every job's tier; a test checks no other file names a model.
   Model names change, so the tiers are the stable thing.
 - **The settings:** `AI_MODEL_FAST`, `AI_MODEL_CAREFUL`, `AI_MODEL_DEEP`, each with a
   default; a malformed one (not a `claude-…` name) stops start-up naming the setting. The
   old `AI_MODEL` stands for FAST, with a line in the log, and is removed in a later update.
-  Note that it now covers every quick job (before, it only chose the model for Find names;
-  the filter and the sidebar were always on the small one).
+  Note that it now covers every quick job (before, it chose the model for Find names only;
+  the filter and the sidebar were always on the small one). Find names is on CAREFUL since
+  #1017, so `AI_MODEL_CAREFUL` is the one that now picks its model.
 - **If a model isn't available** (not found, or a `permission_error` for this key) the call
   goes to the next tier down (DEEP, CAREFUL, FAST). It is noted once in the log, naming the
   setting to check, and only when a lower tier then answered (so a bad key is not blamed on a
   model). The model is tried again after 15 minutes, so fixing the name or the access needs
   no restart. A 403 that isn't a `permission_error` (a blocked request) never counts.
   Running out of money never falls back (it messages the admins, #972).
+- **A careful second try for the sidebar (#1017):** when a quick answer fails a check (it
+  says the rules don't say although an entry for the thing asked about was given, it breaks
+  the length rules, or it cites a house rule or an SRD entry that doesn't say it), the careful
+  tier is asked once, before the source is cut or the "not in DMbot's rules" note is added. It
+  must fit in what is left of the sidebar's 8 seconds (at least 4). With less time, or if it
+  is slow, fails, or the AI is out of money, the quick answer stands as it always did (no
+  other tier is tried). The model that answered is recorded in the sidebar's lineage. Without
+  a careful tier the old same-model retry is unchanged.
+- **Rules alerts (when built):** a FAST candidate is confirmed by one CAREFUL call before it
+  reaches the DM screen (`Feature.RULES_CONFIRM` is listed ahead of use).
+- **PlotBot (owner, 2026-10-10):** the continuity check runs as a batch when a listening
+  session ends, on the DEEP tier. DMbot first tells the DM in #dm-screen that it is making
+  a quick check for plot holes and for clarifications about changes in the plot. When it is
+  done it tells the DM either that the check found nothing or what needs the DM's
+  clarification, each with Confirm / Not right buttons. Nothing is changed in the campaign's
+  memory without the DM. In-session NPC tracking and live continuity hints use CAREFUL; Opus
+  is never used live. Reading shared adventures and rulebooks uses CAREFUL through
+  Anthropic's batch service (about half the price; it is not urgent).
 - **One model for each job:** a job stays on one model, because Anthropic keeps cached
   prompts separately for each model; switching a job's model back and forth throws the
   cache away.
@@ -621,7 +642,8 @@ a model.
   The strongest model costs several times what the small one does.
 - **Changing a tier's model:** a tier's model changes only after its checks pass on the new
   model (for the sidebar, `python -m dmbot.devtools.sidebar_check`). Moving a job to
-  another tier is a change to `FEATURE_TIERS` and its own issue.
+  another tier is a change to `FEATURE_TIERS` and its own issue (Find names and the
+  sidebar's second try moved in #1017).
 - **Logging:** the start-up line shows the three models in use (or that AI is off). Each
   call logs one line: tier, model, tokens in and out, tokens read from the cache; never
   content. `python -m dmbot.devtools.sidebar_check` prints the model that answered.

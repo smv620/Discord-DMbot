@@ -1727,7 +1727,10 @@ class DMBot(commands.AutoShardedBot):
             return await self.lookup.get_within(campaign.guild_id, campaign.id, NAMES_WAIT_S)
 
         ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR])
-        return Sidebar(ai, rules_index.srd, gate=gate, houses=houses, names=names)
+        careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY])
+        return Sidebar(
+            ai, rules_index.srd, gate=gate, houses=houses, names=names, second_try=careful
+        )
 
     async def plan_gate(
         self, action: plan_rules.Action, guild_id: int, campaign: Campaign, user_id: int
