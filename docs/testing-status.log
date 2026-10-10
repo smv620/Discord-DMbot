@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-10 by dev1 (core and web-api 75a62d0 live; Test D next)
+Last updated: 2026-10-10 by dev1 (core d7c3aca, web-api 75a62d0; Test D next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,12 +9,22 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- CloudDev, #962 (#957, plan rules part 4): pause and unpause. Migration **0037** (core and web-api;
+  adds `paused` columns, a trigger update and `dmbot_pause_over_cap`, runs by itself at start). A
+  campaign's owner gets Pause / Unpause on the Settings card; a paused campaign can't start and
+  doesn't count toward the plan. With DMBOT_ENFORCE_PLANS on, a plan that shrinks pauses the extras
+  and tells the owner once. **DMBOT_ENFORCE_PLANS may go on only after this is live.** Check: core and
+  web-api logs show migration 0037 applied and no errors on start.
+- CloudDev, #977 (#972): admin messages when DMbot's AI account is out of funds. Core only, no
+  migration. Needs two new `.env` settings, set by dev1 from the owner's private message (#974 step 5):
+  DMBOT_ADMIN_PRIMARY_ID and DMBOT_ADMIN_SECONDARY_ID (Discord user IDs, 17 to 20 digits each, or
+  empty). A bad value stops start-up naming the setting. Check: the start-up log has no settings error.
 (nothing waiting)
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core and web-api 75a62d0 (2026-10-10 03:20 UTC, migrations through 0038), ears 21c5ff1, web-api
+core d7c3aca (2026-10-10 03:58 UTC, migrations through 0039), web-api 75a62d0, ears 21c5ff1, web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
 website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS is empty again (set by mistake for a few hours on 2026-10-10, see the history).
@@ -52,7 +62,9 @@ entry "Status log as it stood before it was trimmed"):
  15. ⏸️ Pause / ▶️ Unpause a campaign on ⚙️ Settings (#962; owner only; plans off).
  16. The DM sidebar (#944, #954) only after Supervisor has read the 17 answers: then
      DMBOT_SIDEBAR=1 for a short test with a voice message and a typed question.
- 17. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
+ 17. Retention (#985, plans off): after its first 03:00 UTC run (2026-10-11), the core log has
+     ONE dry-run line with counts and no ERROR; nothing is warned or deleted.
+ 18. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
 
 ------------------------------------------------------------------------------
 LATEST RESULTS
