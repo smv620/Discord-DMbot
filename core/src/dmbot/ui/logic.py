@@ -16,6 +16,7 @@ from dmbot.campaigns.models import (
     DM_SCREEN_LEVELS,
     DM_SCREEN_LEVELS_OFFERED,
 )
+from dmbot.consent_words import CONSENT_LABEL, MIN_AGE
 from dmbot.transcription.config import Engine
 
 # Discord limits.
@@ -262,7 +263,9 @@ HELP_TEXT = (
     "\n"
     "**Recording:** DMbot only records people who say yes. When the DM starts a "
     "session, or when you join the voice channel, DMbot sends you a private message "
-    "with an **I consent** button. Anyone in this server can read what DMbot writes down. "
+    f"with a button that says **{CONSENT_LABEL}**. Only people {MIN_AGE} or older are "
+    "recorded; younger players can press **No thanks** and still play. "
+    "Anyone in this server can read what DMbot writes down. "
     "An AI company (Anthropic) also reads it, with who said it, to give the DM notes. "
     "It isn't used to train their AI.\n"
     "Play on D&D Beyond? Press **⚙️ Menu** in DMbot's private message, then 📜 My character "

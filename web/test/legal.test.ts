@@ -157,6 +157,10 @@ describe("the facts #433 asks for", () => {
     }
   });
 
+  it("says where the background artwork came from, on the terms page", () => {
+    expect(terms()).toContain("The background artwork was made with Gemini and Claude, from our own prompts.");
+  });
+
   it("names the State of Ohio, USA, for the law and the courts", () => {
     expect(terms()).toContain("The laws of the State of Ohio, USA, apply to these terms");
     expect(terms()).toContain("heard in the courts of the State of Ohio, USA");
