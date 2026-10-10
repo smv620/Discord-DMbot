@@ -1366,6 +1366,27 @@ PAUSE = """
     REVOKE ALL ON FUNCTION dmbot_pause_over_cap(INTEGER, TEXT[]) FROM PUBLIC;
 """
 
+GAME_CLOCKS = f"""
+    -- A campaign's game clock (#965; docs/PLAN.md, "TimeBot"): game time, not real time,
+    -- set and moved only by the DM's buttons and clear phrases. One row per campaign, and
+    -- none until the DM sets it. Per campaign, never shared between campaigns or servers;
+    -- deleted with the campaign; in its backups (without the message ids).
+    --   minute          game minutes since the start of Day 1
+    --   last_long_rest  the game minute the party last finished a long rest
+    --   tired_told_for  the long-rest minute the 24-hours-without-a-rest line was said for
+    --   channel_id, message_id  the pinned clock message on the DM screen, edited in place
+    CREATE TABLE game_clocks (
+        {_memory_scope()}
+        minute         BIGINT NOT NULL CHECK (minute >= 0),
+        last_long_rest BIGINT NOT NULL CHECK (last_long_rest >= 0),
+        tired_told_for BIGINT CHECK (tired_told_for IS NULL OR tired_told_for >= 0),
+        channel_id     BIGINT,
+        message_id     BIGINT,
+        updated_at     BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id)
+    );
+    """ + _isolate("game_clocks")
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -1546,6 +1567,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0036_transcript_sidebar", TRANSCRIPT_SIDEBAR),
     ("0037_pause", PAUSE),
     ("0038_payment_event_kind", PAYMENT_EVENT_KIND),
+    ("0040_game_clocks", GAME_CLOCKS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -1565,6 +1587,7 @@ ISOLATED_TABLES = (
     "character_sheets",
     "house_rules",
     "session_usage",
+    "game_clocks",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),
