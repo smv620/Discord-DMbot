@@ -33,7 +33,7 @@ from dmbot.ai import AIError, Reply
 from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.rules.house import HouseRule
-from dmbot.rules.index import Hit, Index
+from dmbot.rules.index import Hit, Index, normalize
 from dmbot.sidebar import brevity, context
 from dmbot.ui import rule_card
 
@@ -74,9 +74,10 @@ anything for the DM.
 2014], say so in SOURCE.
 4. Do not quote a whole rule unless asked; a short answer is enough.
 5. If the answer comes from general D&D knowledge and not from the material given (class \
-features, cover, area of effect), end the ANSWER with "(not in DMbot's rules, check your \
-book)" and set SOURCE to none and SURE to not sure. A rule is only "sure" when a given entry \
-or house rule says it. When the scene gives the answer, SOURCE is "the scene".
+features, cover, area of effect), set SOURCE to none and SURE to not sure; DMbot adds the \
+"check your book" note itself, so do not write it. A rule is only "sure" when a given entry \
+or house rule says it. When the scene gives the answer, SOURCE is "the scene"; for campaign \
+names it is "campaign names".
 6. If the question names an edition or compares them, the entries for both are given; the \
 older one is marked [Legacy 2014]: say which edition each fact is from.
 7. Only help with this campaign, the game's rules and content, DMbot itself, and Discord. For \
@@ -93,11 +94,18 @@ Discord help>
 ON_TOPIC: <yes or no>"""
 
 NOT_IN_RULES = "(not in DMbot's rules, check your book)"
-# An answer that says there is nothing to go on ("The free rules don't say", "I don't have that").
+# An answer whose first sentence says there is nothing to go on ("The free rules don't say.",
+# "I don't have that.", "Your call."). Narrow on purpose: ordinary rules prose such as "Creatures
+# not in the area are unaffected" or "A goblin doesn't have darkvision" must never match.
 _NO_INFO = re.compile(
-    r"\b(?:(?:don'?t|do not|doesn'?t|does not|didn'?t)\s+(?:say|have|cover|specify|mention|"
-    r"know|include)|no (?:rule|entry|information))\b|\bnot (?:in|covered)\b",
+    r"\b(?:(?:rules|rulebook|srd|book|entry)\s+(?:don'?t|do not|doesn'?t|does not)\s+"
+    r"(?:say|cover|specify|mention)|i\s+(?:don'?t|do not)\s+have\s+(?:that|anything|a rule)|"
+    r"(?:there is|there's)\s+no\s+(?:rule|entry)|(?:isn'?t|is not)\s+covered|"
+    r"your call)\b",
     re.IGNORECASE,
+)
+_NOTE_ANYWHERE = re.compile(
+    r"\(?\s*not in dmbot['’]s rules,?\s*check your book\s*\)?\.?", re.IGNORECASE
 )
 _FIELD = re.compile(r"^\s*(ANSWER|SOURCE|SURE|IN_GAME|ON_TOPIC)\s*:\s*(.*)$", re.IGNORECASE)
 
@@ -169,7 +177,21 @@ def parse(raw: str) -> Fields:
 
 
 def says_no_info(text: str) -> bool:
-    return bool(_NO_INFO.search(text))
+    """The answer's first sentence says there is nothing to go on."""
+    first = (brevity.sentences(text) or [text])[0]
+    return bool(_NO_INFO.search(first))
+
+
+def named_entry(question: str, hits: Sequence[Hit]) -> Hit | None:
+    """The entry the question actually names (by the words it was found by), not one that
+    matched by chance."""
+    asked = f" {normalize(question)} "
+    for hit in hits:
+        if hit.entry.kind not in ("spell", "condition"):
+            continue  # a monster's name in a question is rarely a question about its stat block
+        if f" {normalize(hit.found_as)} " in asked or f" {normalize(hit.entry.name)} " in asked:
+            return hit
+    return None
 
 
 def entry_fact(hit: Hit) -> str:
@@ -196,6 +218,13 @@ def canonical_source(said: str | None, ctx: context.Context) -> str | None:
     lowered = said.lower()
     for given in ctx.sources:
         if given.lower() == lowered:
+            return given
+    for key, given in (
+        ("campaign", "campaign names"),
+        ("scene", "the scene"),
+        ("dmbot", "DMbot help"),
+    ):
+        if key in lowered and given in ctx.sources:
             return given
     if lowered.startswith("house rule"):
         number = re.search(r"\d+", said)
@@ -304,13 +333,13 @@ class Sidebar:
                 Answer(OFF_TOPIC, in_game=False, model=self._ai.model, parts=(OFF_TOPIC,)),
                 started,
             )
-        text = brevity.strip_padding(fields.answer)
+        text = brevity.strip_padding(_NOTE_ANYWHERE.sub("", fields.answer).strip())
         problems = brevity.violations(question, text, full_text=False)
         # The entry the question names was given, so "the free rules don't say" is wrong.
-        if ctx.hits and says_no_info(text):
-            names = ", ".join(h.entry.name for h in ctx.hits[:2])
+        named = named_entry(question, ctx.hits) if not ctx.house_rules else None
+        if named is not None and says_no_info(text):
             problems.append(
-                f"the entry for {names} is given above: answer from it, "
+                f"the entry for {named.entry.name} is given above: answer from it, "
                 "do not say the rules don't say"
             )
         # One more try, telling the model what to fix, unless the table has waited long enough.
@@ -322,21 +351,26 @@ class Sidebar:
             else:
                 again = parse(retry.text)
                 if again.answer:
-                    fields, text = again, brevity.strip_padding(again.answer)
-        if ctx.hits and says_no_info(text):
+                    fields, text = (
+                        again,
+                        brevity.strip_padding(_NOTE_ANYWHERE.sub("", again.answer).strip()),
+                    )
+        if named is not None and says_no_info(text):
             # Still no: answer with the entry's own words and its source, never contradict
-            # the same question asked another way (#992).
-            hit = ctx.hits[0]
-            text = entry_fact(hit)
-            fields = replace(fields, source=context.source_of(hit), sure="sure", in_game=True)
+            # the same question asked another way (#992). Only for an entry the question
+            # names, and never over a house rule (those come first).
+            text = entry_fact(named)
+            fields = replace(fields, source=context.source_of(named), sure=None, in_game=True)
         if not brevity.within_limit(text):
             text = brevity.shorten(text)
         if not text:
             raise AIError(NO_ANSWER)
         source, sure = canonical_source(fields.source, ctx), fields.sure
-        if fields.in_game and not source and not says_no_info(text) and NOT_IN_RULES not in text:
+        text = _NOTE_ANYWHERE.sub("", text).strip()  # the model may write it; the code does
+        if fields.in_game and not source and not says_no_info(text):
             # A rule with no entry or house rule behind it is never "sure" (CLAUDE.md,
-            # citations): it says plainly it is not from DMbot's rules.
+            # citations): it says plainly it is not from DMbot's rules. It sits with the
+            # source suffix, outside the length limit.
             text, sure = f"{text} {NOT_IN_RULES}", None
         text = brevity.join_source(text, source, sure)
         return self._done(

@@ -152,7 +152,7 @@ class Consistency(unittest.TestCase):
         for got in (plain, hold):
             self.assertIn("point you choose", got.text)
             self.assertNotIn("don't say", got.text.lower())
-        self.assertTrue(plain.text.endswith("(SRD 5.2.1 p. 131, sure)"))
+        self.assertTrue(plain.text.endswith("(SRD 5.2.1 p. 131)"))
 
     def test_the_retry_points_out_the_entry(self) -> None:
         ai = FakeAI(
@@ -178,6 +178,68 @@ class Consistency(unittest.TestCase):
     def test_the_prompt_tells_it_to_use_the_entry_and_to_flag_general_knowledge(self) -> None:
         self.assertIn("never say the rules don't say", sidebar.SYSTEM)
         self.assertIn("check your book", sidebar.SYSTEM)
+
+
+class NoFalseAlarms(unittest.TestCase):
+    """#992 review: the checks must not fire on answers that are right."""
+
+    def test_ordinary_rules_prose_is_not_no_info(self) -> None:
+        for text in (
+            "Yes. Creatures not in the area are unaffected.",
+            "No. A goblin doesn't have darkvision past 60 ft.",
+            "It doesn't include allies.",
+            "Fireball does 8d6 fire damage.",
+        ):
+            self.assertFalse(sidebar.says_no_info(text), text)
+        for text in (
+            "The free rules don't say. Your call.",
+            "I don't have that.",
+            "There is no rule for that. Your call.",
+            "Your call.",
+        ):
+            self.assertTrue(sidebar.says_no_info(text), text)
+
+    def test_a_good_answer_is_not_replaced_when_it_mentions_not_in(self) -> None:
+        ai = FakeAI([reply("Yes. Creatures not in the area are unaffected.", "SRD 5.2.1 p. 131")])
+        got = run(engine(ai).answer(campaign(), "does fireball hit allies", asker_id=7))
+        self.assertEqual(len(ai.prompts), 1)
+        self.assertTrue(got.text.startswith("Yes. Creatures not in the area"))
+
+    def test_a_name_question_that_also_matches_an_entry_keeps_the_honest_answer(self) -> None:
+        ai = FakeAI([reply("I don't have that. Your call.", "none", "not sure")] * 2)
+        got = run(
+            engine(ai).answer(
+                campaign(), "does the goblin chief Grix work for Belleros", asker_id=7
+            )
+        )
+        self.assertIn("i don't have that", got.text.lower())
+        self.assertNotIn("SRD", got.text)  # no stat block swapped in
+
+    def test_a_house_rule_answer_is_never_overwritten_by_the_srd(self) -> None:
+        ai = FakeAI(
+            [reply("The free rules don't say, but house rule 2 does: no healing.", "house rule 2")]
+        )
+        eng = engine(ai, houses={campaign().id: [house(2, "No healing on fireball damage")]})
+        got = run(eng.answer(campaign(), "does fireball heal anyone", asker_id=7))
+        self.assertIn("house rule 2", got.text.lower())
+        self.assertNotIn("bright streak", got.text)
+
+    def test_a_scene_answer_gets_no_rules_note(self) -> None:
+        for source in ("the scene", "scene", "From the scene"):
+            ai = FakeAI([reply("The innkeeper is called Mara.", source)])
+            got = run(
+                engine(ai).answer(
+                    campaign(), "what is the innkeeper called", asker_id=7, scene="Mara waves."
+                )
+            )
+            self.assertNotIn("not in DMbot's rules", got.text, source)
+
+    def test_the_note_is_added_once_whatever_the_model_wrote(self) -> None:
+        ai = FakeAI(
+            [reply("No. A wall blocks it. (Not in DMbot’s rules, check your book)", "none")]
+        )
+        got = run(engine(ai).answer(campaign(), "can fireball go through a wall", asker_id=7))
+        self.assertEqual(got.text.lower().count("check your book"), 1)
 
 
 class Editions(unittest.TestCase):

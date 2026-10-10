@@ -146,8 +146,8 @@ def join_source(text: str, source: str | None, sure: str | None) -> str:
     """The answer with its source and confidence in a few words: `(SRD 5.2.1 p. 131, sure)`.
     Not repeated when the answer already says it: a source named in the text is left out, and
     "not sure" is left out of an answer that already says the rules don't say. The limit on
-    length is for the answer itself; this suffix comes after it (so a message can be about 35
-    characters over 200, which is fine on a phone)."""
+    length is for the answer itself; this suffix comes after it (so a message can be about 40
+    characters over 200, which is fine on a phone; the not-in-DMbot's-rules note goes here too)."""
     if source and source.lower() in text.lower():
         source = None
     if (

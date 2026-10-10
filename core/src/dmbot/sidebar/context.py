@@ -110,7 +110,7 @@ _ABOUT_DMBOT = re.compile(
 # A question that names an edition or compares them wants both editions' entries.
 _EDITIONS = re.compile(
     r"\b(2014|2024|legacy|old|older|new|newer|versus|vs|compare|compared|comparison|"
-    r"differ|differs|different|difference|differences|changed|change)\b",
+    r"differ|differs|different|difference|differences)\b",
     re.IGNORECASE,
 )
 _WORD = re.compile(r"[A-Za-z0-9'’]+")
@@ -145,7 +145,7 @@ def other_edition(hit: Hit, index: Index, target: str, fallback: str) -> Hit | N
         if edition == FALLBACK_NONE or edition == hit.entry.edition:
             continue
         for name in (hit.found_as, hit.entry.name):
-            found = index.lookup(name, edition, FALLBACK_NONE)
+            found = index.lookup(name, edition, FALLBACK_NONE, kind=hit.entry.kind)
             if found is not None and found.entry is not hit.entry:
                 tag = edition_tag(edition, from_fallback=edition != target)
                 return replace(found, tag=tag, from_fallback=edition != target)
@@ -181,6 +181,7 @@ def mentioned_rules(
     if both:  # the other edition's entry beside each, so a comparison can be answered
         extra = [h for h in (other_edition(hit, index, target, fallback) for hit in unique) if h]
         unique += [h for h in extra if all(h.entry is not o.entry for o in unique)]
+        unique = unique[: ENTRIES_MAX + 1]  # one more than usual, never a long list
     return unique
 
 

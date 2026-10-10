@@ -1836,11 +1836,13 @@ voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)
 the 17 test questions against the real model. (1) **Consistency:** when the question names a rules
 entry that was given, "the free rules don't say" is a contradiction: the prompt says so, the
 answer is sent back once with the entry named, and if it still says so DMbot answers with the
-entry's own first sentences and its source (so "do you need line of sight for fireball" and the
+entry's own first sentences and its source (only for a spell or condition the question names, and
+never over a house rule; so "do you need line of sight for fireball" and the
 same question after "hold on, I need to find" agree). (2) **No unsourced certainty:** a rule stated
 with no source among the entries and house rules the model was given gets "(not in DMbot's rules,
 check your book)" and is never "sure"; the prompt asks for the same wording for general D&D
-knowledge (class features, cover, area of effect, which the index doesn't hold yet). (3)
+knowledge (class features, cover, area of effect, which the index doesn't hold yet); the code adds the
+note itself and the answer from the scene or the campaign's names is not marked. (3)
 **Editions:** a question that says "2014", "2024", "legacy", "old", "new" or compares them gets
 both editions' entries, the older tagged `[Legacy 2014]` ("is the 2014 goblin different" sees
 Goblin and Goblin Warrior). `sidebar_check` now also checks each case's must-say and must-not-say
