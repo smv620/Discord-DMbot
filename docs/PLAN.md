@@ -2033,9 +2033,12 @@ repeat one and playing a session (which moves the date) starts them over. Deleti
 existing `CampaignStore.delete`, then the owner is told once; the log has counts only. The job
 runs per server (the bot's own servers), reading across servers only the owner's plan, through
 `usage.retention_standing`'s owner-scoped door; a plan that can't be read means that campaign is
-left alone. **Safety:** behind `DMBOT_ENFORCE_PLANS` (off: no warnings, no deletion, one dry-run
+left alone. **A campaign is only deleted after its last warning:** one already past its date when
+first seen (the first run after deploy, a long outage) gets a warning and is deleted three days
+later, and playing a session, or restoring a backup (which starts the clock from now), cancels
+it; the job looks again right before each delete. **Safety:** behind `DMBOT_ENFORCE_PLANS` (off: no warnings, no deletion, one dry-run
 log line with counts); a run that would delete more than 10% of all campaigns (and more than
-3, so a small deployment isn't stuck on one old campaign) stops and logs an error instead.
+3, so a small deployment isn't stuck on one old campaign) stops and logs an error instead, before any warning goes out; at most 300 warnings go out per run (the rest wait a day).
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find

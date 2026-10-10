@@ -84,7 +84,7 @@ class Job(DatabaseTest):
             await conn.execute(
                 "UPDATE campaigns SET last_played_at = %s, created_at = %s,"
                 " owner_user_id = %s WHERE guild_id = %s AND id = %s",
-                (played, played, owner, guild, campaign.id),
+                (played, min(played, T0), owner, guild, campaign.id),
             )
         return campaign.id
 
@@ -137,6 +137,7 @@ class Job(DatabaseTest):
         old = await self.make(GUILD_A, "Old", ALICE, T0)
         for n in range(9):
             await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+        await self.job().run_once(T0 + 57 * DAY)  # the 3-day warning
         now = T0 + 61 * DAY
         out = await self.job().run_once(now)
         self.assertEqual((out.to_delete, out.deleted), (1, 1))
@@ -163,6 +164,7 @@ class Job(DatabaseTest):
             await self.make(GUILD_B, f"x{n}", BOB, T0 + 700 * DAY)
         await self.job().run_once(T0 + 5 * DAY + 119 * DAY)
         self.assertTrue(await self.exists(GUILD_A, mine))
+        await self.job().run_once(T0 + 5 * DAY + 118 * DAY)  # inside the last 3 days: warned
         await self.job().run_once(T0 + 5 * DAY + 121 * DAY)
         self.assertFalse(await self.exists(GUILD_A, mine))
 
@@ -173,6 +175,7 @@ class Job(DatabaseTest):
             await self.make(GUILD_B, f"x{n}", ALICE, T0 + 300 * DAY)
         await self.job().run_once(T0 + 50 * DAY)  # 10 days before Try It's 60
         self.assertIn(BOB, [u for u, _ in self.sent])
+        await self.job().run_once(T0 + 58 * DAY)  # the last warning
         await self.job().run_once(T0 + 61 * DAY)
         self.assertFalse(await self.exists(GUILD_A, orphan))
 
@@ -182,6 +185,7 @@ class Job(DatabaseTest):
             await conn.execute("UPDATE campaigns SET paused = TRUE WHERE id = %s", (cid,))
         for n in range(9):
             await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+        await self.job().run_once(T0 + 58 * DAY)
         await self.job().run_once(T0 + 61 * DAY)
         self.assertFalse(await self.exists(GUILD_A, cid))
 
@@ -237,6 +241,103 @@ class Job(DatabaseTest):
         b = await self.make(GUILD_B, "B", ALICE, T0)
         for n in range(9):
             await self.make(GUILD_A, f"x{n}", BOB, T0 + 300 * DAY)
+        await self.job(guilds=(GUILD_A,)).run_once(T0 + 58 * DAY)
         await self.job(guilds=(GUILD_A,)).run_once(T0 + 61 * DAY)
         self.assertFalse(await self.exists(GUILD_A, a))
         self.assertTrue(await self.exists(GUILD_B, b))
+
+    async def test_nothing_is_deleted_that_was_never_warned(self) -> None:
+        # The first run after deploy meets a campaign already well past its date: it is
+        # warned now and deleted three days later, never at once.
+        cid = await self.make(GUILD_A, "Ancient", ALICE, T0)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 700 * DAY)
+        now = T0 + 200 * DAY
+        first = await self.job().run_once(now)
+        self.assertEqual((first.deleted, first.warnings), (0, 1))
+        self.assertTrue(await self.exists(GUILD_A, cid))
+        self.assertIn("will be deleted", self.sent[0][1])
+        self.assertEqual((await self.job().run_once(now + DAY)).deleted, 0)
+        self.assertTrue(await self.exists(GUILD_A, cid))
+        self.assertEqual((await self.job().run_once(now + 3 * DAY)).deleted, 1)
+        self.assertFalse(await self.exists(GUILD_A, cid))
+
+    async def test_a_warning_nobody_received_does_not_license_a_deletion(self) -> None:
+        cid = await self.make(GUILD_A, "Closed", ALICE, T0)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+
+        async def nobody(user_id: int, text: str) -> bool:
+            return False
+
+        job = self.job()
+        job._send = nobody
+        for day in (57, 58, 61, 62):
+            await job.run_once(T0 + day * DAY)
+        self.assertTrue(await self.exists(GUILD_A, cid))
+
+    async def test_a_session_after_the_warning_saves_the_campaign(self) -> None:
+        cid = await self.make(GUILD_A, "Saved", ALICE, T0)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+        now = T0 + 200 * DAY
+        await self.job().run_once(now)  # warned, found past its date
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET last_played_at = %s WHERE id = %s", (now + DAY, cid)
+            )
+        out = await self.job().run_once(now + 4 * DAY)
+        self.assertEqual(out.deleted, 0)
+        self.assertTrue(await self.exists(GUILD_A, cid))
+
+    async def test_a_session_starting_during_the_run_stops_the_delete(self) -> None:
+        cid = await self.make(GUILD_A, "Racing", ALICE, T0)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+        await self.job().run_once(T0 + 58 * DAY)
+        job = self.job()
+        original = job._running
+        calls = {"n": 0}
+
+        def running() -> set[str]:
+            calls["n"] += 1
+            return set() if calls["n"] == 1 else {cid}  # a session starts after the scan
+
+        job._running = running
+        out = await job.run_once(T0 + 61 * DAY)
+        self.assertEqual(out.deleted, 0)
+        self.assertTrue(await self.exists(GUILD_A, cid))
+        del original
+
+    async def test_a_wrong_clock_touches_nothing(self) -> None:
+        cid = await self.make(GUILD_A, "Future", ALICE, T0 + 500 * DAY)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("UPDATE campaigns SET created_at = %s", (T0 + 500 * DAY,))
+        with self.assertLogs("dmbot.retention", "ERROR"):
+            out = await self.job().run_once(T0)
+        self.assertTrue(out.guard_stopped)
+        self.assertTrue(await self.exists(GUILD_A, cid))
+
+    async def test_a_campaign_restored_from_an_old_backup_starts_its_clock_now(self) -> None:
+        cid = await self.make(GUILD_A, "Old", ALICE, T0)
+        data = await self.store.export(GUILD_A, cid)
+        self.now = T0 + 400 * DAY
+        restored = await self.store.import_backup(GUILD_B, data, BOB, replace_campaign_id=None)
+        got = await self.store.get(GUILD_B, restored.id)
+        assert got is not None
+        self.assertEqual(got.last_active_at, self.now)
+
+    async def test_the_old_warning_cannot_license_a_later_deletion(self) -> None:
+        cid = await self.make(GUILD_A, "Again", ALICE, T0)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 900 * DAY)
+        await self.job().run_once(T0 + 58 * DAY)  # stage 2 for the first date
+        async with self.db.guild(GUILD_A) as conn:  # played on day 59
+            await conn.execute(
+                "UPDATE campaigns SET last_played_at = %s WHERE id = %s", (T0 + 59 * DAY, cid)
+            )
+        await self.job().run_once(T0 + 60 * DAY)  # the job sees the date has moved: resets
+        # Then nobody looks for a long time; when the new date passes there is no licence.
+        out = await self.job().run_once(T0 + 59 * DAY + 61 * DAY)
+        self.assertEqual(out.deleted, 0)
+        self.assertTrue(await self.exists(GUILD_A, cid))

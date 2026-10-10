@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
 from dmbot import plans
@@ -135,6 +135,26 @@ def _md(text: str) -> str:
     return text.replace("\\", "\\\\").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
 
 
+GRACE_DAYS = 3  # a campaign already past its date when first seen gets this long
+MAX_WARNINGS_PER_RUN = 300  # the rest wait for tomorrow: Discord limits private messages
+
+
+def may_delete(campaign: Campaign, at: int, now: int) -> bool:
+    """Has the campaign had its last warning for the date it is being deleted on? Either the
+    3-day warning for this very date, or (stage 3) a warning sent when it was found already
+    past its date, at least GRACE_DAYS ago and with no session since."""
+    if at > now:
+        return False
+    stage, announced = campaign.retention_warned_stage, campaign.retention_warned_for
+    if announced is None:
+        return False
+    if stage >= 2 and announced == at:
+        return True
+    return (
+        stage == 3 and announced <= now and campaign.last_active_at <= announced - GRACE_DAYS * DAY
+    )
+
+
 @dataclass(slots=True)
 class Result:
     """Counts only: nothing about campaigns or people goes in the log."""
@@ -179,15 +199,23 @@ class RetentionJob:
         self._site_url = site_url
 
     async def run_once(self, now: int) -> Result:
-        """Safe to run twice: warnings are remembered, and a deleted campaign is gone."""
+        """Safe to run twice: warnings are remembered, and a deleted campaign is gone.
+
+        A campaign is only ever deleted after its last warning went out for the date it is
+        being deleted on (`may_delete`): one already past its date when first seen (a first
+        run after deploy, a long outage) is warned first and deleted three days later."""
         result = Result(dry_run=not self._enforce)
-        due: list[tuple[Campaign, Standing, int]] = []  # past their keep date
-        warn: list[tuple[Campaign, Standing, int, int]] = []
+        due: list[tuple[Campaign, int]] = []  # past their keep date
+        warn: list[tuple[Campaign, Standing, int, int]] = []  # campaign, plan, date, stage
         owners: dict[int, Standing] = {}
         running = self._running()
         for guild_id in self._guild_ids():
             for campaign in await self._campaigns.list_campaigns(guild_id):
                 result.scanned += 1
+                if campaign.created_at > now:  # the clock is wrong: touch nothing this run
+                    log.error("Retention: a campaign is newer than the clock; doing nothing")
+                    result.guard_stopped = True
+                    return result
                 if campaign.id in running:
                     result.skipped += 1
                     continue
@@ -199,37 +227,54 @@ class RetentionJob:
                     continue
                 at = delete_at(campaign.last_active_at, standing)
                 if at <= now:
-                    due.append((campaign, standing, at))
+                    due.append((campaign, at))
+                    waiting = (
+                        campaign.retention_warned_stage == 3
+                        and campaign.retention_warned_for is not None
+                        and campaign.retention_warned_for > now
+                    )  # the grace warning is out: just wait for its date
+                    if not waiting and not may_delete(campaign, at, now):
+                        # First seen past its date: warn now, delete in WARN_GRACE_DAYS.
+                        warn.append((campaign, standing, now + GRACE_DAYS * DAY, 3))
                     continue
                 stage = warning_stage(at, now)
-                sent = (
-                    campaign.retention_warned_for == at and campaign.retention_warned_stage >= stage
-                )
-                if stage and not sent:
+                if campaign.retention_warned_stage and campaign.retention_warned_for != at:
+                    # The date moved (it was played, or the plan changed): old warnings
+                    # no longer count, so none can license a later deletion.
+                    if self._enforce:
+                        await self._remember(campaign, 0, None)
+                    campaign = replace(
+                        campaign, retention_warned_stage=0, retention_warned_for=None
+                    )
+                if stage and campaign.retention_warned_stage < stage:
                     warn.append((campaign, standing, at, stage))
+        if result.scanned == 0:
+            log.warning("Retention: no campaigns found (the bot may still be starting)")
         result.to_delete = len(due)
+        # The guard comes first: if this run would delete too many, say nothing to anyone.
+        evaluated = result.scanned - result.skipped
+        if len(due) > MIN_FOR_GUARD and len(due) > MAX_SHARE_PER_RUN * evaluated:
+            result.guard_stopped = True
+            log.error(
+                "Retention: %d of %d campaigns are past their keep date, more than %d%%; "
+                "doing nothing. Check the plans and the clock.",
+                len(due),
+                evaluated,
+                int(MAX_SHARE_PER_RUN * 100),
+            )
+            self._log(result)
+            return result
         if not self._enforce:  # a dry run: counts only
             result.warnings = len(warn)
             self._log(result)
             return result
-        for campaign, standing, at, stage in warn:
+        for campaign, standing, at, stage in warn[:MAX_WARNINGS_PER_RUN]:
             if await self._warn(campaign, standing, at, stage, now):
                 result.warnings += 1
                 result.stages[stage] = result.stages.get(stage, 0) + 1
-        too_many = len(due) > MIN_FOR_GUARD and len(due) > MAX_SHARE_PER_RUN * result.scanned
-        if too_many:
-            result.guard_stopped = True
-            log.error(
-                "Retention: %d of %d campaigns are due for deletion, more than %d%%; "
-                "deleting none. Check the plans and the clock.",
-                len(due),
-                result.scanned,
-                int(MAX_SHARE_PER_RUN * 100),
-            )
-        else:
-            for campaign, _standing, _at in due:
-                if await self._delete(campaign):
-                    result.deleted += 1
+        for campaign, _at in due:
+            if await self._delete(campaign, now, owners):
+                result.deleted += 1
         self._log(result)
         return result
 
@@ -248,6 +293,16 @@ class RetentionJob:
             return [campaign.owner_user_id]
         return sorted(campaign.dm_user_ids)
 
+    async def _remember(self, campaign: Campaign, stage: int, announced: int | None) -> bool:
+        try:
+            await self._campaigns.set_retention_warned(
+                campaign.guild_id, campaign.id, stage, announced
+            )
+        except Exception:  # one campaign's failure never stops the run
+            log.exception("Retention: couldn't record a warning")
+            return False
+        return True
+
     async def _warn(
         self, campaign: Campaign, standing: Standing, at: int, stage: int, now: int
     ) -> bool:
@@ -259,11 +314,20 @@ class RetentionJob:
             told = await self._send(user_id, text) or told
         if not told:
             return False  # nobody could be reached: try again tomorrow
-        await self._campaigns.set_retention_warned(campaign.guild_id, campaign.id, stage, at)
-        return True
+        return await self._remember(campaign, stage, at)
 
-    async def _delete(self, campaign: Campaign) -> bool:
+    async def _delete(self, stale: Campaign, now: int, owners: dict[int, Standing]) -> bool:
+        """Delete one campaign, after looking again: a session may have started, it may
+        have been played, or the owner's plan may have changed since the scan."""
+        if stale.id in self._running():
+            return False
         try:
+            campaign = await self._campaigns.get(stale.guild_id, stale.id)
+            if campaign is None:
+                return False
+            standing = await self._standing(campaign.guild_id, campaign, now, owners)
+            if not may_delete(campaign, delete_at(campaign.last_active_at, standing), now):
+                return False
             await self._campaigns.delete(campaign.guild_id, campaign.id)
         except Exception:
             log.exception("Retention: couldn't delete a campaign")
