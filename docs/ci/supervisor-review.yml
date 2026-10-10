@@ -28,24 +28,29 @@ concurrency:
 
 jobs:
   check:
-    name: supervisor-review
+    # Not called supervisor-review: that name belongs to the commit status alone, so a branch
+    # rule that requires it can only be met by the status, never by this job going green.
+    name: post-supervisor-status
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
       # The script that runs is the one on the base branch (a pull request cannot change what
       # judges it); until that copy exists, this pull request's own copy is used.
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: trusted
+          persist-credentials: false
       - name: post the check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           if [ -f trusted/scripts/supervisor_review.py ]; then
-            python3 trusted/scripts/supervisor_review.py
+            python3 -I trusted/scripts/supervisor_review.py
           else
-            python3 scripts/supervisor_review.py
+            python3 -I scripts/supervisor_review.py
           fi

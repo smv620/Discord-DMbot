@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
@@ -34,6 +35,7 @@ API = "https://api.github.com"
 LOG_ONLY = frozenset({"docs/testing-status.log", "docs/testing-history.log"})
 PREFIX = re.compile(r"^\s*supervisor review:\s*(approved|changes needed)\b", re.IGNORECASE)
 DESCRIPTION_MAX = 140  # GitHub's limit for a status description
+COMPARE_FILE_CAP = 300  # GitHub's compare lists at most this many files
 
 SUCCESS, FAILURE, PENDING = "success", "failure", "pending"
 Verdict = tuple[str, str]  # (state, description)
@@ -57,7 +59,7 @@ def latest_verdict(
     found: Mapping[str, Any] | None = None
     for review in reviews:
         user = (review.get("user") or {}).get("login", "")
-        if review.get("state") == "DISMISSED" or user.casefold() not in names:
+        if review.get("state") in ("DISMISSED", "PENDING") or user.casefold() not in names:
             continue
         if verdict_of(review) is None:
             continue
@@ -72,17 +74,22 @@ def _order(review: Mapping[str, Any]) -> tuple[str, int]:
 
 def patch_id(files: Sequence[Mapping[str, Any]]) -> str | None:
     """A fingerprint of what a pull request changes, ignoring where in the file it sits: the
-    names of the files and each added or removed line (whitespace squeezed), not the context
-    around them or the line numbers. A merge of `development` into the branch leaves it as it
-    was. None if GitHub left a patch out (a file too big to compare)."""
+    names of the files (and a renamed file's old name) and each added or removed line
+    (whitespace squeezed), not the context around them or the line numbers. A merge of
+    `development` into the branch leaves it as it was. None when it can't be told: GitHub
+    left a patch out (a binary file, a mode change, a file too big to compare) or listed too
+    many files to be the whole list. A missing newline at the end of a file is not seen."""
+    if len(files) >= COMPARE_FILE_CAP:
+        return None
     digest = hashlib.sha256()
     for item in sorted(files, key=lambda f: str(f.get("filename"))):
         patch = item.get("patch")
-        if patch is None and item.get("changes", 0):
+        if patch is None and item.get("status") != "renamed":
             return None
-        digest.update(f"{item.get('filename')}\0{item.get('status')}\0".encode())
+        names = f"{item.get('filename')}\0{item.get('status')}\0{item.get('previous_filename')}"
+        digest.update(names.encode() + b"\0")
         for line in (patch or "").splitlines():
-            if line[:1] in "+-" and not line.startswith(("+++", "---")):
+            if line[:1] in ("+", "-"):  # the patch has no file headers: a "--" line is a change
                 digest.update(" ".join(line.split()).encode() + b"\n")
     return digest.hexdigest()
 
@@ -117,9 +124,17 @@ def decide(
 # ---- GitHub ---------------------------------------------------------------------------
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """GitHub's API answers directly; a redirect would carry the token somewhere else."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
 class GitHub:
     def __init__(self, token: str, repo: str) -> None:
         self._token, self._repo = token, repo
+        self._opener = urllib.request.build_opener(_NoRedirect)
 
     def _request(self, method: str, path: str, body: Mapping[str, Any] | None = None) -> Any:
         data = None if body is None else json.dumps(body).encode()
@@ -134,7 +149,7 @@ class GitHub:
                 "Content-Type": "application/json",
             },
         )
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with self._opener.open(request, timeout=30) as response:
             raw = response.read()
         return json.loads(raw) if raw else None
 
@@ -166,13 +181,17 @@ class GitHub:
 def run(github: GitHub, number: int, allowed: Iterable[str]) -> Verdict:
     """Work out the check for a pull request and post it on its head commit."""
     pull = github.get(f"/pulls/{number}")
-    head, base = pull["head"]["sha"], pull["base"]["sha"]
+    head = pull["head"]["sha"]
+    tip = urllib.parse.quote(pull["base"]["ref"], safe="")  # the live branch, not an old sha
     names = [f["filename"] for f in github.pages(f"/pulls/{number}/files")]
     review = latest_verdict(github.pages(f"/pulls/{number}/reviews"), allowed)
 
     def same_change(sha: str) -> bool:
-        old = patch_id(github.get(f"/compare/{base}...{sha}").get("files", []))
-        new = patch_id(github.get(f"/compare/{base}...{head}").get("files", []))
+        try:
+            old = patch_id(github.get(f"/compare/{tip}...{sha}").get("files", []))
+            new = patch_id(github.get(f"/compare/{tip}...{head}").get("files", []))
+        except OSError:  # the old commit is gone (a rebase), or GitHub failed: not the same
+            return False
         return old is not None and old == new
 
     state, description = decide(
@@ -193,13 +212,20 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    github = GitHub(token, repo)
     try:
-        state, description = run(GitHub(token, repo), int(number), owner.split(","))
-    except urllib.error.HTTPError as exc:
-        print(
-            f"supervisor-review: GitHub answered {exc.code} for {exc.url.split('?')[0]}",
-            file=sys.stderr,
-        )
+        state, description = run(github, int(number), owner.split(","))
+    except Exception as exc:  # whatever went wrong, an old green must not stand
+        print(f"supervisor-review: could not check ({type(exc).__name__})", file=sys.stderr)
+        try:
+            head = github.get(f"/pulls/{int(number)}")["head"]["sha"]
+            github.set_status(
+                head, PENDING, "Could not check Supervisor's review; will retry", None
+            )
+        except Exception as again:
+            print(
+                f"supervisor-review: and could not say so ({type(again).__name__})", file=sys.stderr
+            )
         return 1
     print(f"supervisor-review: {state}: {description}")
     return 0
