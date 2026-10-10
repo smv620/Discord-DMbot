@@ -539,7 +539,7 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
 *Built, part 3b: the linked file and the upload (2026-10-10, #969):*
 - **Link a file** (the campaign's DMs only): ⚙️ Settings → **House-rules file**, the list's
   **📄 House-rules file** button, or `/dmbot houserules link:`. Stored per campaign in
-  `house_rules_file` (migration 0038, deleted with the campaign, no grant for the website).
+  `house_rules_file` (migration 0039, deleted with the campaign, no grant for the website).
   A share link can be private, so it is never logged, never shown back (only the site it is
   on, such as docs.google.com), and not in backups. Unlink and **🔄 Check it now** are in the
   same menu.
