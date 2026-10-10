@@ -630,6 +630,9 @@ async def dmbot_house_rules(interaction: discord.Interaction, link: str | None =
     if link is not None and current is not None:
         await file_ui.link_file(interaction, current, link)  # (the DMs only: it checks)
         return
+    if link is not None:
+        await _tell(interaction, file_ui.PICK_FIRST)
+        return
     if current is not None:
         await show_list(interaction, current, first=True)
         return

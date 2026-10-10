@@ -547,7 +547,11 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   Google Docs, Drive, Dropbox, OneDrive; every address checked; plain text only) and
   compares it with the campaign's rules by number. If anything differs, one short note on
   the DM screen with **Accept all**, **Review** (one at a time: Accept, Skip, or Accept the
-  rest) and **Ignore until the file changes**. Nothing changes without a press; every press
+  rest) and **Not now** (= ignore until the file changes). The note says what pressing does
+  ("2 to add, 1 to change, 3 to remove"); when anything would be removed, **Review** is the
+  main button and Accept all says how many removals it includes; with many removals (6 or
+  more, or over half of DMbot's rules) Accept all is switched off. Nothing changes without a
+  press; every press
   re-checks that the person is a DM, and the store checks again for each change (a rule
   another DM changed meanwhile is left alone and said). A new rule keeps its number from the
   file if that number was never used in this campaign; otherwise it takes the next free
@@ -556,7 +560,16 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
 - **Never a mass removal by mistake:** a file with no readable rule is not compared (it would
   offer to remove every rule); the DM is told instead. A file that can't be read gets one
   short note and the session goes on with DMbot's copy. "Ignore until the file changes"
-  remembers a fingerprint of the rules (not the title or notes).
+  remembers which version of the file you set aside (its rules, not its title or notes). A
+  file's changes are done one at a time, so one that fails does not undo the rest, and doing
+  the same offer twice never adds a rule twice. Only the newest offer for a campaign works.
+  A note is shown once per session start and never when the files match.
+- **Numbers:** a rule from the file keeps its number only if it was never used and is within
+  200 of the highest (one stray number such as a year must not use up the campaign's
+  numbers); otherwise it gets the next one and the DM is told.
+- **Careful with the network:** the file is read in the background (never delaying a
+  session), 10 MB at most and 200,000 characters of text; comparing by hand waits a few
+  seconds after the last time and never runs twice at once for a campaign.
 - **📎 Upload a file** does the same comparison from an uploaded `.txt` file, shown privately
   to the DM; nothing is stored.
 - The offers wait in memory (the 20 newest); after a restart an old button says it has ended.

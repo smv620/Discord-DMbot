@@ -35,7 +35,10 @@ class FileLink:
     @property
     def site(self) -> str:
         """Where the file is, and nothing else: `docs.google.com`."""
-        host = yarl.URL(fetch.direct_url(self.link).human_repr()).host
+        try:
+            host = yarl.URL(fetch.direct_url(self.link).human_repr()).host
+        except fetch.LinkError:
+            host = None
         return host or "a link"
 
 
@@ -95,11 +98,13 @@ class HouseFileLinkStore:
             )
             return cur.rowcount > 0
 
-    async def ignore(self, guild_id: int, campaign_id: str, user_id: int, fingerprint: str) -> None:
-        """Say nothing about this version of the file again (until it changes)."""
+    async def ignore(self, guild_id: int, campaign_id: str, user_id: int, fingerprint: str) -> bool:
+        """Say nothing about this version of the file again (until it changes). False if no
+        file is linked any more."""
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id)
-            await conn.execute(
+            cur = await conn.execute(
                 "UPDATE house_rules_file SET ignored = %s WHERE guild_id = %s AND campaign_id = %s",
                 (fingerprint, guild_id, campaign_id),
             )
+            return cur.rowcount > 0

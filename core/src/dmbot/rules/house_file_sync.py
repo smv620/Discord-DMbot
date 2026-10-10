@@ -13,12 +13,15 @@ number and the DM is told.
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_file import Diff, FileRule
+
+log = logging.getLogger(__name__)
 
 ADD, CHANGE, REMOVE = "add", "change", "remove"
 SCENARIO = "From the house-rules file"
@@ -37,6 +40,8 @@ class Item:
 
 
 class Store(Protocol):
+    async def list(self, guild_id: int, campaign_id: str) -> list[HouseRule]: ...
+
     async def add(
         self,
         guild_id: int,
@@ -108,22 +113,26 @@ def _plural(n: int, one: str, many: str) -> str:
 
 
 def summary(diff: Diff, unreadable: int = 0) -> str:
-    """One short line saying what differs."""
+    """One short line saying what differs, and what pressing would do."""
     parts = []
     if diff.added:
-        parts.append(_plural(len(diff.added), "new rule", "new rules"))
+        parts.append(f"{len(diff.added)} to add")
     if diff.changed:
-        parts.append(f"{len(diff.changed)} changed")
+        parts.append(f"{len(diff.changed)} to change")
     if diff.removed:
-        parts.append(f"{len(diff.removed)} removed")
-    text = "Your house-rules file has " + ", ".join(parts) + "."
+        parts.append(f"{len(diff.removed)} to remove")
+    text = "**Your rules file and DMbot's house rules don't match:** " + ", ".join(parts) + "."
     if diff.moved:
         text += (
             f" {_plural(len(diff.moved), 'rule has', 'rules have')} another number in the "
             "file; DMbot keeps its own numbers."
         )
     if unreadable:
-        text += f" {_plural(unreadable, 'line', 'lines')} in the file couldn't be read."
+        one = unreadable == 1
+        text += (
+            f" {_plural(unreadable, 'line', 'lines')} in the file didn't look like "
+            f"{'a rule' if one else 'rules'} and {'was' if one else 'were'} skipped."
+        )
     return text
 
 
@@ -138,7 +147,7 @@ def _words(rule: str, instead: str | None) -> str:
 def describe(item: Item) -> str:
     """One item, for a review. Plain text (the caller escapes it)."""
     if item.kind == ADD:
-        return f"➕ New in the file: {item.number}. {_words(item.rule, item.instead)}"
+        return f"➕ Add as a new rule: {item.number}. {_words(item.rule, item.instead)}"
     if item.kind == CHANGE:
         return (
             f"✏️ House rule {item.number} is different in the file.\n"
@@ -147,7 +156,7 @@ def describe(item: Item) -> str:
         )
     return (
         f"🗑 House rule {item.number} isn't in the file any more: "
-        f"{_words(item.was, item.was_instead)}\nAccepting removes it from DMbot."
+        f"{_words(item.was, item.was_instead)}\nAccepting removes it from DMbot. Skip keeps it."
     )
 
 
@@ -155,21 +164,33 @@ async def apply(
     store: Store, guild_id: int, campaign_id: str, user_id: int, items: Sequence[Item]
 ) -> Applied:
     """Do the items, one by one. One that can't be done is skipped and said, never forced:
-    the store refuses it if another DM changed or removed the rule since it was compared."""
+    the store refuses it if another DM changed or removed the rule since it was compared.
+    A new rule that is already there (the same words) is not added a second time, so doing
+    the same offer twice, or again after a failure part way, never makes copies."""
     out = Applied()
+    present: set[tuple[str, str | None]] = set()
+    if any(item.kind == ADD for item in items):
+        try:
+            present = {(r.rule, r.supersedes) for r in await store.list(guild_id, campaign_id)}
+        except Exception:
+            log.exception("Couldn't read the house rules before adding from the file")
     for item in items:
         try:
             if item.kind == ADD:
+                if (item.rule, item.instead) in present:
+                    out.done.append(f"Rule {item.number} was already there.")
+                    continue
                 saved = await store.add(
                     guild_id, campaign_id, user_id, item.rule, item.instead,
                     scenario=SCENARIO, wanted=item.number,
                 )  # fmt: skip
+                present.add((item.rule, item.instead))
                 if saved.number == item.number:
                     out.done.append(f"Added house rule {saved.number}.")
                 else:
                     out.done.append(
                         f"Added the file's rule {item.number} as house rule {saved.number} "
-                        f"(number {item.number} was used before)."
+                        "(a number is never used twice, so old alerts stay right)."
                     )
             elif item.kind == CHANGE:
                 await store.edit(
@@ -184,15 +205,25 @@ async def apply(
                 out.done.append(f"Removed house rule {item.number}.")
         except HouseRuleError as exc:
             out.skipped.append(f"Rule {item.number} was left as it is: {exc}")
+        except Exception:
+            log.exception("Couldn't apply a house rule from the file")
+            out.skipped.append(
+                f"Rule {item.number} couldn't be done just now; it was left as it is."
+            )
     return out
 
 
 def result_text(applied: Applied) -> str:
-    """What happened, in a few lines."""
-    lines = list(applied.done[:8])
+    """What happened: a count first, then the lines."""
+    if not applied.done and not applied.skipped:
+        return "Nothing to change."
+    head = f"Done: {len(applied.done)} changed." if applied.done else "Nothing was changed."
+    if applied.skipped:
+        head += f" {len(applied.skipped)} left alone."
+    lines = [head, *applied.done[:8]]
     if len(applied.done) > 8:
         lines.append(f"…and {len(applied.done) - 8} more.")
     lines += applied.skipped[:5]
     if len(applied.skipped) > 5:
         lines.append(f"…and {len(applied.skipped) - 5} more were left as they are.")
-    return "\n".join(lines) or "Nothing to change."
+    return "\n".join(lines)

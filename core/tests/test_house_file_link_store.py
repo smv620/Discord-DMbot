@@ -136,6 +136,21 @@ class WantedNumbers(LinkTest):
         await self.rules.remove(GUILD_A, self.campaign.id, DM, 2)
         self.assertEqual(await self.add("Wants the removed 2", wanted=2), 4)
 
+    async def test_a_stray_big_number_is_not_taken(self) -> None:
+        await self.add("One")
+        self.assertEqual(await self.add("Year", wanted=2024), 2)  # a leap of 2,000
+        self.assertEqual(await self.add("Huge", wanted=2_147_483_646), 3)
+        self.assertEqual(await self.add("Next"), 4)  # the counter never ran away
+
+    async def test_the_edge_of_the_window(self) -> None:
+        self.assertEqual(await self.add("At the edge", wanted=HOUSE_RULES_MAX), HOUSE_RULES_MAX)
+        self.assertEqual(await self.add("Just past it", wanted=2 * HOUSE_RULES_MAX + 1), 201)
+
+    async def test_ignoring_with_no_link_says_so(self) -> None:
+        self.assertFalse(await self.links.ignore(GUILD_A, self.campaign.id, DM, FINGERPRINT))
+        await self.links.set_link(GUILD_A, self.campaign.id, DM, DOC)
+        self.assertTrue(await self.links.ignore(GUILD_A, self.campaign.id, DM, FINGERPRINT))
+
     async def test_no_wanted_number_is_the_next_as_before(self) -> None:
         self.assertEqual([await self.add("A"), await self.add("B")], [1, 2])
 

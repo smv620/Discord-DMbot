@@ -150,8 +150,9 @@ class HouseRuleStore:
     ) -> HouseRule:
         """Save a new house rule, with the campaign's next number, or with `wanted` (a
         rule from the house-rules file, #969) if that number was never used: it is above
-        every number the campaign has made. Only the campaign's DMs; at most
-        `HOUSE_RULES_MAX`."""
+        every number the campaign has made, and not a leap: within `HOUSE_RULES_MAX` of the
+        highest (one stray number in a file must not use up the campaign's numbers). Only the
+        campaign's DMs; at most `HOUSE_RULES_MAX`."""
         text = clean_rule(rule)
         instead = clean_optional(supersedes, INSTEAD_BOX)
         happened = clean_optional(scenario, HAPPENED_BOX)
@@ -159,7 +160,7 @@ class HouseRuleStore:
         async with self._db.guild(guild_id) as conn:
             # Locking the campaign makes two adds at once take turns: the limit holds, and
             # each gets its own number.
-            await _require_dm(conn, guild_id, campaign_id, user_id, lock=True)
+            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM house_rules WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
@@ -170,10 +171,11 @@ class HouseRuleStore:
                 raise HouseRuleError(FULL)
             cur = await conn.execute(
                 "UPDATE campaigns SET house_rules_made = CASE"
-                " WHEN %s::integer IS NOT NULL AND %s::integer > house_rules_made THEN %s::integer"
+                " WHEN %s::integer IS NOT NULL AND %s::integer > house_rules_made"
+                " AND %s::integer <= house_rules_made + %s THEN %s::integer"
                 " ELSE house_rules_made + 1 END"
                 " WHERE guild_id = %s AND id = %s RETURNING house_rules_made",
-                (wanted, wanted, wanted, guild_id, campaign_id),
+                (wanted, wanted, wanted, HOUSE_RULES_MAX, wanted, guild_id, campaign_id),
             )
             made = await cur.fetchone()
             assert made is not None
@@ -216,7 +218,7 @@ class HouseRuleStore:
         text = clean_rule(rule)
         instead = clean_optional(supersedes, INSTEAD_BOX)
         async with self._db.guild(guild_id) as conn:
-            await _require_dm(conn, guild_id, campaign_id, user_id)
+            await require_dm(conn, guild_id, campaign_id, user_id)
             cur = await conn.execute(
                 "UPDATE house_rules SET rule = %s, supersedes = %s, updated_at = %s,"
                 " version = version + 1"
@@ -251,7 +253,7 @@ class HouseRuleStore:
         """Take a rule away; returns it. Only the campaign's DMs. `unchanged_since`: as for
         `edit`. Its number is not used again."""
         async with self._db.guild(guild_id) as conn:
-            await _require_dm(conn, guild_id, campaign_id, user_id)
+            await require_dm(conn, guild_id, campaign_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM house_rules WHERE guild_id = %s AND campaign_id = %s"
                 " AND number = %s AND (%s::int IS NULL OR version = %s)"
@@ -273,7 +275,7 @@ async def _missing(conn: Conn, guild_id: int, campaign_id: str, number: int) -> 
     return HouseRuleError(GONE if await cur.fetchone() is None else CHANGED)
 
 
-async def _require_dm(
+async def require_dm(
     conn: Conn, guild_id: int, campaign_id: str, user_id: int, *, lock: bool = False
 ) -> None:
     """The campaign exists in this server, and this person is one of its DMs."""
@@ -292,8 +294,6 @@ async def _require_dm(
     if await cur.fetchone() is None:
         raise HouseRuleError(NOT_DM)
 
-
-require_dm = _require_dm  # for the house-rules file link (dmbot.rules.house_file_link)
 
 # ---- backups ------------------------------------------------------------------------
 

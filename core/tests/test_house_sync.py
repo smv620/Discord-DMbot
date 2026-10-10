@@ -9,7 +9,7 @@ import asyncio
 import inspect
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
@@ -20,7 +20,7 @@ from dmbot.campaigns import Campaign
 from dmbot.dm_screen import house_sync as hs
 from dmbot.dm_screen import settings as screen_settings
 from dmbot.rules import house, house_file, house_file_sync
-from dmbot.rules.house import HouseRuleError
+from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_file_link import FileLink
 from dmbot.ui import house_file as file_ui
 from tests.test_house_file_sync import FakeStore, rule
@@ -69,6 +69,8 @@ class FakeLinks:
 
 class SyncTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        file_ui._last.clear()
+        file_ui._busy.clear()
         self.campaigns = {C1: campaign()}
         self.store = FakeStore([rule(1, "Keep"), rule(2, "Old"), rule(3, "Gone")])
         self.links = FakeLinks()
@@ -98,7 +100,11 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def button(view: Any, label: str) -> Any:
-        return next(b for b in view.children if str(b.item.label) == label)
+        """The button with this label (or, failing that, one starting with it: Accept all
+        says how many removals it makes)."""
+        labels = [(str(b.item.label), b) for b in view.children]
+        exact = [b for text, b in labels if text == label]
+        return (exact or [b for text, b in labels if text.startswith(label)])[0]
 
     async def offer(self, text: str = FILE, *, from_link: bool = True) -> tuple[str, Any]:
         words = await hs.compare_text(self.bot, campaign(), text, self.send, from_link=from_link)
@@ -109,16 +115,16 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
 class Offering(SyncTest):
     async def test_what_differs_is_offered_with_three_buttons_and_nothing_is_changed(self) -> None:
         text, view = await self.offer()
-        self.assertIn("Your house-rules file has 1 new rule, 1 changed, 1 removed.", text)
-        self.assertIn("Nothing changes unless you press a button.", text)
+        self.assertIn("don't match:** 1 to add, 1 to change, 1 to remove.", text)
+        self.assertIn("Nothing changes until you press a button.", text)
         labels = [str(b.item.label) for b in view.children]
-        self.assertEqual(labels, ["Accept all", "Review", "Ignore until the file changes"])
+        self.assertEqual(labels, ["Accept all (1 to remove)", "Review", "Not now"])
         self.assertEqual(len(self.store.rules), 3)
         self.assertEqual(len(self.bot.house_syncs), 1)
 
     async def test_an_upload_can_only_be_ignored_not_ignored_until_it_changes(self) -> None:
         _, view = await self.offer(from_link=False)
-        self.assertEqual([str(b.item.label) for b in view.children][-1], "Ignore")
+        self.assertEqual([str(b.item.label) for b in view.children][-1], "Close")
 
     async def test_files_that_match_are_told_so(self) -> None:
         same = "1. Keep\n2. Old\n3. Gone\n"
@@ -142,7 +148,7 @@ class Offering(SyncTest):
 
     async def test_unreadable_lines_are_counted_in_the_offer(self) -> None:
         text, _ = await self.offer(FILE + "what is this\nand this\n")
-        self.assertIn("2 lines in the file couldn't be read.", text)
+        self.assertIn("2 lines in the file didn't look like rules and were skipped.", text)
 
     async def test_a_version_the_dm_ignored_stays_quiet_until_the_file_changes(self) -> None:
         self.links.link = DOC
@@ -187,15 +193,15 @@ class Pressing(SyncTest):
     async def test_ignore_remembers_this_version_of_the_file(self) -> None:
         _, view = await self.offer()
         it = self.interaction()
-        await self.button(view, "Ignore until the file changes").callback(it)
+        await self.button(view, "Not now").callback(it)
         fingerprint = house_file_sync.fingerprint(house_file.parse(FILE).rules)
         self.assertEqual(self.links.calls, [("ignore", DM, fingerprint)])
         self.assertEqual(len(self.store.rules), 3)
-        self.assertIn("Ignored", it.response.edited[0][0])
+        self.assertIn("Left as it is", it.response.edited[0][0])
 
     async def test_ignoring_an_upload_remembers_nothing(self) -> None:
         _, view = await self.offer(from_link=False)
-        await self.button(view, "Ignore").callback(self.interaction())
+        await self.button(view, "Close").callback(self.interaction())
         self.assertEqual(self.links.calls, [])
 
     async def test_review_goes_one_at_a_time_accept_or_skip(self) -> None:
@@ -204,9 +210,10 @@ class Pressing(SyncTest):
         await self.button(view, "Review").callback(it)
         text, step = it.response.edited[0]
         self.assertIn("Review 1 of 3", text)
-        self.assertIn("New in the file: 9. Fresh", text)
+        self.assertIn("Add as a new rule: 9. Fresh", text)
         self.assertEqual(
-            [str(b.item.label) for b in step.children], ["Accept", "Skip", "Accept the rest"]
+            [str(b.item.label) for b in step.children],
+            ["Accept", "Skip", "Accept this and the rest"],
         )
         accepted = self.interaction()
         await self.button(step, "Accept").callback(accepted)
@@ -236,7 +243,7 @@ class Pressing(SyncTest):
         skip = self.interaction()
         await self.button(step, "Skip").callback(skip)  # skips the new rule
         rest = self.interaction()
-        await self.button(skip.response.edited[0][1], "Accept the rest").callback(rest)
+        await self.button(skip.response.edited[0][1], "Accept this and the rest").callback(rest)
         self.assertEqual(sorted(r.number for r in self.store.rules), [1, 2])
 
     async def test_a_press_on_an_old_step_is_told_it_is_done(self) -> None:
@@ -301,12 +308,14 @@ class Pressing(SyncTest):
         )
         self.assertIn("Rule 2 was left as it is", it.response.edited[0][0])
 
-    async def test_a_store_that_breaks_says_so_and_changes_nothing_more(self) -> None:
+    async def test_a_store_that_breaks_is_said_and_nothing_more_is_changed(self) -> None:
         _, view = await self.offer()
         self.store.add = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
         it = self.interaction()
         await self.button(view, "Accept all").callback(it)
-        self.assertEqual(it.response.sent[0][0], hs.FAILED)
+        content = it.response.edited[0][0]
+        self.assertIn("Rule 9 couldn't be done just now; it was left as it is.", content)
+        self.assertIn("Changed house rule 2.", content)  # the rest still went through
 
     async def test_ids_survive_a_restart_and_fit_a_phone(self) -> None:
         _, view = await self.offer()
@@ -317,6 +326,114 @@ class Pressing(SyncTest):
             self.assertIsNotNone(template.fullmatch(str(item.item.custom_id)))
             self.assertLessEqual(len(str(item.item.label)), 80)
             self.assertLessEqual(len(str(item.item.custom_id)), 100)
+
+
+class Safeguards(SyncTest):
+    """Mistakes a file can make must not cost the campaign its rules or its numbers."""
+
+    MANY: ClassVar[list[HouseRule]] = [rule(n, f"Rule {n}") for n in range(1, 9)]
+
+    async def test_a_file_that_removes_many_rules_has_no_accept_all(self) -> None:
+        self.store.rules = list(self.MANY)
+        text, view = await self.offer("1. Rule 1\n")  # 7 of 8 would go
+        self.assertIn("Accept all** is off", text)
+        self.assertEqual([str(b.item.label) for b in view.children], ["Review", "Not now"])
+        it = self.interaction()
+        await self.button(view, "Review").callback(it)
+        steps = [str(b.item.label) for b in it.response.edited[0][1].children]
+        self.assertEqual(steps, ["Accept", "Skip"])  # not even Accept the rest
+        self.assertEqual(len(self.store.rules), 8)
+
+    async def test_a_few_removals_make_review_the_easy_choice_and_accept_all_says_so(self) -> None:
+        _, view = await self.offer()
+        styles = {str(b.item.label): b.item.style for b in view.children}
+        self.assertEqual(styles["Review"], discord.ButtonStyle.primary)
+        self.assertEqual(styles["Accept all (1 to remove)"], discord.ButtonStyle.secondary)
+        _, clean = await self.offer("1. Keep\n2. Old\n3. Gone\n4. Extra\n")
+        label = {str(b.item.label): b.item.style for b in clean.children}["Accept all changes"]
+        self.assertEqual(label, discord.ButtonStyle.primary)  # nothing to remove
+
+    async def test_a_newer_offer_replaces_the_older_one(self) -> None:
+        _, old = await self.offer()
+        await self.offer(FILE + "10. More\n")
+        self.assertEqual(len(self.bot.house_syncs), 1)
+        it = self.interaction()
+        await self.button(old, "Accept all").callback(it)
+        self.assertEqual(it.response.sent[0][0], hs.CLOSED)
+        self.assertEqual(len(self.store.rules), 3)
+
+    async def test_accepting_once_retires_the_other_offers_so_nothing_is_added_twice(self) -> None:
+        _, view = await self.offer()
+        other = hs.Pending(
+            GUILD, C1, next(iter(self.bot.house_syncs._items.values())).items, "x" * 64, "s", False
+        )
+        other_key = self.bot.house_syncs.add(other)
+        await self.button(view, "Accept all").callback(self.interaction())
+        self.assertIsNone(self.bot.house_syncs.get(other_key))
+        self.assertEqual(len(self.bot.house_syncs), 0)
+
+    async def test_the_same_offer_done_twice_adds_no_copies(self) -> None:
+        items = house_file_sync.items_of(
+            house_file.compare(self.store.rules, house_file.parse(FILE).rules)
+        )
+        for _ in range(2):
+            await house_file_sync.apply(self.store, GUILD, C1, DM, items)
+        self.assertEqual(sorted(r.rule for r in self.store.rules).count("Fresh"), 1)
+
+    async def test_a_failure_part_way_is_said_and_the_rest_still_done(self) -> None:
+        self.store.rules = [rule(1, "Keep"), rule(2, "Old")]
+        _, view = await self.offer("1. Keep\n2. New\n5. Five\n6. Six\n")
+        real = self.store.add
+        calls = {"n": 0}
+
+        async def flaky(*args: Any, **kwargs: Any) -> Any:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("database went away")
+            return await real(*args, **kwargs)
+
+        self.store.add = flaky  # type: ignore[method-assign]
+        it = self.interaction()
+        await self.button(view, "Accept all").callback(it)
+        content = it.response.edited[0][0]
+        self.assertIn("1 left alone", content)
+        self.assertIn("couldn't be done just now", content)
+        self.assertIn("Added house rule 6.", content)
+        self.assertIn("Changed house rule 2.", content)
+        self.assertEqual(len(self.bot.house_syncs), 0)
+
+    async def test_many_changes_answer_discord_first(self) -> None:
+        self.store.rules = []
+        text = "".join(f"{n}. Rule {n}\n" for n in range(1, 9))
+        _, view = await self.offer(text)
+        order: list[str] = []
+        real = self.store.add
+
+        async def slow(*args: Any, **kwargs: Any) -> Any:
+            order.append("add")
+            return await real(*args, **kwargs)
+
+        self.store.add = slow  # type: ignore[method-assign]
+        it = self.interaction()
+        it.edit_original_response = AsyncMock()
+        real_defer = it.response.defer
+
+        async def defer(**kw: Any) -> None:
+            order.append("defer")
+            await real_defer(**kw)
+
+        it.response.defer = defer
+        await self.button(view, "Accept all").callback(it)
+        self.assertEqual(order[0], "defer")
+        self.assertEqual(order.count("add"), 8)
+        it.edit_original_response.assert_awaited()
+        self.assertIn("Done: 8 changed.", it.edit_original_response.await_args.kwargs["content"])
+
+    async def test_a_few_changes_are_answered_in_one_step(self) -> None:
+        _, view = await self.offer()
+        it = self.interaction()
+        await self.button(view, "Accept all").callback(it)
+        self.assertEqual(len(it.response.edited), 1)
 
 
 class Reading(SyncTest):
@@ -333,7 +450,7 @@ class Reading(SyncTest):
         with patch.object(fetch, "fetch", AsyncMock(return_value=got)) as fetched:
             await self.check()
         fetched.assert_awaited_once_with(DOC)
-        self.assertIn("1 new rule", self.sent[0][0])
+        self.assertIn("1 to add", self.sent[0][0])
 
     async def test_a_linked_file_that_matches_says_nothing_at_a_session_start(self) -> None:
         self.links.link = DOC
@@ -354,6 +471,13 @@ class Reading(SyncTest):
         self.assertNotIn("docs.google.com", text)
         self.assertNotIn("a" * 30, text)
         self.assertEqual(len(view.children), 0)
+
+    async def test_a_file_too_big_is_refused_before_it_is_decoded(self) -> None:
+        self.links.link = DOC
+        huge = fetch.Fetched(b"1. a\n" * (hs.READ_MAX_BYTES // 4), "link.txt")
+        with patch.object(fetch, "fetch", AsyncMock(return_value=huge)):
+            await self.check()
+        self.assertEqual(self.sent[0][0], hs.TOO_BIG)
 
     async def test_a_file_that_is_not_plain_text_is_said(self) -> None:
         self.links.link = DOC
@@ -411,9 +535,9 @@ class Menu(SyncTest):
             await file_ui.link_file(it, campaign(), DOC)
         self.assertEqual(self.links.calls, [("set", DM, DOC)])
         first, offer = it.followup.send.await_args_list[0], it.followup.send.await_args_list[-1]
-        self.assertIn("Linked: **docs.google.com**", first.args[0])
+        self.assertIn("Connected: **docs.google.com**", first.args[0])
         self.assertNotIn("a" * 30, first.args[0])
-        self.assertIn("1 new rule", offer.args[0])
+        self.assertIn("1 to add", offer.args[0])
         self.assertTrue(offer.kwargs["ephemeral"])
 
     async def test_check_it_now_also_looks_at_a_version_that_was_ignored(self) -> None:
@@ -424,7 +548,7 @@ class Menu(SyncTest):
             await hs.check_linked(self.bot, campaign(), self.send, quiet_if_same=True)
             self.assertEqual(self.sent, [])  # a session start stays quiet
             await hs.check_linked(self.bot, campaign(), self.send, quiet_if_same=False)
-        self.assertIn("1 new rule", self.sent[0][0])  # asked for: shown
+        self.assertIn("1 to add", self.sent[0][0])  # asked for: shown
 
     async def test_a_player_or_a_bad_link_links_nothing(self) -> None:
         player = self.interaction(PLAYER)
@@ -445,11 +569,43 @@ class Menu(SyncTest):
         it = self.interaction()
         await self.unlink_button(menu).callback(it)
         self.assertIsNone(self.links.link)
-        self.assertIn("Unlinked", it.followup.send.await_args.args[0])
+        self.assertIn("Done. DMbot won't read", it.followup.send.await_args.args[0])
         player = self.interaction(PLAYER)
         self.links.link = DOC
         await self.unlink_button(menu).callback(player)
         self.assertEqual(self.links.link, DOC)  # a player cannot
+
+    async def test_comparing_by_hand_waits_a_few_seconds_and_never_twice_at_once(self) -> None:
+        self.links.link = DOC
+        got = fetch.Fetched(FILE.encode(), "link.txt")
+        fetched = AsyncMock(return_value=got)
+        with patch.object(fetch, "fetch", fetched):
+            first, second = self.interaction(), self.interaction()
+            await file_ui.check_now(first, campaign())
+            await file_ui.check_now(second, campaign())
+        fetched.assert_awaited_once()  # the second came a moment after the first
+        self.assertEqual(second.followup.send.await_args.args[0], file_ui.TOO_OFTEN)
+        file_ui._last.clear()
+        gate = asyncio.Event()
+
+        async def slow(link: str) -> fetch.Fetched:
+            await gate.wait()
+            return got
+
+        with patch.object(fetch, "fetch", slow):
+            running = asyncio.create_task(file_ui.check_now(self.interaction(), campaign()))
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            file_ui._last.clear()
+            busy = self.interaction()
+            await file_ui.check_now(busy, campaign())
+            self.assertEqual(busy.followup.send.await_args.args[0], file_ui.ALREADY)
+            gate.set()
+            await running
+        self.assertEqual(file_ui._busy, set())  # the turn is given back
+
+    async def test_the_slash_link_option_without_a_campaign_says_what_to_do(self) -> None:
+        self.assertIn("pick the campaign", file_ui.PICK_FIRST)
 
     async def test_the_slash_link_option_is_there(self) -> None:
         from dmbot.ui.house_rules import dmbot_house_rules
@@ -472,7 +628,7 @@ class Uploading(SyncTest):
         it = self.interaction()
         await form.on_submit(it)
         offer = it.followup.send.await_args
-        self.assertIn("1 new rule", offer.args[0])
+        self.assertIn("1 to add", offer.args[0])
         self.assertTrue(offer.kwargs["ephemeral"])
         self.assertEqual(self.sent, [])  # not on the DM screen
         self.assertEqual(len(self.store.rules), 3)
@@ -498,6 +654,7 @@ class Uploading(SyncTest):
         same = self.interaction()
         await self.form(b"1. Keep\n2. Old\n3. Gone\n").on_submit(same)
         self.assertEqual(same.followup.send.await_args.args[0], hs.SAME)
+        file_ui._last.clear()  # (a comparison by hand waits a few seconds after the last)
         junk = self.interaction()
         await self.form(b"\x00\x01 not rules").on_submit(junk)
         self.assertIn("couldn't find any house rules", junk.followup.send.await_args.args[0])
@@ -538,7 +695,7 @@ class SessionStart(SyncTest):
             await self.settle()
         ((channel, text, view),) = self.posts
         self.assertEqual(channel, SCREEN)
-        self.assertIn("1 new rule", text)
+        self.assertIn("1 to add", text)
         self.assertEqual(len(view.children), 3)
         self.assertEqual(len(self.store.rules), 3)  # nothing changed by itself
 

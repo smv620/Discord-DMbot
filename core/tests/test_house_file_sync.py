@@ -48,7 +48,8 @@ class FakeStore:
         self._check(user_id)
         if len(self.rules) >= house.HOUSE_RULES_MAX:
             raise HouseRuleError(house.FULL)
-        self.made = wanted if wanted is not None and wanted > self.made else self.made + 1
+        window = self.made < (wanted or 0) <= self.made + house.HOUSE_RULES_MAX
+        self.made = wanted if wanted is not None and window else self.made + 1
         self.scenarios.append(scenario)
         added = rule(self.made, text, supersedes)
         self.rules.append(added)
@@ -119,23 +120,28 @@ class Words(unittest.TestCase):
         mine = [rule(1, "Keep"), rule(2, "Old"), rule(3, "Gone")]
         diff = diff_of(mine, "1. Keep\n2. New\n9. Fresh\n10. Another\n")
         self.assertEqual(
-            sync.summary(diff), "Your house-rules file has 2 new rules, 1 changed, 1 removed."
+            sync.summary(diff),
+            "**Your rules file and DMbot's house rules don't match:** "
+            "2 to add, 1 to change, 1 to remove.",
         )
 
     def test_one_of_a_kind_and_the_extra_notes(self) -> None:
         diff = diff_of([rule(4, "Same"), rule(5, "Old")], "11. Same\n5. New\n")
         text = sync.summary(diff, unreadable=3)
-        self.assertIn("1 changed", text)
+        self.assertIn("1 to change", text)
         self.assertIn("1 rule has another number in the file; DMbot keeps its own numbers.", text)
-        self.assertIn("3 lines in the file couldn't be read.", text)
-        self.assertIn("1 line in the file couldn't be read.", sync.summary(diff, unreadable=1))
+        self.assertIn("3 lines in the file didn't look like rules and were skipped.", text)
+        self.assertIn(
+            "1 line in the file didn't look like a rule and was skipped.",
+            sync.summary(diff, unreadable=1),
+        )
 
     def test_each_item_says_what_accepting_does(self) -> None:
         mine = [rule(2, "Old", "Book"), rule(3, "Gone")]
         add, change, remove = sync.items_of(
             diff_of(mine, "2. New (instead of: Other)\n9. Fresh\n")
         )[0:3]
-        self.assertIn("New in the file: 9. Fresh", sync.describe(add))
+        self.assertIn("Add as a new rule: 9. Fresh", sync.describe(add))
         self.assertIn("DMbot has: Old (instead of: Book)", sync.describe(change))
         self.assertIn("The file says: New (instead of: Other)", sync.describe(change))
         self.assertIn("Accepting removes it from DMbot.", sync.describe(remove))
@@ -176,7 +182,14 @@ class Applying(unittest.IsolatedAsyncioTestCase):
         added = max(store.rules, key=lambda r: r.number)
         self.assertEqual((added.number, added.rule), (9, "Back from the dead"))
         self.assertIn("Added the file's rule 7 as house rule 9", applied.done[0])
-        self.assertIn("number 7 was used before", applied.done[0])
+        self.assertIn("a number is never used twice", applied.done[0])
+
+    async def test_one_stray_big_number_does_not_use_up_the_numbers(self) -> None:
+        store = FakeStore([rule(1, "One")])
+        applied = await self.run_all(store, "1. One\n2147483646. Year-ish\n")
+        added = max(store.rules, key=lambda r: r.number)
+        self.assertEqual((added.number, store.made), (2, 2))
+        self.assertIn("Added the file's rule 2147483646 as house rule 2", applied.done[0])
 
     async def test_a_number_never_used_is_kept_even_if_higher(self) -> None:
         store = FakeStore([rule(1, "One")])
@@ -216,7 +229,7 @@ class Applying(unittest.IsolatedAsyncioTestCase):
     async def test_the_result_is_short(self) -> None:
         applied = sync.Applied([f"Added house rule {n}." for n in range(30)], ["x"] * 9)
         lines = sync.result_text(applied).splitlines()
-        self.assertLessEqual(len(lines), 8 + 1 + 5 + 1)
+        self.assertLessEqual(len(lines), 1 + 8 + 1 + 5 + 1)
         self.assertEqual(sync.result_text(sync.Applied()), "Nothing to change.")
 
 

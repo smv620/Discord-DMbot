@@ -41,27 +41,39 @@ TEXT_MAX = 1900
 READ_MAX_BYTES = 4 * house_file.MAX_FILE_CHARS  # as bytes: UTF-8 is up to 4 per character
 
 CLOSED = (
-    "This offer has ended (DMbot restarted, or it was already dealt with). To compare your "
-    "file again, press **House-rules file** in `/dmbot houserules`."
+    "This offer has ended (DMbot restarted, or it was already handled). To compare again, "
+    "press ⚙️ Settings, then 📄 House-rules file, then 🔄 Compare now."
 )
 ONLY_DMS = "Only this campaign's DMs can use these buttons."
-FAILED = "Couldn't do that. Nothing was changed. Press the button again."
+FAILED = (
+    "That didn't work. Some changes may have been made, so look at `/dmbot houserules` before "
+    "you try again. If it keeps happening, tell the person who runs DMbot."
+)
 STALE = "That one was already dealt with."
-NOTHING_CHANGES = "_Nothing changes unless you press a button._"
+NOTHING_CHANGES = (
+    "_Nothing changes until you press a button. Review lets you go one rule at a time._"
+)
+BIG_REMOVAL = (
+    "⚠️ That would remove many of your house rules, so **Accept all** is off. If your file "
+    "looks wrong, press **Not now**; otherwise use **Review**."
+)
 SAME = "Your house-rules file and DMbot's house rules match. Nothing to change."
 NOT_TEXT = (
-    "Your house-rules file isn't plain text. Share it as a Google Doc or a .txt file. "
+    "Your rules file isn't a Google Doc or a plain .txt file, so I couldn't read it. "
     "Nothing was changed."
 )
 TOO_BIG = "That file is too big to be a house-rules file. Nothing was changed."
+SHARING = " Check that sharing is set to “Anyone with the link”, then press 🔄 Compare now."
+DEFER_AT = 5  # more than this many changes: answer Discord first, then do them
+BIG_REMOVALS = 6  # this many removals, or more than half of DMbot's rules, turns Accept all off
 LABELS = {
-    "all": ("Accept all", "✅", discord.ButtonStyle.primary),
+    "all": ("Accept all changes", "✅", discord.ButtonStyle.primary),
     "review": ("Review", "🔍", discord.ButtonStyle.secondary),
-    "ignore": ("Ignore until the file changes", "🙈", discord.ButtonStyle.secondary),
-    "dismiss": ("Ignore", "🙈", discord.ButtonStyle.secondary),
+    "ignore": ("Not now", "🙈", discord.ButtonStyle.secondary),
+    "dismiss": ("Close", "🙈", discord.ButtonStyle.secondary),
     "accept": ("Accept", "✅", discord.ButtonStyle.primary),
     "skip": ("Skip", "⏭️", discord.ButtonStyle.secondary),
-    "rest": ("Accept the rest", "✅", discord.ButtonStyle.secondary),
+    "rest": ("Accept this and the rest", "✅", discord.ButtonStyle.secondary),
 }
 
 Send = Callable[[str, discord.ui.View], Awaitable[bool]]
@@ -69,16 +81,17 @@ Send = Callable[[str, discord.ui.View], Awaitable[bool]]
 
 def couldnt_read(why: str) -> str:
     return (
-        f"I couldn't read your house-rules file: {why} The session goes on with DMbot's "
-        "copy. Nothing was changed."
+        f"I couldn't read your house-rules file: {why}{SHARING} The session goes on with "
+        "DMbot's copy. Nothing was changed."
     )[:TEXT_MAX]
 
 
 def no_rules(unreadable: int) -> str:
-    extra = f" ({unreadable} lines couldn't be read)" if unreadable else ""
+    extra = f" ({unreadable} lines didn't look like rules)" if unreadable else ""
     return (
         f"I couldn't find any house rules in your file{extra}, so nothing was changed. A rule "
-        "is one line: its number, a dot, then the rule, like `12. Potions are a bonus action`."
+        "is one line: its number, a dot, then the rule, like `12. Potions are a bonus action`. "
+        "Press 📥 Download rules in `/dmbot houserules` to get a file with the right layout."
     )
 
 
@@ -90,6 +103,8 @@ class Pending:
     fingerprint: str
     summary: str
     from_link: bool  # a linked file (can be ignored until it changes) or an upload
+    removals: int = 0  # how many of the items remove a rule
+    big: bool = False  # many removals: no Accept all
     index: int = 0  # the item a review is on
     applied: Applied = field(default_factory=Applied)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -115,6 +130,13 @@ class Pendings:
     def drop(self, key: str) -> None:
         self._items.pop(key, None)
 
+    def drop_campaign(self, guild_id: int, campaign_id: str, *, keep: str | None = None) -> None:
+        """Forget this campaign's offers (an older one is out of date once a newer one is
+        made or any change is accepted), except `keep`."""
+        for key, pending in list(self._items.items()):
+            if key != keep and (pending.guild_id, pending.campaign_id) == (guild_id, campaign_id):
+                del self._items[key]
+
     def __len__(self) -> int:
         return len(self._items)
 
@@ -124,25 +146,33 @@ def _md(text: str) -> str:
 
 
 def offer_text(pending: Pending) -> str:
-    return f"📄 {pending.summary}\n{NOTHING_CHANGES}"
+    extra = f"\n{BIG_REMOVAL}" if pending.big else ""
+    return f"📄 {pending.summary}\n{NOTHING_CHANGES}{extra}"
 
 
 def review_text(pending: Pending) -> str:
     item = pending.items[pending.index]
-    head = f"📄 **Review {pending.index + 1} of {len(pending.items)}**\n"
+    head = (
+        f"📄 **Review {pending.index + 1} of {len(pending.items)}** "
+        "(Accept = use the file's version)\n"
+    )
     return (head + _md(house_file_sync.describe(item)))[:TEXT_MAX]
 
 
 def offer_view(guild_id: int, key: str, pending: Pending) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for action in ("all", "review", "ignore" if pending.from_link else "dismiss"):
-        view.add_item(HouseSyncButton(guild_id, key, action, 0))
+    actions = [] if pending.big else ["all"]
+    actions += ["review", "ignore" if pending.from_link else "dismiss"]
+    for action in actions:
+        view.add_item(HouseSyncButton(guild_id, key, action, 0, pending.removals))
     return view
 
 
 def review_view(guild_id: int, key: str, pending: Pending) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    actions = ["accept", "skip"] + (["rest"] if pending.index + 1 < len(pending.items) else [])
+    actions = ["accept", "skip"]
+    if not pending.big and pending.index + 1 < len(pending.items):
+        actions.append("rest")
     for action in actions:
         view.add_item(HouseSyncButton(guild_id, key, action, pending.index))
     return view
@@ -155,8 +185,13 @@ class HouseSyncButton(
         r"(?P<guild>[0-9]{1,20}):(?P<key>[0-9a-f]{8}):(?P<n>[0-9]{1,4})"
     ),
 ):
-    def __init__(self, guild_id: int, key: str, action: str, n: int) -> None:
+    def __init__(self, guild_id: int, key: str, action: str, n: int, removals: int = 0) -> None:
         label, emoji, style = LABELS[action]
+        if removals:  # Accept all includes removals: say so, and don't make it the easy one
+            if action == "all":
+                label, style = f"Accept all ({removals} to remove)", discord.ButtonStyle.secondary
+            elif action == "review":
+                style = discord.ButtonStyle.primary
         super().__init__(
             discord.ui.Button(
                 label=label,
@@ -185,7 +220,19 @@ class HouseSyncButton(
 
 
 async def _show(interaction: discord.Interaction, text: str, view: discord.ui.View | None) -> None:
-    await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
+    """Change the message the button is on: through the answer, or, if Discord was answered
+    first (a long job), through the original response."""
+    if interaction.response.is_done():
+        await interaction.edit_original_response(content=text, view=view)
+    else:
+        await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
+
+
+async def _answer_long_job(interaction: discord.Interaction, how_many: int) -> None:
+    """Many changes take a while (each is its own step in the database), and Discord waits
+    3 seconds: answer first."""
+    if how_many > DEFER_AT and not interaction.response.is_done():
+        await interaction.response.defer()
 
 
 async def _finish(interaction: discord.Interaction, key: str, pending: Pending) -> None:
@@ -194,12 +241,19 @@ async def _finish(interaction: discord.Interaction, key: str, pending: Pending) 
     bot.house_syncs.drop(key)
     result = house_file_sync.result_text(pending.applied)
     await _show(interaction, f"📄 {pending.summary}\n{_md(result)}"[:TEXT_MAX], None)
-    if pending.applied.done:  # the file as it is now, privately (#969, part 1)
+    if pending.applied.done:
+        # Other offers for this campaign are out of date now.
+        bot.house_syncs.drop_campaign(pending.guild_id, pending.campaign_id)
+        # The file as it is now, privately (#969, part 1).
         from dmbot.ui import house_file as file_ui
 
         campaign = await bot.campaigns.get(pending.guild_id, pending.campaign_id)
         if campaign is not None:
-            await file_ui.send_after_change(interaction, campaign, "House rules updated.")
+            await file_ui.send_after_change(
+                interaction,
+                campaign,
+                "House rules updated. Here is the new list, in case you want to replace your file.",
+            )
 
 
 async def press(
@@ -238,9 +292,15 @@ async def press(
                 if links is not None:
                     await links.ignore(guild_id, pending.campaign_id, user_id, pending.fingerprint)
             bot.house_syncs.drop(key)
-            await _show(interaction, f"📄 {pending.summary}\n_Ignored._", None)
+            note = (
+                "_Left as it is. I'll mention it again when the file changes._"
+                if action == "ignore"
+                else "_Left as it is._"
+            )
+            await _show(interaction, f"📄 {pending.summary}\n{note}", None)
         elif action in ("all", "rest"):
             todo = pending.items[pending.index :]
+            await _answer_long_job(interaction, len(todo))
             done = await house_file_sync.apply(store, guild_id, pending.campaign_id, user_id, todo)
             pending.applied.done += done.done
             pending.applied.skipped += done.skipped
@@ -296,6 +356,8 @@ async def compare_text(
     items = house_file_sync.items_of(diff)
     if not items:
         return SAME
+    removals = len(diff.removed)
+    big = removals >= BIG_REMOVALS or (removals >= 2 and removals * 2 > len(mine))
     pending = Pending(
         campaign.guild_id,
         campaign.id,
@@ -303,7 +365,10 @@ async def compare_text(
         fingerprint,
         house_file_sync.summary(diff, unreadable),
         from_link,
+        removals,
+        big,
     )
+    bot.house_syncs.drop_campaign(campaign.guild_id, campaign.id)  # the older ones are stale
     key = bot.house_syncs.add(pending)
     if not await send(offer_text(pending), offer_view(campaign.guild_id, key, pending)):
         bot.house_syncs.drop(key)
@@ -323,6 +388,8 @@ async def read_link(bot: Any, campaign: Campaign) -> tuple[str | None, str | Non
         return None, couldnt_read(str(exc))
     if not got.filename.endswith(".txt"):
         return None, NOT_TEXT
+    if len(got.data) > READ_MAX_BYTES:  # before decoding anything
+        return None, TOO_BIG
     return got.data.decode("utf-8", errors="replace"), None
 
 
