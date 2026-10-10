@@ -1657,7 +1657,6 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Result: all of these were in the 17:27 build (21c5ff1), deployed from their PRs' deploy notes.
 
 ==============================================================================
-<<<<<<< HEAD
 2026-10-10  Server: core restarted for a new Anthropic API key (dev1, owner's request)
 ==============================================================================
   - The owner replaced ANTHROPIC_API_KEY with scripts/set-key and asked for core to be
@@ -1669,7 +1668,8 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     runs (🤖 Find names, the off-topic filter, the Transcript Cleaner's second look). A
     short 🤖 Find names on a pasted paragraph, or Test D with the off-topic filter, will
     show it; an authentication error would appear in the core log.
-=======
+
+==============================================================================
 2026-10-10  Server: DMBOT_FREE_USERS set (dev1, owner's request)
 ==============================================================================
   - The owner gave the Discord ID of the primary admin (their own account) in chat. dev1
@@ -1683,7 +1683,6 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   - DMBOT_ENFORCE_PLANS is still off, so nothing changes at the table yet. With it on, that
     account has no hours or campaign limits. Check for a person: the admin page lists the id
     as "Always free" (https://dev.getdmbot.com/admin, signed in).
->>>>>>> 9593d19 (logs: DMBOT_FREE_USERS set for the owner's account)
 
 ==============================================================================
 2026-10-10  Server: deploy 75a62d0, core and web-api together (dev1)
@@ -1800,3 +1799,37 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Result: both were live before the lines were added: 0037_pause applied, no errors.
   Still for a person: #962's pause and unpause on the ⚙️ Settings card (plans off); #977's
   out-of-funds message to the admin, which only fires when the AI account really runs out.
+
+==============================================================================
+2026-10-10  Conflict markers removed from this log (dev1, #1000)
+==============================================================================
+  - Two entries above ("core restarted for a new Anthropic API key" and "DMBOT_FREE_USERS
+    set") had been committed with unresolved merge-conflict markers (<<<<<<<, =======,
+    >>>>>>>) between them: dev1's landing script had resolved only the status log when two
+    log PRs both appended here. The three marker lines were removed and the second entry's
+    top rule restored; no words were changed. The DMBOT_FREE_USERS entry is history only:
+    the list was emptied again in the 03:20 UTC deploy (see that entry); it is empty now.
+  - The landing script now re-applies a log PR on top of development instead of rebasing, and
+    refuses to push if a conflict marker or any other file is present.
+
+==============================================================================
+2026-10-10  Server: deploy adb179a, core only; sidebar re-test (dev1)
+==============================================================================
+  - 04:2x UTC  development @ adb179a, core: #992 and #997 (the sidebar's accuracy fixes:
+    consistent with a given entry, no unsourced certainty, both editions when asked; prompt
+    sidebar-2; DMBOT_SIDEBAR stays 0) and #988 (house-rules file part 2: link a file, compare
+    it at every session start; migration 0040_house_rules_file). None had a queue line; the PR
+    pages said "core only" (#997) and described migration 0040 (#988, with its 5-minute live
+    check).
+  - Migration 0040_house_rules_file: a new table with row security on and forced; 0 rows.
+    Backup first (35 tables); no session was live; scripts/update-env had nothing to add;
+    `up -d --no-build core` naming the service (web-api and ears untouched). Logs: "Database
+    updated: 0040_house_rules_file", "Connected to 1 server(s)", "ears connected"; 0 errors;
+    /health 404.
+  - Sidebar re-test (python -m dmbot.devtools.sidebar_check in a one-off container, the
+    owner's new key, the 18 cases with must-say words): 13 of 18 pass, times 0.7 to 2.7 s;
+    the fireball questions now agree; unsourced rules now say "not in DMbot's rules, check
+    your book". Fails: a general rule stated as sure (#9), the 2014 goblin answer does not
+    name Goblin Warrior (#15), two checker wording misses and one that does not name the NPC.
+    Table and my reading posted on #954 for Supervisor. DMBOT_SIDEBAR stays 0.
+  - For a person: #988's 5-minute check with a Google Doc (listed in the status log).
