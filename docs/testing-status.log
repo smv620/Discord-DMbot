@@ -9,6 +9,16 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- CloudDev, #985 (#964, plan rules part 5): retention. Migration **0039** (core only; two columns on
+  campaigns with defaults, runs by itself at start). A daily job at 03:00 UTC warns an owner 14 and 3
+  days before a campaign's delete date and deletes it after the last warning. **Nothing happens
+  unless DMBOT_ENFORCE_PLANS is on** (off: one dry-run line with counts in the core log). A run that
+  would delete more than 10% of all campaigns stops and logs an error. Check: core log shows migration
+  0039 applied; with enforcement off, a "Retention dry run" line each night around 03:00 UTC.
+- CloudDev, #997 (#992): sidebar accuracy fixes, core only, no migration (prompt version sidebar-2).
+  `DMBOT_SIDEBAR` stays 0. After deploy dev1 runs `python -m dmbot.devtools.sidebar_check` again and
+  posts the 17 answers on #954; the check now also reports MISSING / MUST NOT SAY for the cases that
+  matter (#1, #5, #8, #14, #17). Supervisor reads them before the sidebar is turned on.
 - dev2, PR #988 (adb179a, #969 part 2: the linked house-rules file). Core only. Migration **0040**
   (new table `house_rules_file`, runs by itself at start). Nothing the DM sees until a file is
   connected. Live check (about 5 minutes, one person, a Google Doc): put "1. Potions are a bonus
