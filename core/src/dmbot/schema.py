@@ -1396,6 +1396,26 @@ RETENTION = """
     ALTER TABLE campaigns ADD COLUMN retention_warned_for BIGINT;
 """
 
+GAME_EFFECTS = f"""
+    -- Timed effects the DM starts on a campaign's game clock (#998; docs/PLAN.md, "TimeBot"):
+    -- Bless, Mage Armor and the like. Per campaign, never shared between campaigns or servers;
+    -- deleted with the campaign; in its backups. Only the campaign's DMs start or end them
+    -- (dmbot.timebot.effects checks that in the same transaction). Ends are game minutes, so
+    -- a restart keeps them. At most 20 per campaign (checked in the same transaction).
+    --   told  the "has likely ended" line was said (once); the DM then ends it or extends it
+    CREATE TABLE game_effects (
+        {_memory_scope()}
+        number        INTEGER NOT NULL CHECK (number > 0),
+        name          TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 60),
+        target        TEXT CHECK (target IS NULL OR char_length(target) BETWEEN 1 AND 60),
+        minutes       INTEGER NOT NULL CHECK (minutes > 0),
+        concentration BOOLEAN NOT NULL DEFAULT FALSE,
+        ends_minute   BIGINT NOT NULL CHECK (ends_minute >= 0),
+        told          BOOLEAN NOT NULL DEFAULT FALSE,
+        PRIMARY KEY (guild_id, campaign_id, number)
+    );
+    """ + _isolate("game_effects")
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -1578,6 +1598,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0038_payment_event_kind", PAYMENT_EVENT_KIND),
     ("0039_retention", RETENTION),
     ("0041_game_clocks", GAME_CLOCKS),
+    ("0042_game_effects", GAME_EFFECTS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -1598,6 +1619,7 @@ ISOLATED_TABLES = (
     "house_rules",
     "session_usage",
     "game_clocks",
+    "game_effects",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

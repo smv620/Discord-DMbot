@@ -26,6 +26,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.rules import optional
 from dmbot.timebot import clock as game
+from dmbot.timebot import effects
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.store import ClockStore, Stored
 
@@ -57,12 +58,29 @@ ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     "short": ("Short rest", "🛌", discord.ButtonStyle.secondary, 1),
     "long": ("Long rest", "🌙", discord.ButtonStyle.secondary, 1),
     "dawn": ("Skip to dawn", "🌅", discord.ButtonStyle.secondary, 1),
+    "timer": ("Start a timer", "⏳", discord.ButtonStyle.secondary, 2),
 }
 MARK_LINES = {"dawn": "🌅 Dawn", "noon": "☀️ Noon", "dusk": "🌇 Dusk"}
 
 
-def clock_text(clock: Clock) -> str:
-    return f"🕰️ **{game.label(clock.minute)}**"
+def clock_text(clock: Clock, effect_lines: list[str] | None = None) -> str:
+    """The pinned message: the time, then the running timers one to a line (#998)."""
+    head = f"🕰️ **{game.label(clock.minute)}**"
+    return "\n".join([head, *(effect_lines or [])])
+
+
+async def render(client: Any, campaign: Campaign, clock: Clock) -> str:
+    """The clock message as it should read now, with the campaign's running timers. A
+    timers store that can't be read just leaves them off: the time still shows."""
+    store = getattr(client, "effects", None)
+    if store is None:
+        return clock_text(clock)
+    try:
+        running = await store.running(campaign.guild_id, campaign.id)
+    except Exception:
+        log.exception("Couldn't read the timers for the clock message")
+        return clock_text(clock)
+    return clock_text(clock, effects.lines(running, clock.minute))
 
 
 @dataclass(slots=True)
@@ -168,7 +186,7 @@ def clock_view(campaign_id: str) -> discord.ui.View:
 async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Message | None:
     """Edit the pinned clock message in place with the clock now; post (and pin) a new one if
     there isn't one or it is gone. Returns the message, or None if nothing could be shown."""
-    text, view = clock_text(stored.clock), clock_view(campaign.id)
+    text, view = await render(client, campaign, stored.clock), clock_view(campaign.id)
     channel = client.get_channel(stored.channel_id) if stored.channel_id else None
     if isinstance(channel, discord.abc.Messageable) and stored.message_id:
         try:
@@ -291,6 +309,9 @@ async def _run_press(
             SET_DONE.format(label=game.short_label(result.after.minute), where=message.jump_url),
         )
     await say(client, campaign, result.lines)  # dawn, noon, dusk, tired: on the DM screen
+    from dmbot.dm_screen import effects as timers
+
+    await timers.announce_due(client, campaign, result.after.minute)
     if result.before is not None and action in ("short", "long", "dawn"):
         # The DM who pressed sees the clock change; the note with Undo is for them alone.
         note = rest_note(action, result.after)
@@ -314,13 +335,14 @@ async def _show_here(
     else (the form opened from ⚙️ Settings), show it the usual way."""
     message = interaction.message
     if message is not None and message.id == stored.message_id:
-        text, view = clock_text(stored.clock), clock_view(campaign.id)
+        text, view = await render(client, campaign, stored.clock), clock_view(campaign.id)
         with contextlib.suppress(discord.HTTPException):
             await message.edit(content=text, view=view, allowed_mentions=NO_PINGS)
             return message
     if message is not None and _is_clock_message(message):
         with contextlib.suppress(discord.HTTPException):
-            await message.edit(content=clock_text(stored.clock), view=clock_view(campaign.id))
+            text = await render(client, campaign, stored.clock)
+            await message.edit(content=text, view=clock_view(campaign.id))
             await client.clocks.set_message(
                 campaign.guild_id, campaign.id, message.channel.id, message.id
             )
@@ -342,7 +364,7 @@ async def _reply(interaction: discord.Interaction, text: str) -> None:
 
 class ClockButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:clock:{_ID}:(?P<action>m10|h1|short|long|dawn|set|open)",
+    template=rf"dmbot:clock:{_ID}:(?P<action>m10|h1|short|long|dawn|set|timer|open)",
 ):
     """One of the clock's buttons (`open` is the ⚙️ Settings button that starts or shows it)."""
 
@@ -374,6 +396,11 @@ class ClockButton(
         if guild is None:
             return
         try:
+            if self.action == "timer":
+                from dmbot.dm_screen import effects as timers
+
+                await interaction.response.send_modal(timers.TimerForm(self.campaign_id))
+                return
             if self.action in ("set", "open"):
                 await self._form_or_show(interaction, client, guild.id)
                 return

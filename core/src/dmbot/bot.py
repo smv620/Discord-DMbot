@@ -69,6 +69,7 @@ from dmbot.dm_screen import (
     rules_cards,
 )
 from dmbot.dm_screen import clock as clock_screen
+from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
@@ -135,7 +136,9 @@ from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.ask import AskLimiter
 from dmbot.sidebar.service import Recent, SidebarService
+from dmbot.timebot import durations
 from dmbot.timebot import phrases as clock_phrases
+from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out
 from dmbot.transcript import questions as name_questions
@@ -446,6 +449,7 @@ class DMBot(commands.AutoShardedBot):
         house_rules: HouseRuleStore | None = None,
         meter: usage.Meter | None = None,
         clocks: ClockStore | None = None,
+        effects: EffectStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -478,6 +482,8 @@ class DMBot(commands.AutoShardedBot):
         self.house_rules = house_rules
         # Each campaign's game clock (#965); None without a database.
         self.clocks = clocks
+        # Timed effects on that clock (#998); None without a database.
+        self.effects = effects
         # The hours meter (#437 part 2): listening minutes are written here; None records
         # nothing (tests and tools that run no real sessions).
         self.meter = meter
@@ -620,6 +626,7 @@ class DMBot(commands.AutoShardedBot):
         # "Check new names" on the DM screen after a session.
         self.add_dynamic_items(ReviewButton)
         self.add_dynamic_items(clock_screen.ClockButton, clock_screen.ClockUndoButton)  # #965
+        self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
         self.add_dynamic_items(UndoButton, UndoListButton)
         # "Download transcript" in the private message when a session ends.
@@ -2482,6 +2489,7 @@ class DMBot(commands.AutoShardedBot):
         if stored is None:
             return
         await clock_screen.show(self, campaign, stored)
+        await timer_screen.announce_due(self, campaign, stored.clock.minute)
         await clock_screen.say(
             self,
             campaign,
@@ -2617,8 +2625,14 @@ class DMBot(commands.AutoShardedBot):
             table.rules.forget(card_id, before)
             return
         text = rule_card.alert_text(hit, mention.said, mention.heard, rules)
+        timed = (
+            hit.entry.kind == "spell"
+            and durations.parse(str(hit.entry.details.get("duration", ""))).timed
+        )  # a spell with a length gets Time it (#998)
         posted = await self.post_message(
-            table.screen_channel_id, text, rules_cards.card_view(table.guild_id, card_id)
+            table.screen_channel_id,
+            text,
+            rules_cards.card_view(table.guild_id, card_id, timed=timed),
         )
         if posted is None:
             table.rules.forget(card_id, before)
@@ -4410,6 +4424,7 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
+        campaigns.register_section(EffectsSection())  # and its timed effects (#998)
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
         bot = DMBot(
@@ -4424,6 +4439,7 @@ async def run(settings: Settings) -> None:
             HouseRuleStore(db),
             usage.Meter(db),
             ClockStore(db),
+            EffectStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
