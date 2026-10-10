@@ -35,6 +35,7 @@ from dmbot.campaigns.models import (
 )
 from dmbot.dm_screen import handover, messages
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
+from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
 from dmbot.logs import set_log_context
 
@@ -127,6 +128,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
     if viewer in campaign.dm_user_ids:  # rules lookup is for the campaign's DMs (#908)
         view.add_item(RuleLookupButton(campaign.id))
         view.add_item(RulesCardsButton(campaign.id, campaign.rules_cards))
+        view.add_item(ClockButton(campaign.id, "open"))  # the game clock (#965)
         view.add_item(HouseFileButton(campaign.id))  # the house-rules file (#969)
     return view
 

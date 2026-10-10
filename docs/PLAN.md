@@ -1743,6 +1743,24 @@ background.
   far ahead of the other.
 - The DM can correct the clock with buttons ([+1 hour] [It's dawn] [Set time…]).
 
+*Built, part 1: the clock and the DM's buttons (2026-10-10, #965):* no AI, and no guessing time
+from narration. `game_clocks` (migration 0041): one row per campaign, in its own server scope,
+deleted with the campaign and carried in backups (`ClockSection`, without message ids); none
+until a DM sets it. **Game time** is minutes since the start of Day 1; dawn is 06:00, noon 12:00,
+dusk 18:00 (`dmbot.timebot.clock`, pure). A DM presses ⚙️ Settings, then **Game clock**, gives a
+day and an hour, and DMbot posts and pins one message, "🕰️ Day 4, afternoon (14:30)", edited in
+place, with **+10 min**, **+1 hour**, **Short rest** (+1 h), **Long rest** (+8 h), **Skip to dawn**
+and **Set time…**. Only the campaign's DMs can press them: checked on every press, in the same
+database transaction as the change; the buttons survive a restart. **Said at the table:** a
+DM's clear "we take a short rest" / "you take a long rest" (a strict phrase list: a question, a
+wish, an "if", a "can't" or a long ramble never counts; the same rest twice in five minutes is
+one) moves a clock the DM has set, with a one-line note and **Undo** (a rest from a button gets its note and Undo for the DM who
+pressed it alone; it only undoes while the clock is still where the rest left it); a player's line never does. **Speaks up only for** dawn,
+noon and dusk as a button or rest passes them (not when the DM sets the time), and **24 hours
+without a long rest**, once per stretch, with its source ("Check: 24 hours since the last long rest… Optional rule, Xanathar's… Your call."); on by default, and off if the DM turns the "Going without a long rest" optional rule
+off. The first time the clock is set the party counts as rested then. Not built yet: effect
+durations, split-party clocks, reading time from narration, periodic notes.
+
 **DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
 DMbot is there to help the game move quickly, never to bog it down or distract. The
 sidebar is the DM's shortcut to an AI that knows this campaign and knows DMbot, so the

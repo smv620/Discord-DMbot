@@ -69,6 +69,7 @@ from dmbot.dm_screen import (
     peek_view,
     rules_cards,
 )
+from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
@@ -137,6 +138,8 @@ from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.ask import AskLimiter
 from dmbot.sidebar.service import Recent, SidebarService
+from dmbot.timebot import phrases as clock_phrases
+from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import stream as transcript_lines
@@ -206,6 +209,7 @@ METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
+CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once (#965)
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
@@ -337,6 +341,9 @@ class Table:
     rules: rules_cards.RulesCards = field(default_factory=rules_cards.RulesCards)
     # A house rule the DM said at the table, offered with Save / Edit / Cancel (#953).
     house_voice: house_voice.HouseVoice = field(default_factory=house_voice.HouseVoice)
+    # When a rest said at the table last moved the game clock, by kind (monotonic seconds):
+    # the same phrase twice in a few minutes is one rest (#965).
+    clock_said: dict[str, float] = field(default_factory=dict)
     resumed: bool = False  # picked up again after a restart
     announce_resume: bool = True  # post "listening again" when voice is back
     # Asked privately about recording (or reminded) this session: at most once each.
@@ -441,6 +448,7 @@ class DMBot(commands.AutoShardedBot):
         sheets: SheetStore | None = None,
         house_rules: HouseRuleStore | None = None,
         meter: usage.Meter | None = None,
+        clocks: ClockStore | None = None,
         house_file_links: HouseFileLinkStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
@@ -472,6 +480,8 @@ class DMBot(commands.AutoShardedBot):
         self.sheets = sheets
         # A campaign's house rules, for `/dmbot houserules` (#865); None without a database.
         self.house_rules = house_rules
+        # Each campaign's game clock (#965); None without a database.
+        self.clocks = clocks
         # The linked house-rules file (#969), and what is waiting for a DM's press.
         self.house_file_links = house_file_links
         self.house_syncs = house_sync.Pendings()
@@ -617,6 +627,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(*CONSENT_BUTTONS)
         # "Check new names" on the DM screen after a session.
         self.add_dynamic_items(ReviewButton)
+        self.add_dynamic_items(clock_screen.ClockButton, clock_screen.ClockUndoButton)  # #965
         # Undo after forgetting a name (its card), after a restart too.
         self.add_dynamic_items(UndoButton, UndoListButton)
         # "Download transcript" in the private message when a session ends.
@@ -2382,6 +2393,11 @@ class DMBot(commands.AutoShardedBot):
                     self._note_house_rule(table, utterance.user_id, str(cleaned or text))
             except Exception:
                 log.exception("House rules by voice: couldn't look at a line")
+            if utterance.user_id in table.dm_user_ids and self.clocks is not None:
+                self._track(  # only a DM's own line can move the clock
+                    self._note_clock_phrase(table, utterance.user_id, str(cleaned or text)),
+                    "clock-phrase",
+                )
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
             table.unsaved.add(
@@ -2443,6 +2459,45 @@ class DMBot(commands.AutoShardedBot):
         before = table.rules.last_at  # given back if the card can't be shown
         card_id = table.rules.remember(mention, time.monotonic())
         self._track(self._post_rules_card(table, user_id, mention, card_id, before), "rules-card")
+
+    async def _note_clock_phrase(self, table: Table, user_id: int, line: str) -> None:
+        """A DM's clear "we take a short rest" / "you take a long rest" moves the game clock,
+        if the DM has set one (#965): no AI, and a player's line never does. One short note
+        on the DM screen with an Undo button."""
+        rest = clock_phrases.find(line)
+        if rest is None or table.campaign_id is None:
+            return
+        if not table.listening or self.tables.get(table.guild_id) is not table:
+            return
+        if user_id not in table.dm_user_ids or not self.consent.has_consent(
+            table.guild_id, user_id
+        ):
+            return
+        now = time.monotonic()
+        last = table.clock_said.get(rest)
+        if last is not None and now - last < CLOCK_PHRASE_GAP_S:
+            return
+        table.clock_said[rest] = now
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return
+        try:
+            result = await clock_screen.press(self, campaign.guild_id, campaign.id, user_id, rest)
+        except Exception:
+            log.exception("The game clock couldn't take a rest said at the table")
+            return
+        if result.before is None or result.after is None:
+            return  # no clock set yet: nothing to move
+        stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
+        if stored is None:
+            return
+        await clock_screen.show(self, campaign, stored)
+        await clock_screen.say(
+            self,
+            campaign,
+            [clock_screen.rest_note(rest, result.after), *result.lines],
+            clock_screen.undo_id(result.before, result.after),
+        )
 
     def _check_house_file(self, campaign: Campaign, screen_id: int) -> None:
         """At a session start: read the campaign's linked house-rules file, if any, and put
@@ -4379,6 +4434,7 @@ async def run(settings: Settings) -> None:
         )
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+        campaigns.register_section(ClockSection())  # and the game clock (#965)
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
         bot = DMBot(
@@ -4392,6 +4448,7 @@ async def run(settings: Settings) -> None:
             SheetStore(db),
             HouseRuleStore(db),
             usage.Meter(db),
+            ClockStore(db),
             HouseFileLinkStore(db),
         )
         _close_on_sigterm(bot)
