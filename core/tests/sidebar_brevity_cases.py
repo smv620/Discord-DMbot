@@ -74,7 +74,7 @@ CASES: tuple[Case, ...] = (
     ),
     Case(  # not in the free rules' index: no source, so never "sure" (#992)
         "can fireball hit someone behind a wall",
-        (reply("No. A solid wall blocks the blast.", "none", "sure"),),
+        (reply("No. A solid wall blocks the blast.", "SRD 5.2.1 p. 131", "not sure"),),
         ("not in dmbot's rules",),
         yes_no=True,
         must_not=("sure)", ", sure"),
