@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-10 by dev1 (core adb179a, web-api 75a62d0; Test D next)
+Last updated: 2026-10-10 by dev1 (core 40b3c79, web-api 75a62d0; Test D passed; sidebar test next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,54 +9,28 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- CloudDev, #985 (#964, plan rules part 5): retention. Migration **0039** (core only; two columns on
-  campaigns with defaults, runs by itself at start). A daily job at 03:00 UTC warns an owner 14 and 3
-  days before a campaign's delete date and deletes it after the last warning. **Nothing happens
-  unless DMBOT_ENFORCE_PLANS is on** (off: one dry-run line with counts in the core log). A run that
-  would delete more than 10% of all campaigns stops and logs an error. Check: core log shows migration
-  0039 applied; with enforcement off, a "Retention dry run" line each night around 03:00 UTC.
-- CloudDev, #997 (#992): sidebar accuracy fixes, core only, no migration (prompt version sidebar-2).
-  `DMBOT_SIDEBAR` stays 0. After deploy dev1 runs `python -m dmbot.devtools.sidebar_check` again and
-  posts the 17 answers on #954; the check now also reports MISSING / MUST NOT SAY for the cases that
-  matter (#1, #5, #8, #14, #17). Supervisor reads them before the sidebar is turned on.
-- dev2, PR #988 (adb179a, #969 part 2: the linked house-rules file). Core only. Migration **0040**
-  (new table `house_rules_file`, runs by itself at start). Nothing the DM sees until a file is
-  connected. Live check (about 5 minutes, one person, a Google Doc): put "1. Potions are a bonus
-  action" and "2. No flanking" in a Google Doc set to "Anyone with the link can view". In Discord:
-  ⚙️ Settings > 📄 House-rules file > 🔗 Connect a file, paste the Doc's address. DMbot says
-  "Connected: docs.google.com" and offers "2 to add": press Review, Accept the first, Skip the
-  second. Add a third line in the Doc, stop and start a session: the DM screen shows "1 to add"
-  (and the skipped one); press Accept all changes and check /dmbot houserules. Press Not now on
-  a later change and start another session: nothing is said until the Doc changes again.
-  Also check: 📎 Upload a file (one time) with a .txt file of the rules; 📄 shows only the site,
-  never the link. The download after every change and the 📥 Download rules button (#983) are
-  already live: check them in the same run.
-- CloudDev, #994 (#965) + #1008 (#998), TimeBot (core only). Migrations **0041** (`game_clocks`) and
-  **0042** (`game_effects`), both run by themselves at start. A game clock on the DM screen
-  (rests, dawn/noon/dusk) and, on a rules card, a Time it button: the DM names an effect (Bless,
-  Mage Armor) and a length, DMbot says when it has likely ended with End / Ten more minutes buttons.
-  No AI. Check: core log shows 0041 and 0042 applied; advance the clock with a rest and see a timer
-  announced at its end.
-- CloudDev, #1010 (#1005): sidebar accuracy part 3, core only, no migration (prompt version
-  sidebar-3). `DMBOT_SIDEBAR` stays 0. After deploy dev1 reruns `python -m dmbot.devtools.sidebar_check`
-  and posts the answers on #954 (new case: fireball around corners in 2014). Supervisor reads them.
-
+- CloudDev, #1013 (#1006): AI model tiers (FAST / CAREFUL / DEEP, a fallback down the tiers, one usage
+  line per call). Core only, no migration. Three optional new settings in .env.example (the defaults work;
+  the old AI_MODEL still works with a log line). BLOCKED for dev1 on 2026-10-10: the permission checker refused
+  scripts/update-env ("Feature Flag Writes"); needs the owner's go. Check: start-up log shows
+  "AI models in use: fast=... careful=... deep=...", 0 ERROR, one usage line per AI call.
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core adb179a (2026-10-10 04:2x UTC, migrations through 0040), web-api 75a62d0, ears 21c5ff1, web-api
+core 40b3c79 (2026-10-10 05:05 UTC, migrations through 0042: retention #985, house-rules file #988,
+TimeBot #994 and #1008, sidebar accuracy #997 and #1010), web-api 75a62d0, ears 21c5ff1, web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
 website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS is empty again (set by mistake for a few hours on 2026-10-10, see the history).
-DMBOT_SIDEBAR is 0 (off). DMBOT_ADMIN_PRIMARY_ID is set; DMBOT_ADMIN_SECONDARY_ID waits for the owner. The app stays
+DMBOT_SIDEBAR is 0 (off): Supervisor said "sidebar may go on" on #954 (18 of 19 passed); dev1 cannot edit .env (blocked), so it waits for the owner to switch it (see the history, 2026-10-10 05:5x). DMBOT_ADMIN_PRIMARY_ID is set; DMBOT_ADMIN_SECONDARY_ID waits for the owner. The app stays
 private (no install link) until the website launches.
 
 ------------------------------------------------------------------------------
-NEXT TEST: Test D, no false ⚠️ with a TV on (docs/next-test-step.md)
+NEXT TEST: the DM sidebar at the table (docs/next-test-step.md)
 ------------------------------------------------------------------------------
-Needs the owner, one person, ~3 minutes. Covers #697 and #718 (the audio warning reads
-the transcript first); run it with DMBOT_DEBUG_AUDIO=1 so #914's counts show (check below). Result goes in the history log; then the next small test below.
+Needs DMBOT_SIDEBAR=1 first (owner or dev1 once allowed), then one person, ~5 minutes. Test D passed on
+2026-10-10 (no false warning with a TV on); see the history.
 
 SMALL TESTS AFTER THAT (one at a time; each one's "Check:" note is in the history log,
 entry "Status log as it stood before it was trimmed"):
@@ -81,15 +55,14 @@ entry "Status log as it stood before it was trimmed"):
  14. House rules: typed to DMbot in the private chat (#971) and said at the table (#959), then
      /dmbot houserules shows them (needs the quick-answers side: #944).
  15. ⏸️ Pause / ▶️ Unpause a campaign on ⚙️ Settings (#962; owner only; plans off).
- 16. The DM sidebar (#944, #954) only after Supervisor has read the 17 answers: then
-     DMBOT_SIDEBAR=1 for a short test with a voice message and a typed question.
+ 16. The DM sidebar (#944, #954): next test (see above).
  17. Retention (#985, plans off): after its first 03:00 UTC run (2026-10-11), the core log has
      ONE dry-run line with counts and no ERROR; nothing is warned or deleted.
  18. House-rules file (#988): put two rules in a Google Doc (anyone with the link can view),
      ⚙️ Settings > 📄 House-rules file > 🔗 Connect a file; the comparison shows 2 to add;
      Review > Accept one and Skip the other.
- 19. The DM sidebar stays OFF (DMBOT_SIDEBAR=0) until Supervisor has read a clean re-test:
-     13 of 18 passed on 2026-10-10 (answers on #954).
+ 19. TimeBot (#994, #1008): as a DM, ⚙️ Settings > Game clock; set a time; Start a timer (or Time it on
+     a spell card); +1 hour: the DM screen says "has likely ended" with Ended / Still going +10 min.
  20. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
 
 ------------------------------------------------------------------------------
