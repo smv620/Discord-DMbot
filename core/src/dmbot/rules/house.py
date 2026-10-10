@@ -146,9 +146,12 @@ class HouseRuleStore:
         *,
         scenario: str | None = None,
         session_id: str | None = None,
+        wanted: int | None = None,
     ) -> HouseRule:
-        """Save a new house rule, with the campaign's next number. Only the campaign's
-        DMs; at most `HOUSE_RULES_MAX`."""
+        """Save a new house rule, with the campaign's next number, or with `wanted` (a
+        rule from the house-rules file, #969) if that number was never used: it is above
+        every number the campaign has made. Only the campaign's DMs; at most
+        `HOUSE_RULES_MAX`."""
         text = clean_rule(rule)
         instead = clean_optional(supersedes, INSTEAD_BOX)
         happened = clean_optional(scenario, HAPPENED_BOX)
@@ -166,9 +169,11 @@ class HouseRuleStore:
             if row["n"] >= HOUSE_RULES_MAX:
                 raise HouseRuleError(FULL)
             cur = await conn.execute(
-                "UPDATE campaigns SET house_rules_made = house_rules_made + 1"
+                "UPDATE campaigns SET house_rules_made = CASE"
+                " WHEN %s::integer IS NOT NULL AND %s::integer > house_rules_made THEN %s::integer"
+                " ELSE house_rules_made + 1 END"
                 " WHERE guild_id = %s AND id = %s RETURNING house_rules_made",
-                (guild_id, campaign_id),
+                (wanted, wanted, wanted, guild_id, campaign_id),
             )
             made = await cur.fetchone()
             assert made is not None
@@ -287,6 +292,8 @@ async def _require_dm(
     if await cur.fetchone() is None:
         raise HouseRuleError(NOT_DM)
 
+
+require_dm = _require_dm  # for the house-rules file link (dmbot.rules.house_file_link)
 
 # ---- backups ------------------------------------------------------------------------
 
