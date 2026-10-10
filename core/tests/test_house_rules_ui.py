@@ -191,7 +191,8 @@ class UITest(unittest.IsolatedAsyncioTestCase):
         return [
             str(c.label)
             for c in view.children
-            if isinstance(c, discord.ui.Button) and str(c.label) != file_ui.DOWNLOAD_LABEL
+            if isinstance(c, discord.ui.Button)
+            and str(c.label) not in (file_ui.DOWNLOAD_LABEL, file_ui.FILE_LABEL)
         ]
 
     @staticmethod
