@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dmbot.ai import AIError, AIModels, AIModelTier, AnthropicClient
-from dmbot.config import parse_ai_models
+from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.claims import cost
 from dmbot.devtools.claims.extract import MAX_TOKENS, SYSTEM, Client, extract, transcript
 from dmbot.devtools.claims.scenes import WORDS_PER_SECOND, Scene, batches, load_scenes
@@ -241,7 +241,11 @@ async def main_async(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         print(f"claims: {exc}", file=sys.stderr)
         return 2
-    fast = parse_ai_models(lambda name: os.environ.get(name, ""))[0].fast
+    try:
+        fast = parse_ai_models(lambda name: os.environ.get(name, ""))[0].fast
+    except ConfigError as exc:
+        print(f"claims: {exc}", file=sys.stderr)
+        return 2
     models = args.model or [fast]
     prices = {**cost.PRICES, **dict(args.price)}
     tokens_in, tokens_out = estimate(scenes)

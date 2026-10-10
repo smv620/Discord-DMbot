@@ -3,6 +3,7 @@ down, the out-of-funds error never falling back, and the one usage line per call
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import unittest
@@ -19,6 +20,7 @@ from dmbot.ai import (
     AIModelTier,
     AIOutOfFunds,
     AnthropicClient,
+    Feature,
     TierClient,
 )
 from dmbot.config import (
@@ -88,6 +90,29 @@ class Settings(unittest.TestCase):
                 if len(bad) > 8:
                     self.assertNotIn(bad, str(caught.exception))  # (never echoes the value)
 
+    def test_quotes_and_spaces_a_phone_adds_are_dropped_but_inside_ones_are_not_allowed(
+        self,
+    ) -> None:
+        models, _ = parse_ai_models(
+            env(AI_MODEL_FAST=' "claude-a-1" ', AI_MODEL_DEEP="'claude-c-3'")
+        )
+        self.assertEqual((models.fast, models.deep), ("claude-a-1", "claude-c-3"))
+        for bad in ("claude a-1", "Claude-a-1", "claude-A-1", "claude-" + "x" * 90):
+            with self.assertRaises(ConfigError):
+                parse_ai_models(env(AI_MODEL_CAREFUL=bad))
+
+    def test_the_error_says_what_to_do_and_that_empty_is_fine(self) -> None:
+        with self.assertRaises(ConfigError) as caught:
+            parse_ai_models(env(AI_MODEL_FAST="gpt-4"))
+        text = str(caught.exception)
+        self.assertIn("AI_MODEL_FAST in .env isn't a Claude model name", text)
+        self.assertIn(DEFAULT_MODELS.fast, text)
+        self.assertIn("leave it empty", text)
+
+    def test_the_old_name_notice_says_it_now_covers_every_quick_job(self) -> None:
+        self.assertIn("quick jobs", OLD_MODEL_NOTICE)
+        self.assertIn("rename it to AI_MODEL_FAST", OLD_MODEL_NOTICE)
+
     def test_load_settings_carries_them_and_the_notice(self) -> None:
         settings = load_settings(
             {**BASE, "AI_MODEL": "claude-old-1", "AI_MODEL_DEEP": "claude-d-9"}
@@ -112,15 +137,16 @@ class Tiers(unittest.TestCase):
         self.assertEqual(
             FEATURE_TIERS,
             {
-                "names": AIModelTier.FAST,
-                "topic": AIModelTier.FAST,
-                "audio_check": AIModelTier.FAST,
-                "sidebar": AIModelTier.FAST,
-                "rules": AIModelTier.FAST,
-                "cleaner": AIModelTier.FAST,
-                "house_rules": AIModelTier.CAREFUL,
+                Feature.NAMES: AIModelTier.FAST,
+                Feature.TOPIC: AIModelTier.FAST,
+                Feature.AUDIO_CHECK: AIModelTier.FAST,
+                Feature.SIDEBAR: AIModelTier.FAST,
+                Feature.RULES: AIModelTier.FAST,
+                Feature.CLEANER: AIModelTier.FAST,
+                Feature.HOUSE_RULES: AIModelTier.CAREFUL,
             },
         )
+        self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
         self.assertNotIn(AIModelTier.DEEP, FEATURE_TIERS.values())  # PlotBot, later
 
     def test_the_bot_gives_each_job_the_client_for_its_tier(self) -> None:
@@ -132,9 +158,9 @@ class Tiers(unittest.TestCase):
         settings = BotSettings(discord_token="t", ears_secret="s", ai_key="k", ai_models=MODELS)
         bot = DMBot(settings, SimpleNamespace(), MagicMock(), MagicMock())  # type: ignore[arg-type]
         for client, job in (
-            (bot.ai, "names"),
-            (bot.topic_ai, "topic"),
-            (bot.audio_ai, "audio_check"),
+            (bot.ai, Feature.NAMES),
+            (bot.topic_ai, Feature.TOPIC),
+            (bot.audio_ai, Feature.AUDIO_CHECK),
         ):
             assert isinstance(client, TierClient)
             self.assertEqual(client.tier, FEATURE_TIERS[job], job)
@@ -199,12 +225,33 @@ class Watch:
         self.funds += 1
 
 
+PERMISSION = json.dumps(
+    {"error": {"type": "permission_error", "message": "Your key can't use this model"}}
+)
+NOT_FOUND = json.dumps({"error": {"type": "not_found_error", "message": "model: x"}})
+BLOCKED = "<html>Access denied by the gateway</html>"
+GONE = (404, NOT_FOUND)
+DENIED = (403, PERMISSION)
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
 class Fallback(unittest.IsolatedAsyncioTestCase):
     def make(
         self, answers: dict[str, tuple[int, Any]], watch: Watch | None = None
     ) -> tuple[AnthropicClient, Service]:
         service = Service(answers)
-        client = AnthropicClient("sk-secret", MODELS, session=service, watch=watch)  # type: ignore[arg-type]
+        self.clock = Clock()
+        session: Any = service
+        client = AnthropicClient(
+            "sk-secret", MODELS, session=session, watch=watch, clock=self.clock
+        )
         return client, service
 
     async def test_a_tier_that_works_answers_alone(self) -> None:
@@ -212,49 +259,103 @@ class Fallback(unittest.IsolatedAsyncioTestCase):
         for tier in AIModelTier:
             reply = await client.complete("s", "t", tier=tier)
             self.assertEqual(reply.model, MODELS.of(tier))
-        self.assertEqual(service.asked, [MODELS.fast, MODELS.careful, MODELS.deep][::1])
+        self.assertEqual(service.asked, [MODELS.fast, MODELS.careful, MODELS.deep])
 
-    async def test_a_refused_model_falls_back_one_tier_down(self) -> None:
-        for status in (404, 403):
-            client, service = self.make({MODELS.deep: (status, "no such model")})
+    async def test_a_model_that_is_not_available_falls_back_one_tier_down(self) -> None:
+        for answer in (GONE, DENIED):
+            client, service = self.make({MODELS.deep: answer})
             with self.assertLogs("dmbot.ai", "WARNING") as logged:
                 reply = await client.complete("s", "t", tier=AIModelTier.DEEP)
             self.assertEqual((reply.model, reply.text), (MODELS.careful, "the answer"))
             self.assertEqual(service.asked, [MODELS.deep, MODELS.careful])
-            self.assertIn("refused model claude-deep-1", logged.output[0])
+            (line,) = logged.output
+            self.assertIn("claude-deep-1 (deep jobs) isn't available to this key", line)
+            self.assertIn("Using claude-careful-1 instead", line)
+            self.assertIn("AI_MODEL_DEEP", line)  # what to check, in the owner's words
 
     async def test_it_goes_all_the_way_down_if_it_must(self) -> None:
-        client, service = self.make({MODELS.deep: (404, "x"), MODELS.careful: (403, "x")})
+        client, service = self.make({MODELS.deep: GONE, MODELS.careful: DENIED})
         with self.assertLogs("dmbot.ai", "WARNING") as logged:
             reply = await client.complete("s", "t", tier=AIModelTier.DEEP)
         self.assertEqual(reply.model, MODELS.fast)
         self.assertEqual(service.asked, [MODELS.deep, MODELS.careful, MODELS.fast])
-        self.assertEqual(len([m for m in logged.output if "refused model" in m]), 2)
+        self.assertEqual(len(logged.output), 2)
 
-    async def test_the_order_is_deep_careful_fast_and_careful_never_goes_up(self) -> None:
-        client, service = self.make({MODELS.careful: (404, "x")})
+    async def test_careful_never_goes_up(self) -> None:
+        client, service = self.make({MODELS.careful: GONE})
         with self.assertLogs("dmbot.ai", "WARNING"):
             reply = await client.complete("s", "t", tier=AIModelTier.CAREFUL)
         self.assertEqual(reply.model, MODELS.fast)
         self.assertNotIn(MODELS.deep, service.asked)
 
-    async def test_a_refusal_is_logged_once_and_not_asked_again(self) -> None:
-        client, service = self.make({MODELS.careful: (404, "x")})
+    async def test_it_is_said_once_and_not_asked_again_for_a_while(self) -> None:
+        client, service = self.make({MODELS.careful: GONE})
         with self.assertLogs("dmbot.ai", "WARNING") as logged:
             for _ in range(3):
                 await client.complete("s", "t", tier=AIModelTier.CAREFUL)
-        self.assertEqual(len([m for m in logged.output if "refused model" in m]), 1)
+        self.assertEqual(len(logged.output), 1)
         self.assertEqual(service.asked, [MODELS.careful, MODELS.fast, MODELS.fast, MODELS.fast])
         self.assertEqual(client.tier(AIModelTier.CAREFUL).model, MODELS.fast)  # now says so
 
+    async def test_a_fixed_model_is_used_again_after_a_while(self) -> None:
+        client, service = self.make({MODELS.careful: GONE})
+        with self.assertLogs("dmbot.ai", "WARNING"):
+            await client.complete("s", "t", tier=AIModelTier.CAREFUL)
+        service.answers.clear()  # the model is available now (renamed in .env, or access given)
+        self.clock.now += ai_module.REFUSED_RETRY_S - 1
+        self.assertEqual(
+            (await client.complete("s", "t", tier=AIModelTier.CAREFUL)).model, MODELS.fast
+        )
+        self.clock.now += 2
+        reply = await client.complete("s", "t", tier=AIModelTier.CAREFUL)
+        self.assertEqual(reply.model, MODELS.careful)
+        self.assertEqual(client.tier(AIModelTier.CAREFUL).model, MODELS.careful)
+        await client.complete("s", "t", tier=AIModelTier.CAREFUL)
+        self.assertEqual(service.asked[-2:], [MODELS.careful, MODELS.careful])  # no more skipping
+
+    async def test_still_not_available_later_is_not_said_again(self) -> None:
+        client, service = self.make({MODELS.careful: GONE})
+        with self.assertLogs("dmbot.ai", "WARNING") as logged:
+            await client.complete("s", "t", tier=AIModelTier.CAREFUL)
+            self.clock.now += ai_module.REFUSED_RETRY_S + 1
+            await client.complete("s", "t", tier=AIModelTier.CAREFUL)  # tried afresh, refused again
+        self.assertEqual(len(logged.output), 1)
+        self.assertEqual(service.asked.count(MODELS.careful), 2)
+
+    async def test_two_calls_at_once_say_it_once(self) -> None:
+        client, service = self.make({MODELS.careful: GONE})
+        with self.assertLogs("dmbot.ai", "WARNING") as logged:
+            replies = await asyncio.gather(
+                *(client.complete("s", "t", tier=AIModelTier.CAREFUL) for _ in range(3))
+            )
+        self.assertEqual({r.model for r in replies}, {MODELS.fast})
+        self.assertEqual(len(logged.output), 1)
+        self.assertLessEqual(service.asked.count(MODELS.careful), 3)
+
+    async def test_nothing_is_marked_if_the_lower_tier_fails_too(self) -> None:
+        # A bad key looks the same on every tier: no model is blamed for it.
+        client, _ = self.make({MODELS.deep: DENIED, MODELS.careful: DENIED, MODELS.fast: DENIED})
+        with self.assertLogs("dmbot.ai", "ERROR"), self.assertRaises(AIError) as caught:
+            await client.complete("s", "t", tier=AIModelTier.DEEP)
+        self.assertIn("key", str(caught.exception))
+        self.assertEqual(client._refused, {})
+        self.assertEqual(client.tier(AIModelTier.DEEP).model, MODELS.deep)
+
     async def test_the_bottom_tier_has_nowhere_to_go(self) -> None:
-        client, _ = self.make({MODELS.fast: (404, "x")})
+        client, _ = self.make({MODELS.fast: GONE})
         with self.assertLogs("dmbot.ai", "ERROR"), self.assertRaises(AIError):
             await client.complete("s", "t", tier=AIModelTier.FAST)
-        client, _ = self.make({MODELS.fast: (403, "x")})
+        client, _ = self.make({MODELS.fast: DENIED})
         with self.assertLogs("dmbot.ai", "ERROR"), self.assertRaises(AIError) as caught:
             await client.complete("s", "t", tier=AIModelTier.FAST)
         self.assertIn("key", str(caught.exception))  # a refused key is still a refused key
+
+    async def test_a_blocked_request_is_not_a_missing_model(self) -> None:
+        client, service = self.make({MODELS.deep: (403, BLOCKED)})
+        with self.assertLogs("dmbot.ai", "ERROR"), self.assertRaises(AIError):
+            await client.complete("s", "t", tier=AIModelTier.DEEP)
+        self.assertEqual(service.asked, [MODELS.deep])  # no fallback, nothing marked
+        self.assertEqual(client._refused, {})
 
     async def test_a_bad_key_or_a_busy_service_never_changes_tier(self) -> None:
         for status in (401, 429, 500, 529, 400):
@@ -262,6 +363,19 @@ class Fallback(unittest.IsolatedAsyncioTestCase):
             with self.assertLogs("dmbot.ai"), self.assertRaises(AIError):
                 await client.complete("s", "t", tier=AIModelTier.DEEP)
             self.assertEqual(service.asked, [MODELS.deep], status)
+
+    async def test_a_dropped_connection_does_not_blame_the_model(self) -> None:
+        import aiohttp
+
+        class Broken(Service):
+            def post(self, url: str, *, json: Any, headers: Any) -> Any:
+                raise aiohttp.ClientError("reset")
+
+        service = Broken({})
+        client = AnthropicClient("k", MODELS, session=service)  # type: ignore[arg-type]
+        with self.assertLogs("dmbot.ai"), self.assertRaises(AIError):
+            await client.complete("s", "t", tier=AIModelTier.DEEP)
+        self.assertEqual(client._refused, {})
 
     async def test_out_of_funds_never_falls_back(self) -> None:
         for status in (400, 402, 403, 429):
@@ -271,14 +385,17 @@ class Fallback(unittest.IsolatedAsyncioTestCase):
                 await client.complete("s", "t", tier=AIModelTier.DEEP)
             self.assertEqual(service.asked, [MODELS.deep], status)
             self.assertEqual(watch.funds, 1)
-        # a 404 for a model is not money; a 403 about money is not a refused model
-        client, service = self.make({MODELS.careful: (403, FUNDS)})
+        # a funds error that looks like a permission one is still about money
+        both = json.dumps(
+            {"error": {"type": "permission_error", "message": "Your credit balance is too low"}}
+        )
+        client, service = self.make({MODELS.careful: (403, both)})
         with self.assertLogs("dmbot.ai", "ERROR"), self.assertRaises(AIOutOfFunds):
             await client.complete("s", "t", tier=AIModelTier.CAREFUL)
         self.assertEqual(service.asked, [MODELS.careful])
 
     async def test_tiers_that_share_a_model_are_not_asked_twice(self) -> None:
-        service = Service({"claude-same": (404, "x")})
+        service = Service({"claude-same": GONE})
         client = AnthropicClient("k", AIModels.same("claude-same"), session=service)  # type: ignore[arg-type]
         with self.assertLogs("dmbot.ai", "ERROR"), self.assertRaises(AIError):
             await client.complete("s", "t", tier=AIModelTier.DEEP)
@@ -311,7 +428,7 @@ class UsageLine(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(private, line)
 
     async def test_a_fallback_says_which_tier_was_asked_for(self) -> None:
-        service = Service({MODELS.deep: (404, "x")})
+        service = Service({MODELS.deep: GONE})
         client = AnthropicClient("k", MODELS, session=service)  # type: ignore[arg-type]
         with self.assertLogs("dmbot.ai", "INFO") as logged:
             await client.complete("s", "t", tier=AIModelTier.DEEP)

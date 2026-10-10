@@ -378,7 +378,7 @@ class Sidebar:
             Answer(
                 text,
                 in_game=fields.in_game,
-                model=self._ai.model,
+                model=reply.model or self._ai.model,  # the one that answered, if it says
                 sources=ctx.sources,
                 parts=(text,),
             ),

@@ -575,18 +575,27 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
 - The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
 **AI models by task (decided 2026-10-10, built #1006).** Every AI call names a *tier*, never
-a model: **FAST** (Haiku) for simple jobs (transcript cleaning, the off-topic filter, Find
-names, rules checks and lookups, the DM sidebar), **CAREFUL** (Sonnet) for house-rule
-changes, and **DEEP** (Opus) for PlotBot (phase 5c; nothing uses it yet). The settings
-`AI_MODEL_FAST`, `AI_MODEL_CAREFUL` and `AI_MODEL_DEEP` say which model each tier uses (each
-has a default; a malformed one stops start-up naming the setting; the old `AI_MODEL` stands
-for FAST for one release, with a line in the log). If a model is refused (not found, or no
-permission) the call goes to the next tier down (DEEP, CAREFUL, FAST), logged once for that
-model; running out of money never falls back (it messages the admins, #972). Each call logs
-one line: tier, model, tokens in and out, tokens read from the cache; never content.
-`dmbot.ai.FEATURE_TIERS` is the list of which job uses which tier, and a test checks no
-other file names a model. `python -m dmbot.devtools.sidebar_check` prints the model that
-answered.
+a model.
+- **Which job uses which:** **FAST** (the small model, Haiku today) for simple jobs:
+  transcript cleaning, the off-topic filter, Find names, rules checks and lookups, the audio
+  check and the DM sidebar. **CAREFUL** (the middle model, Sonnet) for house-rule changes.
+  **DEEP** (the strongest, Opus) for PlotBot (phase 5c; nothing uses it yet).
+  `dmbot.ai.FEATURE_TIERS` lists every job's tier; a test checks no other file names a model.
+  Model names change, so the tiers are the stable thing.
+- **The settings:** `AI_MODEL_FAST`, `AI_MODEL_CAREFUL`, `AI_MODEL_DEEP`, each with a
+  default; a malformed one (not a `claude-…` name) stops start-up naming the setting. The
+  old `AI_MODEL` stands for FAST, with a line in the log, and is removed in a later update.
+  Note that it now covers every quick job (before, it only chose the model for Find names;
+  the filter and the sidebar were always on the small one).
+- **If a model isn't available** (not found, or a `permission_error` for this key) the call
+  goes to the next tier down (DEEP, CAREFUL, FAST). It is noted once in the log, naming the
+  setting to check, and only when a lower tier then answered (so a bad key is not blamed on a
+  model). The model is tried again after 15 minutes, so fixing the name or the access needs
+  no restart. A 403 that isn't a `permission_error` (a blocked request) never counts.
+  Running out of money never falls back (it messages the admins, #972).
+- **Logging:** the start-up line shows the three models in use (or that AI is off). Each
+  call logs one line: tier, model, tokens in and out, tokens read from the cache; never
+  content. `python -m dmbot.devtools.sidebar_check` prints the model that answered.
 
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and

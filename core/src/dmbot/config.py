@@ -156,17 +156,21 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
 MODEL_NAME = re.compile(r"^claude-[a-z0-9][a-z0-9._-]{1,80}$")
 OLD_MODEL_NOTICE = (
-    "AI_MODEL is the old name of AI_MODEL_FAST: it is used as AI_MODEL_FAST for now. "
-    "Rename it in .env; a later release stops reading AI_MODEL."
+    "Your .env still has AI_MODEL. It works for now, as AI_MODEL_FAST (the model for all the "
+    "quick jobs, not only Find names as before), but please rename it to AI_MODEL_FAST, "
+    "keeping the same value. A future update will stop reading AI_MODEL."
 )
-BOTH_MODEL_NOTICE = "AI_MODEL is ignored because AI_MODEL_FAST is set. Remove AI_MODEL from .env."
+BOTH_MODEL_NOTICE = (
+    "Your .env has both AI_MODEL and AI_MODEL_FAST. Only AI_MODEL_FAST is used; delete the "
+    "AI_MODEL line."
+)
 
 
 def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
     """The model for each AI tier, from `AI_MODEL_FAST`, `AI_MODEL_CAREFUL` and
     `AI_MODEL_DEEP` (empty: that tier's default). The old `AI_MODEL`, if set, stands for
-    FAST for one release; the second value is the line to log about that (or ""). A value
-    that isn't a Claude model name stops start-up, naming the setting."""
+    FAST for now; the second value is the line to log about that (or ""). A value that
+    isn't a Claude model name stops start-up, naming the setting (never the value)."""
     old = get("AI_MODEL")
     notice = ""
     chosen: dict[str, str] = {}
@@ -175,15 +179,17 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
         ("careful", "AI_MODEL_CAREFUL"),
         ("deep", "AI_MODEL_DEEP"),
     ):
-        raw, shown = get(name), name
+        raw, shown = get(name).strip("\"'").strip(), name  # (a phone adds quotes)
         if tier == "fast":
             if old and raw:
                 notice = BOTH_MODEL_NOTICE
             elif old:
-                raw, shown, notice = old, "AI_MODEL", OLD_MODEL_NOTICE
+                raw, shown, notice = old.strip("\"'").strip(), "AI_MODEL", OLD_MODEL_NOTICE
         if raw and not MODEL_NAME.match(raw):
             raise ConfigError(
-                f"{shown} must be a Claude model name such as {getattr(DEFAULT_MODELS, tier)}."
+                f"{shown} in .env isn't a Claude model name. Use something like "
+                f"{getattr(DEFAULT_MODELS, tier)} (no quotes or spaces), or leave it empty to "
+                "use that one."
             )
         chosen[tier] = raw or getattr(DEFAULT_MODELS, tier)
     return AIModels(**chosen), notice

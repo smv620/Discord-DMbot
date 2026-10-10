@@ -17,6 +17,8 @@ import enum
 import json
 import logging
 import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -37,16 +39,38 @@ class AIModelTier(enum.Enum):
 # What a refused tier falls back to: the next one down.
 NEXT_DOWN = {AIModelTier.DEEP: AIModelTier.CAREFUL, AIModelTier.CAREFUL: AIModelTier.FAST}
 
+
+class Feature(enum.StrEnum):
+    """The jobs that use the AI. Rules, cleaner and house rules are listed ahead of their
+    first use, so each already has its tier."""
+
+    NAMES = "names"  # Find names: a document into a names list
+    TOPIC = "topic"  # the off-topic filter
+    AUDIO_CHECK = "audio_check"  # is the audio bad, or just quiet talk
+    SIDEBAR = "sidebar"  # quick answers for the DM
+    RULES = "rules"  # rules checks and lookups
+    CLEANER = "cleaner"  # transcript cleaning
+    HOUSE_RULES = "house_rules"  # house-rule changes (by voice, typed, or from a file)
+
+
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
 FEATURE_TIERS = {
-    "names": AIModelTier.FAST,  # Find names: a document into a names list
-    "topic": AIModelTier.FAST,  # the off-topic filter
-    "audio_check": AIModelTier.FAST,  # is the audio bad, or just quiet talk
-    "sidebar": AIModelTier.FAST,  # quick answers for the DM
-    "rules": AIModelTier.FAST,  # rules checks and lookups
-    "cleaner": AIModelTier.FAST,  # transcript cleaning
-    "house_rules": AIModelTier.CAREFUL,  # house-rule changes (by voice, typed, or from a file)
+    Feature.NAMES: AIModelTier.FAST,
+    Feature.TOPIC: AIModelTier.FAST,
+    Feature.AUDIO_CHECK: AIModelTier.FAST,
+    Feature.SIDEBAR: AIModelTier.FAST,
+    Feature.RULES: AIModelTier.FAST,
+    Feature.CLEANER: AIModelTier.FAST,
+    Feature.HOUSE_RULES: AIModelTier.CAREFUL,
 }
+
+# The setting that picks each tier's model (named in the log when one isn't available).
+TIER_SETTINGS = {
+    AIModelTier.FAST: "AI_MODEL_FAST",
+    AIModelTier.CAREFUL: "AI_MODEL_CAREFUL",
+    AIModelTier.DEEP: "AI_MODEL_DEEP",
+}
+REFUSED_RETRY_S = 900.0  # a model that wasn't available is tried again after this long
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +170,30 @@ class Reply:
     cache_read_tokens: int = 0  # input tokens read from the cache
 
 
+def _model_unavailable(status: int, body_text: str) -> bool:
+    """Is this error response the service saying the model isn't there (404) or isn't
+    allowed for this key (a 403 `permission_error`)? Any other 403 (a blocked request, a
+    proxy's page) is not taken to mean the model."""
+    if status == 404:
+        return True
+    if status != 403:
+        return False
+    try:
+        error = json.loads(body_text).get("error", {})
+        return str(error.get("type", "")) == "permission_error"
+    except (ValueError, AttributeError):
+        return False
+
+
+def step_of_tier(models: AIModels, model: str) -> AIModelTier:
+    """The highest tier that uses this model."""
+    return next((t for t in AIModelTier if models.of(t) == model), AIModelTier.FAST)
+
+
+def step_of(models: AIModels, model: str) -> str:
+    return step_of_tier(models, model).value
+
+
 class _ModelRefused(Exception):
     """The service refused this model (not found, or no permission), not the request."""
 
@@ -181,12 +229,17 @@ class AnthropicClient:
         models: AIModels = DEFAULT_MODELS,
         session: aiohttp.ClientSession | None = None,
         watch: Watcher | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._key = api_key
         self.models = models
         self._session = session
         self._watch = watch
-        self._refused: set[str] = set()  # models the service refused: not asked again
+        self._clock = clock
+        # Models the service said weren't available, and when: skipped for a while (a model
+        # that gets fixed is tried again), never for good.
+        self._refused: dict[str, float] = {}
+        self._said: set[str] = set()  # models already named in a log line (once each)
 
     def __repr__(self) -> str:  # never the key
         return f"AnthropicClient(models={self.models!r})"
@@ -204,7 +257,12 @@ class AnthropicClient:
             if all(model != known for _, known in steps):
                 steps.append((step, model))
             step = NEXT_DOWN.get(step)
-        usable = [(t, m) for t, m in steps if m not in self._refused]
+        now = self._clock()
+        usable = [
+            (t, m)
+            for t, m in steps
+            if m not in self._refused or now - self._refused[m] >= REFUSED_RETRY_S
+        ]
         return usable or steps[-1:]
 
     def model_for(self, tier: AIModelTier) -> str:
@@ -229,23 +287,37 @@ class AnthropicClient:
         tier's model is refused, the next tier down answers instead. Raises AIError in
         plain words (AIOutOfFunds never falls back)."""
         chain = self._chain(tier)
+        unavailable: list[str] = []  # refused on this call: only noted once a lower tier answers
         for position, (step, model) in enumerate(chain):
             lower = chain[position + 1] if position + 1 < len(chain) else None
             try:
-                return await self._request(
+                reply = await self._request(
                     system, text, max_tokens, step, model, asked=tier, can_refuse=lower is not None
                 )
             except _ModelRefused as refused:
-                assert lower is not None
-                self._refused.add(model)
-                log.warning(
-                    "The AI service refused model %s for tier %s (HTTP %s); using tier %s (%s)",
-                    model,
-                    step.value,
-                    refused.status,
-                    lower[0].value,
-                    lower[1],
-                )
+                if lower is None:
+                    raise AIError(FAILED) from None
+                unavailable.append(model)
+                log.debug("Model %s was refused (HTTP %s)", model, refused.status)
+                continue
+            self._refused.pop(model, None)  # it works (again)
+            # A lower tier answering proves the key is fine, so the model above it really
+            # isn't available to it. Said once for each model.
+            for gone in unavailable:
+                if gone not in self._said:
+                    self._said.add(gone)
+                    log.warning(
+                        "AI model %s (%s jobs) isn't available to this key. Using %s instead "
+                        "for now; it is tried again in %d minutes. To fix it, check %s in .env "
+                        "or your Anthropic access.",
+                        gone,
+                        step_of(self.models, gone),
+                        model,
+                        REFUSED_RETRY_S // 60,
+                        TIER_SETTINGS[step_of_tier(self.models, gone)],
+                    )
+                self._refused[gone] = self._clock()
+            return reply
         raise AIError(FAILED)  # (the last step never refuses: it raises its own error)
 
     async def _request(
@@ -281,7 +353,7 @@ class AnthropicClient:
                         if self._watch is not None:
                             self._watch.out_of_funds()
                         raise AIOutOfFunds(OUT_OF_FUNDS)
-                    if can_refuse and resp.status in (403, 404):  # this model, not the key
+                    if can_refuse and _model_unavailable(resp.status, reason):
                         raise _ModelRefused(resp.status)
                     if resp.status in (401, 403):
                         log.error("The AI service refused the key (HTTP %s)", resp.status)

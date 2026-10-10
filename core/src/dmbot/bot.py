@@ -25,7 +25,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from dmbot import campaign_cap, entitlements, hours, install, plan_rules, retention, usage
-from dmbot.ai import FEATURE_TIERS, AnthropicClient
+from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -517,23 +517,28 @@ class DMBot(commands.AutoShardedBot):
         # (dmbot.ai.FEATURE_TIERS), so no job names a model. None when no key is set.
         if settings.ai_model_notice:
             log.warning(settings.ai_model_notice)
-        log.info(
-            "AI models: fast=%s careful=%s deep=%s",
-            settings.ai_models.fast,
-            settings.ai_models.careful,
-            settings.ai_models.deep,
-        )
+        if settings.ai_key:
+            log.info(
+                "AI models in use: fast=%s careful=%s deep=%s",
+                settings.ai_models.fast,
+                settings.ai_models.careful,
+                settings.ai_models.deep,
+            )
+        else:
+            log.info("AI is off (no ANTHROPIC_API_KEY)")
         self.ai_client = (
             AnthropicClient(settings.ai_key, settings.ai_models, watch=self.ai_watch)
             if settings.ai_key
             else None
         )
         # AI text calls (a document into a names list).
-        self.ai = self.ai_client.tier(FEATURE_TIERS["names"]) if self.ai_client else None
+        self.ai = self.ai_client.tier(FEATURE_TIERS[Feature.NAMES]) if self.ai_client else None
         # The off-topic filter (#52), the audio check and the DM sidebar.
-        self.topic_ai = self.ai_client.tier(FEATURE_TIERS["topic"]) if self.ai_client else None
+        self.topic_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC]) if self.ai_client else None
+        )
         self.audio_ai = (
-            self.ai_client.tier(FEATURE_TIERS["audio_check"]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.AUDIO_CHECK]) if self.ai_client else None
         )
         # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
         # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
@@ -1532,7 +1537,7 @@ class DMBot(commands.AutoShardedBot):
                 return None
             return await self.lookup.get_within(campaign.guild_id, campaign.id, NAMES_WAIT_S)
 
-        ai = self.ai_client.tier(FEATURE_TIERS["sidebar"])
+        ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR])
         return Sidebar(ai, rules_index.srd, gate=gate, houses=houses, names=names)
 
     async def plan_gate(

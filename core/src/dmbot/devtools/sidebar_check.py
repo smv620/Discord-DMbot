@@ -22,9 +22,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from types import ModuleType
 
-from dmbot.ai import FEATURE_TIERS, AnthropicClient
+from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
 from dmbot.campaigns.models import Campaign
-from dmbot.config import parse_ai_models
+from dmbot.config import ConfigError, parse_ai_models
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import srd
 from dmbot.sidebar import brevity
@@ -69,9 +69,12 @@ async def run(path: Path) -> int:
     if not key:
         raise SystemExit("Set ANTHROPIC_API_KEY (the server's key) to run this.")
     cases = load_cases(path).CASES
-    models, _ = parse_ai_models(lambda name: os.environ.get(name, ""))
+    try:
+        models, _ = parse_ai_models(lambda name: os.environ.get(name, ""))
+    except ConfigError as exc:
+        raise SystemExit(str(exc)) from None
     ai_client = AnthropicClient(key, models)
-    client = ai_client.tier(FEATURE_TIERS["sidebar"])
+    client = ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR])
     print(f"Model: {client.model} (tier {client.tier.value})\n")
 
     async def gate(campaign: Campaign, user: int) -> str | None:
