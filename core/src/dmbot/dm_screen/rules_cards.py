@@ -43,8 +43,14 @@ ONLY_DMS = "Only this campaign's DMs can use these buttons. You can still read t
 STOP_ALL = "To stop all cards: ⚙️ Settings, then 🃏 Turn rules cards off."
 FAILED = "Something went wrong. Try again in a moment."
 GOT_LABEL, IGNORE_LABEL, OVERRIDE_LABEL, READ_LABEL = "Got it", "Ignore", "Override", "Read it all"
-ACTIONS = {"got": "✅", "ign": "🙈", "ovr": "⚖️", "all": "📖"}
-LABELS = {"got": GOT_LABEL, "ign": IGNORE_LABEL, "ovr": OVERRIDE_LABEL, "all": READ_LABEL}
+ACTIONS = {"got": "✅", "ign": "🙈", "ovr": "⚖️", "all": "📖", "time": "⏳"}
+LABELS = {
+    "got": GOT_LABEL,
+    "ign": IGNORE_LABEL,
+    "ovr": OVERRIDE_LABEL,
+    "all": READ_LABEL,
+    "time": "Time it",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,16 +114,19 @@ def spotter_for(target: str, fallback: str) -> Spotter:
     return Spotter.from_pool(index.srd().names_pool(target, fallback))
 
 
-def card_view(guild_id: int, card_id: str) -> discord.ui.View:
+def card_view(guild_id: int, card_id: str, *, timed: bool = False) -> discord.ui.View:
+    """The card's buttons; **Time it** only on a spell that lasts a length of time (#998)."""
     view = discord.ui.View(timeout=None)
     for action in ACTIONS:
+        if action == "time" and not timed:
+            continue
         view.add_item(RulesCardButton(guild_id, card_id, action))
     return view
 
 
 class RulesCardButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=r"dmbot:rcard:(?P<action>got|ign|ovr|all):(?P<guild>[0-9]{1,20}):(?P<card>[0-9a-f]{8})",
+    template=r"dmbot:rcard:(?P<action>got|ign|ovr|all|time):(?P<guild>[0-9]{1,20}):(?P<card>[0-9a-f]{8})",
 ):
     """One of a card's four buttons. The cards live with the running session, so after a
     restart, or once the session is over, a press just says the card is closed."""
@@ -178,6 +187,10 @@ async def press(interaction: discord.Interaction, guild_id: int, card_id: str, a
         name = discord.utils.escape_markdown(card.name)
         note = f"\n🙈 No more cards for {name} this session. {STOP_ALL}"
         await interaction.response.edit_message(content=words + note, view=None)
+    elif action == "time":
+        from dmbot.dm_screen.effects import TimerForm
+
+        await interaction.response.send_modal(TimerForm(campaign.id, name=card.name))
     elif action == "ovr":
         from dmbot.ui.house_rules import OverrideForm
 
