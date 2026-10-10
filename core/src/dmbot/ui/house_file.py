@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import io
 import logging
+import time
+from typing import Any, cast
 
 import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.rules import house_file
-from dmbot.ui.dmbot_commands import NO_PINGS, _bot
+from dmbot.ui.dmbot_commands import NO_PINGS, _answer_first, _bot, _Button, _Menu, _send, _tell
 
 log = logging.getLogger(__name__)
 
@@ -74,3 +76,275 @@ async def send_download(interaction: discord.Interaction, campaign: Campaign) ->
     except discord.HTTPException:
         log.warning("Couldn't send the house-rules file", exc_info=True)
         await interaction.followup.send(COULDNT, ephemeral=True)
+
+
+# ---- the linked file and the upload (#969, part 2) -----------------------------------
+
+FILE_LABEL = "📄 House-rules file"
+LINK_LABEL = "🔗 Connect a file"
+CHANGE_LABEL = "🔗 Use another file"
+CHECK_LABEL = "🔄 Compare now"
+UNLINK_LABEL = "Stop using this file"
+UPLOAD_LABEL = "📎 Upload a file (one time)"
+ONLY_DMS = "Only this campaign's DMs can set up the house-rules file. Ask your DM."
+PICK_FIRST = (
+    "Which campaign is this file for? Open `/dmbot houserules`, pick the campaign, then press "
+    "**📄 House-rules file**."
+)
+GONE = "That campaign isn't here any more. Use `/dmbot houserules` to start again."
+NOT_READY = "The house-rules file isn't available right now. Please try again in a moment."
+NOT_LINKED = (
+    "📄 **House-rules file**\nNo file is connected yet. Keep your house rules in a Google Doc "
+    "(or a Dropbox or OneDrive text file) and DMbot compares it with its own list at the "
+    "start of every session.\nBefore you paste its web address, set sharing to “Anyone with "
+    "the link can view”. Or upload a file for one comparison (it isn't kept).\n"
+    "Nothing changes unless you press a button."
+)
+
+
+def linked_text(site: str) -> str:
+    return (
+        f"📄 **House-rules file**\nConnected: **{discord.utils.escape_markdown(site)}**. DMbot "
+        "compares it with your house rules every time you start a session, and tells you what "
+        "differs. Nothing changes unless you press a button."
+    )
+
+
+def _links(interaction: discord.Interaction) -> Any:
+    return getattr(_bot(interaction), "house_file_links", None)
+
+
+async def _dm_campaign(interaction: discord.Interaction, campaign: Campaign) -> Campaign | None:
+    """The campaign as it is now, if this person is one of its DMs; else they are told."""
+    current = await _bot(interaction).campaigns.get(campaign.guild_id, campaign.id)
+    if current is None:
+        await _tell(interaction, GONE)
+        return None
+    if interaction.user.id not in current.dm_user_ids:
+        await _tell(interaction, ONLY_DMS)
+        return None
+    return current
+
+
+def _private_send(interaction: discord.Interaction) -> Any:
+    """Offer the comparison as a private message (the same buttons as on the DM screen)."""
+
+    async def send(text: str, view: discord.ui.View) -> bool:
+        try:
+            if view.children:
+                await interaction.followup.send(
+                    text, view=view, ephemeral=True, allowed_mentions=NO_PINGS
+                )
+            else:
+                await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
+        except discord.HTTPException:
+            log.warning("Couldn't send the house-rules comparison", exc_info=True)
+            return False
+        return True
+
+    return send
+
+
+async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> None:
+    """📄 House-rules file: what is linked, and the ways to change it. The campaign's DMs
+    only; the answer is private."""
+    await _answer_first(interaction)
+    current = await _dm_campaign(interaction, campaign)
+    if current is None:
+        return
+    links = _links(interaction)
+    if links is None:
+        await _tell(interaction, NOT_READY)
+        return
+    link = await links.get(current.guild_id, current.id)
+    text = linked_text(link.site) if link is not None else NOT_LINKED
+    await _send(interaction, text, FileMenu(current, linked=link is not None))
+
+
+COOLDOWN_S = 30.0  # between two comparisons of one campaign's file asked for by hand
+_busy: set[tuple[int, str]] = set()  # campaigns being compared right now
+_last: dict[tuple[int, str], float] = {}  # when each was last compared by hand
+TOO_OFTEN = "I just compared that file. Try again in a few seconds."
+ALREADY = "I'm already comparing that file. One moment."
+
+
+def _take(campaign: Campaign) -> str | None:
+    """Words if this campaign's file can't be compared by hand right now (it is being
+    compared, or was a moment ago); else None, and the turn is taken."""
+    key = (campaign.guild_id, campaign.id)
+    if key in _busy:
+        return ALREADY
+    now = time.monotonic()
+    if now - _last.get(key, -COOLDOWN_S) < COOLDOWN_S:
+        return TOO_OFTEN
+    _busy.add(key)
+    _last[key] = now
+    if len(_last) > 500:  # strangers can't reach this, but keep it small anyway
+        for old in [k for k, at in _last.items() if now - at > COOLDOWN_S]:
+            del _last[old]
+    return None
+
+
+def _done(campaign: Campaign) -> None:
+    _busy.discard((campaign.guild_id, campaign.id))
+
+
+async def check_now(interaction: discord.Interaction, campaign: Campaign) -> None:
+    """Read the linked file now and offer what differs, privately."""
+    from dmbot.dm_screen import house_sync
+
+    await _answer_first(interaction)
+    current = await _dm_campaign(interaction, campaign)
+    if current is None:
+        return
+    wait = _take(current)
+    if wait is not None:
+        await _tell(interaction, wait)
+        return
+    try:
+        bot = _bot(interaction)
+        await house_sync.check_linked(bot, current, _private_send(interaction), quiet_if_same=False)
+    finally:
+        _done(current)
+
+
+async def link_file(interaction: discord.Interaction, campaign: Campaign, link: str) -> None:
+    """Link the file (the campaign's DMs only), then check it at once."""
+    from dmbot.rules.house import HouseRuleError
+
+    await _answer_first(interaction)
+    current = await _dm_campaign(interaction, campaign)
+    links = _links(interaction)
+    if current is None:
+        return
+    if links is None:
+        await _tell(interaction, NOT_READY)
+        return
+    try:
+        saved = await links.set_link(current.guild_id, current.id, interaction.user.id, link)
+    except HouseRuleError as exc:
+        await _tell(interaction, str(exc))
+        return
+    await _tell(
+        interaction,
+        f"✅ Connected: **{discord.utils.escape_markdown(saved.site)}**. DMbot will compare it "
+        "with your house rules every time you start a session. Comparing it now…",
+    )
+    await check_now(interaction, current)
+
+
+class LinkForm(discord.ui.Modal, title="Connect your house-rules file"):
+    link: discord.ui.TextInput[LinkForm] = discord.ui.TextInput(
+        label="Web address of your rules file",  # 45 characters at most
+        placeholder="In Google Docs: Share, then “Anyone with the link”, then Copy link.",
+        max_length=2000,
+    )
+
+    def __init__(self, campaign: Campaign) -> None:
+        super().__init__(timeout=30 * 60)
+        self.campaign = campaign
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await link_file(interaction, self.campaign, self.link.value)
+
+
+class UploadForm(discord.ui.Modal, title="Compare a house-rules file"):
+    file: discord.ui.Label[UploadForm] = discord.ui.Label(
+        text="Your house-rules file (a .txt file)",  # 45 characters at most
+        component=discord.ui.FileUpload(max_values=1),
+    )
+
+    def __init__(self, campaign: Campaign) -> None:
+        super().__init__(timeout=30 * 60)
+        self.campaign = campaign
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        from dmbot.dm_screen import house_sync
+
+        await _answer_first(interaction)
+        current = await _dm_campaign(interaction, self.campaign)  # before reading anything
+        if current is None:
+            return
+        upload = cast(discord.ui.FileUpload[UploadForm], self.file.component)
+        if not upload.values:
+            await _tell(interaction, f"No file was added. Press {UPLOAD_LABEL} and pick one.")
+            return
+        attachment = upload.values[0]
+        if attachment.size > house_sync.READ_MAX_BYTES:
+            await _tell(interaction, house_sync.TOO_BIG)
+            return
+        wait = _take(current)
+        if wait is not None:
+            await _tell(interaction, wait)
+            return
+        try:
+            data = await attachment.read()
+        except discord.HTTPException:
+            _done(current)
+            await _tell(interaction, "DMbot couldn't download that file. Try again.")
+            return
+        try:
+            words = await house_sync.compare_text(
+                _bot(interaction),
+                current,
+                data.decode("utf-8", errors="replace"),
+                _private_send(interaction),
+                from_link=False,
+            )
+        finally:
+            _done(current)
+        if words:
+            await _tell(interaction, words)
+
+
+class FileMenu(_Menu):
+    """The house-rules file's buttons: link or change the link, check it now, unlink, or
+    upload a file for one comparison."""
+
+    def __init__(self, campaign: Campaign, *, linked: bool) -> None:
+        super().__init__()
+        self.campaign = campaign
+        self.add_item(
+            _Button(
+                self._link,
+                label=CHANGE_LABEL if linked else LINK_LABEL,
+                style=discord.ButtonStyle.secondary if linked else discord.ButtonStyle.primary,
+            )
+        )
+        if linked:
+            self.add_item(
+                _Button(self._check, label=CHECK_LABEL, style=discord.ButtonStyle.primary)
+            )
+            self.add_item(
+                _Button(self._unlink, label=UNLINK_LABEL, style=discord.ButtonStyle.danger)
+            )
+        self.add_item(_Button(self._upload, label=UPLOAD_LABEL))
+
+    async def _link(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(LinkForm(self.campaign))
+
+    async def _upload(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(UploadForm(self.campaign))
+
+    async def _check(self, interaction: discord.Interaction) -> None:
+        await check_now(interaction, self.campaign)
+
+    async def _unlink(self, interaction: discord.Interaction) -> None:
+        from dmbot.rules.house import HouseRuleError
+
+        await _answer_first(interaction)
+        current = await _dm_campaign(interaction, self.campaign)
+        links = _links(interaction)
+        if current is None or links is None:
+            return
+        try:
+            had = await links.clear(current.guild_id, current.id, interaction.user.id)
+        except HouseRuleError as exc:
+            await _tell(interaction, str(exc))
+            return
+        await _tell(
+            interaction,
+            "Done. DMbot won't read that file any more. Your house rules are as they were."
+            if had
+            else "No file was connected.",
+        )
