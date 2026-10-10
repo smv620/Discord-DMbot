@@ -1,3 +1,6 @@
+# TO INSTALL: copy this file to .github/workflows/supervisor-review.yml (#1049). It lives here
+# because the sessions' GitHub token may not create or change workflow files; whoever has that
+# right (the owner, in the web editor, or a token with the `workflow` scope) moves it.
 name: Supervisor review
 
 # Shows Supervisor's review as a green or red `supervisor-review` check on each pull request

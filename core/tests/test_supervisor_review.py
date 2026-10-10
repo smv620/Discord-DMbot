@@ -11,7 +11,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-SCRIPT = Path(__file__).resolve().parent.parent / "supervisor_review.py"
+REPO = Path(__file__).resolve().parents[2]
+SCRIPT = REPO / "scripts" / "supervisor_review.py"
 spec = importlib.util.spec_from_file_location("supervisor_review", SCRIPT)
 assert spec and spec.loader
 sr = importlib.util.module_from_spec(spec)
@@ -45,12 +46,13 @@ def decide(
     files: tuple[str, ...] = ("core/src/x.py",),
     same: bool = False,
 ) -> tuple[str, str]:
-    return sr.decide(
+    verdict: tuple[str, str] = sr.decide(
         head=HEAD,
         changed_files=files,
         review=sr.latest_verdict(reviews, ["smv620"]),
         same_change_as_reviewed=lambda sha: same,
     )
+    return verdict
 
 
 class Verdicts(unittest.TestCase):
@@ -231,7 +233,7 @@ class FakeGitHub:
 class Run(unittest.TestCase):
     def test_it_posts_the_check_on_the_head_with_a_link_to_the_review(self) -> None:
         fake = FakeGitHub([review("Supervisor review: approved")], ["a.py"], {})
-        state, _ = sr.run(fake, 7, ["smv620"])  # type: ignore[arg-type]
+        state, _ = sr.run(fake, 7, ["smv620"])
         self.assertEqual(state, "success")
         ((sha, posted, _, url),) = fake.posted
         self.assertEqual((sha, posted), (HEAD, "success"))
@@ -242,17 +244,17 @@ class Run(unittest.TestCase):
         fake = FakeGitHub(
             [review("Supervisor review: approved", commit=OLD)], ["a.py"], {OLD: same, HEAD: same}
         )
-        self.assertEqual(sr.run(fake, 7, ["smv620"])[0], "success")  # type: ignore[arg-type]
+        self.assertEqual(sr.run(fake, 7, ["smv620"])[0], "success")
         moved = FakeGitHub(
             [review("Supervisor review: approved", commit=OLD)],
             ["a.py"],
             {OLD: same, HEAD: changes(("a.py", patch("-a", "+c")))},
         )
-        self.assertEqual(sr.run(moved, 7, ["smv620"])[0], "pending")  # type: ignore[arg-type]
+        self.assertEqual(sr.run(moved, 7, ["smv620"])[0], "pending")
 
     def test_a_log_only_pull_request_never_asks_for_a_comparison(self) -> None:
         fake = FakeGitHub([], ["docs/testing-status.log"], {})
-        self.assertEqual(sr.run(fake, 7, ["smv620"])[0], "success")  # type: ignore[arg-type]
+        self.assertEqual(sr.run(fake, 7, ["smv620"])[0], "success")
 
     def test_the_script_needs_its_settings(self) -> None:
         for name in ("GITHUB_TOKEN", "GITHUB_REPOSITORY", "PR_NUMBER"):
@@ -262,9 +264,7 @@ class Run(unittest.TestCase):
 class Workflow(unittest.TestCase):
     """The workflow file keeps to the issue's limits."""
 
-    text = (SCRIPT.parent.parent / ".github" / "workflows" / "supervisor-review.yml").read_text(
-        encoding="utf-8"
-    )
+    text = (REPO / "docs" / "ci" / "supervisor-review.yml").read_text(encoding="utf-8")
 
     def test_triggers_and_permissions(self) -> None:
         for needed in (
