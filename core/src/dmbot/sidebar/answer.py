@@ -201,6 +201,30 @@ def house_rule_covers(text: str, rule: str) -> bool:
     return len(stems(text) - stems(rule)) <= 1
 
 
+# Spell and rules words every answer about an entry uses, so they prove nothing about it.
+_ENTRY_SKIP = frozenset(
+    {"spell", "spells", "target", "targets", "creature", "creatures", "cast", "casts", "casting",
+     "caster", "within", "range", "area", "level", "damage", "save", "saves", "effect"}
+)  # fmt: skip
+
+
+def entry_covers(text: str, hits: Sequence[Hit]) -> bool:
+    """Does an SRD entry given to the AI say what the answer says? Same word comparison as a
+    house rule's, against every entry it was given (an edition comparison uses both), minus
+    the entry's own name and the words every spell answer has. An uncertain match loses the
+    citation, never gains certainty (#1015)."""
+    own = {w[:4] for h in hits for w in _SCOPE_WORD.findall(h.entry.name.lower())}
+    given = {
+        w[:4] for h in hits for w in _SCOPE_WORD.findall(f"{h.entry.text} {h.entry.name}".lower())
+    }
+    said = {
+        w[:4]
+        for w in _SCOPE_WORD.findall(text.lower())
+        if w not in _SCOPE_SKIP and w not in _ENTRY_SKIP
+    }
+    return len(said - given - own) <= 1
+
+
 def legacy_citation(source: str | None, ctx: context.Context) -> str | None:
     """When the AI was given a `[Legacy 2014]` entry, the source names both editions' entries by
     their own names and pages, the older one tagged: "Goblin Warrior SRD 5.2.1 p. 290; Goblin SRD
@@ -417,6 +441,9 @@ class Sidebar:
             rule = next((r for r in ctx.house_rules if number and r.number == int(number[0])), None)
             if rule is not None and not house_rule_covers(text, rule.rule):
                 source, sure = None, None  # the house rule is not what says this
+        srd_said = bool(source and source.startswith("SRD")) and not says_no_info(text)
+        if srd_said and not entry_covers(text, ctx.hits):
+            source, sure = None, None  # the page does not say this (#1015)
         text = _NOTE_ANYWHERE.sub("", text).strip()  # the model may write it; the code does
         if fields.in_game and not source and not says_no_info(text):
             # A rule with no entry or house rule behind it is never "sure" (CLAUDE.md,
