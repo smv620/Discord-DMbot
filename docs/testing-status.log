@@ -37,6 +37,13 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   `[DM Sidebar id=… via=… stt=…]` and `(DMbot) [DM Sidebar reply-to=… model=… sources=…]` lines
   (everyone can read them); the cleaned download and the live transcript channel do not. A
   player who sends DMbot a message gets nothing. Core logs no ERROR.
+- dev2, PR #971 (8f7bf1a, #960; needs #959 and #944 on): typed house rules. Core only, no
+  migration. A DM types "house rule: ..." to DMbot in the private chat and gets the same
+  Save / Edit / Cancel proposal on the DM screen. No AI, works with quick answers off. Live
+  check (about 2 minutes, one person, a game running): type "house rule: potions are a bonus
+  action" to DMbot in the private chat; DMbot answers "It's on your DM screen now..."; press
+  Save in #dm-screen; /dmbot houserules shows it as "Typed by the DM". Typing the same words
+  again says it was already offered.
 
 ------------------------------------------------------------------------------
 LIVE NOW
