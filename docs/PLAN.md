@@ -1996,6 +1996,12 @@ and is never "sure" ("a spell attack can crit on a 20" is not house rule 3).
 both entries by their own names and pages ("Goblin Warrior SRD 5.2.1 p. 290; Goblin SRD 5.1 p. 315
 [Legacy 2014]"). Brevity is unchanged; tags and sources are added after the cut.
 
+*Built, header facts (#1039, CloudDev, 2026-10-10; prompt version `sidebar-4`):* each rules entry sent to
+the sidebar's AI now starts with its facts (a spell's level, casting time, range, components and duration; a
+creature's size and type, AC, HP, speed, CR, senses and initiative), which the entries keep apart from their text.
+Range, casting-time and duration questions were answered "not stated". The facts are outside the text cut and count
+as the entry's own words for the SRD-citation check (#1015). A condition has none.
+
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
 keys. DMbot runs on the operator's keys and bills **by hours and campaigns** through the

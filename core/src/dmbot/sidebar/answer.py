@@ -40,7 +40,7 @@ from dmbot.ui import rule_card
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
-PROMPT_VERSION = "sidebar-3"  # bump when SYSTEM or the reply form changes (it is recorded)
+PROMPT_VERSION = "sidebar-4"  # bump when SYSTEM or the reply form changes (it is recorded)
 MAX_TOKENS = 150  # 200 characters of answer and the four fields fit in ~100
 CALL_TIMEOUT_S = 6  # one AI call; a Haiku answer of ~80 tokens takes 1 to 3 s
 TOTAL_BUDGET_S = 8  # everything after the plan check, retry included (the target is ~5 s)
@@ -70,7 +70,9 @@ don't say. Your call." or "I don't have that. Your call."). But if a RULES ENTRY
 RULE below names what the question is about, answer from it: never say the rules don't say \
 when such an entry is given. Never invent story, names, rules or numbers. Never decide \
 anything for the DM.
-3. House rules come first; then the rules entries as given. If an entry is marked [Legacy \
+3. A rules entry may start with FACTS (a spell's casting time, range, components and duration; \
+a creature's AC, HP and speed): they are part of the entry, so answer questions about them \
+from it. House rules come first; then the rules entries as given. If an entry is marked [Legacy \
 2014], say so in SOURCE.
 4. Do not quote a whole rule unless asked; a short answer is enough.
 5. If the answer comes from general D&D knowledge and not from the material given (class \
@@ -215,8 +217,12 @@ def entry_covers(text: str, hits: Sequence[Hit]) -> bool:
     the entry's own name and the words every spell answer has. An uncertain match loses the
     citation, never gains certainty (#1015)."""
     own = {w[:4] for h in hits for w in _SCOPE_WORD.findall(h.entry.name.lower())}
-    given = {
-        w[:4] for h in hits for w in _SCOPE_WORD.findall(f"{h.entry.text} {h.entry.name}".lower())
+    given = {  # the facts are part of what the AI was given (#1039)
+        w[:4]
+        for h in hits
+        for w in _SCOPE_WORD.findall(
+            f"{h.entry.text} {h.entry.name} {context.header_facts(h.entry)}".lower()
+        )
     }
     said = {
         w[:4]
