@@ -1915,8 +1915,11 @@ table isn't left waiting while the DM looks something up.
     speech-to-text, the question it answers, the AI model, the prompt version, the sources).
     Never in the cleaned file, the live channel, or the session counts. Backups hold no
     transcripts, so they hold no sidebar lines.
-  - **Cost limits:** nothing is downloaded, written down or asked while the answer engine (#934) is missing. A voice message may be up to 30 seconds. A spoken question is one a minute per table; questions in the DM chat are
-    six a minute per DM (each can spend speech-to-text and AI money). A voice message's speech
+  - **Cost limits:** nothing is downloaded, written down or asked while the answer engine (#934) is missing. A voice message may be up to 30 seconds. Questions are one at a time, and at most **6 a minute and 120 per listening session**
+    per table, spoken, typed and voice-noted alike (owner, #1040, 2026-10-10; the old
+    one-a-minute limit for spoken questions is gone because a clear wake phrase makes an accidental
+    question unlikely, and this limit keeps a looping line from running up AI cost). Past it, one short note:
+    "That's a lot of questions at once. Ask again in a minute." A voice message's speech
     counts in the end-of-session "sent" line for outside engines, not in the hours meter.
   - **Switch:** the ways in answer only when `DMBOT_SIDEBAR=1` (default 0, and it needs
     `ANTHROPIC_API_KEY`); off, a DM gets "Quick answers aren't switched on yet." and the table
@@ -1995,6 +1998,14 @@ and is never "sure" ("a spell attack can crit on a 20" is not house rule 3).
 (2) **Older edition always tagged and named:** when the AI was given a `[Legacy 2014]` entry, the source names
 both entries by their own names and pages ("Goblin Warrior SRD 5.2.1 p. 290; Goblin SRD 5.1 p. 315
 [Legacy 2014]"). Brevity is unchanged; tags and sources are added after the cut.
+
+*Built, wake phrase (#1040, CloudDev, 2026-10-10):* besides "Hold on, I need to find…", the campaign's DM can
+start a question with **"Hey DMbot, …" or "DMbot, …" at the very start of the line**; the rest is the question.
+Only the DM (a player's line does nothing), never in the middle of a sentence ("…and then DMbot said…"), never a
+line tagged in character, and a line like "DMbot said the goblin…" (no comma) is a story, not a question. Speech-to-text
+spellings matched at the start only: DMbot, DM bot, D.M. bot, D M bot, DM-bot, Dee em bot, the M bot (the list is a
+constant in `sidebar/ask.py`). The answer stays private (the DM's chat only) and the raw transcript keeps its
+`[DM Sidebar]` lines.
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste

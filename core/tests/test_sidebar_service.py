@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 from dmbot.ai import AIError
 from dmbot.sidebar import service
-from dmbot.sidebar.ask import AskLimiter
+from dmbot.sidebar.ask import ASK_PER_MINUTE, AskLimiter
 from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, Line
 from tests.test_sidebar_memo import ogg_opus
@@ -515,13 +515,13 @@ class TheRulesStayTrue(unittest.IsolatedAsyncioTestCase):
         for message in messages:
             await self.sidebar.on_dm_message(message)
             now[0] += 2
-        self.assertEqual(len(self.answerer.asked), service.CHAT_PER_MINUTE)
-        self.assertEqual(sent(messages[6]), [service.SLOW_DOWN])
+        self.assertEqual(len(self.answerer.asked), ASK_PER_MINUTE)
+        self.assertEqual(sent(messages[6]), [service.TOO_MANY])
         self.assertEqual(sent(messages[7]), [])  # said once
         now[0] += 60
         later = dm_message(content="check how flanking works")
         await self.sidebar.on_dm_message(later)
-        self.assertEqual(len(self.answerer.asked), service.CHAT_PER_MINUTE + 1)
+        self.assertEqual(len(self.answerer.asked), ASK_PER_MINUTE + 1)
 
     async def test_strangers_do_not_make_the_notes_grow_forever(self) -> None:
         self.host.tables.clear()
@@ -612,18 +612,68 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         ]:
             self.assertFalse(self.sidebar.ask_at_table(self.table, DM, said, **kw))
 
-    async def test_one_a_minute_for_the_table(self) -> None:
+    async def test_six_questions_a_minute_for_the_table(self) -> None:
         now = [1000.0]
         self.sidebar._clock = lambda: now[0]
         said = "Hold on, I need to check how grappling works."
-        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, said))
-        await self.settle()
-        now[0] += 30
+        for _ in range(ASK_PER_MINUTE):
+            self.assertTrue(self.sidebar.ask_at_table(self.table, DM, said))
+            await self.settle()
+            now[0] += 2
         self.assertFalse(self.sidebar.ask_at_table(self.table, DM, said))
-        now[0] += 31
+        now[0] += 60
         self.assertTrue(self.sidebar.ask_at_table(self.table, DM, said))
         await self.settle()
-        self.assertEqual(len(self.answerer.asked), 2)
+        self.assertEqual(len(self.answerer.asked), ASK_PER_MINUTE + 1)
+
+    async def test_hey_dmbot_gets_a_private_answer(self) -> None:
+        self.assertTrue(
+            self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what's the range of fireball?")
+        )
+        await self.settle()
+        self.assertEqual(self.answerer.asked[0][1], "what's the range of fireball")
+        self.assertEqual(self.host.dms, [(DM, FakeAnswer().text)])  # the DM's chat only
+        self.assertEqual(self.host.screen, [])  # never the screen, a channel or the voice room
+        self.assertEqual(
+            [x.sidebar for x in self.host.saved], [SIDEBAR_QUESTION, SIDEBAR_ANSWER]
+        )  # the raw transcript keeps its lines, as for "hold on"
+
+    async def test_a_player_saying_hey_dmbot_starts_nothing(self) -> None:
+        self.assertFalse(
+            self.sidebar.ask_at_table(
+                self.table, PLAYER, "Hey DMbot, what's the range of fireball?"
+            )
+        )
+        self.assertEqual((self.sidebar._tasks, self.host.dms, self.answerer.asked), (set(), [], []))
+
+    async def test_the_name_in_the_middle_of_a_sentence_starts_nothing(self) -> None:
+        self.assertFalse(
+            self.sidebar.ask_at_table(self.table, DM, "and then DMbot, what's the range of it")
+        )
+
+    async def test_one_question_at_a_time_with_the_wake_phrase_too(self) -> None:
+        self.answerer.gate = asyncio.Event()
+        self.assertTrue(
+            self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, how does grapple work")
+        )
+        await asyncio.sleep(0)
+        self.assertFalse(self.sidebar.ask_at_table(self.table, DM, "DMbot, what about prone"))
+        await asyncio.sleep(0)
+        self.assertIn((DM, service.NOT_SOON_AGAIN), self.host.dms)
+        self.answerer.gate.set()
+        await self.settle()
+
+    async def test_the_session_limit_stops_a_looping_line(self) -> None:
+        self.table.sidebar_limiter = AskLimiter(per_minute=1000, per_session=3)
+        for _ in range(3):
+            self.assertTrue(
+                self.sidebar.ask_at_table(self.table, DM, "DMbot, how does grapple work")
+            )
+            await self.settle()
+        self.assertFalse(self.sidebar.ask_at_table(self.table, DM, "DMbot, how does grapple work"))
+        await asyncio.gather(*self.sidebar._tasks)
+        self.assertEqual(len(self.answerer.asked), 3)
+        self.assertEqual(self.host.dms[-1], (DM, service.TOO_MANY))
 
     async def test_a_dm_who_stopped_being_recorded_gets_nothing(self) -> None:
         self.host.agreed.discard((GUILD, DM))
@@ -657,6 +707,7 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         await self.settle()
 
     async def test_a_spoken_question_the_limit_swallows_is_explained_privately_once(self) -> None:
+        self.table.sidebar_limiter = AskLimiter(per_minute=1)
         now = [1000.0]
         self.sidebar._clock = lambda: now[0]
         said = "Hold on, I need to check how grappling works."
@@ -667,7 +718,7 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.sidebar.ask_at_table(self.table, DM, said))
         self.assertFalse(self.sidebar.ask_at_table(self.table, DM, said))  # not told twice
         await asyncio.gather(*self.sidebar._tasks)
-        self.assertEqual(self.host.dms, [(DM, service.ONE_A_MINUTE)])
+        self.assertEqual(self.host.dms, [(DM, service.TOO_MANY)])
 
     async def test_a_spoken_question_while_one_is_being_answered_is_explained(self) -> None:
         self.answerer.gate = asyncio.Event()
