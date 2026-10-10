@@ -241,7 +241,7 @@ than in separate volumes.
 | 4 | **TimeBot**: game clock, effect durations, rests, dawn/noon/dusk, split-party clocks | |
 | 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only. *Split (decided 2026-10-06, docs/STORY_MEMORY.md):* 5a claims, state facts and the first continuity warnings · 5b NPC tracker, who knows what, hierarchical reputations · 5c PlotBot: threads, promises, summaries, pre-session note · 5d the Shared story switch |
 | 6 | **DM sidebar**: quick, very short AI answers for the DM, by voice memo or by asking out loud at the table; tagged `[DM Sidebar]` in the raw transcript only (owner, 2026-10-09) | No install needed; being built early, after the rules lookup |
-| 7 | **Google Drive** (house-rules doc mirror) and **character data** from D&D Beyond links | |
+| 7 | **Google Drive** (writing the house-rules file of record directly) and **character data** from D&D Beyond links | Reading a linked house-rules file and the download come first (2026-10-09) |
 | later | Paid service billing (owner's key, per-server metering); D&D Beyond companion extension; optional DM hotkey helper | |
 
 ## Feature notes
@@ -428,8 +428,28 @@ titles), so the rules index keys each entry by a normalized name plus known alia
 and a legacy entry is used only when no newer entry matches any alias. If a future
 edition supersedes 2024, it becomes "newest" and 2024 content gets its own legacy tag.
 
-**House rules (decided 2026-10-04).** Each campaign has its own. The database is the
-source of truth; the Google Doc (Phase 7) is a readable mirror. Each rule records the
+**House rules (decided 2026-10-04; the file of record added 2026-10-09).** Each campaign
+has its own. **The house rules live where the table can read them offline** (owner,
+2026-10-09): a house rule only DMbot can see isn't useful, and most house-rule talk happens
+away from Discord. So the DM keeps **one house-rules file of record** (a Google Doc, or any
+document with a share link), and DMbot keeps its own copy in step with it:
+- **Linked file:** the DM gives DMbot the file's share link once (⚙️ Settings or
+  `/dmbot houserules`). **Every time a session starts, DMbot reads the file** (through the
+  guarded link reader `dmbot.fetch`) and compares it with its copy. Changes made offline
+  (added, changed or removed rules) are shown to the DM on the DM screen as one short list
+  with **Accept all / Review / Ignore**. Nothing changes until the DM accepts. If the file
+  can't be read, DMbot says so once and carries on with its copy.
+- **Changes made in Discord** (Override, by voice, by typing, `/dmbot houserules`): if
+  DMbot can write the file (Phase 7: a Google Doc it created, with Google's narrowest
+  `drive.file` access), it writes the change there. **If it can't, it offers the DM the
+  updated house-rules file to download** right away, with one line saying "Put this in
+  your house-rules file so everyone can see it", and reminds them at the next start if the
+  linked file still doesn't have it.
+- **One plain format** both ways, readable by people: one rule per numbered line,
+  `12. <the rule>` with an optional `(instead of: <book rule>)`. Rule numbers stay the
+  campaign's own (below), so a rule edited offline keeps its number.
+- With no linked file, the download after each change is the record the DM keeps.
+DMbot's copy (the database) is what alerts and lookups read during a game. Each rule records the
 rule, the book rule it supersedes, and the scenario that created it (session, date, what
 happened). Ways in:
 1. **From an alert:** ⚖️ Override → "Save as a house rule?"
@@ -1790,8 +1810,23 @@ one) moves a clock the DM has set, with a one-line note and **Undo** (a rest fro
 pressed it alone; it only undoes while the clock is still where the rest left it); a player's line never does. **Speaks up only for** dawn,
 noon and dusk as a button or rest passes them (not when the DM sets the time), and **24 hours
 without a long rest**, once per stretch, with its source ("Check: 24 hours since the last long rest… Optional rule, Xanathar's… Your call."); on by default, and off if the DM turns the "Going without a long rest" optional rule
-off. The first time the clock is set the party counts as rested then. Not built yet: effect
-durations, split-party clocks, reading time from narration, periodic notes.
+off. The first time the clock is set the party counts as rested then. Not built yet: split-party
+clocks, reading time from narration, periodic notes.
+
+*Built, part 2: timed effects the DM starts (2026-10-10, #998):* `game_effects` (migration 0042): per
+campaign, own server scope, deleted with the campaign, in backups (`EffectsSection`, validated),
+at most 20 running. A DM starts one from **Start a timer** on the clock message (a form: spell or
+effect, who it is on, how long) or **Time it** on a rules card for a spell that lasts a length of
+time; nothing starts by itself. `dmbot.timebot.durations` reads the index's duration text ("1
+minute", "Concentration, up to 1 hour", "8 hours") into game minutes, a round counting as 6 seconds
+rounded up to a minute; "Instantaneous", "Until dispelled" and "Special" are not timed; the DM can
+type a length instead, and a form with no length uses the spell's own (a test reads every spell in the
+index). Concentration shows as 🧠. The clock message lists the soonest five, one line each. When a
+button or rest passes an effect's end, the DM screen says once "⏳ Bless on Mira has likely
+ended (1 minute)" with **Ended** and **Still going +10 min** (ten more game minutes from where the
+clock is, then said again); nothing ends silently or by itself. Only the campaign's DMs, checked in
+the transaction. Effects live on the game clock, so a restart keeps them. Not built: split-party
+clocks, reading time from narration, AI.
 
 **DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
 DMbot is there to help the game move quickly, never to bog it down or distract. The
@@ -1932,6 +1967,15 @@ note itself and the answer from the scene or the campaign's names is not marked.
 both editions' entries, the older tagged `[Legacy 2014]` ("is the 2014 goblin different" sees
 Goblin and Goblin Warrior). `sidebar_check` now also checks each case's must-say and must-not-say
 words. Not done: adding general rules or class features to the index.
+
+*Built, accuracy part 3 (#1005, CloudDev, 2026-10-10; prompt version `sidebar-3`):* (1) **Each fact cites
+its own source:** a house rule is cited only when it says what the answer says (the answer's real
+words, bar one, must be in the rule); otherwise the cite is dropped and the answer gets "(not in
+DMbot's rules, check your book)
+and is never "sure" ("a spell attack can crit on a 20" is not house rule 3).
+(2) **Older edition always tagged and named:** when the AI was given a `[Legacy 2014]` entry, the source names
+both entries by their own names and pages ("Goblin Warrior SRD 5.2.1 p. 290; Goblin SRD 5.1 p. 315
+[Legacy 2014]"). Brevity is unchanged; tags and sources are added after the cut.
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
