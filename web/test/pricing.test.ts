@@ -166,7 +166,10 @@ describe("the words match the numbers", () => {
       /^Only the hours and how many campaigns you can run\. The free Try It has no backups or downloads; everything else is the same on every plan/,
     );
     expect(answer("Can I change my plan?")).toMatch(/any time/);
-    expect(answer("What if a payment doesn't go through?")).toMatch(/keeps working for 7 days/);
+    const failed = answer("What if a payment doesn't go through?");
+    expect(failed).toContain("short grace period");
+    expect(failed).not.toMatch(/\d+ days/);
+    expect(failed).toContain("If your first payment doesn't go through, the plan doesn't start until it does");
     expect(answer("What if I move to a plan with fewer campaigns?")).toMatch(
       /To play a paused one, move to a bigger plan\.$/,
     );
