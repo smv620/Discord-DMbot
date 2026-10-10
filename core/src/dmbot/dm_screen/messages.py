@@ -423,4 +423,7 @@ def joined_not_recorded_message(name: str) -> str:
 
 
 # A test server (#1019): said once at /dmbot start, in the DM screen.
-TEST_SESSION = "🎙️ This is a test session: voices of people who agreed are saved for DMbot's tests."
+TEST_SESSION = (
+    '🧪 Test session. Only players who chose "Save my voice for tests" have their voice kept. '
+    "Everyone else is still written down as usual. Players can stop any time in ⚙️ Menu."
+)

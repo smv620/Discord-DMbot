@@ -6,6 +6,7 @@ and by `python -m dmbot.devtools.test_library` (list, keep). Nothing here shows 
 from __future__ import annotations
 
 import shutil
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,7 +64,7 @@ class LibraryError(ValueError):
 def keep(root: Path, folder: str, name: str, note: str, *, now: datetime | None = None) -> Path:
     """Mark a session to keep under a name, with what passed. It is not deleted after 7 days."""
     target = root / folder
-    if target.parent != root or not (target / files.MANIFEST).exists():
+    if Path(folder).name != folder or not (target / files.MANIFEST).exists():
         raise LibraryError(f"No saved session called {folder!r} (see `test_library list`).")
     if not name.strip() or any(c in name for c in "/\\"):
         raise LibraryError("Give the case a short name without slashes.")
@@ -82,13 +83,19 @@ def keep(root: Path, folder: str, name: str, note: str, *, now: datetime | None 
     return target
 
 
-def delete_person(root: Path, key: bytes, guild_id: int, user_id: int) -> int:
-    """ "Stop saving my voice": delete this person's files from every session and take them
+def delete_person(
+    root: Path, key: bytes, guild_id: int, user_id: int, *, live: Collection[Path] = ()
+) -> int:
+    """Stop saving my voice: delete this person's files from every session and take them
     out of every manifest. A kept session that lost a speaker is marked incomplete; an unkept
-    one with nobody left is deleted. How many sessions had them."""
+    one with nobody left is deleted. How many sessions had them. `live`: folders of sessions
+    running now, which clean up after themselves (TestSession.forget) and are left alone
+    here, so two writers never rewrite one manifest."""
     code = files.voice_code(key, guild_id, user_id)
     touched = 0
     for folder in session_folders(root):
+        if folder in live:
+            continue
         manifest = files.read_json(folder / files.MANIFEST)
         if manifest is None:
             continue
@@ -97,15 +104,14 @@ def delete_person(root: Path, key: bytes, guild_id: int, user_id: int) -> int:
             continue
         touched += 1
         numbers = {s["speaker"] for s in mine}
-        for item in manifest.get("utterances", []):
-            if item["speaker"] in numbers:
-                (folder / item["file"]).unlink(missing_ok=True)
+        for number in numbers:  # every file of theirs, listed in the manifest or not
+            for path in (folder / files.AUDIO).glob(f"*-{number}.flac"):
+                path.unlink(missing_ok=True)
         manifest["utterances"] = [u for u in manifest["utterances"] if u["speaker"] not in numbers]
         manifest["speakers"] = [s for s in manifest["speakers"] if s["voice"] != code]
         produced = manifest.get("produced", {})
-        produced["transcript"] = [
-            t for t in produced.get("transcript", []) if t["speaker"] not in numbers
-        ]
+        for part in ("transcript", "shown"):
+            produced[part] = [t for t in produced.get(part, []) if t["speaker"] not in numbers]
         manifest["removed_speakers"] = [
             *manifest.get("removed_speakers", []),
             *({"speaker": s["speaker"], "role": s["role"]} for s in mine),
@@ -130,11 +136,23 @@ def cleanup(root: Path, now: float, *, keep_days: int = files.KEEP_DAYS) -> int:
     for folder in session_folders(root):
         if (folder / files.KEPT).exists():
             continue
-        newest = max((p.stat().st_mtime for p in folder.rglob("*") if p.is_file()), default=0.0)
-        if now - newest > keep_days * 86400:
+        if now - _newest(folder) > keep_days * 86400:
             shutil.rmtree(folder, ignore_errors=True)
             gone += 1
     return gone
+
+
+def _newest(folder: Path) -> float:
+    """When anything in the folder was last written; a file that vanishes meanwhile (a
+    person deleted, a session ending) is skipped."""
+    newest = 0.0
+    for path in folder.rglob("*"):
+        try:
+            if path.is_file():
+                newest = max(newest, path.stat().st_mtime)
+        except OSError:
+            continue
+    return newest
 
 
 def describe(info: Info) -> str:

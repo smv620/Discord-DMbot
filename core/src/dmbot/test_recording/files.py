@@ -14,16 +14,19 @@ file of one person across sessions.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
 import os
 import re
 import secrets
+import tempfile
 from pathlib import Path
 from typing import Any
 
 KEY_FILE = ".key"
+KEY_BYTES = 32
 MANIFEST = "session.json"
 KEPT = "kept.json"
 AUDIO = "audio"
@@ -39,14 +42,27 @@ def ensure_root(root: Path) -> None:
 
 
 def load_key(root: Path) -> bytes:
-    """The secret for voice codes, made on first use (owner-only), kept with the files."""
+    """The secret for voice codes, made on first use (owner-only), kept with the files.
+
+    Made whole under a temporary name and then linked into place, so another thread never
+    reads half of it; and checked every time: a key of the wrong size is an error, never
+    something to compute codes with."""
     ensure_root(root)
     path = root / KEY_FILE
     if not path.exists():
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(secrets.token_bytes(32))
-    return path.read_bytes()
+        fd, temp = tempfile.mkstemp(dir=root, prefix=".key-")
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(secrets.token_bytes(KEY_BYTES))
+            os.chmod(temp, 0o600)
+            with contextlib.suppress(FileExistsError):  # another thread got there first: fine
+                os.link(temp, path)
+        finally:
+            Path(temp).unlink(missing_ok=True)
+    key = path.read_bytes()
+    if len(key) != KEY_BYTES:
+        raise RuntimeError("The test-recordings secret is damaged; fix or remove it by hand.")
+    return key
 
 
 def voice_code(key: bytes, guild_id: int, user_id: int) -> str:
@@ -57,10 +73,19 @@ def voice_code(key: bytes, guild_id: int, user_id: int) -> str:
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
     """Replace a file whole or not at all (a crash never leaves half a manifest)."""
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-    temp.chmod(0o600)
-    temp.replace(path)
+    write_text(path, json.dumps(data, indent=2, sort_keys=True))
+
+
+def write_text(path: Path, text: str) -> None:
+    """Whole or not at all, under a name of its own: two writers never share a temp file."""
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+    finally:
+        Path(temp).unlink(missing_ok=True)
 
 
 def read_json(path: Path) -> dict[str, Any] | None:

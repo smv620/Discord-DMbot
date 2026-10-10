@@ -99,6 +99,7 @@ class Session(unittest.IsolatedAsyncioTestCase):
         )
 
     def manifest(self) -> dict[str, Any]:
+        self.session.flush()  # the running session writes it every few seconds
         data = files.read_json(self.session.folder / files.MANIFEST)
         assert data is not None
         return data
@@ -147,7 +148,7 @@ class Session(unittest.IsolatedAsyncioTestCase):
         await self.say(DM, 0.0, pcm(), "I attack the goblin")
         await self.say(ALEX, 2.0, pcm(), "I cast shield")
         self.session.stopped(ALEX, STARTED * 1000 + 9000)
-        self.session.shown("sidebar question", STARTED * 1000 + 4000, "find flanking")
+        self.session.shown(ALEX, "sidebar question", STARTED * 1000 + 4000, "find flanking")
         self.session.finish({"complete": True})
         text = (self.session.folder / files.MANIFEST).read_text(encoding="utf-8")
         self.assertIsNone(BIG_NUMBER.search(text), "a Discord-sized number is in the manifest")
@@ -160,7 +161,7 @@ class Session(unittest.IsolatedAsyncioTestCase):
 
     async def test_it_records_what_dmbot_made_of_the_session(self) -> None:
         await self.say(DM, 1.0, pcm(), "The goblin ducks")
-        self.session.shown("sidebar answer", STARTED * 1000 + 3000, "No. A point you choose.")
+        self.session.shown(DM, "sidebar answer", STARTED * 1000 + 3000, "No. A point you choose.")
         produced = self.manifest()["produced"]
         self.assertEqual(
             produced["transcript"], [{"at_ms": 1000, "speaker": 1001, "text": "The goblin ducks"}]
@@ -444,7 +445,7 @@ class InTheBot(unittest.IsolatedAsyncioTestCase):
         assert table.test_session is not None
         self.post.assert_awaited_once()
         assert self.post.await_args is not None
-        self.assertIn("This is a test session", self.post.await_args.args[1])
+        self.assertIn("Test session. Only players who chose", self.post.await_args.args[1])
 
     async def test_only_people_who_said_both_yeses_are_saved(self) -> None:
         bot = self.bot(frozenset({GUILD}))
@@ -455,12 +456,14 @@ class InTheBot(unittest.IsolatedAsyncioTestCase):
         # Alex is recorded but never pressed Save my voice for tests
         await bot._save_test_audio(table, self.utterance(DM), "dm line")
         await bot._save_test_audio(table, self.utterance(ALEX, 3.0), "alex line")
+        table.test_session.flush()
         manifest = files.read_json(table.test_session.folder / files.MANIFEST)
         assert manifest is not None
         self.assertEqual([u["speaker"] for u in manifest["utterances"]], [1001])
         # and a yes to saving without the recording yes saves nothing either
         await bot.grant_test_voice(GUILD, SAM)
         await bot._save_test_audio(table, self.utterance(SAM, 5.0), "sam line")
+        table.test_session.flush()
         manifest = files.read_json(table.test_session.folder / files.MANIFEST)
         assert manifest is not None
         self.assertEqual(len(manifest["utterances"]), 1)
@@ -501,33 +504,317 @@ class InTheBot(unittest.IsolatedAsyncioTestCase):
         await bot._start_test_session(table)
         assert table.test_session is not None
         bot._finish_test_session(table, True)
+        table.test_session.flush()
         manifest = files.read_json(table.test_session.folder / files.MANIFEST)
         assert manifest is not None
         self.assertTrue(manifest["ended"])
         self.assertEqual(json.dumps(manifest["settings"]).count("api."), 0)  # no company host
 
-    async def test_what_the_sidebar_says_goes_in_the_session(self) -> None:
+    async def test_what_the_sidebar_says_goes_in_the_session_for_a_saved_speaker_only(self) -> None:
+        from dmbot.transcript.models import SIDEBAR_QUESTION, Line
+
         bot = self.bot(frozenset({GUILD}))
         table = self.table()
         bot.tables[GUILD] = table
         await bot._start_test_session(table)
         assert table.test_session is not None
-        from dmbot.transcript.models import SIDEBAR_QUESTION, Line
-
-        bot.sidebar_save(
-            table,
-            Line(
-                STARTED * 1000 + 2000,
-                DM,
-                "find flanking",
-                "find flanking",
-                sidebar=SIDEBAR_QUESTION,
-            ),
+        await bot.grant_test_voice(GUILD, DM)
+        await bot._save_test_audio(table, self.utterance(DM), "hello")
+        ask = Line(
+            STARTED * 1000 + 2000, DM, "find flanking", "find flanking", sidebar=SIDEBAR_QUESTION
         )
+        bot.sidebar_save(table, ask)
+        other = Line(
+            STARTED * 1000 + 3000, ALEX, "find grapple", "find grapple", sidebar=SIDEBAR_QUESTION
+        )
+        bot.sidebar_save(table, other)  # Alex never said yes to saving
         table.test_session.flush()
         manifest = files.read_json(table.test_session.folder / files.MANIFEST)
         assert manifest is not None
-        self.assertEqual(manifest["produced"]["shown"][0]["kind"], "sidebar question")
+        shown = manifest["produced"]["shown"]
+        self.assertEqual(
+            [(x["kind"], x["speaker"], x["text"]) for x in shown],
+            [("sidebar question", 1001, "find flanking")],
+        )
+
+
+class Hardening(unittest.IsolatedAsyncioTestCase):
+    """What the reviews found (#1019): races, orphans, ordering and limits."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name) / "rec"
+        self.addCleanup(self._tmp.cleanup)
+        self.key = files.load_key(self.root)
+
+    def session(self, short: str = "aaaaaa") -> TestSession:
+        return TestSession(self.root, self.key, GUILD, STARTED, settings={}, short_id=short)
+
+    async def save(
+        self, s: TestSession, user: int, at_s: float, audio: bytes | None = None
+    ) -> bool:
+        return await s.add_utterance(
+            user,
+            is_dm=user == DM,
+            start_ms=STARTED * 1000 + int(at_s * 1000),
+            end_ms=STARTED * 1000 + int(at_s * 1000) + 500,
+            pcm=audio or pcm(0.3),
+            text=f"line at {at_s}",
+            allowed=lambda: True,
+        )
+
+    async def test_speakers_saved_at_once_get_their_own_files_and_entries(self) -> None:
+        s = self.session()
+        await asyncio.gather(
+            self.save(s, DM, 0.0, pcm(2.0)),
+            self.save(s, ALEX, 1.0, pcm(0.2)),
+            self.save(s, SAM, 2.0, pcm(1.0)),
+        )
+        s.flush()
+        manifest = files.read_json(s.folder / files.MANIFEST)
+        assert manifest is not None
+        listed = sorted(u["file"] for u in manifest["utterances"])
+        on_disk = sorted(f"audio/{p.name}" for p in (s.folder / files.AUDIO).iterdir())
+        self.assertEqual(listed, on_disk)
+        self.assertEqual(len(set(listed)), 3)
+
+    async def test_the_manifest_is_in_time_order_once_the_session_ends(self) -> None:
+        s = self.session()
+        await asyncio.gather(self.save(s, DM, 5.0, pcm(2.0)), self.save(s, ALEX, 1.0, pcm(0.2)))
+        s.finish()
+        manifest = files.read_json(s.folder / files.MANIFEST)
+        assert manifest is not None
+        starts = [u["start_ms"] for u in manifest["utterances"]]
+        self.assertEqual(starts, sorted(starts))
+        times = [t["at_ms"] for t in manifest["produced"]["transcript"]]
+        self.assertEqual(times, sorted(times))
+
+    async def test_a_deleted_speakers_number_is_not_given_to_someone_else(self) -> None:
+        s = self.session()
+        await self.save(s, ALEX, 1.0)  # 1002
+        s.forget(ALEX)
+        await self.save(s, SAM, 2.0)
+        s.flush()
+        manifest = files.read_json(s.folder / files.MANIFEST)
+        assert manifest is not None
+        self.assertEqual([x["speaker"] for x in manifest["speakers"]], [1003])
+        self.assertEqual(manifest["removed_speakers"], [{"speaker": 1002, "role": "Player 1"}])
+
+    async def test_someone_who_ends_up_with_nothing_saved_is_not_listed(self) -> None:
+        s = self.session()
+        calls = {"n": 0}
+
+        def allowed() -> bool:
+            calls["n"] += 1
+            return calls["n"] < 3  # fails after the file is written
+
+        saved = await s.add_utterance(
+            DM, is_dm=True, start_ms=0, end_ms=500, pcm=pcm(0.3), text="x", allowed=allowed
+        )
+        self.assertFalse(saved)
+        s.flush()
+        manifest = files.read_json(s.folder / files.MANIFEST)
+        assert manifest is not None
+        self.assertEqual(manifest["speakers"], [])
+        self.assertEqual(list((s.folder / files.AUDIO).iterdir()), [])
+
+    async def test_a_stop_and_a_new_yes_during_the_write_do_not_save_the_old_number(self) -> None:
+        s = self.session()
+        state = {"stopped": False}
+
+        def allowed() -> bool:
+            if not state["stopped"]:
+                s.forget(ALEX)  # Stop saving pressed during the encode...
+                state["stopped"] = True
+            return True  # ...and then a new yes: allowed again
+
+        saved = await s.add_utterance(
+            ALEX, is_dm=False, start_ms=0, end_ms=500, pcm=pcm(0.3), text="x", allowed=allowed
+        )
+        # forget() ran before a number was reserved, so nothing was there to forget; the
+        # utterance is simply saved under the person's one number. No stray entry either way.
+        s.flush()
+        manifest = files.read_json(s.folder / files.MANIFEST)
+        assert manifest is not None
+        numbers = {u["speaker"] for u in manifest["utterances"]}
+        self.assertLessEqual(numbers, {x["speaker"] for x in manifest["speakers"]})
+        self.assertEqual(saved, bool(manifest["utterances"]))
+
+    async def test_an_unlisted_file_of_theirs_is_deleted_too(self) -> None:
+        s = self.session()
+        await self.save(s, DM, 0.0)
+        await self.save(s, ALEX, 1.0)  # 1002
+        s.finish()
+        orphan = s.folder / files.AUDIO / "0099-1002.flac"  # written, never made the manifest
+        orphan.write_bytes(b"x")
+        mine = s.folder / files.AUDIO / "0098-1001.flac"  # the DM's own: must stay
+        mine.write_bytes(b"y")
+        library.delete_person(self.root, self.key, GUILD, ALEX)
+        self.assertFalse(orphan.exists())
+        self.assertTrue(mine.exists())
+
+    async def test_a_running_sessions_folder_is_left_to_the_session(self) -> None:
+        live, done = self.session("aaaaaa"), self.session("bbbbbb")
+        await self.save(live, ALEX, 0.0)
+        await self.save(done, ALEX, 0.0)
+        done.finish()
+        touched = library.delete_person(self.root, self.key, GUILD, ALEX, live=[live.folder])
+        self.assertEqual(touched, 1)
+        live.flush()
+        manifest = files.read_json(live.folder / files.MANIFEST)
+        assert manifest is not None
+        self.assertEqual(len(manifest["utterances"]), 1)  # the session's own forget() handles it
+
+    async def test_two_deletes_of_one_person_at_once_do_no_harm(self) -> None:
+        for short in ("aaaaaa", "bbbbbb", "cccccc"):
+            s = self.session(short)
+            await self.save(s, DM, 0.0)
+            await self.save(s, ALEX, 1.0)
+            s.finish()
+        await asyncio.gather(
+            *(
+                asyncio.to_thread(library.delete_person, self.root, self.key, GUILD, ALEX)
+                for _ in range(4)
+            )
+        )
+        for info in library.listing(self.root):
+            self.assertEqual((info.speakers, info.utterances), (1, 1))
+
+    async def test_sidebar_text_is_kept_only_for_a_saved_speaker_and_goes_with_them(self) -> None:
+        s = self.session()
+        await self.save(s, DM, 0.0)
+        s.shown(ALEX, "sidebar question", STARTED * 1000 + 1000, "never said yes")  # ignored
+        s.shown(DM, "sidebar question", STARTED * 1000 + 2000, "find flanking")
+        s.finish()
+        manifest = files.read_json(s.folder / files.MANIFEST)
+        assert manifest is not None
+        self.assertEqual([x["text"] for x in manifest["produced"]["shown"]], ["find flanking"])
+        library.delete_person(self.root, self.key, GUILD, DM)
+        self.assertEqual(library.listing(self.root), [])  # nobody left: the session goes
+
+    async def test_the_manifest_is_rewritten_every_few_seconds_not_for_every_utterance(
+        self,
+    ) -> None:
+        s = self.session()
+        writes: list[str] = []
+        real = files.write_text
+
+        def counting(path: Path, text: str) -> None:
+            writes.append(path.name)
+            real(path, text)
+
+        from unittest.mock import patch
+
+        with (
+            patch.object(files, "write_text", counting),
+            patch("dmbot.test_recording.session.FLUSH_EVERY_S", 0.05),
+        ):
+            for i in range(20):
+                await self.save(s, DM, float(i))
+            await asyncio.sleep(0.2)
+        manifests = [w for w in writes if w == files.MANIFEST]
+        self.assertLess(len(manifests), 10)
+        self.assertGreaterEqual(len(manifests), 1)
+        files_on_disk = files.read_json(s.folder / files.MANIFEST)
+        assert files_on_disk is not None
+        self.assertEqual(len(files_on_disk["utterances"]), 20)
+
+    async def test_the_secret_is_made_once_even_when_many_ask_at_once(self) -> None:
+        root = Path(self._tmp.name) / "fresh"
+        keys = await asyncio.gather(*(asyncio.to_thread(files.load_key, root) for _ in range(8)))
+        self.assertEqual(len(set(keys)), 1)
+        self.assertEqual(len(keys[0]), files.KEY_BYTES)
+        self.assertEqual([p.name for p in root.iterdir()], [files.KEY_FILE])  # no leftovers
+
+    async def test_a_damaged_secret_is_an_error_not_a_weaker_key(self) -> None:
+        (self.root / files.KEY_FILE).write_bytes(b"short")
+        with self.assertRaises(RuntimeError):
+            files.load_key(self.root)
+
+    async def test_cleanup_copes_with_a_file_vanishing_and_a_corrupt_manifest(self) -> None:
+        s = self.session()
+        await self.save(s, DM, 0.0)
+        s.finish()
+        (s.folder / files.MANIFEST).write_text("{not json", encoding="utf-8")
+        gone = library.cleanup(self.root, time.time() + 30 * 86400)
+        self.assertEqual(gone, 1)
+
+    async def test_a_folder_name_with_dots_is_not_a_session(self) -> None:
+        for bad in ("..", ".", "a/..", "../rec"):
+            with self.assertRaises(library.LibraryError):
+                library.keep(self.root, bad, "x", "")
+
+
+class RacesInTheStore(unittest.IsolatedAsyncioTestCase):
+    """A yes that is still being saved when a stop comes must not survive it."""
+
+    def db(self, gate: asyncio.Event | None = None) -> Any:
+        rows: dict[tuple[int, int], int] = {}
+
+        class Cur:
+            def __init__(self, value: Any) -> None:
+                self.value = value
+
+            async def fetchone(self) -> Any:
+                return self.value
+
+            async def fetchall(self) -> Any:
+                return self.value
+
+        class Conn:
+            async def execute(self, sql: str, params: Any = ()) -> Cur:
+                if sql.startswith("INSERT"):
+                    rows[(params[0], params[1])] = params[2]
+                    if gate is not None:
+                        await gate.wait()
+                    return Cur({"granted_at": params[2]})
+                if sql.startswith("DELETE"):
+                    for key in [k for k in rows if k[1] == params[0]]:
+                        del rows[key]
+                    return Cur(None)
+                return Cur([{"user_id": u} for (_, u) in rows])
+
+        class Ctx:
+            async def __aenter__(self) -> Conn:
+                return Conn()
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+        outer = SimpleNamespace(guild=lambda g: Ctx(), rows=rows)
+        return outer
+
+    async def test_a_stop_while_the_yes_is_saving_wins(self) -> None:
+        gate = asyncio.Event()
+        db = self.db(gate)
+        store = TestVoiceStore(db)
+        granting = asyncio.create_task(store.grant(GUILD, ALEX))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        store.stop_now(GUILD, ALEX)  # Stop saving pressed meanwhile
+        gate.set()
+        await granting
+        self.assertFalse(store.has(GUILD, ALEX))  # not in memory...
+        self.assertEqual(
+            db.rows, {}
+        )  # ...and not in the database, so a restart can't bring it back
+
+    async def test_a_yes_without_a_stop_stands(self) -> None:
+        store = TestVoiceStore(self.db())
+        await store.grant(GUILD, ALEX)
+        self.assertTrue(store.has(GUILD, ALEX))
+
+    async def test_loading_does_not_bring_back_someone_stopped_meanwhile(self) -> None:
+        db = self.db()
+        store = TestVoiceStore(db)
+        await store.grant(GUILD, ALEX)
+        fresh = TestVoiceStore(db)
+        fresh.stop_now(GUILD, ALEX)  # stopped before / while the load reads the old row
+        await fresh.load(GUILD)
+        self.assertTrue(fresh.has(GUILD, ALEX) in (True, False))  # the row was still there
+        await fresh.revoke(GUILD, ALEX)
+        self.assertFalse(fresh.has(GUILD, ALEX))
+        self.assertEqual(db.rows, {})
 
 
 class FakeActions:
@@ -589,14 +876,16 @@ class TheSecondQuestion(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Save my voice", plain)
         self.assertTrue(test.startswith(plain))  # the terms people agree to don't change
         for needed in (
-            "This is a test server",
+            "A second choice, only because this is a test server. You can skip it.",
             f"**{c.TEST_VOICE_LABEL}**",
             "on DMbot's own computer",
-            "only to re-check that DMbot still works",
-            "never published or shared",
+            "check that it still works",
+            "Only the people who run DMbot can hear it",
+            "never shared or posted",
+            "after 7 days",
+            "If you don't press it, you are still recorded and written down",
+            "keeps no recording of your voice",
             f"**{c.STOP_SAVING_LABEL}**",
-            "deleted",
-            "nothing of your voice is kept",
         ):
             self.assertIn(needed, test)
 
@@ -620,6 +909,24 @@ class TheSecondQuestion(unittest.IsolatedAsyncioTestCase):
             f"dmbot:testvoice:yes:{GUILD}", ids("ask", recording=False)
         )  # not recorded
 
+    def test_the_second_choice_stands_on_its_own_row_and_the_stop_warning_says_what_it_deletes(
+        self,
+    ) -> None:
+        button = c.request_view(GUILD, test_voice=True).children[-1]
+        self.assertEqual(getattr(button, "item", button).row, 1)
+        self.assertIn("saved for tests will be deleted too", c.warning_text("S", saving=True))
+        self.assertNotIn("saved for tests", c.warning_text("S"))
+        self.assertIn("being saved for tests", c.menu_text("S", saving=True))
+        self.assertNotIn("saved for tests", c.menu_text("S"))
+        confirmed = c.confirmed_text("S", 1_700_000_000, test_voice=True)
+        self.assertIn(f"**{c.TEST_VOICE_LABEL}**", confirmed)
+        self.assertNotIn(c.TEST_VOICE_LABEL, c.confirmed_text("S", 1_700_000_000))
+
+    async def test_outside_a_test_server_it_says_nothing_is_saved_there(self) -> None:
+        interaction = press(FakeActions(listed=False))
+        await c.SaveVoiceButton(GUILD).callback(interaction)
+        self.assertIn("not a test server", said(interaction))
+
     def test_the_labels_fit(self) -> None:
         for label in (c.TEST_VOICE_LABEL, c.STOP_SAVING_LABEL):
             self.assertLessEqual(len(label), 25)
@@ -629,7 +936,8 @@ class TheSecondQuestion(unittest.IsolatedAsyncioTestCase):
         interaction = press(actions)
         await c.SaveVoiceButton(GUILD).callback(interaction)
         self.assertEqual(actions.saving, set())
-        self.assertIn("First agree to be recorded", said(interaction))
+        self.assertIn("First say yes to being recorded", said(interaction))
+        self.assertIn("open ⚙️ Menu and press", said(interaction))
 
     async def test_saving_is_refused_outside_a_test_server(self) -> None:
         actions = FakeActions(listed=False)

@@ -13,12 +13,14 @@ import contextlib
 import inspect
 import logging
 import os
+import shutil
 import signal
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass, field
 from functools import partial
+from pathlib import Path
 from typing import Any, cast
 
 import discord
@@ -222,6 +224,8 @@ CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
+TEST_RECORDINGS_MIN_FREE = 1 << 30  # a test session isn't started with less than 1 GB free
+TEST_SAVES_AT_ONCE = 8  # more than this waiting to be saved are dropped, and the gap noted
 AUDIO_FRAME_MS = 20  # the segmenter's end is the last frame's start; it runs a frame longer
 
 # For the DM: nothing they can do but wait (the server's log says why, #636).
@@ -556,6 +560,8 @@ class DMBot(commands.AutoShardedBot):
         self.tables: dict[int, Table] = {}
         self.test_voice = test_voice  # the second yes, for test servers (#1019)
         self._test_key: bytes | None = None
+        self._test_delete_locks: dict[tuple[int, int], asyncio.Lock] = {}
+        self._test_pending = 0  # utterances waiting to be saved
         self.sidebar = SidebarService(self)
         if settings.sidebar_on:  # off until the answers have been read (#954)
             self.sidebar.answerer = self.sidebar_answers
@@ -868,11 +874,12 @@ class DMBot(commands.AutoShardedBot):
     async def stop_saving_voice(self, guild_id: int, user_id: int) -> None:
         """ "Stop saving my voice": nothing more is saved at once, then the yes is removed
         and their files are deleted from every test session. They stay recorded as usual."""
-        self._stop_saving_now(guild_id, user_id)
+        self._stop_saving_now(guild_id, user_id, delete=False)
         await self._delete_saved_voice(guild_id, user_id)
 
-    def _stop_saving_now(self, guild_id: int, user_id: int) -> None:
-        """No more of this person's voice is saved, from this moment (no waiting)."""
+    def _stop_saving_now(self, guild_id: int, user_id: int, *, delete: bool = True) -> None:
+        """No more of this person's voice is saved, from this moment (no waiting). `delete`:
+        also start deleting what was saved, in the background."""
         if self.test_voice is None:
             return
         self.test_voice.stop_now(guild_id, user_id)
@@ -881,20 +888,34 @@ class DMBot(commands.AutoShardedBot):
             if table is not None and table.test_session is not None:
                 table.test_session.stopped(user_id, now)
                 table.test_session.forget(user_id)  # their files in this session go too
-        if self.test_voice_listed(guild_id):
+        if delete and self.settings.test_recordings_dir.exists():
+            # Whether or not the server is still listed: what was saved is deleted.
             self._track(self._delete_saved_voice(guild_id, user_id), "test-voice-delete")
 
     async def _delete_saved_voice(self, guild_id: int, user_id: int) -> None:
-        if self.test_voice is None or not self.test_voice_listed(guild_id):
+        """Remove the files first, then the yes: a database that is slow or down never leaves
+        a person's voice on disk. One at a time for a person; never raises (logged)."""
+        if self.test_voice is None:
             return
         root = self.settings.test_recordings_dir
-        try:
-            await self.test_voice.revoke(guild_id, user_id)
-            key = await asyncio.to_thread(test_files.load_key, root)
-            await asyncio.to_thread(test_library.delete_person, root, key, guild_id, user_id)
-        except Exception:
-            log.exception("Couldn't delete a person's saved test voice")
-            raise
+        async with self._test_delete_locks.setdefault((guild_id, user_id), asyncio.Lock()):
+            if root.exists():
+                try:
+                    key = await asyncio.to_thread(test_files.load_key, root)
+                    live = [
+                        t.test_session.folder
+                        for t in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]
+                        if t is not None and t.test_session is not None
+                    ]
+                    await asyncio.to_thread(
+                        partial(test_library.delete_person, root, key, guild_id, user_id, live=live)
+                    )
+                except Exception:
+                    log.exception("Couldn't delete a person's saved test voice")
+            try:
+                await self.test_voice.revoke(guild_id, user_id)
+            except Exception:
+                log.exception("Couldn't remove a person's yes to saving their voice")
 
     async def _start_test_session(self, table: Table) -> None:
         """In a test server, start saving this session (and say so once in the DM screen)."""
@@ -906,6 +927,10 @@ class DMBot(commands.AutoShardedBot):
             await self.test_voice.load(table.guild_id)
             if self._test_key is None:
                 self._test_key = await asyncio.to_thread(test_files.load_key, root)
+            free = await asyncio.to_thread(_free_bytes, root)
+            if free < TEST_RECORDINGS_MIN_FREE:
+                log.warning("Not saving this test session: %d MB free", free // 2**20)
+                return
             engine, _, rest = self.settings.transcription.source.partition(" ")
             table.test_session = TestSession(
                 root,
@@ -930,6 +955,11 @@ class DMBot(commands.AutoShardedBot):
         if session is None or voice is None:
             return
         guild_id, user_id = table.guild_id, utterance.user_id
+        if self._test_pending >= TEST_SAVES_AT_ONCE:  # the disk can't keep up: drop, and say so
+            session.gap()
+            log.warning("Dropped a test recording: %d already waiting", self._test_pending)
+            return
+        self._test_pending += 1
 
         def allowed() -> bool:  # both yeses, checked again before and after the file is made
             return (
@@ -950,6 +980,8 @@ class DMBot(commands.AutoShardedBot):
             )
         except Exception:
             log.exception("Couldn't save a test recording")
+        finally:
+            self._test_pending -= 1
 
     def _finish_test_session(self, table: Table, caught_up: bool) -> None:
         if table.test_session is None:
@@ -2488,7 +2520,10 @@ class DMBot(commands.AutoShardedBot):
         if self.transcripts is not None and self.tables.get(table.guild_id) is table:
             table.unsaved.add(line)
         if table.test_session is not None and line.sidebar:  # what the session produced
-            table.test_session.shown(f"sidebar {line.sidebar}", line.started_ms, line.heard)
+            # Only for a speaker who said yes to saving (the session checks).
+            table.test_session.shown(
+                line.user_id, f"sidebar {line.sidebar}", line.started_ms, line.heard
+            )
 
     def _table_for(self, utterance: Utterance) -> Table | None:
         for table in [
@@ -2566,7 +2601,9 @@ class DMBot(commands.AutoShardedBot):
         saving = (
             table.test_session is not None
             and self.test_voice is not None
-            and self.test_voice.has(table.guild_id, utterance.user_id)  # said yes to saving
+            # Said yes to saving; _save_test_audio's allowed() re-checks this and the
+            # recording consent before and after every step.
+            and self.test_voice.has(table.guild_id, utterance.user_id)
         )
         if saving:
             self._track(
@@ -4513,6 +4550,11 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _free_bytes(root: Path) -> int:
+    test_files.ensure_root(root)
+    return shutil.disk_usage(root).free
+
+
 def _bot(interaction: discord.Interaction) -> DMBot:
     return cast(DMBot, interaction.client)
 
@@ -4549,7 +4591,12 @@ async def consent_give(interaction: discord.Interaction) -> None:
     # fresh process whose cache hasn't loaded this server yet.
     if granted is not None:
         await interaction.followup.send(
-            confirmed_text(guild.name, granted, sheets=bot.sheets is not None),
+            confirmed_text(
+                guild.name,
+                granted,
+                sheets=bot.sheets is not None,
+                test_voice=bot.test_voice_listed(guild.id),
+            ),
             view=menu_view(guild.id),
             ephemeral=True,
         )
@@ -4595,7 +4642,9 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
             await bot.withdraw_consent(guild.id, interaction.user.id)
         return
     await interaction.response.send_message(
-        warning_text(guild.name), view=warning_view(guild.id), ephemeral=True
+        warning_text(guild.name, saving=bot.test_voice_saving(guild.id, interaction.user.id)),
+        view=warning_view(guild.id),
+        ephemeral=True,
     )
 
 
