@@ -179,6 +179,31 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
   channel shows (part 2 of #299). So use replays to compare speech-to-text and changes to
   core, and live runs for audio and pieces of speech.
 
+## Keeping and replaying a live test (#1019, #1020)
+
+Every live test on a listed test server is saved by the recorder (only voices of people who
+pressed "Save my voice for tests"; made-up speaker ids; never on GitHub). dev1 keeps a good one:
+
+    python -m dmbot.devtools.test_library keep FOLDER --name two-speaker-live --note "what passed"
+
+Replay one saved session at its original times (overlaps and consent stops as recorded) and
+see what changed since it was saved:
+
+    scripts/replay --session /var/lib/dmbot/test-recordings/FOLDER --transcriber deepgram
+
+It prints a short diff: lines changed, lost or added, and alerts gained or lost. Words from
+the session appear on your screen only, never in a log. Replay every kept, complete case,
+one after another at low priority, with one line each (same, better, worse, changed) and the
+speech-to-text cost:
+
+    python -m dmbot.devtools.test_library run --transcriber deepgram --log
+
+`--log` adds a "Library run" entry to docs/testing-history.log with case names and counts only.
+A case that lost a speaker (they pressed Stop saving my voice) is skipped as incomplete. These
+never run in the bot's container or during a live session, and refuse a folder whose manifest
+holds a number shaped like a Discord id. The replay does not run the rules or the AI, so rules
+cards and sidebar answers stay as saved and are not compared.
+
 ## Run 8: what the twin answers, and what needs Discord (#534)
 
 Live tests need the owner and a table, so run 8 only checks what the twin can't. The twin
