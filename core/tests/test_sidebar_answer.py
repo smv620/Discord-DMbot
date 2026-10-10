@@ -351,7 +351,7 @@ class AccuracyPart3(unittest.TestCase):
                 self.assertNotIn("not in DMbot's rules", got.text)
 
     def test_the_prompt_version_moved_on(self) -> None:
-        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-3")
+        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-4")
 
 
 class FireballExample(unittest.TestCase):
@@ -527,7 +527,7 @@ class Lineage(unittest.TestCase):
         ai = FakeAI([reply("No.", "SRD 5.2.1 p. 131")])
         got = run(engine(ai).answer(campaign(), "do you need line of sight for fireball"))
         self.assertEqual(got.model, "fake-fast-model")
-        self.assertEqual(got.prompt_version, "sidebar-3")
+        self.assertEqual(got.prompt_version, "sidebar-4")
         self.assertEqual(got.sources, ("SRD 5.2.1 p. 131",))
         self.assertGreaterEqual(got.seconds, 0)
 

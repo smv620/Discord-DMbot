@@ -23,6 +23,44 @@ from tests.test_sidebar_answer import FakeAI, house
 INDEX = srd()
 
 
+class HeaderFacts(unittest.TestCase):
+    """#1039: a spell's range and duration, and a creature's AC and speed, are kept apart from
+    the entry's text, so they are sent in front of it."""
+
+    def prompt(self, question: str) -> str:
+        return context.build(
+            question,
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        ).prompt
+
+    def test_a_spells_header_is_in_the_prompt(self) -> None:
+        prompt = self.prompt("what's the range of fireball")
+        self.assertIn("FACTS: Level 3 Evocation; Casting time Action; Range 150 feet;", prompt)
+        self.assertIn("Duration Instantaneous. TEXT: A bright streak", prompt)
+
+    def test_a_creatures_header_is_in_the_prompt(self) -> None:
+        prompt = self.prompt("what's the AC of a goblin warrior")
+        self.assertIn("AC 15; HP 10 (3d6); Speed 30 ft.", prompt)
+
+    def test_the_older_edition_has_its_own_header(self) -> None:
+        prompt = self.prompt("fireball in 2014 versus 2024")
+        self.assertIn("Casting time 1 action", prompt)  # the 2014 entry's own words
+        self.assertIn("Casting time Action", prompt)
+
+    def test_a_condition_has_no_header(self) -> None:
+        self.assertNotIn("FACTS:", self.prompt("what does grappled do"))
+
+    def test_a_cantrip_and_a_missing_field_do_not_break_it(self) -> None:
+        entry = INDEX.lookup("prestidigitation", "2024", "2014", kind="spell")
+        assert entry is not None
+        self.assertTrue(context.header_facts(entry.entry).startswith("Transmutation cantrip;"))
+
+
 class MentionedRules(unittest.TestCase):
     def names(self, question: str, target: str = "2024", fallback: str = "2014") -> list[str]:
         return [h.entry.name for h in context.mentioned_rules(question, INDEX, target, fallback)]

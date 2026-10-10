@@ -150,6 +150,24 @@ CASES: tuple[Case, ...] = (
         ("[Legacy 2014]", "spreads around corners"),
         yes_no=True,
     ),
+    Case(  # the header facts are sent with the entry (#1039): never "not stated"
+        "what's the range of fireball",
+        (reply("150 feet.", "SRD 5.2.1 p. 131"),),
+        ("150 feet",),
+        must_not=("not stated", "don't say", "not sure"),
+    ),
+    Case(
+        "how long does bless last",
+        (reply("Up to a minute, if you keep concentrating.", "SRD 5.2.1 p. 124"),),
+        ("minute",),
+        must_not=("not stated", "don't say", "not sure"),
+    ),
+    Case(
+        "what's the casting time of shield",
+        (reply("A reaction, when you're hit.", "SRD 5.2.1 p. 169"),),
+        ("reaction",),
+        must_not=("not stated", "don't say", "not sure"),
+    ),
     Case(
         "who does Belleros work for",
         (reply("I don't have that. Your call.", "none", "not sure"),),
