@@ -88,7 +88,8 @@ routes) and keeps nothing in the browser but the API's HttpOnly cookie. With
 
 `public/art/table-wide.webp` (computers) and `table-tall.webp` (phones) sit behind every page
 (`body::before` in `src/styles/global.css`, strength in `--art-opacity`). The owner supplied the
-artwork on 2026-10-09; its origin and licence are for the owner to confirm in the PR. The files
+artwork on 2026-10-09 and confirmed it is free to use: it was made with Gemini and Claude from the
+owner's own prompts. The Terms page says so, next to the "not affiliated" notice. The files
 are made by `scripts/make-art.py` (half the colour, brightest parts capped, the dice lifted so they
 stand out). Bare text over the art measured 4.7:1 or better on the home, prices and Q&A pages.
 To change the picture, run the script on the new file and look at those pages again.

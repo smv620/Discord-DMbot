@@ -147,4 +147,8 @@ describe("the facts #433 asks for", () => {
       expect(body.slice(Math.max(0, stop.index - 80), stop.index)).toContain("⚙️ Menu");
     }
   });
+
+  it("says where the background artwork came from, on the terms page", () => {
+    expect(terms()).toContain("The background artwork was made with Gemini and Claude, from our own prompts.");
+  });
 });
