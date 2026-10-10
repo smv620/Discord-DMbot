@@ -1239,6 +1239,7 @@ MEMORY_KINDS = (
         known      BOOLEAN NOT NULL,
         created_at BIGINT NOT NULL,
         PRIMARY KEY (guild_id, campaign_id, id),
+        CHECK (known = (rules_source <> '')),
         {_entity_link("entity_id")}
     );
     -- One species and one creature type for each character; any number of the others.
@@ -1260,27 +1261,53 @@ MEMORY_KINDS = (
     CREATE POLICY migrate_backfill ON memory_types FOR ALL USING (true) WITH CHECK (true);
     CREATE POLICY migrate_backfill ON memory_predicates FOR ALL USING (true) WITH CHECK (true);
 
-    UPDATE memory_entities SET type = 'character', role = 'player_character'
-        WHERE type = 'player_character';
-    UPDATE memory_entities SET type = 'character', role = 'npc' WHERE type = 'npc';
-    UPDATE memory_entities SET type = 'character', role = 'god' WHERE type = 'deity';
-    -- A named creature is a character; which role, if any, is the DM's call.
-    UPDATE memory_entities SET type = 'character', needs_look = TRUE WHERE type = 'creature';
-    -- A spell is rules vocabulary, not an entry: kept as an idea for the DM to look at.
-    UPDATE memory_entities SET type = 'concept', needs_look = TRUE WHERE type = 'spell';
+    -- An entry of a campaign's own kind that sat under an older kind keeps what that meant:
+    -- its role (a player's character stays one, with its player), or a look from the DM for
+    -- a creature. Before the kinds' parents are moved below, and before the entries' own
+    -- older kinds are, since it reads each entry's kind from memory_types.
+    UPDATE memory_entities e SET
+        role = CASE t.parent
+            WHEN 'player_character' THEN 'player_character'
+            WHEN 'npc' THEN 'npc'
+            WHEN 'deity' THEN 'god' END,
+        needs_look = (t.parent = 'creature')
+        FROM memory_types t
+        WHERE t.guild_id = e.guild_id AND t.campaign_id = e.campaign_id AND t.key = e.type
+          AND t.parent IN ('player_character', 'npc', 'deity', 'creature');
+
+    -- The older kinds, in one pass over the table. A named creature is a character; which
+    -- role, if any, is the DM's call. A spell is rules vocabulary, not an entry: kept as an
+    -- idea for the DM to look at (nothing is deleted).
+    UPDATE memory_entities SET
+        role = CASE type
+            WHEN 'player_character' THEN 'player_character'
+            WHEN 'npc' THEN 'npc'
+            WHEN 'deity' THEN 'god' END,
+        needs_look = type IN ('creature', 'spell'),
+        type = CASE type WHEN 'spell' THEN 'concept' ELSE 'character' END
+        WHERE type IN ('player_character', 'npc', 'deity', 'creature', 'spell');
+
+    -- Whoever plays an entry plays a player character (only those were played before).
+    UPDATE memory_entities SET role = 'player_character'
+        WHERE played_by IS NOT NULL AND role IS NULL;
 
     -- A campaign's own kinds that sat under an older kind now sit under its replacement,
-    -- and its own relationships that named an older kind name the replacement.
+    -- and its own relationships that named an older kind name the replacement (each once,
+    -- in the order they were given).
     UPDATE memory_types SET parent = 'character'
         WHERE parent IN ('player_character', 'npc', 'deity', 'creature');
     UPDATE memory_types SET parent = 'concept' WHERE parent = 'spell';
     UPDATE memory_predicates SET
-        subject_types = ARRAY(SELECT DISTINCT CASE
-            WHEN t IN ('player_character', 'npc', 'deity', 'creature') THEN 'character'
-            WHEN t = 'spell' THEN 'concept' ELSE t END FROM unnest(subject_types) AS t),
-        object_types = ARRAY(SELECT DISTINCT CASE
-            WHEN t IN ('player_character', 'npc', 'deity', 'creature') THEN 'character'
-            WHEN t = 'spell' THEN 'concept' ELSE t END FROM unnest(object_types) AS t)
+        subject_types = ARRAY(SELECT x FROM (
+            SELECT CASE
+                WHEN t IN ('player_character', 'npc', 'deity', 'creature') THEN 'character'
+                WHEN t = 'spell' THEN 'concept' ELSE t END AS x, min(ord) AS o
+            FROM unnest(subject_types) WITH ORDINALITY AS u(t, ord) GROUP BY 1) q ORDER BY o),
+        object_types = ARRAY(SELECT x FROM (
+            SELECT CASE
+                WHEN t IN ('player_character', 'npc', 'deity', 'creature') THEN 'character'
+                WHEN t = 'spell' THEN 'concept' ELSE t END AS x, min(ord) AS o
+            FROM unnest(object_types) WITH ORDINALITY AS u(t, ord) GROUP BY 1) q ORDER BY o)
         WHERE subject_types && ARRAY['player_character', 'npc', 'deity', 'creature', 'spell']
            OR object_types && ARRAY['player_character', 'npc', 'deity', 'creature', 'spell'];
 

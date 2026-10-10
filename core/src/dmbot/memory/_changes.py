@@ -15,6 +15,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.db import Conn
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
+from dmbot.memory.ontology import MIGRATED_KINDS
 
 NOT_FOUND = "DMbot doesn't remember that any more."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
@@ -64,10 +65,6 @@ RULE_LINKS = Table(
     "id",
     ("id", "entity_id", "kind", "rules_source", "name", "edition", "known", "created_at"),
 )
-# What a column holds in change-log rows written before the column existed.
-OLD_LOG_DEFAULTS: dict[str, dict[str, Any]] = {
-    "memory_entities": {"role": None, "needs_look": False},
-}
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
 SHEETS = Table(
@@ -458,12 +455,19 @@ class Changes(Scope):
 
 
 def _filled(table: Table, snapshot: Any) -> Any:
-    """A change-log snapshot with the columns added since it was written (#1034) filled in
-    with what they held then."""
-    defaults = OLD_LOG_DEFAULTS.get(table.name)
-    if not defaults or not isinstance(snapshot, dict):
+    """A change-log snapshot as it would read today (#1034): an entry written before roles
+    existed is read the way the migration moved it (npc becomes a character with the role
+    npc, and so on), so Undo across the migration puts back what the entry is now."""
+    if table.name != "memory_entities" or not isinstance(snapshot, dict) or "role" in snapshot:
         return snapshot
-    return {**defaults, **snapshot}
+    kind, role, look = MIGRATED_KINDS.get(
+        str(snapshot.get("type")), (snapshot.get("type"), None, False)
+    )
+    return {**snapshot, "type": kind, "role": role, "needs_look": look}
+
+
+def _only(snapshot: dict[str, Any], columns: Sequence[str]) -> dict[str, Any]:
+    return {c: snapshot[c] for c in columns}
 
 
 def _unchanged_since(table: Table, current: dict[str, Any] | None, after: Any) -> bool:
@@ -612,10 +616,7 @@ async def _undo_run(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
         others = [c for c in table.columns if c != table.key]
         await changes.update_rows(
             table,
-            {
-                change["row_id"]: {c: _filled(table, change["before"])[c] for c in others}
-                for change in run
-            },
+            {change["row_id"]: _only(_filled(table, change["before"]), others) for change in run},
         )
     else:  # undo a delete: put the rows back
         cols = sql.SQL(", ").join(sql.Identifier(c) for c in table.columns)

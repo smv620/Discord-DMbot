@@ -215,6 +215,11 @@ class OlderBackups(unittest.TestCase):
         )
         self.assertEqual(got["Testa"]["played_by"], 5)  # still played by them
 
+    def test_a_creature_someone_plays_is_a_player_character(self) -> None:
+        rows = [_old_entity("a" * 32, "creature", "Rex", played_by=7)]
+        got = backup._from_before_kinds(rows)[0]
+        self.assertEqual((got["type"], got["role"]), ("character", "player_character"))
+
     def test_nothing_is_dropped(self) -> None:
         rows = [_old_entity(f"{n:032x}", "creature", f"C{n}") for n in range(5)]
         self.assertEqual(len(backup._from_before_kinds(rows)), 5)

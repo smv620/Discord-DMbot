@@ -94,7 +94,17 @@ LEGACY_KINDS: Mapping[str, tuple[str, str | None]] = {
     "deity": ("character", GOD),
     "creature": ("character", NPC),
 }
-SPELL_NOT_KEPT = "A spell isn't kept in campaign memory: look it up in the rules with /dmbot rule."
+# What the migration (and an older backup, and an old change-log row) made of an older kind:
+# (kind now, role, needs a look). A named creature is a character the DM decides about; a
+# spell is an idea to look at.
+MIGRATED_KINDS: Mapping[str, tuple[str, str | None, bool]] = {
+    "player_character": ("character", PLAYER_CHARACTER, False),
+    "npc": ("character", NPC, False),
+    "deity": ("character", GOD, False),
+    "creature": ("character", None, True),
+    "spell": ("concept", None, True),
+}
+SPELL_NOT_KEPT = "Spells aren't kept in campaign memory. To look one up, use /dmbot rule."
 
 
 def resolve_kind(kind: str, role: str | None = None) -> tuple[str, str | None]:
@@ -161,7 +171,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         "owns",
         "Has or holds something.",
         (*_BEINGS, "faction"),
-        ("item", "place"),
+        ("item", "place", *_BEINGS),
     ),
     PredicateTerm(
         "knows",
@@ -210,8 +220,8 @@ BLOCKED_KINDS = frozenset(
     }
 )  # fmt: skip
 NOT_A_KIND = (
-    "{label} is a role or a kind of rules entry, not a kind of thing. Make it a character and "
-    "give it a role, or link it to the rules."
+    "{label} can't be a kind of thing: it is a role, or something from the rules. Make it a "
+    "character (an NPC, a god…) or link it to the rules."
 )
 
 

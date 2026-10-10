@@ -47,6 +47,7 @@ from dmbot.memory.models import (
     LINK_SOURCE_MAX,
     LIST_MAX,
     NAME_MAX,
+    PLAYER_CHARACTER,
     ROLES,
     SOURCES,
     is_id,
@@ -57,6 +58,7 @@ from dmbot.memory.ontology import (
     CORE_TYPES,
     DEPRECATED,
     LABEL_MAX,
+    MIGRATED_KINDS,
     Ontology,
     PredicateTerm,
     TypeTerm,
@@ -259,15 +261,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     return by_tag
 
 
-# The older kinds, as a backup from before #1034 holds them → (kind now, role, needs a look).
-_OLD_KINDS: dict[str, tuple[str, str | None, bool]] = {
-    "player_character": ("character", "player_character", False),
-    "npc": ("character", "npc", False),
-    "deity": ("character", "god", False),
-    "creature": ("character", None, True),
-    "spell": ("concept", None, True),
-}
-_OLD_PARENTS = {k: v[0] for k, v in _OLD_KINDS.items()}
+_OLD_PARENTS = {k: v[0] for k, v in MIGRATED_KINDS.items()}
 
 
 def _from_before_kinds(rows: list[Any]) -> list[Any]:
@@ -286,7 +280,11 @@ def _from_before_kinds(rows: list[Any]) -> list[Any]:
             continue
         table = raw.get("table")
         if table == "entity" and "role" not in raw:
-            kind, role, look = _OLD_KINDS.get(str(raw.get("type")), (raw.get("type"), None, False))
+            kind, role, look = MIGRATED_KINDS.get(
+                str(raw.get("type")), (raw.get("type"), None, False)
+            )
+            if role is None and raw.get("played_by") is not None:
+                role = PLAYER_CHARACTER  # only player characters were played before
             raw = {**raw, "type": kind, "role": role, "needs_look": look}
         elif table == "type" and raw.get("parent") in _OLD_PARENTS:
             raw = {**raw, "parent": _OLD_PARENTS[raw["parent"]]}

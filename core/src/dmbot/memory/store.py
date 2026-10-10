@@ -754,8 +754,10 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             onto.active_type(type)
-            _check_role(onto, type, role, None)
             current = await _entity_row(w, entity_id)
+            if role is None and type == current["type"]:
+                role = current["role"]  # same kind, no new role said: it keeps its role
+            _check_role(onto, type, role, None)
             changes: dict[str, Any] = {"type": type, "role": role, "needs_look": False}
             if current["played_by"] is not None and role != PLAYER_CHARACTER:
                 changes["played_by"] = None
@@ -795,7 +797,9 @@ class MemoryStore:
         type, stat block, class or background). A name the rules data doesn't have keeps its
         plain words with `known` false ("not in DMbot's rules"). A character has one species
         and one creature type: a new one replaces the old; classes and the rest add up.
-        The DM's call, or a proposal the DM confirms."""
+        The DM's call (there is no screen for it yet; links come from the DM's sheet flow)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can link a character to the rules.")
         _check_choice(kind, LINK_KINDS, "link kind")
         name = clean_text(name, LINK_NAME_MAX)
         if known and not rules_source:
@@ -1135,6 +1139,14 @@ class MemoryStore:
                     keep_id,
                     {"type": gone["type"], "role": gone["role"], "played_by": gone["played_by"]},
                 )
+            kept = await _entity_row(w, keep_id)
+            if kept["type"] == gone["type"]:  # one role, one look: neither is lost or invented
+                merged = {
+                    "role": kept["role"] or gone["role"],
+                    "needs_look": kept["needs_look"] and gone["needs_look"],
+                }
+                if merged != {"role": kept["role"], "needs_look": kept["needs_look"]}:
+                    await w.update(ENTITIES, keep_id, merged)
             await _move_rule_links(w, keep_id, gone_id)
             if confirm_keys and source != DM:
                 raise ValueError("Only the DM confirms names")
@@ -1182,9 +1194,9 @@ class MemoryStore:
             await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
             # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
             await w.update(ENTITIES, gone_id, {"status": MERGED, "merged_into": keep_id})
-            kept = await w.get(ENTITIES, keep_id)
-            assert kept is not None
-            return Written(_entity(kept), w.batch)
+            final = await w.get(ENTITIES, keep_id)
+            assert final is not None
+            return Written(_entity(final), w.batch)
 
     # ---- relationships ----------------------------------------------------------------
 
