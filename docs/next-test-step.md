@@ -4,33 +4,27 @@
 
 ---
 
-## Test D: no false warning with a TV on
+## Test E: try the DM sidebar at the table
 
 **People:** 1 (you, as the DM)
-**Time:** about 3 minutes
-**Why:** on Oct 8 a TV in the room set off DMbot's ⚠️ warning even though everything you said was written down. DMbot now reads the transcript before it warns. Check that a noisy room gives no false alarm.
+**Time:** about 5 minutes
+**Why:** the DM sidebar lets you ask DMbot a quick question in the middle of the game and get a short answer on your DM screen. DMbot checked 19 sample questions and the Supervisor says it may go on. Now see it work for real.
 
 ### Before you start
-- DMbot is up to date (dev1 updated it on Oct 9 at 16:28 UTC).
-- Turn on a TV (or music with talking) in the room, at a normal volume.
-- DMbot may ask you to agree to recording again after the update. If it does, press **I consent**.
-- Tell dev1 you're starting, so it can watch from its side.
+- **dev1 must say the sidebar is on first.** It is a setting that is off until you or dev1 switch it on. If dev1 hasn't said so, tell dev1.
+- Join the voice channel you play in.
 
 ### Steps
-1. Join the voice channel you play in.
-2. Type `/dmbot start`. Press **▶ Continue last campaign** (or pick your campaign), then **▶ Start listening**.
-3. Say these three sentences clearly, with a short pause between them:
-   - **"The party walks into the tavern and orders three drinks."**
-   - **"The innkeeper says the road north is closed."**
-   - **"Roll for initiative."**
-4. Let the TV play for about one minute while you stay quiet.
-5. Look at the channel whose name starts with **dmb-dm-screen**, and the one whose name starts with **dmb-transcript**.
-6. Type `/dmbot stop`.
+1. Type `/dmbot start`. Press **▶ Continue last campaign**, then **▶ Start listening**.
+2. Ask one question by voice, clearly, for example: **"DMbot, do you need line of sight for fireball?"**
+3. Ask one question in the **dmb-dm-screen** channel by typing it, for example: **"how much damage does fireball do"**.
+4. Look at **dmb-dm-screen**: each answer should be short, say where it comes from (like "SRD 5.2.1 p. 131"), and say "sure" or "not sure".
+5. Type `/dmbot stop`, then open the **raw** transcript: your two questions and DMbot's answers should show as lines tagged **[DM Sidebar]** and **DMbot**.
 
 ### It worked if
-- **No ⚠️ warning** appears on the DM screen, **and** your three sentences are in the **dmb-transcript** channel.
+- Both questions got a short answer on the DM screen **only** (nothing in the public channels), and the raw transcript has the **[DM Sidebar]** lines.
 
-**If not:** type `/dmbot stop` anyway, then tell dev1 below. Don't try again until dev1 answers. If a ⚠️ line showed, copy it for dev1.
+**If not:** type `/dmbot stop`, then tell dev1. If an answer was wrong **and** said "sure", copy it for dev1.
 
 ### Tell dev1
 - **Worked** or **didn't work**.
