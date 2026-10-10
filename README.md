@@ -109,7 +109,7 @@ report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
    campaign and voice channel you used. DMbot makes a `#dmb-dm-screen-<campaign>` channel for
    your notes, with buttons there to change who can see it. Everyone in the voice channel
    (you too) gets a private message from DMbot asking if they agree to be recorded; they
-   press **I consent**. Their answer is remembered for the server, so next time they just
+   press **I'm 16 or older, record me**. Their answer is remembered for the server, so next time they just
    get a reminder with a **⚙️ Menu** button (to stop: ⚙️ Menu, then **Stop recording me**,
    then **Yes, stop recording me**). Talk for a bit and watch what you
    say appear in the campaign's transcript channel, `#dmb-transcript-<short name>`, which
@@ -191,7 +191,7 @@ count until they agree to the new wording, and DMbot doesn't record them until t
 | `/dmbot help` | What DMbot does and doesn't do, plus a **Status** button. |
 | `/dmbot backup` | Download a copy of a campaign you run. |
 | `/dmbot restore` | Bring a campaign back from a copy, as a new campaign or replacing one of yours. |
-| `/consent give` | Shows DMbot's recording question with the **I consent** button, for people who didn't get the private message (for example, DMs from server members turned off). |
+| `/consent give` | Shows DMbot's recording question with the **I'm 16 or older, record me** button, for people who didn't get the private message (for example, DMs from server members turned off). |
 | `/consent revoke` | Stop recording you and discard unprocessed audio. It warns first, like **⚙️ Menu**, then **Stop recording me**, in DMbot's private message; **Yes, stop recording me** stops. |
 
 ## Development
