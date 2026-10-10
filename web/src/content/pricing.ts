@@ -188,7 +188,8 @@ export const questions: readonly Question[] = [
   },
   {
     question: "What if a payment doesn't go through?",
-    answer: `Your plan keeps working for ${data.paymentGraceDays} days while you fix it. Tap Fix my payment in My Account.`,
+    answer:
+      "If a renewal payment fails, your plan keeps working for a short grace period while you fix it. Tap Fix my payment in My Account. If your first payment doesn't go through, the plan doesn't start until it does.",
   },
   {
     question: "How long do you keep my campaign?",

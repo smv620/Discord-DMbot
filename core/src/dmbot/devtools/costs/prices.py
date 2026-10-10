@@ -32,7 +32,7 @@ DEEPGRAM_STREAMING = Price(
 _ANTHROPIC = "https://platform.claude.com/docs/en/about-claude/pricing"
 # Anthropic, base (uncached) tokens: model id -> (input, output) per million tokens. Core
 # uses the first for the off-topic filter, the audio check and the DM sidebar
-# (dmbot.ai.DEFAULT_MODEL). A model that is not here has not been checked.
+# (dmbot.ai.DEFAULT_MODELS). A model that is not here has not been checked.
 ANTHROPIC_PER_MILLION: dict[str, tuple[Price, Price]] = {
     "claude-haiku-4-5-20251001": (
         Price(1.0, "per million input tokens", _ANTHROPIC, "2026-10-09"),

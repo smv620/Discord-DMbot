@@ -1395,7 +1395,7 @@ class SaveAndResume(SessionTests):
             table.capture_log.add_health(PLAYER, received, expected)
             table.capture_log.add_line(PLAYER, "the bridge north", None)  # unknown: ask
 
-        self.bot.topic_ai = AI("no")  # type: ignore[assignment]
+        self.bot.audio_ai = AI("no")  # type: ignore[assignment]
         patchy()
         await self.bot.post_summary(table)
         posted.assert_not_awaited()  # reads fine: nothing for the DM
@@ -1405,7 +1405,7 @@ class SaveAndResume(SessionTests):
         table.audio_checker.asked_at.clear()
         table.audio_checker.fine_until.clear()
         early = AI("yes")
-        self.bot.topic_ai = early  # type: ignore[assignment]
+        self.bot.audio_ai = early  # type: ignore[assignment]
         due = table.capture_log.due
 
         def due_then_stop(now: float) -> Any:
@@ -1420,7 +1420,7 @@ class SaveAndResume(SessionTests):
         await self.consent.grant(GUILD, PLAYER)
 
         table.audio_checker.asked_at.clear()
-        self.bot.topic_ai = AI(  # type: ignore[assignment]
+        self.bot.audio_ai = AI(  # type: ignore[assignment]
             "yes", during=lambda: self.bot.stop_recording(GUILD, PLAYER)
         )
         patchy()
@@ -1430,7 +1430,7 @@ class SaveAndResume(SessionTests):
 
         await self.consent.grant(GUILD, PLAYER)
         asked = AI("no")
-        self.bot.topic_ai = asked  # type: ignore[assignment]
+        self.bot.audio_ai = asked  # type: ignore[assignment]
         patchy(400, 1000)  # 40% got through, 12 s lost
         await self.bot.post_summary(table)
         posted.assert_awaited_once()  # at once, without asking
