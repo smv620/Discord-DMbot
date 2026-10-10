@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import yarl
 
@@ -27,7 +27,7 @@ TOO_LONG = f"That link is too long (over {LINK_MAX} characters)."
 
 @dataclass(frozen=True, slots=True)
 class FileLink:
-    link: str  # private: never logged, never shown
+    link: str = field(repr=False)  # private: never logged, never shown, not even by repr()
     ignored: str | None  # the fingerprint of the file the DM chose to ignore until it changes
     set_by: int
     set_at: int

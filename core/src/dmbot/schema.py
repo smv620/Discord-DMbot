@@ -1213,7 +1213,7 @@ RULES_CARDS = """
 """
 
 HOUSE_RULES_FILE = f"""
-    -- A campaign's linked house-rules file (#969, migration 0039): the share link a DM set, and the
+    -- A campaign's linked house-rules file (#969, migration 0040): the share link a DM set, and the
     -- fingerprint of the file they chose to "ignore until it changes". One row per campaign,
     -- deleted with it. The link can be a private share link, so it is never logged, never
     -- shown back in full (only the site it is on), and not part of a backup. Only the
@@ -1563,7 +1563,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0036_transcript_sidebar", TRANSCRIPT_SIDEBAR),
     ("0037_pause", PAUSE),
     ("0038_payment_event_kind", PAYMENT_EVENT_KIND),
-    ("0039_house_rules_file", HOUSE_RULES_FILE),
+    ("0040_house_rules_file", HOUSE_RULES_FILE),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

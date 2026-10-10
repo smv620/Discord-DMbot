@@ -37,6 +37,15 @@ def campaign(dms: frozenset[int] = frozenset({DM})) -> Campaign:
     return Campaign(C1, GUILD, "Frostmaiden", 1, 1, "2024", "2014", True, dms, None, 50, "peek")
 
 
+class FileLinkRepr(unittest.TestCase):
+    def test_the_private_link_is_not_in_its_repr_or_str(self) -> None:
+        link = FileLink(DOC, None, DM, 1)
+        for text in (repr(link), str(link), f"{link!r}", f"{[link]}"):
+            self.assertNotIn(DOC, text)
+            self.assertNotIn("a" * 30, text)
+            self.assertNotIn("docs.google.com", text)
+
+
 class FakeLinks:
     def __init__(self, link: str | None = None) -> None:
         self.link = link
