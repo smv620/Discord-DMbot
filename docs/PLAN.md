@@ -696,10 +696,15 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   **Built for the switch to an outside company (#170):** each yes records whether the
   request said another company writes things down. While the server uses one
   (`TRANSCRIBER=deepgram` or `cloud`), only those yeses count; everyone else isn't
-  recorded and gets the question again. An old "I consent" button from before the switch
+  recorded and gets the question again. An old consent button from before the switch
   shows the new question instead of saving a yes. The general terms version (#35) still
   covers other wording changes.
-  It has a **✅ I consent** button (#33).
+  It has a **✅ I'm 16 or older, record me** button (#33).
+  **Minimum age 16 (owner, 2026-10-10); the consent button confirms it** (#1018): the request
+  says "You must be 16 or older to be recorded.", no age or birthdate is stored, and the
+  terms version went up (4), so earlier yeses are asked again at the next join. Someone under
+  16 has nothing to press (the request tells them to press No thanks and keep playing): they
+  are not asked for an age and nothing of theirs is captured.
 - **Consent carries over** between sessions, per server. In **every session**, a consented
   person gets one short private reminder with the date they consented, plus a
   **⚙️ Menu** button (#33, #34; the menu replaced a red 🛑 button, below). Rejoining in
@@ -723,7 +728,7 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   - **in place on lasting messages** (2026-10-08, #807): on the per-session reminder and
     the "you said yes" message, ⚙️ Menu swaps that message's buttons for the menu, Stop
     puts the warning at the top of that message's text, Yes leaves it reading "🛑
-    Stopped…" with ✅ I consent, and Keep or Close restore it exactly. So a reminder never
+    Stopped…" with the ✅ consent button, and Keep or Close restore it exactly. So a reminder never
     keeps saying "recording you" after a stop. The warning is in the text, never an embed,
     because Discord hides embeds for people who turn previews off;
   - ⚙️ Menu and `/consent revoke` answer from the in-memory consent first, never waiting
@@ -1564,6 +1569,20 @@ reads the campaign memory and never changes it.
   it (never queued, never in Redis, never logged, never stored). **Consent is re-checked
   right before every re-listen request**, and the audio is dropped at once on revoke.
   Re-listen is added after the first version, once close calls can be measured.
+- **Test recordings (owner, 2026-10-10; #1019, built): the one place audio is kept.** On a
+  test server only (`DMBOT_TEST_RECORDING_GUILDS`, empty by default), and only for people who
+  pressed a second, separate button, **Save my voice for tests**, in their consent message
+  (it needs the recording yes first). Each utterance core heard is written as one FLAC file
+  under `DMBOT_TEST_RECORDINGS_DIR` (a volume, owner-only), with a `session.json`: made-up
+  speaker numbers (1001 the DM, 1002 and up players), each with a role and a *voice code* (a
+  keyed hash, the secret lives in that folder), times in ms on one session clock, consent
+  events, and the transcript lines and sidebar questions and answers DMbot produced. No
+  Discord id, name or server id is in the files, and the files are never in Postgres, a
+  backup or the repository. Both yeses are checked before the audio is encoded, before it is
+  written and after. **Stop saving my voice** (⚙️ Menu), or **Stop recording me**, stops it at
+  once and deletes the person's files from every session; a kept session that lost a speaker
+  is marked incomplete. Sessions nobody keeps (`python -m dmbot.devtools.test_library keep`)
+  are deleted after 7 days by a daily job. Replaying them is a later issue.
 - **Learning is immediate:** a confirmed correction becomes a `misheard` alias and
   reaches the Cleaner within about a second. Earlier lines of the same session with the
   same mishearing are re-checked from "as heard" and fixed, with each change logged.

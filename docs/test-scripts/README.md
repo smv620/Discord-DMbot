@@ -60,7 +60,7 @@ Stage directions:
 
 1. **Before:** on the server, `DMBOT_DEBUG_AUDIO=1` in `.env` (ears logs one `audio …` line per
    piece of speech). Ask: how many people (1 = DM only)?
-2. `/dmbot start`, and every reader presses **I consent** (or already has).
+2. `/dmbot start`, and every reader presses **I'm 16 or older, record me** (or already has).
 3. Read the script once, start to finish.
 4. **Wait until the last line ("…Lonelywood and Caer-Dineval") shows up in the transcript
    channel** (`#dmb-transcript-<short name>`, #124), or until nothing new has appeared for
@@ -179,6 +179,34 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
   channel shows (part 2 of #299). So use replays to compare speech-to-text and changes to
   core, and live runs for audio and pieces of speech.
 
+## Keeping and replaying a live test (#1019, #1020)
+
+Every live test on a listed test server is saved by the recorder (only voices of people who
+pressed "Save my voice for tests"; made-up speaker ids; never on GitHub). Right after a live test that
+went well, dev1 keeps it (FOLDER is the session's folder name under /var/lib/dmbot/test-recordings/):
+
+    python -m dmbot.devtools.test_library keep FOLDER --name two-speaker-live --note "what passed"
+
+Replay one saved session at its original times (overlaps and consent stops as recorded) and
+see what changed since it was saved:
+
+    scripts/replay --session /var/lib/dmbot/test-recordings/FOLDER --transcriber deepgram
+
+It prints a short diff: lines changed, lost or added, and alerts gained or lost. Words from
+the session appear on your screen only, never in a log. The verdicts: better = fewer wrong
+words than when saved (judged against the kept expected lines), worse = more, same = identical,
+changed = the text differs and nothing kept says which is right: read it. Replay every kept, complete case,
+one after another at low priority, with one line each (same, better, worse, changed) and the
+speech-to-text cost (it takes as long as the sessions did; `--no-timing` finishes sooner with the
+same diff):
+
+    python -m dmbot.devtools.test_library run --transcriber deepgram --log
+
+`--log` adds a "Library run" entry to docs/testing-history.log with case names and counts only (then commit it).
+A case that lost a speaker (they pressed Stop saving my voice) is skipped as incomplete. These
+never run in the bot's container or during a live session, and refuse a folder whose manifest
+holds a number shaped like a Discord id.
+
 ## Run 8: what the twin answers, and what needs Discord (#534)
 
 Live tests need the owner and a table, so run 8 only checks what the twin can't. The twin
@@ -226,7 +254,7 @@ Before the session
 - [ ] Someone who has never agreed before is ready to join voice
 
 Joining and agreeing
-- [ ] Everyone presses I consent before speaking. The first-time request says Deepgram will
+- [ ] Everyone presses the consent button before speaking. The first-time request says Deepgram will
   hear them; nothing is written down until they press Yes
 - [ ] The DM screen's "who is recorded" list updates (#107)
 

@@ -84,6 +84,17 @@ It signs in with Google or the admin email and password (the web API's `/admin/.
 routes) and keeps nothing in the browser but the API's HttpOnly cookie. With
 `PUBLIC_API_BASE=mock` any password signs in.
 
+### The background artwork
+
+`public/art/table-wide.webp` (computers) and `table-tall.webp` (phones) sit behind every page
+(`body::before` in `src/styles/global.css`, strength in `--art-opacity`). The owner supplied the
+artwork on 2026-10-09 and confirmed it is free to use: it was made with Gemini and Claude from the
+owner's own prompts. The Terms page says so, next to the "not affiliated" notice. The files
+are made by `scripts/make-art.py` (half the colour, brightest parts capped, the dice lifted so they
+stand out). Bare text over the art measured 4.7:1 or better on the home, prices and Q&A pages.
+To change the picture, run the script on the new file and look at those pages again.
+They are cached for a day (their names have no hash), so a new picture can take a day to show.
+
 ## Layout
 
 - `src/layouts/Base.astro`: the one layout (head tags, menu, footer with legal links).
