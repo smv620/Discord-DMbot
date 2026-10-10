@@ -517,6 +517,25 @@ alerts yet; those build on this.
   they pick which one by button. The bot still doesn't read messages in servers (narrowest
   intents); the **Add a house rule** form in `/dmbot houserules` is the other typed way.
 
+*Built, part 3: the house-rules file, first half (2026-10-10, #969):* the owner's decision is
+that house rules must be readable offline, so DMbot keeps a plain-text file of record.
+- **The format** (`dmbot.rules.house_file`, pure): a title line, `#` help lines, then one
+  rule per line, `12. <rule> (instead of: <book rule>)`. Reading and writing go both ways
+  without loss (a rule that itself contains " (instead of: " is written with square
+  brackets). A line that is not a rule is reported with its line number, never guessed at;
+  over 200 rules, a rule over 500 characters, a number used twice or a number too big are
+  reported, not kept. `compare` says what was added, changed or removed against DMbot's copy
+  by rule number, and calls the same words under another number "moved".
+- **Download after every change:** after any change a DM makes in Discord (Add, Edit,
+  Remove, an Override, a rule said or typed) the DM gets the updated
+  `house-rules-<campaign>.txt` as a private message: "Put this in your house-rules file so
+  everyone can see it." A problem sending it never undoes the change. A **📥 Download**
+  button on the `/dmbot houserules` list gives anyone in the server the same file (they may
+  read the list already); it holds this campaign's house rules only.
+- **Still to build (second half):** a linked file read at every session start and compared
+  with DMbot's copy (Accept all / Review / Ignore until the file changes), and **📎 Upload a
+  file** for DMs without a link.
+
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
 is chosen by `TRANSCRIBER=` in config.

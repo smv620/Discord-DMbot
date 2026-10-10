@@ -27,6 +27,7 @@ from dmbot.rules.house import RULE_MAX, HouseRule, HouseRuleError, HouseRuleStor
 
 if TYPE_CHECKING:
     from dmbot.rules.house_voice import Proposal
+from dmbot.ui import house_file as file_ui
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
@@ -218,6 +219,8 @@ class ListMenu(_Menu):
         shown = pages(rules)
         if is_dm:
             self.add_item(_Button(self._add, label=ADD_LABEL, style=discord.ButtonStyle.primary))
+        if rules:  # nothing to download before the first rule
+            self.add_item(_Button(self._download, label=file_ui.DOWNLOAD_LABEL))
         if page > 0:
             self.add_item(_Button(self._newer, label=NEWER_LABEL))
         if page < len(shown) - 1:
@@ -256,6 +259,10 @@ class ListMenu(_Menu):
 
     async def _add(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(AddForm(self.campaign))
+
+    async def _download(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction)  # a new private message; the list stays as it is
+        await file_ui.send_download(interaction, self.campaign)
 
     async def _newer(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page - 1)
@@ -345,6 +352,8 @@ class ConfirmRemove(_Menu):
         if gone is not None:  # the words in full, to copy back if it was a mistake: first,
             await _tell(interaction, removed_words(gone))  # so they're never lost
         await _redraw(interaction, c, note=note, page=self.page)
+        if gone is not None:
+            await file_ui.send_after_change(interaction, c, note)
 
     async def _keep(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page)
@@ -405,6 +414,7 @@ class _RuleForm(discord.ui.Modal):
                 await _redraw(interaction, self.campaign, page=self.page)
             return
         await _redraw(interaction, self.campaign, note=note, page=self.page)
+        await file_ui.send_after_change(interaction, self.campaign, note)
 
     def typed(self) -> str:
         """The form is closed by the time a refusal comes: give both boxes back, whole
@@ -459,6 +469,7 @@ class OverrideForm(AddForm, title="Add a house rule"):
         await _tell(
             interaction, f"{note} Everyone in the server can read it. See all: `/dmbot houserules`."
         )
+        await file_ui.send_after_change(interaction, self.campaign, note)
 
 
 class ProposalForm(AddForm, title="Edit before saving"):
@@ -510,10 +521,11 @@ class ProposalForm(AddForm, title="Edit before saving"):
         note = f"✅ Saved as house rule {saved.number}."
         if interaction.message is None:
             await interaction.response.send_message(note, ephemeral=True)
-            return
-        await interaction.response.edit_message(
-            content=f"{interaction.message.content}\n{note}", view=None
-        )
+        else:
+            await interaction.response.edit_message(
+                content=f"{interaction.message.content}\n{note}", view=None
+            )
+        await file_ui.send_after_change(interaction, c, note)
 
 
 class EditForm(_RuleForm, title="Edit a house rule"):
