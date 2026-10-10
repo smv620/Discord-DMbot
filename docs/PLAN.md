@@ -1832,6 +1832,20 @@ voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)
   ones against the real model (it needs the server's key, so dev1 runs it) and prints the
   answers and times.
 
+*Built, accuracy fixes (#992, CloudDev, 2026-10-10; prompt version `sidebar-2`):* from dev1's run of
+the 17 test questions against the real model. (1) **Consistency:** when the question names a rules
+entry that was given, "the free rules don't say" is a contradiction: the prompt says so, the
+answer is sent back once with the entry named, and if it still says so DMbot answers with the
+entry's own first sentences and its source (so "do you need line of sight for fireball" and the
+same question after "hold on, I need to find" agree). (2) **No unsourced certainty:** a rule stated
+with no source among the entries and house rules the model was given gets "(not in DMbot's rules,
+check your book)" and is never "sure"; the prompt asks for the same wording for general D&D
+knowledge (class features, cover, area of effect, which the index doesn't hold yet). (3)
+**Editions:** a question that says "2014", "2024", "legacy", "old", "new" or compares them gets
+both editions' entries, the older tagged `[Legacy 2014]` ("is the 2014 goblin different" sees
+Goblin and Goblin Warrior). `sidebar_check` now also checks each case's must-say and must-not-say
+words. Not done: adding general rules or class features to the index.
+
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
 keys. DMbot runs on the operator's keys and bills **by hours and campaigns** through the
