@@ -56,7 +56,7 @@ _WAKE = re.compile(
 )
 # "DMbot said the goblin ..." (no comma) is a story about DMbot, not a question to it.
 _STORY_VERBS = re.compile(
-    r"^(?:said|says|told|tells|was|were|had|has|did|thinks|thought|wants|wanted|will|would)\b",
+    r"^(?:said|says|told|tells|was|were|had|has|did|thinks|thought|wants|wanted)\b",
     re.IGNORECASE,
 )
 MIN_WORDS = 1
