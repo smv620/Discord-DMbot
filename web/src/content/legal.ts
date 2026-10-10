@@ -21,6 +21,9 @@ export const operator = {
 /** The payment company, chosen by the owner (2026-10-09). It is the seller (merchant of record). */
 export const paymentProvider = "Lemon Squeezy";
 
+/** The day the owner signed the legal pages off (2026-10-09); shown on all three. */
+export const effectiveDate = "9 October 2026";
+
 export const minimumAge = 13;
 
 /** Days to fix a failed payment before the plan stops (#437). */

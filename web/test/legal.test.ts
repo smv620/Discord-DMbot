@@ -49,7 +49,7 @@ describe.each(pages.map(([name]) => [name]))("legal/%s", (name) => {
     for (const line of lines) expect(line.length).toBeGreaterThan(0);
     expect(text(main?.querySelector(".draft") ?? null)).toMatch(/^Draft for review/);
     expect(text(main?.querySelector(".effective") ?? null)).toContain(
-      "{{EFFECTIVE DATE: to be set by the owner}}",
+      "Effective date: 9 October 2026",
     );
   });
 
@@ -154,5 +154,11 @@ describe("the facts #433 asks for", () => {
     for (const stop of stops) {
       expect(body.slice(Math.max(0, stop.index - 80), stop.index)).toContain("⚙️ Menu");
     }
+  });
+
+  it("names the State of Ohio, USA, for the law and the courts", () => {
+    expect(terms()).toContain("The laws of the State of Ohio, USA, apply to these terms");
+    expect(terms()).toContain("heard in the courts of the State of Ohio, USA");
+    expect(terms()).not.toContain("governing law and courts");
   });
 });
