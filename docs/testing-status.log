@@ -9,6 +9,16 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- CloudDev, #962 (#957, plan rules part 4): pause and unpause. Migration **0037** (core and web-api;
+  adds `paused` columns, a trigger update and `dmbot_pause_over_cap`, runs by itself at start). A
+  campaign's owner gets Pause / Unpause on the Settings card; a paused campaign can't start and
+  doesn't count toward the plan. With DMBOT_ENFORCE_PLANS on, a plan that shrinks pauses the extras
+  and tells the owner once. **DMBOT_ENFORCE_PLANS may go on only after this is live.** Check: core and
+  web-api logs show migration 0037 applied and no errors on start.
+- CloudDev, #977 (#972): admin messages when DMbot's AI account is out of funds. Core only, no
+  migration. Needs two new `.env` settings, set by dev1 from the owner's private message (#974 step 5):
+  DMBOT_ADMIN_PRIMARY_ID and DMBOT_ADMIN_SECONDARY_ID (Discord user IDs, 17 to 20 digits each, or
+  empty). A bad value stops start-up naming the setting. Check: the start-up log has no settings error.
 - WebDev, PR #981 (#922, part 1): payments, web-api only. Migration **0038** (runs by itself at
   start; a metadata-only `ADD COLUMN kind` on `payment_events`, no rows change). After a failed
   payment, the 7-day grace now goes only to someone with an earlier successful payment on record
