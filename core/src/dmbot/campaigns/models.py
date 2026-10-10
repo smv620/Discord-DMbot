@@ -133,6 +133,9 @@ class Campaign:
     # Paused by its owner, or by DMbot when the owner's plan shrank (#957): it keeps all its
     # data and downloads, can't start, and doesn't count toward the owner's campaign cap.
     paused: bool = False
+    # Which retention warning it has had, and for which delete date (#964).
+    retention_warned_stage: int = 0
+    retention_warned_for: int | None = None
 
     @property
     def last_active_at(self) -> int:
