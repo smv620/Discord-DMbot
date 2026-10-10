@@ -166,6 +166,11 @@ BOTH_MODEL_NOTICE = (
 )
 
 
+def _unquote(raw: str) -> str:
+    """A value without the spaces and quotes a phone adds around it."""
+    return raw.strip().strip("\"'").strip()
+
+
 def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
     """The model for each AI tier, from `AI_MODEL_FAST`, `AI_MODEL_CAREFUL` and
     `AI_MODEL_DEEP` (empty: that tier's default). The old `AI_MODEL`, if set, stands for
@@ -179,12 +184,12 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
         ("careful", "AI_MODEL_CAREFUL"),
         ("deep", "AI_MODEL_DEEP"),
     ):
-        raw, shown = get(name).strip("\"'").strip(), name  # (a phone adds quotes)
+        raw, shown = _unquote(get(name)), name  # (a phone adds quotes)
         if tier == "fast":
             if old and raw:
                 notice = BOTH_MODEL_NOTICE
             elif old:
-                raw, shown, notice = old.strip("\"'").strip(), "AI_MODEL", OLD_MODEL_NOTICE
+                raw, shown, notice = _unquote(old), "AI_MODEL", OLD_MODEL_NOTICE
         if raw and not MODEL_NAME.match(raw):
             raise ConfigError(
                 f"{shown} in .env isn't a Claude model name. Use something like "
