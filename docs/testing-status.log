@@ -41,6 +41,14 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   sidebar-3). `DMBOT_SIDEBAR` stays 0. After deploy dev1 reruns `python -m dmbot.devtools.sidebar_check`
   and posts the answers on #954 (new case: fireball around corners in 2014). Supervisor reads them.
 
+- dev2, PR #1013 (9bdfca7, #1006: AI model tiers). Core only, no migration. Three new OPTIONAL `.env`
+  settings, AI_MODEL_FAST, AI_MODEL_CAREFUL and AI_MODEL_DEEP (the defaults work: Haiku, Sonnet, Opus).
+  The old AI_MODEL still works: it is read as AI_MODEL_FAST with a warning in the start-up log, and it
+  now covers every quick job, not only Find names, so rename it (same value). A malformed value stops
+  start-up and names the setting. Check: the core start-up log has "AI models in use: fast=...
+  careful=... deep=..." (or "AI is off" with no key) and no settings error; every AI call logs one
+  "AI call: tier=... model=... in=... out=... cache_read=..." line (counts only). If a model is not
+  available to the key, one warning says which setting to check and the next tier down is used.
 
 ------------------------------------------------------------------------------
 LIVE NOW
