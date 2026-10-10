@@ -35,6 +35,7 @@ from dmbot.campaigns.models import (
 )
 from dmbot.dm_screen import handover, messages
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
+from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
 from dmbot.logs import set_log_context
 
@@ -127,6 +128,8 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
     if viewer in campaign.dm_user_ids:  # rules lookup is for the campaign's DMs (#908)
         view.add_item(RuleLookupButton(campaign.id))
         view.add_item(RulesCardsButton(campaign.id, campaign.rules_cards))
+        view.add_item(ClockButton(campaign.id, "open"))  # the game clock (#965)
+        view.add_item(HouseFileButton(campaign.id))  # the house-rules file (#969)
     return view
 
 
@@ -268,6 +271,54 @@ class RuleLookupButton(
             await interaction.response.send_message(ONLY_DMS, ephemeral=True)
             return
         await interaction.response.send_modal(LookupForm(campaign))
+
+
+class HouseFileButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:housefile:{_ID}",
+):
+    """📄 House-rules file, on ⚙️ Settings (#969): link a file, check it, or upload one. Only
+    the campaign's DMs."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="House-rules file",
+                emoji="📄",
+                style=discord.ButtonStyle.secondary,
+                row=3,
+                custom_id=f"dmbot:housefile:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> HouseFileButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.house_file import GONE, ONLY_DMS, open_menu
+
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for the house-rules file")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        await open_menu(interaction, campaign)
 
 
 class RulesCardsButton(

@@ -32,21 +32,28 @@ class Case:
     must_any: tuple[str, ...]  # at least one of these (any case) is in the answer
     yes_no: bool = False  # the answer starts with Yes or No
     calls: int = 1  # how many AI calls the engine should make
+    must_not: tuple[str, ...] = ()  # none of these (any case) is in the answer (#992)
     in_game: bool = True
 
 
 CASES: tuple[Case, ...] = (
-    Case(
+    Case(  # the real model once said "The free rules don't say" with the entry in front of it:
+        # asked once more, then the entry's own words and source (#992)
         "do you need line of sight for fireball",
-        (reply("No. Its origin is a point you choose within range.", "SRD 5.2.1 p. 131"),),
-        ("no", "point you choose"),
-        yes_no=True,
+        (
+            reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "not sure"),
+            reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "not sure"),
+        ),
+        ("point you choose", "choose a point"),
+        calls=2,
+        must_not=("don't say", "your call"),
     ),
     Case(
         "hold on, I need to find if you need line of sight for fireball",
         (reply("No. It starts at a point you choose within range.", "SRD 5.2.1 p. 131"),),
-        ("point you choose",),
+        ("point you choose", "choose a point"),
         yes_no=True,
+        must_not=("don't say",),
     ),
     Case(
         "how much damage does fireball do",
@@ -65,8 +72,15 @@ CASES: tuple[Case, ...] = (
         ("burning",),
         yes_no=True,
     ),
-    Case(  # no Yes/No first: asked once more
+    Case(  # not in the free rules' index: no source, so never "sure" (#992)
         "can fireball hit someone behind a wall",
+        (reply("No. A solid wall blocks the blast.", "none", "sure"),),
+        ("not in dmbot's rules",),
+        yes_no=True,
+        must_not=("sure)", ", sure"),
+    ),
+    Case(  # no Yes/No first: asked once more
+        "can fireball spread around a corner",
         (
             reply("Fireball spreads around corners, so it can.", "SRD 5.2.1 p. 131"),
             reply("Yes. It spreads around corners.", "SRD 5.2.1 p. 131"),
@@ -110,14 +124,15 @@ CASES: tuple[Case, ...] = (
                 "SRD 5.2.1 p. 182",
             ),
         ),
-        ("speed is 0",),
+        ("speed is 0", "speed becomes 0"),
         calls=2,
     ),
     Case(
         "is there a rule for a critical hit on a spell attack",
-        (reply("The free rules don't say. Your call.", "none", "not sure"),),
-        ("your call",),
+        (reply("Yes. A spell attack can crit on a natural 20.", "none", "sure"),),
+        ("not in dmbot's rules",),
         yes_no=True,
+        must_not=("sure)", ", sure"),
     ),
     Case(
         "what's my house rule for criticals",
@@ -126,8 +141,14 @@ CASES: tuple[Case, ...] = (
     ),
     Case(
         "what do I know about Belleros",
-        (reply("Belleros is an NPC and the hooded stranger's friend.", "campaign names"),),
-        ("belleros",),
+        (reply("I don't have that. Your call.", "none", "not sure"),),
+        ("your call",),
+    ),
+    Case(  # the older fireball is named as such and cites its own page (#1005)
+        "does fireball go around corners in 2014",
+        (reply("Yes. In 2014 it spreads around corners.", "SRD 5.1 p. 144"),),
+        ("[Legacy 2014]", "spreads around corners"),
+        yes_no=True,
     ),
     Case(
         "who does Belleros work for",
@@ -158,6 +179,7 @@ CASES: tuple[Case, ...] = (
         (reply("Yes. It is now the Goblin Warrior in the newer rules.", "SRD 5.2.1 p. 290"),),
         ("goblin warrior",),
         yes_no=True,
+        must_not=("don't say",),
     ),
     Case(
         "what's the best pizza topping",
@@ -171,15 +193,11 @@ CASES: tuple[Case, ...] = (
         ("only help with the game",),
         in_game=False,
     ),
-    Case(
+    Case(  # class features are not in the index yet: said plainly, never "sure" (#992)
         "should I let the rogue sneak attack with a spell",
-        (
-            reply(
-                "Your call. Sneak Attack needs a weapon attack in the free rules.",
-                "SRD 5.2.1",
-                "not sure",
-            ),
-        ),
-        ("your call",),
+        (reply("No. Sneak Attack needs a weapon attack.", "none", "sure"),),
+        ("not in dmbot's rules",),
+        yes_no=True,
+        must_not=("sure)", ", sure"),
     ),
 )

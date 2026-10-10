@@ -10,6 +10,9 @@ Payment events:
   nothing, because the payment company may deliver events out of order.
 - **Only known plans.** The plan id is checked against plans.json, and the caps are copied
   from it, never taken from the event.
+- **Grace only after paying.** A failed payment gives the 7-day grace only to someone with
+  an earlier successful payment on record (owner decision, 2026-10-09, #922). A first
+  payment that fails starts no plan, and a plan that never started is never lapsed.
 """
 
 from __future__ import annotations
@@ -56,13 +59,35 @@ async def _paid_before(conn: Conn, user_id: int) -> bool:
     return await cur.fetchone() is not None
 
 
+# The events that mean money was taken: a plan started or renewed, or extra hours bought.
+# (The payment company's adapter sends "started" only once the first payment has gone
+# through; see payments.py.)
+_PAID_KINDS = ("subscription_started", "subscription_renewed", "extra_hours_bought")
+
+
+async def _has_paid(conn: Conn, user_id: int) -> bool:
+    """This person has an earlier successful payment on record. Called before the event
+    being applied is recorded, so a failure never counts as its own earlier payment.
+
+    Per person, not per subscription or company: a payment under any of their
+    subscriptions counts. A row with no kind was recorded before kinds were kept; it counts
+    as paid, so the old behaviour (grace, and lapsing when the plan ends) carries on for
+    them rather than a plan that never lapses."""
+    cur = await conn.execute(
+        "SELECT 1 FROM payment_events WHERE user_id = %s AND (kind IS NULL OR kind = ANY(%s))"
+        " LIMIT 1",
+        (user_id, list(_PAID_KINDS)),
+    )
+    return await cur.fetchone() is not None
+
+
 async def _record(conn: Conn, event: PaymentEvent, now: int) -> None:
     """Record the event id, so a repeat delivery is a duplicate. (_seen has already
     checked under the person's lock; DO NOTHING only guards against the impossible.)"""
     await conn.execute(
-        "INSERT INTO payment_events (provider, event_id, user_id, subscription_id, received_at)"
-        " VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
-        (event.provider, event.event_id, event.user_id, event.subscription_id, now),
+        "INSERT INTO payment_events (provider, event_id, user_id, subscription_id, kind,"
+        " received_at) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+        (event.provider, event.event_id, event.user_id, event.subscription_id, event.kind, now),
     )
 
 
@@ -265,7 +290,19 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
         if event.occurred_at < row["last_event_at"]:
             await _record(conn, event, now)
             return "stale"
+        paid = await _has_paid(conn, event.user_id)  # before this event is recorded
         await _record(conn, event, now)
+        if not paid:
+            # No payment on record: the plan never started, so there is nothing to give
+            # grace to and nothing to lapse. The row stays as it was.
+            log.error(
+                "Payment event %s (%s) for user %s, who has no earlier payment on record:"
+                " no grace, nothing changed: needs a person to look at it",
+                event.event_id,
+                event.kind,
+                event.user_id,
+            )
+            return "ignored"
         if event.kind == "payment_failed":
             if row["status"] == "lapsed":
                 return "ignored"

@@ -21,15 +21,17 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 from pathlib import Path
 
+from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED
 from dmbot.rules.house import HouseRule
-from dmbot.rules.index import Hit, Index, normalize
+from dmbot.rules.index import Hit, Index, edition_tag, normalize
 
+LEGACY_TAG = "[Legacy 2014]"  # the owner's rule: the older ruleset is always tagged
 ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
 ENTRIES_MAX = 3
 HOUSE_RULES_MAX = 5
@@ -106,6 +108,12 @@ _ABOUT_DMBOT = re.compile(
     r"dm screen|sidebar)\b|(^|\s)/\w+)",
     re.IGNORECASE,
 )
+# A question that names an edition or compares them wants both editions' entries.
+_EDITIONS = re.compile(
+    r"\b(2014|2024|legacy|old|older|new|newer|versus|vs|compare|compared|comparison|"
+    r"differ|differs|different|difference|differences)\b",
+    re.IGNORECASE,
+)
 _WORD = re.compile(r"[A-Za-z0-9'’]+")
 _POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
 
@@ -125,7 +133,29 @@ def asks_about_dmbot(question: str) -> bool:
     return bool(_ABOUT_DMBOT.search(question))
 
 
-def mentioned_rules(question: str, index: Index, target: str, fallback: str) -> list[Hit]:
+def wants_both_editions(question: str) -> bool:
+    """The question names an edition ("2014", "legacy", "the old one") or compares them."""
+    return bool(_EDITIONS.search(question))
+
+
+def other_edition(hit: Hit, index: Index, target: str, fallback: str) -> Hit | None:
+    """The same thing in the other edition, tagged as the older one if it is (the owner's
+    rule: newest first, legacy tagged). Found by the name the entry was found by, then by its
+    own name, since the newer edition may have renamed it (Goblin is the Goblin Warrior)."""
+    for edition in (target, fallback):
+        if edition == FALLBACK_NONE or edition == hit.entry.edition:
+            continue
+        for name in (hit.found_as, hit.entry.name):
+            found = index.lookup(name, edition, FALLBACK_NONE, kind=hit.entry.kind)
+            if found is not None and found.entry is not hit.entry:
+                tag = edition_tag(edition, from_fallback=edition != target)
+                return replace(found, tag=tag, from_fallback=edition != target)
+    return None
+
+
+def mentioned_rules(
+    question: str, index: Index, target: str, fallback: str, *, both: bool = False
+) -> list[Hit]:
     """The rules entries the question names: longest names first, no word used twice, at most
     `ENTRIES_MAX`. A single common word (`_STOP`) is never looked up on its own."""
     words = words_of(question)
@@ -148,7 +178,12 @@ def mentioned_rules(question: str, index: Index, target: str, fallback: str) -> 
     for _, hit in found:
         if all(hit.entry is not other.entry for other in unique):
             unique.append(hit)
-    return unique[:ENTRIES_MAX]
+    unique = unique[:ENTRIES_MAX]
+    if both:  # the other edition's entry beside each, so a comparison can be answered
+        extra = [h for h in (other_edition(hit, index, target, fallback) for hit in unique) if h]
+        unique += [h for h in extra if all(h.entry is not o.entry for o in unique)]
+        unique = unique[: ENTRIES_MAX + 1]  # one more than usual, never a long list
+    return unique
 
 
 def relevant_house_rules(
@@ -243,7 +278,7 @@ def build(
     """The AI's message for one question about one campaign. `house_rules` and `lookup`
     must already be this campaign's; nothing else is read here."""
     question = " ".join(question.split())[:QUESTION_MAX]
-    hits = mentioned_rules(question, index, target, fallback)
+    hits = mentioned_rules(question, index, target, fallback, both=wants_both_editions(question))
     rules = relevant_house_rules(house_rules, question, hits)
     names = mentioned_names(question, lookup)
     sources: list[str] = []

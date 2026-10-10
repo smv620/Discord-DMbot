@@ -15,6 +15,7 @@ import discord
 from dmbot.campaigns import Campaign
 from dmbot.rules import house
 from dmbot.rules.house import HouseRule, HouseRuleError
+from dmbot.ui import house_file as file_ui
 from dmbot.ui import house_rules as ui
 from dmbot.ui.logic import DESCRIPTION_MAX, PHONE_LABEL_MAX, SELECT_OPTIONS_MAX
 from tests.test_memory_names import FakeResponse
@@ -176,12 +177,23 @@ class UITest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def opened(it: Any) -> tuple[str, Any]:
         """What the command showed: it answers Discord first, so it comes as a follow-up."""
-        call = it.followup.send.await_args
+        call = UITest.last_text_call(it)
         return str(call.args[0]), call.kwargs.get("view")
 
     @staticmethod
+    def last_text_call(it: Any) -> Any:
+        """The last follow-up that is words (the house-rules file follows a change)."""
+        calls = [c for c in it.followup.send.await_args_list if "file" not in c.kwargs]
+        return calls[-1]
+
+    @staticmethod
     def labels(view: Any) -> list[str]:
-        return [str(c.label) for c in view.children if isinstance(c, discord.ui.Button)]
+        return [
+            str(c.label)
+            for c in view.children
+            if isinstance(c, discord.ui.Button)
+            and str(c.label) not in (file_ui.DOWNLOAD_LABEL, file_ui.FILE_LABEL)
+        ]
 
     @staticmethod
     def shown(it: Any) -> tuple[str, Any]:
@@ -201,7 +213,7 @@ class UITest(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def told(it: Any) -> str:
-        return str(it.followup.send.await_args.args[0])
+        return str(UITest.last_text_call(it).args[0])
 
     async def mine(self) -> list[HouseRule]:
         return await self.store.list(GUILD, "c1")
@@ -306,7 +318,7 @@ class Opening(UITest):
         self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])
         self.assertIn("1. Rule number 1", text)
         self.assertTrue(text.index("2. Rule number 2") < text.index("1. Rule number 1"))
-        self.assertIsNone(view)  # a player has nothing to press
+        self.assertEqual(self.labels(view), [])  # a player can only download, not change
 
     async def test_the_dm_of_the_only_campaign_without_a_session(self) -> None:
         self.playing = None
@@ -333,7 +345,7 @@ class Opening(UITest):
         shown, after = self.shown(pick)
         self.assertIn("House rules: Strahd", shown)
         self.assertIn("Strahd's own rule", shown)
-        self.assertIsNone(after)  # read only
+        self.assertEqual(self.labels(after), [])  # read only (a download at most)
 
     async def test_the_command_answers_discord_before_it_reads_anything(self) -> None:
         order: list[str] = []
@@ -842,6 +854,92 @@ class PickingFromTheMenu(UITest):
         yes = self.it()
         await self.press(self.shown(ask)[1], ui.YES_REMOVE_LABEL).callback(yes)
         self.assertTrue(self.shown(yes)[0].startswith(ui.ALREADY_GONE))
+
+
+class TheFile(UITest):
+    """The house-rules file (#969): sent privately after every change, and by Download."""
+
+    def put(self, text: str, cid: str = "c1") -> HouseRule:
+        self.store.seed(cid, 1, text=text)
+        return self.store.rules[cid][-1]
+
+    def files(self, it: Any) -> list[Any]:
+        return [c for c in it.followup.send.await_args_list if "file" in c.kwargs]
+
+    @staticmethod
+    def text_of(call: Any) -> str:
+        return str(call.kwargs["file"].fp.read().decode())
+
+    async def test_an_added_rule_sends_the_updated_file_privately(self) -> None:
+        self.put("No flanking")
+        form = ui.AddForm(campaign())
+        form.rule._value, form.instead._value = "Potions are a bonus action", ""
+        it = await self.submit(form)
+        (call,) = self.files(it)
+        self.assertTrue(call.kwargs["ephemeral"])
+        self.assertIn("Added house rule 2.", call.args[0])
+        self.assertIn(file_ui.AFTER_CHANGE, call.args[0])
+        self.assertEqual(call.kwargs["file"].filename, "house-rules-frostmaiden.txt")
+        text = self.text_of(call)
+        self.assertIn("1. No flanking", text)
+        self.assertIn("2. Potions are a bonus action", text)
+
+    async def test_an_edit_and_a_removal_send_it_too(self) -> None:
+        rule = self.put("Old words")
+        form = ui.EditForm(campaign(), rule, 0)
+        form.rule._value, form.instead._value = "New words", ""
+        it = await self.submit(form)
+        (call,) = self.files(it)
+        self.assertIn("1. New words", self.text_of(call))
+        current = (await self.mine())[0]
+        yes = self.it()
+        await ui.ConfirmRemove(campaign(), current, 0)._yes(yes)
+        (call,) = self.files(yes)
+        self.assertNotIn("New words", self.text_of(call))
+
+    async def test_a_refused_change_sends_no_file(self) -> None:
+        form = ui.AddForm(campaign())
+        form.rule._value, form.instead._value = "Anything", ""
+        it = await self.submit(form, user_id=PLAYER)
+        self.assertEqual(self.files(it), [])
+
+    async def test_the_file_holds_this_campaigns_rules_only(self) -> None:
+        self.put("Ours")
+        self.put("Theirs", "c2")
+        form = ui.AddForm(campaign())
+        form.rule._value, form.instead._value = "Another of ours", ""
+        it = await self.submit(form)
+        (call,) = self.files(it)
+        self.assertNotIn("Theirs", self.text_of(call))
+
+    async def test_download_gives_anyone_the_file_privately(self) -> None:
+        self.put("No flanking")
+        it = await self.command(PLAYER)
+        _, view = self.opened(it)
+        press = self.press(view, file_ui.DOWNLOAD_LABEL)
+        pressed = self.it(PLAYER)
+        await press.callback(pressed)
+        (call,) = self.files(pressed)
+        self.assertEqual(call.args[0], file_ui.DOWNLOAD_NOTE)
+        self.assertTrue(call.kwargs["ephemeral"])
+        self.assertIn("1. No flanking", self.text_of(call))
+
+    async def test_no_download_button_before_the_first_rule(self) -> None:
+        it = await self.command(DM)
+        _, view = self.opened(it)
+        self.assertNotIn(file_ui.DOWNLOAD_LABEL, [str(c.label) for c in view.children])
+
+    async def test_a_file_that_cant_be_sent_never_breaks_the_change(self) -> None:
+        form = ui.AddForm(campaign())
+        form.rule._value, form.instead._value = "Potions are a bonus action", ""
+        it = self.it(DM, discord.InteractionType.modal_submit)
+        it.followup.send = AsyncMock(
+            side_effect=lambda *a, **k: (
+                (_ for _ in ()).throw(RuntimeError("boom")) if "file" in k else None
+            )
+        )
+        await form.on_submit(it)
+        self.assertEqual(len(await self.mine()), 1)  # saved all the same
 
 
 class Registered(unittest.TestCase):

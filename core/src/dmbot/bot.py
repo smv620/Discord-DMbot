@@ -24,8 +24,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import campaign_cap, entitlements, hours, install, plan_rules, usage
+from dmbot import campaign_cap, entitlements, hours, install, plan_rules, retention, usage
 from dmbot.ai import DEFAULT_MODEL, AnthropicClient
+from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
 from dmbot.campaigns import Campaign, CampaignStore
@@ -64,9 +65,12 @@ from dmbot.dm_screen import (
     StopListeningButton,
     VisibilityButton,
     ensure_dm_screen,
+    house_sync,
     peek_view,
     rules_cards,
 )
+from dmbot.dm_screen import clock as clock_screen
+from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
@@ -88,6 +92,7 @@ from dmbot.dm_screen.name_questions import (
 )
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.settings import (
+    HouseFileButton,
     LevelButton,
     RuleLookupButton,
     RulesCardsButton,
@@ -124,14 +129,20 @@ from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
+from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
+from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.ask import AskLimiter
 from dmbot.sidebar.service import Recent, SidebarService
+from dmbot.timebot import durations
+from dmbot.timebot import phrases as clock_phrases
+from dmbot.timebot.effects import EffectsSection, EffectStore
+from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import stream as transcript_lines
@@ -201,6 +212,7 @@ METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
+CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once (#965)
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
@@ -332,6 +344,9 @@ class Table:
     rules: rules_cards.RulesCards = field(default_factory=rules_cards.RulesCards)
     # A house rule the DM said at the table, offered with Save / Edit / Cancel (#953).
     house_voice: house_voice.HouseVoice = field(default_factory=house_voice.HouseVoice)
+    # When a rest said at the table last moved the game clock, by kind (monotonic seconds):
+    # the same phrase twice in a few minutes is one rest (#965).
+    clock_said: dict[str, float] = field(default_factory=dict)
     resumed: bool = False  # picked up again after a restart
     announce_resume: bool = True  # post "listening again" when voice is back
     # Asked privately about recording (or reminded) this session: at most once each.
@@ -436,6 +451,9 @@ class DMBot(commands.AutoShardedBot):
         sheets: SheetStore | None = None,
         house_rules: HouseRuleStore | None = None,
         meter: usage.Meter | None = None,
+        clocks: ClockStore | None = None,
+        house_file_links: HouseFileLinkStore | None = None,
+        effects: EffectStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -466,13 +484,53 @@ class DMBot(commands.AutoShardedBot):
         self.sheets = sheets
         # A campaign's house rules, for `/dmbot houserules` (#865); None without a database.
         self.house_rules = house_rules
+        # Each campaign's game clock (#965); None without a database.
+        self.clocks = clocks
+        # The linked house-rules file (#969), and what is waiting for a DM's press.
+        self.house_file_links = house_file_links
+        self.house_syncs = house_sync.Pendings()
+        # Timed effects on that clock (#998); None without a database.
+        self.effects = effects
         # The hours meter (#437 part 2): listening minutes are written here; None records
         # nothing (tests and tools that run no real sessions).
         self.meter = meter
+        # The daily job that warns about and deletes campaigns past their keep date (#964).
+        # Needs the meter (the owners' plans); without one nothing is ever deleted.
+        self.retention: RetentionJob | None = None
+        if meter is not None:
+            self.retention = RetentionJob(
+                campaigns=campaigns,
+                standing_of=meter.retention_standing,
+                guild_ids=lambda: [g.id for g in self.guilds],
+                running=lambda: {t.campaign_id for t in self.tables.values() if t.campaign_id},
+                send=self._dm_user,
+                enforce=settings.enforce_plans,
+                server_name=lambda gid: g.name if (g := self.get_guild(gid)) else "your server",
+                site_url=settings.site_url,
+            )
+
+        # Tells the two admins when the AI account is out of funds, and logs a daily usage
+        # line (#972). Every AI client below reports to it.
+        admins: dict[str, int] = {}
+        for role, user_id in (
+            ("primary", settings.admin_primary_id),
+            ("secondary", settings.admin_secondary_id),
+        ):
+            if user_id is not None and user_id not in admins.values():  # the same person twice
+                admins[role] = user_id
+        self.ai_watch = AIWatch(admins=admins, state_dir=settings.data_dir, send=self._tell_admin)
         # AI text calls (a document into a names list); None when no key is set.
-        self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None
+        self.ai = (
+            AnthropicClient(settings.ai_key, settings.ai_model, watch=self.ai_watch)
+            if settings.ai_key
+            else None
+        )
         # The off-topic filter (#52) always uses the smallest model, whatever AI_MODEL is.
-        self.topic_ai = AnthropicClient(settings.ai_key, DEFAULT_MODEL) if settings.ai_key else None
+        self.topic_ai = (
+            AnthropicClient(settings.ai_key, DEFAULT_MODEL, watch=self.ai_watch)
+            if settings.ai_key
+            else None
+        )
         # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
         # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
         # without an AI key.
@@ -559,6 +617,7 @@ class DMBot(commands.AutoShardedBot):
             SettingsVisibilityButton,
             RuleLookupButton,
             RulesCardsButton,
+            HouseFileButton,
         )
         # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
         self.add_dynamic_items(
@@ -574,12 +633,15 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(*CONSENT_BUTTONS)
         # "Check new names" on the DM screen after a session.
         self.add_dynamic_items(ReviewButton)
+        self.add_dynamic_items(clock_screen.ClockButton, clock_screen.ClockUndoButton)  # #965
+        self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
         self.add_dynamic_items(UndoButton, UndoListButton)
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
         self.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton, FixUndoButton)
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
+        self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
         # A player's 📜 My character sheet, in their private messages (#723).
@@ -598,6 +660,7 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self._idle_sweeper(), "idle-sweep"),
             self._watched(self._summary_poster(), "summaries"),
             self._watched(self._meter_loop(), "hours-meter"),
+            *([self._watched(self._retention_loop(), "retention")] if self.retention else []),
             *(
                 [asyncio.create_task(self.lookup.follow(self.memory.listen), name="names")]
                 if self.lookup is not None and self.memory is not None
@@ -614,6 +677,9 @@ class DMBot(commands.AutoShardedBot):
         if self._closing:  # SIGTERM and the normal exit can both call this
             return
         self._closing = True
+        # A notice to the admins that is on its way gets a moment to finish (#972).
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(self.ai_watch.wait(), 3)
         document_reader.shutdown()  # files being read: end them, don't wait out their limit
         # Stopped sessions stop waiting for their last words and finish now (saving
         # first), alongside everything below.
@@ -1239,6 +1305,34 @@ class DMBot(commands.AutoShardedBot):
         saved = await self.sessions.get(guild_id)
         return saved is not None and saved.campaign_id == campaign_id
 
+    async def _dm_user(self, user_id: int, text: str) -> bool:
+        """A private message that may fail (messages off, left Discord): False if it did."""
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S * 2):
+                user = self.get_user(user_id) or await self.fetch_user(user_id)
+                await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+        except Exception:
+            return False
+        return True
+
+    async def _retention_loop(self) -> None:
+        """Once a day, after hours (UTC), warn about and delete campaigns past their keep
+        date (#964). Safe to run twice; a failed run is logged and tried again tomorrow."""
+        assert self.retention is not None
+        while True:
+            now = int(time.time())
+            await asyncio.sleep(max(60, retention.next_run_after(now) - now))
+            try:
+                await self.retention.run_once(int(time.time()))
+            except Exception:
+                log.exception("The daily retention job failed")
+
+    async def _tell_admin(self, user_id: int, text: str) -> None:
+        """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
+        the watch tries again later and doesn't count it as told."""
+        user = self.get_user(user_id) or await self.fetch_user(user_id)
+        await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+
     def session_lock(self, guild_id: int) -> asyncio.Lock:
         """Held while a session starts or stops, or a campaign is replaced, per server."""
         return self._session_locks.setdefault(guild_id, asyncio.Lock())
@@ -1641,6 +1735,7 @@ class DMBot(commands.AutoShardedBot):
             return False, SAVE_FAILED
         if transcript_problem:
             await self.post(screen_id, transcript_problem)
+        self._check_house_file(campaign, screen_id)
         transcript_line = (
             f"📜 Transcript (anyone in the server can read it): <#{transcript_id}>\n"
             if transcript_id
@@ -2305,6 +2400,11 @@ class DMBot(commands.AutoShardedBot):
                     self._note_house_rule(table, utterance.user_id, str(cleaned or text))
             except Exception:
                 log.exception("House rules by voice: couldn't look at a line")
+            if utterance.user_id in table.dm_user_ids and self.clocks is not None:
+                self._track(  # only a DM's own line can move the clock
+                    self._note_clock_phrase(table, utterance.user_id, str(cleaned or text)),
+                    "clock-phrase",
+                )
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
             table.unsaved.add(
@@ -2366,6 +2466,61 @@ class DMBot(commands.AutoShardedBot):
         before = table.rules.last_at  # given back if the card can't be shown
         card_id = table.rules.remember(mention, time.monotonic())
         self._track(self._post_rules_card(table, user_id, mention, card_id, before), "rules-card")
+
+    async def _note_clock_phrase(self, table: Table, user_id: int, line: str) -> None:
+        """A DM's clear "we take a short rest" / "you take a long rest" moves the game clock,
+        if the DM has set one (#965): no AI, and a player's line never does. One short note
+        on the DM screen with an Undo button."""
+        rest = clock_phrases.find(line)
+        if rest is None or table.campaign_id is None:
+            return
+        if not table.listening or self.tables.get(table.guild_id) is not table:
+            return
+        if user_id not in table.dm_user_ids or not self.consent.has_consent(
+            table.guild_id, user_id
+        ):
+            return
+        now = time.monotonic()
+        last = table.clock_said.get(rest)
+        if last is not None and now - last < CLOCK_PHRASE_GAP_S:
+            return
+        table.clock_said[rest] = now
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return
+        try:
+            result = await clock_screen.press(self, campaign.guild_id, campaign.id, user_id, rest)
+        except Exception:
+            log.exception("The game clock couldn't take a rest said at the table")
+            return
+        if result.before is None or result.after is None:
+            return  # no clock set yet: nothing to move
+        stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
+        if stored is None:
+            return
+        await clock_screen.show(self, campaign, stored)
+        await timer_screen.announce_due(self, campaign, stored.clock.minute)
+        await clock_screen.say(
+            self,
+            campaign,
+            [clock_screen.rest_note(rest, result.after), *result.lines],
+            clock_screen.undo_id(result.before, result.after),
+        )
+
+    def _check_house_file(self, campaign: Campaign, screen_id: int) -> None:
+        """At a session start: read the campaign's linked house-rules file, if any, and put
+        what differs on the DM screen (#969). In the background; it never holds up the
+        session, and says nothing when there is no link or nothing to change."""
+        if self.house_file_links is None:
+            return
+
+        async def send(text: str, view: discord.ui.View) -> bool:
+            posted = await self.post_message(screen_id, text, view if view.children else None)
+            return posted is not None
+
+        self._track(
+            house_sync.check_linked(self, campaign, send, quiet_if_same=True), "house-file-check"
+        )
 
     def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> str:
         """A house rule typed to DMbot in the DM's private chat (#960): the same proposal,
@@ -2495,8 +2650,14 @@ class DMBot(commands.AutoShardedBot):
             table.rules.forget(card_id, before)
             return
         text = rule_card.alert_text(hit, mention.said, mention.heard, rules)
+        timed = (
+            hit.entry.kind == "spell"
+            and durations.parse(str(hit.entry.details.get("duration", ""))).timed
+        )  # a spell with a length gets Time it (#998)
         posted = await self.post_message(
-            table.screen_channel_id, text, rules_cards.card_view(table.guild_id, card_id)
+            table.screen_channel_id,
+            text,
+            rules_cards.card_view(table.guild_id, card_id, timed=timed),
         )
         if posted is None:
             table.rules.forget(card_id, before)
@@ -4287,6 +4448,8 @@ async def run(settings: Settings) -> None:
         )
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+        campaigns.register_section(ClockSection())  # and the game clock (#965)
+        campaigns.register_section(EffectsSection())  # and its timed effects (#998)
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
         bot = DMBot(
@@ -4300,6 +4463,9 @@ async def run(settings: Settings) -> None:
             SheetStore(db),
             HouseRuleStore(db),
             usage.Meter(db),
+            ClockStore(db),
+            HouseFileLinkStore(db),
+            EffectStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
