@@ -57,10 +57,9 @@ KINDS: dict[str, str] = {
     PC: "A player's character",
     "place": "A place",
     "faction": "A group (guild, cult, family…)",
-    "creature": "A creature or monster",
+    "creature": "A named creature or monster",
     "item": "An item",
     "deity": "A god or other power",
-    "spell": "A spell or magic",
     "event": "Something that happened (event)",
     "concept": "Something else",
 }
@@ -175,7 +174,7 @@ def home_text(
         kinds: dict[str, int] = {}
         other = 0
         for e in confirmed:
-            kind = KIND_SHORT.get(e.type, e.type)
+            kind = KIND_SHORT.get(e.kind_key, e.kind_key)
             if kind == "other":
                 other += 1
             else:
@@ -205,7 +204,7 @@ def home_text(
         more = f" … and {len(fresh) - len(listed)} more" if len(fresh) > len(listed) else ""
         lines.append(f"{title} {text}{more}")
         shown.extend(
-            (e, names.entities[e].name, KIND_SHORT.get(names.entities[e].type, "other"))
+            (e, names.entities[e].name, KIND_SHORT.get(names.entities[e].kind_key, "other"))
             for e in listed
         )
 
@@ -586,7 +585,7 @@ async def save_name(
 
 
 def saved_text(entity: Entity, others: list[str], secret: list[str]) -> str:
-    kind = KIND_SHORT.get(entity.type, entity.type)
+    kind = KIND_SHORT.get(entity.kind_key, entity.kind_key)
     lines = [f"✅ DMbot will remember **{_md(entity.name)}** ({kind})."]
     if others:
         lines.append(f"DMbot also listens for: {', '.join(map(_md, others))}.")
@@ -950,7 +949,7 @@ class SuggestionReview(_Menu):
                 discord.SelectOption(
                     label=logic.shorten(e.name, logic.OPTION_LABEL_MAX),
                     value=e.id,
-                    description=KIND_SHORT.get(e.type, e.type),
+                    description=KIND_SHORT.get(e.kind_key, e.kind_key),
                 )
                 for e in ranked_same_as(entity.name, known)
             ],

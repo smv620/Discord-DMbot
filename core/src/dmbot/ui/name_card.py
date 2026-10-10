@@ -20,6 +20,7 @@ import discord
 from discord import app_commands
 
 from dmbot.campaigns import Campaign
+from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
     CONFIRMED,
@@ -139,7 +140,7 @@ def cut(text: str, limit: int) -> str:
 def _who(names: CampaignLookup, entity_id: str) -> str:
     """A name with its kind, so two buttons never read the same: "Bell (NPC)"."""
     entity = names.entities.get(entity_id)
-    return f"{entity.name} ({_kind(entity.type)})" if entity is not None else "?"
+    return f"{entity.name} ({_kind(entity.kind_key)})" if entity is not None else "?"
 
 
 def _kind(type_key: str) -> str:
@@ -180,7 +181,8 @@ def card_text(
         if heard is not None and heard.last_session_at
         else "Not heard in a session yet"
     )
-    what = f"played by **{_md(player)}**" if player else _kind(entity.type)
+    phrase = kind_phrase(entity, lookup.links.get(entity_id, ()))
+    what = f"{phrase} · played by **{_md(player)}**" if player else phrase
     lines = [f"🪪 **{_md(entity.name)}** · {what} · {when}"]
     if sheet:
         lines.append(sheet)
@@ -1304,7 +1306,7 @@ def _label(names: CampaignLookup, m: Match) -> str:
     entity = names.entities[m.entity_id]
     matched = "" if name_key(m.matched) == name_key(entity.name) else f' (matched "{m.matched}")'
     secret = " 🤫" if m.secret else ""
-    return logic.shorten(f"{entity.name} · {_kind(entity.type)}{matched}{secret}", 100)
+    return logic.shorten(f"{entity.name} · {_kind(entity.kind_key)}{matched}{secret}", 100)
 
 
 async def show_matches(interaction: discord.Interaction, campaign_id: str, typed: str) -> None:

@@ -61,7 +61,7 @@ class MentionedNames(unittest.TestCase):
         lookup = CampaignLookup.build(data())
         lines = context.mentioned_names("what do I know about Belleros", lookup)
         self.assertEqual(len(lines), 1)
-        self.assertTrue(lines[0].startswith("Belleros (npc)"))
+        self.assertTrue(lines[0].startswith("Belleros (NPC)"))
 
     def test_secret_and_unconfirmed_names_are_left_out(self) -> None:
         lookup = CampaignLookup.build(data())
@@ -108,7 +108,7 @@ class SecretIdentities(unittest.TestCase):
         described = replace(data().entities[0], description="Secretly the lich's brother.")
         lookup = CampaignLookup.build(data(entities=(described, *data().entities[1:])))
         (line,) = context.mentioned_names("what about Belleros", lookup)
-        self.assertEqual(line, "Belleros (npc)")
+        self.assertEqual(line, "Belleros (NPC)")
         self.assertNotIn("lich", line)
 
     def test_someone_without_a_secret_name_keeps_the_description(self) -> None:

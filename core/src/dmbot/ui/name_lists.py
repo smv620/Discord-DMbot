@@ -130,13 +130,13 @@ def kinds_in(names: CampaignLookup) -> list[tuple[str, int]]:
     counts: dict[str, int] = {}
     for e in names.entities.values():
         if e.status == CONFIRMED:
-            counts[e.type] = counts.get(e.type, 0) + 1
+            counts[e.kind_key] = counts.get(e.kind_key, 0) + 1
     return sorted(counts.items(), key=lambda kv: (-kv[1], KIND_SHORT.get(kv[0], kv[0])))
 
 
 def browse_order(names: CampaignLookup, kind: str, by_heard: bool) -> list[str]:
     """Confirmed entries of one kind: last heard first (never heard last), or A to Z."""
-    ids = [e.id for e in names.entities.values() if e.status == CONFIRMED and e.type == kind]
+    ids = [e.id for e in names.entities.values() if e.status == CONFIRMED and e.kind_key == kind]
 
     def az(entity_id: str) -> str:
         return name_key(names.entities[entity_id].name)
@@ -326,7 +326,7 @@ def format_help(*, secrets: bool) -> str:
         "DMbot's AI finds the names and shows you the list first: nothing is added until "
         "you press **Add these names**.\n"
         f"Template: one name per line, `{parts}`. Only the name is needed. Separate other "
-        "names with `,` or `;`. Kinds: NPC, place, group, creature, item, god, spell, event, "
+        "names with `,` or `;`. Kinds: NPC, place, group, creature, item, god, event, "
         "other. Names with no kind wait in 📝 Check new names.\n"
         "If 📎 Upload a file shows no place to pick a file, type `/dmbot names` and add the "
         "file in its **file** box."
@@ -1619,7 +1619,7 @@ def download_files(
         mine = by_entity.get(e.id, [])
         others = tuple(a.text for a in mine if not a.secret and a.key != own)
         hidden = tuple(a.text for a in mine if a.secret) if secrets else ()
-        out.append(OutName(e.name, e.type, others, hidden))
+        out.append(OutName(e.name, e.kind_key, others, hidden))
     return render_files(out, campaign=campaign.name, secrets=secrets), len(out)
 
 

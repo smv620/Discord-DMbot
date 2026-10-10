@@ -33,6 +33,7 @@ from dmbot.memory._changes import (
     NOT_FOUND,
     PREDICATES,
     RELATIONS,
+    RULE_LINKS,
     TYPES,
     Changes,
     Scope,
@@ -43,6 +44,7 @@ from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import (
     ALIAS_KINDS,
     CONFIRMED,
+    CREATURE_TYPE,
     DESCRIPTION_MAX,
     DETAIL_MAX,
     DM,
@@ -50,13 +52,20 @@ from dmbot.memory.models import (
     FIX,
     KEEP,
     LINE_REF_MAX,
+    LINK_EDITIONS,
+    LINK_KINDS,
+    LINK_NAME_MAX,
+    LINK_SOURCE_MAX,
     LIST_MAX,
     LIVE,
     MENTION_METHODS,
     MERGED,
+    PLAYER_CHARACTER,
     PROPOSED,
     REJECTED,
+    ROLES,
     SOURCES,
+    SPECIES,
     Alias,
     Correction,
     Entity,
@@ -67,6 +76,7 @@ from dmbot.memory.models import (
     MoreNames,
     NewName,
     Relation,
+    RuleLink,
     TooLateToUndo,
     Written,
     check_status_change,
@@ -83,6 +93,7 @@ from dmbot.memory.ontology import (
     Ontology,
     PredicateTerm,
     TypeTerm,
+    resolve_kind,
 )
 from dmbot.memory.sounds import sound_codes
 
@@ -122,7 +133,14 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 def _entity(r: dict[str, Any]) -> Entity:
     return Entity(
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
-        r["source"], r["created_at"], r["played_by"],
+        r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"],
+    )  # fmt: skip
+
+
+def _rule_link(r: dict[str, Any]) -> RuleLink:
+    return RuleLink(
+        r["id"], r["entity_id"], r["kind"], r["rules_source"], r["name"], r["edition"], r["known"],
+        r["created_at"],
     )  # fmt: skip
 
 
@@ -469,6 +487,11 @@ class MemoryStore:
                 scope.ids,
             )
             recent = tuple(int(r["session_started_at"]) for r in await cur.fetchall())
+            links = [
+                r
+                for r in await scope.select(RULE_LINKS, " ORDER BY created_at, id")
+                if r["entity_id"] in live
+            ]
             return LookupData(
                 scope.version,
                 tuple(_entity(r) for r in entities),
@@ -477,6 +500,7 @@ class MemoryStore:
                 tuple(_relation(r) for r in relations),
                 heard,
                 recent,
+                tuple(_rule_link(r) for r in links),
             )
 
     async def corrections(self, guild_id: int, campaign_id: str) -> list[Correction]:
@@ -519,9 +543,13 @@ class MemoryStore:
         status: str = PROPOSED,
         description: str = "",
         played_by: int | None = None,
+        role: str | None = None,
     ) -> Written[Entity]:
-        """A new person, place or thing, with its name as the first alias. `played_by`:
-        the Discord user playing a player character."""
+        """A new person, place or thing, with its name as the first alias. `role`: for a
+        character, player character, NPC or god (the older kinds npc, player_character,
+        deity and creature are read as a character with that role). `played_by`: the
+        Discord user playing a player character."""
+        type, role = resolve_kind(type, role)
         _check_choice(status, LIVE, "entity status")
         check_status_change(None, status, source)
         name = clean_text(name)
@@ -532,8 +560,7 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             onto.active_type(type)
-            if played_by is not None and not onto.is_a(type, "player_character"):
-                raise MemoryRuleError("Only a player character is played by someone.")
+            _check_role(onto, type, role, played_by)
             row = await w.insert(
                 ENTITIES,
                 {
@@ -546,6 +573,8 @@ class MemoryStore:
                     "source": source,
                     "created_at": w.now,
                     "played_by": played_by,
+                    "role": role,
+                    "needs_look": False,
                 },
             )
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
@@ -635,8 +664,10 @@ class MemoryStore:
             ids: list[str | None] = []
             entities: list[dict[str, Any]] = []
             for n in names:
-                onto.active_type(n.type)
-                if onto_is_pc(onto, n.type):
+                kind, role = resolve_kind(n.type, n.role)
+                onto.active_type(kind)
+                _check_role(onto, kind, role, None)
+                if role == PLAYER_CHARACTER:
                     raise MemoryRuleError("A player's character needs its player.")
                 name, name_key_, _ = prep[n.name]
                 if name_key_ in used:
@@ -645,9 +676,10 @@ class MemoryStore:
                 entity_id = new_id()
                 entities.append(
                     {
-                        "id": entity_id, "type": n.type, "name": name, "description": "",
+                        "id": entity_id, "type": kind, "name": name, "description": "",
                         "status": n.status, "merged_into": None, "source": source,
-                        "created_at": w.now, "played_by": None,
+                        "created_at": w.now, "played_by": None, "role": role,
+                        "needs_look": False,
                     }
                 )  # fmt: skip
                 seen = {name_key_}
@@ -705,19 +737,119 @@ class MemoryStore:
             return Written(None, w.batch)
 
     async def set_entity_type(
-        self, guild_id: int, campaign_id: str, entity_id: str, type: str, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        type: str,
+        *,
+        source: str,
+        role: str | None = None,
     ) -> Written[Entity]:
-        """What kind of thing it is (an NPC, a place…): the DM's call."""
+        """What kind of thing it is (a character, a place…) and, for a character, its role
+        (an NPC, a god…): the DM's call. Looking at it clears "needs a look"."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say what something is.")
+        type, role = resolve_kind(type, role)
         async with self._write(guild_id, campaign_id, source) as w:
-            (await _load_ontology(w)).active_type(type)
+            onto = await _load_ontology(w)
+            onto.active_type(type)
             current = await _entity_row(w, entity_id)
-            changes: dict[str, Any] = {"type": type}
-            if current["played_by"] is not None and not onto_is_pc(await _load_ontology(w), type):
+            if role is None and type == current["type"]:
+                role = current["role"]  # same kind, no new role said: it keeps its role
+            _check_role(onto, type, role, None)
+            changes: dict[str, Any] = {"type": type, "role": role, "needs_look": False}
+            if current["played_by"] is not None and role != PLAYER_CHARACTER:
                 changes["played_by"] = None
             row = await w.update(ENTITIES, entity_id, changes)
             return Written(_entity(row), w.batch)
+
+    async def rule_links(
+        self, guild_id: int, campaign_id: str, entity_ids: Collection[str] | None = None
+    ) -> list[RuleLink]:
+        """A campaign's characters' links to the rules (species, creature type, stat
+        block, class, background), or those of `entity_ids`."""
+        async with self._read(guild_id, campaign_id) as scope:
+            if entity_ids is None:
+                rows = await scope.select(RULE_LINKS, " ORDER BY created_at, id")
+            else:
+                rows = await scope.select(
+                    RULE_LINKS,
+                    " AND entity_id = ANY(%s) ORDER BY created_at, id",
+                    [sorted(entity_ids)],
+                )
+            return [_rule_link(r) for r in rows]
+
+    async def set_rule_link(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        kind: str,
+        name: str,
+        *,
+        source: str,
+        rules_source: str = "",
+        edition: str | None = None,
+        known: bool = False,
+    ) -> Written[RuleLink]:
+        """Link a character to a rules entry by source and name (its species, creature
+        type, stat block, class or background). A name the rules data doesn't have keeps its
+        plain words with `known` false ("not in DMbot's rules"). A character has one species
+        and one creature type: a new one replaces the old; classes and the rest add up.
+        The DM's call (there is no screen for it yet; links come from the DM's sheet flow)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can link a character to the rules.")
+        _check_choice(kind, LINK_KINDS, "link kind")
+        name = clean_text(name, LINK_NAME_MAX)
+        if known and not rules_source:
+            raise MemoryRuleError("A link to a rules entry needs its source.")
+        rules_source = rules_source if known else ""
+        if len(rules_source) > LINK_SOURCE_MAX:
+            raise MemoryRuleError("That source name is too long.")
+        if edition is not None and edition not in LINK_EDITIONS:
+            raise MemoryRuleError("The edition is 2014 or 2024.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            entity = await _entity_row(w, entity_id)
+            if entity["status"] not in LIVE or not onto.is_a(entity["type"], "character"):
+                raise MemoryRuleError("Only a character is linked to the rules.")
+            if kind in (SPECIES, CREATURE_TYPE):
+                for old in await w.select(
+                    RULE_LINKS, " AND entity_id = %s AND kind = %s", [entity_id, kind]
+                ):
+                    await w.delete(RULE_LINKS, old["id"])
+            else:
+                for old in await w.select(
+                    RULE_LINKS,
+                    " AND entity_id = %s AND kind = %s AND rules_source = %s AND name = %s",
+                    [entity_id, kind, rules_source, name],
+                ):
+                    return Written(_rule_link(old), w.batch)  # already linked
+            row = await w.insert(
+                RULE_LINKS,
+                {
+                    "id": new_id(),
+                    "entity_id": entity_id,
+                    "kind": kind,
+                    "rules_source": rules_source,
+                    "name": name,
+                    "edition": edition,
+                    "known": known,
+                    "created_at": w.now,
+                },
+            )
+            return Written(_rule_link(row), w.batch)
+
+    async def remove_rule_link(
+        self, guild_id: int, campaign_id: str, link_id: str, *, source: str
+    ) -> Written[None]:
+        """Take a link away (the DM's call)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            await w.delete(RULE_LINKS, link_id)
+            return Written(None, w.batch)
 
     async def rename_entity(
         self, guild_id: int, campaign_id: str, entity_id: str, name: str, *, source: str
@@ -800,21 +932,30 @@ class MemoryStore:
         *,
         source: str,
         played_by: int | None = None,
+        role: str | None = None,
     ) -> Written[Entity]:
-        """The DM says a suggested name is real: what it is, confirmed with all its
-        names, in one change (one undo, one reload)."""
+        """The DM says a suggested name is real: what it is (and, for a character, its
+        role), confirmed with all its names, in one change (one undo, one reload)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can confirm that.")
         if played_by is not None and not 0 < played_by <= INT64_MAX:
             raise ValueError("Bad Discord user ID")
+        type, role = resolve_kind(type, role)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             onto.active_type(type)
-            if played_by is not None and not onto.is_a(type, "player_character"):
-                raise MemoryRuleError("Only a player character is played by someone.")
+            _check_role(onto, type, role, played_by)
             await _entity_row(w, entity_id)
             row = await w.update(
-                ENTITIES, entity_id, {"type": type, "status": CONFIRMED, "played_by": played_by}
+                ENTITIES,
+                entity_id,
+                {
+                    "type": type,
+                    "role": role,
+                    "status": CONFIRMED,
+                    "played_by": played_by,
+                    "needs_look": False,
+                },
             )
             for alias in await w.select(
                 ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
@@ -823,23 +964,32 @@ class MemoryStore:
             return Written(_entity(row), w.batch)
 
     async def confirm_kinds(
-        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str], type: str, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_ids: Sequence[str],
+        type: str,
+        *,
+        source: str,
+        role: str | None = None,
     ) -> Written[int]:
         """The DM says what a whole group of suggested names is (📥 Add many: "every
         'wizard' is an NPC"): each still waiting is confirmed as that kind, with its names,
         in one change. Returns how many were confirmed."""
         if source != DM:
             raise MemoryRuleError("Only the DM can confirm that.")
+        type, role = resolve_kind(type, role)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             onto.active_type(type)
-            if onto_is_pc(onto, type):
+            _check_role(onto, type, role, None)
+            if role == PLAYER_CHARACTER:
                 raise MemoryRuleError("A player's character needs its player.")
             # A few statements for the whole group, not a chain per name (#580). Names
             # checked or removed since aren't proposed any more, so they're left alone.
             confirmed = await w.update_where(
                 ENTITIES,
-                {"type": type, "status": CONFIRMED},
+                {"type": type, "role": role, "status": CONFIRMED, "needs_look": False},
                 " AND status = 'proposed' AND id = ANY(%s)",
                 [sorted(set(entity_ids))],
             )
@@ -973,7 +1123,10 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             keep = await _entity_row(w, keep_id)
             gone = await _entity_row(w, gone_id)
-            needs_dm = CONFIRMED in (keep["status"], gone["status"]) or keep["type"] != gone["type"]
+            needs_dm = CONFIRMED in (keep["status"], gone["status"]) or (
+                keep["type"],
+                keep["role"],
+            ) != (gone["type"], gone["role"])
             if needs_dm and not dm_said_same:
                 raise MemoryRuleError("Only the DM can say these two are the same.")
             players = {keep["played_by"], gone["played_by"]} - {None}
@@ -982,8 +1135,19 @@ class MemoryStore:
             if gone["played_by"] is not None and keep["played_by"] is None:
                 # A player's character stays one, whichever name is kept.
                 await w.update(
-                    ENTITIES, keep_id, {"type": gone["type"], "played_by": gone["played_by"]}
+                    ENTITIES,
+                    keep_id,
+                    {"type": gone["type"], "role": gone["role"], "played_by": gone["played_by"]},
                 )
+            kept = await _entity_row(w, keep_id)
+            if kept["type"] == gone["type"]:  # one role, one look: neither is lost or invented
+                merged = {
+                    "role": kept["role"] or gone["role"],
+                    "needs_look": kept["needs_look"] and gone["needs_look"],
+                }
+                if merged != {"role": kept["role"], "needs_look": kept["needs_look"]}:
+                    await w.update(ENTITIES, keep_id, merged)
+            await _move_rule_links(w, keep_id, gone_id)
             if confirm_keys and source != DM:
                 raise ValueError("Only the DM confirms names")
             await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
@@ -1030,9 +1194,9 @@ class MemoryStore:
             await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
             # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
             await w.update(ENTITIES, gone_id, {"status": MERGED, "merged_into": keep_id})
-            kept = await w.get(ENTITIES, keep_id)
-            assert kept is not None
-            return Written(_entity(kept), w.batch)
+            final = await w.get(ENTITIES, keep_id)
+            assert final is not None
+            return Written(_entity(final), w.batch)
 
     # ---- relationships ----------------------------------------------------------------
 
@@ -1331,6 +1495,8 @@ class MemoryStore:
                     "source": DM,
                     "created_at": w.now,
                     "played_by": None,
+                    "role": None,
+                    "needs_look": False,
                 },
             )
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", PROPOSED, False, None))
@@ -1535,8 +1701,34 @@ async def _close_stale_flags(w: Changes) -> list[Flag]:
 # ---- helpers (inside a write) ----------------------------------------------------------
 
 
-def onto_is_pc(onto: Ontology, type_key: str) -> bool:
-    return onto.is_a(type_key, "player_character")
+async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
+    """A merged entry's links to the rules go with it, unless the kept entry already has
+    that species or creature type, or the very same link (then they stay behind, unseen)."""
+    mine = await w.select(RULE_LINKS, " AND entity_id = %s", [keep_id])
+    has_one = {r["kind"] for r in mine if r["kind"] in (SPECIES, CREATURE_TYPE)}
+    has_same = {(r["kind"], r["rules_source"], r["name"]) for r in mine}
+    for link in await w.select(RULE_LINKS, " AND entity_id = %s", [gone_id]):
+        if (
+            link["kind"] in has_one
+            or (link["kind"], link["rules_source"], link["name"]) in has_same
+        ):
+            continue
+        await w.update(RULE_LINKS, link["id"], {"entity_id": keep_id})
+        if link["kind"] in (SPECIES, CREATURE_TYPE):
+            has_one.add(link["kind"])
+        has_same.add((link["kind"], link["rules_source"], link["name"]))
+
+
+def _check_role(onto: Ontology, type_key: str, role: str | None, played_by: int | None) -> None:
+    """A role belongs to a character, one at a time; only a player character is played by
+    someone (#1034)."""
+    if role is not None:
+        if role not in ROLES:
+            raise MemoryRuleError("A character is a player character, an NPC or a god.")
+        if not onto.is_a(type_key, "character"):
+            raise MemoryRuleError("Only a character has a role.")
+    if played_by is not None and role != PLAYER_CHARACTER:
+        raise MemoryRuleError("Only a player character is played by someone.")
 
 
 class _Prepared:

@@ -15,6 +15,7 @@ from dmbot.memory.models import (
     Entity,
     name_key,
 )
+from dmbot.memory.ontology import resolve_kind
 from dmbot.memory.sounds import sound_codes
 from dmbot.transcript import cleaner
 from dmbot.transcript.cleaner import (
@@ -44,7 +45,8 @@ def entity(
     played_by: int | None = None,
     created_at: int = 0,
 ) -> Entity:
-    return Entity(eid, kind, name, "", status, None, "dm", created_at, played_by)
+    type_, role = resolve_kind(kind)
+    return Entity(eid, type_, name, "", status, None, "dm", created_at, played_by, role)
 
 
 def alias(eid: str, text: str, *, secret: bool = False, status: str = CONFIRMED) -> Alias:

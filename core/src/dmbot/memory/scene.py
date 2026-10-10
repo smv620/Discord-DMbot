@@ -47,7 +47,6 @@ NAMES_PER_ENTRY = 3  # an entry's own name and up to two other names
 MAX_TIMES_KEPT = 20  # per entry: plenty to rank a scene, bounded in a long session
 LONG_UNSAID_S = 180 * 86400  # names unsaid for about six months drop out of hints
 MAX_HINTS = 50  # Deepgram's limit (deepgram.MAX_KEYTERMS); local Whisper cuts by length
-PLAYER_CHARACTER = "player_character"
 
 WORD = re.compile(r"[^\W_](?:[^\W_]|['’-](?=[^\W_]))*")
 
@@ -178,7 +177,7 @@ def prepare(lookup: CampaignLookup, now: float) -> HintParts:
     return HintParts(
         version=lookup.version,
         names=ordered,
-        characters=tuple(e.id for e in by_name if e.type == PLAYER_CHARACTER),
+        characters=tuple(e.id for e in by_name if e.is_player_character),
         recent=tuple(e.id for e in [*recently, *never]),
         fill=tuple(e.id for e in fill),
         guesses=tuple(sorted(guesses, key=name_key)),

@@ -15,6 +15,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory.models import NAME_MAX, name_key
+from dmbot.memory.ontology import SPELL_NOT_KEPT
 
 MAX_FILE_BYTES = 256 * 1024
 MAX_LINES = 2000
@@ -44,6 +45,9 @@ KIND_WORDS: dict[str, str] = {
     "npc": "npc",
     "person": "npc",
     "character": "npc",
+    "pc": "player_character",
+    "player character": "player_character",
+    "player's character": "player_character",
     "place": "place",
     "location": "place",
     "town": "place",
@@ -59,9 +63,10 @@ KIND_WORDS: dict[str, str] = {
     "weapon": "item",
     "god": "deity",
     "deity": "deity",
-    "spell": "spell",
+    "spell": "spell",  # refused: a spell is not kept in campaign memory (SPELL_NOT_KEPT)
     "magic": "spell",
     "event": "event",
+    "idea": "concept",
     "other": "concept",
     "thing": "concept",
 }
@@ -94,10 +99,11 @@ def header(*, secrets: bool, download: bool = False) -> str:
         f"###     {parts}",
         "###",
         "### - Only the name is needed. To skip a part, leave it empty: Ulfgar | | Ulf",
-        "### - kind: NPC, place, group, creature, item, god, spell, event or other.",
+        "### - kind: NPC, place, group, creature, item, god, event or other.",
         "###   These work too: person or character (NPC); town, city or location (place);",
         "###   faction or guild (group); monster or beast (creature); object or weapon",
-        "###   (item); deity (god); magic (spell); thing (other).",
+        "###   (item); deity (god); idea or thing (other). A named creature, an NPC and a",
+        "###   god are all characters. Spells aren't kept here: look them up with /dmbot rule.",
         "###   Another word (like wizard), or no kind? After you add the list, DMbot asks",
         '###   you once what every "wizard" is. If there are many words, the rest wait in',
         "###   Check new names.",
@@ -315,6 +321,9 @@ def parse(text: str, *, secrets: bool) -> Parsed:
             )  # fmt: skip
             continue
         word = " ".join(cells[1].split())
+        if kind_of(word) == "spell":
+            out.refused.append((number, SPELL_NOT_KEPT))
+            continue
         first = taking.get(key)
         if first is None:
             taking[key] = first = _Taking(number, name, kind_of(word), word, [], [], {key})

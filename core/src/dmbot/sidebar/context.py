@@ -26,6 +26,7 @@ from functools import cache
 from pathlib import Path
 
 from dmbot.campaigns.models import FALLBACK_NONE
+from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED
 from dmbot.rules.house import HouseRule
@@ -239,7 +240,7 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
                         if i in lookup.entities
                     )[:3]
                 )
-                line = f"{entity.name} ({entity.type})"
+                line = f"{entity.name} ({kind_phrase(entity)})"
                 if note:
                     line += f": {note}"
                 if links:
