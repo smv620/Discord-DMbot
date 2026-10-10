@@ -57,6 +57,18 @@ CI runs all of the above on every pull request. Never merge red CI.
   "Supervisor review: approved" on its current head, plus RepoManager's compliance check
   and green CI. That approval is the design review: never hold it as "self-approval", and
   don't wait for the owner. A compliance problem goes back to Supervisor like any send-back.
+  **How an approval is recorded** (owner, 2026-10-10, after approvals were misread):
+  Supervisor's verdict is a **PR review** (event COMMENT) on the exact head commit, whose
+  body starts "Supervisor review: approved" or "Supervisor review: changes needed", plus the
+  same verdict as a PR comment saying what was read and why. **The review is the record:** a
+  PR is approved only when Supervisor's latest review starting "Supervisor review:" says
+  "approved" **and its commit is the PR's head**, or the head is RepoManager's refresh of that
+  commit with the PR's own patch unchanged (RepoManager notes "approval carried over from
+  <sha>"). A new push by the author is unapproved until a new review, so nothing goes stale
+  and nothing has to be removed. RepoManager reads the reviews
+  (`GET /repos/smv620/Discord-DMbot/pulls/N/reviews`, `commit_id` and `body`), never infers an
+  approval from a missing line. **The owner's approval** is the label `approved: owner`
+  (the owner adds it in GitHub). RepoManager removes it when the PR's own change changes.
 - Promotions (`development` → `beta`, `beta` → `main`) are PRs, opened only when the
   owner asks (through Supervisor); RepoManager opens and merges them.
 - One concern per PR. Link the GitHub issue it closes.
