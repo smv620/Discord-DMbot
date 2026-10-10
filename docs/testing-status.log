@@ -9,6 +9,13 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev3, #1023 (#1018): the consent question now says "You must be 16 or older to be recorded." and
+  the button reads "I'm 16 or older, record me". Core only, no migration. The consent terms version goes
+  from 3 to 4, so EVERYONE who agreed before is asked again at their next join and is NOT recorded until
+  they press the new button: deploy between sessions, not mid-test, and tell the people at the table.
+  Check: the private message and `/consent give` show the age line and "Younger than 16? Press No thanks.
+  You can still play."; an old "I consent" button from before shows the new question and saves nothing;
+  `/dmbot help` names the new button; 0 ERROR. (docs/next-test-step.md still says "I consent": update it.)
 - CloudDev, #1013 (#1006): AI model tiers (FAST / CAREFUL / DEEP, a fallback down the tiers, one usage
   line per call). Core only, no migration. Three optional new settings in .env.example (the defaults work;
   the old AI_MODEL still works with a log line). BLOCKED for dev1 on 2026-10-10: the permission checker refused
