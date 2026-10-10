@@ -300,6 +300,11 @@ NO_ROOM_TO_RESTORE = (
     "Your plan has no room for another campaign, so nothing was restored. Pause one or "
     "change your plan, then restore it again."
 )
+NOT_THE_OWNER_PAUSE = "Only the campaign's owner can pause or unpause it."
+NO_ROOM_TO_UNPAUSE = (
+    "Your plan has no room to unpause this campaign. Pause one of your other campaigns first "
+    "(open it, then ⚙️ Settings and ⏸️ **Pause this campaign**)."
+)
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
 )
@@ -561,6 +566,28 @@ class CampaignStore:
         """Whether rules cards show on the DM screen when a spell or creature is named
         (#931). Who may change it is checked by the caller (the campaign's DMs)."""
         return await self._set(guild_id, campaign_id, "rules_cards", bool(on))
+
+    async def set_paused(
+        self, guild_id: int, campaign_id: str, user_id: int, paused: bool, now: int
+    ) -> Campaign:
+        """Pause or unpause a campaign (#957). Only its owner may: it is their plan's room
+        that changes. Unpausing is a campaign more under the cap, so it needs room (checked
+        here as the backstop; the bot checks first to give the plan's own words). Raises
+        CampaignError in plain words."""
+        async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, guild_id, campaign_id)
+            campaign = await self._require(conn, guild_id, campaign_id)
+            if campaign.owner_user_id is None or campaign.owner_user_id != user_id:
+                raise CampaignError(NOT_THE_OWNER_PAUSE)
+            if campaign.paused == paused:
+                return campaign
+            if not paused and not await self._has_free_slot(conn, user_id, now):
+                raise CampaignError(NO_ROOM_TO_UNPAUSE)
+            await conn.execute(
+                "UPDATE campaigns SET paused = %s WHERE guild_id = %s AND id = %s",
+                (paused, guild_id, campaign_id),
+            )
+            return await self._require(conn, guild_id, campaign_id)
 
     async def set_last_voice_channel(
         self, guild_id: int, campaign_id: str, channel_id: int | None
@@ -1235,6 +1262,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         dm_screen_level=row["dm_screen_level"],
         owner_user_id=row_int(row, "owner_user_id"),
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
+        paused=bool(row.get("paused", False)),
     )
 
 
