@@ -2,22 +2,25 @@
 
     python -m dmbot.devtools.replay --session FOLDER [--transcriber ENGINE] [--no-timing]
 
-A saved session (made by the live test recorder, #1019) is a folder with `session.json`
-and one FLAC file per utterance. Every speaker in it has a made-up id; there are no Discord
-ids, names or server ids anywhere in it, and this tool refuses a folder that has any.
+A saved session (made by the live test recorder, dmbot.test_recording, #1019) is a folder with
+`session.json` and one FLAC file per utterance under `audio/`. Every speaker in it has a
+made-up number; there are no Discord ids, names or server ids anywhere in it, and this tool
+refuses a folder that has any.
 
-`session.json`:
+`session.json` (format 1, as the recorder writes it):
 
-    {"version": 1,
-     "speakers": {"1001": "DM", "1002": "player"},
-     "utterances": [{"speaker": 1001, "start_ms": 1000, "end_ms": 3400, "file": "u0001.flac"}],
-     "consent": [{"at_ms": 9000, "speaker": 1002, "agrees": false}],
-     "produced": {"transcript": [{"speaker": 1001, "start_ms": 1000, "text": "..."}],
-                  "cards": ["..."], "sidebar": ["..."], "alerts": ["..."]},
-     "commit": "abc1234", "settings": {}}
+    {"format": 1, "started": "2026-10-10 05:10 UTC", "settings": {},
+     "speakers": [{"speaker": 1001, "role": "DM", "voice": "v-0123456789ab"}],
+     "utterances": [{"file": "audio/0001-1001.flac", "speaker": 1001,
+                     "start_ms": 1000, "end_ms": 3400}],
+     "consent_events": [{"at_ms": 9000, "speaker": 1002, "event": "stopped saving"}],
+     "produced": {"transcript": [{"at_ms": 1000, "speaker": 1001, "text": "..."}],
+                  "shown": [{"at_ms": 5000, "speaker": 1001, "kind": "sidebar", "text": "..."}]},
+     "gaps": 0, "ended": true}
 
-`kept.json` (written when a session is kept as a test case): {"name", "note", "incomplete",
-"expected": {"transcript": [...]}}. A case is complete when it is not marked incomplete and
+`kept.json` is written by `test_library keep`: {"name", "note", "kept_at", "incomplete"} (and,
+if someone adds it, "expected": {"transcript": [...]} to judge better or worse). A case is
+complete when the session ended, lost no utterance (`gaps`), is not marked incomplete, and
 every file the manifest names is there.
 
 The replay uses the twin's real speech path (the Segmenter, the pipeline's consent checks,
@@ -42,9 +45,9 @@ from typing import Any
 from dmbot.devtools.replay import audio
 from dmbot.devtools.replay.run import ConsentChange, Replay, replay
 from dmbot.devtools.replay.score import align, words
+from dmbot.test_recording import files
 from dmbot.transcription.base import Transcriber
 
-VERSION = 1
 # A Discord id is 17 to 20 digits. The saved sessions use made-up ids (1001 and up), so
 # anything shaped like a real one means the folder was not made by the recorder: refuse it
 # rather than copy it anywhere (the repo is public).
@@ -74,12 +77,21 @@ class Utterance:
 
 
 @dataclass(frozen=True, slots=True)
+class Shown:
+    """Something DMbot showed or answered in the live session (a sidebar question, say)."""
+
+    speaker: int
+    kind: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class Produced:
-    """What the live session showed: the transcript, and what went to the DM screen."""
+    """What the live session produced: the transcript and what was shown. The recorder saves
+    no alerts, so `alerts` stays empty (today's are only listed)."""
 
     transcript: tuple[Line, ...] = ()
-    cards: tuple[str, ...] = ()
-    sidebar: tuple[str, ...] = ()
+    shown: tuple[Shown, ...] = ()
     alerts: tuple[str, ...] = ()
 
 
@@ -95,37 +107,56 @@ class Session:
     kept: bool = False
     incomplete: bool = False
     missing: tuple[str, ...] = ()  # files the manifest names that are not there
+    ended: bool = True  # the session finished normally
+    gaps: int = 0  # utterances the recorder could not save
 
     @property
     def complete(self) -> bool:
-        return not self.incomplete and not self.missing and bool(self.utterances)
+        return (
+            self.ended
+            and not self.gaps
+            and not self.incomplete
+            and not self.missing
+            and bool(self.utterances)
+        )
 
 
 def _lines(raw: Any) -> tuple[Line, ...]:
-    return tuple(Line(int(r["speaker"]), int(r["start_ms"]), str(r["text"])) for r in raw or ())
+    return tuple(Line(int(r["speaker"]), int(r["at_ms"]), str(r["text"])) for r in raw or ())
 
 
 def _produced(raw: Any) -> Produced:
     raw = raw or {}
-    return Produced(
-        _lines(raw.get("transcript")),
-        tuple(str(t) for t in raw.get("cards") or ()),
-        tuple(str(t) for t in raw.get("sidebar") or ()),
-        tuple(str(t) for t in raw.get("alerts") or ()),
+    shown = tuple(
+        Shown(int(r["speaker"]), str(r.get("kind", "")), str(r["text"]))
+        for r in raw.get("shown") or ()
     )
+    return Produced(_lines(raw.get("transcript")), shown)
+
+
+def _consent(raw: Any) -> tuple[ConsentChange, ...]:
+    """The recorder writes only "stopped saving" today; a later "agreed" would be a yes."""
+    out = []
+    for event in raw or ():
+        kind = str(event.get("event", ""))
+        if kind.startswith("stopped"):
+            out.append(ConsentChange(int(event["at_ms"]), int(event["speaker"]), False))
+        elif kind.startswith(("agreed", "started")):
+            out.append(ConsentChange(int(event["at_ms"]), int(event["speaker"]), True))
+    return tuple(out)
 
 
 def load(folder: Path) -> Session:
     """Read a saved session. Raises SessionError for anything unusable, including a manifest
     holding something shaped like a Discord id."""
     try:
-        text = (folder / "session.json").read_text(encoding="utf-8")
+        text = (folder / files.MANIFEST).read_text(encoding="utf-8")
     except OSError as exc:
         raise SessionError(f"{folder.name}: no session.json ({exc.strerror})") from exc
     kept_text = ""
     try:
-        if (folder / "kept.json").is_file():
-            kept_text = (folder / "kept.json").read_text(encoding="utf-8")
+        if (folder / files.KEPT).is_file():
+            kept_text = (folder / files.KEPT).read_text(encoding="utf-8")
     except OSError as exc:
         raise SessionError(f"{folder.name}: kept.json can't be read ({exc.strerror})") from exc
     if DISCORD_ID.search(text) or DISCORD_ID.search(kept_text):
@@ -135,19 +166,16 @@ def load(folder: Path) -> Session:
         kept = json.loads(kept_text) if kept_text else {}
         if not isinstance(data, dict) or not isinstance(kept, dict):
             raise SessionError(f"{folder.name}: session.json is not in the saved format")
-        if not isinstance(data.get("speakers", {}), dict):
+        if not isinstance(data.get("speakers", []), list):
             raise SessionError(f"{folder.name}: session.json is not in the saved format")
-        if data.get("version") != VERSION:
-            raise SessionError(f"{folder.name}: unknown manifest version")
+        if data.get("format") != files.FORMAT:
+            raise SessionError(f"{folder.name}: unknown manifest format")
         utterances = tuple(
             Utterance(int(u["speaker"]), int(u["start_ms"]), int(u["end_ms"]), str(u["file"]))
             for u in data.get("utterances", ())
         )
-        changes = tuple(
-            ConsentChange(int(c["at_ms"]), int(c["speaker"]), bool(c["agrees"]))
-            for c in data.get("consent", ())
-        )
-        speakers = {int(k): str(v) for k, v in data.get("speakers", {}).items()}
+        changes = _consent(data.get("consent_events"))
+        speakers = {int(x["speaker"]): str(x["role"]) for x in data.get("speakers", ())}
         produced = _produced(data.get("produced"))
         expected = _produced(kept["expected"]) if "expected" in kept else None
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
@@ -155,7 +183,9 @@ def load(folder: Path) -> Session:
             raise
         raise SessionError(f"{folder.name}: session.json is not in the saved format") from exc
     for u in utterances:
-        if Path(u.file).name != u.file:  # a file in this folder only, never a path out of it
+        # Exactly audio/<plain name>: a file of this session, never a path out of it.
+        where, _, leaf = u.file.partition("/")
+        if where != files.AUDIO or not leaf or Path(leaf).name != leaf or leaf.startswith("."):
             raise SessionError(f"{folder.name}: {u.file!r} is not a plain file name")
     missing = tuple(u.file for u in utterances if not (folder / u.file).is_file())
     try:
@@ -173,6 +203,8 @@ def load(folder: Path) -> Session:
         kept=bool(kept),
         incomplete=incomplete,
         missing=missing,
+        ended=bool(data.get("ended")),
+        gaps=int(data.get("gaps", 0)),
     )
 
 
@@ -333,8 +365,8 @@ def report(diff: Diff, session: Session) -> list[str]:
     # read as lost.
     out += [f"  alert gained: {a}" for a in diff.alerts_gained]
     out += [f"  alert lost (rules alerts are not replayed): {a}" for a in diff.alerts_lost]
-    if session.produced.cards or session.produced.sidebar:
-        out.append("  (Rules cards and sidebar answers are not replayed, so not compared.)")
+    if session.produced.shown:
+        out.append("  (Sidebar answers and rules cards are not replayed, so not compared.)")
     return out
 
 

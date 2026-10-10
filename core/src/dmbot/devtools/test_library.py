@@ -1,6 +1,11 @@
-"""The library of kept live tests: replay every one and say what changed (#1020).
+"""The library of kept live tests (#1019, #1020): list, keep, and replay them.
 
-    python -m dmbot.devtools.test_library run [--dir FOLDER] [--transcriber ENGINE] [--log]
+    python -m dmbot.devtools.test_library list
+    python -m dmbot.devtools.test_library keep FOLDER --name two-speaker-live --note "what passed"
+    python -m dmbot.devtools.test_library run [--transcriber ENGINE] [--log]
+
+`list` and `keep` are the recorder's (dmbot.test_recording.library): nothing they print holds a
+Discord id or a name. `run` replays the library:
 
 Replays every kept, complete case in the recordings folder (default
 DMBOT_TEST_RECORDINGS_DIR, else /var/lib/dmbot/test-recordings) one after another at low
@@ -10,8 +15,8 @@ AI tokens. `--log` appends a "Library run" entry to docs/testing-history.log wit
 and counts only: transcript text is players' words and the repo is public.
 
 Never runs inside the bot's container or during a live session, reads only the recordings
-folder, and refuses a case whose manifest holds a Discord-id-shaped number. Keeping and
-listing cases is the recorder's side (#1019).
+folder, and refuses a case whose manifest holds a Discord-id-shaped number. Run it where the
+recordings are, with DMBOT_TEST_RECORDINGS_DIR set or --dir given.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ from dmbot.devtools.session_replay import (
     summary,
     today_lines,
 )
+from dmbot.test_recording import library
 
 DEFAULT_DIR = Path("/var/lib/dmbot/test-recordings")
 NICE = 10
@@ -103,7 +109,7 @@ async def main_async(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    folder = recordings_dir(args.dir)
+    folder = args.dir
     if not folder.is_dir():
         print(f"test_library: no recordings folder at {folder}", file=sys.stderr)
         return 2
@@ -186,10 +192,20 @@ def with_nice(increment: int) -> None:
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="test_library", description=__doc__.split("\n")[0])
-    sub = parser.add_subparsers(dest="command", required=True)
-    runner = sub.add_parser("run", help="replay every kept, complete case")
-    runner.add_argument("--dir", type=Path, help="the recordings folder")
+    parser = argparse.ArgumentParser(prog="test_library", description="Saved test sessions.")
+    parser.add_argument(
+        "--dir",
+        type=Path,
+        default=recordings_dir(None),
+        help="the recordings folder (default: DMBOT_TEST_RECORDINGS_DIR)",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("list", help="the saved sessions, their sizes and kept names")
+    keep = commands.add_parser("keep", help="keep a finished session as a replayable case")
+    keep.add_argument("folder", help="a folder name from `list`")
+    keep.add_argument("--name", required=True, help="a short name, like two-speaker-live")
+    keep.add_argument("--note", default="", help="what passed, in a few words")
+    runner = commands.add_parser("run", help="replay every kept, complete case")
     runner.add_argument("--transcriber", help="overrides TRANSCRIBER")
     runner.add_argument("--no-timing", action="store_true", help="queue at once, not in real time")
     runner.add_argument("--log", action="store_true", help="append to docs/testing-history.log")
@@ -199,7 +215,23 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    return asyncio.run(main_async(parse_args(argv)))
+    args = parse_args(argv)
+    if args.command == "list":
+        infos = library.listing(args.dir)
+        if not infos:
+            print("No saved test sessions.")
+        for info in infos:
+            print(library.describe(info))
+        return 0
+    if args.command == "keep":
+        try:
+            library.keep(args.dir, args.folder, args.name, args.note)
+        except library.LibraryError as exc:
+            print(f"test_library: {exc}", file=sys.stderr)
+            return 1
+        print(f"Kept {args.folder} as {args.name!r}.")
+        return 0
+    return asyncio.run(main_async(args))
 
 
 if __name__ == "__main__":

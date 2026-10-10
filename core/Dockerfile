@@ -14,8 +14,9 @@ COPY pyproject.toml ./
 COPY src ./src
 RUN pip install ".[${EXTRAS}]"
 
-RUN useradd --create-home --uid 1000 dmbot && mkdir -p /data /models \
-    && chown dmbot:dmbot /data /models
+RUN useradd --create-home --uid 1000 dmbot && mkdir -p /data /models /var/lib/dmbot/test-recordings \
+    && chown dmbot:dmbot /data /models /var/lib/dmbot/test-recordings \
+    && chmod 700 /var/lib/dmbot/test-recordings
 USER dmbot
-VOLUME ["/data", "/models"]
+VOLUME ["/data", "/models", "/var/lib/dmbot/test-recordings"]
 CMD ["python", "-m", "dmbot"]

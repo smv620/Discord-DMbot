@@ -43,6 +43,9 @@ MENU_LABEL = "Menu"  # with the ⚙️ emoji
 STOP_YES_LABEL = "Yes, stop recording me"
 KEEP_LABEL = "Keep recording"
 CLOSE_LABEL = "Close"
+# Test recordings (#1019): only in a server listed in DMBOT_TEST_RECORDING_GUILDS.
+TEST_VOICE_LABEL = "Save my voice for tests"
+STOP_SAVING_LABEL = "Stop saving my voice"
 
 NOT_HERE = (
     "DMbot can't change this from here. If DMbot is still in that server, use "
@@ -139,9 +142,12 @@ def request_text(
     cloud: bool,
     renewed: bool = False,
     company: str | None = None,
+    test_voice: bool = False,
 ) -> str:
-    """The consent request. Changing what it says people agree to means bumping
-    consent.TERMS_VERSION, so everyone who agreed before is asked again (#35)."""
+    """The consent request. `test_voice`: a test server, which asks the second question
+    (#1019); it is added after the terms, which are the same everywhere. Changing what it
+    says people agree to means bumping consent.TERMS_VERSION, so everyone who agreed before
+    is asked again (#35)."""
     lines = [
         f"🎙️ **Can DMbot record you for your D&D game on {_plain(server)}?** Please choose below."
     ]
@@ -161,7 +167,46 @@ def request_text(
     ]
     if cloud:
         lines.append(cloud_note(company))
+    if test_voice:
+        lines.append(test_voice_note())
     return "\n".join(lines)
+
+
+def test_voice_note() -> str:
+    """Added to the request in a test server (#1019): a second, separate choice, kept
+    apart from the terms above it (which are the same everywhere)."""
+    return (
+        "\n🧪 **A second choice, only because this is a test server. You can skip it.**\n"
+        f"If you press **{TEST_VOICE_LABEL}**, DMbot also keeps a recording of your voice, on "
+        "DMbot's own computer, so its makers can check that it still works. Only the people "
+        "who run DMbot can hear it. It is never shared or posted, and DMbot deletes it after "
+        "7 days unless it is kept as a lasting test.\n"
+        "If you don't press it, you are still recorded and written down (if you said yes "
+        "above), but DMbot keeps no recording of your voice.\n"
+        f"To stop and delete it any time: ⚙️ {MENU_LABEL}, then **{STOP_SAVING_LABEL}**."
+    )
+
+
+def test_voice_saved_text() -> str:
+    return (
+        "🧪 Done. DMbot is now also keeping your voice, in this server only. Stop any time: "
+        f"⚙️ {MENU_LABEL}, then **{STOP_SAVING_LABEL}**. That deletes it."
+    )
+
+
+def test_voice_first_text() -> str:
+    return (
+        f"First say yes to being recorded (the **{CONSENT_LABEL}** button). After that, open "
+        f"⚙️ {MENU_LABEL} and press **{TEST_VOICE_LABEL}**."
+    )
+
+
+def test_voice_stopped_text() -> str:
+    return "🧪 DMbot has stopped saving your voice, and deleted what it had kept."
+
+
+def test_voice_not_here_text() -> str:
+    return "This is not a test server, so DMbot saves nobody's voice here."
 
 
 SHEET_LABEL = "📜 My character sheet"
@@ -185,12 +230,20 @@ def _sheet_note(sheets: bool) -> str:
     return f" {SHEET_NOTE}" if sheets else ""
 
 
-def confirmed_text(server: str, granted_at: int, *, sheets: bool = True) -> str:
-    return (
+def confirmed_text(
+    server: str, granted_at: int, *, sheets: bool = True, test_voice: bool = False
+) -> str:
+    text = (
         f"✅ You said yes on {_date(granted_at)}. DMbot now records you in "
         f"**{_plain(server)}**, this session and later ones. You'll get a short reminder "
         f"each time you play. {MENU_HINT}{_sheet_note(sheets)}"
     )
+    if test_voice:  # a test server (#1019)
+        text += (
+            f"\n🧪 Test server: you can also choose to save your voice. Press ⚙️ {MENU_LABEL}, "
+            f"then **{TEST_VOICE_LABEL}**."
+        )
+    return text
 
 
 def outside_note(company: str | None = None) -> str:
@@ -235,18 +288,25 @@ def stopped_text(server: str) -> str:
     )
 
 
-def menu_text(server: str) -> str:
-    return f"What do you want to do in **{_plain(server)}**?"
+def menu_text(server: str, *, saving: bool = False) -> str:
+    text = f"What do you want to do in **{_plain(server)}**?"
+    if saving:  # a test server, and they said yes to saving (#1019)
+        text += f"\n🧪 Your voice is being saved for tests. Stop: **{STOP_SAVING_LABEL}**."
+    return text
 
 
-def warning_text(server: str) -> str:
+def warning_text(server: str, *, saving: bool = False) -> str:
     """The one warning before stopping (#807, wording from the owner's issue). Plain facts:
-    no guilt and no pressure, and stopping stays one tap away."""
-    return (
+    no guilt and no pressure, and stopping stays one tap away. `saving`: they also said yes
+    to saving their voice for tests (#1019), which stopping ends and deletes."""
+    text = (
         f"Stop recording you in **{_plain(server)}**? DMbot won't write down anything you say "
         "from now on. The campaign's record will have gaps wherever you speak, so its "
         "summaries can miss things and plot holes can appear. You can start again any time."
     )
+    if saving:
+        text += " Your voice saved for tests will be deleted too."
+    return text
 
 
 def kept_text(server: str) -> str:
@@ -350,6 +410,22 @@ class ConsentActions(Protocol):
 
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool: ...
 
+    # Test recordings (#1019)
+    def test_voice_listed(self, guild_id: int) -> bool: ...  # a test server
+
+    def test_voice_saving(self, guild_id: int, user_id: int) -> bool: ...
+
+    async def grant_test_voice(self, guild_id: int, user_id: int) -> None: ...
+
+    async def stop_saving_voice(self, guild_id: int, user_id: int) -> None: ...
+
+
+def _test_voice_state(actions: ConsentActions, guild_id: int, user_id: int) -> str | None:
+    """None: not a test server. "saving": their voice is being kept. "ask": it isn't."""
+    if not actions.test_voice_listed(guild_id):
+        return None
+    return "saving" if actions.test_voice_saving(guild_id, user_id) else "ask"
+
 
 def _actions(interaction: discord.Interaction) -> ConsentActions:
     return interaction.client  # type: ignore[return-value]  # DMBot implements it
@@ -440,10 +516,15 @@ class ConsentButton(
                     dm=None,
                     cloud=engine is not None,
                     company=actions.company,
+                    test_voice=actions.test_voice_listed(self.guild_id),
                 )
                 await interaction.edit_original_response(
                     content=f"{intro}\n\n{text}",
-                    view=request_view(self.guild_id, outside=engine),
+                    view=request_view(
+                        self.guild_id,
+                        outside=engine,
+                        test_voice=actions.test_voice_listed(self.guild_id),
+                    ),
                 )
                 return
             try:
@@ -457,7 +538,12 @@ class ConsentButton(
                 await interaction.followup.send(GRANT_FAILED, ephemeral=True)
                 return
             await interaction.edit_original_response(
-                content=confirmed_text(guild.name, granted_at, sheets=actions.sheets is not None),
+                content=confirmed_text(
+                    guild.name,
+                    granted_at,
+                    sheets=actions.sheets is not None,
+                    test_voice=actions.test_voice_listed(self.guild_id),
+                ),
                 view=menu_view(self.guild_id),
             )
 
@@ -545,7 +631,10 @@ class StopButton(
             if guild is None:
                 await interaction.response.send_message(NOT_HERE, ephemeral=True)
                 return
-            text = warning_text(guild.name)
+            text = warning_text(
+                guild.name,
+                saving=_actions(interaction).test_voice_saving(self.guild_id, interaction.user.id),
+            )
             view = warning_view(self.guild_id, self.campaign_id)
             message = interaction.message
             if _lasting(interaction) and message is not None:
@@ -689,12 +778,19 @@ class MenuButton(
                 self.campaign_id,
                 recording=await actions.recorded(self.guild_id, interaction.user.id),
                 sheets=actions.sheets is not None,
+                test_voice=_test_voice_state(actions, self.guild_id, interaction.user.id),
             )
             if _lasting(interaction):
                 await interaction.response.edit_message(view=view)
                 return
             await interaction.response.send_message(
-                menu_text(guild.name), view=view, ephemeral=True, allowed_mentions=NO_PINGS
+                menu_text(
+                    guild.name,
+                    saving=actions.test_voice_saving(self.guild_id, interaction.user.id),
+                ),
+                view=view,
+                ephemeral=True,
+                allowed_mentions=NO_PINGS,
             )
 
 
@@ -768,15 +864,113 @@ class StartButton(
                 return
             actions = _actions(interaction)
             engine = actions.outside_engine
+            listed = actions.test_voice_listed(self.guild_id)
             text = request_text(
-                guild.name, voice=None, dm=None, cloud=engine is not None, company=actions.company
+                guild.name,
+                voice=None,
+                dm=None,
+                cloud=engine is not None,
+                company=actions.company,
+                test_voice=listed,
             )
             await interaction.response.edit_message(
-                content=text, view=request_view(self.guild_id, outside=engine)
+                content=text, view=request_view(self.guild_id, outside=engine, test_voice=listed)
             )
+
+
+class SaveVoiceButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:testvoice:yes:{_GUILD}",
+):
+    """🧪 Save my voice for tests (#1019), in a test server: a second yes, kept apart from
+    the recording consent. Only for someone who is already recorded; it changes nothing
+    about their recording."""
+
+    def __init__(self, guild_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=TEST_VOICE_LABEL,
+                emoji="🧪",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:testvoice:yes:{guild_id}",
+                row=1,  # apart from the two answers to the question above it
+            )
+        )
+        self.guild_id = guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SaveVoiceButton:
+        return cls(int(match["guild"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        with log_context(guild_id=self.guild_id):
+            guild = _served_here(interaction, self.guild_id)
+            if guild is None:
+                await interaction.response.send_message(NOT_HERE, ephemeral=True)
+                return
+            actions = _actions(interaction)
+            if not actions.test_voice_listed(self.guild_id):  # not a test server (any more)
+                await interaction.response.send_message(test_voice_not_here_text(), ephemeral=True)
+                return
+            member = await _is_member(interaction, guild)
+            if member is not True:
+                await interaction.response.send_message(
+                    NOT_A_MEMBER if member is False else GRANT_FAILED, ephemeral=True
+                )
+                return
+            if not await actions.recorded(self.guild_id, interaction.user.id):
+                await interaction.response.send_message(test_voice_first_text(), ephemeral=True)
+                return
+            try:
+                await actions.grant_test_voice(self.guild_id, interaction.user.id)
+            except Exception:
+                log.exception("Couldn't save the test-voice yes")
+                await interaction.response.send_message(GRANT_FAILED, ephemeral=True)
+                return
+            await interaction.response.send_message(test_voice_saved_text(), ephemeral=True)
+
+
+class StopSavingButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:testvoice:stop:{_GUILD}",
+):
+    """Stop saving my voice (#1019), in ⚙️ Menu: nothing more is saved, and what was saved
+    is deleted from every test session at once."""
+
+    def __init__(self, guild_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=STOP_SAVING_LABEL,
+                emoji="🧪",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"dmbot:testvoice:stop:{guild_id}",
+            )
+        )
+        self.guild_id = guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> StopSavingButton:
+        return cls(int(match["guild"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        with log_context(guild_id=self.guild_id):
+            guild = _served_here(interaction, self.guild_id)
+            if guild is None:
+                await interaction.response.send_message(NOT_HERE, ephemeral=True)
+                return
+            actions = _actions(interaction)
+            # At once, before anything that waits: nothing more is saved from this moment.
+            await actions.stop_saving_voice(self.guild_id, interaction.user.id)
+            await interaction.response.send_message(test_voice_stopped_text(), ephemeral=True)
 
 
 CONSENT_BUTTONS = (
+    SaveVoiceButton,
+    StopSavingButton,
     ConsentButton,
     StartButton,
     DeclineButton,
@@ -788,11 +982,16 @@ CONSENT_BUTTONS = (
 )
 
 
-def request_view(guild_id: int, *, outside: str | None = None) -> discord.ui.View:
-    """`outside`: the outside engine the request shown with it names, if any."""
+def request_view(
+    guild_id: int, *, outside: str | None = None, test_voice: bool = False
+) -> discord.ui.View:
+    """`outside`: the outside engine the request shown with it names, if any.
+    `test_voice`: a test server, which adds the second question's button (#1019)."""
     view = discord.ui.View(timeout=None)
     view.add_item(ConsentButton(guild_id, outside=outside))
     view.add_item(DeclineButton(guild_id))
+    if test_voice:
+        view.add_item(SaveVoiceButton(guild_id))
     return view
 
 
@@ -820,13 +1019,23 @@ def menu_view(guild_id: int, campaign_id: str | None = None) -> discord.ui.View:
 
 
 def options_view(
-    guild_id: int, campaign_id: str | None, *, recording: bool, sheets: bool
+    guild_id: int,
+    campaign_id: str | None,
+    *,
+    recording: bool,
+    sheets: bool,
+    test_voice: str | None = None,
 ) -> discord.ui.View:
     """The menu's buttons, only those that apply: 📜 (when sheets are on), Stop recording
-    me (or I consent, for someone who stopped), and Close."""
+    me (or I consent, for someone who stopped), and Close. `test_voice`: in a test server
+    (#1019), "saving" adds Stop saving my voice, "ask" adds Save my voice for tests."""
     view = discord.ui.View(timeout=None)
     if sheets:
         view.add_item(sheet_button(guild_id, campaign_id))
+    if test_voice == "saving":
+        view.add_item(StopSavingButton(guild_id))
+    elif test_voice == "ask" and recording:
+        view.add_item(SaveVoiceButton(guild_id))
     if recording:
         view.add_item(StopButton(guild_id, campaign_id or "-"))
     else:

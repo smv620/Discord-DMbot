@@ -42,34 +42,36 @@ def make_case(
     utterances: tuple[tuple[int, int, int], ...] = ((1001, 0, 700), (1002, 400, 700)),
     consent: tuple[dict[str, object], ...] = (),
     transcript: tuple[tuple[int, int, str], ...] = ((1001, 0, "hello there"), (1002, 400, "hi")),
-    alerts: tuple[str, ...] = (),
     kept: dict[str, object] | None = None,
     manifest_extra: dict[str, object] | None = None,
     skip_files: tuple[str, ...] = (),
 ) -> Path:
+    """A saved session in the recorder's format (dmbot.test_recording, format 1)."""
     folder = root / name
-    folder.mkdir()
-    files = []
+    (folder / "audio").mkdir(parents=True)
+    entries = []
     for i, (speaker, start, length) in enumerate(utterances):
-        file = f"u{i:04d}.flac"
+        file = f"audio/{i + 1:04d}-{speaker}.flac"
         if file not in skip_files:
             write_flac(folder / file, tone(length))
-        files.append(
+        entries.append(
             {"speaker": speaker, "start_ms": start, "end_ms": start + length, "file": file}
         )
     manifest: dict[str, object] = {
-        "version": 1,
-        "speakers": {"1001": "DM", "1002": "player"},
-        "utterances": files,
-        "consent": list(consent),
-        "produced": {
-            "transcript": [{"speaker": s, "start_ms": t, "text": x} for s, t, x in transcript],
-            "cards": ["Fireball card"],
-            "sidebar": [],
-            "alerts": list(alerts),
-        },
-        "commit": "abc1234",
+        "format": 1,
+        "started": "2026-10-10 05:10 UTC",
         "settings": {},
+        "speakers": [
+            {"speaker": 1001, "role": "DM", "voice": "v-0123456789ab"},
+            {"speaker": 1002, "role": "Player 1", "voice": "v-ba9876543210"},
+        ],
+        "utterances": entries,
+        "consent_events": list(consent),
+        "produced": {
+            "transcript": [{"speaker": s, "at_ms": t, "text": x} for s, t, x in transcript],
+            "shown": [{"speaker": 1001, "at_ms": 100, "kind": "sidebar", "text": "Yes."}],
+        },
+        "ended": True,
     }
     manifest.update(manifest_extra or {})
     (folder / "session.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -113,7 +115,7 @@ class Replaying(unittest.TestCase):
             self.root,
             "2026-10-10-0102-cccc",
             utterances=((1001, 0, 700), (1002, 0, 700), (1002, 2500, 700)),
-            consent=({"at_ms": 1800, "speaker": 1002, "agrees": False},),
+            consent=({"at_ms": 1800, "speaker": 1002, "event": "stopped saving"},),
             transcript=((1001, 0, "a"), (1002, 0, "b"), (1002, 2500, "c")),
         )
         diff = run_session(folder, ["a", "b", "c"])
@@ -125,7 +127,6 @@ class Replaying(unittest.TestCase):
             "2026-10-10-0103-dddd",
             utterances=((1001, 0, 700),),
             transcript=((1001, 0, "the red door"), (1001, 9000, "gone line")),
-            alerts=("old alert",),
         )
         diff = run_session(folder, ["the blue door"])
         self.assertEqual(diff.same, 0)
@@ -133,12 +134,10 @@ class Replaying(unittest.TestCase):
             [(c.before, c.after) for c in diff.changed], [("the red door", "the blue door")]
         )
         self.assertEqual([x.text for x in diff.lost], ["gone line"])
-        self.assertEqual(diff.alerts_lost, ["old alert"])
         self.assertEqual(diff.verdict, "changed")
-        self.assertIn("alert lost", "\n".join(sr.report(diff, sr.load(folder))))
         text = "\n".join(sr.report(diff, sr.load(folder)))
         self.assertIn("then: the red door", text)
-        self.assertIn("alert lost (rules alerts are not replayed): old alert", text)
+        self.assertIn("not compared", text)  # the saved sidebar answer
         self.assertIn("not compared", text)
 
     def test_same_when_nothing_changed(self) -> None:
@@ -148,7 +147,7 @@ class Replaying(unittest.TestCase):
 
     def test_better_and_worse_are_judged_against_the_kept_expected_lines(self) -> None:
         expected = {
-            "expected": {"transcript": [{"speaker": 1001, "start_ms": 0, "text": "the red door"}]}
+            "expected": {"transcript": [{"speaker": 1001, "at_ms": 0, "text": "the red door"}]}
         }
         for said, verdict in (("the red door", "better"), ("the bed floor", "worse")):
             with self.subTest(said):
@@ -162,6 +161,46 @@ class Replaying(unittest.TestCase):
                     kept={"name": "case", **expected},
                 )
                 self.assertEqual(run_session(folder, [said]).verdict, verdict)
+
+
+class TheRecordersOwnFiles(unittest.TestCase):
+    """A session written by the real recorder (#1019) is read, replayed and kept by this."""
+
+    def test_a_recorded_and_kept_session_loads_and_replays(self) -> None:
+        from dmbot.test_recording import files, library
+        from dmbot.test_recording.session import TestSession
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            session = TestSession(root, files.load_key(root), 5, 1_700_000_000, settings={})
+
+            async def record() -> None:
+                for user, is_dm, start, text in (
+                    (11, True, 1_700_000_001_000, "hello there"),
+                    (22, False, 1_700_000_001_400, "hi"),
+                ):
+                    await session.add_utterance(
+                        user,
+                        is_dm=is_dm,
+                        start_ms=start,
+                        end_ms=start + 700,
+                        pcm=tone(700),
+                        text=text,
+                        allowed=lambda: True,
+                    )
+
+            asyncio.run(record())
+            session.stopped(22, 1_700_000_009_000)
+            session.finish()
+            library.keep(root, session.folder.name, "recorded", "made by the recorder")
+            loaded = sr.load(session.folder)
+            self.assertTrue(loaded.complete)
+            self.assertEqual(loaded.speakers, {1001: "DM", 1002: "Player 1"})
+            self.assertEqual([c.agrees for c in loaded.changes], [False])
+            diff = asyncio.run(
+                sr.run(loaded, ScriptedTranscriber(["hello there", "hi"]), realtime=False)
+            )
+            self.assertEqual([h.start_ms for h in diff.heard], [1000, 1400])
 
 
 class Guards(unittest.TestCase):
@@ -183,7 +222,7 @@ class Guards(unittest.TestCase):
         sr.load(make_case(self.root, "2026-10-10-0201-gggg"))  # 1001, 1002, ms values
 
     def test_odd_manifests_are_a_session_error_not_a_crash(self) -> None:
-        for i, text in enumerate(("[]", '{"version": 1, "speakers": []}', "not json")):
+        for i, text in enumerate(("[]", '{"format": 1, "speakers": {}}', "not json")):
             with self.subTest(text):
                 folder = self.root / f"odd-{i}"
                 folder.mkdir()
@@ -195,10 +234,35 @@ class Guards(unittest.TestCase):
         with self.assertRaises(sr.SessionError):
             sr.load(folder)
 
+    def test_only_audio_slash_a_plain_name_is_allowed(self) -> None:
+        for i, bad in enumerate(
+            ("0001-1001.flac", "audio/a/b.flac", "other/x.flac", "audio/", "/etc/x")
+        ):
+            with self.subTest(bad):
+                folder = make_case(self.root, f"2026-10-10-0210-p{i}")
+                path = folder / "session.json"
+                path.write_text(path.read_text().replace("audio/0001-1001.flac", bad))
+                with self.assertRaisesRegex(sr.SessionError, "plain file name"):
+                    sr.load(folder)
+
+    def test_an_unfinished_session_or_one_with_gaps_is_not_complete(self) -> None:
+        unfinished = make_case(self.root, "2026-10-10-0211-aaaa", manifest_extra={"ended": False})
+        gappy = make_case(self.root, "2026-10-10-0212-bbbb", manifest_extra={"gaps": 2})
+        self.assertFalse(sr.load(unfinished).complete)
+        self.assertFalse(sr.load(gappy).complete)
+        self.assertTrue(sr.load(make_case(self.root, "2026-10-10-0213-cccc")).complete)
+
+    def test_an_old_format_is_refused(self) -> None:
+        folder = make_case(self.root, "2026-10-10-0214-dddd", manifest_extra={"format": 2})
+        with self.assertRaisesRegex(sr.SessionError, "format"):
+            sr.load(folder)
+
     def test_a_file_name_cannot_leave_the_folder(self) -> None:
         folder = make_case(self.root, "2026-10-10-0202-hhhh")
         path = folder / "session.json"
-        path.write_text(path.read_text().replace("u0000.flac", "../x.flac"), encoding="utf-8")
+        path.write_text(
+            path.read_text().replace("audio/0001-1001.flac", "audio/../x.flac"), encoding="utf-8"
+        )
         with self.assertRaisesRegex(sr.SessionError, "plain file name"):
             sr.load(folder)
 
@@ -235,9 +299,9 @@ class Library(unittest.TestCase):
         ):
             code = lib.main(
                 [
-                    "run",
                     "--dir",
                     str(self.root),
+                    "run",
                     "--no-timing",
                     "--history",
                     str(self.history),
@@ -264,7 +328,7 @@ class Library(unittest.TestCase):
             self.root,
             "2026-10-10-0303-dddd",
             kept={"name": "file-gone"},
-            skip_files=("u0001.flac",),
+            skip_files=("audio/0002-1002.flac",),
         )
         _, out = self.run_library()
         self.assertIn("lost-a-speaker [2026-10-10-0302-cccc]: skipped, marked incomplete", out)
@@ -291,7 +355,7 @@ class Library(unittest.TestCase):
         logged = self.history.read_text(encoding="utf-8")
         self.assertIn("Library run: saved live tests", logged)
         self.assertIn("two-speaker-live: same: 2 same", logged)
-        for words in ("hello there", "Fireball card"):
+        for words in ("hello there", "Yes."):
             self.assertNotIn(words, logged)
 
     def test_the_log_never_holds_a_folder_name_or_an_error_text(self) -> None:
@@ -302,10 +366,13 @@ class Library(unittest.TestCase):
             manifest_extra={"n": "999999999999999999"},
         )
         make_case(
-            self.root, "2026-10-10-0307-hhhh", kept={"name": "gone"}, skip_files=("u0000.flac",)
+            self.root,
+            "2026-10-10-0307-hhhh",
+            kept={"name": "gone"},
+            skip_files=("audio/0001-1001.flac",),
         )
         make_case(self.root, "2026-10-10-0308-iiii", kept={"name": "corrupt"})
-        (self.root / "2026-10-10-0308-iiii" / "u0000.flac").write_bytes(b"not audio")
+        (self.root / "2026-10-10-0308-iiii" / "audio" / "0001-1001.flac").write_bytes(b"not audio")
         self.history.write_text("", encoding="utf-8")
         code, out = self.run_library("--log")
         self.assertEqual(code, 1)  # a refused or unrunnable case is noticed by a script
@@ -327,7 +394,7 @@ class Library(unittest.TestCase):
         env.update({"TRANSCRIBER": "deepgram", "DEEPGRAM_API_KEY": "k"})
         err = io.StringIO()
         with patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(err):
-            code = lib.main(["run", "--dir", str(self.root)])
+            code = lib.main(["--dir", str(self.root), "run"])
         self.assertEqual(code, 2)
         self.assertIn("costs money", err.getvalue())
 
