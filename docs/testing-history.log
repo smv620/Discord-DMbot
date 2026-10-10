@@ -1811,3 +1811,25 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     the list was emptied again in the 03:20 UTC deploy (see that entry); it is empty now.
   - The landing script now re-applies a log PR on top of development instead of rebasing, and
     refuses to push if a conflict marker or any other file is present.
+
+==============================================================================
+2026-10-10  Server: deploy adb179a, core only; sidebar re-test (dev1)
+==============================================================================
+  - 04:2x UTC  development @ adb179a, core: #992 and #997 (the sidebar's accuracy fixes:
+    consistent with a given entry, no unsourced certainty, both editions when asked; prompt
+    sidebar-2; DMBOT_SIDEBAR stays 0) and #988 (house-rules file part 2: link a file, compare
+    it at every session start; migration 0040_house_rules_file). None had a queue line; the PR
+    pages said "core only" (#997) and described migration 0040 (#988, with its 5-minute live
+    check).
+  - Migration 0040_house_rules_file: a new table with row security on and forced; 0 rows.
+    Backup first (35 tables); no session was live; scripts/update-env had nothing to add;
+    `up -d --no-build core` naming the service (web-api and ears untouched). Logs: "Database
+    updated: 0040_house_rules_file", "Connected to 1 server(s)", "ears connected"; 0 errors;
+    /health 404.
+  - Sidebar re-test (python -m dmbot.devtools.sidebar_check in a one-off container, the
+    owner's new key, the 18 cases with must-say words): 13 of 18 pass, times 0.7 to 2.7 s;
+    the fireball questions now agree; unsourced rules now say "not in DMbot's rules, check
+    your book". Fails: a general rule stated as sure (#9), the 2014 goblin answer does not
+    name Goblin Warrior (#15), two checker wording misses and one that does not name the NPC.
+    Table and my reading posted on #954 for Supervisor. DMBOT_SIDEBAR stays 0.
+  - For a person: #988's 5-minute check with a Google Doc (listed in the status log).
