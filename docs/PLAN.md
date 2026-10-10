@@ -1860,6 +1860,18 @@ keys. DMbot runs on the operator's keys and bills **by hours and campaigns** thr
 customer website (`web/`, #431–#435); the plan rules in the bot are #437. The "who pays
 for this call" seam stays, pointing at the operator's keys.
 
+*Built, out of funds (2026-10-10, #972):* when the AI account has no credit or reaches its
+spend limit, every AI call (Find names, the off-topic filter, the sidebar, the cleaner) raises
+`AIOutOfFunds`, and the DM hears "DMbot's AI is paused right now (its account needs topping
+up). Nothing was changed. You can keep playing; the AI features come back once it's fixed."
+Two named admins, `DMBOT_ADMIN_PRIMARY_ID` (the owner) and `DMBOT_ADMIN_SECONDARY_ID` (a
+backup), each a Discord user ID of 17 to 20 digits or empty (anything else stops start-up,
+naming the setting and never the value), get one private message with full context, at most
+once a day each, remembered in a small file in the data folder (`ai_notice.json`) so a restart
+doesn't repeat it; a failed send to one doesn't stop the other, and with neither set it is
+only logged. The error line is logged at most once an hour, and once a day one INFO line gives
+the last 24 hours' AI calls and tokens (counts only). In `dmbot.ai_watch`.
+
 **Plans and pricing (owner decisions, 2026-10-07).** The plan belongs to one Discord user
 (the DM); every campaign has one owner whose hours and campaign count it uses; co-DMs
 need no plan; "Hand over this campaign" offers ownership to another member of the

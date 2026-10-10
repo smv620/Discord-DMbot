@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -53,6 +53,10 @@ class Settings:
     # The DM sidebar's ways in (#935) use the answer engine (#934) only when this is on.
     # Off until the sidebar's 17 test answers have been read (#954).
     sidebar_on: bool = False
+    # Who is messaged when DMbot's AI account is out of funds (#972): the owner and a backup
+    # admin, by Discord user ID. None: not set (the problem is only logged). Never logged.
+    admin_primary_id: int | None = field(default=None, repr=False)
+    admin_secondary_id: int | None = field(default=None, repr=False)
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -116,6 +120,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
 
+    admin_primary = _admin_id(get, "DMBOT_ADMIN_PRIMARY_ID")
+    admin_secondary = _admin_id(get, "DMBOT_ADMIN_SECONDARY_ID")
+
     return Settings(
         discord_token=get("DISCORD_TOKEN"),
         ears_secret=get("EARS_SHARED_SECRET"),
@@ -135,4 +142,17 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         enforce_plans=enforce_raw in ("1", "true", "on"),
         site_url=get("WEB_SITE_URL").rstrip("/"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
+        admin_primary_id=admin_primary,
+        admin_secondary_id=admin_secondary,
     )
+
+
+def _admin_id(get: Callable[[str], str], name: str) -> int | None:
+    """An admin's Discord user ID: empty, or 17 to 20 digits. Anything else stops start-up
+    naming the setting, never its value (it is a person's ID)."""
+    raw = get(name)
+    if not raw:
+        return None
+    if not (raw.isascii() and raw.isdigit() and 17 <= len(raw) <= 20):
+        raise ConfigError(f"{name} must be empty or a Discord user ID (17 to 20 digits).")
+    return int(raw)
