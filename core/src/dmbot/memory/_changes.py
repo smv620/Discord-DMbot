@@ -53,8 +53,21 @@ ENTITIES = Table(
         "source",
         "created_at",
         "played_by",
+        "role",
+        "needs_look",
     ),
 )
+# A character's links to the rules (#1034): species, creature type, stat block, class,
+# background.
+RULE_LINKS = Table(
+    "memory_rule_links",
+    "id",
+    ("id", "entity_id", "kind", "source", "name", "edition", "known", "created_at"),
+)
+# What a column holds in change-log rows written before the column existed.
+OLD_LOG_DEFAULTS: dict[str, dict[str, Any]] = {
+    "memory_entities": {"role": None, "needs_look": False},
+}
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
 SHEETS = Table(
@@ -91,7 +104,7 @@ FLAGS = Table(
     "id",
     ("id", "kind", "relation_id", "other_id", "status", "created_at"),
 )
-ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS)
+ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS)
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -118,6 +131,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_relations", "subject_id", False),
         ("memory_relations", "object_id", False),
         ("memory_corrections", "entity_id", False),
+        ("memory_rule_links", "entity_id", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
     "memory_relations": (
@@ -443,10 +457,20 @@ class Changes(Scope):
         )
 
 
+def _filled(table: Table, snapshot: Any) -> Any:
+    """A change-log snapshot with the columns added since it was written (#1034) filled in
+    with what they held then."""
+    defaults = OLD_LOG_DEFAULTS.get(table.name)
+    if not defaults or not isinstance(snapshot, dict):
+        return snapshot
+    return {**defaults, **snapshot}
+
+
 def _unchanged_since(table: Table, current: dict[str, Any] | None, after: Any) -> bool:
     """The row is as the batch left it. A flag the after-session cleanup closed since
     (#348) counts as unchanged: undoing an insert deletes it, undoing an update restores
     it as it was (the next cleanup closes it again if the clash is still gone)."""
+    after = _filled(table, after)
     if current == after:
         return True
     return (
@@ -532,9 +556,9 @@ async def _undo_row(changes: Changes, change: dict[str, Any]) -> None:
     if change["op"] == "insert":
         await changes.delete(table, change["row_id"])
     elif change["op"] == "update":
-        await changes.update(table, change["row_id"], change["before"])
+        await changes.update(table, change["row_id"], _filled(table, change["before"]))
     else:
-        await changes.insert(table, change["before"])
+        await changes.insert(table, _filled(table, change["before"]))
 
 
 async def _undo_run_or_not(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
@@ -588,7 +612,10 @@ async def _undo_run(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
         others = [c for c in table.columns if c != table.key]
         await changes.update_rows(
             table,
-            {change["row_id"]: {c: change["before"][c] for c in others} for change in run},
+            {
+                change["row_id"]: {c: _filled(table, change["before"])[c] for c in others}
+                for change in run
+            },
         )
     else:  # undo a delete: put the rows back
         cols = sql.SQL(", ").join(sql.Identifier(c) for c in table.columns)
@@ -597,7 +624,7 @@ async def _undo_run(changes: Changes, run: Sequence[dict[str, Any]]) -> bool:
                 "INSERT INTO {} (guild_id, campaign_id, {}) SELECT %s, %s, {}"
                 " FROM jsonb_populate_recordset(NULL::{}, %s) RETURNING {}"
             ).format(sql.Identifier(table.name), cols, cols, sql.Identifier(table.name), cols),
-            (*ids, Jsonb([change["before"] for change in run])),
+            (*ids, Jsonb([_filled(table, change["before"]) for change in run])),
         )
         back = {r[table.key]: row_of(r, table) for r in await cur.fetchall()}
         await changes._log_many(table, "insert", [(k, None, back[k]) for k in keys])

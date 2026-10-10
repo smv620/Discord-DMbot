@@ -46,7 +46,7 @@ from dataclasses import dataclass, field, replace
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, PROPOSED, name_key
 from dmbot.memory.scan import COMMON, GAME_TERMS
-from dmbot.memory.scene import PLAYER_CHARACTER, WORD, find_mentions, group_sizes
+from dmbot.memory.scene import WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
 
 log = logging.getLogger(__name__)
@@ -203,7 +203,7 @@ def characters(lookup: CampaignLookup) -> dict[int, str]:
     player characters. A player with more than one gets the newest."""
     newest: dict[int, tuple[int, str]] = {}
     for entity in lookup.entities.values():
-        if entity.type != PLAYER_CHARACTER or entity.played_by is None:
+        if not entity.is_player_character or entity.played_by is None:
             continue
         name = own_name(lookup, entity.id)
         if name is None:
@@ -556,7 +556,7 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | Questio
         if name is None or alike < MIN_LIKENESS:
             return None  # not clearly one of these: leave it, don't ask
         entity = lookup.entities.get(entity_id)
-        if entity is not None and entity.type == PLAYER_CHARACTER and alike < MIN_LIKENESS_ONE_WORD:
+        if entity is not None and entity.is_player_character and alike < MIN_LIKENESS_ONE_WORD:
             return None  # a real first name next to a character ("Mary" for Mara): don't ask
         options.append((alike, name, entity_id))
     if any(name == said for _, name, _ in options):

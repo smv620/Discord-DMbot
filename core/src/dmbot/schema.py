@@ -1212,6 +1212,84 @@ RULES_CARDS = """
     ALTER TABLE campaigns ADD COLUMN rules_cards BOOLEAN NOT NULL DEFAULT FALSE;
 """
 
+MEMORY_KINDS = (
+    f"""
+    -- One kind for each memory entry (#1034, owner decision 2026-10-10; docs/STORY_MEMORY.md,
+    -- "Entity kinds"): an entry's kind says what it fundamentally is (character, place, item,
+    -- group, event, idea). Roles and categories are never kinds:
+    --   role        player_character, npc or god, on a character, one at a time
+    --   needs_look  the entry was moved here from an older kind (a named creature, a spell)
+    --               and the DM keeps, links or deletes it; nothing is deleted for them
+    -- and a character's species, creature type, stat block, class and background are links
+    -- to the rules (memory_rule_links), kept by source and name; a name the rules data
+    -- doesn't have keeps its plain words with known = false.
+    ALTER TABLE memory_entities ADD COLUMN role TEXT
+        CHECK (role IS NULL OR role IN ('player_character', 'npc', 'god'));
+    ALTER TABLE memory_entities ADD COLUMN needs_look BOOLEAN NOT NULL DEFAULT FALSE;
+
+    CREATE TABLE memory_rule_links (
+        {_memory_scope()}
+        id         TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        entity_id  TEXT NOT NULL,
+        kind       TEXT NOT NULL
+            CHECK (kind IN ('species', 'creature_type', 'stat_block', 'class', 'background')),
+        source     TEXT NOT NULL CHECK (char_length(source) <= 40),
+        name       TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 100),
+        edition    TEXT CHECK (edition IS NULL OR edition IN ('2014', '2024')),
+        known      BOOLEAN NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        {_entity_link("entity_id")}
+    );
+    -- One species and one creature type for each character; any number of the others.
+    CREATE UNIQUE INDEX memory_rule_links_one_species
+        ON memory_rule_links (guild_id, campaign_id, entity_id) WHERE kind = 'species';
+    CREATE UNIQUE INDEX memory_rule_links_one_type
+        ON memory_rule_links (guild_id, campaign_id, entity_id) WHERE kind = 'creature_type';
+    CREATE UNIQUE INDEX memory_rule_links_no_repeat
+        ON memory_rule_links (guild_id, campaign_id, entity_id, kind, source, name);
+    """
+    + _isolate("memory_rule_links")
+    + """
+
+    -- Move the older kinds. Migrations run with no server set, so row-level security hides
+    -- every row: each table the statements read or write is opened for them, and closed
+    -- again (CLAUDE.md, lesson from #704). The core kinds live in code; what is stored is
+    -- campaigns' own rows: entries, and extension kinds and relationships that name them.
+    CREATE POLICY migrate_backfill ON memory_entities FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON memory_types FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON memory_predicates FOR ALL USING (true) WITH CHECK (true);
+
+    UPDATE memory_entities SET type = 'character', role = 'player_character'
+        WHERE type = 'player_character';
+    UPDATE memory_entities SET type = 'character', role = 'npc' WHERE type = 'npc';
+    UPDATE memory_entities SET type = 'character', role = 'god' WHERE type = 'deity';
+    -- A named creature is a character; which role, if any, is the DM's call.
+    UPDATE memory_entities SET type = 'character', needs_look = TRUE WHERE type = 'creature';
+    -- A spell is rules vocabulary, not an entry: kept as an idea for the DM to look at.
+    UPDATE memory_entities SET type = 'concept', needs_look = TRUE WHERE type = 'spell';
+
+    -- A campaign's own kinds that sat under an older kind now sit under its replacement,
+    -- and its own relationships that named an older kind name the replacement.
+    UPDATE memory_types SET parent = 'character'
+        WHERE parent IN ('player_character', 'npc', 'deity', 'creature');
+    UPDATE memory_types SET parent = 'concept' WHERE parent = 'spell';
+    UPDATE memory_predicates SET
+        subject_types = ARRAY(SELECT DISTINCT CASE
+            WHEN t IN ('player_character', 'npc', 'deity', 'creature') THEN 'character'
+            WHEN t = 'spell' THEN 'concept' ELSE t END FROM unnest(subject_types) AS t),
+        object_types = ARRAY(SELECT DISTINCT CASE
+            WHEN t IN ('player_character', 'npc', 'deity', 'creature') THEN 'character'
+            WHEN t = 'spell' THEN 'concept' ELSE t END FROM unnest(object_types) AS t)
+        WHERE subject_types && ARRAY['player_character', 'npc', 'deity', 'creature', 'spell']
+           OR object_types && ARRAY['player_character', 'npc', 'deity', 'creature', 'spell'];
+
+    DROP POLICY migrate_backfill ON memory_predicates;
+    DROP POLICY migrate_backfill ON memory_types;
+    DROP POLICY migrate_backfill ON memory_entities;
+    """
+)
+
 HOUSE_RULES_FILE = f"""
     -- A campaign's linked house-rules file (#969, migration 0040): the share link a DM set, and the
     -- fingerprint of the file they chose to "ignore until it changes". One row per campaign,
@@ -1621,6 +1699,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0040_house_rules_file", HOUSE_RULES_FILE),
     ("0041_game_clocks", GAME_CLOCKS),
     ("0042_game_effects", GAME_EFFECTS),
+    ("0043_memory_kinds", MEMORY_KINDS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -1643,6 +1722,7 @@ ISOLATED_TABLES = (
     "session_usage",
     "game_clocks",
     "game_effects",
+    "memory_rule_links",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

@@ -25,6 +25,31 @@ FIX, KEEP = "fix", "keep"  # correction actions
 # Where a fact came from. "dm" is the DM's own word; everything else needs confirming.
 SOURCES = ("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup")
 
+# What a character is in the story, one at a time (#1034, owner decision 2026-10-10). A role
+# is never a kind of entry: the kind says what a thing fundamentally is ("character"), and
+# whether it is a player's character, the DM's NPC or a god is said here.
+PLAYER_CHARACTER, NPC, GOD = "player_character", "npc", "god"
+ROLES = (PLAYER_CHARACTER, NPC, GOD)
+ROLE_LABELS = {PLAYER_CHARACTER: "player character", NPC: "NPC", GOD: "god"}
+
+# What a character links to in the rules (by source and name), never kinds of their own:
+# "race" is shown only as the 2014 name, `[Legacy 2014]`. One species and one creature type
+# for each character; any number of classes.
+SPECIES, CREATURE_TYPE, STAT_BLOCK, CLASS, BACKGROUND = (
+    "species", "creature_type", "stat_block", "class", "background",
+)  # fmt: skip
+LINK_KINDS = (SPECIES, CREATURE_TYPE, STAT_BLOCK, CLASS, BACKGROUND)
+LINK_LABELS = {
+    SPECIES: "species",
+    CREATURE_TYPE: "type",
+    STAT_BLOCK: "stat block",
+    CLASS: "class",
+    BACKGROUND: "background",
+}
+LINK_SOURCE_MAX = 40
+LINK_NAME_MAX = 100
+LINK_EDITIONS = ("2014", "2024")
+
 NAME_MAX = 100
 DESCRIPTION_MAX = 300
 DETAIL_MAX = 100
@@ -123,6 +148,23 @@ class NewName:
     status: str
     others: tuple[str, ...] = ()
     secrets: tuple[str, ...] = ()
+    role: str | None = None  # for a character: player character, NPC or god
+
+
+@dataclass(frozen=True, slots=True)
+class RuleLink:
+    """A character's link to a rules entry: its species, creature type, stat block, class
+    or background, by source and name. A name the rules data doesn't have keeps its plain
+    words and is marked not known ("not in DMbot's rules")."""
+
+    id: str
+    entity_id: str
+    kind: str  # LINK_KINDS
+    source: str  # "srd52", "srd51", "homebrew", ...; "" when not known
+    name: str
+    edition: str | None  # "2014" is shown as [Legacy 2014]
+    known: bool
+    created_at: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +188,22 @@ class Entity:
     source: str
     created_at: int
     played_by: int | None = None  # the Discord user playing this player character
+    role: str | None = None  # player character, NPC or god: for a character only (ROLES)
+    needs_look: bool = False  # moved here from an older kind: the DM keeps, links or deletes it
+
+    @property
+    def is_player_character(self) -> bool:
+        return self.role == PLAYER_CHARACTER
+
+    @property
+    def kind_key(self) -> str:
+        """The key the lists and the kind menus use: `npc`, `player_character` or `deity`
+        for a character with that role, else the kind itself."""
+        if self.type == "character":
+            return {PLAYER_CHARACTER: "player_character", NPC: "npc", GOD: "deity"}.get(
+                self.role or "", "character"
+            )
+        return self.type
 
 
 @dataclass(frozen=True, slots=True)

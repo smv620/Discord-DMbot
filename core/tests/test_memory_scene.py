@@ -15,6 +15,7 @@ from dmbot.memory.models import (
     Relation,
     name_key,
 )
+from dmbot.memory.ontology import resolve_kind
 from dmbot.memory.scene import (
     MAX_HINTS,
     SCENE_WINDOW_S,
@@ -33,7 +34,9 @@ DAY = 86400
 
 
 def entity(eid: str, name: str, kind: str = "npc", status: str = CONFIRMED) -> Entity:
-    return Entity(eid, kind, name, "", status, None, "dm", 0)
+    """`kind` may be a role (npc, player_character): a character with that role."""
+    type_, role = resolve_kind(kind)
+    return Entity(eid, type_, name, "", status, None, "dm", 0, None, role)
 
 
 def alias(eid: str, text: str, *, secret: bool = False, status: str = CONFIRMED) -> Alias:
@@ -352,7 +355,7 @@ class StoredMentions(unittest.TestCase):
 
     def test_never_said_names_come_newest_first(self) -> None:
         newer = entity("9" * 32, "Zed")
-        newer = Entity(newer.id, "npc", "Zed", "", CONFIRMED, None, "dm", 99)
+        newer = Entity(newer.id, "character", "Zed", "", CONFIRMED, None, "dm", 99, None, "npc")
         names = lookup(more=(newer,))
         hints = scene_hints(names, prepare(names, NOW), SceneTracker(), 0.0)
         self.assertLess(hints.index("Zed"), hints.index("Belleros"))

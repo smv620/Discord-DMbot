@@ -123,7 +123,7 @@ from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
-from dmbot.memory.scene import PLAYER_CHARACTER, HintParts, SceneTracker, mentions, scene_hints
+from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
@@ -2893,7 +2893,7 @@ class DMBot(commands.AutoShardedBot):
             for question in result.questions
             for entity_id, _ in question.options
             if entity_id in scene
-            or getattr(lookup.entities.get(entity_id), "type", None) == PLAYER_CHARACTER
+            or getattr(lookup.entities.get(entity_id), "is_player_character", False)
         }
         asked = table.questions.offer(
             speaker,

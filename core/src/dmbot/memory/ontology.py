@@ -14,7 +14,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory.models import DESCRIPTION_MAX, MemoryRuleError
+from dmbot.memory.models import DESCRIPTION_MAX, GOD, NPC, PLAYER_CHARACTER, MemoryRuleError
 
 ACTIVE, DEPRECATED = "active", "deprecated"
 KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
@@ -56,29 +56,70 @@ def _t(key: str, label: str, description: str, parent: str | None = None) -> Typ
     return TypeTerm(key, parent, label, description)
 
 
+def _old(key: str, label: str, replaced_by: str) -> TypeTerm:
+    """A kind from before #1034, kept so old data and backups still read: not offered for
+    new entries (a role or a rules category is not a kind of thing)."""
+    return TypeTerm(
+        key, None, label, f"Now {replaced_by}.", status=DEPRECATED, replaced_by=replaced_by
+    )
+
+
+# Story kinds: unique things in this campaign. One kind for each entry, what it
+# fundamentally is (#1034, owner decision 2026-10-10). Roles (player character, NPC, god) are
+# traits of a character (`Entity.role`); species, creature type, stat block, class and
+# background are links to the rules (`RuleLink`), never kinds.
 CORE_TYPES: tuple[TypeTerm, ...] = (
-    _t("character", "character", "A person in the story."),
-    _t("player_character", "player character", "A character a player plays.", "character"),
-    _t("npc", "NPC", "A character the DM plays.", "character"),
-    _t("creature", "creature", "An animal, monster or other being that isn't a character."),
+    _t(
+        "character",
+        "character",
+        "Always unique: a player's character, an NPC, a god, a named monster, a named horse.",
+    ),
     _t("place", "place", "A town, building, region, room or any other location."),
     _t("faction", "group", "A group, guild, army, cult, family or other organization."),
     _t("item", "item", "An object: a weapon, amulet, letter, ship."),
-    _t("spell", "spell", "A spell or magical effect."),
-    _t("deity", "god", "A god or other worshipped power."),
     _t("event", "event", "Something that happened or will happen: a battle, a wedding."),
     _t("concept", "idea", "Anything else worth remembering: a prophecy, a curse, a law."),
+    _old("player_character", "player character", "character"),
+    _old("npc", "NPC", "character"),
+    _old("deity", "god", "character"),
+    _old("creature", "creature", "character"),
+    _old("spell", "spell", "concept"),
 )
 
-_BEINGS = ("character", "creature", "deity")
-_ANY = tuple(t.key for t in CORE_TYPES if t.parent is None)
+# The old kinds as a (kind, role) to write now. A named creature or monster is a character
+# the DM plays; a spell is not an entry (it is in the rules data).
+LEGACY_KINDS: Mapping[str, tuple[str, str | None]] = {
+    "player_character": ("character", PLAYER_CHARACTER),
+    "npc": ("character", NPC),
+    "deity": ("character", GOD),
+    "creature": ("character", NPC),
+}
+SPELL_NOT_KEPT = "A spell isn't kept in campaign memory: look it up in the rules with /dmbot rule."
+
+
+def resolve_kind(kind: str, role: str | None = None) -> tuple[str, str | None]:
+    """(kind, role) to store for a kind a caller names. The older kinds (npc,
+    player_character, deity, creature) become a character with that role; a spell is
+    refused. A kind that is already current passes through with its role."""
+    if kind == "spell":
+        raise MemoryRuleError(SPELL_NOT_KEPT)
+    if kind in LEGACY_KINDS:
+        legacy_kind, legacy_role = LEGACY_KINDS[kind]
+        if role not in (None, legacy_role):
+            raise MemoryRuleError("A character has one role at a time.")
+        return legacy_kind, legacy_role
+    return kind, role
+
+
+_BEINGS = ("character",)
+_ANY = tuple(t.key for t in CORE_TYPES if t.parent is None and t.status == ACTIVE)
 
 CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "located_in",
         "is in",
         "Where someone or something is.",
-        ("character", "creature", "place", "faction", "item", "event"),
+        ("character", "place", "faction", "item", "event"),
         ("place",),
         max_per_subject=1,
     ),
@@ -86,7 +127,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         "member_of",
         "is a member of",
         "Belongs to a group.",
-        ("character", "creature"),
+        ("character",),
         ("faction",),
     ),
     PredicateTerm(
@@ -120,7 +161,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         "owns",
         "Has or holds something.",
         (*_BEINGS, "faction"),
-        ("item", "place", "creature"),
+        ("item", "place"),
     ),
     PredicateTerm(
         "knows",
@@ -144,6 +185,37 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         ("event",),
     ),
 )
+
+# A campaign can't add a kind that is really a role or a rules category (#1034): those are a
+# character's role or its links to the rules. Compared as plain words (case, spaces, _ and -
+# ignored): the roles, the rules vocabulary, the classes, the species and the creature types.
+BLOCKED_KINDS = frozenset(
+    {
+        # roles
+        "npc", "pc", "player", "player character", "god", "goddess", "deity",
+        # rules vocabulary
+        "monster", "creature", "beast", "race", "species", "creature type", "class",
+        "background", "feat", "spell", "skill", "ability", "stat block",
+        # classes
+        "barbarian", "bard", "cleric", "druid", "fighter", "monk", "paladin", "ranger", "rogue",
+        "sorcerer", "warlock", "wizard",
+        # species
+        "human", "elf", "dwarf", "halfling", "gnome", "orc", "tiefling", "dragonborn",
+        "goliath", "aasimar", "half elf", "half orc",
+        # creature types
+        "aberration", "celestial", "construct", "dragon", "elemental", "fey", "fiend", "giant",
+        "humanoid", "monstrosity", "ooze", "plant", "undead",
+    }
+)  # fmt: skip
+NOT_A_KIND = (
+    "{label} is a role or a kind of rules entry, not a kind of thing. Make it a character and "
+    "give it a role, or link it to the rules."
+)
+
+
+def _words(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+
 
 # Words an AI might reach for that mean a core relationship: reuse, don't create.
 SYNONYMS: Mapping[str, str] = {
@@ -275,6 +347,8 @@ class Ontology:
     def check_new_type(self, term: TypeTerm) -> None:
         if term.parent is None:
             raise MemoryRuleError("A new kind of thing needs a parent kind.")
+        if _words(term.key) in BLOCKED_KINDS or _words(term.label) in BLOCKED_KINDS:
+            raise MemoryRuleError(NOT_A_KIND.format(label=term.label.strip() or term.key))
         self.active_type(term.parent)
 
     def check_new_predicate(self, term: PredicateTerm) -> None:

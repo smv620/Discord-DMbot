@@ -34,6 +34,7 @@ from dmbot.memory.models import (
     Entity,
     HeardCount,
     Relation,
+    RuleLink,
     name_key,
 )
 from dmbot.memory.sounds import sound_codes
@@ -56,6 +57,7 @@ class LookupData:
     # the last two sessions with any started: for ranking hints only.
     heard: tuple[HeardCount, ...] = ()
     recent_sessions: tuple[int, ...] = ()
+    links: tuple[RuleLink, ...] = ()  # characters' links to the rules (#1034)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +90,7 @@ class CampaignLookup:
     confirmed_neighbours: dict[str, frozenset[str]]
     heard: dict[str, HeardCount] = field(default_factory=dict)
     recent_sessions: tuple[int, ...] = ()
+    links: dict[str, tuple[RuleLink, ...]] = field(default_factory=dict)  # entity → its links
     # Every secret name's word count: all of one is left alone, and the Cleaner checks
     # only runs of about those lengths.
     secret_lengths: frozenset[int] = frozenset()
@@ -136,6 +139,10 @@ class CampaignLookup:
                 if r.status == CONFIRMED and not r.secret:
                     confirmed_links[r.subject_id].add(r.object_id)
                     confirmed_links[r.object_id].add(r.subject_id)
+        links_by: dict[str, list[RuleLink]] = defaultdict(list)
+        for link in data.links:
+            if link.entity_id in entities:
+                links_by[link.entity_id].append(link)
         return cls(
             data.version,
             entities,
@@ -148,6 +155,7 @@ class CampaignLookup:
             {k: frozenset(v) for k, v in confirmed_links.items()},
             {h.entity_id: h for h in data.heard if h.entity_id in entities},
             data.recent_sessions,
+            {k: tuple(v) for k, v in links_by.items()},
             frozenset(secret_lengths),
             tuple(sorted({e.key for e in names if e.secret and not e.codes})),
         )
