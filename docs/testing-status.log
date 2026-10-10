@@ -9,6 +9,14 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- WebDev, PR #981 (#922, part 1): payments, web-api only. Migration **0038** (runs by itself at
+  start; a metadata-only `ADD COLUMN kind` on `payment_events`, no rows change). After a failed
+  payment, the 7-day grace now goes only to someone with an earlier successful payment on record
+  (events with no kind, from before this, count as paid). A first payment that fails starts no
+  plan; a plan with no payment behind it is never lapsed. Nothing changes for anyone today (no
+  real payment company is connected yet). Check: the web-api log shows migration 0038 applied and
+  no errors on start; `docker compose exec` is not needed. The Lemon Squeezy adapter must send
+  `subscription_started` only once the first payment has succeeded (written in payments.py).
 - #959 (7cc1c5c, dev2): House rules by voice (#953). No migration. When a DM says "house rule: ..."
   (or "new house rule", "for this table, ...", "our rule is ..."), a proposal with Save / Edit /
   Cancel appears in #dm-screen; nothing is saved without a press. Live check (about 2 minutes,
