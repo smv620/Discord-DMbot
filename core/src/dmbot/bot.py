@@ -471,14 +471,13 @@ class DMBot(commands.AutoShardedBot):
         self.meter = meter
         # Tells the two admins when the AI account is out of funds, and logs a daily usage
         # line (#972). Every AI client below reports to it.
-        admins = {
-            role: user_id
-            for role, user_id in (
-                ("primary", settings.admin_primary_id),
-                ("secondary", settings.admin_secondary_id),
-            )
-            if user_id is not None
-        }
+        admins: dict[str, int] = {}
+        for role, user_id in (
+            ("primary", settings.admin_primary_id),
+            ("secondary", settings.admin_secondary_id),
+        ):
+            if user_id is not None and user_id not in admins.values():  # the same person twice
+                admins[role] = user_id
         self.ai_watch = AIWatch(admins=admins, state_dir=settings.data_dir, send=self._tell_admin)
         # AI text calls (a document into a names list); None when no key is set.
         self.ai = (
@@ -632,6 +631,9 @@ class DMBot(commands.AutoShardedBot):
         if self._closing:  # SIGTERM and the normal exit can both call this
             return
         self._closing = True
+        # A notice to the admins that is on its way gets a moment to finish (#972).
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(self.ai_watch.wait(), 3)
         document_reader.shutdown()  # files being read: end them, don't wait out their limit
         # Stopped sessions stop waiting for their last words and finish now (saving
         # first), alongside everything below.

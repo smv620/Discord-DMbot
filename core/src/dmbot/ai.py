@@ -54,11 +54,15 @@ class Watcher(Protocol):
 
 
 # Anthropic's refusals for want of money. Docs: https://docs.anthropic.com/en/api/errors
-# (a "billing_error" is HTTP 402; a low balance or a workspace spend limit arrives as a 400
-# "invalid_request_error" whose message says so). Only these wordings count, so other
-# 400s (a bad request of ours) are not mistaken for it.
+# A "billing_error" is the API's own type for it (HTTP 402); a low balance or a workspace
+# spend limit arrives as a 400 "invalid_request_error" whose message says so. The statuses
+# 400, 403 and 429 are accepted defensively. Only these exact wordings count (not a bare
+# "billing" or "usage"), so other errors are not mistaken for it and nobody is paged for
+# nothing.
 _FUNDS_WORDS = re.compile(
-    r"credit balance is too low|usage limits?|spend(ing)? limit|billing", re.IGNORECASE
+    r"credit balance is too low|reached your specified workspace api usage limits?"
+    r"|reached your (monthly )?(spend|spending) limit",
+    re.IGNORECASE,
 )
 
 
@@ -133,6 +137,7 @@ class AnthropicClient:
                     # rate limit or a bad request by what the service says (never the key).
                     reason = (await resp.text())[:2000]
                     if is_out_of_funds(resp.status, reason):
+                        log.error("The AI service says the account is out of funds or at its limit")
                         if self._watch is not None:
                             self._watch.out_of_funds()
                         raise AIOutOfFunds(OUT_OF_FUNDS)

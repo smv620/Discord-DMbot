@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -23,6 +24,7 @@ log = logging.getLogger(__name__)
 
 NOTICE_EVERY_S = 24 * 3600  # each admin hears about it at most this often
 ERROR_LOG_EVERY_S = 3600
+RETRY_AFTER_S = 1800  # a send that failed (private messages off) isn't tried again sooner
 USAGE_WINDOW_S = 24 * 3600
 STATE_FILE = "ai_notice.json"
 
@@ -31,7 +33,7 @@ STATE_FILE = "ai_notice.json"
 ADMIN_NOTICE = (
     "⚠️ DMbot's AI account needs attention. The Anthropic API key that DMbot's core uses to "
     "run its AI jobs (finding names, the off-topic filter, quick answers for DMs) is out of "
-    "funds or has reached its monthly spend limit, so those jobs are paused. Games can keep "
+    "funds or has reached its spend limit, so those jobs are paused. Games can keep "
     "running. To fix it, add funds or raise the limit at "
     "https://console.anthropic.com/settings/billing. (You're getting this as DMbot's {role} "
     "admin.)"
@@ -57,6 +59,11 @@ class AIWatch:
         self._clock = clock
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
+        # Kept in memory as well as in the file, so an unwritable data folder or a failing
+        # send can't turn every failed AI call into another attempt.
+        self._sent: dict[str, float] | None = None
+        self._tried: dict[str, float] = {}
+        self._started = clock()
         self._last_error_log = float("-inf")
         self._last_usage_log = clock()
         self._calls: deque[tuple[float, int, int]] = deque()  # when, input, output tokens
@@ -64,14 +71,19 @@ class AIWatch:
     # ---- usage ---------------------------------------------------------------
 
     def record(self, input_tokens: int, output_tokens: int) -> None:
-        """One finished AI call. Once a day, logs the last 24 hours' counts."""
+        """One finished AI call. Once a day (on the first call after a day has passed, so a
+        quiet day has no line), logs the last 24 hours' counts; until the bot has run for a
+        full day the line says "since start", as the counts are only since then."""
         now = self._clock()
         self._calls.append((now, input_tokens, output_tokens))
         self._trim(now)
         if now - self._last_usage_log >= USAGE_WINDOW_S:
             self._last_usage_log = now
+            # Until a full day has passed since start-up the counts are only since then.
+            span = "last 24 hours" if now - self._started >= USAGE_WINDOW_S else "since start"
             log.info(
-                "AI usage, last 24 hours: calls=%d input_tokens=%d output_tokens=%d",
+                "AI usage, %s: calls=%d input_tokens=%d output_tokens=%d",
+                span,
                 len(self._calls),
                 sum(c[1] for c in self._calls),
                 sum(c[2] for c in self._calls),
@@ -97,23 +109,26 @@ class AIWatch:
         task.add_done_callback(self._tasks.discard)
 
     async def _tell_admins(self) -> None:
+        send = self._send
+        if send is None:
+            return
         async with self._lock:  # many calls fail at once; one pass decides
-            sent = self._read()
+            if self._sent is None:
+                self._sent = self._read()
             now = self._clock()
-            changed = False
             for role, user_id in self._admins.items():
-                if now - sent.get(role, float("-inf")) < NOTICE_EVERY_S:
+                if now - self._sent.get(role, float("-inf")) < NOTICE_EVERY_S:
                     continue
+                if now - self._tried.get(role, float("-inf")) < RETRY_AFTER_S:
+                    continue  # tried lately and failed
+                self._tried[role] = now
                 try:
-                    assert self._send is not None
-                    await self._send(user_id, ADMIN_NOTICE.format(role=role))
+                    await send(user_id, ADMIN_NOTICE.format(role=role))
                 except Exception as exc:  # one failing doesn't stop the other
                     log.warning("Couldn't tell the %s admin: %s", role, type(exc).__name__)
                     continue
-                sent[role] = now
-                changed = True
-            if changed:
-                self._write(sent)
+                self._sent[role] = now
+                self._write(self._sent)
 
     def _read(self) -> dict[str, float]:
         try:
@@ -122,7 +137,11 @@ class AIWatch:
             return {}
         if not isinstance(data, dict):
             return {}
-        return {k: float(v) for k, v in data.items() if type(v) in (int, float)}
+        return {
+            k: float(v)
+            for k, v in data.items()
+            if type(v) in (int, float) and math.isfinite(v)  # a damaged file can't mute it
+        }
 
     def _write(self, sent: dict[str, float]) -> None:
         # Best effort: if it can't be saved, the worst case is one repeat after a restart.

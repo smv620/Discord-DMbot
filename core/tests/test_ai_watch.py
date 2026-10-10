@@ -75,6 +75,20 @@ class Recognising(unittest.TestCase):
         self.assertNotIn("Anthropic", OUT_OF_FUNDS)  # nothing about the account for players
 
 
+class MoreDetection(unittest.TestCase):
+    def test_a_403_or_400_that_only_mentions_billing_or_usage_is_not_it(self) -> None:
+        other = json.dumps(
+            {"error": {"type": "permission_error", "message": "Not allowed; see billing usage."}}
+        )
+        self.assertFalse(is_out_of_funds(403, other))
+        self.assertFalse(
+            is_out_of_funds(
+                400, json.dumps({"error": {"type": "invalid_request_error", "message": "usage x"}})
+            )
+        )
+        self.assertFalse(is_out_of_funds(400, json.dumps({"no": "error key"})))
+
+
 class Watching(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.dir = tempfile.TemporaryDirectory()
@@ -82,8 +96,10 @@ class Watching(unittest.IsolatedAsyncioTestCase):
         self.clock = Clock()
         self.sent: list[tuple[int, str]] = []
         self.broken: set[int] = set()
+        self.attempts = 0
 
     async def send(self, user_id: int, text: str) -> None:
+        self.attempts += 1
         if user_id in self.broken:
             raise RuntimeError("private messages are off")
         self.sent.append((user_id, text))
@@ -172,6 +188,60 @@ class Watching(unittest.IsolatedAsyncioTestCase):
             watch.out_of_funds()
             await watch.wait()
         self.assertEqual([u for u, _ in self.sent], [SECONDARY, PRIMARY])
+
+    async def test_a_failing_send_is_not_retried_on_every_call(self) -> None:
+        self.broken = {PRIMARY}
+        watch = self.watch({"primary": PRIMARY})
+        with self.assertLogs("dmbot.ai_watch"):
+            for _ in range(50):
+                watch.out_of_funds()
+            await watch.wait()
+            watch.out_of_funds()
+            await watch.wait()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.attempts, 1)
+
+    async def test_a_402_is_out_of_funds_and_a_plain_429_is_not(self) -> None:
+        watch = self.watch({"primary": PRIMARY})
+        with self.assertLogs("dmbot.ai", "ERROR"), self.assertRaises(AIOutOfFunds):
+            await self.client(watch, 402, "").complete("s", "t")
+        plain = json.dumps({"error": {"type": "rate_limit_error", "message": "slow down"}})
+        with self.assertLogs("dmbot.ai", "WARNING"), self.assertRaises(AIError) as caught:
+            await self.client(watch, 429, plain).complete("s", "t")
+        self.assertNotIsInstance(caught.exception, AIOutOfFunds)
+
+    async def test_a_damaged_state_file_counts_as_empty_and_an_unwritable_folder_is_fine(
+        self,
+    ) -> None:
+        (Path(self.dir.name) / STATE_FILE).write_text("[1, 2")
+        watch = self.watch({"primary": PRIMARY})
+        with self.assertLogs("dmbot.ai_watch", "ERROR"):
+            watch.out_of_funds()
+            await watch.wait()
+        self.assertEqual(len(self.sent), 1)
+        (Path(self.dir.name) / STATE_FILE).write_text('{"primary": Infinity}')
+        again = self.watch({"primary": PRIMARY})
+        with self.assertLogs("dmbot.ai_watch", "ERROR"):
+            again.out_of_funds()
+            await again.wait()
+        self.assertEqual(len(self.sent), 2)  # an infinite time can't mute it
+        blocked = AIWatch(
+            admins={"primary": PRIMARY},
+            state_dir=Path(self.dir.name) / "no" / "such" / "file",
+            send=self.send,
+            clock=self.clock,
+        )
+        (Path(self.dir.name) / "no").write_text("a file, not a folder")
+        with self.assertLogs("dmbot.ai_watch", "ERROR"):
+            blocked.out_of_funds()
+            await blocked.wait()  # no crash
+
+    async def test_the_usage_line_says_since_start_until_a_day_has_passed(self) -> None:
+        watch = self.watch({})
+        self.clock.now += 25 * 3600
+        with self.assertLogs("dmbot.ai_watch", "INFO") as logged:
+            watch.record(1, 1)
+        self.assertIn("last 24 hours", logged.records[0].getMessage())
 
     async def test_the_error_line_is_logged_at_most_once_an_hour(self) -> None:
         watch = self.watch({})
