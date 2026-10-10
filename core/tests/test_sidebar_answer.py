@@ -310,6 +310,20 @@ class AccuracyPart3(unittest.TestCase):
         self.assertIn("SRD 5.1 p. 315", got.text)
         self.assertIn("SRD 5.2.1 p. 290", got.text)
 
+    def test_a_house_rule_source_is_not_replaced_by_the_legacy_pair(self) -> None:
+        rule = house(3, "The goblin is weaker in this game.")
+        ai = FakeAI([reply("Yes. The goblin is weaker in this game.", "house rule 3")])
+        got = run(
+            engine(ai, houses={"c" * 32: [rule]}).answer(campaign(), "is the 2014 goblin different")
+        )
+        self.assertIn("house rule 3", got.text.lower())
+        self.assertNotIn("SRD", got.text)
+
+    def test_no_source_means_no_legacy_pair(self) -> None:
+        ai = FakeAI([reply("I don't have that. Your call.", "none", "not sure")])
+        got = run(engine(ai).answer(campaign(), "is the 2014 goblin different"))
+        self.assertNotIn("SRD", got.text)
+
     def test_a_plain_question_gets_no_legacy_tag(self) -> None:
         ai = FakeAI([reply("8d6 fire damage, half on a successful save.", "SRD 5.2.1 p. 131")])
         got = run(engine(ai).answer(campaign(), "how much damage does fireball do"))

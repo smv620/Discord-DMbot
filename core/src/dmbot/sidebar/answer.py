@@ -206,10 +206,11 @@ def legacy_citation(source: str | None, ctx: context.Context) -> str | None:
     their own names and pages, the older one tagged: "Goblin Warrior SRD 5.2.1 p. 290; Goblin SRD
     5.1 p. 315 [Legacy 2014]". None if there is no older entry, or it is already tagged."""
     old = [h for h in ctx.hits if h.tag == context.LEGACY_TAG]
-    if not old or (source and context.LEGACY_TAG in source):
+    # Only an SRD source is rewritten: a house rule, the scene or no source at all stays as it is.
+    if not old or not source or not source.startswith("SRD") or context.LEGACY_TAG in source:
         return None
     parts: list[str] = []
-    for hit in old:
+    for hit in old[:1]:  # one pair keeps the source short
         new = [
             h
             for h in ctx.hits
@@ -422,7 +423,8 @@ class Sidebar:
             # citations): it says plainly it is not from DMbot's rules. It sits with the
             # source suffix, outside the length limit.
             text, sure = f"{text} {NOT_IN_RULES}", None
-        source = legacy_citation(source, ctx) or source
+        if not says_no_info(text):
+            source = legacy_citation(source, ctx) or source
         text = brevity.join_source(text, source, sure)
         return self._done(
             Answer(
