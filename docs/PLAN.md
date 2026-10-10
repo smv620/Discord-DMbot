@@ -1723,8 +1723,23 @@ one) moves a clock the DM has set, with a one-line note and **Undo** (a rest fro
 pressed it alone; it only undoes while the clock is still where the rest left it); a player's line never does. **Speaks up only for** dawn,
 noon and dusk as a button or rest passes them (not when the DM sets the time), and **24 hours
 without a long rest**, once per stretch, with its source ("Check: 24 hours since the last long rest… Optional rule, Xanathar's… Your call."); on by default, and off if the DM turns the "Going without a long rest" optional rule
-off. The first time the clock is set the party counts as rested then. Not built yet: effect
-durations, split-party clocks, reading time from narration, periodic notes.
+off. The first time the clock is set the party counts as rested then. Not built yet: split-party
+clocks, reading time from narration, periodic notes.
+
+*Built, part 2: timed effects the DM starts (2026-10-10, #998):* `game_effects` (migration 0042): per
+campaign, own server scope, deleted with the campaign, in backups (`EffectsSection`, validated),
+at most 20 running. A DM starts one from **Start a timer** on the clock message (a form: spell or
+effect, who it is on, how long) or **Time it** on a rules card for a spell that lasts a length of
+time; nothing starts by itself. `dmbot.timebot.durations` reads the index's duration text ("1
+minute", "Concentration, up to 1 hour", "8 hours") into game minutes, a round counting as 6 seconds
+rounded up to a minute; "Instantaneous", "Until dispelled" and "Special" are not timed; the DM can
+type a length instead, and a form with no length uses the spell's own (a test reads every spell in the
+index). Concentration shows as 🧠. The clock message lists the soonest five, one line each. When a
+button or rest passes an effect's end, the DM screen says once "⏳ Bless on Mira has likely
+ended (1 minute)" with **Ended** and **Still going +10 min** (ten more game minutes from where the
+clock is, then said again); nothing ends silently or by itself. Only the campaign's DMs, checked in
+the transaction. Effects live on the game clock, so a restart keeps them. Not built: split-party
+clocks, reading time from narration, AI.
 
 **DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
 DMbot is there to help the game move quickly, never to bog it down or distract. The

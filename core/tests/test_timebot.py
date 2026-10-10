@@ -411,4 +411,4 @@ class Wiring(unittest.TestCase):
         for _label, _emoji, _style, row in ui.ACTIONS.values():
             rows[row] = rows.get(row, 0) + 1
         self.assertTrue(all(n <= 5 for n in rows.values()))
-        self.assertEqual(sorted(rows), [0, 1])
+        self.assertEqual(sorted(rows), [0, 1, 2])
