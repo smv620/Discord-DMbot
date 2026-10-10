@@ -128,7 +128,8 @@ describe("the facts #433 asks for", () => {
   });
 
   it("tells people a failed payment has a short grace period, with no number of days", () => {
-    expect(terms()).toContain("there is a short grace period to fix it before the plan stops");
+    expect(terms()).toContain("If a renewal payment fails, there is a short grace period to fix it before the plan stops");
+    expect(terms()).toContain("If your first payment doesn't go through, the plan doesn't start until it does");
     expect(terms()).toContain("Tap Fix my payment in My Account");
     expect(terms()).not.toMatch(/\d+ days to fix it/);
   });
