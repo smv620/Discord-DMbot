@@ -22,8 +22,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from types import ModuleType
 
-from dmbot.ai import DEFAULT_MODEL, AnthropicClient
+from dmbot.ai import FEATURE_TIERS, AnthropicClient
 from dmbot.campaigns.models import Campaign
+from dmbot.config import parse_ai_models
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import srd
 from dmbot.sidebar import brevity
@@ -68,7 +69,10 @@ async def run(path: Path) -> int:
     if not key:
         raise SystemExit("Set ANTHROPIC_API_KEY (the server's key) to run this.")
     cases = load_cases(path).CASES
-    client = AnthropicClient(key, DEFAULT_MODEL)
+    models, _ = parse_ai_models(lambda name: os.environ.get(name, ""))
+    ai_client = AnthropicClient(key, models)
+    client = ai_client.tier(FEATURE_TIERS["sidebar"])
+    print(f"Model: {client.model} (tier {client.tier.value})\n")
 
     async def gate(campaign: Campaign, user: int) -> str | None:
         return None
@@ -100,9 +104,11 @@ async def run(path: Path) -> int:
                 verdict += f", MUST NOT SAY {banned}"
             print(f"{number:2}. {case.question}")
             print(f"    → {got.text}")
-            print(f"    {took:.1f} s, {len(got.text)} characters, {verdict}")
+            print(
+                f"    {took:.1f} s, {len(got.text)} characters, {verdict}, answered by {got.model}"
+            )
     finally:
-        await client.close()
+        await ai_client.close()
     print(f"\n{len(cases) - failed} of {len(cases)} passed (length, must-say and must-not-say).")
     return 1 if failed else 0
 

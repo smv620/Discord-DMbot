@@ -113,7 +113,8 @@ _FIELD = re.compile(r"^\s*(ANSWER|SOURCE|SURE|IN_GAME|ON_TOPIC)\s*:\s*(.*)$", re
 class AIClient(Protocol):
     """What the sidebar needs from the AI client (`dmbot.ai.AnthropicClient`)."""
 
-    model: str
+    @property
+    def model(self) -> str: ...
 
     async def complete(self, system: str, text: str, *, max_tokens: int = ...) -> Reply: ...
 

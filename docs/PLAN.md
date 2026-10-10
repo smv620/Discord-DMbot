@@ -574,6 +574,20 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   to the DM; nothing is stored.
 - The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
+**AI models by task (decided 2026-10-10, built #1006).** Every AI call names a *tier*, never
+a model: **FAST** (Haiku) for simple jobs (transcript cleaning, the off-topic filter, Find
+names, rules checks and lookups, the DM sidebar), **CAREFUL** (Sonnet) for house-rule
+changes, and **DEEP** (Opus) for PlotBot (phase 5c; nothing uses it yet). The settings
+`AI_MODEL_FAST`, `AI_MODEL_CAREFUL` and `AI_MODEL_DEEP` say which model each tier uses (each
+has a default; a malformed one stops start-up naming the setting; the old `AI_MODEL` stands
+for FAST for one release, with a line in the log). If a model is refused (not found, or no
+permission) the call goes to the next tier down (DEEP, CAREFUL, FAST), logged once for that
+model; running out of money never falls back (it messages the admins, #972). Each call logs
+one line: tier, model, tokens in and out, tokens read from the cache; never content.
+`dmbot.ai.FEATURE_TIERS` is the list of which job uses which tier, and a test checks no
+other file names a model. `python -m dmbot.devtools.sidebar_check` prints the model that
+answered.
+
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
 is chosen by `TRANSCRIBER=` in config.
@@ -1325,7 +1339,7 @@ names panel nor the speech-to-text hints can be a fixed list.
     are never logged. A list DMbot can read all of is added straight away; anything else
     (a document, **anything from a link**, or a list with any line that doesn't fit)
     goes to the AI (Anthropic, `ANTHROPIC_API_KEY`,
-    `AI_MODEL`, a cheap model by default), which writes the names list. The DM first
+    `AI_MODEL_FAST`, the small model by default), which writes the names list. The DM first
     confirms the right to use the material and that its text goes to Anthropic (one
     press, logged with who and when: the IP rule), then sees the list (the start in the
     message, all of it as a file to edit) and adds it with **Add these names**. The

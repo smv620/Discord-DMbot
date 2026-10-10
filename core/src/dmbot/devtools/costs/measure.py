@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
-from dmbot.ai import DEFAULT_MODEL, Reply
+from dmbot.ai import DEFAULT_MODELS, Reply
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.devtools.common import REPO, TEST_SCRIPTS
 from dmbot.devtools.costs import model as cm
@@ -65,7 +65,7 @@ class RecordingAI:
     """Stands in for the AI service: counts the size of every request and answers from a
     list. Nothing leaves the machine."""
 
-    model = DEFAULT_MODEL
+    model = DEFAULT_MODELS.fast
 
     def __init__(self, replies: Sequence[str] = ("",)) -> None:
         self._replies = list(replies)
@@ -197,7 +197,7 @@ def filter_usage(lines: Sequence[Line]) -> cm.Usage:
             ask(window.take())
     if window.lines:  # the window's timer asks about what is left
         ask(window.take())
-    return cm.Usage(calls, input_tokens, output_tokens, DEFAULT_MODEL, True)
+    return cm.Usage(calls, input_tokens, output_tokens, DEFAULT_MODELS.fast, True)
 
 
 def audio_check_ceiling() -> cm.Usage:

@@ -25,7 +25,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from dmbot import campaign_cap, entitlements, hours, install, plan_rules, retention, usage
-from dmbot.ai import DEFAULT_MODEL, AnthropicClient
+from dmbot.ai import FEATURE_TIERS, AnthropicClient
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -513,17 +513,27 @@ class DMBot(commands.AutoShardedBot):
             if user_id is not None and user_id not in admins.values():  # the same person twice
                 admins[role] = user_id
         self.ai_watch = AIWatch(admins=admins, state_dir=settings.data_dir, send=self._tell_admin)
-        # AI text calls (a document into a names list); None when no key is set.
-        self.ai = (
-            AnthropicClient(settings.ai_key, settings.ai_model, watch=self.ai_watch)
+        # One AI client for every job (#1006); each job holds the client for its own tier
+        # (dmbot.ai.FEATURE_TIERS), so no job names a model. None when no key is set.
+        if settings.ai_model_notice:
+            log.warning(settings.ai_model_notice)
+        log.info(
+            "AI models: fast=%s careful=%s deep=%s",
+            settings.ai_models.fast,
+            settings.ai_models.careful,
+            settings.ai_models.deep,
+        )
+        self.ai_client = (
+            AnthropicClient(settings.ai_key, settings.ai_models, watch=self.ai_watch)
             if settings.ai_key
             else None
         )
-        # The off-topic filter (#52) always uses the smallest model, whatever AI_MODEL is.
-        self.topic_ai = (
-            AnthropicClient(settings.ai_key, DEFAULT_MODEL, watch=self.ai_watch)
-            if settings.ai_key
-            else None
+        # AI text calls (a document into a names list).
+        self.ai = self.ai_client.tier(FEATURE_TIERS["names"]) if self.ai_client else None
+        # The off-topic filter (#52), the audio check and the DM sidebar.
+        self.topic_ai = self.ai_client.tier(FEATURE_TIERS["topic"]) if self.ai_client else None
+        self.audio_ai = (
+            self.ai_client.tier(FEATURE_TIERS["audio_check"]) if self.ai_client else None
         )
         # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
         # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
@@ -700,10 +710,8 @@ class DMBot(commands.AutoShardedBot):
             task.cancel()
         await asyncio.gather(*self._background, *self._asking, *lookups, return_exceptions=True)
         await self.pipeline.transcriber.close()
-        if self.ai is not None:
-            await self.ai.close()
-        if self.topic_ai is not None:
-            await self.topic_ai.close()
+        if self.ai_client is not None:
+            await self.ai_client.close()
         for guild_id in list(self.tables):
             await self.ears.send(leave_command(guild_id))
         await self.ears.stop()
@@ -1508,7 +1516,7 @@ class DMBot(commands.AutoShardedBot):
             log.info("Couldn't tell an owner their campaigns were paused", exc_info=True)
 
     def _make_sidebar_answers(self) -> Sidebar | None:
-        if self.topic_ai is None:
+        if self.ai_client is None:
             return None
 
         async def gate(campaign: Campaign, user_id: int) -> str | None:
@@ -1524,7 +1532,8 @@ class DMBot(commands.AutoShardedBot):
                 return None
             return await self.lookup.get_within(campaign.guild_id, campaign.id, NAMES_WAIT_S)
 
-        return Sidebar(self.topic_ai, rules_index.srd, gate=gate, houses=houses, names=names)
+        ai = self.ai_client.tier(FEATURE_TIERS["sidebar"])
+        return Sidebar(ai, rules_index.srd, gate=gate, houses=houses, names=names)
 
     async def plan_gate(
         self, action: plan_rules.Action, guild_id: int, campaign: Campaign, user_id: int
@@ -4304,7 +4313,7 @@ class DMBot(commands.AutoShardedBot):
             if due.large:
                 verdict = Verdict(True, "large loss")
             else:
-                verdict = await table.audio_checker.check(due, self.topic_ai, time.monotonic())
+                verdict = await table.audio_checker.check(due, self.audio_ai, time.monotonic())
             log.info(
                 "Audio check for user %s: %s (%s; %d%% got through, %.1f s lost)",
                 due.user_id,

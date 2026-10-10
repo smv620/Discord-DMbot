@@ -21,7 +21,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from dmbot.ai import DEFAULT_MODEL, AIError, AnthropicClient
+from dmbot.ai import AIError, AIModels, AIModelTier, AnthropicClient
+from dmbot.config import parse_ai_models
 from dmbot.devtools.claims import cost
 from dmbot.devtools.claims.extract import MAX_TOKENS, SYSTEM, Client, extract, transcript
 from dmbot.devtools.claims.scenes import WORDS_PER_SECOND, Scene, batches, load_scenes
@@ -79,7 +80,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         type=_model,
         action="append",
         default=[],
-        help="a model to measure (repeat; default: AI_MODEL, as the bot)",
+        help="a model to measure (repeat; default: AI_MODEL_FAST, as the bot)",
     )
     parser.add_argument(
         "--price",
@@ -240,7 +241,8 @@ async def main_async(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         print(f"claims: {exc}", file=sys.stderr)
         return 2
-    models = args.model or [os.environ.get("AI_MODEL") or DEFAULT_MODEL]
+    fast = parse_ai_models(lambda name: os.environ.get(name, ""))[0].fast
+    models = args.model or [fast]
     prices = {**cost.PRICES, **dict(args.price)}
     tokens_in, tokens_out = estimate(scenes)
     said = sum(len(s.lines) for s in scenes)
@@ -286,7 +288,8 @@ async def main_async(args: argparse.Namespace) -> int:
     for model in models:
         runs: list[Run] = []
         if not capped:
-            client = AnthropicClient(key, model)
+            ai_client = AnthropicClient(key, AIModels.same(model))
+            client = ai_client.tier(AIModelTier.FAST)
             try:
                 for _ in range(args.runs):
                     if spent > args.max_usd:  # the estimate was wrong: stop, don't overspend
@@ -307,7 +310,7 @@ async def main_async(args: argparse.Namespace) -> int:
                         capped = True
                         break
             finally:
-                await client.close()
+                await ai_client.close()
         out += record(model, runs, prices[model])
     print("\n".join(out[1:]))
     if args.log and measured:

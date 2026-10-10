@@ -12,7 +12,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.ai import DEFAULT_MODEL
+from dmbot.ai import DEFAULT_MODELS
 from dmbot.devtools.costs import prices
 
 # Speech-minutes sent to speech-to-text per table-hour at a real table. PLAN.md's earlier
@@ -32,7 +32,7 @@ class Usage:
     calls: float = 0.0
     input_tokens: float = 0.0
     output_tokens: float = 0.0
-    model: str = DEFAULT_MODEL
+    model: str = DEFAULT_MODELS.fast
     estimated: bool = True  # tokens counted by size, not by the AI service
 
     def __add__(self, other: Usage) -> Usage:
