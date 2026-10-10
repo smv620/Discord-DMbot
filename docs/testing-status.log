@@ -19,7 +19,19 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   `DMBOT_SIDEBAR` stays 0. After deploy dev1 runs `python -m dmbot.devtools.sidebar_check` again and
   posts the 17 answers on #954; the check now also reports MISSING / MUST NOT SAY for the cases that
   matter (#1, #5, #8, #14, #17). Supervisor reads them before the sidebar is turned on.
-(nothing waiting)
+- dev2, PR #988 (adb179a, #969 part 2: the linked house-rules file). Core only. Migration **0040**
+  (new table `house_rules_file`, runs by itself at start). Nothing the DM sees until a file is
+  connected. Live check (about 5 minutes, one person, a Google Doc): put "1. Potions are a bonus
+  action" and "2. No flanking" in a Google Doc set to "Anyone with the link can view". In Discord:
+  ⚙️ Settings > 📄 House-rules file > 🔗 Connect a file, paste the Doc's address. DMbot says
+  "Connected: docs.google.com" and offers "2 to add": press Review, Accept the first, Skip the
+  second. Add a third line in the Doc, stop and start a session: the DM screen shows "1 to add"
+  (and the skipped one); press Accept all changes and check /dmbot houserules. Press Not now on
+  a later change and start another session: nothing is said until the Doc changes again.
+  Also check: 📎 Upload a file (one time) with a .txt file of the rules; 📄 shows only the site,
+  never the link. The download after every change and the 📥 Download rules button (#983) are
+  already live: check them in the same run.
+
 
 ------------------------------------------------------------------------------
 LIVE NOW
