@@ -217,8 +217,12 @@ def entry_covers(text: str, hits: Sequence[Hit]) -> bool:
     the entry's own name and the words every spell answer has. An uncertain match loses the
     citation, never gains certainty (#1015)."""
     own = {w[:4] for h in hits for w in _SCOPE_WORD.findall(h.entry.name.lower())}
-    given = {
-        w[:4] for h in hits for w in _SCOPE_WORD.findall(f"{h.entry.text} {h.entry.name}".lower())
+    given = {  # the facts are part of what the AI was given (#1039)
+        w[:4]
+        for h in hits
+        for w in _SCOPE_WORD.findall(
+            f"{h.entry.text} {h.entry.name} {context.header_facts(h.entry)}".lower()
+        )
     }
     said = {
         w[:4]

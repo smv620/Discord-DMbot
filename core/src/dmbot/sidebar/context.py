@@ -248,6 +248,17 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
     return lines[:NAMES_MAX]
 
 
+_COMPONENTS = {"V": "Verbal", "S": "Somatic", "M": "Material"}
+
+
+def components_words(components: str) -> str:
+    """ "V, S, M (a ball of bat guano)" in words, as the AI should say them: "Verbal, Somatic,
+    Material (a ball of bat guano)". The letters alone would make "verbal" sound like a guess."""
+    letters, paren, rest = components.partition("(")
+    words = ", ".join(_COMPONENTS.get(part.strip(), part.strip()) for part in letters.split(","))
+    return f"{words} ({rest}" if paren else words
+
+
 def header_facts(entry: Entry) -> str:
     """The facts an entry keeps apart from its text, in one plain line for the AI: a spell's
     level, casting time, range, components and duration; a creature's size and type, AC, HP,
@@ -266,7 +277,7 @@ def header_facts(entry: Entry) -> str:
             kind,
             f"Casting time {d['casting_time']}" if d.get("casting_time") else "",
             f"Range {d['range']}" if d.get("range") else "",
-            f"Components {d['components']}" if d.get("components") else "",
+            f"Components {components_words(str(d['components']))}" if d.get("components") else "",
             f"Duration {d['duration']}" if d.get("duration") else "",
         ]
     elif entry.kind == "monster":

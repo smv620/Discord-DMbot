@@ -350,6 +350,26 @@ class AccuracyPart3(unittest.TestCase):
                 self.assertIn("SRD 5.2.1 p. 131", got.text)
                 self.assertNotIn("not in DMbot's rules", got.text)
 
+    def test_header_facts_count_as_the_entrys_words(self) -> None:
+        # Words that live only in a spell's duration, components or casting time (#1039).
+        for question, said in (
+            ("how long does bless last", "Up to a minute, if you keep concentrating."),
+            ("what are the components of fireball", "Verbal, somatic, and a ball of bat guano."),
+            ("what's the casting time of shield", "A reaction, when you're hit."),
+        ):
+            with self.subTest(question):
+                ai = FakeAI([reply(said, "SRD 5.2.1 p. 124")])
+                got = run(engine(ai).answer(campaign(), question))
+                self.assertNotIn("not in DMbot's rules", got.text)
+                self.assertIn("SRD 5.2.1 p.", got.text)
+
+    def test_a_made_up_word_is_still_not_covered(self) -> None:
+        ai = FakeAI(
+            [reply("It lasts a minute and hums like a kettle, then sings.", "SRD 5.2.1 p. 124")]
+        )
+        got = run(engine(ai).answer(campaign(), "how long does bless last"))
+        self.assertIn("not in DMbot's rules", got.text)
+
     def test_the_prompt_version_moved_on(self) -> None:
         self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-4")
 

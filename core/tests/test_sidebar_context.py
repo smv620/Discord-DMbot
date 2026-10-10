@@ -52,6 +52,14 @@ class HeaderFacts(unittest.TestCase):
         self.assertIn("Casting time 1 action", prompt)  # the 2014 entry's own words
         self.assertIn("Casting time Action", prompt)
 
+    def test_components_are_in_words_not_letters(self) -> None:
+        self.assertEqual(
+            context.components_words("V, S, M (a ball of bat guano)"),
+            "Verbal, Somatic, Material (a ball of bat guano)",
+        )
+        self.assertEqual(context.components_words("V, S"), "Verbal, Somatic")
+        self.assertIn("Components Verbal, Somatic, Material (", self.prompt("range of fireball"))
+
     def test_a_condition_has_no_header(self) -> None:
         self.assertNotIn("FACTS:", self.prompt("what does grappled do"))
 
