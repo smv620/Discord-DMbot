@@ -1547,6 +1547,20 @@ reads the campaign memory and never changes it.
   it (never queued, never in Redis, never logged, never stored). **Consent is re-checked
   right before every re-listen request**, and the audio is dropped at once on revoke.
   Re-listen is added after the first version, once close calls can be measured.
+- **Test recordings (owner, 2026-10-10; #1019, built): the one place audio is kept.** On a
+  test server only (`DMBOT_TEST_RECORDING_GUILDS`, empty by default), and only for people who
+  pressed a second, separate button, **Save my voice for tests**, in their consent message
+  (it needs the recording yes first). Each utterance core heard is written as one FLAC file
+  under `DMBOT_TEST_RECORDINGS_DIR` (a volume, owner-only), with a `session.json`: made-up
+  speaker numbers (1001 the DM, 1002 and up players), each with a role and a *voice code* (a
+  keyed hash, the secret lives in that folder), times in ms on one session clock, consent
+  events, and the transcript lines and sidebar questions and answers DMbot produced. No
+  Discord id, name or server id is in the files, and the files are never in Postgres, a
+  backup or the repository. Both yeses are checked before the audio is encoded, before it is
+  written and after. **Stop saving my voice** (⚙️ Menu), or **Stop recording me**, stops it at
+  once and deletes the person's files from every session; a kept session that lost a speaker
+  is marked incomplete. Sessions nobody keeps (`python -m dmbot.devtools.test_library keep`)
+  are deleted after 7 days by a daily job. Replaying them is a later issue.
 - **Learning is immediate:** a confirmed correction becomes a `misheard` alias and
   reaches the Cleaner within about a second. Earlier lines of the same session with the
   same mishearing are re-checked from "as heard" and fixed, with each change logged.

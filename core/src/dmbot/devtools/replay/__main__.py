@@ -468,6 +468,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         args.remove("--measure")
         return measure.main(args)
+    if "--session" in args:  # a saved live test (#1020): its own options and report
+        from dmbot.devtools import session_replay
+
+        return session_replay.main(args)
     return asyncio.run(main_async(parse_args(args)))
 
 
