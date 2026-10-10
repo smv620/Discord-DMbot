@@ -9,28 +9,6 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- CloudDev, #962 (#957, plan rules part 4): pause and unpause. Migration **0037** (core and web-api;
-  adds `paused` columns, a trigger update and `dmbot_pause_over_cap`, runs by itself at start). A
-  campaign's owner gets Pause / Unpause on the Settings card; a paused campaign can't start and
-  doesn't count toward the plan. With DMBOT_ENFORCE_PLANS on, a plan that shrinks pauses the extras
-  and tells the owner once. **DMBOT_ENFORCE_PLANS may go on only after this is live.** Check: core and
-  web-api logs show migration 0037 applied and no errors on start.
-- CloudDev, #977 (#972): admin messages when DMbot's AI account is out of funds. Core only, no
-  migration. Needs two new `.env` settings, set by dev1 from the owner's private message (#974 step 5):
-  DMBOT_ADMIN_PRIMARY_ID and DMBOT_ADMIN_SECONDARY_ID (Discord user IDs, 17 to 20 digits each, or
-  empty). A bad value stops start-up naming the setting. Check: the start-up log has no settings error.
-- dev2, PR #988 (adb179a, #969 part 2: the linked house-rules file). Core only. Migration **0040**
-  (new table `house_rules_file`, runs by itself at start). Nothing the DM sees until a file is
-  connected. Live check (about 5 minutes, one person, a Google Doc): put "1. Potions are a bonus
-  action" and "2. No flanking" in a Google Doc set to "Anyone with the link can view". In Discord:
-  ⚙️ Settings > 📄 House-rules file > 🔗 Connect a file, paste the Doc's address. DMbot says
-  "Connected: docs.google.com" and offers "2 to add": press Review, Accept the first, Skip the
-  second. Add a third line in the Doc, stop and start a session: the DM screen shows "1 to add"
-  (and the skipped one); press Accept all changes and check /dmbot houserules. Press Not now on
-  a later change and start another session: nothing is said until the Doc changes again.
-  Also check: 📎 Upload a file (one time) with a .txt file of the rules; 📄 shows only the site,
-  never the link. The download after every change and the 📥 Download rules button (#983) are
-  already live: check them in the same run.
 
 ------------------------------------------------------------------------------
 LIVE NOW
