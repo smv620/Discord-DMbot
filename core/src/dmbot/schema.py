@@ -1001,6 +1001,15 @@ PAYMENT_EVENT_SUBSCRIPTION = """
     ALTER TABLE payment_events ADD COLUMN subscription_id TEXT;
 """
 
+PAYMENT_EVENT_KIND = """
+    -- What each recorded payment event was (#922): the 7-day grace after a failed payment
+    -- is only for someone who has paid before, and that is read from here. Rows from
+    -- before this have no kind and count as paid (the writer reads NULL that way), so
+    -- anyone recorded earlier keeps grace and still lapses when the plan ends. There is
+    -- no backfill: nothing here changes a row.
+    ALTER TABLE payment_events ADD COLUMN kind TEXT;
+"""
+
 # The website's role is held to its session's servers by these RESTRICTIVE policies
 # (ANDed with each table's own), made `TO dmbot_web` so the bot's role never runs them
 # and any role that is a member of dmbot_web is held too. Database.migrate (re)makes them
@@ -1536,6 +1545,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0035_rules_cards", RULES_CARDS),
     ("0036_transcript_sidebar", TRANSCRIPT_SIDEBAR),
     ("0037_pause", PAUSE),
+    ("0038_payment_event_kind", PAYMENT_EVENT_KIND),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
