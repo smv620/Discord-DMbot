@@ -29,6 +29,12 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   careful=... deep=..." (or "AI is off" with no key) and no settings error; every AI call logs one
   "AI call: tier=... model=... in=... out=... cache_read=..." line (counts only). If a model is not
   available to the key, one warning says which setting to check and the next tier down is used.
+- dev2, PR #1033 (#1017, AI tiers part 2; fix-log #1032). Core only, no migration. Find names now runs on
+  CAREFUL (Sonnet), and the sidebar gets a CAREFUL second try when the quick answer fails. Proof for dev1:
+  rerun `python -m dmbot.devtools.sidebar_check` (it prints the model that answered): all cases pass, a
+  CAREFUL model answers only the cases the quick one failed, times under about 5 s; paste the result on #954.
+  Also: from one test session, grep the core log for "Sidebar second try" and for the "AI call: tier=..."
+  lines per tier, and compare with #979's estimate. 0 ERROR.
 
 ------------------------------------------------------------------------------
 LIVE NOW
