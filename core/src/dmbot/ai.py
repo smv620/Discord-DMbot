@@ -6,9 +6,11 @@ per server come later (#50).
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 import aiohttp
 
@@ -32,6 +34,48 @@ class AIError(Exception):
     """In plain words for the DM; the cause is in the log."""
 
 
+OUT_OF_FUNDS = (
+    "DMbot's AI is paused right now (its account needs topping up). Nothing was changed. "
+    "You can keep playing; the AI features come back once it's fixed."
+)
+
+
+class AIOutOfFunds(AIError):
+    """The AI account has no credit left or has reached its spend limit. The DM is told
+    plainly; the people who can fix it are messaged (dmbot.ai_watch)."""
+
+
+class Watcher(Protocol):
+    """What the client reports to (`dmbot.ai_watch.AIWatch`)."""
+
+    def record(self, input_tokens: int, output_tokens: int) -> None: ...
+
+    def out_of_funds(self) -> None: ...
+
+
+# Anthropic's refusals for want of money. Docs: https://docs.anthropic.com/en/api/errors
+# (a "billing_error" is HTTP 402; a low balance or a workspace spend limit arrives as a 400
+# "invalid_request_error" whose message says so). Only these wordings count, so other
+# 400s (a bad request of ours) are not mistaken for it.
+_FUNDS_WORDS = re.compile(
+    r"credit balance is too low|usage limits?|spend(ing)? limit|billing", re.IGNORECASE
+)
+
+
+def is_out_of_funds(status: int, body_text: str) -> bool:
+    """Is this error response the account being out of funds or at its limit?"""
+    if status == 402:
+        return True
+    if status not in (400, 403, 429):
+        return False
+    try:
+        error = json.loads(body_text).get("error", {})
+        kind, message = str(error.get("type", "")), str(error.get("message", ""))
+    except (ValueError, AttributeError):
+        return False
+    return kind == "billing_error" or bool(_FUNDS_WORDS.search(message))
+
+
 @dataclass(frozen=True, slots=True)
 class Reply:
     text: str
@@ -42,11 +86,16 @@ class Reply:
 
 class AnthropicClient:
     def __init__(
-        self, api_key: str, model: str = DEFAULT_MODEL, session: aiohttp.ClientSession | None = None
+        self,
+        api_key: str,
+        model: str = DEFAULT_MODEL,
+        session: aiohttp.ClientSession | None = None,
+        watch: Watcher | None = None,
     ) -> None:
         self._key = api_key
         self.model = model
         self._session = session
+        self._watch = watch
 
     def __repr__(self) -> str:  # never the key
         return f"AnthropicClient(model={self.model!r})"
@@ -79,18 +128,24 @@ class AnthropicClient:
         }
         try:
             async with self._get_session().post(API_URL, json=body, headers=headers) as resp:
-                if resp.status in (401, 403):
-                    log.error("The AI service refused the key (HTTP %s)", resp.status)
-                    raise AIError(
-                        "The AI service didn't accept DMbot's key. Nothing was added. Ask "
-                        "whoever runs DMbot to check its Anthropic key."
-                    )
-                if resp.status in (429, 529) or resp.status >= 500:
-                    log.warning("The AI service is busy (HTTP %s)", resp.status)
-                    raise AIError(BUSY)
                 if resp.status != 200:
-                    body_text = (await resp.text())[:500]
-                    log.error("AI request failed (HTTP %s): %s", resp.status, body_text)
+                    # Read the reason once: out of funds is told apart from a bad key, a
+                    # rate limit or a bad request by what the service says (never the key).
+                    reason = (await resp.text())[:2000]
+                    if is_out_of_funds(resp.status, reason):
+                        if self._watch is not None:
+                            self._watch.out_of_funds()
+                        raise AIOutOfFunds(OUT_OF_FUNDS)
+                    if resp.status in (401, 403):
+                        log.error("The AI service refused the key (HTTP %s)", resp.status)
+                        raise AIError(
+                            "The AI service didn't accept DMbot's key. Nothing was added. Ask "
+                            "whoever runs DMbot to check its Anthropic key."
+                        )
+                    if resp.status in (429, 529) or resp.status >= 500:
+                        log.warning("The AI service is busy (HTTP %s)", resp.status)
+                        raise AIError(BUSY)
+                    log.error("AI request failed (HTTP %s): %s", resp.status, reason[:500])
                     raise AIError(FAILED)
                 data = await resp.json()
         except (aiohttp.ClientError, TimeoutError, ValueError) as exc:  # ValueError: bad JSON
@@ -116,9 +171,12 @@ class AnthropicClient:
             value = usage.get(name)
             return value if type(value) is int else 0  # not a bool
 
-        return Reply(
+        reply = Reply(
             text,
             cut=data.get("stop_reason") == "max_tokens",
             input_tokens=count("input_tokens"),
             output_tokens=count("output_tokens"),
         )
+        if self._watch is not None:
+            self._watch.record(reply.input_tokens, reply.output_tokens)
+        return reply
