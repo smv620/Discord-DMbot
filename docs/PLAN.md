@@ -526,6 +526,9 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   over 200 rules, a rule over 500 characters, a number used twice or a number too big are
   reported, not kept. `compare` says what was added, changed or removed against DMbot's copy
   by rule number, and calls the same words under another number "moved".
+  Reading costs time in proportion to the file (it will be run on files fetched or
+  uploaded): a file over 200,000 characters is refused unread, a line over 2,000 is refused
+  unread, reading stops at the 201st rule, and at most 20 problems are listed (then a count).
 - **Download after every change:** after any change a DM makes in Discord (Add, Edit,
   Remove, an Override, a rule said or typed) the DM gets the updated
   `house-rules-<campaign>.txt` as a private message: "Put this in your house-rules file so

@@ -23,9 +23,12 @@ from dmbot.ui.dmbot_commands import NO_PINGS, _bot
 log = logging.getLogger(__name__)
 
 AFTER_CHANGE = "Put this in your house-rules file so everyone can see it."
-DOWNLOAD_LABEL = "📥 Download"
-DOWNLOAD_NOTE = "The house rules as a file, to keep wherever your table keeps its notes."
-NONE_YET = "There are no house rules to download yet."
+DOWNLOAD_LABEL = "📥 Download rules"
+DOWNLOAD_NOTE = (
+    "Your table's house rules, as a text file. Only you can see this message. "
+    "Save it anywhere you like."
+)
+COULDNT = "Couldn't make the file just now. Try again in a moment."
 
 
 async def build(interaction: discord.Interaction, campaign: Campaign) -> discord.File | None:
@@ -62,8 +65,12 @@ async def send_download(interaction: discord.Interaction, campaign: Campaign) ->
     """The 📥 Download button: the file as it is now, privately, for anyone."""
     file = await build(interaction, campaign)
     if file is None:
-        await interaction.followup.send(NONE_YET, ephemeral=True)
+        await interaction.followup.send(COULDNT, ephemeral=True)
         return
-    await interaction.followup.send(
-        DOWNLOAD_NOTE, file=file, ephemeral=True, allowed_mentions=NO_PINGS
-    )
+    try:
+        await interaction.followup.send(
+            DOWNLOAD_NOTE, file=file, ephemeral=True, allowed_mentions=NO_PINGS
+        )
+    except discord.HTTPException:
+        log.warning("Couldn't send the house-rules file", exc_info=True)
+        await interaction.followup.send(COULDNT, ephemeral=True)

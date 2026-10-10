@@ -3,6 +3,7 @@ DMbot's copy. Pure: no Discord, no database."""
 
 from __future__ import annotations
 
+import time
 import unittest
 
 from dmbot.rules import house_file as hf
@@ -29,14 +30,14 @@ class Writing(unittest.TestCase):
         lines = text.splitlines()
         self.assertEqual(lines[0], "House rules: Frostmaiden")
         self.assertTrue(lines[1].startswith("# "))
-        self.assertEqual(lines[3:], [
+        self.assertEqual(lines[4:], [
             "3. No flanking",
             "12. Potions are a bonus action (instead of: Drinking takes an action)",
         ])  # fmt: skip
         self.assertTrue(text.endswith("\n"))
 
     def test_an_empty_campaign_still_has_a_title_and_help(self) -> None:
-        self.assertEqual(len(hf.write("Empty", []).splitlines()), 3)
+        self.assertEqual(len(hf.write("Empty", []).splitlines()), 4)
 
     def test_the_words_stay_on_one_line(self) -> None:
         text = hf.write("A\nB", [rule(1, "two\nlines  here", "x\ny")])
@@ -65,6 +66,18 @@ class Reading(unittest.TestCase):
             hf.parse(text).rules, (file_rule(1, "Use this [instead of: that) always"),)
         )
         self.assertEqual(hf.parse(text).problems, ())
+
+    def test_marker_words_in_the_instead_of_are_bracketed_too(self) -> None:
+        text = hf.write("X", [rule(1, "Rule", "Book (instead of: other) rule")])
+        parsed = hf.parse(text)
+        self.assertEqual(parsed.problems, ())
+        self.assertEqual(parsed.rules, (file_rule(1, "Rule", "Book [instead of: other) rule"),))
+
+    def test_a_damaged_first_rule_is_reported_not_taken_for_the_title(self) -> None:
+        for first in ("1) Potions are a bonus action", "1 Potions", "1.Potions"):
+            parsed = hf.parse(f"{first}\n2. Two\n")
+            self.assertEqual([r.number for r in parsed.rules], [2], first)
+            self.assertEqual([(p.line, p.why) for p in parsed.problems], [(1, hf.NOT_A_RULE)])
 
     def test_the_title_comments_and_blank_lines_are_ignored(self) -> None:
         parsed = hf.parse("﻿Our table\n\n# a note\n  # another\n2. Two\n\n1. One\n")
@@ -104,7 +117,7 @@ class Reading(unittest.TestCase):
         text = "\n".join(f"{n}. Rule {n}" for n in range(1, HOUSE_RULES_MAX + 6))
         parsed = hf.parse(text)
         self.assertEqual(len(parsed.rules), HOUSE_RULES_MAX)
-        self.assertEqual([p.why for p in parsed.problems], [hf.TOO_MANY] * 5)
+        self.assertEqual([p.why for p in parsed.problems], [hf.TOO_MANY])
 
     def test_a_shown_bad_line_is_cut_short(self) -> None:
         parsed = hf.parse("1. ok\n" + "z" * 500)
@@ -113,6 +126,50 @@ class Reading(unittest.TestCase):
     def test_nonsense_never_raises(self) -> None:
         for text in ("", "\x00\x01", "1.", "." * 1000, "9" * 400 + ". x", "\n\n\n"):
             hf.parse(text)
+
+
+class Hostile(unittest.TestCase):
+    """A file may come from anywhere (later: a link, an upload): reading it costs time
+    in proportion to its size, and what is reported stays short."""
+
+    def fast(self, text: str) -> hf.Parsed:
+        started = time.perf_counter()
+        parsed = hf.parse(text)
+        self.assertLess(time.perf_counter() - started, 1.0)
+        return parsed
+
+    def test_a_long_run_of_blanks_is_not_slow(self) -> None:
+        for gap in (" ", " \t"):
+            parsed = self.fast("1. a" + gap * 50_000 + "b")
+            self.assertEqual([p.why for p in parsed.problems], [hf.TOO_LONG])  # over a line
+        self.assertEqual(self.fast("1. a" + " " * 1_500 + "b").problems, ())
+
+    def test_a_file_over_the_limit_is_refused_unread(self) -> None:
+        parsed = self.fast("1. a\n" * 100_000)
+        self.assertEqual((parsed.rules, [p.why for p in parsed.problems]), ((), [hf.TOO_BIG]))
+
+    def test_many_bad_lines_are_listed_briefly(self) -> None:
+        parsed = self.fast("junk\n" * 30_000)
+        self.assertEqual(len(parsed.problems), hf.MAX_PROBLEMS + 1)
+        self.assertIn("more lines could not be used", parsed.problems[-1].why)
+
+    def test_reading_stops_at_the_most_rules(self) -> None:
+        parsed = self.fast("\n".join(f"{n}. r" for n in range(1, 5_000)))
+        self.assertEqual(len(parsed.rules), HOUSE_RULES_MAX)
+        self.assertEqual([p.why for p in parsed.problems], [hf.TOO_MANY])
+
+    def test_odd_characters_never_raise(self) -> None:
+        for text in ("²³. x", "١٢. x", "1\u2028. x\u2029y", "1. x\r\n2. y\r\n", "\ufeff1. x"):
+            hf.parse(text)
+        self.assertEqual([r.number for r in hf.parse("1. x\r\n2. y\r\n").rules], [1, 2])
+
+    def test_comparing_two_big_lists_is_fast(self) -> None:
+        mine = [rule(n, f"mine {n}") for n in range(1, 2001)]
+        theirs = [file_rule(n + 5000, f"theirs {n}") for n in range(1, 2001)]
+        started = time.perf_counter()
+        diff = hf.compare(mine, theirs)
+        self.assertLess(time.perf_counter() - started, 1.0)
+        self.assertEqual((len(diff.added), len(diff.removed)), (2000, 2000))
 
 
 class Comparing(unittest.TestCase):

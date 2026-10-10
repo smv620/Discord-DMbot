@@ -235,7 +235,8 @@ async def press(
             return
         raise
     await _finish(interaction, note)
-    from dmbot.ui import house_file as file_ui  # (the UI modules import this one's peers)
+    # Imported here: `ui.house_file` leads back to this module through `ui.dmbot_commands`.
+    from dmbot.ui import house_file as file_ui
 
     await file_ui.send_after_change(interaction, campaign, note)
 

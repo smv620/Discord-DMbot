@@ -219,12 +219,12 @@ class ListMenu(_Menu):
         shown = pages(rules)
         if is_dm:
             self.add_item(_Button(self._add, label=ADD_LABEL, style=discord.ButtonStyle.primary))
-        if rules:  # nothing to download before the first rule
-            self.add_item(_Button(self._download, label=file_ui.DOWNLOAD_LABEL))
         if page > 0:
             self.add_item(_Button(self._newer, label=NEWER_LABEL))
         if page < len(shown) - 1:
             self.add_item(_Button(self._older, label=OLDER_LABEL))
+        if rules:  # nothing to download before the first rule
+            self.add_item(_Button(self._download, label=file_ui.DOWNLOAD_LABEL))
         if not is_dm or not rules:
             return
         on_page = [rules[place] for place in shown[page]]
