@@ -1,0 +1,48 @@
+name: Supervisor review
+
+# Shows Supervisor's review as a green or red `supervisor-review` check on each pull request
+# into development (#1049). The rule is CLAUDE.md's; the logic is scripts/supervisor_review.py,
+# tested in the "scripts" CI job. Supervisor can't post commit statuses itself, and can't use
+# GitHub's own Approve (every session shares one account), so this posts the check for it.
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+    branches: [development]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [development]
+
+# Read the pull request and its reviews, write one commit status. `contents: read` is only for
+# fetching this script.
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: supervisor-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: supervisor-review
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      # The script that runs is the one on the base branch (a pull request cannot change what
+      # judges it); until that copy exists, this pull request's own copy is used.
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+      - name: post the check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -f trusted/scripts/supervisor_review.py ]; then
+            python3 trusted/scripts/supervisor_review.py
+          else
+            python3 scripts/supervisor_review.py
+          fi
