@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol, TypeVar
 
-from dmbot.ai import AIError, Reply
+from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.rules.house import HouseRule
@@ -45,6 +45,10 @@ MAX_TOKENS = 150  # 200 characters of answer and the four fields fit in ~100
 CALL_TIMEOUT_S = 6  # one AI call; a Haiku answer of ~80 tokens takes 1 to 3 s
 TOTAL_BUDGET_S = 8  # everything after the plan check, retry included (the target is ~5 s)
 RETRY_SKIP_S = 3  # a first call slower than this is not asked again: the table is waiting
+# The second try on the careful tier (Sonnet) needs this much of TOTAL_BUDGET_S still to run;
+# with less, the quick answer stands as it is.
+SECOND_TRY_NEEDS_S = 4.0
+SECOND_TRY_MARGIN_S = 1.0  # left over for the checks that follow, whatever the try does
 SLOW_S = 5.0  # slower than this is logged as a warning
 OFF_TOPIC = "I can only help with the game, DMbot or Discord here."
 NO_ANSWER = "I couldn't answer that one. Ask it another way."
@@ -334,9 +338,11 @@ class Sidebar:
         gate: Gate,
         houses: Houses,
         names: Names,
+        second_try: AIClient | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._ai = ai
+        self._second = second_try  # the careful tier; None: the second try uses `ai`
         self._index = index
         self._gate = gate
         self._houses = houses
@@ -412,18 +418,22 @@ class Sidebar:
                 f"the entry for {named.entry.name} is given above: answer from it, "
                 "do not say the rules don't say"
             )
-        # One more try, telling the model what to fix, unless the table has waited long enough.
-        if problems and self._clock() - first_started < RETRY_SKIP_S:
-            try:
-                retry = await self._call(_retry_message(ctx.prompt, text, problems))
-            except AIError:
-                log.warning("The sidebar's second try failed; cutting the first answer instead")
-            else:
+        # A source the entry or the house rule doesn't support is a failed check too, and the
+        # careful tier is asked before the source is cut (#1017).
+        if self._second is not None:  # (without the careful tier, today's checks stand)
+            problems += self._unsupported_source(fields, text, ctx)
+        # One more try, telling the model what to fix. On the careful tier when there is time
+        # (the quick answer stands if the try is slow, fails or runs out of money); else, as
+        # before, on the same model unless the table has waited long enough.
+        if problems:
+            retry = await self._second_try(ctx.prompt, text, problems, started, first_started)
+            if retry is not None:
                 again = parse(retry.text)
                 if again.answer:
-                    fields, text = (
+                    fields, text, reply = (
                         again,
                         brevity.strip_padding(_NOTE_ANYWHERE.sub("", again.answer).strip()),
+                        retry,
                     )
         if named is not None and says_no_info(text):
             # Still no: answer with the entry's own words and its source, never contradict
@@ -475,12 +485,59 @@ class Sidebar:
             log.exception("The sidebar couldn't read %s; answering without them", what)
             return fallback
 
-    async def _call(self, prompt: str) -> Reply:
+    @staticmethod
+    def _unsupported_source(fields: Fields, text: str, ctx: context.Context) -> list[str]:
+        """Problems with the source the answer cites, for the second try to fix: a house rule
+        that doesn't say it, or an SRD entry that doesn't. (The checks after the second try
+        still drop a source nothing supports.)"""
+        source = canonical_source(fields.source, ctx)
+        if not source or says_no_info(text):
+            return []
+        cited = source.lower()
+        if cited.startswith("house rule"):
+            number = re.search(r"\d+", cited)
+            rule = next((r for r in ctx.house_rules if number and r.number == int(number[0])), None)
+            if rule is not None and not house_rule_covers(text, rule.rule):
+                return [f"{source} does not say this: cite only what it says, or cite nothing"]
+        elif source.startswith("SRD") and not entry_covers(text, ctx.hits):
+            return ["the SRD entry given does not say this: answer from it, or cite nothing"]
+        return []
+
+    async def _second_try(
+        self, prompt: str, previous: str, problems: Sequence[str], started: float, first: float
+    ) -> Reply | None:
+        """The answer to a second try, or None to keep the first. Never raises: a slow or
+        failed try leaves the quick answer as it is."""
+        message = _retry_message(prompt, previous, problems)
+        remaining = TOTAL_BUDGET_S - (self._clock() - started)
+        if self._second is not None and remaining >= SECOND_TRY_NEEDS_S:
+            limit = min(CALL_TIMEOUT_S, remaining - SECOND_TRY_MARGIN_S)
+            try:
+                return await self._call(message, self._second, limit)
+            except AIOutOfFunds:
+                log.warning("The sidebar's careful second try couldn't run: the AI is out of funds")
+                return None  # no other tier is asked; the quick answer stands
+            except AIError:
+                log.warning("The sidebar's careful second try failed; keeping the first answer")
+                return None
+        if self._clock() - first >= RETRY_SKIP_S:
+            return None  # the table has waited long enough
         try:
-            async with asyncio.timeout(CALL_TIMEOUT_S):
-                return await self._ai.complete(SYSTEM, prompt, max_tokens=MAX_TOKENS)
+            return await self._call(message)
+        except AIError:
+            log.warning("The sidebar's second try failed; cutting the first answer instead")
+            return None
+
+    async def _call(
+        self, prompt: str, ai: AIClient | None = None, limit: float = CALL_TIMEOUT_S
+    ) -> Reply:
+        client = ai or self._ai
+        try:
+            async with asyncio.timeout(limit):
+                reply = await client.complete(SYSTEM, prompt, max_tokens=MAX_TOKENS)
+                return reply if reply.model else replace(reply, model=client.model)
         except TimeoutError as exc:
-            log.warning("The sidebar's AI call took over %d seconds", CALL_TIMEOUT_S)
+            log.warning("The sidebar's AI call took over %d seconds", limit)
             raise AIError(TOO_SLOW) from exc
 
     def _done(self, answer: Answer, started: float, *, used_ai: bool = True) -> Answer:

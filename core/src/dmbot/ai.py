@@ -41,8 +41,8 @@ NEXT_DOWN = {AIModelTier.DEEP: AIModelTier.CAREFUL, AIModelTier.CAREFUL: AIModel
 
 
 class Feature(enum.StrEnum):
-    """The jobs that use the AI. Rules, cleaner and house rules are listed ahead of their
-    first use, so each already has its tier."""
+    """The jobs that use the AI. Rules, cleaner, house rules and the rules-alert check are
+    listed ahead of their first use, so each already has its tier."""
 
     NAMES = "names"  # Find names: a document into a names list
     TOPIC = "topic"  # the off-topic filter
@@ -51,17 +51,21 @@ class Feature(enum.StrEnum):
     RULES = "rules"  # rules checks and lookups
     CLEANER = "cleaner"  # transcript cleaning
     HOUSE_RULES = "house_rules"  # house-rule changes (by voice, typed, or from a file)
+    SIDEBAR_RETRY = "sidebar_retry"  # a second try when the quick answer fails its checks
+    RULES_CONFIRM = "rules_confirm"  # a rules alert's candidate, confirmed before the DM sees it
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
 FEATURE_TIERS = {
-    Feature.NAMES: AIModelTier.FAST,
+    Feature.NAMES: AIModelTier.CAREFUL,  # its proposals go into the campaign's memory
     Feature.TOPIC: AIModelTier.FAST,
     Feature.AUDIO_CHECK: AIModelTier.FAST,
     Feature.SIDEBAR: AIModelTier.FAST,
     Feature.RULES: AIModelTier.FAST,
     Feature.CLEANER: AIModelTier.FAST,
     Feature.HOUSE_RULES: AIModelTier.CAREFUL,
+    Feature.SIDEBAR_RETRY: AIModelTier.CAREFUL,
+    Feature.RULES_CONFIRM: AIModelTier.CAREFUL,  # (rules alerts: FAST spots, CAREFUL confirms)
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).

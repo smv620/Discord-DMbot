@@ -137,13 +137,15 @@ class Tiers(unittest.TestCase):
         self.assertEqual(
             FEATURE_TIERS,
             {
-                Feature.NAMES: AIModelTier.FAST,
+                Feature.NAMES: AIModelTier.CAREFUL,
                 Feature.TOPIC: AIModelTier.FAST,
                 Feature.AUDIO_CHECK: AIModelTier.FAST,
                 Feature.SIDEBAR: AIModelTier.FAST,
                 Feature.RULES: AIModelTier.FAST,
                 Feature.CLEANER: AIModelTier.FAST,
                 Feature.HOUSE_RULES: AIModelTier.CAREFUL,
+                Feature.SIDEBAR_RETRY: AIModelTier.CAREFUL,
+                Feature.RULES_CONFIRM: AIModelTier.CAREFUL,
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
