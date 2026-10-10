@@ -486,6 +486,39 @@ class Conflicts(TableTest):
         self.assertLessEqual(len(text), 2000)
 
 
+class TheFile(TableTest):
+    """The house-rules file follows a saved proposal (#969)."""
+
+    @staticmethod
+    def files(it: Any) -> list[Any]:
+        return [c for c in it.followup.send.await_args_list if "file" in c.kwargs]
+
+    async def test_save_sends_the_updated_file_to_the_one_who_pressed(self) -> None:
+        await self.deliver("house rule: potions are a bonus action")
+        it = self.interaction(content=self.posts[0][1])
+        await self.button(self.posts[0][2], "Save rule").callback(it)
+        (call,) = self.files(it)
+        self.assertTrue(call.kwargs["ephemeral"])
+        self.assertIn("Saved as house rule 1.", call.args[0])
+        self.assertIn("1. Potions are a bonus action", call.kwargs["file"].fp.read().decode())
+
+    async def test_replace_and_the_edit_form_send_it_too(self) -> None:
+        self.store.seed("Fireball burns scrolls")
+        await self.deliver("house rule: Fireball is a bonus action")
+        it = self.interaction(content=self.posts[0][1])
+        await self.button(self.posts[0][2], "Replace rule 1").callback(it)
+        (call,) = self.files(it)
+        self.assertIn("1. Fireball is a bonus action", call.kwargs["file"].fp.read().decode())
+
+    async def test_a_cancel_or_a_refusal_sends_no_file(self) -> None:
+        await self.deliver("house rule: potions are a bonus action")
+        it = self.interaction(PLAYER)
+        await self.button(self.posts[0][2], "Save rule").callback(it)
+        cancel = self.interaction()
+        await self.button(self.posts[0][2], "Cancel").callback(cancel)
+        self.assertEqual(self.files(it) + self.files(cancel), [])
+
+
 class Typed(TableTest):
     async def test_a_typed_rule_is_the_same_proposal_marked_typed(self) -> None:
         started = self.bot.sidebar_house_rule(

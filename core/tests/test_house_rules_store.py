@@ -24,6 +24,7 @@ from dmbot.rules.house import (
     HouseRuleStore,
 )
 from dmbot.sessions import SessionStore
+from dmbot.ui import house_file as file_ui
 from dmbot.ui import house_rules as ui
 from tests.pg import DatabaseTest
 from tests.test_memory_names import FakeResponse
@@ -658,7 +659,8 @@ class Command(HouseRulesTest):
         call = reading.followup.send.await_args
         text, kw = call.args[0], call.kwargs
         self.assertIn("1. A natural 20 doubles the damage dice", text)
-        self.assertIsNone(kw.get("view"))
+        labels = [str(c.label) for c in kw["view"].children]
+        self.assertEqual(labels, [file_ui.DOWNLOAD_LABEL])  # a download, and nothing to change
 
     async def test_a_player_with_a_form_in_hand_still_changes_nothing(self) -> None:
         number = await self.add("Crits double the dice")
