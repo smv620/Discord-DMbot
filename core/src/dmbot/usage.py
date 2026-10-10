@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from dmbot import campaign_cap, entitlements, hours, plans
+from dmbot import campaign_cap, entitlements, hours, plans, retention
 from dmbot.db import Conn, Database
 
 
@@ -100,6 +100,27 @@ async def campaign_room(
     rules are in `dmbot.campaign_cap`."""
     async with db.meter(guild_id, owner_user_id) as conn:
         return await campaign_cap.room(conn, owner_user_id, now)
+
+
+async def retention_standing(
+    db: Database, guild_id: int, owner_user_id: int, now: int
+) -> retention.Standing:
+    """Which plan's keep time applies to this owner's campaigns, and when it stopped paying
+    (#964). A working plan: its own. Free access and grants keep like the top plan (a year).
+    A plan that ended: its own keep time, with the lapse. No plan ever: Try It's. Reads only,
+    through the owner-scoped meter door (`usage.py` is the only module opening it)."""
+    async with db.meter(guild_id, owner_user_id) as conn:
+        plan, _grant, access = await entitlements.inputs(conn, owner_user_id, now)
+    if access.kind in ("free", "grant"):
+        return retention.Standing("guild", None, True)
+    if plan is None:
+        return retention.UNKNOWN
+    known = plans.load().get(plan.plan)
+    backups = bool(known and known.backups)
+    if plan.usable(now):
+        return retention.Standing(plan.plan, None, backups)
+    lapsed = plan.lapsed_at or plan.grace_ends_at or plan.period_end
+    return retention.Standing(plan.plan, lapsed, backups)
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,3 +369,8 @@ class Meter:
         self, guild_id: int, owner_user_id: int, now: int, live: list[str] | None = None
     ) -> Settled | None:
         return await settle_cap(self.db, guild_id, owner_user_id, now, live)
+
+    async def retention_standing(
+        self, guild_id: int, owner_user_id: int, now: int
+    ) -> retention.Standing:
+        return await retention_standing(self.db, guild_id, owner_user_id, now)

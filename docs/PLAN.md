@@ -1709,7 +1709,7 @@ background.
 - The DM can correct the clock with buttons ([+1 hour] [It's dawn] [Set time…]).
 
 *Built, part 1: the clock and the DM's buttons (2026-10-10, #965):* no AI, and no guessing time
-from narration. `game_clocks` (migration 0040): one row per campaign, in its own server scope,
+from narration. `game_clocks` (migration 0041): one row per campaign, in its own server scope,
 deleted with the campaign and carried in backups (`ClockSection`, without message ids); none
 until a DM sets it. **Game time** is minutes since the start of Day 1; dawn is 06:00, noon 12:00,
 dusk 18:00 (`dmbot.timebot.clock`, pure). A DM presses ⚙️ Settings, then **Game clock**, gives a
@@ -2071,6 +2071,26 @@ plan); because the function pauses each campaign once, there is no second messag
 private message can't be sent, the start refusal still says the campaign is paused. Fails
 open like the other plan checks. **Enforcement (`DMBOT_ENFORCE_PLANS`) may go on only after
 this is live** (migration 0037, core and web-api).
+
+*Built, part 5: retention (2026-10-10, #964):* `dmbot.retention`, a daily job at 03:00 UTC (the
+bot's own loop; safe to run twice). A campaign's **delete date** is its last session plus its
+owner's plan's `keepAfterLastSession` (Try It 60 days, Table 6 months, the others a year), or
+the plan's lapse plus 120 days, whichever is first; free access and grants keep like the top
+plan; a campaign with **no owner** is kept by Try It's rule (DMbot doesn't know a last owner's
+plan), and its DMs get the warnings. A paused campaign follows the same rules, and a campaign
+in a running session is skipped. The owner gets a private message 14 days and 3 days before
+(`deletionWarningDaysBefore`), each once: the stage and the date it was sent for are kept on the
+campaign (`retention_warned_stage`, `retention_warned_for`, migration 0039), so a restart doesn't
+repeat one and playing a session (which moves the date) starts them over. Deletion is the
+existing `CampaignStore.delete`, then the owner is told once; the log has counts only. The job
+runs per server (the bot's own servers), reading across servers only the owner's plan, through
+`usage.retention_standing`'s owner-scoped door; a plan that can't be read means that campaign is
+left alone. **A campaign is only deleted after its last warning:** one already past its date when
+first seen (the first run after deploy, a long outage) gets a warning and is deleted three days
+later, and playing a session, or restoring a backup (which starts the clock from now), cancels
+it; the job looks again right before each delete. **Safety:** behind `DMBOT_ENFORCE_PLANS` (off: no warnings, no deletion, one dry-run
+log line with counts); a run that would delete more than 10% of all campaigns (and more than
+3, so a small deployment isn't stuck on one old campaign) stops and logs an error instead, before any warning goes out; at most 300 warnings go out per run (the rest wait a day).
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
