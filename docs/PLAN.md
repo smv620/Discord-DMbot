@@ -1714,16 +1714,15 @@ deleted with the campaign and carried in backups (`ClockSection`, without messag
 until a DM sets it. **Game time** is minutes since the start of Day 1; dawn is 06:00, noon 12:00,
 dusk 18:00 (`dmbot.timebot.clock`, pure). A DM presses ⚙️ Settings, then **Game clock**, gives a
 day and an hour, and DMbot posts and pins one message, "🕰️ Day 4, afternoon (14:30)", edited in
-place, with **+10 min**, **+1 hour**, **Short rest** (+1 h), **Long rest** (+8 h), **It's dawn**
+place, with **+10 min**, **+1 hour**, **Short rest** (+1 h), **Long rest** (+8 h), **Skip to dawn**
 and **Set time…**. Only the campaign's DMs can press them: checked on every press, in the same
 database transaction as the change; the buttons survive a restart. **Said at the table:** a
 DM's clear "we take a short rest" / "you take a long rest" (a strict phrase list: a question, a
 wish, an "if", a "can't" or a long ramble never counts; the same rest twice in five minutes is
-one) moves a clock the DM has set, with a one-line note and **Undo** (it only undoes while the
-clock is still where the rest left it); a player's line never does. **Speaks up only for** dawn,
+one) moves a clock the DM has set, with a one-line note and **Undo** (a rest from a button gets its note and Undo for the DM who
+pressed it alone; it only undoes while the clock is still where the rest left it); a player's line never does. **Speaks up only for** dawn,
 noon and dusk as a button or rest passes them (not when the DM sets the time), and **24 hours
-without a long rest**, once per stretch, with its source (Xanathar's, optional rule: the DM
-decides); on by default, and off if the DM turns the "Going without a long rest" optional rule
+without a long rest**, once per stretch, with its source ("Check: 24 hours since the last long rest… Optional rule, Xanathar's… Your call."); on by default, and off if the DM turns the "Going without a long rest" optional rule
 off. The first time the clock is set the party counts as rested then. Not built yet: effect
 durations, split-party clocks, reading time from narration, periodic notes.
 

@@ -13,6 +13,7 @@ Register with `bot.add_dynamic_items(ClockButton, ClockUndoButton)`.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import re
@@ -34,22 +35,28 @@ NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 NO_REST_RULE = "xge-no-long-rest"  # the optional rule the 24-hour line follows
 
-SET_FIRST = "Set the time first: press **Set time…** and give the day and the hour."
+SET_FIRST = (
+    "The clock isn't set yet. Press **Game clock** in ⚙️ Settings and give the day and the hour."
+)
 GONE = "That campaign isn't here any more."
 FAILED = "Sorry, that didn't save. Please try again."
-BAD_TIME = "That isn't a time DMbot can use. Give a day (1 or more) and an hour (0 to 23)."
+BAD_TIME = "Couldn't read that time. Press **Set time…** again and try day 4, time 14 (or 14:30)."
 ALREADY_SHOWN = "The clock is already pinned in the DM screen: {where}"
 NEEDS_SCREEN = "This campaign has no DM screen yet. Run `/dmbot start` once first."
-OFF_SCREEN = "I couldn't post the clock in the DM screen. Check that I can post there."
+OFF_SCREEN = (
+    "I can't post in the DM screen. Give DMbot **Send Messages** there, then press "
+    "**Game clock** again."
+)
+SET_DONE = "🕰️ Clock set to {label}. It's pinned here: {where}"
 
 ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     # id: (label, emoji, style, row)
-    "m10": ("+10 min", "⏱️", discord.ButtonStyle.secondary, 0),
+    "m10": ("+10 min", "⏱️", discord.ButtonStyle.primary, 0),
     "h1": ("+1 hour", "⏱️", discord.ButtonStyle.secondary, 0),
-    "short": ("Short rest", "🛌", discord.ButtonStyle.secondary, 0),
+    "set": ("Set time…", "🕰️", discord.ButtonStyle.secondary, 0),
+    "short": ("Short rest", "🛌", discord.ButtonStyle.secondary, 1),
     "long": ("Long rest", "🌙", discord.ButtonStyle.secondary, 1),
-    "dawn": ("It's dawn", "🌅", discord.ButtonStyle.secondary, 1),
-    "set": ("Set time…", "🕰️", discord.ButtonStyle.primary, 1),
+    "dawn": ("Skip to dawn", "🌅", discord.ButtonStyle.secondary, 1),
 }
 MARK_LINES = {"dawn": "🌅 Dawn", "noon": "☀️ Noon", "dusk": "🌇 Dusk"}
 
@@ -107,7 +114,9 @@ async def press(
     """Do one thing to the clock. Raises CampaignError (plain words) if the person isn't a
     DM of the campaign. The 24-hour line is worked out here, once, in the same change."""
     store: ClockStore = client.clocks
-    tired_on = await _tired_rule_on(client, guild_id, campaign_id)
+    tired_on = action in ("m10", "h1", "short", "long") and await _tired_rule_on(
+        client, guild_id, campaign_id
+    )
     result = Result(None, None)
 
     def change(current: Clock | None) -> Clock | None:
@@ -134,8 +143,8 @@ def tired_line(clock: Clock) -> str:
     rule = optional.rule(NO_REST_RULE)
     source = rule.source if rule else "an optional rule"
     return (
-        f"😴 24 hours without a long rest (the last was {game.short_label(clock.last_long_rest)}). "
-        f"Optional rule, {source}: the DM decides if it applies."
+        f"😴 Check: 24 hours since the last long rest ({game.short_label(clock.last_long_rest)}). "
+        f"Optional rule, {source}. Your call."
     )
 
 
@@ -162,10 +171,16 @@ async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Messa
     text, view = clock_text(stored.clock), clock_view(campaign.id)
     channel = client.get_channel(stored.channel_id) if stored.channel_id else None
     if isinstance(channel, discord.abc.Messageable) and stored.message_id:
-        with contextlib.suppress(discord.HTTPException):
+        try:
             message = await channel.fetch_message(stored.message_id)
             await message.edit(content=text, view=view, allowed_mentions=NO_PINGS)
             return message
+        except discord.NotFound:
+            pass  # the pinned message was deleted: post a new one below
+        except discord.HTTPException:
+            # A hiccup (rate limit, Discord error): don't pile a second clock beside it.
+            log.warning("Couldn't edit the pinned clock message")
+            return None
     if campaign.dm_screen_channel_id is None:
         return None
     message = await client.post_message(campaign.dm_screen_channel_id, text, view)
@@ -205,10 +220,10 @@ def parse_time(day: str, hour: str) -> int | None:
 
 class SetTimeForm(discord.ui.Modal):
     day: discord.ui.TextInput[SetTimeForm] = discord.ui.TextInput(
-        label="Day", placeholder="4", max_length=5
+        label="Day (1 or higher)", placeholder="4", max_length=5
     )
     hour: discord.ui.TextInput[SetTimeForm] = discord.ui.TextInput(
-        label="Hour (0 to 23, or 14:30)", placeholder="14", max_length=5
+        label="Time (14 or 14:30)", placeholder="14:30", max_length=5
     )
 
     def __init__(self, campaign_id: str, clock: Clock | None = None) -> None:
@@ -227,10 +242,21 @@ class SetTimeForm(discord.ui.Modal):
         await run_press(interaction, self.campaign_id, "set", set_to=minute)
 
 
+_locks: dict[str, asyncio.Lock] = {}  # one press at a time per campaign, so the pinned
+# message always ends up showing the latest time (the database already keeps the count right)
+
+
 async def run_press(
     interaction: discord.Interaction, campaign_id: str, action: str, *, set_to: int | None = None
 ) -> None:
     """A press after the interaction was answered: change the clock, show it, say the lines."""
+    async with _locks.setdefault(campaign_id, asyncio.Lock()):
+        await _run_press(interaction, campaign_id, action, set_to)
+
+
+async def _run_press(
+    interaction: discord.Interaction, campaign_id: str, action: str, set_to: int | None
+) -> None:
     client: Any = interaction.client
     guild = interaction.guild
     campaign = await client.campaigns.get(guild.id, campaign_id) if guild else None
@@ -258,20 +284,27 @@ async def run_press(
     message = await _show_here(interaction, client, campaign, stored)
     if message is None:
         await _reply(interaction, OFF_SCREEN)
-    undo = None
-    if result.before is not None and action in ("short", "long"):
-        undo = undo_id(result.before, result.after)
-    await say(
-        client,
-        campaign,
-        result.lines + ([] if undo is None else [rest_note(action, result.after)]),
-        undo,
-    )
+    elif action == "set" and interaction.message is None:
+        # The form saved: the DM's own screen shows nothing else, so say where the clock is.
+        await _reply(
+            interaction,
+            SET_DONE.format(label=game.short_label(result.after.minute), where=message.jump_url),
+        )
+    await say(client, campaign, result.lines)  # dawn, noon, dusk, tired: on the DM screen
+    if result.before is not None and action in ("short", "long", "dawn"):
+        # The DM who pressed sees the clock change; the note with Undo is for them alone.
+        note = rest_note(action, result.after)
+        view = discord.ui.View(timeout=None)
+        view.add_item(ClockUndoButton(campaign.id, undo_id(result.before, result.after)))
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.followup.send(note, view=view, ephemeral=True)
 
 
 def rest_note(action: str, clock: Clock) -> str:
-    kind = "Short" if action == "short" else "Long"
-    return f"🛌 {kind} rest. Now {game.short_label(clock.minute)}."
+    if action == "dawn":
+        return f"🌅 Skipped to dawn. Now {game.short_label(clock.minute)}."
+    kind, emoji = ("Short", "🛌") if action == "short" else ("Long", "🌙")
+    return f"{emoji} {kind} rest. Now {game.short_label(clock.minute)}."
 
 
 async def _show_here(
@@ -353,14 +386,16 @@ class ClockButton(
     async def _form_or_show(
         self, interaction: discord.Interaction, client: Any, guild_id: int
     ) -> None:
-        campaign = await client.campaigns.get(guild_id, self.campaign_id)
-        if campaign is None:
-            await _reply(interaction, GONE)
-            return
-        if interaction.user.id not in campaign.dm_user_ids:  # checked again when it saves
-            await _reply(interaction, "Only this campaign's DMs can use the clock.")
-            return
-        stored = await client.clocks.get(guild_id, campaign.id)
+        # A form can't be put off with "thinking…": it must open within Discord's 3 seconds.
+        async with asyncio.timeout(2):
+            campaign = await client.campaigns.get(guild_id, self.campaign_id)
+            if campaign is None:
+                await _reply(interaction, GONE)
+                return
+            if interaction.user.id not in campaign.dm_user_ids:  # checked again when it saves
+                await _reply(interaction, "Only this campaign's DMs can use the clock.")
+                return
+            stored = await client.clocks.get(guild_id, campaign.id)
         if self.action == "set" or stored is None:
             await interaction.response.send_modal(
                 SetTimeForm(campaign.id, None if stored is None else stored.clock)
@@ -374,6 +409,13 @@ class ClockButton(
             )
             return
         await _reply(interaction, ALREADY_SHOWN.format(where=message.jump_url))
+
+
+class SimpleGuild:
+    """Just the server's id (the undo works from it alone)."""
+
+    def __init__(self, guild_id: int) -> None:
+        self.id = guild_id
 
 
 def undo_id(before: Clock, after: Clock) -> str:
@@ -409,11 +451,19 @@ class ClockUndoButton(
         return cls(match["campaign"], f"{match['before']}:{match['rest']}:{match['after']}")
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        client: Any = interaction.client
         guild = interaction.guild
         if guild is None:
             return
         await interaction.response.defer()
+        try:
+            await self._undo(interaction, guild.id)
+        except Exception:
+            log.exception("Undoing a game clock change failed")
+            await _reply(interaction, FAILED)
+
+    async def _undo(self, interaction: discord.Interaction, guild_id: int) -> None:
+        client: Any = interaction.client
+        guild = SimpleGuild(guild_id)
         campaign = await client.campaigns.get(guild.id, self.campaign_id)
         if campaign is None:
             await _reply(interaction, GONE)

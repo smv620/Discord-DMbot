@@ -14,7 +14,7 @@ Rest = Literal["short", "long"]
 _SAYS = re.compile(
     r"\b(?:we|you|you all|you guys|everyone|the party|the group)\s+"
     r"(?:(?:all|now|then|each)\s+)?"
-    r"(?:take|took|taking|finish|finished|have|had|settle in for|settled in for|get|got)\s+"
+    r"(?:take|taking|finish|finished)\s+"
     r"(?:a|an|your)\s+(short|long)\s+rest\b",
     re.IGNORECASE,
 )
@@ -22,7 +22,7 @@ _SAYS = re.compile(
 _NOT_A_REST = re.compile(
     r"\b(?:if|can|can't|cannot|couldn't|could|can not|don't|do not|won't|will not|unless|"
     r"want|wants|wanna|should|shouldn't|would|wouldn't|when|before|after|until|need|needs|"
-    r"may|might|maybe|let's|lets|why|how|what|whether|try|tried|trying|no|not|never|"
+    r"may|might|maybe|let's|lets|why|how|what|whether|try|tried|trying|no|not|never|took|had|last|earlier|yesterday|ago|later|tomorrow|says|said|tells|told|will|going|gonna|"
     r"instead of|rather than)\b",
     re.IGNORECASE,
 )

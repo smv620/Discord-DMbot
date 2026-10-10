@@ -102,9 +102,10 @@ class Phrases(unittest.TestCase):
         for line, kind in (
             ("We take a short rest.", "short"),
             ("you take a long rest", "long"),
-            ("The party takes a long rest" if False else "the party took a long rest", "long"),
+            ("  YOU take a LONG rest.  ", "long"),
             ("Okay, you all finish a short rest", "short"),
             ("everyone settles in for a long rest", None),  # "settles" isn't in the list
+            ("the party took a long rest", None),  # a rest that is over is not one now
         ):
             self.assertEqual(phrases.find(line), kind, line)
 
@@ -120,6 +121,11 @@ class Phrases(unittest.TestCase):
             "after you take a long rest we move on",
             "we should take a long rest",
             "short rest",
+            "the party took a long rest last week",
+            "you had a short rest earlier",
+            "you have a long rest ahead of you",
+            "the innkeeper says we take a long rest",
+            "you will take a long rest tomorrow",
             "",
         ):
             self.assertIsNone(phrases.find(line), line)
@@ -221,7 +227,7 @@ class Clocks(DatabaseTest):
         tired = [x for x in lines if "24 hours" in x]
         self.assertEqual(len(tired), 1)
         self.assertIn("Xanathar", tired[0])
-        self.assertIn("DM decides", tired[0])
+        self.assertIn("Your call", tired[0])
         again = await self.press("long")
         self.assertFalse(any("24 hours" in x for x in again.lines))
         more: list[str] = []
@@ -382,3 +388,27 @@ class AtTheTable(Clocks):
         await self.press("set", set_to=NOON4)
         await self.bot._note_clock_phrase(cast(Any, self.table), DM, "do you take a long rest?")
         self.assertEqual(await self.minute(), NOON4)
+
+
+class Wiring(unittest.TestCase):
+    def test_the_button_ids_fit_discord_and_match_their_own_templates(self) -> None:
+        cid = "0123456789abcdef0123456789abcdef"
+        for action in (*ui.ACTIONS, "open"):
+            custom_id = ui.ClockButton(cid, action).item.custom_id
+            assert custom_id is not None and len(custom_id) <= 100
+            self.assertIsNotNone(
+                ui.ClockButton.__discord_ui_compiled_template__.fullmatch(custom_id)
+            )
+        spec = ui.undo_id(Clock(game.MAX_MINUTE, game.MAX_MINUTE), Clock(game.MAX_MINUTE, 0))
+        custom_id = ui.ClockUndoButton(cid, spec).item.custom_id
+        assert custom_id is not None and len(custom_id) <= 100
+        self.assertIsNotNone(
+            ui.ClockUndoButton.__discord_ui_compiled_template__.fullmatch(custom_id)
+        )
+
+    def test_five_buttons_at_most_to_a_row(self) -> None:
+        rows: dict[int, int] = {}
+        for _label, _emoji, _style, row in ui.ACTIONS.values():
+            rows[row] = rows.get(row, 0) + 1
+        self.assertTrue(all(n <= 5 for n in rows.values()))
+        self.assertEqual(sorted(rows), [0, 1])
