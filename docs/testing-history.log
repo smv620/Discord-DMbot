@@ -1760,3 +1760,23 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     action" to DMbot in the private chat; DMbot answers "It's on your DM screen now..."; press
     Save in #dm-screen; /dmbot houserules shows it as "Typed by the DM". Typing the same words
     again says it was already offered.
+
+==============================================================================
+2026-10-10  Server: deploy d7c3aca, core only (dev1)
+==============================================================================
+  - 03:58 UTC  development @ d7c3aca, core: #985 (plan rules part 5: retention). A daily job
+    at 03:00 UTC that warns an owner 14 and 3 days before a campaign's keep date and deletes
+    a campaign only after its last warning went out; a guard stops a run that would delete
+    more than 10% of all campaigns (and more than 3). Behind DMBOT_ENFORCE_PLANS: with it
+    off (as now) there are no warnings and no deletion, only one dry-run log line with
+    counts. It had no queue line; its PR page said "migration, core only. Nothing happens
+    until DMBOT_ENFORCE_PLANS is on".
+  - Migration 0039_retention (columns on campaigns with defaults; applied). Backup first
+    (35 tables); no session was live; scripts/update-env had nothing to add;
+    `up -d --no-build core` naming the service (web-api and ears untouched). Logs:
+    "Database updated: 0039_retention", "Connected to 1 server(s)", "ears connected"; 0
+    errors; /health 404.
+  - To check after the first 03:00 UTC run (2026-10-11): ONE dry-run line with counts and no
+    ERROR in the core log. Before DMBOT_ENFORCE_PLANS is turned on at go-live (#498): the
+    one test campaign has no owner, so retention would treat it by Try It's rule and warn its
+    DMs when its keep date nears; read the dry-run counts first.
