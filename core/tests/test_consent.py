@@ -142,6 +142,19 @@ class TermsVersionTests(DatabaseTest):
         self.assertEqual(await fresh.consenting(1), frozenset({2, 3}))
         self.assertEqual(await fresh.outdated(1, [2]), set())
 
+    async def test_a_yes_from_before_the_minimum_age_wording_is_asked_again(self) -> None:
+        # #1018: version 4 is "16 or older". A yes given under version 3 (no age) is not
+        # recorded until they press the new button.
+        await self.store.grant(1, 2)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE consent SET terms_version = 3 WHERE user_id = 2")
+        fresh = ConsentStore(self.db)
+        self.assertEqual(TERMS_VERSION, 4)
+        self.assertEqual(await fresh.consenting(1), frozenset())
+        self.assertEqual(await fresh.outdated(1, [2]), {2})  # the join asks again
+        await fresh.grant(1, 2)  # presses "I'm 16 or older, record me"
+        self.assertEqual(await fresh.consenting(1), frozenset({2}))
+
     async def test_stopping_removes_an_older_yes_too(self) -> None:
         await self.store.grant(1, 2)
         async with self.db.guild(1) as conn:

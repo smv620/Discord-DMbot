@@ -622,10 +622,14 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   **Built for the switch to an outside company (#170):** each yes records whether the
   request said another company writes things down. While the server uses one
   (`TRANSCRIBER=deepgram` or `cloud`), only those yeses count; everyone else isn't
-  recorded and gets the question again. An old "I consent" button from before the switch
+  recorded and gets the question again. An old consent button from before the switch
   shows the new question instead of saving a yes. The general terms version (#35) still
   covers other wording changes.
-  It has a **✅ I consent** button (#33).
+  It has a **✅ I'm 16 or older, record me** button (#33).
+  **Minimum age 16 (owner, 2026-10-10); the consent button confirms it** (#1018): the request
+  says "You must be 16 or older to be recorded.", no age or birthdate is stored, and the
+  terms version went up (4), so earlier yeses are asked again at the next join. Someone under
+  16 has no button for it: they don't press it and nothing of theirs is captured.
 - **Consent carries over** between sessions, per server. In **every session**, a consented
   person gets one short private reminder with the date they consented, plus a
   **⚙️ Menu** button (#33, #34; the menu replaced a red 🛑 button, below). Rejoining in

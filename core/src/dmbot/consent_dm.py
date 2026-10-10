@@ -28,6 +28,7 @@ from typing import Any, Literal, Protocol
 import discord
 
 from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, TERMS_VERSION, ConsentMethod
+from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, MIN_AGE
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,6 @@ NO_PINGS = discord.AllowedMentions.none()
 _GUILD = r"(?P<guild>[0-9]{1,20})"
 _CAMPAIGN = r"(?P<campaign>[0-9a-f]{32}|-)"
 
-CONSENT_LABEL = "I consent"
 DECLINE_LABEL = "No thanks"
 STOP_LABEL = "Stop recording me"
 MENU_LABEL = "Menu"  # with the ⚙️ emoji
@@ -104,9 +104,8 @@ def _date(timestamp: int) -> str:
 # Says what changed in the current consent.TERMS_VERSION; rewrite it when that goes up.
 # It explains rather than adds terms, so it isn't part of the pinned wording.
 RENEWED = (
-    "**What's new:** DMbot's helper now sends the text of what you say, with who said it, "
-    "to an AI company (Anthropic) to give your DM notes. It isn't used to train their AI. "
-    "You agreed before this change, so DMbot is asking you again. It won't record you "
+    f"**What's new:** you must be {MIN_AGE} or older to be recorded, and the button now says "
+    "so. You agreed before this change, so DMbot is asking you again. It won't record you "
     "until you say yes."
 )
 # The AI that reads the text, said once for every helper (#52; TERMS_VERSION 3).
@@ -152,6 +151,7 @@ def request_text(
     lines += [
         "DMbot listens and gives the DM private notes. It never talks in the game and never "
         "decides anything. Your DM does.",
+        AGE_LINE,
         f"• **{CONSENT_LABEL}:** DMbot records what you say and turns it into text. "
         "Anyone in this server can read and download that text. It stays there even if you "
         f"stop later. {AI_NOTE}",

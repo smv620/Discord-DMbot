@@ -5,6 +5,7 @@ import unittest
 
 from dmbot.consent import TERMS_VERSION
 from dmbot.consent_dm import RENEWED, reminder_text, request_text
+from dmbot.consent_words import CONSENT_LABEL
 from dmbot.ui.logic import HELP_TEXT
 
 # The request as people see it, under TERMS_VERSION. If this test fails you changed the
@@ -14,8 +15,8 @@ from dmbot.ui.logic import HELP_TEXT
 # may a change to a version nobody can have agreed to yet (not deployed).
 # The "What's new" note for people asked again (consent_dm.RENEWED) explains a change
 # rather than adding terms, so it isn't part of the fingerprint.
-PINNED_VERSION = 3  # #52: "with who said it" added before version 3 was live
-PINNED_FINGERPRINT = "bcb62efd5252d63d92d31695ae2009b989aa97acbfa1c0241158806fab733b23"
+PINNED_VERSION = 4  # #1018: "You must be 16 or older to be recorded." and the button says so
+PINNED_FINGERPRINT = "0aaf5ad5441f6e5b7ec1a57be1fbaa3fa70f77151d39c80d4f537f38a037c02e"
 
 
 def fingerprint() -> str:
@@ -48,11 +49,34 @@ class TermsVersion(unittest.TestCase):
             "An AI company (Anthropic) reads the text, with who said it, to give your DM notes",
             reminder,
         )
-        # The note for people asked again, and /dmbot help, say the same (#52).
-        self.assertIn("with who said it", RENEWED)
+        # /dmbot help says the same (#52).
         self.assertIn("with who said it", HELP_TEXT)
         self.assertIn("isn't used to train their AI", HELP_TEXT)
         self.assertIn("isn't used to train their AI", reminder)
+
+    def test_the_request_and_the_button_ask_for_the_minimum_age(self) -> None:
+        # Owner, 2026-10-10 (#1018): DMbot's minimum age is 16, and pressing the button
+        # confirms it. Nothing about age is stored.
+        for text in (
+            request_text("Server", voice="Table", dm="Dee", cloud=False),  # the private message
+            request_text("Server", voice=None, dm=None, cloud=True, renewed=True),  # /consent give
+        ):
+            self.assertIn("You must be 16 or older to be recorded.", text)
+            self.assertIn(f"**{CONSENT_LABEL}:**", text)
+        self.assertIn("16", CONSENT_LABEL)
+        self.assertLessEqual(len(CONSENT_LABEL), 80)  # Discord's limit for a button
+        self.assertIn(f"**{CONSENT_LABEL}**", HELP_TEXT)
+        self.assertIn("16 or older", HELP_TEXT)
+
+    def test_the_note_for_people_asked_again_says_why(self) -> None:
+        self.assertIn("16 or older", RENEWED)
+        self.assertIn("asking you again", RENEWED)
+        self.assertIn("won't record you until you say yes", RENEWED)
+
+    def test_nobody_is_asked_for_an_age_or_a_birthdate(self) -> None:
+        text = request_text("Server", voice=None, dm=None, cloud=False).casefold()
+        for word in ("birth", "how old are you", "enter your age", "date of"):
+            self.assertNotIn(word, text)
 
     def test_the_request_says_who_can_read_it(self) -> None:
         self.assertIn(
