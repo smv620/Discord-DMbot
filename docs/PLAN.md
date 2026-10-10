@@ -2230,6 +2230,30 @@ pricing on roughly 36–60 speech-minutes per hour, Claude Haiku for the AI feat
 hosting); to be measured with the twin and run 8 before the promotion to `main`.
 Discord servers cost nothing and are not counted.
 
+**AI models by task (owner, 2026-10-10).** DMbot uses three tiers of Claude model, each picked
+for the job:
+- **Fast (Haiku):** simple tasks: transcript cleaning, the off-topic filter, Find names,
+  rules checks and rules lookups, the DM sidebar's quick answers.
+- **Careful (Sonnet):** changing the house rules (by voice, typed, or from the linked file).
+- **Deep (Opus):** reasoning over the whole story: PlotBot (threads, promises, summaries,
+  the pre-session note) and continuity warnings.
+
+How it's built:
+- Each tier is one `.env` setting (`AI_MODEL_FAST`, `AI_MODEL_CAREFUL`, `AI_MODEL_DEEP`). The
+  code's defaults are fixed model ids, one per family, changed by a PR; dev1 can override
+  one in `.env` without a code change. `AI_MODEL` stays for one release as the fast tier's
+  old name.
+- Each feature names its tier, never a model.
+- A tier whose model is refused (not found, or no access) falls back to the next tier down,
+  logs it once, and never stops the table.
+- Each task stays on one model, so prompt caching keeps working: the cache is kept per model.
+- Opus costs several times what Haiku does, so deep-tier work runs in batches (at a break,
+  at session end, or when the DM asks), never on every transcript line.
+- Usage is logged per tier (tokens in and out, no content), so the cost basis above can be
+  re-measured per tier.
+- The sidebar check (`python -m dmbot.devtools.sidebar_check`) records which model answered.
+  A tier's model changes only after its checks pass on the new model.
+
 **D&D Beyond character sheets (plan, 2026-10-08; phase 7 part A can start now).**
 Each player links their own sheet, privately: the consent message gains a "Link my
 character" button that opens a form for the link, and the DM's "Add a player's
