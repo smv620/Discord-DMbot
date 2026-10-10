@@ -19,6 +19,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 import discord
+from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.logs import set_log_context
@@ -27,6 +28,7 @@ from dmbot.rules.house import RULE_MAX, HouseRule, HouseRuleError, HouseRuleStor
 
 if TYPE_CHECKING:
     from dmbot.rules.house_voice import Proposal
+from dmbot.ui import house_file as file_ui
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
@@ -222,6 +224,10 @@ class ListMenu(_Menu):
             self.add_item(_Button(self._newer, label=NEWER_LABEL))
         if page < len(shown) - 1:
             self.add_item(_Button(self._older, label=OLDER_LABEL))
+        if rules:  # nothing to download before the first rule
+            self.add_item(_Button(self._download, label=file_ui.DOWNLOAD_LABEL))
+        if is_dm:
+            self.add_item(_Button(self._file, label=file_ui.FILE_LABEL))
         if not is_dm or not rules:
             return
         on_page = [rules[place] for place in shown[page]]
@@ -256,6 +262,13 @@ class ListMenu(_Menu):
 
     async def _add(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(AddForm(self.campaign))
+
+    async def _download(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction)  # a new private message; the list stays as it is
+        await file_ui.send_download(interaction, self.campaign)
+
+    async def _file(self, interaction: discord.Interaction) -> None:
+        await file_ui.open_menu(interaction, self.campaign)
 
     async def _newer(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page - 1)
@@ -345,6 +358,8 @@ class ConfirmRemove(_Menu):
         if gone is not None:  # the words in full, to copy back if it was a mistake: first,
             await _tell(interaction, removed_words(gone))  # so they're never lost
         await _redraw(interaction, c, note=note, page=self.page)
+        if gone is not None:
+            await file_ui.send_after_change(interaction, c, note)
 
     async def _keep(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page)
@@ -405,6 +420,7 @@ class _RuleForm(discord.ui.Modal):
                 await _redraw(interaction, self.campaign, page=self.page)
             return
         await _redraw(interaction, self.campaign, note=note, page=self.page)
+        await file_ui.send_after_change(interaction, self.campaign, note)
 
     def typed(self) -> str:
         """The form is closed by the time a refusal comes: give both boxes back, whole
@@ -459,6 +475,7 @@ class OverrideForm(AddForm, title="Add a house rule"):
         await _tell(
             interaction, f"{note} Everyone in the server can read it. See all: `/dmbot houserules`."
         )
+        await file_ui.send_after_change(interaction, self.campaign, note)
 
 
 class ProposalForm(AddForm, title="Edit before saving"):
@@ -510,10 +527,11 @@ class ProposalForm(AddForm, title="Edit before saving"):
         note = f"✅ Saved as house rule {saved.number}."
         if interaction.message is None:
             await interaction.response.send_message(note, ephemeral=True)
-            return
-        await interaction.response.edit_message(
-            content=f"{interaction.message.content}\n{note}", view=None
-        )
+        else:
+            await interaction.response.edit_message(
+                content=f"{interaction.message.content}\n{note}", view=None
+            )
+        await file_ui.send_after_change(interaction, c, note)
 
 
 class EditForm(_RuleForm, title="Edit a house rule"):
@@ -588,7 +606,10 @@ class CampaignChoice(_Menu):
     name="houserules",
     description="See this campaign's house rules (its DM can add, edit or remove them)",
 )
-async def dmbot_house_rules(interaction: discord.Interaction) -> None:
+@app_commands.describe(
+    link="DMs only: the share link of your house-rules file, to compare it with DMbot's rules"
+)
+async def dmbot_house_rules(interaction: discord.Interaction, link: str | None = None) -> None:
     guild = interaction.guild
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)
@@ -606,6 +627,12 @@ async def dmbot_house_rules(interaction: discord.Interaction) -> None:
         current = mine[0]
     if current is None and len(everyone) == 1:
         current = everyone[0]
+    if link is not None and current is not None:
+        await file_ui.link_file(interaction, current, link)  # (the DMs only: it checks)
+        return
+    if link is not None:
+        await _tell(interaction, file_ui.PICK_FIRST)
+        return
     if current is not None:
         await show_list(interaction, current, first=True)
         return

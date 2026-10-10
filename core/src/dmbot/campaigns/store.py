@@ -589,6 +589,18 @@ class CampaignStore:
             )
             return await self._require(conn, guild_id, campaign_id)
 
+    async def set_retention_warned(
+        self, guild_id: int, campaign_id: str, stage: int, delete_at: int | None
+    ) -> None:
+        """Remember that the retention warning of this stage went out for this delete date
+        (#964), so it isn't sent twice."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET retention_warned_stage = %s, retention_warned_for = %s"
+                " WHERE guild_id = %s AND id = %s",
+                (stage, delete_at, guild_id, campaign_id),
+            )
+
     async def set_last_voice_channel(
         self, guild_id: int, campaign_id: str, channel_id: int | None
     ) -> Campaign:
@@ -1059,6 +1071,9 @@ class CampaignStore:
         # other servers) carries on, and before the transaction, so no locks are held
         # meanwhile (#164).
         info, sections = await asyncio.to_thread(self._checked, data)
+        # Restoring counts as using the campaign: the retention clock starts from now, so a
+        # copy of an old campaign isn't deleted by the next daily run (#964).
+        restored_at = int(self._clock())
         async with self._db.guild(guild_id) as conn:
             if replace_campaign_id is not None:
                 await self._lock(conn, guild_id, replace_campaign_id)
@@ -1080,7 +1095,7 @@ class CampaignStore:
                         info["target_ruleset"],
                         info["fallback_ruleset"],
                         info["optional_rules_default"],
-                        info["last_played_at"],
+                        restored_at,
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
                         info["rules_cards"],
@@ -1101,7 +1116,7 @@ class CampaignStore:
                         info["fallback_ruleset"],
                         info["optional_rules_default"],
                         info["created_at"],
-                        info["last_played_at"],
+                        restored_at,
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
                         importer_id,
@@ -1263,6 +1278,12 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         owner_user_id=row_int(row, "owner_user_id"),
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
         paused=bool(row.get("paused", False)),
+        retention_warned_stage=int(row.get("retention_warned_stage", 0) or 0),
+        retention_warned_for=(
+            int(row["retention_warned_for"])
+            if row.get("retention_warned_for") is not None
+            else None
+        ),  # older schemas (tests) have none
     )
 
 

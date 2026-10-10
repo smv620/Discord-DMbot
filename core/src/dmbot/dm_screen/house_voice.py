@@ -235,6 +235,10 @@ async def press(
             return
         raise
     await _finish(interaction, note)
+    # Imported here: `ui.house_file` leads back to this module through `ui.dmbot_commands`.
+    from dmbot.ui import house_file as file_ui
+
+    await file_ui.send_after_change(interaction, campaign, note)
 
 
 async def _replace(store: Any, campaign: Any, user_id: int, proposal: Proposal) -> str:

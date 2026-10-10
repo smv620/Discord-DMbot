@@ -1001,6 +1001,15 @@ PAYMENT_EVENT_SUBSCRIPTION = """
     ALTER TABLE payment_events ADD COLUMN subscription_id TEXT;
 """
 
+PAYMENT_EVENT_KIND = """
+    -- What each recorded payment event was (#922): the 7-day grace after a failed payment
+    -- is only for someone who has paid before, and that is read from here. Rows from
+    -- before this have no kind and count as paid (the writer reads NULL that way), so
+    -- anyone recorded earlier keeps grace and still lapses when the plan ends. There is
+    -- no backfill: nothing here changes a row.
+    ALTER TABLE payment_events ADD COLUMN kind TEXT;
+"""
+
 # The website's role is held to its session's servers by these RESTRICTIVE policies
 # (ANDed with each table's own), made `TO dmbot_web` so the bot's role never runs them
 # and any role that is a member of dmbot_web is held too. Database.migrate (re)makes them
@@ -1203,6 +1212,23 @@ RULES_CARDS = """
     ALTER TABLE campaigns ADD COLUMN rules_cards BOOLEAN NOT NULL DEFAULT FALSE;
 """
 
+HOUSE_RULES_FILE = f"""
+    -- A campaign's linked house-rules file (#969, migration 0040): the share link a DM set, and the
+    -- fingerprint of the file they chose to "ignore until it changes". One row per campaign,
+    -- deleted with it. The link can be a private share link, so it is never logged, never
+    -- shown back in full (only the site it is on), and not part of a backup. Only the
+    -- campaign's DMs set or clear it (dmbot.rules.house_file_link checks that in the same
+    -- transaction). The website's role has no grant on this table.
+    CREATE TABLE house_rules_file (
+        {_memory_scope()}
+        link    TEXT NOT NULL CHECK (char_length(link) BETWEEN 1 AND 2000),
+        ignored TEXT CHECK (ignored IS NULL OR char_length(ignored) = 64),
+        set_by  BIGINT NOT NULL CHECK (set_by > 0),
+        set_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id)
+    );
+    """ + _isolate("house_rules_file")
+
 PAUSE = """
     -- Pausing a campaign (#957; docs/PLAN.md, "Plans and pricing"): a paused campaign keeps all
     -- its data, can't start a session, and doesn't count toward the owner's campaign cap. The
@@ -1356,6 +1382,60 @@ PAUSE = """
     $do$;
     REVOKE ALL ON FUNCTION dmbot_pause_over_cap(INTEGER, TEXT[]) FROM PUBLIC;
 """
+
+GAME_CLOCKS = f"""
+    -- A campaign's game clock (#965; docs/PLAN.md, "TimeBot"): game time, not real time,
+    -- set and moved only by the DM's buttons and clear phrases. One row per campaign, and
+    -- none until the DM sets it. Per campaign, never shared between campaigns or servers;
+    -- deleted with the campaign; in its backups (without the message ids).
+    --   minute          game minutes since the start of Day 1
+    --   last_long_rest  the game minute the party last finished a long rest
+    --   tired_told_for  the long-rest minute the 24-hours-without-a-rest line was said for
+    --   channel_id, message_id  the pinned clock message on the DM screen, edited in place
+    CREATE TABLE game_clocks (
+        {_memory_scope()}
+        minute         BIGINT NOT NULL CHECK (minute >= 0),
+        last_long_rest BIGINT NOT NULL CHECK (last_long_rest >= 0),
+        tired_told_for BIGINT CHECK (tired_told_for IS NULL OR tired_told_for >= 0),
+        channel_id     BIGINT,
+        message_id     BIGINT,
+        updated_at     BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id)
+    );
+    """ + _isolate("game_clocks")
+
+RETENTION = """
+    -- Which retention warning a campaign has had (#964), so a restart doesn't repeat one:
+    -- the stage (0 none, 1 the 14-day warning, 2 the 3-day one) and the delete date it was
+    -- sent for. Playing a session moves the date, so the warnings start over. Columns with
+    -- defaults: no rows change, so no row-level-security policy is needed.
+    ALTER TABLE campaigns ADD COLUMN retention_warned_stage INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE campaigns ADD COLUMN retention_warned_for BIGINT;
+"""
+
+GAME_EFFECTS = f"""
+    -- The game clock counts the timers it has numbered, so a number is never used twice even
+    -- after a timer is ended (an old "has likely ended" message can't act on a newer timer).
+    ALTER TABLE game_clocks ADD COLUMN effects_made INTEGER NOT NULL DEFAULT 0
+        CHECK (effects_made >= 0);
+    -- Timed effects the DM starts on a campaign's game clock (#998; docs/PLAN.md, "TimeBot"):
+    -- Bless, Mage Armor and the like. Per campaign, never shared between campaigns or servers;
+    -- deleted with the campaign; in its backups. Only the campaign's DMs start or end them
+    -- (dmbot.timebot.effects checks that in the same transaction). Ends are game minutes, so
+    -- a restart keeps them. At most 20 per campaign (checked in the same transaction).
+    --   told  the "has likely ended" line was said (once); the DM then ends it or extends it
+    CREATE TABLE game_effects (
+        {_memory_scope()}
+        number        INTEGER NOT NULL CHECK (number > 0),
+        name          TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 60),
+        target        TEXT CHECK (target IS NULL OR char_length(target) BETWEEN 1 AND 60),
+        minutes       INTEGER NOT NULL CHECK (minutes > 0),
+        concentration BOOLEAN NOT NULL DEFAULT FALSE,
+        ends_minute   BIGINT NOT NULL CHECK (ends_minute >= 0),
+        told          BOOLEAN NOT NULL DEFAULT FALSE,
+        PRIMARY KEY (guild_id, campaign_id, number)
+    );
+    """ + _isolate("game_effects")
 
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
@@ -1536,6 +1616,11 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0035_rules_cards", RULES_CARDS),
     ("0036_transcript_sidebar", TRANSCRIPT_SIDEBAR),
     ("0037_pause", PAUSE),
+    ("0038_payment_event_kind", PAYMENT_EVENT_KIND),
+    ("0039_retention", RETENTION),
+    ("0040_house_rules_file", HOUSE_RULES_FILE),
+    ("0041_game_clocks", GAME_CLOCKS),
+    ("0042_game_effects", GAME_EFFECTS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -1554,7 +1639,10 @@ ISOLATED_TABLES = (
     "campaign_handover_offers",
     "character_sheets",
     "house_rules",
+    "house_rules_file",
     "session_usage",
+    "game_clocks",
+    "game_effects",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

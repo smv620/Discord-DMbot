@@ -17,7 +17,7 @@ from dmbot.campaigns.models import Campaign
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import srd
 from dmbot.sidebar import answer as sidebar
-from dmbot.sidebar import brevity
+from dmbot.sidebar import brevity, context
 from tests.sidebar_brevity_cases import CASES, Case, reply
 
 GUILD = 111
@@ -119,6 +119,8 @@ class BrevityCases(unittest.TestCase):
             any(word.lower() in text.lower() for word in case.must_any),
             f"{case.question!r} → {text!r} lacks any of {case.must_any}",
         )
+        for word in case.must_not:
+            self.assertNotIn(word.lower(), text.lower(), case.question)
         if case.yes_no:
             self.assertTrue(brevity.starts_with_the_answer(text), text)
         for padding in ("let me know", "great question", "hope this helps"):
@@ -131,6 +133,204 @@ class BrevityCases(unittest.TestCase):
         for case in CASES:
             with self.subTest(case.question):
                 self.check(case)
+
+
+class Consistency(unittest.TestCase):
+    """#992: the same question gets the same answer however it is asked."""
+
+    def test_line_of_sight_two_ways_agree(self) -> None:
+        plain = run(
+            engine(FakeAI([reply("The free rules don't say.", "SRD 5.2.1 p. 131")] * 2)).answer(
+                campaign(), "do you need line of sight for fireball"
+            )
+        )
+        hold = run(
+            engine(
+                FakeAI([reply("No. A point you choose within range.", "SRD 5.2.1 p. 131")])
+            ).answer(campaign(), "hold on, I need to find if you need line of sight for fireball")
+        )
+        for got in (plain, hold):
+            self.assertIn("point you choose", got.text)
+            self.assertNotIn("don't say", got.text.lower())
+        self.assertTrue(plain.text.endswith("(SRD 5.2.1 p. 131)"))
+
+    def test_the_retry_points_out_the_entry(self) -> None:
+        ai = FakeAI(
+            [
+                reply("The free rules don't say.", "none", "not sure"),
+                reply("No. It starts at a point you choose.", "SRD 5.2.1 p. 131"),
+            ]
+        )
+        got = run(engine(ai).answer(campaign(), "do you need line of sight for fireball"))
+        self.assertEqual(len(ai.prompts), 2)
+        self.assertIn("Fireball is given above", ai.prompts[1])
+        self.assertTrue(got.text.startswith("No."))
+
+    def test_no_entry_given_the_honest_dont_have_stays(self) -> None:
+        got = run(
+            engine(FakeAI([reply("I don't have that. Your call.", "none", "not sure")])).answer(
+                campaign(), "who does Belleros work for"
+            )
+        )
+        self.assertNotIn("not in DMbot's rules", got.text)
+        self.assertIn("your call", got.text.lower())
+
+    def test_the_prompt_tells_it_to_use_the_entry_and_to_flag_general_knowledge(self) -> None:
+        self.assertIn("never say the rules don't say", sidebar.SYSTEM)
+        self.assertIn("check your book", sidebar.SYSTEM)
+
+
+class NoFalseAlarms(unittest.TestCase):
+    """#992 review: the checks must not fire on answers that are right."""
+
+    def test_ordinary_rules_prose_is_not_no_info(self) -> None:
+        for text in (
+            "Yes. Creatures not in the area are unaffected.",
+            "No. A goblin doesn't have darkvision past 60 ft.",
+            "It doesn't include allies.",
+            "Fireball does 8d6 fire damage.",
+        ):
+            self.assertFalse(sidebar.says_no_info(text), text)
+        for text in (
+            "The free rules don't say. Your call.",
+            "I don't have that.",
+            "There is no rule for that. Your call.",
+            "Your call.",
+        ):
+            self.assertTrue(sidebar.says_no_info(text), text)
+
+    def test_a_good_answer_is_not_replaced_when_it_mentions_not_in(self) -> None:
+        ai = FakeAI([reply("Yes. Creatures not in the area are unaffected.", "SRD 5.2.1 p. 131")])
+        got = run(engine(ai).answer(campaign(), "does fireball hit allies", asker_id=7))
+        self.assertEqual(len(ai.prompts), 1)
+        self.assertTrue(got.text.startswith("Yes. Creatures not in the area"))
+
+    def test_a_name_question_that_also_matches_an_entry_keeps_the_honest_answer(self) -> None:
+        ai = FakeAI([reply("I don't have that. Your call.", "none", "not sure")] * 2)
+        got = run(
+            engine(ai).answer(
+                campaign(), "does the goblin chief Grix work for Belleros", asker_id=7
+            )
+        )
+        self.assertIn("i don't have that", got.text.lower())
+        self.assertNotIn("SRD", got.text)  # no stat block swapped in
+
+    def test_a_house_rule_answer_is_never_overwritten_by_the_srd(self) -> None:
+        ai = FakeAI(
+            [reply("The free rules don't say, but house rule 2 does: no healing.", "house rule 2")]
+        )
+        eng = engine(ai, houses={campaign().id: [house(2, "No healing on fireball damage")]})
+        got = run(eng.answer(campaign(), "does fireball heal anyone", asker_id=7))
+        self.assertIn("house rule 2", got.text.lower())
+        self.assertNotIn("bright streak", got.text)
+
+    def test_a_scene_answer_gets_no_rules_note(self) -> None:
+        for source in ("the scene", "scene", "From the scene"):
+            ai = FakeAI([reply("The innkeeper is called Mara.", source)])
+            got = run(
+                engine(ai).answer(
+                    campaign(), "what is the innkeeper called", asker_id=7, scene="Mara waves."
+                )
+            )
+            self.assertNotIn("not in DMbot's rules", got.text, source)
+
+    def test_the_note_is_added_once_whatever_the_model_wrote(self) -> None:
+        ai = FakeAI(
+            [reply("No. A wall blocks it. (Not in DMbot’s rules, check your book)", "none")]
+        )
+        got = run(engine(ai).answer(campaign(), "can fireball go through a wall", asker_id=7))
+        self.assertEqual(got.text.lower().count("check your book"), 1)
+
+
+class Editions(unittest.TestCase):
+    """#992: a question that names or compares editions gets both entries."""
+
+    def test_both_goblins_are_in_the_context(self) -> None:
+        ctx = context.build(
+            "is the 2014 goblin different",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        )
+        self.assertIn("Goblin Warrior", ctx.prompt)
+        self.assertIn("[Legacy 2014]", ctx.prompt)
+        self.assertEqual(len({h.entry.edition for h in ctx.hits}), 2)
+        legacy = [h for h in ctx.hits if h.entry.edition == "2014"]
+        self.assertEqual([h.tag for h in legacy], ["[Legacy 2014]"])
+
+    def test_a_plain_question_keeps_one_entry(self) -> None:
+        ctx = context.build(
+            "how much damage does fireball do",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        )
+        self.assertEqual(len(ctx.hits), 1)
+
+    def test_the_words_that_ask_for_both(self) -> None:
+        for question in ("is the old fireball different", "2024 or 2014 grappled", "legacy goblin"):
+            self.assertTrue(context.wants_both_editions(question), question)
+        self.assertFalse(context.wants_both_editions("how much damage does fireball do"))
+
+
+class AccuracyPart3(unittest.TestCase):
+    """#1005: each fact cites its own source; the older edition is always tagged and named."""
+
+    def test_a_house_rule_is_not_cited_for_more_than_it_says(self) -> None:
+        rule = house(3, "Criticals deal maximum damage plus the roll.")
+        ai = FakeAI(
+            [reply("Yes. A spell attack can crit on a 20, dealing max damage.", "house rule 3")]
+        )
+        got = run(
+            engine(ai, houses={"c" * 32: [rule]}).answer(
+                campaign(), "is there a rule for a critical hit on a spell attack"
+            )
+        )
+        self.assertIn("not in DMbot's rules", got.text)
+        self.assertNotIn("house rule 3", got.text.lower())
+        self.assertNotIn("sure", got.text)
+
+    def test_a_house_rule_is_cited_for_what_it_says(self) -> None:
+        rule = house(3, "Criticals deal maximum damage plus the roll.")
+        ai = FakeAI([reply("Criticals deal maximum damage plus the roll.", "house rule 3")])
+        got = run(engine(ai, houses={"c" * 32: [rule]}).answer(campaign(), "what do criticals do"))
+        self.assertIn("house rule 3", got.text.lower())
+
+    def test_the_older_goblin_is_tagged_and_the_current_one_named(self) -> None:
+        ai = FakeAI([reply("Yes, the 2014 one is weaker.", "SRD 5.1 p. 315")])
+        got = run(engine(ai).answer(campaign(), "is the 2014 goblin different"))
+        self.assertIn("[Legacy 2014]", got.text)
+        self.assertIn("Goblin Warrior", got.text)
+        self.assertIn("SRD 5.1 p. 315", got.text)
+        self.assertIn("SRD 5.2.1 p. 290", got.text)
+
+    def test_a_house_rule_source_is_not_replaced_by_the_legacy_pair(self) -> None:
+        rule = house(3, "The goblin is weaker in this game.")
+        ai = FakeAI([reply("Yes. The goblin is weaker in this game.", "house rule 3")])
+        got = run(
+            engine(ai, houses={"c" * 32: [rule]}).answer(campaign(), "is the 2014 goblin different")
+        )
+        self.assertIn("house rule 3", got.text.lower())
+        self.assertNotIn("SRD", got.text)
+
+    def test_no_source_means_no_legacy_pair(self) -> None:
+        ai = FakeAI([reply("I don't have that. Your call.", "none", "not sure")])
+        got = run(engine(ai).answer(campaign(), "is the 2014 goblin different"))
+        self.assertNotIn("SRD", got.text)
+
+    def test_a_plain_question_gets_no_legacy_tag(self) -> None:
+        ai = FakeAI([reply("8d6 fire damage, half on a successful save.", "SRD 5.2.1 p. 131")])
+        got = run(engine(ai).answer(campaign(), "how much damage does fireball do"))
+        self.assertNotIn("Legacy", got.text)
+
+    def test_the_prompt_version_moved_on(self) -> None:
+        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-3")
 
 
 class FireballExample(unittest.TestCase):
@@ -174,7 +374,7 @@ class Retry(unittest.TestCase):
     def test_a_reply_that_ignores_the_form_still_answers(self) -> None:
         ai = FakeAI(["8d6 fire damage."])
         got = run(engine(ai).answer(campaign(), "how much damage does fireball do"))
-        self.assertEqual(got.text, "8d6 fire damage.")
+        self.assertEqual(got.text, "8d6 fire damage. (not in DMbot's rules, check your book)")
         self.assertTrue(got.in_game)
 
     def test_an_empty_reply_raises_in_plain_words(self) -> None:
@@ -306,7 +506,7 @@ class Lineage(unittest.TestCase):
         ai = FakeAI([reply("No.", "SRD 5.2.1 p. 131")])
         got = run(engine(ai).answer(campaign(), "do you need line of sight for fireball"))
         self.assertEqual(got.model, "fake-fast-model")
-        self.assertEqual(got.prompt_version, "sidebar-1")
+        self.assertEqual(got.prompt_version, "sidebar-3")
         self.assertEqual(got.sources, ("SRD 5.2.1 p. 131",))
         self.assertGreaterEqual(got.seconds, 0)
 
@@ -364,7 +564,10 @@ class Timing(unittest.TestCase):
             self.assertRaises(AIError),
         ):
             run(built.answer(campaign(), "does it work"))
-        self.assertEqual(run(built.answer(campaign(), "does it work")).text, "Yes.")
+        self.assertEqual(
+            run(built.answer(campaign(), "does it work")).text,
+            "Yes. (not in DMbot's rules, check your book)",
+        )
 
     def test_a_slow_first_call_is_not_asked_again(self) -> None:
         ticks = iter(range(0, 100, 4))  # each clock read is 4 s later: past RETRY_SKIP_S
@@ -418,7 +621,7 @@ class ReadsThatFail(unittest.TestCase):
         built = Engine(ai, INDEX, gate=gate, houses=broken, names=broken)
         with self.assertLogs("dmbot.sidebar.answer", "ERROR") as logged:
             got = run(built.answer(campaign(), "does fireball hurt"))
-        self.assertEqual(got.text, "Yes.")
+        self.assertEqual(got.text, "Yes. (not in DMbot's rules, check your book)")
         self.assertEqual(len(logged.records), 2)  # one for each read, with the reason
 
 

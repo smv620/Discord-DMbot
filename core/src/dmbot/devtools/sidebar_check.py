@@ -88,14 +88,22 @@ async def run(path: Path) -> int:
             took = time.monotonic() - started
             body = got.text.rsplit(" (", 1)[0] if got.text.endswith(")") else got.text
             ok = brevity.within_limit(body) or len(got.parts) > 1
-            failed += not ok
+            # What the answer must and must not say (#992): the words are the case's own.
+            lowered = got.text.lower()
+            missing = bool(case.must_any) and not any(w.lower() in lowered for w in case.must_any)
+            banned = [w for w in case.must_not if w.lower() in lowered]
+            failed += not ok or missing or bool(banned)
             verdict = "ok" if ok else "TOO LONG"
+            if missing:
+                verdict += f", MISSING one of {list(case.must_any)}"
+            if banned:
+                verdict += f", MUST NOT SAY {banned}"
             print(f"{number:2}. {case.question}")
             print(f"    → {got.text}")
             print(f"    {took:.1f} s, {len(got.text)} characters, {verdict}")
     finally:
         await client.close()
-    print(f"\n{len(cases) - failed} of {len(cases)} kept to the length rules.")
+    print(f"\n{len(cases) - failed} of {len(cases)} passed (length, must-say and must-not-say).")
     return 1 if failed else 0
 
 

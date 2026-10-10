@@ -517,6 +517,63 @@ alerts yet; those build on this.
   they pick which one by button. The bot still doesn't read messages in servers (narrowest
   intents); the **Add a house rule** form in `/dmbot houserules` is the other typed way.
 
+*Built, part 3: the house-rules file, first half (2026-10-10, #969):* the owner's decision is
+that house rules must be readable offline, so DMbot keeps a plain-text file of record.
+- **The format** (`dmbot.rules.house_file`, pure): a title line, `#` help lines, then one
+  rule per line, `12. <rule> (instead of: <book rule>)`. Reading and writing go both ways
+  without loss (a rule that itself contains " (instead of: " is written with square
+  brackets). A line that is not a rule is reported with its line number, never guessed at;
+  over 200 rules, a rule over 500 characters, a number used twice or a number too big are
+  reported, not kept. `compare` says what was added, changed or removed against DMbot's copy
+  by rule number, and calls the same words under another number "moved".
+  Reading costs time in proportion to the file (it will be run on files fetched or
+  uploaded): a file over 200,000 characters is refused unread, a line over 2,000 is refused
+  unread, reading stops at the 201st rule, and at most 20 problems are listed (then a count).
+- **Download after every change:** after any change a DM makes in Discord (Add, Edit,
+  Remove, an Override, a rule said or typed) the DM gets the updated
+  `house-rules-<campaign>.txt` as a private message: "Put this in your house-rules file so
+  everyone can see it." A problem sending it never undoes the change. A **📥 Download**
+  button on the `/dmbot houserules` list gives anyone in the server the same file (they may
+  read the list already); it holds this campaign's house rules only.
+
+*Built, part 3b: the linked file and the upload (2026-10-10, #969):*
+- **Link a file** (the campaign's DMs only): ⚙️ Settings → **House-rules file**, the list's
+  **📄 House-rules file** button, or `/dmbot houserules link:`. Stored per campaign in
+  `house_rules_file` (migration 0040, deleted with the campaign, no grant for the website).
+  A share link can be private, so it is never logged, never shown back (only the site it is
+  on, such as docs.google.com), and not in backups. Unlink and **🔄 Check it now** are in the
+  same menu.
+- **At every session start** DMbot reads the linked file in the background (`dmbot.fetch`:
+  Google Docs, Drive, Dropbox, OneDrive; every address checked; plain text only) and
+  compares it with the campaign's rules by number. If anything differs, one short note on
+  the DM screen with **Accept all**, **Review** (one at a time: Accept, Skip, or Accept the
+  rest) and **Not now** (= ignore until the file changes). The note says what pressing does
+  ("2 to add, 1 to change, 3 to remove"); when anything would be removed, **Review** is the
+  main button and Accept all says how many removals it includes; with many removals (6 or
+  more, or over half of DMbot's rules) Accept all is switched off. Nothing changes without a
+  press; every press
+  re-checks that the person is a DM, and the store checks again for each change (a rule
+  another DM changed meanwhile is left alone and said). A new rule keeps its number from the
+  file if that number was never used in this campaign; otherwise it takes the next free
+  number and the DM is told. The same words under another number are not a change (DMbot
+  keeps its own numbers). After accepting, the DM gets the updated file (part 3).
+- **Never a mass removal by mistake:** a file with no readable rule is not compared (it would
+  offer to remove every rule); the DM is told instead. A file that can't be read gets one
+  short note and the session goes on with DMbot's copy. "Ignore until the file changes"
+  remembers which version of the file you set aside (its rules, not its title or notes). A
+  file's changes are done one at a time, so one that fails does not undo the rest, and doing
+  the same offer twice never adds a rule twice. Only the newest offer for a campaign works.
+  A note is shown once per session start and never when the files match.
+- **Numbers:** a rule from the file keeps its number only if it was never used and is within
+  200 of the highest (one stray number such as a year must not use up the campaign's
+  numbers); otherwise it gets the next one and the DM is told.
+- **Careful with the network:** the file is read in the background (never delaying a
+  session), 10 MB at most and 200,000 characters of text; comparing by hand waits a few
+  seconds after the last time and never runs twice at once for a campaign.
+- **📎 Upload a file** does the same comparison from an uploaded `.txt` file, shown privately
+  to the DM; nothing is stored.
+- The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
+
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
 is chosen by `TRANSCRIBER=` in config.
@@ -1686,6 +1743,39 @@ background.
   far ahead of the other.
 - The DM can correct the clock with buttons ([+1 hour] [It's dawn] [Set time…]).
 
+*Built, part 1: the clock and the DM's buttons (2026-10-10, #965):* no AI, and no guessing time
+from narration. `game_clocks` (migration 0041): one row per campaign, in its own server scope,
+deleted with the campaign and carried in backups (`ClockSection`, without message ids); none
+until a DM sets it. **Game time** is minutes since the start of Day 1; dawn is 06:00, noon 12:00,
+dusk 18:00 (`dmbot.timebot.clock`, pure). A DM presses ⚙️ Settings, then **Game clock**, gives a
+day and an hour, and DMbot posts and pins one message, "🕰️ Day 4, afternoon (14:30)", edited in
+place, with **+10 min**, **+1 hour**, **Short rest** (+1 h), **Long rest** (+8 h), **Skip to dawn**
+and **Set time…**. Only the campaign's DMs can press them: checked on every press, in the same
+database transaction as the change; the buttons survive a restart. **Said at the table:** a
+DM's clear "we take a short rest" / "you take a long rest" (a strict phrase list: a question, a
+wish, an "if", a "can't" or a long ramble never counts; the same rest twice in five minutes is
+one) moves a clock the DM has set, with a one-line note and **Undo** (a rest from a button gets its note and Undo for the DM who
+pressed it alone; it only undoes while the clock is still where the rest left it); a player's line never does. **Speaks up only for** dawn,
+noon and dusk as a button or rest passes them (not when the DM sets the time), and **24 hours
+without a long rest**, once per stretch, with its source ("Check: 24 hours since the last long rest… Optional rule, Xanathar's… Your call."); on by default, and off if the DM turns the "Going without a long rest" optional rule
+off. The first time the clock is set the party counts as rested then. Not built yet: split-party
+clocks, reading time from narration, periodic notes.
+
+*Built, part 2: timed effects the DM starts (2026-10-10, #998):* `game_effects` (migration 0042): per
+campaign, own server scope, deleted with the campaign, in backups (`EffectsSection`, validated),
+at most 20 running. A DM starts one from **Start a timer** on the clock message (a form: spell or
+effect, who it is on, how long) or **Time it** on a rules card for a spell that lasts a length of
+time; nothing starts by itself. `dmbot.timebot.durations` reads the index's duration text ("1
+minute", "Concentration, up to 1 hour", "8 hours") into game minutes, a round counting as 6 seconds
+rounded up to a minute; "Instantaneous", "Until dispelled" and "Special" are not timed; the DM can
+type a length instead, and a form with no length uses the spell's own (a test reads every spell in the
+index). Concentration shows as 🧠. The clock message lists the soonest five, one line each. When a
+button or rest passes an effect's end, the DM screen says once "⏳ Bless on Mira has likely
+ended (1 minute)" with **Ended** and **Still going +10 min** (ten more game minutes from where the
+clock is, then said again); nothing ends silently or by itself. Only the campaign's DMs, checked in
+the transaction. Effects live on the game clock, so a restart keeps them. Not built: split-party
+clocks, reading time from narration, AI.
+
 **DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
 DMbot is there to help the game move quickly, never to bog it down or distract. The
 sidebar is the DM's shortcut to an AI that knows this campaign and knows DMbot, so the
@@ -1810,11 +1900,48 @@ voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)
   ones against the real model (it needs the server's key, so dev1 runs it) and prints the
   answers and times.
 
+*Built, accuracy fixes (#992, CloudDev, 2026-10-10; prompt version `sidebar-2`):* from dev1's run of
+the 17 test questions against the real model. (1) **Consistency:** when the question names a rules
+entry that was given, "the free rules don't say" is a contradiction: the prompt says so, the
+answer is sent back once with the entry named, and if it still says so DMbot answers with the
+entry's own first sentences and its source (only for a spell or condition the question names, and
+never over a house rule; so "do you need line of sight for fireball" and the
+same question after "hold on, I need to find" agree). (2) **No unsourced certainty:** a rule stated
+with no source among the entries and house rules the model was given gets "(not in DMbot's rules,
+check your book)" and is never "sure"; the prompt asks for the same wording for general D&D
+knowledge (class features, cover, area of effect, which the index doesn't hold yet); the code adds the
+note itself and the answer from the scene or the campaign's names is not marked. (3)
+**Editions:** a question that says "2014", "2024", "legacy", "old", "new" or compares them gets
+both editions' entries, the older tagged `[Legacy 2014]` ("is the 2014 goblin different" sees
+Goblin and Goblin Warrior). `sidebar_check` now also checks each case's must-say and must-not-say
+words. Not done: adding general rules or class features to the index.
+
+*Built, accuracy part 3 (#1005, CloudDev, 2026-10-10; prompt version `sidebar-3`):* (1) **Each fact cites
+its own source:** a house rule is cited only when it says what the answer says (the answer's real
+words, bar one, must be in the rule); otherwise the cite is dropped and the answer gets "(not in
+DMbot's rules, check your book)
+and is never "sure" ("a spell attack can crit on a 20" is not house rule 3).
+(2) **Older edition always tagged and named:** when the AI was given a `[Legacy 2014]` entry, the source names
+both entries by their own names and pages ("Goblin Warrior SRD 5.2.1 p. 290; Goblin SRD 5.1 p. 315
+[Legacy 2014]"). Brevity is unchanged; tags and sources are added after the cut.
+
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
 keys. DMbot runs on the operator's keys and bills **by hours and campaigns** through the
 customer website (`web/`, #431–#435); the plan rules in the bot are #437. The "who pays
 for this call" seam stays, pointing at the operator's keys.
+
+*Built, out of funds (2026-10-10, #972):* when the AI account has no credit or reaches its
+spend limit, every AI call (Find names, the off-topic filter, the sidebar, the cleaner) raises
+`AIOutOfFunds`, and the DM hears "DMbot's AI is paused right now (its account needs topping
+up). Nothing was changed. You can keep playing; the AI features come back once it's fixed."
+Two named admins, `DMBOT_ADMIN_PRIMARY_ID` (the owner) and `DMBOT_ADMIN_SECONDARY_ID` (a
+backup), each a Discord user ID of 17 to 20 digits or empty (anything else stops start-up,
+naming the setting and never the value), get one private message with full context, at most
+once a day each, remembered in a small file in the data folder (`ai_notice.json`) so a restart
+doesn't repeat it; a failed send to one doesn't stop the other, and with neither set it is
+only logged. The error line is logged at most once an hour, and once a day one INFO line gives
+the last 24 hours' AI calls and tokens (counts only). In `dmbot.ai_watch`.
 
 **Plans and pricing (owner decisions, 2026-10-07).** The plan belongs to one Discord user
 (the DM); every campaign has one owner whose hours and campaign count it uses; co-DMs
@@ -2019,6 +2146,26 @@ plan); because the function pauses each campaign once, there is no second messag
 private message can't be sent, the start refusal still says the campaign is paused. Fails
 open like the other plan checks. **Enforcement (`DMBOT_ENFORCE_PLANS`) may go on only after
 this is live** (migration 0037, core and web-api).
+
+*Built, part 5: retention (2026-10-10, #964):* `dmbot.retention`, a daily job at 03:00 UTC (the
+bot's own loop; safe to run twice). A campaign's **delete date** is its last session plus its
+owner's plan's `keepAfterLastSession` (Try It 60 days, Table 6 months, the others a year), or
+the plan's lapse plus 120 days, whichever is first; free access and grants keep like the top
+plan; a campaign with **no owner** is kept by Try It's rule (DMbot doesn't know a last owner's
+plan), and its DMs get the warnings. A paused campaign follows the same rules, and a campaign
+in a running session is skipped. The owner gets a private message 14 days and 3 days before
+(`deletionWarningDaysBefore`), each once: the stage and the date it was sent for are kept on the
+campaign (`retention_warned_stage`, `retention_warned_for`, migration 0039), so a restart doesn't
+repeat one and playing a session (which moves the date) starts them over. Deletion is the
+existing `CampaignStore.delete`, then the owner is told once; the log has counts only. The job
+runs per server (the bot's own servers), reading across servers only the owner's plan, through
+`usage.retention_standing`'s owner-scoped door; a plan that can't be read means that campaign is
+left alone. **A campaign is only deleted after its last warning:** one already past its date when
+first seen (the first run after deploy, a long outage) gets a warning and is deleted three days
+later, and playing a session, or restoring a backup (which starts the clock from now), cancels
+it; the job looks again right before each delete. **Safety:** behind `DMBOT_ENFORCE_PLANS` (off: no warnings, no deletion, one dry-run
+log line with counts); a run that would delete more than 10% of all campaigns (and more than
+3, so a small deployment isn't stuck on one old campaign) stops and logs an error instead, before any warning goes out; at most 300 warnings go out per run (the rest wait a day).
 
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
