@@ -535,9 +535,44 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   everyone can see it." A problem sending it never undoes the change. A **📥 Download**
   button on the `/dmbot houserules` list gives anyone in the server the same file (they may
   read the list already); it holds this campaign's house rules only.
-- **Still to build (second half):** a linked file read at every session start and compared
-  with DMbot's copy (Accept all / Review / Ignore until the file changes), and **📎 Upload a
-  file** for DMs without a link.
+
+*Built, part 3b: the linked file and the upload (2026-10-10, #969):*
+- **Link a file** (the campaign's DMs only): ⚙️ Settings → **House-rules file**, the list's
+  **📄 House-rules file** button, or `/dmbot houserules link:`. Stored per campaign in
+  `house_rules_file` (migration 0040, deleted with the campaign, no grant for the website).
+  A share link can be private, so it is never logged, never shown back (only the site it is
+  on, such as docs.google.com), and not in backups. Unlink and **🔄 Check it now** are in the
+  same menu.
+- **At every session start** DMbot reads the linked file in the background (`dmbot.fetch`:
+  Google Docs, Drive, Dropbox, OneDrive; every address checked; plain text only) and
+  compares it with the campaign's rules by number. If anything differs, one short note on
+  the DM screen with **Accept all**, **Review** (one at a time: Accept, Skip, or Accept the
+  rest) and **Not now** (= ignore until the file changes). The note says what pressing does
+  ("2 to add, 1 to change, 3 to remove"); when anything would be removed, **Review** is the
+  main button and Accept all says how many removals it includes; with many removals (6 or
+  more, or over half of DMbot's rules) Accept all is switched off. Nothing changes without a
+  press; every press
+  re-checks that the person is a DM, and the store checks again for each change (a rule
+  another DM changed meanwhile is left alone and said). A new rule keeps its number from the
+  file if that number was never used in this campaign; otherwise it takes the next free
+  number and the DM is told. The same words under another number are not a change (DMbot
+  keeps its own numbers). After accepting, the DM gets the updated file (part 3).
+- **Never a mass removal by mistake:** a file with no readable rule is not compared (it would
+  offer to remove every rule); the DM is told instead. A file that can't be read gets one
+  short note and the session goes on with DMbot's copy. "Ignore until the file changes"
+  remembers which version of the file you set aside (its rules, not its title or notes). A
+  file's changes are done one at a time, so one that fails does not undo the rest, and doing
+  the same offer twice never adds a rule twice. Only the newest offer for a campaign works.
+  A note is shown once per session start and never when the files match.
+- **Numbers:** a rule from the file keeps its number only if it was never used and is within
+  200 of the highest (one stray number such as a year must not use up the campaign's
+  numbers); otherwise it gets the next one and the DM is told.
+- **Careful with the network:** the file is read in the background (never delaying a
+  session), 10 MB at most and 200,000 characters of text; comparing by hand waits a few
+  seconds after the last time and never runs twice at once for a campaign.
+- **📎 Upload a file** does the same comparison from an uploaded `.txt` file, shown privately
+  to the DM; nothing is stored.
+- The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
 **Transcription (decided 2026-10-03; default changed 2026-10-05).** Per-speaker audio
 means no diarization is needed. Every engine sits behind one `Transcriber` interface and
@@ -1864,6 +1899,22 @@ voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)
   fake AI and counts the sentences by hand. `python -m dmbot.devtools.sidebar_check` runs the same
   ones against the real model (it needs the server's key, so dev1 runs it) and prints the
   answers and times.
+
+*Built, accuracy fixes (#992, CloudDev, 2026-10-10; prompt version `sidebar-2`):* from dev1's run of
+the 17 test questions against the real model. (1) **Consistency:** when the question names a rules
+entry that was given, "the free rules don't say" is a contradiction: the prompt says so, the
+answer is sent back once with the entry named, and if it still says so DMbot answers with the
+entry's own first sentences and its source (only for a spell or condition the question names, and
+never over a house rule; so "do you need line of sight for fireball" and the
+same question after "hold on, I need to find" agree). (2) **No unsourced certainty:** a rule stated
+with no source among the entries and house rules the model was given gets "(not in DMbot's rules,
+check your book)" and is never "sure"; the prompt asks for the same wording for general D&D
+knowledge (class features, cover, area of effect, which the index doesn't hold yet); the code adds the
+note itself and the answer from the scene or the campaign's names is not marked. (3)
+**Editions:** a question that says "2014", "2024", "legacy", "old", "new" or compares them gets
+both editions' entries, the older tagged `[Legacy 2014]` ("is the 2014 goblin different" sees
+Goblin and Goblin Warrior). `sidebar_check` now also checks each case's must-say and must-not-say
+words. Not done: adding general rules or class features to the index.
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
