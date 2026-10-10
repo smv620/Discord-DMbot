@@ -111,6 +111,9 @@ class Job(DatabaseTest):
         self.assertEqual([u for u, _ in self.sent], [ALICE, ALICE])
         self.assertIn("14 days", self.sent[0][1])
         self.assertIn("3 days", self.sent[1][1])
+        self.assertIn("Last warning", self.sent[1][1])
+        self.assertNotIn("Last warning", self.sent[0][1])
+        self.assertIn("your server", self.sent[0][1])  # a private message names the server
         self.assertIn("play a session", self.sent[0][1])
         self.assertTrue(await self.exists(GUILD_A, cid))
 

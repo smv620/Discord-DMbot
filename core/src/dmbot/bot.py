@@ -481,6 +481,8 @@ class DMBot(commands.AutoShardedBot):
                 running=lambda: {t.campaign_id for t in self.tables.values() if t.campaign_id},
                 send=self._dm_user,
                 enforce=settings.enforce_plans,
+                server_name=lambda gid: g.name if (g := self.get_guild(gid)) else "your server",
+                site_url=settings.site_url,
             )
         # AI text calls (a document into a names list); None when no key is set.
         self.ai = AnthropicClient(settings.ai_key, settings.ai_model) if settings.ai_key else None

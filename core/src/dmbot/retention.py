@@ -84,31 +84,50 @@ def _date(ts: int) -> str:
     return f"<t:{ts}:D>"
 
 
-def warning_text(campaign: Campaign, delete: int, now: int, standing: Standing) -> str:
+def warning_text(
+    campaign: Campaign, delete: int, now: int, standing: Standing, server: str, site_url: str = ""
+) -> str:
+    """The private message before deletion. It names the server, since a private message has
+    none, and says where each way of keeping the campaign is done. The reason mentions a
+    plan only to the owner, whose message this is; the campaign's DMs (no owner) get the
+    time-based reason."""
     days = max(1, round((delete - now) / DAY))
     left = f"{days} day" + ("" if days == 1 else "s")
-    why = (
-        "its plan stopped paying"
-        if standing.lapsed_at is not None
-        and delete <= standing.lapsed_at + plans.load().keep_after_plan_stops_paying.days * DAY
-        else "nobody has played it for a long time"
+    lapse_at = (
+        None
+        if standing.lapsed_at is None
+        else standing.lapsed_at + plans.load().keep_after_plan_stops_paying.days * DAY
     )
-    keep = ["play a session in it (that starts the clock again)"]
+    ended = campaign.owner_user_id is not None and lapse_at is not None and delete <= lapse_at
+    why = "no one has played it for a long time" + (", and your plan ended" if ended else "")
+    last = "Last warning: " if warning_stage(delete, now) == 2 else ""
+    where = f"in **{_md(server)}**"
+    keep = [f"play a session {where} (that starts the clock again)"]
     if standing.backups:
-        keep.append("download a backup (`/dmbot backup`)")
-    if standing.lapsed_at is not None:
-        keep.append("pick a plan again")
-    options = " or ".join(keep) if len(keep) < 3 else ", ".join(keep[:-1]) + ", or " + keep[-1]
+        keep.append(f"download a backup with `/dmbot backup` {where}")
+    if campaign.owner_user_id is not None and standing.lapsed_at is not None:
+        keep.append(f"pick a plan again at {_plans_page(site_url)}")
+    options = (
+        keep[0]
+        if len(keep) == 1
+        else ", ".join(keep[:-1]) + (", or " if len(keep) > 2 else " or ") + keep[-1]
+    )
     return (
-        f"⏳ **{_md(campaign.name)}** will be deleted in {left} ({_date(delete)}), because {why}. "
-        f"Everything in it goes. To keep it, {options}."
+        f"⏳ {last}**{_md(campaign.name)}** (in **{_md(server)}**) will be deleted on "
+        f"{_date(delete)}, in {left}: {why}. Its story, notes and transcripts go, and that "
+        f"can't be undone. To keep it, {options}."
     )
 
 
-def deleted_text(campaign: Campaign) -> str:
+def _plans_page(site_url: str) -> str:
+    return f"{site_url}/account" if site_url else "DMbot's website"
+
+
+def deleted_text(campaign: Campaign, server: str) -> str:
     return (
-        f"🗑️ **{_md(campaign.name)}** was deleted, as the warnings said, because it was past "
-        "the time DMbot keeps it. To play again, start a new campaign."
+        f"🗑️ **{_md(campaign.name)}** (in **{_md(server)}**) was deleted. DMbot keeps a "
+        f"campaign for a limited time. To play again, start a new one with `/dmbot start` "
+        f"in {_md(server)}."
     )
 
 
@@ -144,6 +163,8 @@ class RetentionJob:
         running: Callable[[], set[str]],
         send: Send,
         enforce: bool,
+        server_name: Callable[[int], str] = lambda guild_id: "your server",
+        site_url: str = "",
     ) -> None:
         """`standing_of(guild_id, owner_id, now)`: the owner's plan (raises if it can't be
         read: then that campaign is left alone). `running()`: campaigns in a session now.
@@ -154,6 +175,8 @@ class RetentionJob:
         self._running = running
         self._send = send
         self._enforce = enforce
+        self._server_name = server_name
+        self._site_url = site_url
 
     async def run_once(self, now: int) -> Result:
         """Safe to run twice: warnings are remembered, and a deleted campaign is gone."""
@@ -228,7 +251,9 @@ class RetentionJob:
     async def _warn(
         self, campaign: Campaign, standing: Standing, at: int, stage: int, now: int
     ) -> bool:
-        text = warning_text(campaign, at, now, standing)
+        text = warning_text(
+            campaign, at, now, standing, self._server_name(campaign.guild_id), self._site_url
+        )
         told = False
         for user_id in self._recipients(campaign):
             told = await self._send(user_id, text) or told
@@ -243,7 +268,7 @@ class RetentionJob:
         except Exception:
             log.exception("Retention: couldn't delete a campaign")
             return False
-        text = deleted_text(campaign)
+        text = deleted_text(campaign, self._server_name(campaign.guild_id))
         for user_id in self._recipients(campaign):
             await self._send(user_id, text)
         return True
