@@ -593,6 +593,15 @@ a model.
   model). The model is tried again after 15 minutes, so fixing the name or the access needs
   no restart. A 403 that isn't a `permission_error` (a blocked request) never counts.
   Running out of money never falls back (it messages the admins, #972).
+- **One model for each job:** a job stays on one model, because Anthropic keeps cached
+  prompts separately for each model; switching a job's model back and forth throws the
+  cache away.
+- **DEEP work runs in batches:** PlotBot and the after-session continuity pass run at a
+  break, at the end of a session, or when the DM asks; never on every transcript line.
+  The strongest model costs several times what the small one does.
+- **Changing a tier's model:** a tier's model changes only after its checks pass on the new
+  model (for the sidebar, `python -m dmbot.devtools.sidebar_check`). Moving a job to
+  another tier is a change to `FEATURE_TIERS` and its own issue.
 - **Logging:** the start-up line shows the three models in use (or that AI is off). Each
   call logs one line: tier, model, tokens in and out, tokens read from the cache; never
   content. `python -m dmbot.devtools.sidebar_check` prints the model that answered.
