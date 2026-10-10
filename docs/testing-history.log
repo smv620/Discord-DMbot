@@ -1892,3 +1892,33 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     posts the 17 answers on #954; the check now also reports MISSING / MUST NOT SAY for the cases that
     matter (#1, #5, #8, #14, #17). Supervisor reads them before the sidebar is turned on.
   Result: those were already deployed before the lines were added.
+
+==============================================================================
+2026-10-10  dev1: deploy of core 40b3c79 (TimeBot part 2 #1008, migration 0042; sidebar accuracy part 3 #1010)
+==============================================================================
+  Found through PR #1008's deploy note (#1010 had none; it is core only and rebuilt in the same image).
+  No live session. Backup first: 37 tables, verified. Backup command that works: pg_dump as the
+  postgres role (the dmbot role is blocked by row security).
+  Core log: "Database updated: 0042_game_effects", gateway connected, ears connected, "Connected to 1
+  server(s)", 0 ERROR. Table game_effects empty, row security on and forced. /health 404,
+  /admin/auth/ways 200, tunnel token blank inside core.
+  Sidebar re-test (python -m dmbot.devtools.sidebar_check): 18 of 19 passed (was 13 of 18); the one
+  miss is "can fireball hit someone behind a wall" (cites a page that does not say it, but says "not
+  sure"). Posted on #954. Supervisor: "Sidebar may go on"; the miss is follow-up #1015.
+  Result: PASS.
+
+==============================================================================
+2026-10-10  Test D: no false warning with a TV on (owner, one person)
+==============================================================================
+  Owner: "no warning on the DM screen, it worked." Core log for the window: 0 ERROR. Result: PASS.
+  Covers #697 and #718 (the audio warning reads the transcript first). Not run with DMBOT_DEBUG_AUDIO=1:
+  dev1 cannot edit .env in this session, so #914's counts were not exercised.
+
+==============================================================================
+2026-10-10  Blocked: dev1 cannot edit .env or run scripts/update-env this session
+==============================================================================
+  The permission checker refused (1) setting DMBOT_SIDEBAR=1 (the Supervisor's go on #954) and (2)
+  scripts/update-env for #1013 (AI model tiers, three optional new settings). Nothing was changed.
+  Waiting for the owner: either set DMBOT_SIDEBAR=1 in .env, or allow dev1 to change plain settings;
+  then dev1 restarts core by name, checks the start-up log (0 ERROR) and records it here.
+  #1013 can also be deployed without the new settings (the defaults work).

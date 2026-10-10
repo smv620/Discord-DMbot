@@ -114,8 +114,8 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
      **Peek behind the DM screen** button under the default setting).
    - If either is missing, the bot should warn in the DM screen about what to fix (#27).
 4. **Both people get a private message from DMbot** ("🎙️ Can DMbot record you for your
-   D&D game…") with **I consent** and **No thanks** buttons, and both press
-   **I consent**. The message changes to "✅ You said yes on …" with a
+   D&D game…") with **I'm 16 or older, record me** and **No thanks** buttons, and both press
+   **I'm 16 or older, record me**. The message changes to "✅ You said yes on …" with a
    **⚙️ Menu** button.
    - **Testing alone (DM only):** only one private message is expected, steps 5–6 have no
      turn-taking or overlap, and the consent check (step 7) is the DM pressing

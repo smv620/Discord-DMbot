@@ -41,8 +41,10 @@ from dmbot.db import Conn, Database
 # DMbot's helpers have an AI company (Anthropic) read the written-down text, with who said
 # it, to give the DM notes, not used to train their AI (#52; for every helper, not one
 # feature). If a provider or key ever trains on the data, the wording changes and this
-# goes up again.
-TERMS_VERSION = 3
+# goes up again. Version 4: DMbot's minimum age is 16 and the button confirms it (owner,
+# 2026-10-10; #1018): no age or birthdate is stored, the yes under this wording is the
+# confirmation.
+TERMS_VERSION = 4
 # How someone said yes: the button in DMbot's private message, or in the reply to
 # /consent give in the server.
 ConsentMethod = Literal["private_message", "consent_command"]
