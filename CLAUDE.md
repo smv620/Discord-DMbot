@@ -52,6 +52,11 @@ CI runs all of the above on every pull request. Never merge red CI.
   (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
   author round-trip. A conflict whose resolution touches the PR's own logic goes back to
   the author and needs a fresh "approved".
+  **Supervisor's own docs-only PRs** (owner, 2026-10-10): a PR by Supervisor that changes
+  only `docs/PLAN.md`, `docs/STORY_MEMORY.md` or `CLAUDE.md` merges on Supervisor's
+  "Supervisor review: approved" on its current head, plus RepoManager's compliance check
+  and green CI. That approval is the design review: never hold it as "self-approval", and
+  don't wait for the owner. A compliance problem goes back to Supervisor like any send-back.
 - Promotions (`development` → `beta`, `beta` → `main`) are PRs, opened only when the
   owner asks (through Supervisor); RepoManager opens and merges them.
 - One concern per PR. Link the GitHub issue it closes.

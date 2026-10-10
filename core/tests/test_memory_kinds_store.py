@@ -391,12 +391,12 @@ class Backups(MemoryTest):
         json.dumps(data)  # still plain data
 
 
-class Migration0043(MemoryTest):
-    """Migrations run with no server set: 0043's backfill must open every table it reads or
+class Migration0044(MemoryTest):
+    """Migrations run with no server set: 0044's backfill must open every table it reads or
     writes (memory_entities, memory_types and memory_predicates), or it changes nothing."""
 
     async def test_the_older_kinds_move_on_tables_that_hold_rows(self) -> None:
-        before = [m for m in MIGRATIONS if m[0] < "0043"]
+        before = [m for m in MIGRATIONS if m[0] < "0044"]
         await self.db.close()
         await drop_schema(TEST_URL, self.schema)
         self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)

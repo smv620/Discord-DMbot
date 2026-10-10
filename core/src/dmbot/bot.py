@@ -12,12 +12,15 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import os
+import shutil
 import signal
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass, field
 from functools import partial
+from pathlib import Path
 from typing import Any, cast
 
 import discord
@@ -136,9 +139,14 @@ from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
+from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.ask import AskLimiter
 from dmbot.sidebar.service import Recent, SidebarService
+from dmbot.test_recording import files as test_files
+from dmbot.test_recording import library as test_library
+from dmbot.test_recording.session import TestSession
+from dmbot.test_recording.store import TestVoiceStore
 from dmbot.timebot import durations
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot.effects import EffectsSection, EffectStore
@@ -216,6 +224,9 @@ CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
+TEST_RECORDINGS_MIN_FREE = 1 << 30  # a test session isn't started with less than 1 GB free
+TEST_SAVES_AT_ONCE = 8  # more than this waiting to be saved are dropped, and the gap noted
+AUDIO_FRAME_MS = 20  # the segmenter's end is the last frame's start; it runs a frame longer
 
 # For the DM: nothing they can do but wait (the server's log says why, #636).
 EARS_DOWN = (
@@ -399,6 +410,8 @@ class Table:
     # The DM sidebar (#935): what was said lately (the scene for an answer), and the
     # one-question-a-minute limit on asking at the table.
     recent: Recent = field(default_factory=Recent.new)
+    # Test recordings (#1019): the saved session, only in a test server.
+    test_session: TestSession | None = None
     sidebar_limiter: AskLimiter = field(default_factory=AskLimiter)
 
     def is_dm(self, user_id: int) -> bool:
@@ -454,6 +467,7 @@ class DMBot(commands.AutoShardedBot):
         clocks: ClockStore | None = None,
         house_file_links: HouseFileLinkStore | None = None,
         effects: EffectStore | None = None,
+        test_voice: TestVoiceStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -559,6 +573,10 @@ class DMBot(commands.AutoShardedBot):
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
         self.tables: dict[int, Table] = {}
+        self.test_voice = test_voice  # the second yes, for test servers (#1019)
+        self._test_key: bytes | None = None
+        self._test_delete_locks: dict[tuple[int, int], asyncio.Lock] = {}
+        self._test_pending = 0  # utterances waiting to be saved
         self.sidebar = SidebarService(self)
         if settings.sidebar_on:  # off until the answers have been read (#954)
             self.sidebar.answerer = self.sidebar_answers
@@ -676,6 +694,11 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self._summary_poster(), "summaries"),
             self._watched(self._meter_loop(), "hours-meter"),
             *([self._watched(self._retention_loop(), "retention")] if self.retention else []),
+            *(
+                [self._watched(self._test_recordings_loop(), "test-recordings")]
+                if self.settings.test_recording_guilds
+                else []
+            ),
             *(
                 [asyncio.create_task(self.lookup.follow(self.memory.listen), name="names")]
                 if self.lookup is not None and self.memory is not None
@@ -823,6 +846,7 @@ class DMBot(commands.AutoShardedBot):
         Callers run this before their first await; `withdraw_consent` repeats it.
         """
         self.consent.stop_now(guild_id, user_id)
+        self._stop_saving_now(guild_id, user_id)  # no recording means no saved voice (#1019)
         for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
             if table is None:
                 continue
@@ -844,6 +868,159 @@ class DMBot(commands.AutoShardedBot):
                 self._track(self._close_question(table), "name-question")
             for key in [k for k in table.heard_counts if k[1] == user_id]:
                 del table.heard_counts[key]
+
+    # ---- test recordings (#1019; dmbot.test_recording) ------------------------------------
+
+    def test_voice_listed(self, guild_id: int) -> bool:
+        """A test server: the second question is asked, and sessions can be saved."""
+        return self.test_voice is not None and guild_id in self.settings.test_recording_guilds
+
+    def test_voice_saving(self, guild_id: int, user_id: int) -> bool:
+        return self.test_voice is not None and self.test_voice.has(guild_id, user_id)
+
+    async def grant_test_voice(self, guild_id: int, user_id: int) -> None:
+        """They said yes to "Save my voice for tests", and are recorded."""
+        if self.test_voice is None or not self.test_voice_listed(guild_id):
+            return
+        await self.test_voice.grant(guild_id, user_id)
+
+    async def stop_saving_voice(self, guild_id: int, user_id: int) -> None:
+        """ "Stop saving my voice": nothing more is saved at once, then the yes is removed
+        and their files are deleted from every test session. They stay recorded as usual."""
+        self._stop_saving_now(guild_id, user_id, delete=False)
+        await self._delete_saved_voice(guild_id, user_id)
+
+    def _stop_saving_now(self, guild_id: int, user_id: int, *, delete: bool = True) -> None:
+        """No more of this person's voice is saved, from this moment (no waiting). `delete`:
+        also start deleting what was saved, in the background."""
+        if self.test_voice is None:
+            return
+        self.test_voice.stop_now(guild_id, user_id)
+        now = int(time.time() * 1000)
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if table is not None and table.test_session is not None:
+                table.test_session.stopped(user_id, now)
+                table.test_session.forget(user_id)  # their files in this session go too
+        if delete and self.settings.test_recordings_dir.exists():
+            # Whether or not the server is still listed: what was saved is deleted.
+            self._track(self._delete_saved_voice(guild_id, user_id), "test-voice-delete")
+
+    async def _delete_saved_voice(self, guild_id: int, user_id: int) -> None:
+        """Remove the files first, then the yes: a database that is slow or down never leaves
+        a person's voice on disk. One at a time for a person; never raises (logged)."""
+        if self.test_voice is None:
+            return
+        root = self.settings.test_recordings_dir
+        async with self._test_delete_locks.setdefault((guild_id, user_id), asyncio.Lock()):
+            if root.exists():
+                try:
+                    key = await asyncio.to_thread(test_files.load_key, root)
+                    live = [
+                        t.test_session.folder
+                        for t in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]
+                        if t is not None and t.test_session is not None
+                    ]
+                    await asyncio.to_thread(
+                        partial(test_library.delete_person, root, key, guild_id, user_id, live=live)
+                    )
+                except Exception:
+                    log.exception("Couldn't delete a person's saved test voice")
+            try:
+                await self.test_voice.revoke(guild_id, user_id)
+            except Exception:
+                log.exception("Couldn't remove a person's yes to saving their voice")
+
+    async def _start_test_session(self, table: Table) -> None:
+        """In a test server, start saving this session (and say so once in the DM screen)."""
+        if not self.test_voice_listed(table.guild_id) or table.test_session is not None:
+            return
+        assert self.test_voice is not None
+        root = self.settings.test_recordings_dir
+        try:
+            await self.test_voice.load(table.guild_id)
+            if self._test_key is None:
+                self._test_key = await asyncio.to_thread(test_files.load_key, root)
+            free = await asyncio.to_thread(_free_bytes, root)
+            if free < TEST_RECORDINGS_MIN_FREE:
+                log.warning("Not saving this test session: %d MB free", free // 2**20)
+                return
+            engine, _, rest = self.settings.transcription.source.partition(" ")
+            table.test_session = TestSession(
+                root,
+                self._test_key,
+                table.guild_id,
+                table.started_at or int(time.time()),
+                settings={
+                    "transcriber": f"{engine} {rest.split(' ')[0]}".strip(),
+                    "ai_models": {
+                        "fast": self.settings.ai_models.fast,
+                        "careful": self.settings.ai_models.careful,
+                        "deep": self.settings.ai_models.deep,
+                    },
+                    "sidebar_prompt": SIDEBAR_PROMPT_VERSION,
+                    "sidebar_on": self.settings.sidebar_on,
+                    "commit": test_files.short_commit(os.environ.get("GIT_COMMIT")),
+                },
+            )
+        except Exception:
+            log.exception("Couldn't start saving a test session")
+            return
+        await self.post(table.screen_channel_id, screen_messages.TEST_SESSION)
+
+    async def _save_test_audio(self, table: Table, utterance: Utterance, text: str | None) -> None:
+        session, voice = table.test_session, self.test_voice
+        if session is None or voice is None:
+            return
+        guild_id, user_id = table.guild_id, utterance.user_id
+        if self._test_pending >= TEST_SAVES_AT_ONCE:  # the disk can't keep up: drop, and say so
+            session.gap()
+            log.warning("Dropped a test recording: %d already waiting", self._test_pending)
+            return
+        self._test_pending += 1
+
+        def allowed() -> bool:  # both yeses, checked again before and after the file is made
+            return (
+                table.test_session is session
+                and self.consent.has_consent(guild_id, user_id)
+                and voice.has(guild_id, user_id)
+            )
+
+        try:
+            await session.add_utterance(
+                user_id,
+                is_dm=table.is_dm(user_id),
+                start_ms=utterance.start_ms,
+                end_ms=utterance.end_ms + AUDIO_FRAME_MS,
+                pcm=utterance.pcm,
+                text=text,
+                allowed=allowed,
+            )
+        except Exception:
+            log.exception("Couldn't save a test recording")
+        finally:
+            self._test_pending -= 1
+
+    def _finish_test_session(self, table: Table, caught_up: bool) -> None:
+        if table.test_session is None:
+            return
+        try:
+            table.test_session.finish({"complete": caught_up})
+        except Exception:
+            log.exception("Couldn't finish a test session")
+
+    async def _test_recordings_loop(self) -> None:
+        """Daily: delete saved sessions nobody kept that are over 7 days old (#1019)."""
+        while True:
+            now = int(time.time())
+            await asyncio.sleep(max(60, retention.next_run_after(now) - now))
+            try:
+                gone = await asyncio.to_thread(
+                    test_library.cleanup, self.settings.test_recordings_dir, time.time()
+                )
+                if gone:
+                    log.info("Deleted %d old test session(s)", gone)
+            except Exception:
+                log.exception("The daily test-recordings clean-up failed")
 
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
@@ -969,10 +1146,13 @@ class DMBot(commands.AutoShardedBot):
                         cloud=cloud,
                         renewed=member.id in status.outdated,  # the "What's new" note
                         company=company,
+                        test_voice=self.test_voice_listed(gid),
                     )
                     if cloud and member.id in status.other_company:
                         text = f"{REASK_INTRO}\n\n{text}"  # why they're asked again
-                    view = request_view(gid, outside=self.outside_engine)
+                    view = request_view(
+                        gid, outside=self.outside_engine, test_voice=self.test_voice_listed(gid)
+                    )
                 result = await send_prompt(member, text, view)
                 if result != "sent":
                     table.asked.discard(member.id)  # try again if they rejoin
@@ -1061,6 +1241,7 @@ class DMBot(commands.AutoShardedBot):
         table.listening_from = int(time.time())
         table.after_restart = table.resumed
         self.pipeline.session_started(table.guild_id)  # told of an outage afresh (#470)
+        await self._start_test_session(table)  # only in a test server (#1019)
         try:
             await self.push_allowlist(table.guild_id)
         except BaseException:
@@ -1215,6 +1396,7 @@ class DMBot(commands.AutoShardedBot):
                         *table.topic_tokens,
                     )
                 await self._after_session(table, ended_at, caught_up)
+                self._finish_test_session(table, caught_up)
                 # After it: the end-of-session capture check runs the last audio checks.
                 if checks := table.audio_checker.log_line():  # cost of #699's checks
                     log.info(checks)
@@ -1545,7 +1727,10 @@ class DMBot(commands.AutoShardedBot):
             return await self.lookup.get_within(campaign.guild_id, campaign.id, NAMES_WAIT_S)
 
         ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR])
-        return Sidebar(ai, rules_index.srd, gate=gate, houses=houses, names=names)
+        careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY])
+        return Sidebar(
+            ai, rules_index.srd, gate=gate, houses=houses, names=names, second_try=careful
+        )
 
     async def plan_gate(
         self, action: plan_rules.Action, guild_id: int, campaign: Campaign, user_id: int
@@ -2306,8 +2491,13 @@ class DMBot(commands.AutoShardedBot):
             dm=self.name_of(table.guild_id, table.dm_user_id),
             cloud=self.sends_audio_out,
             company=self.company,
+            test_voice=self.test_voice_listed(table.guild_id),
         )
-        return text, request_view(table.guild_id, outside=self.outside_engine)
+        return text, request_view(
+            table.guild_id,
+            outside=self.outside_engine,
+            test_voice=self.test_voice_listed(table.guild_id),
+        )
 
     async def sidebar_transcribe(self, table: Table, utterance: Utterance) -> str | None:
         """A voice message written down by the table's speech-to-text, with the
@@ -2350,6 +2540,11 @@ class DMBot(commands.AutoShardedBot):
         """A sidebar line for the stored (raw) transcript; never the live channel."""
         if self.transcripts is not None and self.tables.get(table.guild_id) is table:
             table.unsaved.add(line)
+        if table.test_session is not None and line.sidebar:  # what the session produced
+            # Only for a speaker who said yes to saving (the session checks).
+            table.test_session.shown(
+                line.user_id, f"sidebar {line.sidebar}", line.started_ms, line.heard
+            )
 
     def _table_for(self, utterance: Utterance) -> Table | None:
         for table in [
@@ -2423,6 +2618,18 @@ class DMBot(commands.AutoShardedBot):
             duration_ms = int(utterance.duration_s * 1000)
             table.unsaved.add(
                 Line(utterance.start_ms, utterance.user_id, text, cleaned or text, duration_ms)
+            )
+        saving = (
+            table.test_session is not None
+            and self.test_voice is not None
+            # Said yes to saving; _save_test_audio's allowed() re-checks this and the
+            # recording consent before and after every step.
+            and self.test_voice.has(table.guild_id, utterance.user_id)
+        )
+        if saving:
+            self._track(
+                self._save_test_audio(table, utterance, str(cleaned) if cleaned else None),
+                "test-audio",
             )
         if text:
             table.recent.add(utterance.user_id, str(cleaned or text), time.monotonic())
@@ -4364,6 +4571,11 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _free_bytes(root: Path) -> int:
+    test_files.ensure_root(root)
+    return shutil.disk_usage(root).free
+
+
 def _bot(interaction: discord.Interaction) -> DMBot:
     return cast(DMBot, interaction.client)
 
@@ -4400,7 +4612,12 @@ async def consent_give(interaction: discord.Interaction) -> None:
     # fresh process whose cache hasn't loaded this server yet.
     if granted is not None:
         await interaction.followup.send(
-            confirmed_text(guild.name, granted, sheets=bot.sheets is not None),
+            confirmed_text(
+                guild.name,
+                granted,
+                sheets=bot.sheets is not None,
+                test_voice=bot.test_voice_listed(guild.id),
+            ),
             view=menu_view(guild.id),
             ephemeral=True,
         )
@@ -4414,9 +4631,14 @@ async def consent_give(interaction: discord.Interaction) -> None:
         cloud=bot.sends_audio_out,
         renewed=renewed,
         company=bot.company,
+        test_voice=bot.test_voice_listed(guild.id),
     )
     await interaction.followup.send(
-        text, view=request_view(guild.id, outside=bot.outside_engine), ephemeral=True
+        text,
+        view=request_view(
+            guild.id, outside=bot.outside_engine, test_voice=bot.test_voice_listed(guild.id)
+        ),
+        ephemeral=True,
     )
 
 
@@ -4441,7 +4663,9 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
             await bot.withdraw_consent(guild.id, interaction.user.id)
         return
     await interaction.response.send_message(
-        warning_text(guild.name), view=warning_view(guild.id), ephemeral=True
+        warning_text(guild.name, saving=bot.test_voice_saving(guild.id, interaction.user.id)),
+        view=warning_view(guild.id),
+        ephemeral=True,
     )
 
 
@@ -4480,6 +4704,7 @@ async def run(settings: Settings) -> None:
             ClockStore(db),
             HouseFileLinkStore(db),
             EffectStore(db),
+            TestVoiceStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

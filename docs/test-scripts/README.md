@@ -179,6 +179,47 @@ scripts/replay docs/test-scripts/DMOnlyAudio.m4a --script docs/test-scripts/dm-o
   channel shows (part 2 of #299). So use replays to compare speech-to-text and changes to
   core, and live runs for audio and pieces of speech.
 
+## Keeping and replaying a live test (#1019, #1020)
+
+Every live test on a listed test server is saved by the recorder (only voices of people who
+pressed "Save my voice for tests"; made-up speaker ids; never on GitHub). Right after a live test that
+went well, dev1 keeps it (FOLDER is the session's folder name under /var/lib/dmbot/test-recordings/):
+
+    python -m dmbot.devtools.test_library keep FOLDER --name two-speaker-live --note "what passed"
+
+Replay one saved session at its original times (overlaps and consent stops as recorded) and
+see what changed since it was saved:
+
+    scripts/replay --session /var/lib/dmbot/test-recordings/FOLDER --transcriber deepgram
+
+It prints a short diff: lines changed, lost or added, and alerts gained or lost. Words from
+the session appear on your screen only, never in a log. The verdicts: better = fewer wrong
+words than when saved (judged against the kept expected lines), worse = more, same = identical,
+changed = the text differs and nothing kept says which is right: read it. Replay every kept, complete case,
+one after another at low priority, with one line each (same, better, worse, changed) and the
+speech-to-text cost (it takes as long as the sessions did; `--no-timing` finishes sooner with the
+same diff):
+
+    python -m dmbot.devtools.test_library run --transcriber deepgram --log
+
+`--log` adds a "Library run" entry to docs/testing-history.log with case names and counts only (then commit it).
+A case that lost a speaker (they pressed Stop saving my voice) is skipped as incomplete. These
+never run in the bot's container or during a live session, and refuse a folder whose manifest
+holds a number shaped like a Discord id.
+
+Two more checks on a library run, both off by default:
+
+    python -m dmbot.devtools.test_library run --transcriber deepgram --with-rules
+    python -m dmbot.devtools.test_library run --transcriber deepgram --with-sidebar
+
+`--with-rules` runs the real card spotter over the saved and today's transcript and lists the
+cards gained, lost or changed. It is free. `--with-sidebar` asks every saved DM sidebar question
+again through the real answer path (today's prompt and tier) and compares each new answer with
+the saved one: its source, sure or not sure, the length rule, and the share of words in common
+(same, changed, worse or better; no judging of style). **It costs money:** it needs
+ANTHROPIC_API_KEY and prints the calls, tokens and dollars at the end. A question that cannot be
+answered is counted as failed and the rest go on. `--log` adds counts per flag, never text.
+
 ## Run 8: what the twin answers, and what needs Discord (#534)
 
 Live tests need the owner and a table, so run 8 only checks what the twin can't. The twin
