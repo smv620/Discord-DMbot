@@ -64,6 +64,9 @@ class Perfect:
         counted = self.tokens or (len(system) + len(text)) // 4  # real text: about 4 a token
         return Reply(answer, False, counted, len(answer) // 4)
 
+    def tier(self, tier: object) -> "Perfect":  # (the real client hands out one per tier)
+        return self
+
     async def close(self) -> None:
         return None
 
