@@ -1,7 +1,8 @@
 import unittest
 
 from dmbot.campaigns import Campaign
-from dmbot.consent_dm import CONSENT_LABEL, STOP_LABEL
+from dmbot.consent_dm import STOP_LABEL
+from dmbot.consent_words import CONSENT_LABEL
 from dmbot.transcription.config import Engine
 from dmbot.ui.logic import (
     BUTTON_LABEL_MAX,

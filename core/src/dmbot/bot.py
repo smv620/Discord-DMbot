@@ -4587,7 +4587,7 @@ consent_group = app_commands.Group(
 )
 async def consent_give(interaction: discord.Interaction) -> None:
     # Shows the same request as the private message, so everyone agrees to the same terms;
-    # nothing is saved until they press I consent.
+    # nothing is saved until they press the consent button.
     bot = _bot(interaction)
     guild = interaction.guild
     if guild is None:

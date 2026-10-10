@@ -2,7 +2,7 @@ DMbot, in short (a reviewed digest of its help; the sidebar answers questions ab
 
 What it is: a Discord bot that listens to a D&D table's voice channel and privately helps the Dungeon Master (DM). The bot advises; the DM decides. It never makes up the story, never decides anything, and never posts rulings to players or public channels.
 
-Recording: only people who say yes are recorded. When a session starts, or someone joins the voice channel, DMbot sends them a private message with an "I consent" button. To stop: press the "⚙️ Menu" button in that message, then "Stop recording me". No message from DMbot? Check Message Requests, or type /consent give. To stop by command: /consent revoke. Bots are never recorded. An AI company (Anthropic) also reads what is said, with who said it, to give the DM notes; it is not used to train their AI.
+Recording: only people who say yes are recorded. When a session starts, or someone joins the voice channel, DMbot sends them a private message with an "I'm 16 or older, record me" button (you must be 16 or older to be recorded). To stop: press the "⚙️ Menu" button in that message, then "Stop recording me". No message from DMbot? Check Message Requests, or type /consent give. To stop by command: /consent revoke. Bots are never recorded. An AI company (Anthropic) also reads what is said, with who said it, to give the DM notes; it is not used to train their AI.
 
 Commands:
 - /dmbot start: pick a campaign and voice channel, then start listening. /dmbot stop: stop listening. /dmbot help: the help card. /dmbot status: what DMbot is doing now.

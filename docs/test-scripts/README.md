@@ -60,7 +60,7 @@ Stage directions:
 
 1. **Before:** on the server, `DMBOT_DEBUG_AUDIO=1` in `.env` (ears logs one `audio …` line per
    piece of speech). Ask: how many people (1 = DM only)?
-2. `/dmbot start`, and every reader presses **I consent** (or already has).
+2. `/dmbot start`, and every reader presses **I'm 16 or older, record me** (or already has).
 3. Read the script once, start to finish.
 4. **Wait until the last line ("…Lonelywood and Caer-Dineval") shows up in the transcript
    channel** (`#dmb-transcript-<short name>`, #124), or until nothing new has appeared for
@@ -254,7 +254,7 @@ Before the session
 - [ ] Someone who has never agreed before is ready to join voice
 
 Joining and agreeing
-- [ ] Everyone presses I consent before speaking. The first-time request says Deepgram will
+- [ ] Everyone presses the consent button before speaking. The first-time request says Deepgram will
   hear them; nothing is written down until they press Yes
 - [ ] The DM screen's "who is recorded" list updates (#107)
 
