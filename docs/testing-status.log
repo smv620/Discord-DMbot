@@ -9,6 +9,18 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- dev3, #1031 (#1019), merged into development with CloudDev's #1025 (replay): TEST RECORDINGS, part 1,
+  saving live test sessions. Core only. Migration **0043** (test_voice_consent). A NEW volume
+  `test-recordings` (compose and Dockerfile are updated): `docker compose up -d --build`. Nothing is saved
+  until you set `DMBOT_TEST_RECORDING_GUILDS=<the test server's number>` in `.env` and restart core
+  (`DMBOT_TEST_RECORDINGS_DIR` has a good default). Then, in that server: `/dmbot start` says once in the
+  DM screen "Test session..."; each player's consent message ends with "A second choice... You can skip
+  it" and a **Save my voice for tests** button (only works after the recording yes); ⚙️ Menu then has
+  **Stop saving my voice**. Check: after a two-speaker live test (docs/test-scripts/dm-and-player.md, both
+  people pressing Save my voice for tests) `python -m dmbot.devtools.test_library list` shows the session,
+  2 speakers, complete, no ids; `... keep <folder> --name two-speaker-live --note "what passed"`; a person
+  who presses Stop saving my voice (or Stop recording me) has their files gone from every session. Files
+  live only in the volume; unkept sessions go after 7 days. Core logs no ERROR.
 - dev3, #1023 (#1018): the consent question now says "You must be 16 or older to be recorded." and
   the button reads "I'm 16 or older, record me". Core only, no migration. The consent terms version goes
   from 3 to 4, so EVERYONE who agreed before is asked again at their next join and is NOT recorded until
