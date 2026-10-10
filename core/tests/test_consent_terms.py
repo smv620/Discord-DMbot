@@ -5,7 +5,7 @@ import unittest
 
 from dmbot.consent import TERMS_VERSION
 from dmbot.consent_dm import RENEWED, reminder_text, request_text
-from dmbot.consent_words import CONSENT_LABEL
+from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, MIN_AGE, UNDER_LINE
 from dmbot.ui.logic import HELP_TEXT
 
 # The request as people see it, under TERMS_VERSION. If this test fails you changed the
@@ -69,6 +69,16 @@ class TermsVersion(unittest.TestCase):
         self.assertLessEqual(len(CONSENT_LABEL), 80)  # Discord's limit for a button
         self.assertIn(f"**{CONSENT_LABEL}**", HELP_TEXT)
         self.assertIn("Only people 16 or older are recorded", HELP_TEXT)
+
+    def test_the_age_is_written_once(self) -> None:
+        # Every line that names the age is built from MIN_AGE, so a later change can't leave
+        # one behind (the Supervisor's note on #1023).
+        for line in (AGE_LINE, UNDER_LINE, CONSENT_LABEL, RENEWED):
+            self.assertIn(str(MIN_AGE), line)
+        self.assertEqual(AGE_LINE, f"You must be {MIN_AGE} or older to be recorded.")
+        self.assertEqual(
+            UNDER_LINE, f"Younger than {MIN_AGE}? Press **No thanks**. You can still play."
+        )
 
     def test_the_note_for_people_asked_again_says_why(self) -> None:
         self.assertIn("16 or older", RENEWED)
