@@ -31,6 +31,7 @@ from dmbot.memory.models import CONFIRMED
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, edition_tag, normalize
 
+LEGACY_TAG = "[Legacy 2014]"  # the owner's rule: the older ruleset is always tagged
 ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
 ENTRIES_MAX = 3
 HOUSE_RULES_MAX = 5
