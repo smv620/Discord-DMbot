@@ -1631,7 +1631,7 @@ class SaveAndResume(SessionTests):
         channel, text, view = post.await_args.args
         self.assertEqual(channel, table.screen_channel_id)
         self.assertIn("Who was speaking just now?", text)
-        labels = [item.label for item in view.children]
+        labels = [item.item.label for item in view.children]
         self.assertEqual(labels[:2], ["Narrating", "Brother Hiro"])  # the guess comes first
         self.assertEqual(labels[-2:], ["Type it…", "Not sure"])
         asked = table.speaker_questions.open
