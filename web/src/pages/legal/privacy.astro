@@ -18,32 +18,33 @@ import {
     "DMbot only records people who said yes.",
     "We never keep the sound of your voice: it is turned into text and the sound is thrown away.",
     "Everyone in your Discord server can read what was written down.",
-    "We keep your Discord account number, your email and which of your servers use DMbot, so you can sign in and use your plan.",
+    "We keep your Discord account number, your name, your email and a list of your servers while you are signed in, so you can sign in and use your plan.",
     "We don't sell anything about you, and there are no ads.",
-    "You can stop being recorded at any time, and you can delete your account and your campaigns from My Account.",
+    "You can stop being recorded at any time, and you can delete your account from My Account.",
   ]}
 >
   <h2>Who looks after your information</h2>
   <p>
-    DMbot is run by {operator.name}, {operator.address}. Write to {operator.email} about anything
-    on this page.
+    DMbot is run by {operator.name}. Write to {operator.email} about anything on this page.
   </p>
 
   <h2>What we keep</h2>
   <h3>When you sign in to this website</h3>
   <ul>
     <li>
-      Your <strong>Discord account number</strong> and the <strong>email</strong> Discord gives us. We
-      use the email only to tell you about your account and plan, and to fill in the payment
-      page when you pick a plan.
+      Your <strong>Discord account number</strong>, your <strong>Discord name</strong> and the
+      <strong>email</strong> Discord gives us (only if Discord has confirmed it is yours). We use the
+      email only to tell you about your account and plan, and to fill in the payment page when
+      you pick a plan.
     </li>
     <li>
-      The <strong>ids of your Discord servers that use DMbot</strong>, so we can show them to
-      you. {"{{CHECK: confirm with #435 what /me stores}}"}
+      The <strong>names and numbers of the Discord servers you are in</strong>, and whether you
+      manage them, so we can show you the ones that use DMbot. We keep this only while you are
+      signed in.
     </li>
     <li>
-      Sign-in uses Discord. We never see your Discord password, and we don't keep your Discord
-      sign-in token after you sign out. {"{{CHECK: confirm once sign-in is built (#435)}}"}
+      Sign-in uses Discord. We never see your Discord password. Discord gives us a one-time
+      sign-in pass. We use it once to read your account, then cancel it. We never keep it.
     </li>
   </ul>
 
@@ -73,7 +74,6 @@ import {
     <li>
       <strong>Your voice is not kept.</strong> The sound is sent to be written down, then thrown
       away. It is never saved.
-      {"{{CHECK: when the re-listen feature ships, say it holds about a minute of sound in memory only}}"}
     </li>
   </ul>
 
@@ -106,9 +106,8 @@ import {
     </li>
     <li>
       <strong>Backups</strong> of a paid campaign hold the campaign, including the game master's
-      secrets, and anyone in the server may download one.
-      {"{{CHECK: say whether transcripts are in backups once that is built}}"} This keeps a campaign safe if
-      its game master leaves.
+      secrets, but not what was said, and anyone in the server may download one. This keeps a
+      campaign safe if its game master leaves.
     </li>
     <li>Only people in your server can open your campaign in DMbot. Campaigns never share information.</li>
   </ul>
@@ -126,15 +125,18 @@ import {
     <li><strong>GitHub</strong>: where messages from the Say hello page are posted, for anyone to read.</li>
     <li>
       <strong>Cloudflare</strong>: delivers this website, and checks that a person (not a
-      robot) sent a Say hello message; for that it sees your internet address. {"{{CHECK: once the owner sets it up}}"}
+      robot) sent a Say hello message; for that it sees your internet address.
     </li>
     <li>
-      <strong>{"{{HOSTING PROVIDER}}"}</strong>: the server DMbot and its database run on.
-      {"{{CHECK: name and country}}"}
+      <strong>OVH US LLC (OVHcloud, U.S.A.)</strong>, a subsidiary of OVH Groupe: the server
+      DMbot and its database run on. Its servers are in the United States.
     </li>
   </ul>
   <p>
-    Some of these companies are in the United States. {"{{CHECK: transfer safeguards for people in the EU and UK}}"}
+    Deepgram, Anthropic, OVH US, Cloudflare, GitHub and {paymentProvider} are companies in the
+    United States, so if you are in the EU or the UK, your information goes there when you use
+    DMbot. {paymentProvider} is the seller of record and handles withdrawal rights, invoices and
+    tax.
   </p>
   <p>We don't sell your information and we don't use it for ads.</p>
   <p>
@@ -181,7 +183,10 @@ import {
       changed or taken back, and when, so we can see who had free access.
     </li>
   </ul>
-  <p>{"{{CHECK: anything payment law says we must keep, such as invoices}}"}</p>
+  <p>
+    {paymentProvider}, as the seller, keeps the invoices and tax records that payment law
+    requires.
+  </p>
 
   <h2>Your choices</h2>
   <ul>
@@ -192,12 +197,13 @@ import {
     </li>
     <li>
       <strong>Delete your account</strong> from <a href="/account">My Account</a>. This removes
-      your sign-in details, your plan and the campaigns you own, straight away. If you pay for a
+      your sign-in details and your plan, straight away. If you pay for a
       plan, you won't be charged again, and the rest of the month isn't paid back. If you want
       money back, ask before you delete (see <a href="/legal/refunds#stopping">Refunds</a>). Lines
       you said in
       someone else's campaign stay there, readable by that server, until that campaign is
-      deleted. {"{{CHECK: what account deletion removes (#435), and update when \"Delete my past transcripts\" ships}}"}
+      deleted.
+      {"{{CHECK: do the campaigns you own go when you delete? PLAN says yes; the code does not delete them yet (#922). Update when \"Delete my past transcripts\" ships}}"}
     </li>
     <li>
       <strong>Ask for a copy</strong> of what we keep, or ask us to fix it, by writing to
@@ -207,8 +213,10 @@ import {
 
   <h2>Cookies</h2>
   <p>
-    This website uses one cookie, only to keep you signed in. Other websites can't read it. There
-    are no tracking or ad cookies. {"{{CHECK: confirm with #435}}"}
+    This website uses one cookie to keep you signed in, and two short ones (they last 10
+    minutes) that are used only while you sign in or add DMbot to a server. Other websites
+    can't read them. There are no tracking or ad cookies. The robot check on the Say hello
+    page is run by Cloudflare and may use a cookie of its own to do its job.
   </p>
 
   <h2>Keeping it safe</h2>
@@ -220,8 +228,7 @@ import {
 
   <h2>Children</h2>
   <p>
-    You must be at least {minimumAge} to use Discord, so you must be at least {minimumAge} to use
-    DMbot. {"{{CHECK: older age where local law requires it, for example 16 in some EU countries}}"}
+    You must be at least {minimumAge} to use DMbot.
   </p>
 
   <h2>Changes</h2>

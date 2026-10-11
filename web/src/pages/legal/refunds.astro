@@ -8,16 +8,16 @@ import { keepAfterStopPaying, operator, paymentProvider } from "../../content/le
   description="How refunds for DMbot work, and how to ask for one."
   heading="Refunds"
   summary={[
-    "You can stop your plan any time. It keeps working until the end of the month you paid for.",
+    "You can stop your plan any time. It keeps working until the end of the period you already paid for.",
     "If we charged you by mistake, or twice, we give the money back.",
-    "For anything else, ask us and we'll look at it fairly.",
+    "Extra hours can't be refunded. For anything else, ask us and we'll look at it fairly.",
     "Refunds go back to the card or account you paid with.",
   ]}
 >
   <h2 id="stopping">Stopping your plan</h2>
   <p>
     Stop your plan any time from <a href="/account">My Account</a>. You won't be charged again.
-    Your plan keeps working until the end of the month you paid for. After that, your campaigns
+    Your plan keeps working until the end of the period you already paid for. After that, your campaigns
     are kept for {keepAfterStopPaying} in case you come back.
   </p>
   <p>
@@ -29,28 +29,28 @@ import { keepAfterStopPaying, operator, paymentProvider } from "../../content/le
   <h2>When you can get money back</h2>
   <ul>
     <li>
-      <strong>A new plan you haven't used:</strong> {"{{CHECK: refund window for an unused new plan, for example 14 days, set by the owner}}"}
+      <strong>A plan you just started and haven't used:</strong> write to {operator.email} within 14 days of paying and we'll refund it. A monthly renewal is not a new plan.
     </li>
     <li>
       <strong>Charged by mistake</strong>, or charged twice: we refund it.
     </li>
     <li>
       <strong>DMbot didn't work</strong> for a long time because of a problem on our side: ask us,
-      and we'll look at it. {"{{CHECK: owner's rule for outages}}"}
+      and we'll look at each case. Write to {operator.email}.
     </li>
     <li>
-      <strong>Extra hours</strong> you've already used can't be refunded.
-      {"{{CHECK: owner's rule, for used and unused extra hours}}"}
+      <strong>Extra hours</strong> (the add-on hours you buy) can't be refunded, used or not.
     </li>
   </ul>
   <p>
-    {"{{CHECK: legal withdrawal rights for people in the EU and UK (usually 14 days for digital services), and how the payment company applies them}}"}
+    {paymentProvider} is the seller. If you are in the EU or the UK, it handles your legal
+    right to withdraw, and your invoices and tax.
   </p>
 
   <h2 id="how-to-ask">How to ask</h2>
   <p>
     Write to {operator.email} from the email on your account, and say what happened. We answer
-    within {"{{CHECK: 5}}"} working days. Refunds are made by {paymentProvider} to the card or
+    within 5 working days. Refunds are made by {paymentProvider} to the card or
     account you paid with, and can take a few days to show.
   </p>
 </LegalPage>
