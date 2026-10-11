@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-11 by dev1 (core 4904c12; Test F next)
+Last updated: 2026-10-11 by dev1 (core 5383938, migrations through 0044; Test F next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,29 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- CloudDev, #1045 (#1039): the sidebar's AI now gets each entry's facts (a spell's casting time, range, components,
-  duration; a creature's AC, HP, speed): core only, no migration, prompt version sidebar-4. Check: rerun
-  `python -m dmbot.devtools.sidebar_check` (new cases: fireball range "150 feet", Bless "a minute", Shield casting
-  time "reaction") and post the table on #954; live, ask "Hey DMbot, what's the range of fireball?".
-  (#1025 and #1038, the test-recordings replay and library run, are devtools only: nothing to deploy;
-  `scripts/replay --session` and `python -m dmbot.devtools.test_library run` work once a session is kept.)
-- dev2, PR #1053 (#1034, memory kinds) and PR #1062 (#1061). MIGRATION 0044_memory_kinds, core only. Every
-  entry has one kind now: character, place, item, group, event or idea; a character's role (player
-  character, NPC, god) is a separate field; species, creature type, stat block and class are links to the
-  free rules (no screen for those yet). The migration moves the older kinds, deletes nothing: npc, player
-  character and god become a character with that role; a named creature becomes a character and a spell
-  becomes an idea, both marked "needs a look". Check: the core log shows 0044 applied and 0 ERROR; existing
-  entries show "needs a look" where expected; /dmbot names cards read "character · NPC" (and "character · god",
-  "place"); a spell line in a names list ("Fireball | spell") is refused with the /dmbot rule hint; a
-  "goblin | monster" line is refused with "That's a kind of monster, not one person", while "Snot | monster"
-  is kept as a character. Find-names accuracy was not rerun (no saved test set here): the library run
-  (#1025/#1038) covers it once recordings exist. #1062 fixes a test recording's manifest sometimes missing
-  the last utterance; no check needed beyond a kept session replaying all its lines.
+(nothing waiting; core 5383938 deployed 2026-10-11 04:44 UTC took #1045 earlier and #1053 + #1062 now: see the history)
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core 4904c12 (2026-10-11 04:08 UTC; sidebar header facts #1045, fixes #1039; before that ccb8f47 03:31 UTC; wake phrase "Hey DMbot" #1048, consent age line #1044; before that 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
+core 5383938 (2026-10-11 04:44 UTC, migrations through 0044 memory kinds #1053; before that 4904c12 04:08 UTC; sidebar header facts #1045, fixes #1039; before that ccb8f47 03:31 UTC; wake phrase "Hey DMbot" #1048, consent age line #1044; before that 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
 consent, AI tiers, the 16-or-older consent words), web-api 75a62d0, ears 21c5ff1, web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
