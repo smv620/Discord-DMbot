@@ -28,7 +28,14 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from dmbot.schema import MIGRATIONS, WEB_ROLE, WEB_ROLE_GRANTS, WEB_ROLE_POLICIES, Migration
+from dmbot.schema import (
+    MIGRATIONS,
+    WEB_ROLE,
+    WEB_ROLE_GRANTS,
+    WEB_ROLE_OFFER_POLICY,
+    WEB_ROLE_POLICIES,
+    Migration,
+)
 
 log = logging.getLogger(__name__)
 
@@ -362,6 +369,14 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     )
     await conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(here, role))
     await conn.execute(WEB_ROLE_POLICIES)  # constants: several statements, no parameters
+    cur = await conn.execute(
+        "SELECT count(*) AS n FROM information_schema.columns"
+        " WHERE table_schema = current_schema() AND table_name = 'campaign_handover_offers'"
+        " AND column_name IN ('delivered_at', 'claimed_at', 'message_id', 'end_told_at')"
+    )
+    columns = await cur.fetchone()
+    if columns is not None and columns["n"] == 4:
+        await conn.execute(WEB_ROLE_OFFER_POLICY)  # #728
     # Only tables that exist yet: a database brought up to an older migration (a test of a
     # backfill, say) doesn't have the newer tables the list names. Each gets its rights
     # once its own migration has run, since this runs after every migration.

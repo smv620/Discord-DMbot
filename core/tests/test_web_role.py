@@ -5,6 +5,7 @@ schema. The bot's role is unaffected."""
 from __future__ import annotations
 
 import json
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -25,6 +26,7 @@ from tests.test_web_feedback import FakeDiscussions
 
 WEB_PASSWORD = "dmbot_web"
 OUTSIDER = DiscordGuild(id=555, name="Not In Alice's List", manage=True)
+OTHER_USER = 424242  # made-up: the person offered, and "someone else" as a sender
 
 
 async def ensure_web_role() -> None:
@@ -200,6 +202,74 @@ class WebRole(DatabaseTest):
         for row in rows:
             self.assertNotIn(schema.WEB_ROLE, list(row["roles"]))
             self.assertNotIn("public", list(row["roles"]))
+
+    async def _grant(self, privilege: str) -> None:
+        """Give the website's role `privilege` on the offers table for this test's schema (only
+        a superuser can; the schema is dropped afterwards, so nothing carries over)."""
+        admin = await AsyncConnection.connect(SUPERUSER_URL, autocommit=True)
+        try:
+            table = f"{self.schema}.campaign_handover_offers"
+            await admin.execute(f"GRANT {privilege} ON {table} TO {schema.WEB_ROLE}")
+            await admin.execute(f"GRANT USAGE ON SEQUENCE {table}_id_seq TO {schema.WEB_ROLE}")
+        finally:
+            await admin.close()
+
+    async def _offer_insert(self, conn: Any, from_user: int, **extra: object) -> None:
+        """Insert an offer for Alice's campaign as the website's role would."""
+        await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+        columns = {
+            "guild_id": THURSDAY.id,
+            "campaign_id": self.mine.id,
+            "from_user_id": from_user,
+            "to_user_id": OTHER_USER,
+            "created_at": self.now,
+            "from_name": "Alice",
+            "to_name": "Bob",
+            **extra,
+        }
+        names = ", ".join(columns)
+        marks = ", ".join(["%s"] * len(columns))
+        await conn.execute(
+            f"INSERT INTO campaign_handover_offers ({names}) VALUES ({marks})",
+            tuple(columns.values()),
+        )
+
+    async def test_the_website_cannot_create_offers_today(self) -> None:
+        session = await self.alice()
+        with self.assertRaises(errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                await self._offer_insert(conn, ALICE.id)
+
+    async def test_when_it_may_create_offers_it_cannot_mark_them_sent(self) -> None:
+        # #728: the grant a future route needs is column-limited, and a restrictive rule backs it.
+        columns = ", ".join(schema.OFFER_INSERT_COLUMNS)
+        await self._grant(f"INSERT ({columns})")
+        session = await self.alice()
+        # Her own, open, unsent offer goes in.
+        async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+            await self._offer_insert(conn, ALICE.id)
+        # Columns outside the grant are refused outright.
+        for column in ("delivered_at", "claimed_at", "message_id", "end_told_at", "status"):
+            with self.assertRaises(errors.InsufficientPrivilege, msg=column):
+                async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                    await self._offer_insert(conn, ALICE.id, **{column: 1})
+        # Someone else's name as the sender is refused by the rule.
+        with self.assertRaises(errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                await self._offer_insert(conn, OTHER_USER)
+
+    async def test_a_wider_grant_is_still_held_by_the_rule(self) -> None:
+        # If someone granted INSERT on the whole table by mistake, marking an offer sent is
+        # still refused by the restrictive rule (#728).
+        await self._grant("INSERT")
+        session = await self.alice()
+        for column in ("delivered_at", "claimed_at", "message_id", "end_told_at"):
+            with self.assertRaises(errors.InsufficientPrivilege, msg=column):
+                async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                    await self._offer_insert(conn, ALICE.id, **{column: 1})
+        with self.assertRaises(errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                await self._offer_insert(conn, ALICE.id, status="accepted")
 
     async def test_its_limits_apply_to_it_and_never_to_the_bot(self) -> None:
         async with self.db.unscoped() as conn:
