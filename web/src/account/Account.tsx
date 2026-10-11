@@ -147,12 +147,10 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
         setState({ kind: "signed-out", notice: text.installSignedOut });
         return;
       }
-      const failed = params.get("signin") === "failed";
-      setState(
-        me
-          ? { kind: "signed-in", me }
-          : { kind: "signed-out", notice: failed ? text.signInFailed : null },
-      );
+      const why = params.get("signin");
+      const notice =
+        why === "failed" ? text.signInFailed : why === "slow" ? text.tooManyTries : null;
+      setState(me ? { kind: "signed-in", me } : { kind: "signed-out", notice });
     } catch {
       setState({ kind: "down" });
     }

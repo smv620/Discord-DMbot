@@ -47,6 +47,11 @@ describe("states", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(text.signInFailed);
   });
 
+  it("signed out after too many sign-in tries: says to wait", async () => {
+    show("signed-out", "?signin=slow");
+    expect((await screen.findByRole("alert")).textContent).toBe(text.tooManyTries);
+  });
+
   it("API down: says so with a Try again button", async () => {
     const { api } = show("down");
     expect((await screen.findByRole("alert")).textContent).toContain(text.down);
