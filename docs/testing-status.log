@@ -15,6 +15,18 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   time "reaction") and post the table on #954; live, ask "Hey DMbot, what's the range of fireball?".
   (#1025 and #1038, the test-recordings replay and library run, are devtools only: nothing to deploy;
   `scripts/replay --session` and `python -m dmbot.devtools.test_library run` work once a session is kept.)
+- dev2, PR #1053 (#1034, memory kinds) and PR #1062 (#1061). MIGRATION 0044_memory_kinds, core only. Every
+  entry has one kind now: character, place, item, group, event or idea; a character's role (player
+  character, NPC, god) is a separate field; species, creature type, stat block and class are links to the
+  free rules (no screen for those yet). The migration moves the older kinds, deletes nothing: npc, player
+  character and god become a character with that role; a named creature becomes a character and a spell
+  becomes an idea, both marked "needs a look". Check: the core log shows 0044 applied and 0 ERROR; existing
+  entries show "needs a look" where expected; /dmbot names cards read "character · NPC" (and "character · god",
+  "place"); a spell line in a names list ("Fireball | spell") is refused with the /dmbot rule hint; a
+  "goblin | monster" line is refused with "That's a kind of monster, not one person", while "Snot | monster"
+  is kept as a character. Find-names accuracy was not rerun (no saved test set here): the library run
+  (#1025/#1038) covers it once recordings exist. #1062 fixes a test recording's manifest sometimes missing
+  the last utterance; no check needed beyond a kept session replaying all its lines.
 
 ------------------------------------------------------------------------------
 LIVE NOW
