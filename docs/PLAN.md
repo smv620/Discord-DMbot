@@ -2112,6 +2112,14 @@ messages use the same ones.
 | Pro | 217 ("about 50 hours a week"); needs the bigger server | 20 | coming soon |
 | Extra hours | +10 this month | — | $4.99 |
 
+*The hours rules, replayed offline (2026-10-11, #437):* `python -m dmbot.devtools.replay --session
+FOLDER --plan PLAN --hours-used N [--grace] [--session-minutes N] [--hours-only]` puts a made-up owner
+on a plan with some hours used, in a throwaway schema (never the live one) with enforcement on, and
+runs the session through the bot's own hours rules and meter. It shows the 80% and 90% warnings, the
+cap finish (the 2-hour grace, once), the stop and the refusal at the next start, in the bot's exact
+words; Try It at the cap is refused at start. dev1 runs it once before the go-live switch (#498). How
+to run it: docs/test-scripts/README.md.
+
 *How extra hours are bought (2026-10-11, #1089):* an **Add 10 hours ($4.99)** button on the account
 page, under the hours left, shown only over a paid plan that works now (active, or in the 7-day
 grace). It calls `POST /billing/extra-hours`, which answers `{url}` like checkout, from the payment

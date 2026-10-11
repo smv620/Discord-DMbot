@@ -207,6 +207,35 @@ A case that lost a speaker (they pressed Stop saving my voice) is skipped as inc
 never run in the bot's container or during a live session, and refuse a folder whose manifest
 holds a number shaped like a Discord id.
 
+### The hours rules, offline (#437)
+
+The same command can also replay the **hours rules** for an owner on a plan, so dev1 can see the
+warnings, the cap and the refusal in the bot's exact words before `DMBOT_ENFORCE_PLANS` is turned
+on (#498). It needs `DATABASE_URL` (any database you may create a schema in): it makes a throwaway
+schema, runs the session minute by minute through the bot's own hours rules and meter, and drops
+the schema again. The live schema is never touched, the owner and server are made-up numbers, and
+enforcement is on for that replay only. Add `--hours-only` to skip the speech replay (no
+transcriber needed):
+
+    scripts/replay --session FOLDER --hours-only --plan table --hours-used 14 --session-minutes 400
+
+| Option | What it does |
+|---|---|
+| `--plan try-it\|table\|two-tables\|guild` | the owner's plan (its hours and campaigns come from plans.json) |
+| `--hours-used N` | hours already used this month (0 by default) |
+| `--grace` | the paid plan is in its 7-day payment grace (not for Try It) |
+| `--session-minutes N` | how long the session listens (default: the saved session's length, rounded up) |
+| `--hours-only` | only the hours replay |
+
+It prints, in order: the 80% and 90% warnings, the cap and the one 2-hour grace, the "will stop in
+about 15 minutes" notice, the stop, and what the owner is told at the next `/dmbot start`. An owner
+already at the cap is refused at start and no session runs (Try It: "change your plan", no extra
+hours). Example: `--plan table --hours-used 14 --session-minutes 400` shows 80% at 24 min, 90% at
+132, the grace at 240, the stop warning at 345 and the stop at 360. The loop around the rules
+(`Bot._meter_write`, `_enforce_cap`) needs Discord, so the twin follows its steps and a test pins
+that the words come from the same functions; if the bot's loop changes, change `hours_twin.play`
+with it.
+
 Two more checks on a library run, both off by default:
 
     python -m dmbot.devtools.test_library run --transcriber deepgram --with-rules
