@@ -190,7 +190,7 @@ class PlayersOwn(SheetTest):
         await self.linked()
         async with self.db.guild(GUILD_A) as conn:  # as an undone merge can leave it
             await conn.execute(
-                "UPDATE memory_entities SET played_by = NULL, type = 'npc'"
+                "UPDATE memory_entities SET played_by = NULL, type = 'character', role = 'npc'"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
                 (GUILD_A, self.c, self.pc),
             )

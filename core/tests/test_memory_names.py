@@ -216,7 +216,7 @@ class NameCards(NamesTest):
 
     async def test_the_card_shows_other_names_and_secrets_only_to_the_dm(self) -> None:
         text = await self.card()
-        self.assertIn("🪪 **Belleros** · NPC · Not heard in a session yet", text)
+        self.assertIn("🪪 **Belleros** · character · NPC · Not heard in a session yet", text)
         self.assertIn("**Also called:** Bell", text)
         self.assertIn("**🤫 Secret:** the hooded stranger", text)
         manager = await self.card(MANAGER)
@@ -368,7 +368,7 @@ class NameCards(NamesTest):
         await view._main(it)
         self.assertIn("⭐ **Bell** is the main name now", it.response.edited[0][0])
         text = await self.card()
-        self.assertIn("🪪 **Bell** · NPC", text)
+        self.assertIn("🪪 **Bell** · character · NPC", text)
         self.assertIn("**Also called:** Belleros", text)
 
     async def test_a_secret_name_never_becomes_the_main_name(self) -> None:
@@ -810,7 +810,7 @@ class Lists(NamesTest):
         sent = await self.add_many("Belleros | place")
         self.assertIn("1 kind differs. Questions below.", sent[0].args[0])
         self.assertIn("1. **Belleros**: DMbot has NPC, your list says place.", sent[1].args[0])
-        self.assertIn("🪪 **Belleros** · NPC", await self.card())  # kept by default
+        self.assertIn("🪪 **Belleros** · character · NPC", await self.card())  # kept by default
         await self.press(sent[1].kwargs["view"], "1. Change to place")
         self.assertIn("🪪 **Belleros** · place", await self.card())
 

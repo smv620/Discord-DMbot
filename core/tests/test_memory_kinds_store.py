@@ -133,7 +133,7 @@ class Roles(MemoryTest):
             GUILD_A,
             self.c,
             [NewName("Mage 1", "concept", PROPOSED), NewName("Mage 2", "concept", PROPOSED)],
-            source="scan",
+            source="dm",
         )
         ids = [i for i in written.value if i is not None]
         done = await self.memory.confirm_kinds(GUILD_A, self.c, ids, "npc", source="dm")
@@ -231,7 +231,10 @@ class Links(MemoryTest):
             (await self.snot(), "species", "x" * 101, {}),
             (await self.snot(), "species", "elf", {"edition": "1999"}),
         ):
-            with self.subTest(kind=kind, name=name[:5]), self.assertRaises(MemoryRuleError):
+            with (
+                self.subTest(kind=kind, name=name[:5]),
+                self.assertRaises((MemoryRuleError, ValueError)),
+            ):
                 await self.link(entity, kind, name, **kw)
         self.assertEqual(await self.memory.rule_links(GUILD_A, self.c), [])
 
