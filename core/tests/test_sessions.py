@@ -1617,6 +1617,40 @@ class SaveAndResume(SessionTests):
         await self.settle()
         self.assertTrue(all(line.entity == "" for line in table.unsaved._waiting))
 
+    async def test_a_maybe_is_asked_in_the_dm_screen_and_the_answer_is_saved(self) -> None:
+        table = await self.speaking("1 npc 2 maybe\n2 unsure")
+        post = AsyncMock(return_value=MagicMock(edit=AsyncMock()))
+        self.bot.post_message = post  # type: ignore[method-assign]
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        self.said(table, "The door creaks open slowly.", user=DM, at_ms=5_000)
+        await self.settle()
+        self.assertEqual([line.entity for line in table.unsaved._waiting], ["", ""])  # no guess
+        post.assert_awaited_once()
+        assert post.await_args is not None
+        channel, text, view = post.await_args.args
+        self.assertEqual(channel, table.screen_channel_id)
+        self.assertIn("Who was speaking just now?", text)
+        labels = [item.label for item in view.children]
+        self.assertEqual(labels[:2], ["Narrating", "Brother Hiro"])  # the guess comes first
+        self.assertEqual(labels[-2:], ["Type it…", "Not sure"])
+        asked = table.speaker_questions.open
+        assert asked is not None
+        # Only the DM may answer; a player is told so and the question stays open.
+        text, done = await self.bot.answer_speaker_question(GUILD, asked.id, "0", PLAYER)
+        self.assertEqual((text, done), ("Only the DM can answer this.", False))
+        # A name typed in is checked like the buttons: a secret name is refused.
+        text, done = await self.bot.answer_speaker_question(
+            GUILD, asked.id, "type", DM, "Silas Vane"
+        )
+        self.assertFalse(done)
+        self.assertTrue(table.speaker_questions.is_open(asked.id))
+        text, done = await self.bot.answer_speaker_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        self.assertIn("Brother Hiro", text)
+        said_as = {line.text: line.entity for line in table.unsaved._waiting}
+        self.assertEqual(said_as[asked.context], "Brother Hiro")
+        self.assertIsNone(table.speaker_questions.open)
+
     async def test_a_dm_who_has_stopped_is_not_asked_about(self) -> None:
         table = await self.speaking("1 narrating\n2 narrating")
         self.bot.stop_recording(GUILD, DM)

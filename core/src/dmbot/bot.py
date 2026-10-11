@@ -103,6 +103,8 @@ from dmbot.dm_screen.settings import (
     SettingsVisibilityButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
+from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
+from dmbot.dm_screen.speaker_question import question_view as speaker_question_view
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -153,6 +155,7 @@ from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, speaker_ai
 from dmbot.transcript import questions as name_questions
+from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
     Cleaned,
@@ -163,7 +166,7 @@ from dmbot.transcript.cleaner import (
     with_ending,
 )
 from dmbot.transcript.export import clock
-from dmbot.transcript.models import Line, TranscriptBuffer
+from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.topic_ai import classify
@@ -411,6 +414,8 @@ class Table:
     # Who the DM was speaking as (#53): the DM's lines waiting for the AI, a window at a
     # time, and the same bookkeeping as the off-topic filter.
     speakers: TopicWindow = field(default_factory=TopicWindow)
+    speaker_questions: speaker_q.SpeakerBook = field(default_factory=speaker_q.SpeakerBook)
+    speaker_message: discord.Message | None = None
     speaker_book: speaker_ai.NameBook = field(default_factory=speaker_ai.NameBook)
     speaker_calls: int = 0
     speaker_tokens: list[int] = field(default_factory=lambda: [0, 0])  # in, out
@@ -684,7 +689,9 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(UndoButton, UndoListButton)
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
-        self.add_dynamic_items(NameQuestionButton, NameAnswerUndoButton, FixUndoButton)
+        self.add_dynamic_items(
+            NameQuestionButton, NameAnswerUndoButton, FixUndoButton, SpeakerQuestionButton
+        )
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
         self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
@@ -878,6 +885,8 @@ class DMBot(commands.AutoShardedBot):
                 self._redraw_left_out(table)
             if table.questions.drop_speaker(user_id, time.monotonic()) is not None:
                 self._track(self._close_question(table), "name-question")
+            if table.speaker_questions.drop_speaker(user_id, time.monotonic()) is not None:
+                self._track(self._close_speaker_question(table, speaker_q.GONE), "speaker-q")
             for key in [k for k in table.heard_counts if k[1] == user_id]:
                 del table.heard_counts[key]
 
@@ -1361,6 +1370,11 @@ class DMBot(commands.AutoShardedBot):
             ended = table.questions.close(name_questions.ENDED, time.monotonic())
             if ended is not None:
                 self._track(self._close_question(table, self._not_answered(table, ended)), "q")
+        speaker_book = table.speaker_questions  # likewise "Who was speaking just now?"
+        if not speaker_book.answering and speaker_book.close(speaker_q.ENDED, time.monotonic()):
+            self._track(
+                self._close_speaker_question(table, speaker_q.not_answered_text()), "speaker-q"
+            )
         table.fix_ended = True  # the fixes stay listed; their Undo buttons go
         self._redraw_fix_notes(table)
         self._redraw_left_out(table)  # likewise the lines left out, and Put it back
@@ -3133,6 +3147,133 @@ class DMBot(commands.AutoShardedBot):
             entity = speaker_ai.check_entity(now, guess.entity) if guess.sure else ""
             if entity:
                 await self._save_entity(table, waiting, entity)
+            elif not guess.sure:  # no label in the file; the DM may say who it was
+                self._offer_speaker_question(table, waiting, guess, now, last_said)
+
+    def _offer_speaker_question(
+        self,
+        table: Table,
+        waiting: Waiting,
+        guess: speaker_ai.Guess,
+        lookup: CampaignLookup,
+        last_said: dict[str, float],
+    ) -> None:
+        """Ask the DM "Who was speaking just now?" about a line the AI wasn't sure of (#53),
+        in the DM screen only: see `SpeakerBook` for the limits. The guess, if any, is the
+        first button, then the NPCs said most lately. Not asked when the DM screen is quiet,
+        or the session is finishing."""
+        if (
+            self.tables.get(table.guild_id) is not table
+            or not screen_levels.allows(table.screen_level, screen_levels.QUESTION)
+            or not self.consent.has_consent(table.guild_id, waiting.speaker)
+        ):
+            return
+        now = time.monotonic()
+        if table.speaker_questions.expire(now) is not None:
+            self._track(
+                self._close_speaker_question(table, speaker_q.not_answered_text()), "speaker-q"
+            )
+        guessed = speaker_ai.check_entity(lookup, guess.entity)
+        said = speaker_ai.offered(lookup, last_said, table.speaker_book)
+        options = list(dict.fromkeys(n for n in [guessed, *said] if n and n != NARRATING))
+        asked = table.speaker_questions.offer(
+            waiting.speaker, waiting.started_ms, waiting.text, options, now
+        )
+        if asked is not None:
+            self._track(self._ask_speaker(table, asked), "speaker-question")
+
+    async def _ask_speaker(self, table: Table, asked: speaker_q.Asked) -> None:
+        """Post the question to the DM screen. Consent is checked again first: this runs
+        after the line was delivered."""
+        book = table.speaker_questions
+        if not self.consent.has_consent(table.guild_id, asked.speaker):
+            if book.is_open(asked.id):
+                book.close(speaker_q.STOPPED, time.monotonic())
+            return
+        text = speaker_q.question_text(discord.utils.escape_markdown(asked.context))
+        message = await self.post_message(
+            table.screen_channel_id, text, speaker_question_view(table.guild_id, asked)
+        )
+        if message is None:
+            if book.is_open(asked.id):  # not posted: free the slot, ask again later
+                book.close(speaker_q.NOT_POSTED, time.monotonic())
+            return
+        if book.is_open(asked.id):
+            table.speaker_message = message
+            return
+        closed = (  # closed while posting: say how
+            speaker_q.GONE
+            if book.why_closed(asked.id) == speaker_q.STOPPED
+            else speaker_q.not_answered_text()
+        )
+        with contextlib.suppress(discord.HTTPException):
+            await message.edit(content=closed, view=None)
+
+    async def _close_speaker_question(self, table: Table, text: str) -> None:
+        """Take the question's buttons down, saying why."""
+        message, table.speaker_message = table.speaker_message, None
+        if message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(content=text, view=None)
+
+    def _speaker_table(self, guild_id: int, question_id: str) -> Table | None:
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if table is not None and (
+                table.speaker_questions.is_open(question_id)
+                or table.speaker_questions.why_closed(question_id) is not None
+            ):
+                return table
+        return None
+
+    async def answer_speaker_question(
+        self, guild_id: int, question_id: str, pick: str, user_id: int, typed: str | None = None
+    ) -> tuple[str, bool]:
+        """The DM answered "Who was speaking just now?" (#53): what to tell them, and
+        whether the question is now closed (its message then shows the answer). The name
+        is checked against the names a label may take, as they are now, so a secret name
+        is never written; consent is checked before and after every wait."""
+        table = self._speaker_table(guild_id, question_id)
+        book = table.speaker_questions if table is not None else None
+        asked = book.open if book is not None else None
+        if table is None or book is None or asked is None or asked.id != question_id:
+            gone = book is not None and book.why_closed(question_id) == speaker_q.STOPPED
+            return (speaker_q.GONE if gone else speaker_q.EXPIRED), True
+        if not table.is_dm(user_id):
+            return speaker_q.ONLY_DM, False
+        if not self.consent.has_consent(guild_id, asked.speaker):
+            book.close(speaker_q.STOPPED, time.monotonic())
+            return speaker_q.GONE, True
+        began = book.begin(question_id)
+        if began is speaker_q.Begin.BUSY:
+            return speaker_q.BUSY, False
+        if began is speaker_q.Begin.GONE:
+            return speaker_q.EXPIRED, True
+        try:
+            if pick == speaker_q.SKIP:
+                book.close(speaker_q.ANSWERED, time.monotonic())
+                return speaker_q.SKIPPED, True
+            wanted = typed if pick == speaker_q.TYPE else speaker_q.pick_to_name(asked, pick)
+            lookup = await self._names_now(table)  # a name may have been made secret since
+            if lookup is None:
+                book.failed(question_id)
+                return speaker_q.CANT_CHECK, False
+            name = speaker_ai.check_entity(lookup, wanted or "")
+            if not name:
+                book.failed(question_id)
+                return speaker_q.NOT_ALLOWED, False
+            if not self.consent.has_consent(guild_id, asked.speaker) or not book.is_open(
+                question_id
+            ):
+                book.close(speaker_q.STOPPED, time.monotonic())
+                return speaker_q.GONE, True
+            await self._save_entity(
+                table, Waiting(asked.speaker, asked.started_ms, asked.context, 0.0), name
+            )
+        except BaseException:
+            book.failed(question_id)
+            raise
+        book.close(speaker_q.ANSWERED, time.monotonic())
+        return speaker_q.answered_text(discord.utils.escape_markdown(name)), True
 
     async def _save_entity(self, table: Table, waiting: Waiting, entity: str) -> None:
         """Save who a line was said as, waiting or saved. Only while its speaker is recorded."""
