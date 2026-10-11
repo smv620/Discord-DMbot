@@ -177,6 +177,40 @@ describe("the facts #433 asks for", () => {
     expect(terms()).toMatch(/confirm they have the right to use it\. We don't check this/);
   });
 
+  // Owner's decisions of 2026-10-11 (#922): campaigns outlive the account, the rights wording,
+  // and the "Our responsibility" text. No placeholder is left on any legal page.
+  it("says campaigns stay when an account is deleted", () => {
+    for (const body of [terms(), privacy()]) {
+      expect(body).toContain("Your campaigns are not deleted with your account");
+      expect(body).toContain("the other players may still want to read or download them");
+      // PLAN: kept like a campaign whose plan stopped paying (120 days), unless a DM takes it over.
+      expect(body).toContain("They are deleted 120 days later, unless another DM of the campaign takes them over.");
+    }
+  });
+
+  it("tells people how to ask about their information, with a 30-day answer", () => {
+    expect(privacy()).toContain(
+      "You can ask us to show you, correct, send you a copy of, or delete the information we hold about you, by emailing dmbot.admin@gmail.com. We answer within 30 days.",
+    );
+  });
+
+  it("uses the owner's approved 'Our responsibility' text", () => {
+    // The owner's words, with only the spelling fixed (Supervisor, 2026-10-11).
+    expect(terms()).toContain(
+      "DMbot LLC, its affiliates and any contributors to the DMbot project make no claims or promises towards the accuracy or stability of the product's performance. DMbot LLC does not warrant or guarantee the goods or services purchased. By using the DMbot agent and the associated tools, users agree to hold DMbot LLC and its affiliates harmless towards any losses, material, non-material or deemed.",
+    );
+  });
+
+  it("keeps the 120 days in the deletion sentence in step with the plan file", () => {
+    expect(facts.keepAfterPlanStopsPaying).toEqual({ count: 120, unit: "day" });
+  });
+
+  it("leaves no placeholder on any legal page", () => {
+    for (const page of ["terms", "privacy", "refunds"]) {
+      expect(text(doc(page).querySelector("main"))).not.toMatch(/\{\{/);
+    }
+  });
+
   it("describes the three DM-screen settings and that peeks are seen", () => {
     expect(privacy()).toMatch(/players who choose to peek \(the usual setting/);
     expect(privacy()).toContain("the game master can see who peeked");
