@@ -63,7 +63,19 @@ class Completes(Protocol):
     async def complete(self, system: str, text: str, *, max_tokens: int = ...) -> Reply: ...
 
 
+_last: tuple[CampaignLookup, dict[str, str]] | None = None  # the newest lookup's answer
+
+
 def _allowed(lookup: CampaignLookup) -> dict[str, str]:
+    """`_work`, remembered for the newest lookup: it is asked for on every line the DM
+    says, and a lookup never changes (a reload is a new one), so it is worked out once."""
+    global _last
+    if _last is None or _last[0] is not lookup:
+        _last = (lookup, _work(lookup))
+    return _last[1]
+
+
+def _work(lookup: CampaignLookup) -> dict[str, str]:
     """Entity ID → the name a label may take. A name is allowed only if it is a confirmed
     NPC's or god's own name, itself confirmed and not secret, and no secret name of anything
     reads the same."""
