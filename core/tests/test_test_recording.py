@@ -711,13 +711,47 @@ class Hardening(unittest.IsolatedAsyncioTestCase):
         ):
             for i in range(20):
                 await self.save(s, DM, float(i))
-            await asyncio.sleep(0.2)
+            for _ in range(100):  # wait for the last write, not a fixed time (slow machines)
+                saved = files.read_json(s.folder / files.MANIFEST)
+                if saved is not None and len(saved["utterances"]) == 20:
+                    break
+                await asyncio.sleep(0.05)
         manifests = [w for w in writes if w == files.MANIFEST]
         self.assertLess(len(manifests), 10)
         self.assertGreaterEqual(len(manifests), 1)
         files_on_disk = files.read_json(s.folder / files.MANIFEST)
         assert files_on_disk is not None
         self.assertEqual(len(files_on_disk["utterances"]), 20)
+
+    async def test_a_change_during_a_manifest_write_is_written_too(self) -> None:
+        s = self.session()
+        real = files.write_text
+        first = True
+
+        def changing(path: Path, text: str) -> None:
+            nonlocal first
+            real(path, text)
+            if first:  # an utterance's change arrives while the first write is running
+                first = False
+                s._manifest["gaps"] = 7
+                s._flush_soon()
+
+        from unittest.mock import patch
+
+        with (
+            patch.object(files, "write_text", changing),
+            patch("dmbot.test_recording.session.FLUSH_EVERY_S", 0.02),
+        ):
+            s._manifest["gaps"] = 1
+            s._flush_soon()
+            for _ in range(100):
+                saved = files.read_json(s.folder / files.MANIFEST)
+                if saved is not None and saved.get("gaps") == 7:
+                    break
+                await asyncio.sleep(0.02)
+        saved = files.read_json(s.folder / files.MANIFEST)
+        assert saved is not None
+        self.assertEqual(saved["gaps"], 7)
 
     async def test_the_secret_is_made_once_even_when_many_ask_at_once(self) -> None:
         root = Path(self._tmp.name) / "fresh"
