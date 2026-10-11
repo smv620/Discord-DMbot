@@ -951,8 +951,10 @@ class CampaignStore:
                 return "gone"
             if not await self._has_free_slot(conn, user_id, now):
                 return "no_free_slot"
+            # Taking it on also ends the 120-day countdown a deleted account started (#1059).
             await conn.execute(
-                "UPDATE campaigns SET owner_user_id = %s WHERE guild_id = %s AND id = %s",
+                "UPDATE campaigns SET owner_user_id = %s, owner_left_at = NULL"
+                " WHERE guild_id = %s AND id = %s",
                 (user_id, guild_id, campaign_id),
             )
             return "taken"
@@ -1109,7 +1111,9 @@ class CampaignStore:
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
                     " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
-                    " owner_user_id = COALESCE(owner_user_id, %s)"
+                    " owner_user_id = COALESCE(owner_user_id, %s),"
+                    " owner_left_at = CASE WHEN owner_user_id IS NULL THEN NULL"
+                    "   ELSE owner_left_at END"
                     " WHERE guild_id = %s AND id = %s",
                     (
                         info["target_ruleset"],
@@ -1304,6 +1308,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
             if row.get("retention_warned_for") is not None
             else None
         ),  # older schemas (tests) have none
+        owner_left_at=(int(row["owner_left_at"]) if row.get("owner_left_at") is not None else None),
     )
 
 

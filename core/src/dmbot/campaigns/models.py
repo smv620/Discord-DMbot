@@ -136,6 +136,9 @@ class Campaign:
     # Which retention warning it has had, and for which delete date (#964).
     retention_warned_stage: int = 0
     retention_warned_for: int | None = None
+    # When the owner deleted their account (#1059): the campaign is kept, ownerless, and the
+    # retention job deletes it 120 days later unless a DM takes it on. None otherwise.
+    owner_left_at: int | None = None
 
     @property
     def last_active_at(self) -> int:

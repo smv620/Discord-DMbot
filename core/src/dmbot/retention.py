@@ -66,6 +66,23 @@ def delete_at(last_active_at: int, standing: Standing) -> int:
     return at
 
 
+def owner_left(campaign: Campaign) -> bool:
+    """Its owner deleted their account and nobody has taken it on (#1059)."""
+    return campaign.owner_user_id is None and campaign.owner_left_at is not None
+
+
+def delete_date(campaign: Campaign, standing: Standing) -> int:
+    """When the campaign is deleted. A campaign whose owner deleted their account goes
+    120 days after that, whatever its plan was and however recently it was played (#1059;
+    owner, 2026-10-11): the players may still read and download it until then, and any DM
+    can take it on. Every other campaign follows `delete_at`."""
+    if campaign.owner_left_at is not None and campaign.owner_user_id is None:
+        # Tied on purpose to the 120 days a lapsed plan's campaigns are kept (the same
+        # promise on the legal pages), not a separate setting.
+        return campaign.owner_left_at + plans.load().keep_after_plan_stops_paying.days * DAY
+    return delete_at(campaign.last_active_at, standing)
+
+
 def warning_stage(delete: int, now: int) -> int:
     """Which warning is due: 0 none yet, 1 the first (14 days), 2 the last (3 days)."""
     first, last = sorted(plans.load().deletion_warning_days_before, reverse=True)[:2]
@@ -136,6 +153,10 @@ def warning_text(
     last = "Last warning: " if warning_stage(delete, now) == 2 else ""
     where = f"in **{_md(server)}**"
     keep = [f"play a session {where} (that starts the clock again)"]
+    if owner_left(campaign):
+        # A fixed date, not a clock a session restarts: only taking it on keeps it.
+        why = "the DM who ran it deleted their account and no one has taken it on"
+        keep = [f"any of its DMs can open ⚙️ Settings {where} and press 🤝 **{TAKE_ON}**"]
     if standing.backups:
         keep.append(f"download a backup with `/dmbot backup` {where}")
     if campaign.owner_user_id is not None and standing.lapsed_at is not None:
@@ -152,6 +173,7 @@ def warning_text(
     )
 
 
+TAKE_ON = "Take it on"  # the button's label (dm_screen.handover.TAKE_ON_LABEL)
 WARNINGS_PER_MESSAGE = 6  # keeps a message well under Discord's 2000 characters
 NAME_SHOWN = 50
 
@@ -177,9 +199,17 @@ def grouped_warning_text(
             + ("" if days == 1 else "s")
             + f" ({_date(at)})"
             + (", plan ended" if ended else "")
+            + (", its DM left" if owner_left(campaign) else "")
         )
     last = "Last warning: " if any(warning_stage(at, now) == 2 for _c, _s, at in items) else ""
-    keep = ["play a session in that campaign's server (it is then safe for a while)"]
+    keep = []
+    if any(not owner_left(c) for c, _s, _a in items):
+        keep.append("play a session in that campaign's server (it is then safe for a while)")
+    if any(owner_left(c) for c, _s, _a in items):
+        keep.append(
+            "for one whose DM left, any of its DMs can open ⚙️ Settings in its server and "
+            f"press 🤝 **{TAKE_ON}** (a session doesn't keep it)"
+        )
     if any(s.backups for _c, s, _a in items):
         keep.append("download a backup with `/dmbot backup` in that server")
     if any(c.owner_user_id is not None and s.lapsed_at is not None for c, s, _a in items):
@@ -193,7 +223,7 @@ def grouped_warning_text(
         f"⏳ {last}These campaigns will be deleted for good: their story, notes and "
         f"transcripts can't be brought back.\n"
         + "\n".join(lines)
-        + f"\nTo keep a campaign, {options}. Each one is judged on its own."
+        + f"\nTo keep a campaign, {options}."
     )
 
 
@@ -318,7 +348,7 @@ class RetentionJob:
                     log.exception("Retention: couldn't read a plan; leaving the campaign alone")
                     result.skipped += 1
                     continue
-                at = delete_at(campaign.last_active_at, standing)
+                at = delete_date(campaign, standing)
                 if at <= now:
                     due.append((campaign, at))
                     waiting = (
@@ -434,7 +464,7 @@ class RetentionJob:
             if campaign is None:
                 return False
             standing = await self._standing(campaign.guild_id, campaign, now, owners)
-            if not may_delete(campaign, delete_at(campaign.last_active_at, standing), now):
+            if not may_delete(campaign, delete_date(campaign, standing), now):
                 return False
             await self._campaigns.delete(campaign.guild_id, campaign.id)
         except Exception:

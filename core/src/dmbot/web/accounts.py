@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+import time
+
 from dmbot.db import Database
+
+log = logging.getLogger(__name__)
 
 
 async def account_email(db: Database, user_id: int) -> str | None:
@@ -90,15 +95,25 @@ async def active_subscription(db: Database, user_id: int) -> tuple[str, str] | N
     return None if row is None else (row["provider"], row["provider_subscription_id"])
 
 
-async def delete_person(db: Database, user_id: int) -> None:
+async def delete_person(db: Database, user_id: int, *, now: int | None = None) -> None:
     """Delete the account: the person, their plan and sessions go (the database cascades),
     and so does any free access they were given (the grants log keeps the Discord id and
     what was done, for the admin);
     installs keep the server but lose the person. What's kept: the Discord id in
     try_it_used (one free trial per person) and payment events with the Discord id and the
     subscription id (so a replayed payment can't apply twice, and a cancelled subscription's
-    last news isn't retried): ids only (privacy page, #433, #571)."""
+    last news isn't retried): ids only (privacy page, #433, #571).
+
+    The campaigns the person owns are **kept**, ownerless, so the players can still read and
+    download them: they go 120 days later unless another DM takes them on (#1059; owner,
+    2026-10-11). A database function does that across every server (0047)."""
     async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT dmbot_orphan_owned_campaigns(%s) AS n",
+            (int(time.time()) if now is None else now,),
+        )
+        row = await cur.fetchone()
+        log.info("Account deletion: %s campaign(s) kept, ownerless", row["n"] if row else 0)
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.
