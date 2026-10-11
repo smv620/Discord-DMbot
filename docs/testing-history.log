@@ -2079,3 +2079,20 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   "ears connected", 0 ERROR. The transcript_lines.entity column exists. /health 404, /admin/auth/ways 200, DMBOT_SIDEBAR=1.
   Nothing sets the entity yet, so no visible change; a transcript download still needs a look in Discord after the next
   session (together with the #1079 table-talk tags).
+
+==============================================================================
+2026-10-10  Queue lines other sessions added to the status log while dev1 deployed (kept)
+==============================================================================
+  - #1083 / PR #1086 + #1089 / PR #1097 (CloudDev, web-api only, no migration, no new setting needed to start): the Lemon Squeezy adapter (PAYMENT_PROVIDER stays empty until the owner's store exists, #1096) and the extra-hours button and route. Deploy web-api (the container gets the new LEMONSQUEEZY_* names from docker-compose.yml, all empty). Check: /health answers; from a signed-in browser POST /billing/checkout and POST /billing/extra-hours both still say payments_off (503); the account page shows no payment error. Nothing to check in Discord.
+  Result: these PRs were already deployed by dev1 (see the deploy entries around this date); the lines were added after the deploy.
+
+==============================================================================
+2026-10-11  dev1  Deploy: core + web-api 8391df7 (#1093/#1095 DM speaker labels, #1086 payments adapter, #1097 extra hours)
+==============================================================================
+  dev2's READY TO DEPLOY line (#1093 + #1095, core only, no migration) and CloudDev's answer on #1086 (web-api, payments
+  stay off, goes with #1097). Backup first (41 tables with data), no live session. No schema change.
+  Result: both images rebuilt and restarted. Core log: "Connected to 1 server(s)", "ears connected", 0 ERROR; web-api
+  healthy, 0 ERROR. /health 404, /admin/auth/ways 200. From inside the web-api container, signed-out POSTs to
+  /billing/checkout and /billing/extra-hours answer 401 (the 503 payments_off needs a signed-in browser: not run).
+  Still to check in Discord: in a session where the DM voices a confirmed NPC and narrates, the as-heard transcript shows
+  {narrating} or the NPC's name on the DM's lines, no secret name, and the core log has "Speaker labels: N calls" at the end.
