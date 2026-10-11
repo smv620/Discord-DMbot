@@ -207,6 +207,19 @@ A case that lost a speaker (they pressed Stop saving my voice) is skipped as inc
 never run in the bot's container or during a live session, and refuse a folder whose manifest
 holds a number shaped like a Discord id.
 
+Two more checks on a library run, both off by default:
+
+    python -m dmbot.devtools.test_library run --transcriber deepgram --with-rules
+    python -m dmbot.devtools.test_library run --transcriber deepgram --with-sidebar
+
+`--with-rules` runs the real card spotter over the saved and today's transcript and lists the
+cards gained, lost or changed. It is free. `--with-sidebar` asks every saved DM sidebar question
+again through the real answer path (today's prompt and tier) and compares each new answer with
+the saved one: its source, sure or not sure, the length rule, and the share of words in common
+(same, changed, worse or better; no judging of style). **It costs money:** it needs
+ANTHROPIC_API_KEY and prints the calls, tokens and dollars at the end. A question that cannot be
+answered is counted as failed and the rest go on. `--log` adds counts per flag, never text.
+
 ## Run 8: what the twin answers, and what needs Discord (#534)
 
 Live tests need the owner and a table, so run 8 only checks what the twin can't. The twin
