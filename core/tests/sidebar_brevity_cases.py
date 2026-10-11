@@ -15,12 +15,12 @@ from dataclasses import dataclass
 def reply(
     answer: str,
     source: str = "none",
-    sure: str = "sure",
+    confidence: str = "confident",
     in_game: str = "yes",
     on_topic: str = "yes",
 ) -> str:
     return (
-        f"ANSWER: {answer}\nSOURCE: {source}\nSURE: {sure}\n"
+        f"ANSWER: {answer}\nSOURCE: {source}\nCONFIDENCE: {confidence}\n"
         f"IN_GAME: {in_game}\nON_TOPIC: {on_topic}"
     )
 
@@ -41,8 +41,8 @@ CASES: tuple[Case, ...] = (
         # asked once more, then the entry's own words and source (#992)
         "do you need line of sight for fireball",
         (
-            reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "not sure"),
-            reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "not sure"),
+            reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "uncertain"),
+            reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "uncertain"),
         ),
         ("point you choose", "choose a point"),
         calls=2,
@@ -72,12 +72,12 @@ CASES: tuple[Case, ...] = (
         ("burning",),
         yes_no=True,
     ),
-    Case(  # not in the free rules' index: no source, so never "sure" (#992)
+    Case(  # not in the free rules' index: no source, so never "confident" (#992)
         "can fireball hit someone behind a wall",
-        (reply("No. A solid wall blocks the blast.", "SRD 5.2.1 p. 131", "not sure"),),
+        (reply("No. A solid wall blocks the blast.", "SRD 5.2.1 p. 131", "uncertain"),),
         ("not in dmbot's rules",),
         yes_no=True,
-        must_not=("sure)", ", sure"),
+        must_not=("confident)", ", confident"),
     ),
     Case(  # no Yes/No first: asked once more
         "can fireball spread around a corner",
@@ -85,7 +85,7 @@ CASES: tuple[Case, ...] = (
             reply("Fireball spreads around corners, so it can.", "SRD 5.2.1 p. 131"),
             reply("Yes. It spreads around corners.", "SRD 5.2.1 p. 131"),
         ),
-        ("around corners",),
+        ("corner",),  # "corner" or "corners", any phrasing (#954)
         yes_no=True,
         calls=2,
     ),
@@ -129,10 +129,10 @@ CASES: tuple[Case, ...] = (
     ),
     Case(
         "is there a rule for a critical hit on a spell attack",
-        (reply("Yes. A spell attack can crit on a natural 20.", "none", "sure"),),
+        (reply("Yes. A spell attack can crit on a natural 20.", "none", "confident"),),
         ("not in dmbot's rules",),
         yes_no=True,
-        must_not=("sure)", ", sure"),
+        must_not=("confident)", ", confident"),
     ),
     Case(
         "what's my house rule for criticals",
@@ -141,7 +141,7 @@ CASES: tuple[Case, ...] = (
     ),
     Case(
         "what do I know about Belleros",
-        (reply("I don't have that. Your call.", "none", "not sure"),),
+        (reply("I don't have that. Your call.", "none", "uncertain"),),
         ("your call",),
     ),
     Case(  # the older fireball is named as such and cites its own page (#1005)
@@ -154,23 +154,23 @@ CASES: tuple[Case, ...] = (
         "what's the range of fireball",
         (reply("150 feet.", "SRD 5.2.1 p. 131"),),
         ("150 feet",),
-        must_not=("not stated", "don't say", "not sure"),
+        must_not=("not stated", "don't say", "uncertain"),
     ),
     Case(
         "how long does bless last",
         (reply("Up to a minute, if you keep concentrating.", "SRD 5.2.1 p. 124"),),
         ("minute",),
-        must_not=("not stated", "don't say", "not sure"),
+        must_not=("not stated", "don't say", "uncertain"),
     ),
     Case(
         "what's the casting time of shield",
         (reply("A reaction, when you're hit.", "SRD 5.2.1 p. 169"),),
         ("reaction",),
-        must_not=("not stated", "don't say", "not sure"),
+        must_not=("not stated", "don't say", "uncertain"),
     ),
     Case(
         "who does Belleros work for",
-        (reply("I don't have that. Your call.", "none", "not sure"),),
+        (reply("I don't have that. Your call.", "none", "uncertain"),),
         ("your call",),
     ),
     Case(
@@ -211,11 +211,11 @@ CASES: tuple[Case, ...] = (
         ("only help with the game",),
         in_game=False,
     ),
-    Case(  # class features are not in the index yet: said plainly, never "sure" (#992)
+    Case(  # class features are not in the index yet: said plainly, never "confident" (#992)
         "should I let the rogue sneak attack with a spell",
-        (reply("No. Sneak Attack needs a weapon attack.", "none", "sure"),),
+        (reply("No. Sneak Attack needs a weapon attack.", "none", "confident"),),
         ("not in dmbot's rules",),
         yes_no=True,
-        must_not=("sure)", ", sure"),
+        must_not=("confident)", ", confident"),
     ),
 )

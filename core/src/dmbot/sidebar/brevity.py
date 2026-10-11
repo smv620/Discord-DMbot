@@ -2,9 +2,9 @@
 
 The prompt asks for brevity, but the rules also live here, in code, because a model slips:
 an answer is at most `MAX_SENTENCES` sentences and `MAX_CHARS` characters (the short source
-and "sure" come after, outside the limit) unless the DM asked for the full text. A yes-or-no
-question gets "Yes." or "No." first. Greetings, repeated questions and offers of more help
-are removed. All of it is pure text work, so it tests with no AI and no Discord.
+and "confident" or "uncertain" come after, outside the limit) unless the DM asked for the full
+text. A yes-or-no question gets "Yes." or "No." first. Greetings, repeated questions and
+offers of more help are removed. All of it is pure text work, so it tests with no AI and no Discord.
 """
 
 from __future__ import annotations
@@ -32,7 +32,8 @@ _YES_NO = re.compile(
     re.IGNORECASE,
 )
 _ANSWERS_FIRST = re.compile(
-    r"^\s*(yes|no|not sure|the free rules don't say|i don't have|your call)\b", re.IGNORECASE
+    r"^\s*(yes|no|not sure|uncertain|the free rules don't say|i don't have|your call)\b",
+    re.IGNORECASE,
 )
 
 # Padding to strip: whole sentences that only fill space.
@@ -142,21 +143,21 @@ def within_limit(text: str) -> bool:
     return len(sentences(text)) <= MAX_SENTENCES and len(text) <= MAX_CHARS
 
 
-def join_source(text: str, source: str | None, sure: str | None) -> str:
-    """The answer with its source and confidence in a few words: `(SRD 5.2.1 p. 131, sure)`.
+def join_source(text: str, source: str | None, confidence: str | None) -> str:
+    """The answer with its source and confidence in a few words: `(SRD 5.2.1 p. 131, confident)`.
     Not repeated when the answer already says it: a source named in the text is left out, and
-    "not sure" is left out of an answer that already says the rules don't say. The limit on
+    "uncertain" is left out of an answer that already says the rules don't say. The limit on
     length is for the answer itself; this suffix comes after it (so a message can be about 40
     characters over 200, which is fine on a phone; the not-in-DMbot's-rules note goes here too)."""
     if source and source.lower() in text.lower():
         source = None
     if (
-        sure == "not sure"
+        confidence == "uncertain"
         and starts_with_the_answer(text)
         and not re.match(r"\s*(yes|no)\b", text, re.I)
     ):
-        sure = None
-    elif not source and sure == "sure":
-        sure = None  # "(sure)" alone says nothing
-    pieces = [p for p in (source, sure) if p]
+        confidence = None
+    elif not source and confidence == "confident":
+        confidence = None  # "(confident)" alone says nothing
+    pieces = [p for p in (source, confidence) if p]
     return f"{text} ({', '.join(pieces)})" if pieces else text

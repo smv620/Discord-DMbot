@@ -102,7 +102,7 @@ def run(coro: Any) -> Any:
 
 
 def answer_part(text: str) -> str:
-    """The answer without its trailing `(source, sure)`."""
+    """The answer without its trailing `(source, confident)`."""
     return text.rsplit(" (", 1)[0] if text.endswith(")") else text
 
 
@@ -164,7 +164,7 @@ class Consistency(unittest.TestCase):
     def test_the_retry_points_out_the_entry(self) -> None:
         ai = FakeAI(
             [
-                reply("The free rules don't say.", "none", "not sure"),
+                reply("The free rules don't say.", "none", "uncertain"),
                 reply("No. It starts at a point you choose.", "SRD 5.2.1 p. 131"),
             ]
         )
@@ -175,7 +175,7 @@ class Consistency(unittest.TestCase):
 
     def test_no_entry_given_the_honest_dont_have_stays(self) -> None:
         got = run(
-            engine(FakeAI([reply("I don't have that. Your call.", "none", "not sure")])).answer(
+            engine(FakeAI([reply("I don't have that. Your call.", "none", "uncertain")])).answer(
                 campaign(), "who does Belleros work for"
             )
         )
@@ -213,7 +213,7 @@ class NoFalseAlarms(unittest.TestCase):
         self.assertTrue(got.text.startswith("Yes. Creatures not in the area"))
 
     def test_a_name_question_that_also_matches_an_entry_keeps_the_honest_answer(self) -> None:
-        ai = FakeAI([reply("I don't have that. Your call.", "none", "not sure")] * 2)
+        ai = FakeAI([reply("I don't have that. Your call.", "none", "uncertain")] * 2)
         got = run(
             engine(ai).answer(
                 campaign(), "does the goblin chief Grix work for Belleros", asker_id=7
@@ -301,7 +301,7 @@ class AccuracyPart3(unittest.TestCase):
         )
         self.assertIn("not in DMbot's rules", got.text)
         self.assertNotIn("house rule 3", got.text.lower())
-        self.assertNotIn("sure", got.text)
+        self.assertNotIn("confident", got.text)
 
     def test_a_house_rule_is_cited_for_what_it_says(self) -> None:
         rule = house(3, "Criticals deal maximum damage plus the roll.")
@@ -327,7 +327,7 @@ class AccuracyPart3(unittest.TestCase):
         self.assertNotIn("SRD", got.text)
 
     def test_no_source_means_no_legacy_pair(self) -> None:
-        ai = FakeAI([reply("I don't have that. Your call.", "none", "not sure")])
+        ai = FakeAI([reply("I don't have that. Your call.", "none", "uncertain")])
         got = run(engine(ai).answer(campaign(), "is the 2014 goblin different"))
         self.assertNotIn("SRD", got.text)
 
@@ -338,11 +338,11 @@ class AccuracyPart3(unittest.TestCase):
 
     def test_an_srd_page_is_not_cited_for_what_it_does_not_say(self) -> None:
         # The real model cited the Fireball page for walls (#1015).
-        ai = FakeAI([reply("No. A solid wall blocks the blast.", "SRD 5.2.1 p. 131", "sure")])
+        ai = FakeAI([reply("No. A solid wall blocks the blast.", "SRD 5.2.1 p. 131", "confident")])
         got = run(engine(ai).answer(campaign(), "can fireball hit someone behind a wall"))
         self.assertIn("not in DMbot's rules", got.text)
         self.assertNotIn("SRD 5.2.1 p. 131", got.text)
-        self.assertNotIn("sure", got.text)
+        self.assertNotIn("confident", got.text)
 
     def test_an_srd_page_is_still_cited_for_what_it_says(self) -> None:
         for question, said in (
@@ -378,14 +378,14 @@ class AccuracyPart3(unittest.TestCase):
         self.assertIn("not in DMbot's rules", got.text)
 
     def test_the_prompt_version_moved_on(self) -> None:
-        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-4")
+        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-5")
 
 
 class CarefulSecondTry(unittest.TestCase):
     """A quick answer that fails its checks is asked again on the careful tier (#1017)."""
 
-    BAD = reply("No. A solid wall blocks the blast.", "SRD 5.2.1 p. 131", "sure")
-    GOOD = reply("No. It starts at a point you choose.", "SRD 5.2.1 p. 131", "sure")
+    BAD = reply("No. A solid wall blocks the blast.", "SRD 5.2.1 p. 131", "confident")
+    GOOD = reply("No. It starts at a point you choose.", "SRD 5.2.1 p. 131", "confident")
     QUESTION = "can fireball hit someone behind a wall"
 
     def careful(self, *replies: str) -> FakeAI:
@@ -541,7 +541,7 @@ class FireballExample(unittest.TestCase):
         got = run(engine(ai).answer(campaign(), "do you need line of sight for fireball"))
         self.assertEqual(
             got.text,
-            "No. Its origin is a point you choose within range. (SRD 5.2.1 p. 131, sure)",
+            "No. Its origin is a point you choose within range. (SRD 5.2.1 p. 131, confident)",
         )
         self.assertIn("point you choose", ai.prompts[0])  # the entry was in front of the model
         self.assertIn("SRD 5.2.1 p. 131", got.sources)
@@ -555,7 +555,7 @@ class Retry(unittest.TestCase):
         self.assertEqual(len(ai.prompts), 2)
         self.assertIn("Fix it:", ai.prompts[1])
         self.assertIn("at most 2 sentences", ai.prompts[1])
-        self.assertEqual(got.text, "Yes. It does. (SRD 5.2.1 p. 131, sure)")
+        self.assertEqual(got.text, "Yes. It does. (SRD 5.2.1 p. 131, confident)")
 
     def test_never_a_third_call_and_never_a_paragraph(self) -> None:
         wall = reply("Yes. " + "Sentence number. " * 40)
@@ -607,7 +607,7 @@ class FullText(unittest.TestCase):
         self.assertTrue(all(len(p) <= 2000 for p in got.parts))
 
     def test_asked_for_but_not_in_the_rules_it_goes_to_the_ai_as_usual(self) -> None:
-        ai = FakeAI([reply("I don't have that. Your call.", "none", "not sure")])
+        ai = FakeAI([reply("I don't have that. Your call.", "none", "uncertain")])
         got = run(engine(ai).answer(campaign(), "give me the full text of the Blorp spell"))
         self.assertEqual(len(ai.prompts), 1)
         self.assertIn("Your call", got.text)
@@ -704,7 +704,7 @@ class Lineage(unittest.TestCase):
         ai = FakeAI([reply("No.", "SRD 5.2.1 p. 131")])
         got = run(engine(ai).answer(campaign(), "do you need line of sight for fireball"))
         self.assertEqual(got.model, "fake-fast-model")
-        self.assertEqual(got.prompt_version, "sidebar-4")
+        self.assertEqual(got.prompt_version, "sidebar-5")
         self.assertEqual(got.sources, ("SRD 5.2.1 p. 131",))
         self.assertGreaterEqual(got.seconds, 0)
 
@@ -712,17 +712,17 @@ class Lineage(unittest.TestCase):
 class Parsing(unittest.TestCase):
     def test_fields_are_read_in_any_case_and_a_wrapped_answer_is_joined(self) -> None:
         fields = sidebar.parse(
-            "answer: Yes. It does\n  and more.\nSource: none\nSure: Not sure\n"
+            "answer: Yes. It does\n  and more.\nSource: none\nConfidence: Uncertain\n"
             "In_Game: no\nOn_Topic: yes"
         )
         self.assertEqual(fields.answer, "Yes. It does and more.")
         self.assertIsNone(fields.source)
-        self.assertEqual(fields.sure, "not sure")
+        self.assertEqual(fields.confidence, "uncertain")
         self.assertFalse(fields.in_game)
         self.assertTrue(fields.on_topic)
 
     def test_unknown_confidence_is_dropped_not_guessed(self) -> None:
-        self.assertIsNone(sidebar.parse("ANSWER: Yes.\nSURE: absolutely certain").sure)
+        self.assertIsNone(sidebar.parse("ANSWER: Yes.\nCONFIDENCE: absolutely certain").confidence)
 
 
 class Timing(unittest.TestCase):
@@ -867,13 +867,21 @@ class Sources(unittest.TestCase):
 
     def test_a_source_already_in_the_answer_is_not_repeated(self) -> None:
         self.assertEqual(
-            brevity.join_source("House rule 3: max damage.", "House rule 3", "sure"),
+            brevity.join_source("House rule 3: max damage.", "House rule 3", "confident"),
             "House rule 3: max damage.",
         )
 
-    def test_not_sure_is_not_said_twice(self) -> None:
+    def test_the_old_sure_words_are_still_read_as_the_new_ones(self) -> None:
+        # A model slip back to the sidebar-4 form (SURE: sure / not sure) must still parse (#1071).
+        self.assertEqual(sidebar.parse("ANSWER: Yes.\nSURE: sure").confidence, "confident")
+        self.assertEqual(sidebar.parse("ANSWER: Yes.\nSURE: Not sure").confidence, "uncertain")
+        self.assertEqual(
+            sidebar.parse("ANSWER: Yes.\nCONFIDENCE: confident").confidence, "confident"
+        )
+
+    def test_uncertain_is_not_said_twice(self) -> None:
         text = "The free rules don't say. Your call."
-        self.assertEqual(brevity.join_source(text, None, "not sure"), text)
+        self.assertEqual(brevity.join_source(text, None, "uncertain"), text)
 
 
 class FullTextWithoutAHit(unittest.TestCase):

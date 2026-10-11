@@ -1917,7 +1917,7 @@ table isn't left waiting while the DM looks something up.
   the answer. No elaborating unless the DM asks. Example: "Fireball has no sight
   requirement: its origin is 'a point you choose within range'." The full spell text (and
   a link to read it outside Discord) comes only when asked for ("I need the spell
-  description"). Rules answers still carry their source and how sure DMbot is, in a few
+  description"). Rules answers still carry their source and how confident DMbot is, in a few
   words.
 - **Only on topic:** the campaign, the game's rules and content, DMbot itself, and Discord
   mechanics. Anything else gets one short line saying it can't help with that here.
@@ -1980,11 +1980,11 @@ table isn't left waiting while the DM looks something up.
 
 *Built, part 1: the answer engine (#934, CloudDev, 2026-10-09):* `dmbot.sidebar` (no Discord, no
 voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)` returns an `Answer`:
-`text` (short, with its source and "sure"), `in_game`, `refused`, `model`, `prompt_version`,
+`text` (short, with its source and "confident" or "uncertain"), `in_game`, `refused`, `model`, `prompt_version`,
 `sources` (everything the AI was given, in short words: "SRD 5.2.1 p. 131", "house rule 3",
 "campaign names", "the scene", "DMbot help"), `parts` (a long answer as messages) and `seconds`.
 `asker_id` has no default: it decides the wording of a plan refusal.
-- **Brevity is enforced in code.** At most 2 sentences and 200 characters (the source and "sure"
+- **Brevity is enforced in code.** At most 2 sentences and 200 characters (the source and "confident" or "uncertain"
   come after, outside the limit), unless the DM asked for the full text. A yes-or-no question
   starts "Yes." or "No." (or says plainly it can't: "Your call."; a choice question with "or" is
   not a yes-or-no one). Greetings and "let me know" offers are stripped; "Sure, it can." becomes
@@ -2029,7 +2029,7 @@ entry's own first sentences and its source (only for a spell or condition the qu
 never over a house rule; so "do you need line of sight for fireball" and the
 same question after "hold on, I need to find" agree). (2) **No unsourced certainty:** a rule stated
 with no source among the entries and house rules the model was given gets "(not in DMbot's rules,
-check your book)" and is never "sure"; the prompt asks for the same wording for general D&D
+check your book)" and is never "confident"; the prompt asks for the same wording for general D&D
 knowledge (class features, cover, area of effect, which the index doesn't hold yet); the code adds the
 note itself and the answer from the scene or the campaign's names is not marked. (3)
 **Editions:** a question that says "2014", "2024", "legacy", "old", "new" or compares them gets
@@ -2041,10 +2041,17 @@ words. Not done: adding general rules or class features to the index.
 its own source:** a house rule is cited only when it says what the answer says (the answer's real
 words, bar one, must be in the rule); otherwise the cite is dropped and the answer gets "(not in
 DMbot's rules, check your book)
-and is never "sure" ("a spell attack can crit on a 20" is not house rule 3).
+and is never "confident" ("a spell attack can crit on a 20" is not house rule 3).
 (2) **Older edition always tagged and named:** when the AI was given a `[Legacy 2014]` entry, the source names
 both entries by their own names and pages ("Goblin Warrior SRD 5.2.1 p. 290; Goblin SRD 5.1 p. 315
 [Legacy 2014]"). Brevity is unchanged; tags and sources are added after the cut.
+
+*Built, confident / uncertain (#1071, CloudDev, 2026-10-11; prompt version `sidebar-5`):* the DM sees
+"confident" or "uncertain" after the source, never "sure" / "not sure" (owner, 2026-10-11): "Range 150
+feet. (SRD 5.2.1 p. 131, confident)". Wording only: when an answer is confident is unchanged (a given
+entry or house rule must say it). The AI's reply field is `CONFIDENCE: <confident or uncertain>`; the
+old `SURE:` form is still read and mapped across, and `devtools/recheck.py` reads saved answers with
+either wording.
 
 *Built, header facts (#1039, CloudDev, 2026-10-10; prompt version `sidebar-4`):* each rules entry sent to
 the sidebar's AI now starts with its facts (a spell's level, casting time, range, components and duration; a
