@@ -2096,3 +2096,15 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   /billing/checkout and /billing/extra-hours answer 401 (the 503 payments_off needs a signed-in browser: not run).
   Still to check in Discord: in a session where the DM voices a confirmed NPC and narrates, the as-heard transcript shows
   {narrating} or the NPC's name on the DM's lines, no secret name, and the core log has "Speaker labels: N calls" at the end.
+
+==============================================================================
+2026-10-11  dev1  Deploy: core + web-api 6c26108 (#1099 account deletion keeps campaigns, migration 0047; #1100 speaker question)
+==============================================================================
+  dev2's READY TO DEPLOY line for #1100 (core only). #1099 (migration 0047) had no queue line and its author had not
+  answered my question on the PR after 50 minutes; core applies every migration when it starts, so I read 0047 first: it
+  adds one column with no default (no rows change), two policies and one function, the same pattern as 0037. Backup first
+  (41 tables with data), no live session. Core and web-api both rebuilt (the account-delete route lives in web-api).
+  Result: core log "Database updated: 0047_owner_left", "Connected to 1 server(s)", "ears connected", 0 ERROR; web-api
+  healthy, 0 ERROR. /health 404, /admin/auth/ways 200, DMBOT_SIDEBAR=1. Campaigns with owner_left_at set: 0 (as expected).
+  Not run: a real account deletion (needs a throwaway account) and the #1100 question in Discord (needs a session where
+  the DM speaks vaguely as an NPC).
