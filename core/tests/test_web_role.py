@@ -182,6 +182,25 @@ class WebRole(DatabaseTest):
             self.assertNotIn(schema.WEB_ROLE, list(row["roles"]))
             self.assertNotIn("public", list(row["roles"]))
 
+    async def test_the_orphan_policies_are_not_open_to_it(self) -> None:
+        # #1059: like the pause ones, the setting that opens `campaigns` to the orphan function
+        # is one any session can set, so the policies must be for the migration role only.
+        session = await self.alice()
+        async with self.web.user(session.user_id, session=session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.owner_sync', 'orphan', true)")
+            cur = await conn.execute("SELECT name FROM campaigns")  # no server chosen
+            self.assertEqual(await cur.fetchall(), [])
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT policyname, roles FROM pg_policies WHERE schemaname ="
+                " current_schema() AND policyname IN ('orphan_read', 'orphan_update')"
+            )
+            rows = await cur.fetchall()
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertNotIn(schema.WEB_ROLE, list(row["roles"]))
+            self.assertNotIn("public", list(row["roles"]))
+
     async def test_its_limits_apply_to_it_and_never_to_the_bot(self) -> None:
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
@@ -362,3 +381,15 @@ class WebRole(DatabaseTest):
         assert row is not None
         self.assertIsNone(row["installed_by_user_id"])
         self.assertEqual(await sessions.delete_expired(self.web, now=self.now + 90 * 86400), 0)
+        # Her campaigns stay, ownerless, in every server, even one outside her session's list
+        # (#1059): the database function is the one door across servers.
+        for guild_id, campaign_id in ((THURSDAY.id, self.mine.id), (OUTSIDER.id, self.hidden.id)):
+            async with self.db.guild(guild_id) as conn:
+                cur = await conn.execute(
+                    "SELECT owner_user_id, owner_left_at FROM campaigns WHERE id = %s",
+                    (campaign_id,),
+                )
+                kept = await cur.fetchone()
+            assert kept is not None
+            self.assertIsNone(kept["owner_user_id"])
+            self.assertEqual(kept["owner_left_at"], self.now)

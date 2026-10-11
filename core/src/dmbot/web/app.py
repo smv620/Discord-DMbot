@@ -447,7 +447,7 @@ def create_app(
             except PaymentError as exc:
                 log.warning("Couldn't stop a subscription for a deletion: %s", exc)
                 raise HTTPException(status_code=502, detail="payments_unavailable") from exc
-        await delete_person(db, session.user_id)
+        await delete_person(db, session.user_id, now=clock())
         log.info("Account deleted: user %s", session.user_id)
         response = Response(status_code=204)
         response.delete_cookie(session_cookie, path="/", secure=settings.secure_cookies)

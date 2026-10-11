@@ -380,6 +380,22 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
         await conn.execute(
             sql.SQL("GRANT EXECUTE ON FUNCTION dmbot_owned_campaigns() TO {}").format(role)
         )
+    # The door account deletion uses to make a person's campaigns ownerless (0047, #1059).
+    cur = await conn.execute(
+        "SELECT 1 FROM pg_proc WHERE proname = 'dmbot_orphan_owned_campaigns'"
+        " AND pronamespace = current_schema()::regnamespace"
+    )
+    if await cur.fetchone() is not None:
+        await conn.execute(
+            sql.SQL("REVOKE ALL ON FUNCTION dmbot_orphan_owned_campaigns(BIGINT) FROM {}").format(
+                role
+            )
+        )
+        await conn.execute(
+            sql.SQL("GRANT EXECUTE ON FUNCTION dmbot_orphan_owned_campaigns(BIGINT) TO {}").format(
+                role
+            )
+        )
     for privileges, tables in WEB_ROLE_GRANTS:
         present = [t for t in tables if t in existing]
         if not present:

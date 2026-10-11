@@ -2454,6 +2454,23 @@ pricing on roughly 36–60 speech-minutes per hour, Claude Haiku for the AI feat
 hosting); to be measured with the twin and run 8 before the promotion to `main`.
 Discord servers cost nothing and are not counted.
 
+*Built, account deletion keeps campaigns (2026-10-11, #1059):* deleting an account calls the
+database function `dmbot_orphan_owned_campaigns(at)` (migration 0047), the one door across servers
+like the pause function: it runs with its owner's rights, opens `campaigns` to itself for the
+signed-in person through a setting it sets and puts back, and only turns that person's campaigns
+ownerless (`owner_user_id` NULL, `owner_left_at` = the deletion time); the website's role may call
+it and nothing else about campaigns. The cap table follows by its trigger, so a deleted account
+holds no slots. **Retention:** an ownerless campaign is deleted exactly 120 days after
+`owner_left_at` (`retention.delete_date`), whatever its last plan was and however recently it was
+played (a session doesn't restart it); the usual 14- and 3-day warnings go as private messages to
+the campaign's DMs (there is no owner), naming the **Take it on** button. **Taking it over** is the
+existing ⚙️ Settings **Take it on** button (needs a free campaign slot), which clears
+`owner_left_at`; replacing the campaign with a backup does the same for whoever restores it. Stays
+dormant with `DMBOT_ENFORCE_PLANS` off, like all retention. The delete screen and the legal pages
+say it in plain words. *Not done:* the warnings are private messages to the DMs, not posts on the
+DM screen as #1059 asked: the retention job has no Discord channel to post to, and a private
+message reaches the same people and keeps DM-screen content out of any shared place.
+
 **D&D Beyond character sheets (plan, 2026-10-08; phase 7 part A can start now).**
 Each player links their own sheet, privately: the consent message gains a "Link my
 character" button that opens a form for the link, and the DM's "Add a player's

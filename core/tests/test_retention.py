@@ -17,7 +17,7 @@ from dmbot.schema import MIGRATIONS
 from tests.pg import TEST_URL, DatabaseTest
 
 GUILD_A, GUILD_B = 111, 222
-ALICE, BOB = 7, 8
+ALICE, BOB, CAROL = 7, 8, 9
 T0 = int(datetime(2026, 3, 1, 12, tzinfo=UTC).timestamp())
 
 
@@ -74,6 +74,7 @@ class Job(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.addCleanup(entitlements.configure_free_users, ())
+        entitlements.configure_free_users((BOB,))  # BOB can take a campaign on
         self.now = T0
         self.store = CampaignStore(self.db, clock=lambda: self.now)
         self.sent: list[tuple[int, str]] = []
@@ -429,6 +430,54 @@ class Job(DatabaseTest):
         out = await self.job().run_once(T0 + 70 * DAY)
         self.assertEqual(out.deleted, 0)
         self.assertTrue(await self.exists(GUILD_A, a))
+
+    async def test_a_campaign_whose_owner_left_goes_120_days_after_and_its_dms_are_told(
+        self,
+    ) -> None:
+        # Played yesterday on a plan with a year's keep: the countdown is still 120 days
+        # from the deletion, and a session doesn't restart it (#1059).
+        cid = await self.make(GUILD_A, "Left behind", ALICE, T0 + 100 * DAY)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = NULL, owner_left_at = %s"
+                " WHERE guild_id = %s AND id = %s",
+                (T0 + 100 * DAY, GUILD_A, cid),
+            )
+        await self.store.add_dm(GUILD_A, cid, BOB)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", CAROL, T0 + 300 * DAY)
+        left = T0 + 100 * DAY
+        self.assertEqual((await self.job().run_once(left + 50 * DAY)).warnings, 0)
+        first = await self.job().run_once(left + 106 * DAY)  # 14 days before
+        self.assertEqual(first.warnings, 1)
+        warned = [text for user, text in self.sent if user == BOB]
+        self.assertTrue(warned and "deleted their account" in warned[0])
+        self.assertIn("Take it on", warned[0])
+        await self.job().run_once(left + 117 * DAY)  # the 3-day warning
+        self.assertTrue(await self.exists(GUILD_A, cid))
+        out = await self.job().run_once(left + 121 * DAY)
+        self.assertEqual(out.deleted, 1)
+        self.assertFalse(await self.exists(GUILD_A, cid))
+
+    async def test_taking_it_on_before_the_date_keeps_the_campaign(self) -> None:
+        cid = await self.make(GUILD_A, "Rescued", ALICE, T0)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = NULL, owner_left_at = %s"
+                " WHERE guild_id = %s AND id = %s",
+                (T0, GUILD_A, cid),
+            )
+        await self.store.add_dm(GUILD_A, cid, BOB)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", CAROL, T0 + 300 * DAY)
+        await self.job().run_once(T0 + 106 * DAY)
+        self.assertEqual(
+            await self.store.take_ownership(GUILD_A, cid, BOB, T0 + 107 * DAY), "taken"
+        )
+        self.standings[BOB] = Standing("pro", None, True)
+        out = await self.job().run_once(T0 + 121 * DAY)
+        self.assertEqual(out.deleted, 0)
+        self.assertTrue(await self.exists(GUILD_A, cid))
 
 
 class Migration0045(DatabaseTest):
