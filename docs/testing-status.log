@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-11 18:15 UTC by dev1 (core e8fe8e3 deployed, migration 0046)
+Last updated: 2026-10-11 by dev2 (#1095 ready to deploy)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -10,6 +10,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
 (nothing waiting; core e8fe8e3 (2026-10-11 18:11 UTC) and web-api (17:27 UTC) are deployed: see the history)
+- #1093 + #1095 (dev2, core only, no migration, no setting; needs the AI key on): the DM's lines get who was speaking, {narrating} or {NPC name}, in the saved transcript (#53, part). One small AI call per ~6 DM lines, only when the campaign has confirmed NPCs. Check: in a session where the DM speaks as a confirmed NPC and narrates, download the as-heard transcript: the DM's lines carry {narrating} or the NPC's name; a secret name never appears; core log shows 'Speaker labels: N calls' at the end.
 
 ------------------------------------------------------------------------------
 LIVE NOW
