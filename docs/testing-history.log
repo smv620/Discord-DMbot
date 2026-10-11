@@ -2010,3 +2010,12 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Not yet checked in Discord (owner): /dmbot names cards read "character · NPC" / "place"; "Fireball | spell"
   is refused with the /dmbot rule hint; "goblin | monster" refused, "Snot | monster" kept.
   Result: PASS (deploy and data check).
+
+==============================================================================
+2026-10-11  dev1: deploy of core 4f2a957 (#1064, a rules entry's facts are read in one place; fixes #1063)
+==============================================================================
+  05:03 UTC, no live session. No queue line; the PR page had the deploy note (core only, no migration,
+  proof: dev1's sidebar_check). Backup first: 40 tables, verified. Core log: gateway and ears connected,
+  "Connected to 1 server(s)", 0 ERROR; /health 404, /admin/auth/ways 200. Sidebar re-test (22 cases): 21
+  pass; fireball range, Bless duration, Shield casting time right and "sure"; the one miss is checker wording
+  only (fireball around a corner). Posted on #954. Result: PASS.
