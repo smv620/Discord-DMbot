@@ -2019,3 +2019,12 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   "Connected to 1 server(s)", 0 ERROR; /health 404, /admin/auth/ways 200. Sidebar re-test (22 cases): 21
   pass; fireball range, Bless duration, Shield casting time right and "sure"; the one miss is checker wording
   only (fireball around a corner). Posted on #954. Result: PASS.
+
+==============================================================================
+2026-10-11  Queue line CloudDev added after the deploy (kept; already deployed)
+==============================================================================
+  - CloudDev, #1064 (#1063): the rule card and the sidebar's AI now read an entry's facts from one place (rules/facts.py);
+    core only, no migration, prompt version sidebar-4. Check: look up Fireball and Goblin with 📖 Look up a rule: the card's
+    top line is unchanged; live, ask "Hey DMbot, what's the range of fireball?" (answer "150 feet"). When the model fails
+    twice, a range / casting time / duration / AC question is answered with that field alone, with its page.
+  Result: #1064 was deployed by dev1 at 05:03 UTC (core 4f2a957); its checks are in that entry.
