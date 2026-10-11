@@ -29,7 +29,7 @@ from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED
 from dmbot.rules.house import HouseRule
-from dmbot.rules.index import Hit, Index, edition_tag, normalize
+from dmbot.rules.index import Entry, Hit, Index, edition_tag, normalize
 
 LEGACY_TAG = "[Legacy 2014]"  # the owner's rule: the older ruleset is always tagged
 ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
@@ -248,6 +248,53 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
     return lines[:NAMES_MAX]
 
 
+_COMPONENTS = {"V": "Verbal", "S": "Somatic", "M": "Material"}
+
+
+def components_words(components: str) -> str:
+    """ "V, S, M (a ball of bat guano)" in words, as the AI should say them: "Verbal, Somatic,
+    Material (a ball of bat guano)". The letters alone would make "verbal" sound like a guess."""
+    letters, paren, rest = components.partition("(")
+    words = ", ".join(_COMPONENTS.get(part.strip(), part.strip()) for part in letters.split(","))
+    return f"{words} ({rest}" if paren else words
+
+
+def header_facts(entry: Entry) -> str:
+    """The facts an entry keeps apart from its text, in one plain line for the AI: a spell's
+    level, casting time, range, components and duration; a creature's size and type, AC, HP,
+    speed, CR, senses and initiative. The text alone does not say how far a spell reaches or
+    how long it lasts, so a question about either was answered "not stated" (#1039). A
+    condition has none. A field an entry lacks is left out."""
+    d = entry.details
+    if entry.kind == "spell":
+        level = int(d.get("level", 0))
+        kind = (
+            f"Level {level} {d.get('school', '')}".strip()
+            if level
+            else f"{d.get('school', '')} cantrip".strip()
+        )
+        parts = [
+            kind,
+            f"Casting time {d['casting_time']}" if d.get("casting_time") else "",
+            f"Range {d['range']}" if d.get("range") else "",
+            f"Components {components_words(str(d['components']))}" if d.get("components") else "",
+            f"Duration {d['duration']}" if d.get("duration") else "",
+        ]
+    elif entry.kind == "monster":
+        parts = [
+            f"{d.get('size', '')} {d.get('type', '')}".strip(),
+            f"AC {d['ac']}" if d.get("ac") else "",
+            f"HP {d['hp']} ({d['hit_dice']})" if d.get("hp") and d.get("hit_dice") else "",
+            f"Speed {d['speed']}" if d.get("speed") else "",
+            f"CR {d['cr']}" if d.get("cr") else "",
+            f"Senses {d['senses']}" if d.get("senses") else "",
+            f"Initiative {d['initiative']}" if d.get("initiative") else "",
+        ]
+    else:
+        return ""
+    return "; ".join(p for p in parts if p)
+
+
 def source_of(hit: Hit) -> str:
     """Where an entry comes from, short: `SRD 5.2.1 p. 241` (`[Legacy 2014]` when it is)."""
     base = f"{hit.entry.source} p. {hit.entry.page}"
@@ -295,7 +342,9 @@ def build(
             entry = hit.entry
             text = " ".join(entry.text[: ENTRY_TEXT_MAX * 2].split())[:ENTRY_TEXT_MAX]
             tag = f" {hit.tag}" if hit.tag else ""
-            sections.append(f"- {entry.name} ({entry.kind}) [{source_of(hit)}]{tag}: {text}")
+            facts = header_facts(entry)
+            facts = f" FACTS: {facts}. TEXT:" if facts else ""
+            sections.append(f"- {entry.name} ({entry.kind}) [{source_of(hit)}]{tag}:{facts} {text}")
             sources.append(source_of(hit))
     if names:
         sections.append("CAMPAIGN NAMES (confirmed):")
