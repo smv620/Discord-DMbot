@@ -44,8 +44,11 @@ SIDEBAR_NOTE = (
 SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
 HOW_TO_READ = (
     "Each line: [time since start] (person) {their character}: what they said. "
-    "{table_talk} is talk about the rules or running the game; {non-game_content} is "
-    "chat that isn't about the game (the Cleaned version only notes how long it lasted)."
+    "{narrating} means the DM is describing the scene; an NPC's name in braces means the DM "
+    "is speaking as that character. {table_talk} is talk about the rules or running the "
+    "game; {non-game_content} is chat that isn't about the game (these are not characters). "
+    "The cleaned file replaces off-topic chat with a note of how long it lasted; the "
+    "as-heard file keeps every word."
 )
 # What a line is when it is not the person's character speaking (#53).
 TOPIC_TAGS = {TABLE_TALK: "table_talk", OFF_TOPIC: "non-game_content"}
@@ -158,10 +161,20 @@ def sidebar_tag(line: Line) -> str:
     return f"[DM Sidebar {shown}]" if shown else SIDEBAR_TAG
 
 
-def label(when: str, speaker: str, character: str | None = None, topic: str = GAME) -> str:
+def label(
+    when: str,
+    speaker: str,
+    character: str | None = None,
+    topic: str = GAME,
+    entity: str = "",
+) -> str:
     """`[0:42:10] (Mia) {Cerric}`, or `[0:42:10] (Sam)` without a character. Table talk and
-    off-topic talk say so instead of the character: `[0:42:10] (Mia) {table_talk}`."""
+    off-topic talk say so instead of the character: `[0:42:10] (Mia) {table_talk}`. A line
+    said as someone else (the DM narrating, or voicing an NPC, #53) shows that instead of
+    the speaker's own character: `[0:42:10] (Sam) {narrating}`, `(Sam) {Brother Hiro}`."""
     speaker, character = _plain(speaker), _plain(character) if character else None
+    if entity:
+        character = _plain(entity)
     character = TOPIC_TAGS.get(topic, character)
     return f"[{when}] ({speaker}) {{{character}}}" if character else f"[{when}] ({speaker})"
 
@@ -204,6 +217,7 @@ def render(
             line.text if version == CLEANED else line.heard,
             line.topic if version == CLEANED else GAME,
             line.topic,
+            line.entity,
         )
         for line in table_lines
     ]
@@ -218,7 +232,7 @@ def render(
         who = (
             label(when, shown[item.speaker][0])
             if item.skipped
-            else label(when, *shown[item.speaker], item.said_as)
+            else label(when, *shown[item.speaker], item.said_as, item.entity)
         )  # a skipped note says what it is, with no character
         if item.skipped:  # "[0:12:04] (Mia) [1m 22s of off-topic chat skipped]"
             timed.append((item.started_ms, f"{who} {item.text}"))

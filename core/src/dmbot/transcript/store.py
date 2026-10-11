@@ -62,15 +62,15 @@ class TranscriptStore:
             cur = await conn.execute(
                 "INSERT INTO transcript_lines"
                 " (guild_id, session_id, started_ms, user_id, heard, text, duration_ms, topic,"
-                " sidebar, sidebar_ref, sidebar_reply_to, sidebar_via, sidebar_stt,"
+                " entity, sidebar, sidebar_ref, sidebar_reply_to, sidebar_via, sidebar_stt,"
                 " sidebar_model, sidebar_prompt, sidebar_sources)"
                 " SELECT %s, %s, l.started_ms, l.user_id, l.heard, l.text, l.duration_ms,"
-                " l.topic, l.sidebar, l.ref, l.reply_to, l.via, l.stt, l.model, l.prompt,"
+                " l.topic, l.entity, l.sidebar, l.ref, l.reply_to, l.via, l.stt, l.model, l.prompt,"
                 " l.sources::jsonb"
                 " FROM unnest(%s::bigint[], %s::bigint[], %s::text[], %s::text[], %s::int[],"
                 " %s::text[], %s::text[], %s::text[], %s::text[], %s::text[], %s::text[],"
-                " %s::text[], %s::text[], %s::text[])"
-                " AS l(started_ms, user_id, heard, text, duration_ms, topic, sidebar, ref,"
+                " %s::text[], %s::text[], %s::text[], %s::text[])"
+                " AS l(started_ms, user_id, heard, text, duration_ms, topic, entity, sidebar, ref,"
                 " reply_to, via, stt, model, prompt, sources)"
                 " RETURNING id",
                 (
@@ -83,6 +83,7 @@ class TranscriptStore:
                     [None if line.text == line.heard else line.text for line in lines],
                     [line.duration_ms for line in lines],
                     [line.topic for line in lines],
+                    [line.entity or None for line in lines],
                     [line.sidebar or None for line in lines],
                     *_lineage_columns(lines),
                 ),
@@ -129,6 +130,20 @@ class TranscriptStore:
                 " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
                 " AND sidebar IS NULL",
                 (topic, session_id, user_id, started_ms),
+            )
+            return cur.rowcount
+
+    async def set_entity(
+        self, guild_id: int, session_id: str, user_id: int, started_ms: int, entity: str
+    ) -> int:
+        """A saved line's entity: who it was said as (#53). What was heard never changes.
+        How many lines changed (0: it wasn't saved)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE transcript_lines SET entity = %s"
+                " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
+                " AND sidebar IS NULL",
+                (entity or None, session_id, user_id, started_ms),
             )
             return cur.rowcount
 
@@ -213,7 +228,8 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT started_ms, user_id, heard, coalesce(text, heard) AS text, duration_ms,"
-                " topic, coalesce(sidebar, '') AS sidebar, sidebar_ref, sidebar_reply_to,"
+                " topic, coalesce(entity, '') AS entity, coalesce(sidebar, '') AS sidebar,"
+                " sidebar_ref, sidebar_reply_to,"
                 " sidebar_via, sidebar_stt, sidebar_model, sidebar_prompt, sidebar_sources"
                 " FROM transcript_lines"
                 " WHERE session_id = %s ORDER BY started_ms, id",
@@ -229,6 +245,7 @@ class TranscriptStore:
                     r["topic"],
                     r["sidebar"],
                     _lineage(r),
+                    r["entity"],
                 )
                 for r in await cur.fetchall()
             ]

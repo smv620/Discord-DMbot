@@ -37,7 +37,8 @@ from dmbot.web.accounts import (
 )
 from dmbot.web.admin import CSRF_HEADER, AdminSessions, FailedTries, GoogleSignIn
 from dmbot.web.discord import DiscordError, DiscordOAuth
-from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck, RateLimit
+from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
+from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.me import build_me
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.sessions import Session
@@ -77,6 +78,7 @@ def create_app(
     discussions: Discussions | None = None,
     human_check: HumanCheck | None = None,
     feedback_limit: RateLimit | None = None,
+    route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
@@ -87,6 +89,12 @@ def create_app(
     no Turnstile check (settings allow that only on localhost)."""
     if feedback_limit is None:
         feedback_limit = RateLimit()
+    # One limiter per group of routes in limits.LIMITS (#1082); tests pass fake clocks.
+    if route_limits is None:
+        route_limits = {
+            name: RateLimit(group.seconds, count=group.count) for name, group in LIMITS.items()
+        }
+    limited_paths = {path: name for name, group in LIMITS.items() for path in group.paths}
     app = FastAPI(
         title="DMbot web API",
         docs_url=None,  # no public API browser
@@ -102,6 +110,38 @@ def create_app(
     install_cookie = f"{prefix}dmbot_install"
     account_page = f"{settings.site_url}/account"
 
+    def limit_key(address: str) -> str:
+        """One person can hold a whole IPv6 /64, so count by that block; an IPv4 address,
+        or "unknown", is its own key."""
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            return address
+        if ip.version == 6:
+            return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+        return address
+
+    def self_limit(request: Request) -> Response | None:
+        """The API's own per-address limit on sign-in, install, billing and account
+        deletion (#1082). The webhook is never limited here: its signature is the gate.
+        A browser visit goes back to the site with a plain message; a call from the page
+        gets a 429. The refusal says nothing about why beyond "too many tries"."""
+        name = limited_paths.get(request.url.path)
+        if name is None or request.method not in ("GET", "POST"):
+            return None
+        limit = route_limits[name]
+        address = limit_key(client_address(request))
+        verdict = limit.take(address)
+        if verdict == "ok":
+            return None
+        wait = {"Retry-After": str(limit.retry_after(address) if verdict == "wait" else 60)}
+        param = LIMITS[name].redirect_param
+        if param is not None:
+            return RedirectResponse(f"{account_page}?{param}=slow", status_code=302, headers=wait)
+        if verdict == "busy":
+            return JSONResponse({"error": "busy"}, status_code=503, headers=wait)
+        return JSONResponse({"error": "slow_down"}, status_code=429, headers=wait)
+
     @app.middleware("http")
     async def guard(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -115,8 +155,13 @@ def create_app(
                 origin is not None and origin != settings.site_origin
             ):
                 return JSONResponse({"error": "not_allowed"}, status_code=403)
+        # After the cross-site check, so a forged POST from another site can't use up a
+        # visitor's count. (A forged GET to a sign-in route still can; that is accepted:
+        # the wait is minutes, and the proxy's rules are the first line.)
+        response = self_limit(request)
         try:
-            response = await call_next(request)
+            if response is None:
+                response = await call_next(request)
         except Exception:
             # Any crash is still JSON the website can read, inside the CORS wrapper below
             # (a FastAPI Exception handler runs outside it). The log has the path, no data.

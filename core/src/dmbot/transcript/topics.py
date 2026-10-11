@@ -69,6 +69,7 @@ class Spoken:
     text: str
     topic: str = GAME  # what the version hides (the as-heard one hides nothing)
     said_as: str = GAME  # what the line was, for its label (#53), whatever is hidden
+    entity: str = ""  # who it was said as (#53; Line.entity)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +81,7 @@ class Shown:
     text: str
     skipped: bool = False
     said_as: str = GAME
+    entity: str = ""
 
 
 def collapse(lines: Iterable[Spoken]) -> Iterator[Shown]:
@@ -100,7 +102,9 @@ def collapse(lines: Iterable[Spoken]) -> Iterator[Shown]:
             run.append(line)
             continue
         yield from flush()
-        yield Shown(line.speaker, line.started_ms, line.text, said_as=line.said_as)
+        yield Shown(
+            line.speaker, line.started_ms, line.text, said_as=line.said_as, entity=line.entity
+        )
     yield from flush()
 
 

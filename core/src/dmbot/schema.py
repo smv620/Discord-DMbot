@@ -672,6 +672,14 @@ TRANSCRIPT_TOPICS = """
         ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0);
     """
 
+TRANSCRIPT_ENTITY = """
+    -- Who a line was said as (#53): NULL when nobody is named (the player's character is
+    -- shown from the sheet), 'narrating' for the DM's narration, or the confirmed, non-secret
+    -- name of the NPC the DM was voicing. Never a secret name: the writer checks that.
+    ALTER TABLE transcript_lines
+        ADD COLUMN entity TEXT CHECK (entity IS NULL OR length(entity) BETWEEN 1 AND 120);
+    """
+
 TRANSCRIPT_SIDEBAR = """
     -- DM sidebar lines (#935): the DM's question and DMbot's answer, NULL for table speech.
     -- In the as-heard (raw) transcript for everyone who may read transcripts, never in the
@@ -1674,6 +1682,34 @@ OWNER_CAMPAIGNS = (
     """
 )
 
+CAMPAIGN_GUILDS = """
+    -- Which servers have ever held a campaign (#989), so the daily retention job can reach
+    -- the campaigns of servers the bot has since left: it can't ask Discord about those.
+    -- Server IDs and nothing else, so no row-level security (a routing table; see the rules
+    -- at the top of this file). A plain trigger fills it however a campaign is made or
+    -- restored; the retention job removes a server once it has no campaigns left.
+    CREATE TABLE campaign_guilds (
+        guild_id BIGINT PRIMARY KEY
+    );
+    CREATE FUNCTION dmbot_note_campaign_guild() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        INSERT INTO campaign_guilds (guild_id) VALUES (NEW.guild_id) ON CONFLICT DO NOTHING;
+        RETURN NULL;
+    END
+    $fn$;
+    CREATE TRIGGER campaign_guilds_note
+        AFTER INSERT ON campaigns
+        FOR EACH ROW EXECUTE FUNCTION dmbot_note_campaign_guild();
+    -- The servers that hold campaigns now. Migrations run with no server set, so row-level
+    -- security hides every campaign: the backfill opens the one table it reads for itself
+    -- (CLAUDE.md), dropped again inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON campaigns FOR SELECT USING (true);
+    INSERT INTO campaign_guilds (guild_id) SELECT DISTINCT guild_id FROM campaigns;
+    DROP POLICY migrate_backfill ON campaigns;
+    """
+
 # What the website's role may touch at all: its own tables, and only reads of the two
 # server tables /me needs. Everything else (consent, transcripts, memory...) is refused
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
@@ -1741,6 +1777,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0042_game_effects", GAME_EFFECTS),
     ("0043_test_voice_consent", TEST_VOICE_CONSENT),
     ("0044_memory_kinds", MEMORY_KINDS),
+    ("0045_campaign_guilds", CAMPAIGN_GUILDS),
+    ("0046_transcript_entity", TRANSCRIPT_ENTITY),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -1789,5 +1827,5 @@ USER_ISOLATED_TABLES = (
 # administrator (#665).
 WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
-ROUTING_TABLES = ("live_session_guilds",)
+ROUTING_TABLES = ("live_session_guilds", "campaign_guilds")
 UNSCOPED_TABLES = ("schema_migrations", *ROUTING_TABLES)

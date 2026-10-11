@@ -103,6 +103,7 @@ export type ApiErrorKind =
   | "confirm-again" // the delete confirmation ran out (10 minutes) or belongs elsewhere
   | "no-paid-plan" // the billing page needs a paid plan
   | "free-access" // free access: there's nothing to pay for
+  | "slow-down" // too many tries from this address (the API limits sign-in, billing, delete)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -160,6 +161,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   no_paid_plan: "no-paid-plan",
   offer_gone: "offer-gone",
   has_free_access: "free-access",
+  slow_down: "slow-down",
+  busy: "slow-down",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */

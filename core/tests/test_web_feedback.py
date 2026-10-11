@@ -19,10 +19,10 @@ from dmbot.web.feedback import (
     GitHubDiscussions,
     Kind,
     Posted,
-    RateLimit,
     Turnstile,
     discussion_body,
 )
+from dmbot.web.limits import RateLimit
 from dmbot.web.settings import load_web_settings
 from tests.pg import DatabaseTest
 from tests.test_web_api import API, SITE, FakeDiscord, settings

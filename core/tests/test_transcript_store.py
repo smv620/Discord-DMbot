@@ -2,6 +2,7 @@
 `/transcript` download flow."""
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -186,6 +187,22 @@ class StoreTests(DatabaseTest):
         self.assertEqual(await self.store.set_topic(GUILD, sid, PLAYER, 1, "off_topic"), 0)
         self.assertEqual(
             await self.store.set_topic(OTHER_GUILD, sid, PLAYER, said.started_ms, "game"), 0
+        )  # never another server's
+
+    async def test_who_a_line_was_said_as_is_kept(self) -> None:
+        # #53: saved with the line, or set later; nothing named reads back as "".
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        plain, as_npc = line(1, DM, "Hello."), line(2, DM, "Welcome.")
+        await self.store.add_lines(GUILD, sid, [plain, replace(as_npc, entity="narrating")])
+        back = await self.store.lines(GUILD, sid)
+        self.assertEqual([x.entity for x in back], ["", "narrating"])
+        self.assertEqual(await self.store.set_entity(GUILD, sid, DM, plain.started_ms, "Hiro"), 1)
+        self.assertEqual(await self.store.set_entity(GUILD, sid, DM, as_npc.started_ms, ""), 1)
+        back = await self.store.lines(GUILD, sid)
+        self.assertEqual([x.entity for x in back], ["Hiro", ""])
+        self.assertEqual(await self.store.set_entity(GUILD, sid, DM, 1, "x"), 0)
+        self.assertEqual(
+            await self.store.set_entity(OTHER_GUILD, sid, DM, plain.started_ms, "x"), 0
         )  # never another server's
 
     async def test_put_it_back_changes_one_persons_lines_at_once(self) -> None:
