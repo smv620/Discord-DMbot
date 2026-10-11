@@ -2152,6 +2152,21 @@ hours meter (#437 part 2), decided:* the free list has no meter; a Guild-level g
 Guild's hours, its month running from the day the grant started (as a paid plan's runs
 from its billing date), and a grant that ends mid-month just stops; a grant overlapping a
 paid plan uses the larger caps and the paid plan's month.
+*Free-access follow-ups (2026-10-11, #824):* (1) **A cancelled plan says so.** The payment
+company's cancel event (Lemon Squeezy: `subscription_updated` or `subscription_cancelled` with
+status `cancelled`, and `ends_at`) is stored as `entitlements.ends_at` (migration 0048); the plan
+keeps working to that date; a renewal or a resume (status `active`) clears it. `/me` then sends
+`plan.endsOn`, and under free access `paidPlan` with `paidPlanEndsOn` ("Your Table plan ends on
+Oct 14.") instead of `stillPaying`. (2) **`stillPaying` only when the billing page can open:** a
+plan with no payment-company customer (set by hand) is not offered "Stop paying"; the line reads
+"Tap Stop paying, then cancel on the payment page, if you don't need it." (3) **Hours on the
+account page come from the meter now.** `/me` read `hoursUsed: 0` always; it asks the database
+function `dmbot_hours_used(month_start)` (0048: the signed-in person's own minutes in one month,
+nothing else, the table stays closed to the website's role). A capped grant ("like Guild") shows an
+hours line and bar (`access.hours`), a no-limits person none. (4) **Words:** a no-limits free
+person's campaigns are tagged "You run it", a hand-over offer reads "If you accept, it becomes
+yours and <name> stays on as a DM", and nothing says hours or slots; a capped grant keeps the hours
+wording.
 **Admin sign-in:** only addresses in `ADMIN_EMAILS` (server settings) may sign in, either with
 Google ("Sign in with Google", verified email only) or with that email and an admin password
 whose hash (argon2id) is in the server settings, never in the database or the repository; a

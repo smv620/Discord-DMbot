@@ -23,6 +23,8 @@ export interface MyPlan {
   renewsOn: string | null;
   /** ISO date a failed payment must be fixed by (status "grace"), or null. */
   graceEndsOn: string | null;
+  /** ISO date a cancelled plan ends (it works until then and does not renew), if it was. */
+  endsOn?: string;
 }
 
 export interface Campaign {
@@ -72,6 +74,10 @@ export interface Access {
   stillPaying?: boolean;
   /** That plan's name, as the API words it. */
   paidPlan?: string;
+  /** ISO date a cancelled paid plan under free access ends (then it is not "still paying"). */
+  paidPlanEndsOn?: string;
+  /** Hours for free access that has a cap (a grant "like Guild"); missing when it has none. */
+  hours?: { used: number; cap: number; renewsOn: string | null };
 }
 
 export interface Me {

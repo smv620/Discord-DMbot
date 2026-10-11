@@ -44,6 +44,8 @@ interface Shared {
   refresh: () => Promise<void>;
   /** The session ended (or must be renewed): back to sign-in, with a message. */
   signedOut: (notice?: string) => void;
+  /** Free access with no hours or campaign limit: no "your hours" or "slots" wording (#824). */
+  noLimits: boolean;
 }
 
 const SharedContext = createContext<Shared | null>(null);
@@ -181,7 +183,9 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
     [go],
   );
 
-  const shared: Shared = { api, go: safeGo, refresh, signedOut };
+  const access = state.kind === "signed-in" ? state.me.access : undefined;
+  const noLimits = access?.kind === "free" && access.hours === undefined;
+  const shared: Shared = { api, go: safeGo, refresh, signedOut, noLimits };
 
   let body: JSX.Element;
   switch (state.kind) {
@@ -430,6 +434,20 @@ function PlanSection({ me }: { me: Me }) {
           {text.freeNext}
           {access.endsOn && !access.stillPaying && ` ${text.freeEnds(access.endsOn)}`}
         </p>
+        {access.hours && (
+          <>
+            <p class="hours-line">{hoursUsedLine(access.hours.used, access.hours.cap)}</p>
+            <progress
+              max={access.hours.cap}
+              value={Math.min(Math.max(access.hours.used, 0), access.hours.cap)}
+              aria-label={text.hoursBarLabel}
+            />
+            <p class="muted small">{text.freeHoursLeft(access.hours.renewsOn)}</p>
+          </>
+        )}
+        {!access.stillPaying && access.paidPlanEndsOn && (
+          <p>{text.planEnds(access.paidPlan ?? null, access.paidPlanEndsOn)}</p>
+        )}
         {access.stillPaying && (
           <>
             <p>{text.stillPaying(paying, plan?.renewsOn ?? null)}</p>
@@ -492,6 +510,7 @@ function PlanSection({ me }: { me: Me }) {
               <p class="muted small">
                 {hoursLeftLine(plan.hoursUsed, plan.hoursCap, plan.renewsOn, plan.id)}
               </p>
+              {plan.endsOn && <p>{text.planEnds(planName(plan.id), plan.endsOn)}</p>}
               {plan.id === "try-it" ? (
                 choices(text.pickPlan)
               ) : (
@@ -547,7 +566,7 @@ function OfferRow({
   free: boolean;
   onNews: (news: { text: string; ok: boolean }) => void;
 }) {
-  const { api, refresh } = useShared();
+  const { api, refresh, noLimits } = useShared();
   const { busy, notice, run } = useAction();
   const [noSlot, setNoSlot] = useState(false);
   const answer = (action: () => Promise<void>, message: string): void =>
@@ -573,7 +592,13 @@ function OfferRow({
     );
   return (
     <li data-offer={offer.id}>
-      <p>{text.offerIncoming(offer.personName, offer.campaignName, offer.serverName)}</p>
+      <p>
+        {(noLimits ? text.offerIncomingFree : text.offerIncoming)(
+          offer.personName,
+          offer.campaignName,
+          offer.serverName,
+        )}
+      </p>
       <p class="muted small">{text.offerExpires(offer.expiresAt)}</p>
       <Notice message={notice} />
       {noSlot && <a href="#plan">{text.seeMyPlan}</a>}
@@ -648,7 +673,7 @@ function CampaignRow({
   onWithdrawn: (person: string) => Promise<void>;
   onHandedOver: (person: Person) => Promise<void>;
 }) {
-  const { api, refresh } = useShared();
+  const { api, refresh, noLimits } = useShared();
   const { busy, notice, run } = useAction();
   const [people, setPeople] = useState<Person[] | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -665,7 +690,13 @@ function CampaignRow({
         <span class={`tag ${campaign.status}`}>
           {campaign.status === "active" ? text.active : text.paused}
         </span>
-        <span class="tag">{campaign.role === "owner" ? text.youRunIt : text.youHelp}</span>
+        <span class="tag">
+          {campaign.role === "owner"
+            ? noLimits
+              ? text.youRunItFree
+              : text.youRunIt
+            : text.youHelp}
+        </span>
       </p>
       <Notice message={notice} />
       {offer && (
@@ -736,7 +767,9 @@ function CampaignRow({
               <p>{text.handOverNobody}</p>
             ) : (
               <>
-                <p class="muted small">{text.handOverNote}</p>
+                <p class="muted small">
+                  {noLimits ? text.handOverNoteFree : text.handOverNote}
+                </p>
                 {people.map((p) => (
                   <label key={p.id} class="choice">
                     <input

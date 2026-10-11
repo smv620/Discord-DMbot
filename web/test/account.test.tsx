@@ -914,4 +914,74 @@ describe("free access (#806)", () => {
     expect(await screen.findByText(text.freeAccess)).toBeTruthy();
     expect(screen.queryByRole("button", { name: text.startTryIt })).toBeNull();
   });
+
+  // #824: follow-ups from the first free-access page.
+  it("tells a still-paying person to cancel on the payment page", async () => {
+    showFree("table", { kind: "free", stillPaying: true, paidPlan: "Table" });
+    const line = await screen.findByText(/Tap Stop paying/);
+    expect(line.textContent).toContain("then cancel on the payment page");
+  });
+
+  it("a cancelled plan says when it ends and offers no Stop paying", async () => {
+    showFree("table", { kind: "free", paidPlan: "Table", paidPlanEndsOn: "2026-10-14" });
+    expect(await screen.findByText(text.planEnds("Table", "2026-10-14"))).toBeTruthy();
+    expect(text.planEnds("Table", "2026-10-14")).toBe("Your Table plan ends on Oct 14.");
+    expect(screen.queryByRole("button", { name: text.stopPaying })).toBeNull();
+  });
+
+  it("a capped grant shows its hours line and bar, no limits shows none", async () => {
+    showFree("no-plan", {
+      kind: "free",
+      hours: { used: 11.2, cap: 87, renewsOn: "2026-11-11" },
+    });
+    expect(await screen.findByText("About 11 of 87 hours used")).toBeTruthy();
+    const bar = screen.getByLabelText(text.hoursBarLabel) as HTMLProgressElement;
+    expect([bar.value, bar.max]).toEqual([11.2, 87]);
+    expect(screen.getByText(text.freeHoursLeft("2026-11-11"))).toBeTruthy();
+  });
+
+  it("no limits: no hours line, and campaigns say 'You run it', not 'Uses your hours'", async () => {
+    showFree("table", { kind: "free" });
+    await screen.findByText(text.freeAccess);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect((await screen.findAllByText(text.youRunItFree)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(text.youRunIt)).toBeNull();
+  });
+
+  it("a capped grant keeps the hours wording on its campaigns", async () => {
+    showFree("table", { kind: "free", hours: { used: 1, cap: 87, renewsOn: null } });
+    expect((await screen.findAllByText(text.youRunIt)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(text.youRunItFree)).toBeNull();
+  });
+
+  it("an offer to a no-limits person doesn't talk about slots or hours", async () => {
+    showFree("offers", { kind: "free" });
+    const lines = await screen.findAllByText(/wants to hand you/);
+    for (const line of lines) {
+      expect(line.textContent).not.toMatch(/slot|hours/);
+      expect(line.textContent).toContain("it becomes yours");
+      expect(line.textContent).toContain("stays on as a DM");
+    }
+  });
+
+  it("an offer to a person with limits keeps the slot and hours wording", async () => {
+    show("offers");
+    const lines = await screen.findAllByText(/wants to hand you/);
+    for (const line of lines) {
+      expect(line.textContent).toMatch(/campaign slots and your plan's hours/);
+    }
+  });
+
+  it("a paid plan that was cancelled says when it ends", async () => {
+    const api = mockApi("table");
+    const base = scenarioMe("table");
+    const plan = base?.plan;
+    if (!base || !plan) throw new Error("the table scenario has a plan");
+    api.me = vi.fn(async (): Promise<Me | null> => ({
+      ...base,
+      plan: { ...plan, endsOn: "2026-10-14" },
+    }));
+    render(<Account api={api} go={vi.fn()} search="" />);
+    expect(await screen.findByText(text.planEnds("Table", "2026-10-14"))).toBeTruthy();
+  });
 });
