@@ -9,7 +9,8 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting; core 0f39e35 deployed 2026-10-11 05:55 UTC took everything merged so far: see the history)
+- core + web-api (#989 / PR #1080, migration 0045 campaign_guilds): the daily retention job now takes its server list from the database, sends one grouped warning per person, and catches up a missed 03:00 run (it writes retention_last_run in the data directory). Deploy core (migration 0045 runs at start; back up first). Check: the core log has no "Retention: couldn't" errors after the first run, and with DMBOT_ENFORCE_PLANS off the run logs one "Retention dry run" line with counts only. Nothing to check in Discord.
+- web-api (#1082 / PR #1084): per-address limits on sign-in, install, billing and account delete. Deploy web-api only (no migration). Check: https://api.getdmbot.com/health still answers; behind the Cloudflare Tunnel, six quick POSTs to /account/delete/request from one address give 429 on the sixth (use a signed-out browser: the first five answer 401). The tunnel must send CF-Connecting-IP (client_ip_header) or everyone shares one count.
 
 ------------------------------------------------------------------------------
 LIVE NOW
