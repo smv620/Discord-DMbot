@@ -51,6 +51,11 @@ def normalize(name: str) -> str:
     return _NOT_ALNUM.sub(" ", text).strip()
 
 
+_COUNTS = frozenset(
+    ["a", "an", "the", "some", "many", "several", "few"]
+    + ["two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
+    + [str(n) for n in range(1, 100)]
+)
 PEOPLES = ("elf", "gnome", "dwarf", "halfling", "human", "orc")  # "Elf, Drow": say "Drow"
 
 
@@ -257,6 +262,32 @@ class Index:
                 found.append(entry)
         found.sort(key=lambda e: e.edition != target)  # stable: the target's names first
         return found[:limit]
+
+    def is_monster(self, name: str) -> bool:
+        """Is `name` a kind of monster the rules have, in any edition: by its name, its
+        other names, its plural ("goblins") or with a count or article in front ("three
+        goblins", "the goblin")? A proper name ("Snot") is not."""
+        words = normalize(name).split()
+        while words and words[0] in _COUNTS:
+            words.pop(0)
+        key = " ".join(words)
+        if not key:
+            return False
+        tries = [key]
+        if key.endswith("ies"):
+            tries.append(key[:-3] + "y")
+        if key.endswith("ves"):
+            tries.append(key[:-3] + "f")  # wolves
+        if key.endswith("es"):
+            tries.append(key[:-2])
+        if key.endswith("s"):
+            tries.append(key[:-1])
+        return any(
+            entry.kind == "monster"
+            for found in self._by_edition.values()
+            for t in tries
+            for entry in found.get(t, ())
+        )
 
     def names(self, kind: str, edition: str) -> list[str]:
         """The names of that edition's entries of that kind, in order."""

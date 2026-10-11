@@ -17,8 +17,10 @@
 ###   Varrow | place            (you have Varrow as a god)
 ###   Ashen Crown | place       (you have Ashen Crown as a group)
 ###
-### Bardic Inspiration is "other", not "spell": it's a bard's class feature. That's
-### right, and not one of the 7 deliberate errors.
+### Detect Magic, Cure Wounds, Fireball and Bardic Inspiration are rules (spells and a bard's
+### class feature), which DMbot does not keep as names (#1034): they are "other" here only
+### so this test's counts stay as they were. That is right, and not one of the 7 deliberate
+### errors.
 ###
 ### No secret names: those are tested separately.
 Bell | NPC | Belleros
@@ -43,7 +45,7 @@ Lirael | NPC
 Saelith | NPC
 Vane | NPC | Oskar Vane
 Ashen Crown | place
-Detect Magic | spell
-Cure Wounds | spell
-Fireball | spell
+Detect Magic | other
+Cure Wounds | other
+Fireball | other
 Bardic Inspiration | other

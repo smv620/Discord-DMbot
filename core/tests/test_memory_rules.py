@@ -30,6 +30,7 @@ from dmbot.memory.ontology import (
     Ontology,
     PredicateTerm,
     TypeTerm,
+    resolve_kind,
 )
 
 A, B, C = "a" * 32, "b" * 32, "c" * 32
@@ -105,10 +106,67 @@ class CoreOntology(unittest.TestCase):
                 self.assertNotIn(word, term.description.lower())
 
     def test_kinds_inherit(self) -> None:
-        self.assertTrue(self.onto.is_a("npc", "character"))
-        self.assertTrue(self.onto.is_a("player_character", "character"))
-        self.assertFalse(self.onto.is_a("character", "npc"))
-        self.assertFalse(self.onto.is_a("place", "character"))
+        # An extension kind under character is a character; a role is not a kind (#1034).
+        under = TypeTerm("horse", "character", "horse", "A named horse.", core=False)
+        onto = Ontology.build([under])
+        self.assertTrue(onto.is_a("horse", "character"))
+        self.assertFalse(onto.is_a("character", "horse"))
+        self.assertFalse(onto.is_a("place", "character"))
+
+    def test_the_story_kinds_are_these_six(self) -> None:
+        active = {t.key: t.label for t in CORE_TYPES if t.status == "active"}
+        self.assertEqual(
+            active,
+            {
+                "character": "character",
+                "place": "place",
+                "faction": "group",
+                "item": "item",
+                "event": "event",
+                "concept": "idea",
+            },
+        )
+
+    def test_the_older_kinds_are_retired_with_what_replaced_them(self) -> None:
+        old = {t.key: t.replaced_by for t in CORE_TYPES if t.status == "deprecated"}
+        self.assertEqual(
+            old,
+            {
+                "npc": "character",
+                "player_character": "character",
+                "deity": "character",
+                "creature": "character",
+                "spell": "concept",
+            },
+        )
+        for key in old:
+            with self.assertRaises(MemoryRuleError):
+                self.onto.active_type(key)  # no new entry takes one
+
+    def test_the_older_kinds_are_read_as_a_character_with_a_role(self) -> None:
+        self.assertEqual(resolve_kind("npc"), ("character", "npc"))
+        self.assertEqual(resolve_kind("player_character"), ("character", "player_character"))
+        self.assertEqual(resolve_kind("deity"), ("character", "god"))
+        self.assertEqual(resolve_kind("creature"), ("character", "npc"))
+        self.assertEqual(resolve_kind("character", "god"), ("character", "god"))
+        self.assertEqual(resolve_kind("place"), ("place", None))
+        with self.assertRaises(MemoryRuleError):
+            resolve_kind("npc", "god")  # one role at a time
+        with self.assertRaises(MemoryRuleError) as spell:
+            resolve_kind("spell")
+        self.assertIn("/dmbot rule", str(spell.exception))
+
+    def test_every_relationship_accepts_a_character(self) -> None:
+        for predicate in CORE_PREDICATES:
+            ends = (*predicate.subject_types, *predicate.object_types)
+            self.assertNotIn("creature", ends, predicate.key)
+            self.assertNotIn("npc", ends, predicate.key)
+            self.assertNotIn("deity", ends, predicate.key)
+        located = self.onto.predicates["located_in"]
+        self.assertIn("character", located.subject_types)
+        for key in ("member_of", "ally_of", "enemy_of", "kin_of", "owns", "knows", "serves"):
+            self.assertIn("character", self.onto.predicates[key].subject_types, key)
+        self.assertIn("character", self.onto.predicates["appears_in"].subject_types)
 
     def test_unknown_or_retired_terms_are_refused(self) -> None:
         with self.assertRaises(MemoryRuleError):
@@ -118,8 +176,8 @@ class CoreOntology(unittest.TestCase):
             Ontology.build([retired]).active_type("ship")
 
     def test_core_wins_over_a_campaign_term_with_the_same_key(self) -> None:
-        fake = TypeTerm("npc", "place", "fake", "Not an NPC.", core=False)
-        self.assertTrue(Ontology.build([fake]).types["npc"].core)
+        fake = TypeTerm("character", "place", "fake", "Not a character.", core=False)
+        self.assertTrue(Ontology.build([fake]).types["character"].core)
 
 
 class Extensions(unittest.TestCase):
@@ -185,25 +243,27 @@ class Checks(unittest.TestCase):
 
     def test_kinds_must_fit(self) -> None:
         new = rel(A, "located_in", B)
-        self.assertEqual(check_relation(self.onto, new, "npc", "place", []), [])
-        kinds = [p.kind for p in check_relation(self.onto, new, "spell", "npc", [])]
+        self.assertEqual(check_relation(self.onto, new, "character", "place", []), [])
+        kinds = [p.kind for p in check_relation(self.onto, new, "concept", "character", [])]
         self.assertEqual(kinds, [WRONG_SUBJECT, WRONG_OBJECT])
 
     def test_two_birthplaces_are_flagged(self) -> None:
         first = rel(A, "born_in", B, rid="1" * 32, status=CONFIRMED)
         second = rel(A, "born_in", C)
-        problems = check_relation(self.onto, second, "npc", "place", [first])
+        problems = check_relation(self.onto, second, "character", "place", [first])
         self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, first.id)])
 
     def test_one_place_at_a_time_is_fine(self) -> None:
         # Facts are history: Cerric was in Brynwater last session, Thornewick now.
         then = rel(A, "located_in", B, rid="1" * 32, span=(100, 200))
         now = rel(A, "located_in", C, span=(200, None))
-        self.assertEqual(check_relation(self.onto, now, "npc", "place", [then]), [])
+        self.assertEqual(check_relation(self.onto, now, "character", "place", [then]), [])
 
     def test_rejected_facts_dont_count(self) -> None:
         old = rel(A, "born_in", B, rid="1" * 32, status=REJECTED)
-        self.assertEqual(check_relation(self.onto, rel(A, "born_in", C), "npc", "place", [old]), [])
+        self.assertEqual(
+            check_relation(self.onto, rel(A, "born_in", C), "character", "place", [old]), []
+        )
 
     def test_a_two_way_limit_counts_both_sides(self) -> None:
         married = PredicateTerm(
@@ -213,19 +273,19 @@ class Checks(unittest.TestCase):
         onto = Ontology.build(extra_predicates=[married])
         # Stored smaller ID first: B is on the object side of the first fact.
         first = rel(A, "married_to", B, rid="1" * 32)
-        problems = check_relation(onto, rel(B, "married_to", C), "npc", "npc", [first])
+        problems = check_relation(onto, rel(B, "married_to", C), "character", "character", [first])
         self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, first.id)])
 
     def test_ally_and_enemy_at_once_is_a_contradiction(self) -> None:
         ally = rel(A, "ally_of", B, rid="1" * 32)
         enemy = rel(B, "enemy_of", A)  # either direction
-        problems = check_relation(self.onto, enemy, "npc", "npc", [ally])
+        problems = check_relation(self.onto, enemy, "character", "character", [ally])
         self.assertEqual([(p.kind, p.other_id) for p in problems], [(CONTRADICTION, ally.id)])
 
     def test_ally_then_enemy_is_history_not_a_contradiction(self) -> None:
         ally = rel(A, "ally_of", B, rid="1" * 32, span=(100, 300))
         enemy = rel(A, "enemy_of", B, span=(300, None))
-        self.assertEqual(check_relation(self.onto, enemy, "npc", "npc", [ally]), [])
+        self.assertEqual(check_relation(self.onto, enemy, "character", "character", [ally]), [])
 
     def test_game_time_separates_facts_once_both_have_it(self) -> None:
         a = rel(A, "ally_of", B, rid="1" * 32, game=(0, 10))

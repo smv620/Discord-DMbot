@@ -121,6 +121,40 @@ even on the same server.
 Derived on top, never a source of truth: **reputations** (section 5) and **summaries**
 (section 7). Both can be rebuilt from facts at any time.
 
+### Entity kinds (owner, 2026-10-10)
+
+An entry's kind says what it fundamentally is, one kind for each entry. Roles and categories
+(NPC, god, monster, goblin, humanoid, wizard) are traits or links, never kinds. This had to land
+before PlotBot (phase 5c) builds on the memory.
+
+**Story kinds** (unique things in this campaign, kept in campaign memory):
+
+| Key | Label | Covers |
+|---|---|---|
+| `character` | character | always unique: PCs, NPCs, gods, named monsters, a named horse |
+| `place` | place | a town, building, region, room |
+| `item` | item | an object |
+| `faction` | group | an organization |
+| `event` | event | and threads and promises hang off it |
+| `concept` | idea | a prophecy, a curse, a clue |
+
+**Traits and links:**
+- **Role:** `player_character`, `npc` or `god`, on a character, one at a time (a state fact).
+- **Links to rules entries** (SRD 5.2.1 / 5.1, the campaign's homebrew and shared rulebooks, by
+  source and entry name): species ("race" is shown only as the 2014 name, `[Legacy 2014]`),
+  creature type, stat block (this is what makes a character a "monster"), class, background.
+  A name not in the rules data keeps its words and is marked "not in DMbot's rules".
+- Rules vocabulary (species, creature type, class, background, feat, spell, skill, ability) is
+  not campaign memory: memory only links to it. Unnamed monsters are not entries: "three goblins
+  attack" is a reference to the goblin stat block; an organized band is a group.
+
+**Examples.** *Snot, son of Garg, the goblin prince*: character · NPC · species goblin (creature
+type humanoid) · stat block Goblin Warrior; he is a member of the Cragmaw tribe (a group). *Auril*:
+character · god. Both fit one kind each; the role says what each is to the table.
+
+2024 makes "goblin" both a playable species and a monster stat block: that is why "monster" is a
+stat-block link and never a kind.
+
 ### 2. Ontology additions (core v2, a reviewed code release)
 
 Per the ontology rules, the core changes only in a code release. Proposed additions,

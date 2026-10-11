@@ -117,6 +117,9 @@ class Isolation(MemoryTest):
             source="entitybot",
         )
         a, b = await self.add("Belleros"), await self.add("Cerric")
+        await self.memory.set_rule_link(
+            GUILD_A, self.c, a, "species", "goblin", source="dm", rules_source="srd52", known=True
+        )
         await self.memory.add_alias(GUILD_A, self.c, a, "Bell", kind="nickname", source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
         await self.memory.add_mention(
@@ -423,7 +426,7 @@ class Rules(MemoryTest):
 
     async def test_wrong_kinds_are_flagged(self) -> None:
         a = await self.add("Gorrak")
-        fireball = await self.add("Fireball", type="spell")
+        fireball = await self.add("Fireball", type="concept")
         written = await self.relate(a, "located_in", fireball, source="cleaner", confidence=0.4)
         self.assertEqual([f.kind for f in written.value[1]], [WRONG_OBJECT])
         written = await self.relate(fireball, "member_of", a, source="cleaner", confidence=0.4)
@@ -439,7 +442,7 @@ class Rules(MemoryTest):
         )
         first = await self.relate(cerric, "located_in", p1)
         clash = await self.relate(cerric, "located_in", p2, source="cleaner", confidence=0.5)
-        fireball = await self.add("Fireball", type="spell")
+        fireball = await self.add("Fireball", type="concept")
         wrong = await self.relate(cerric, "member_of", fireball, source="cleaner", confidence=0.4)
         self.assertEqual([f.kind for f in clash.value[1]], [TOO_MANY])
         nothing = await self.memory.resolve_stale_flags(GUILD_A, self.c)
@@ -464,7 +467,7 @@ class Rules(MemoryTest):
         same_town = await self.add("Bryn", type="place")
         await self.relate(cerric, "located_in", town)
         await self.relate(cerric, "located_in", same_town, source="cleaner", confidence=0.5)
-        fireball = await self.add("Fireball", type="spell")
+        fireball = await self.add("Fireball", type="concept")
         await self.relate(cerric, "member_of", fireball, source="cleaner", confidence=0.4)
         await self.memory.merge(GUILD_A, self.c, town, same_town, source="dm")
         closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
@@ -499,7 +502,7 @@ class Rules(MemoryTest):
         """#348 review, a guard for #342's set-based undo: a batch that inserted two
         flags, both later closed by the cleanup, can still be undone."""
         cerric = await self.add("Cerric")
-        fireball = await self.add("Fireball", type="spell")
+        fireball = await self.add("Fireball", type="concept")
         pair = await self.relate(fireball, "member_of", cerric, source="cleaner", confidence=0.4)
         self.assertEqual([f.kind for f in pair.value[1]], [WRONG_SUBJECT, WRONG_OBJECT])
         await self.memory.set_entity_type(GUILD_A, self.c, fireball, "npc", source="dm")
@@ -513,7 +516,7 @@ class Rules(MemoryTest):
 
     async def test_naming_the_right_kind_closes_a_wrong_kind_flag(self) -> None:
         cerric = await self.add("Cerric")
-        tower = await self.add("The Tower", type="spell")  # wrongly a spell
+        tower = await self.add("The Tower", type="concept")  # wrongly an idea
         wrong = await self.relate(cerric, "located_in", tower, source="cleaner", confidence=0.4)
         self.assertEqual([f.kind for f in wrong.value[1]], [WRONG_OBJECT])
         await self.memory.set_entity_type(GUILD_A, self.c, tower, "place", source="dm")
@@ -755,7 +758,12 @@ class Rules(MemoryTest):
                 GUILD_A,
                 self.c,
                 PredicateTerm(
-                    "friends_with", "friends with", "Friends.", ("npc",), ("npc",), core=False
+                    "friends_with",
+                    "friends with",
+                    "Friends.",
+                    ("character",),
+                    ("character",),
+                    core=False,
                 ),
                 examples=["x"],
                 reason="y",
@@ -1364,7 +1372,7 @@ class Lists(MemoryTest):
         self.assertEqual(done.value, 2)  # one was removed in between
         confirmed = await self.memory.entities(GUILD_A, self.c, statuses=[CONFIRMED])
         self.assertEqual(
-            {(e.name, e.type) for e in confirmed}, {("Mage 1", "npc"), ("Mage 2", "npc")}
+            {(e.name, e.kind_key) for e in confirmed}, {("Mage 1", "npc"), ("Mage 2", "npc")}
         )
         aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=ids[1])
         self.assertTrue(all(a.status == CONFIRMED for a in aliases))
@@ -1457,7 +1465,7 @@ class Lists(MemoryTest):
         self.assertEqual(len(names), 600)
         self.assertTrue(all(a.status == CONFIRMED for a in names))
         confirmed = await self.memory.entities(GUILD_A, self.c, statuses=[CONFIRMED])
-        self.assertEqual({e.type for e in confirmed}, {"npc"})
+        self.assertEqual({e.kind_key for e in confirmed}, {"npc"})
         assert done.batch is not None  # one change, and Undo puts it all back
         await self.memory.undo(GUILD_A, self.c, done.batch)
         names = await self.memory.aliases(GUILD_A, self.c, include_secret=True)
@@ -2053,7 +2061,7 @@ class MergeMatchesTheOldWalk(MemoryTest):
             except MemoryRuleError:
                 return None
 
-        types = ("npc", "npc", "npc", "place", "place", "spell")
+        types = ("npc", "npc", "npc", "place", "place", "concept")
         names = ["Keep", "Gone"] + [f"Someone {n}" for n in range(10)]
         ents = []
         for name in names:

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, PROPOSED, MoreNames, NewName, name_key
-from dmbot.memory.name_list import MAX_ADDED, MAX_PER_NAME, PC, ListLine
+from dmbot.memory.name_list import MAX_ADDED, MAX_PER_NAME, ListLine
 from dmbot.memory.sounds import sound_codes
 from dmbot.transcript.cleaner import likeness
 
@@ -198,11 +198,11 @@ def _fold_known(
         out.swapped.append((line.name, entity.name))
     if (
         line.kind is not None
-        and line.kind not in (UNKNOWN_KIND, entity.type)
-        and entity.type != PC
+        and line.kind not in (UNKNOWN_KIND, entity.kind_key)
+        and not entity.is_player_character
         and entity_id not in {k.entity_id for k in out.kinds}
     ):
-        out.kinds.append(KindDiffers(entity_id, entity.name, entity.type, line.kind))
+        out.kinds.append(KindDiffers(entity_id, entity.name, entity.kind_key, line.kind))
 
 
 def _fold_new(out: Plan, position: int, line: ListLine, owner: dict[str, str | int]) -> None:
@@ -267,7 +267,7 @@ def _near(
                 continue
             seen.add(entry.alias_id)
             entity = names.entities.get(entry.entity_id)
-            if entity is None or not _usable(entry, key) or not kinds_fit(entity.type):
+            if entity is None or not _usable(entry, key) or not kinds_fit(entity.kind_key):
                 continue
             score = _alike(line.name, entry.text, one_word)
             if score and (best is None or score > best[0]):

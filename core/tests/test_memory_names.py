@@ -216,7 +216,7 @@ class NameCards(NamesTest):
 
     async def test_the_card_shows_other_names_and_secrets_only_to_the_dm(self) -> None:
         text = await self.card()
-        self.assertIn("🪪 **Belleros** · NPC · Not heard in a session yet", text)
+        self.assertIn("🪪 **Belleros** · character · NPC · Not heard in a session yet", text)
         self.assertIn("**Also called:** Bell", text)
         self.assertIn("**🤫 Secret:** the hooded stranger", text)
         manager = await self.card(MANAGER)
@@ -368,7 +368,7 @@ class NameCards(NamesTest):
         await view._main(it)
         self.assertIn("⭐ **Bell** is the main name now", it.response.edited[0][0])
         text = await self.card()
-        self.assertIn("🪪 **Bell** · NPC", text)
+        self.assertIn("🪪 **Bell** · character · NPC", text)
         self.assertIn("**Also called:** Belleros", text)
 
     async def test_a_secret_name_never_becomes_the_main_name(self) -> None:
@@ -810,7 +810,7 @@ class Lists(NamesTest):
         sent = await self.add_many("Belleros | place")
         self.assertIn("1 kind differs. Questions below.", sent[0].args[0])
         self.assertIn("1. **Belleros**: DMbot has NPC, your list says place.", sent[1].args[0])
-        self.assertIn("🪪 **Belleros** · NPC", await self.card())  # kept by default
+        self.assertIn("🪪 **Belleros** · character · NPC", await self.card())  # kept by default
         await self.press(sent[1].kwargs["view"], "1. Change to place")
         self.assertIn("🪪 **Belleros** · place", await self.card())
 
@@ -1443,7 +1443,7 @@ class Adding(NamesTest):
         entity = await ui.save_name(
             self.memory, self.campaign, "Belleros", "npc", ["Bell", "Bel"], ["the hooded stranger"]
         )
-        self.assertEqual((entity.status, entity.type), (CONFIRMED, "npc"))
+        self.assertEqual((entity.status, entity.kind_key), (CONFIRMED, "npc"))
         aliases = await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)
         shown = {(a.text, a.secret, a.status) for a in aliases}
         self.assertIn(("Bell", False, CONFIRMED), shown)
@@ -1477,7 +1477,7 @@ class Adding(NamesTest):
         await form.on_submit(it)
         self.assertIn("**Cerric**, played by **Mia**", it.response.sent[0][0])
         cerric = (await self.names())["Cerric"]
-        self.assertEqual((cerric.type, cerric.played_by), ("player_character", PLAYER))
+        self.assertEqual((cerric.kind_key, cerric.played_by), ("player_character", PLAYER))
 
     async def test_only_a_player_character_has_a_player(self) -> None:
         with self.assertRaises(MemoryRuleError):
@@ -1528,7 +1528,7 @@ class Review(NamesTest):
         self.assertIn("Added **Hrothgar**", it.response.edited[0][0])
         self.assertIn("All checked", it.response.edited[0][0])
         hrothgar = (await self.names())["Hrothgar"]
-        self.assertEqual(hrothgar.type, "npc")
+        self.assertEqual(hrothgar.kind_key, "npc")
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=hrothgar.id)
         self.assertEqual({a.status for a in aliases}, {CONFIRMED})
 
@@ -1682,7 +1682,7 @@ class Review(NamesTest):
         await view._player_picked(it, player)  # type: ignore[arg-type]
         self.assertIn("played by **Mia**", it.response.edited[0][0])
         cerric = (await self.names())["Cerric"]
-        self.assertEqual((cerric.type, cerric.played_by), (ui.PC, PLAYER))
+        self.assertEqual((cerric.kind_key, cerric.played_by), (ui.PC, PLAYER))
 
     async def test_later_ends_the_round_and_keeps_it_waiting(self) -> None:
         await self.suggest("Hrothgar")
@@ -2083,7 +2083,7 @@ class Store(NamesTest):
         changed = await self.memory.set_entity_type(
             GUILD, self.campaign.id, written.value.id, "npc", source="dm"
         )
-        self.assertEqual(changed.value.type, "npc")
+        self.assertEqual(changed.value.kind_key, "npc")
         assert changed.batch is not None
         await self.memory.undo(GUILD, self.campaign.id, changed.batch)
         self.assertEqual((await self.names((PROPOSED,)))["Hrothgar"].type, "concept")
