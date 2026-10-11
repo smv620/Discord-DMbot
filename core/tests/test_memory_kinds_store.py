@@ -27,6 +27,26 @@ DM, PLAYER = 7, 55
 
 
 class Roles(MemoryTest):
+    async def test_a_named_creature_is_a_character_but_a_kind_of_monster_is_refused(self) -> None:
+        snot = await self.memory.add_entity(
+            GUILD_A, self.c, type="creature", name="Snot", source="dm"
+        )
+        self.assertEqual(snot.value.type, "character")
+        for name in ("goblin", "Goblin Warrior", "goblins"):
+            with self.subTest(name=name), self.assertRaises(MemoryRuleError):
+                await self.memory.add_entity(
+                    GUILD_A, self.c, type="creature", name=name, source="dm"
+                )
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.add_names(
+                GUILD_A, self.c, [NewName("three goblins", "creature", PROPOSED)], source="dm"
+            )
+        goblin = await self.add("goblin", type="concept", status=PROPOSED)
+        with self.assertRaises(MemoryRuleError):  # saying it later is refused the same way
+            await self.memory.set_entity_type(GUILD_A, self.c, goblin, "creature", source="dm")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.confirm_kinds(GUILD_A, self.c, [goblin], "creature", source="dm")
+
     async def test_snot_and_auril(self) -> None:
         snot = await self.memory.add_entity(
             GUILD_A, self.c, type="character", role="npc", name="Snot", source="dm"

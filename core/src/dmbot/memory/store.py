@@ -93,6 +93,7 @@ from dmbot.memory.ontology import (
     Ontology,
     PredicateTerm,
     TypeTerm,
+    check_named,
     resolve_kind,
 )
 from dmbot.memory.sounds import sound_codes
@@ -549,6 +550,7 @@ class MemoryStore:
         character, player character, NPC or god (the older kinds npc, player_character,
         deity and creature are read as a character with that role). `played_by`: the
         Discord user playing a player character."""
+        check_named(type, name)
         type, role = resolve_kind(type, role)
         _check_choice(status, LIVE, "entity status")
         check_status_change(None, status, source)
@@ -664,6 +666,7 @@ class MemoryStore:
             ids: list[str | None] = []
             entities: list[dict[str, Any]] = []
             for n in names:
+                check_named(n.type, n.name)
                 kind, role = resolve_kind(n.type, n.role)
                 onto.active_type(kind)
                 _check_role(onto, kind, role, None)
@@ -750,11 +753,13 @@ class MemoryStore:
         (an NPC, a god…): the DM's call. Looking at it clears "needs a look"."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say what something is.")
+        asked = type
         type, role = resolve_kind(type, role)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             onto.active_type(type)
             current = await _entity_row(w, entity_id)
+            check_named(asked, current["name"])
             if role is None and type == current["type"]:
                 role = current["role"]  # same kind, no new role said: it keeps its role
             _check_role(onto, type, role, None)
@@ -940,12 +945,13 @@ class MemoryStore:
             raise MemoryRuleError("Only the DM can confirm that.")
         if played_by is not None and not 0 < played_by <= INT64_MAX:
             raise ValueError("Bad Discord user ID")
+        asked = type
         type, role = resolve_kind(type, role)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             onto.active_type(type)
             _check_role(onto, type, role, played_by)
-            await _entity_row(w, entity_id)
+            check_named(asked, (await _entity_row(w, entity_id))["name"])
             row = await w.update(
                 ENTITIES,
                 entity_id,
@@ -978,11 +984,15 @@ class MemoryStore:
         in one change. Returns how many were confirmed."""
         if source != DM:
             raise MemoryRuleError("Only the DM can confirm that.")
+        asked = type
         type, role = resolve_kind(type, role)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             onto.active_type(type)
             _check_role(onto, type, role, None)
+            if asked == "creature":
+                for row in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(set(entity_ids))]):
+                    check_named(asked, row["name"])
             if role == PLAYER_CHARACTER:
                 raise MemoryRuleError("A player's character needs its player.")
             # A few statements for the whole group, not a chain per name (#580). Names

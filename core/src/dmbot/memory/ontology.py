@@ -107,6 +107,24 @@ MIGRATED_KINDS: Mapping[str, tuple[str, str | None, bool]] = {
 SPELL_NOT_KEPT = "Spells aren't kept in campaign memory. To look one up, use /dmbot rule."
 
 
+UNNAMED_MONSTER = (
+    "That's a kind of monster, not one person. Name them (like 'Snot the goblin') "
+    "or link it as a stat block on a character."
+)
+
+
+def check_named(kind: str, name: str) -> None:
+    """A caller that says `creature` means one named creature. A name that is a monster in
+    the rules ("goblin", "three goblins", "Goblin Warrior") is a kind of monster, not an
+    entry: refused (decided on #1034)."""
+    if kind != "creature":
+        return
+    from dmbot.rules import index  # late: the rules data loads on first use
+
+    if index.srd().is_monster(name):
+        raise MemoryRuleError(UNNAMED_MONSTER)
+
+
 def resolve_kind(kind: str, role: str | None = None) -> tuple[str, str | None]:
     """(kind, role) to store for a kind a caller names. The older kinds (npc,
     player_character, deity, creature) become a character with that role; a spell is

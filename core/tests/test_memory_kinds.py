@@ -8,7 +8,7 @@ import unittest
 from typing import Any
 
 from dmbot.campaigns.models import CampaignError
-from dmbot.memory import backup
+from dmbot.memory import backup, ontology
 from dmbot.memory.kinds import LEGACY_TAG, NOT_IN_RULES, kind_key, kind_phrase, links_text
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import (
@@ -324,6 +324,14 @@ class FindNames(unittest.TestCase):
         self.assertEqual(parsed.refused, [(1, SPELL_NOT_KEPT), (3, SPELL_NOT_KEPT)])
         self.assertIn("/dmbot rule", SPELL_NOT_KEPT)
 
+    def test_a_kind_of_monster_in_a_list_is_refused_and_a_name_is_kept(self) -> None:
+        parsed = parse(
+            "goblin | monster\nThree goblins | creature\nFang | monster\n", secrets=False
+        )
+        self.assertEqual([line.name for line in parsed.lines], ["Fang"])
+        self.assertEqual([n for n, _ in parsed.refused], [1, 2])
+        self.assertIn("not one person", parsed.refused[0][1])
+
     def test_the_role_words_read_as_the_older_keys_the_store_knows(self) -> None:
         text = "Snot | NPC\nTesta | pc\nAuril | god\nRex | monster\nTower | place\nThing\n"
         kinds = {line.name: line.kind for line in parse(text, secrets=False).lines}
@@ -346,3 +354,26 @@ class FindNames(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnnamedMonsters(unittest.TestCase):
+    def test_a_kind_of_monster_is_refused_as_a_creature(self) -> None:
+        for name in (
+            "goblin",
+            "Goblin Warrior",
+            "goblins",
+            "three goblins",
+            "the goblin",
+            "wolves",
+        ):
+            with self.subTest(name=name), self.assertRaises(MemoryRuleError) as raised:
+                ontology.check_named("creature", name)
+            self.assertIn("not one person", str(raised.exception))
+
+    def test_a_proper_name_is_accepted(self) -> None:
+        for name in ("Snot", "Auril", "Fang"):
+            with self.subTest(name=name):
+                ontology.check_named("creature", name)
+
+    def test_only_the_older_creature_kind_is_checked(self) -> None:
+        ontology.check_named("character", "goblin")  # the DM names a person that way
