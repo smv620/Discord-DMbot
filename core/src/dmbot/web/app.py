@@ -551,6 +551,8 @@ def create_app(
         current, access = await entitlements.plan_and_access(db, session.user_id, clock())
         if access.kind in ("free", "grant"):
             raise HTTPException(status_code=409, detail="has_free_access")
+        # usable(), not just "not lapsed": an overdue plan can't use the hours either, and
+        # the page then refreshes to what is true now.
         if current is None or current.plan == "try-it" or not current.usable(clock()):
             raise HTTPException(status_code=409, detail="no_paid_plan")
         email = await account_email(db, session.user_id)

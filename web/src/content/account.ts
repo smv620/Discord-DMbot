@@ -40,9 +40,7 @@ export function hoursLeftLine(
   renewsOn: string | null,
   plan: PlanId,
 ): string {
-  const again = renewsOn
-    ? `Your hours start again on ${shortDate(renewsOn)}.`
-    : "";
+  const again = renewsOn ? `Your hours start again on ${shortDate(renewsOn)}.` : "";
   if (used < cap) return again;
   const more =
     plan === "try-it"
@@ -58,27 +56,22 @@ export const text = {
   loading: "Loading your account…",
 
   // Signed out
-  signInLead:
-    "Sign in with Discord to see your plan, your hours and your campaigns.",
+  signInLead: "Sign in with Discord to see your plan, your hours and your campaigns.",
   signIn: "Sign in with Discord",
-  signInNote:
-    "DMbot only asks Discord for your name, your email and your list of servers.",
+  signInNote: "DMbot only asks Discord for your name, your email and your list of servers.",
   startTryItFree: "Start Try It, free",
   startTryItSignIn:
     "Free for 30 days. No card needed. You'll sign in with Discord first, then confirm your plan.",
   haveAccount: "Already have a plan?",
   seePrices: "See the plans",
-  signInFailed:
-    "You didn't finish signing in. Tap Sign in with Discord to try again.",
-  tooManyTries:
-    "Too many tries. Wait about 10 minutes, then tap Sign in with Discord again.",
+  signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",
+  tooManyTries: "Too many tries. Wait about 10 minutes, then tap Sign in with Discord again.",
 
   // Errors
   down: "DMbot isn't answering right now. Tap Try again in a minute.",
   tryAgain: "Try again",
   actionFailed: "That didn't work. Try again in a minute.",
-  signInAgain:
-    "For your safety, sign in again first. Tap Sign in with Discord.",
+  signInAgain: "For your safety, sign in again first. Tap Sign in with Discord.",
   errors: {
     "try-it-used": "You've already used Try It. Pick a plan to keep playing.",
     "has-plan": "You already have a plan. Tap Change plan to switch.",
@@ -95,8 +88,7 @@ export const text = {
     "slow-down":
       "Too many tries. Wait about 10 minutes, then try again. (Deleting an account can need an hour.)",
     // Only an out-of-date page gets this, so the page updates itself (like no-paid-plan).
-    "free-access":
-      "You have free access, so there's nothing to pay. We've updated this page.",
+    "free-access": "You have free access, so there's nothing to pay. We've updated this page.",
     "no-paid-plan":
       "Your plan has changed since this page opened, so we've updated it. If nothing looks different, write to us for help.",
   } as Record<string, string>,
@@ -104,8 +96,7 @@ export const text = {
     done: "Done! DMbot is in your server. In Discord, type /dmbot start to begin.",
     failed: "DMbot wasn't added. Tap Add DMbot to try again.",
     slow: "Too many tries. Wait about 10 minutes, then tap Add DMbot again.",
-    not_allowed:
-      "You can only add DMbot to a server you run. Ask its owner to add DMbot.",
+    not_allowed: "You can only add DMbot to a server you run. Ask its owner to add DMbot.",
     already_linked:
       "DMbot is in your server. Someone else is listed as the one who added it.",
     other_account:
@@ -139,8 +130,7 @@ export const text = {
   fixPayment: "Fix my payment",
   // Free access (#806): never why someone has it.
   freeAccess: "Free access",
-  freeAccessUntil: (iso: string): string =>
-    `Free access until ${shortDate(iso)}`,
+  freeAccessUntil: (iso: string): string => `Free access until ${shortDate(iso)}`,
   // Not "you're still paying": after Stop paying the plan runs out its period, so that
   // would become false. The date is the plan's own end (its next renewal if left alone).
   stillPaying: (plan: string | null, endsOn: string | null): string => {
@@ -153,8 +143,7 @@ export const text = {
   freeNext: "In Discord, type /dmbot start to play.",
   // Only without a paid plan: with one, the plan's own date is above, and what happens
   // after the grant ends depends on whether they stop paying.
-  freeEnds: (iso: string): string =>
-    `After ${shortDate(iso)}, pick a plan to keep playing.`,
+  freeEnds: (iso: string): string => `After ${shortDate(iso)}, pick a plan to keep playing.`,
   lapsed: `Your plan has stopped. Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns
@@ -169,8 +158,7 @@ export const text = {
   handOver: "Hand over",
 
   // Hand over
-  handOverQuestion: (campaign: string): string =>
-    `Who should take over ${campaign}?`,
+  handOverQuestion: (campaign: string): string => `Who should take over ${campaign}?`,
   handOverNote:
     "Nothing changes until they say yes. They have 7 days to answer. If they say yes, it uses their hours, not yours, and you stay on as a DM.",
   handOverNobody:
@@ -199,8 +187,7 @@ export const text = {
   // on the site (#794, #797), so the words promise it plainly (#798).
   accepted: (campaign: string, person: string): string =>
     `${campaign} is yours now. You're a DM of it in Discord too. We'll tell ${person} in Discord.`,
-  declined: (person: string): string =>
-    `Done. The offer is closed. We'll tell ${person} in Discord.`,
+  declined: (person: string): string => `Done. The offer is closed. We'll tell ${person} in Discord.`,
   offerOutgoing: (person: string, iso: string): string =>
     `Waiting for ${person} to say yes (until ${shortDateTime(iso)}). Nothing changes until they do.`,
   withdraw: "Take back offer",
@@ -211,11 +198,9 @@ export const text = {
   serversHeading: "Add DMbot to a server",
   serversNote: "Servers you run. Tap Add DMbot to bring it to one.",
   linkServer: "This is mine",
-  linkNote:
-    "DMbot is here, but we don't know who added it. If it was you, tap This is mine.",
+  linkNote: "DMbot is here, but we don't know who added it. If it was you, tap This is mine.",
   youAddedIt: "You added DMbot here",
-  noServers:
-    "You don't run any Discord servers. Ask a server's owner to add DMbot.",
+  noServers: "You don't run any Discord servers. Ask a server's owner to add DMbot.",
   addTo: "Add DMbot",
   alreadyThere: "Already added",
 
@@ -242,8 +227,7 @@ export const text = {
   deleteHandOverLink: "Hand over a campaign first",
   deleteNext: "Delete everything",
   keep: "Keep my account",
-  deleteSure:
-    "Last check: your campaigns and account go for good. This can't be undone.",
+  deleteSure: "Last check: your campaigns and account go for good. This can't be undone.",
   deleteConfirm: "Yes, delete it all now",
   deleted: "Done. Your account and data are deleted. You can close this page.",
 };

@@ -15,7 +15,7 @@ from dmbot import entitlements
 from dmbot.config import ConfigError
 from dmbot.web import accounts, entitlements_writer, grants
 from dmbot.web.app import create_app
-from dmbot.web.payments import FakeProvider, PaymentEvent
+from dmbot.web.payments import FakeProvider, PaymentError, PaymentEvent
 from dmbot.web.settings import load_web_settings
 from tests.pg import DatabaseTest
 from tests.test_web_api import ALICE, API, SITE, FakeDiscord, settings
@@ -734,6 +734,18 @@ class Payments(DatabaseTest):
         lapsed = await self.post("/billing/extra-hours")
         self.assertEqual((lapsed.status_code, lapsed.json()), (409, {"error": "no_paid_plan"}))
 
+    async def test_extra_hours_when_the_company_fails_or_payments_are_off(self) -> None:
+        await self.start_table()
+
+        async def broken(*, user_id: int, email: str | None, return_url: str) -> str:
+            raise PaymentError("down")
+
+        self.provider.extra_hours_checkout_url = broken  # type: ignore[method-assign]
+        failed = await self.post("/billing/extra-hours")
+        self.assertEqual(
+            (failed.status_code, failed.json()), (502, {"error": "payments_unavailable"})
+        )
+
     async def test_free_access_is_never_sold_extra_hours(self) -> None:
         admin = "admin@example.invalid"
         await grants.give(self.db, admin, ALICE.id, "guild", ends_at=None, note="", now=self.now)
@@ -786,6 +798,8 @@ class NoPaymentCompanyYet(DatabaseTest):
             self.assertEqual(
                 (response.status_code, response.json()), (503, {"error": "payments_off"})
             )
+            extra = await c.post("/billing/extra-hours", headers={"X-DMbot-Request": "1"})
+            self.assertEqual((extra.status_code, extra.json()), (503, {"error": "payments_off"}))
             self.assertEqual((await c.post("/webhooks/fake", content=b"{}")).status_code, 404)
 
 
