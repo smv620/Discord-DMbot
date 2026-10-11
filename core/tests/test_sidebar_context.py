@@ -11,6 +11,7 @@ from typing import Any
 from dmbot.campaigns.store import CampaignStore
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import Relation
+from dmbot.rules import facts as rule_facts
 from dmbot.rules.house import HouseRuleStore
 from dmbot.rules.index import srd
 from dmbot.sidebar import context
@@ -54,10 +55,10 @@ class HeaderFacts(unittest.TestCase):
 
     def test_components_are_in_words_not_letters(self) -> None:
         self.assertEqual(
-            context.components_words("V, S, M (a ball of bat guano)"),
+            rule_facts.components_words("V, S, M (a ball of bat guano)"),
             "Verbal, Somatic, Material (a ball of bat guano)",
         )
-        self.assertEqual(context.components_words("V, S"), "Verbal, Somatic")
+        self.assertEqual(rule_facts.components_words("V, S"), "Verbal, Somatic")
         self.assertIn("Components Verbal, Somatic, Material (", self.prompt("range of fireball"))
 
     def test_a_condition_has_no_header(self) -> None:
@@ -66,7 +67,7 @@ class HeaderFacts(unittest.TestCase):
     def test_a_cantrip_and_a_missing_field_do_not_break_it(self) -> None:
         entry = INDEX.lookup("prestidigitation", "2024", "2014", kind="spell")
         assert entry is not None
-        self.assertTrue(context.header_facts(entry.entry).startswith("Transmutation cantrip;"))
+        self.assertTrue(entry.entry.facts.startswith("Transmutation cantrip;"))
 
 
 class MentionedRules(unittest.TestCase):

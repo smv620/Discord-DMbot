@@ -32,6 +32,7 @@ from typing import Protocol, TypeVar
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup
+from dmbot.rules import facts as rule_facts
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, normalize
 from dmbot.sidebar import brevity, context
@@ -225,9 +226,7 @@ def entry_covers(text: str, hits: Sequence[Hit]) -> bool:
     given = {  # the facts are part of what the AI was given (#1039)
         w[:4]
         for h in hits
-        for w in _SCOPE_WORD.findall(
-            f"{h.entry.text} {h.entry.name} {context.header_facts(h.entry)}".lower()
-        )
+        for w in _SCOPE_WORD.findall(f"{h.entry.full_text} {h.entry.name}".lower())
     }
     said = {
         w[:4]
@@ -275,9 +274,13 @@ def named_entry(question: str, hits: Sequence[Hit]) -> Hit | None:
     return None
 
 
-def entry_fact(hit: Hit) -> str:
+def entry_fact(hit: Hit, question: str = "") -> str:
     """What an entry says, in its first sentences within the length limit: the answer when
-    the model failed to use an entry it was given."""
+    the model failed to use an entry it was given. A question that names one of the entry's
+    facts (its range, casting time, duration, AC...) gets that fact (#1063); otherwise the
+    description, from the text (the facts are only a header)."""
+    if (asked := rule_facts.asked_field(hit.entry, question)) is not None:
+        return f"{hit.entry.name}: {asked}."
     return brevity.shorten(hit.entry.text)
 
 
@@ -473,7 +476,7 @@ class Sidebar:
             # Still no: answer with the entry's own words and its source, never contradict
             # the same question asked another way (#992). Only for an entry the question
             # names, and never over a house rule (those come first).
-            text = entry_fact(named)
+            text = entry_fact(named, question)
             fields = replace(fields, source=context.source_of(named), sure=None, in_game=True)
         if not brevity.within_limit(text):
             text = brevity.shorten(text)

@@ -2052,6 +2052,13 @@ creature's size and type, AC, HP, speed, CR, senses and initiative), which the e
 Range, casting-time and duration questions were answered "not stated". The facts are outside the text cut and count
 as the entry's own words for the SRD-citation check (#1015). A condition has none.
 
+*Built, an entry's metadata is part of the entry (#1063, CloudDev, 2026-10-11; owner):* an entry's metadata (a spell's
+level, casting time, range, components and duration; a creature's size and type, AC, HP, speed, CR, senses and initiative) is part
+of the entry wherever DMbot reads, searches, quotes or checks it. One place, `rules/facts.py`, knows the fields; an entry gives
+`facts` (the header line) and `full_text` (the facts, then the text). The sidebar's prompt and its citation check, its fallback
+answer (a question that names a field gets that field: "what's the range of fireball" gets "Range 150 feet") and the rule card
+all use it, and a test fails when a new reader of a rules entry's text skips it.
+
 *Built, wake phrase (#1040, CloudDev, 2026-10-10; corrected by the owner the same day):* besides "Hold on, I
 need to find…", the campaign's DM can call **"Hey DMbot, …" anywhere in a line** (people talking fast run it into
 what came before: "…so they're in the cave, hey DMbot what's the range of fireball"); the text after it, to the
