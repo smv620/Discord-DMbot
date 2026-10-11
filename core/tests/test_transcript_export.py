@@ -105,6 +105,7 @@ class Render(unittest.TestCase):
             "X", session(), lines, names, characters={MIA: "Cerric"}, version=export.CLEANED
         )
         self.assertIn("(Mia) {Cerric}: I search the chest", with_character)
+        self.assertIn("(Dee) [1m 22s of off-topic chat skipped]", with_character)
         self.assertIn("(Mia) {table_talk}: is it my turn?", with_character)  # not {Cerric}
 
     def test_the_header_says_which_speech_to_text_wrote_it_in_plain_words(self) -> None:

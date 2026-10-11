@@ -44,8 +44,8 @@ SIDEBAR_NOTE = (
 SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
 HOW_TO_READ = (
     "Each line: [time since start] (person) {their character}: what they said. "
-    "{table_talk} is talk about the rules or the table; {non-game_content} is talk "
-    "that isn't about the game."
+    "{table_talk} is talk about the rules or running the game; {non-game_content} is "
+    "chat that isn't about the game (the Cleaned version only notes how long it lasted)."
 )
 # What a line is when it is not the person's character speaking (#53).
 TOPIC_TAGS = {TABLE_TALK: "table_talk", OFF_TOPIC: "non-game_content"}
@@ -215,7 +215,11 @@ def render(
                 clean_name(character) if character else None,
             )
         when = clock((item.started_ms - start_ms) / 1000)
-        who = label(when, *shown[item.speaker], item.said_as)
+        who = (
+            label(when, shown[item.speaker][0])
+            if item.skipped
+            else label(when, *shown[item.speaker], item.said_as)
+        )  # a skipped note says what it is, with no character
         if item.skipped:  # "[0:12:04] (Mia) [1m 22s of off-topic chat skipped]"
             timed.append((item.started_ms, f"{who} {item.text}"))
         else:
