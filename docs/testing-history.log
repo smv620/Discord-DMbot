@@ -2070,3 +2070,12 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Retry-After of 3600; one more from 192.0.2.11 gave 401 again, so the count is per address. (A first try without the
   website's request header got 403 from the cross-site guard, as designed.)
   Result: PASS.
+
+==============================================================================
+2026-10-11  dev1  Deploy: core e8fe8e3 (#1090 transcript line entity, migration 0046)
+==============================================================================
+  dev2's READY TO DEPLOY line for #1090 (core only, migration 0046). Backup first (41 tables with data), no live session.
+  Result: core rebuilt and restarted. Core log shows "Database updated: 0046_transcript_entity", "Connected to 1 server(s)",
+  "ears connected", 0 ERROR. The transcript_lines.entity column exists. /health 404, /admin/auth/ways 200, DMBOT_SIDEBAR=1.
+  Nothing sets the entity yet, so no visible change; a transcript download still needs a look in Discord after the next
+  session (together with the #1079 table-talk tags).
