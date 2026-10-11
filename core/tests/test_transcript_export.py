@@ -61,6 +61,17 @@ class Render(unittest.TestCase):
         self.assertIn("[0:00:06] (Dee) {Brother Hiro}: Welcome, [travellers].\n", text)
         self.assertIn("[0:00:07] (Dee) {non-game_content}: brb\n", text)
 
+    def test_an_entity_is_tidied_and_an_off_topic_run_hides_it(self) -> None:
+        tidy = dataclasses.replace(line(5, DEE, "x"), entity="  Brother \n Hiro " + "z" * 200)
+        self.assertEqual(tidy.entity, ("Brother Hiro " + "z" * 200)[:120].strip())
+        self.assertEqual(dataclasses.replace(line(5, DEE, "x"), entity="  ").entity, "")
+        hidden = dataclasses.replace(
+            line(6, DEE, "my boss"), entity="Hiro", topic="off_topic", duration_ms=3000
+        )
+        cleaned = export.render("X", session(), [hidden], {DEE: "Dee"}, version=export.CLEANED)
+        self.assertIn("(Dee) [3s of off-topic chat skipped]", cleaned)
+        self.assertNotIn("Hiro", cleaned)
+
     def test_each_player_has_their_character(self) -> None:
         text = export.render(
             "X",

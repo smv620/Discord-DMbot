@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
+ENTITY_MAX = 120  # the database refuses a longer entity, which would stick a whole batch
 MAX_UNSAVED = 5_000  # lines kept while saving keeps failing; the oldest go first
 
 
@@ -78,6 +79,9 @@ class Line:
     def __post_init__(self) -> None:
         if self.sidebar not in ("", SIDEBAR_QUESTION, SIDEBAR_ANSWER):  # not at the database
             raise ValueError(f"unknown sidebar kind {self.sidebar!r}")
+        tidy = " ".join(self.entity.split())[:ENTITY_MAX].strip()
+        if tidy != self.entity:  # one line, never blank, never too long for the database
+            object.__setattr__(self, "entity", tidy)
 
     def is_at(self, user_id: int, started_ms: int) -> bool:
         """The speech this person began at this moment (never a sidebar line)."""
