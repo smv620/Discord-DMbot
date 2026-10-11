@@ -15,7 +15,7 @@ from dmbot import entitlements
 from dmbot.config import ConfigError
 from dmbot.web import accounts, entitlements_writer, grants
 from dmbot.web.app import create_app
-from dmbot.web.payments import FakeProvider, PaymentEvent
+from dmbot.web.payments import FakeProvider, PaymentError, PaymentEvent
 from dmbot.web.settings import load_web_settings
 from tests.pg import DatabaseTest
 from tests.test_web_api import ALICE, API, SITE, FakeDiscord, settings
@@ -711,6 +711,72 @@ class Payments(DatabaseTest):
         await self.start_table()
         self.assertIn("fake_billing", (await self.post("/billing/portal")).json()["url"])
 
+    # Extra hours (#1089)
+
+    async def test_extra_hours_are_sold_only_over_a_working_paid_plan(self) -> None:
+        none = await self.post("/billing/extra-hours")
+        self.assertEqual((none.status_code, none.json()), (409, {"error": "no_paid_plan"}))
+        await self.post("/plan/try-it")
+        try_it = await self.post("/billing/extra-hours")
+        self.assertEqual((try_it.status_code, try_it.json()), (409, {"error": "no_paid_plan"}))
+        await self.start_table()
+        paid = await self.post("/billing/extra-hours")
+        self.assertEqual(paid.status_code, 200)
+        self.assertIn("fake_extra_hours", paid.json()["url"])
+        # In the payment grace the plan still works, so the hours may be bought.
+        await self.send(kind="payment_failed", subscription_id="sub_1", occurred_at=self.now + 5)
+        self.assertEqual((await self.plan()).status, "grace")
+        self.assertEqual((await self.post("/billing/extra-hours")).status_code, 200)
+        # Once it has lapsed they may not.
+        await self.send(
+            kind="subscription_ended", subscription_id="sub_1", occurred_at=self.now + 9
+        )
+        lapsed = await self.post("/billing/extra-hours")
+        self.assertEqual((lapsed.status_code, lapsed.json()), (409, {"error": "no_paid_plan"}))
+
+    async def test_extra_hours_when_the_company_fails_or_payments_are_off(self) -> None:
+        await self.start_table()
+
+        async def broken(*, user_id: int, email: str | None, return_url: str) -> str:
+            raise PaymentError("down")
+
+        self.provider.extra_hours_checkout_url = broken  # type: ignore[method-assign]
+        failed = await self.post("/billing/extra-hours")
+        self.assertEqual(
+            (failed.status_code, failed.json()), (502, {"error": "payments_unavailable"})
+        )
+
+    async def test_free_access_is_never_sold_extra_hours(self) -> None:
+        admin = "admin@example.invalid"
+        await grants.give(self.db, admin, ALICE.id, "guild", ends_at=None, note="", now=self.now)
+        response = await self.post("/billing/extra-hours")
+        self.assertEqual(
+            (response.status_code, response.json()), (409, {"error": "has_free_access"})
+        )
+
+    async def test_extra_hours_need_a_session_and_the_site_header(self) -> None:
+        self.assertEqual((await self.client.post("/billing/extra-hours")).status_code, 403)
+        self.client.cookies.clear()
+        self.assertEqual((await self.post("/billing/extra-hours")).status_code, 401)
+
+    async def test_extra_hours_share_the_billing_limit(self) -> None:
+        await self.start_table()
+        statuses = [(await self.post("/billing/extra-hours")).status_code for _ in range(11)]
+        self.assertEqual(statuses, [200] * 10 + [429])
+        self.assertEqual((await self.post("/billing/portal")).status_code, 429)  # same group
+
+    async def test_a_purchase_adds_hours_for_this_period_only(self) -> None:
+        await self.start_table()
+        await self.send(kind="extra_hours_bought", occurred_at=self.now + 5)
+        self.assertEqual((await self.plan()).extra_hours, 10)
+        await self.start_table(
+            kind="subscription_renewed",
+            occurred_at=self.now + 40 * DAY,
+            period_start=self.now + 30 * DAY,
+            period_end=self.now + 60 * DAY,
+        )
+        self.assertEqual((await self.plan()).extra_hours, 0)
+
     async def test_buying_needs_a_session_and_the_site_header(self) -> None:
         self.assertEqual(
             (await self.client.post("/billing/checkout", json={"plan": "table"})).status_code, 403
@@ -732,6 +798,8 @@ class NoPaymentCompanyYet(DatabaseTest):
             self.assertEqual(
                 (response.status_code, response.json()), (503, {"error": "payments_off"})
             )
+            extra = await c.post("/billing/extra-hours", headers={"X-DMbot-Request": "1"})
+            self.assertEqual((extra.status_code, extra.json()), (503, {"error": "payments_off"}))
             self.assertEqual((await c.post("/webhooks/fake", content=b"{}")).status_code, 404)
 
 

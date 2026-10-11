@@ -541,6 +541,30 @@ def create_app(
             raise HTTPException(status_code=502, detail="payments_unavailable") from exc
         return {"url": url}
 
+    @app.post("/billing/extra-hours")
+    async def extra_hours(signed: Signed) -> dict[str, str]:
+        """The page to buy +10 hours for this month (#1089). Only for a paid plan that
+        works now (active, or in the payment grace): the writer ignores hours bought on
+        Try It or without a plan, so selling them there would take money for nothing."""
+        provider = require_payments()
+        session, _token = signed
+        current, access = await entitlements.plan_and_access(db, session.user_id, clock())
+        if access.kind in ("free", "grant"):
+            raise HTTPException(status_code=409, detail="has_free_access")
+        # usable(), not just "not lapsed": an overdue plan can't use the hours either, and
+        # the page then refreshes to what is true now.
+        if current is None or current.plan == "try-it" or not current.usable(clock()):
+            raise HTTPException(status_code=409, detail="no_paid_plan")
+        email = await account_email(db, session.user_id)
+        try:
+            url = await provider.extra_hours_checkout_url(
+                user_id=session.user_id, email=email, return_url=account_page
+            )
+        except PaymentError as exc:
+            log.warning("Extra hours checkout failed: %s", exc)
+            raise HTTPException(status_code=502, detail="payments_unavailable") from exc
+        return {"url": url}
+
     @app.post("/billing/portal")
     async def billing_portal(signed: Signed) -> dict[str, str]:
         provider = require_payments()
