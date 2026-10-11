@@ -49,6 +49,29 @@ class Render(unittest.TestCase):
             body.splitlines(), ["[0:00:05] (Mia): I cast Shield.", "[0:42:10] (Dee): Run!"]
         )
 
+    def test_a_line_said_as_someone_shows_that_instead_of_the_character(self) -> None:
+        # #53: the DM narrating or voicing an NPC; a topic tag still wins; brackets are stripped.
+        lines = [
+            dataclasses.replace(line(5, DEE, "The door creaks."), entity="narrating"),
+            dataclasses.replace(line(6, DEE, "Welcome, [travellers]."), entity="Brother {Hiro}"),
+            dataclasses.replace(line(7, DEE, "brb"), entity="narrating", topic="off_topic"),
+        ]
+        text = export.render("X", session(), lines, {DEE: "Dee"}, characters={DEE: "Cerric"})
+        self.assertIn("[0:00:05] (Dee) {narrating}: The door creaks.\n", text)
+        self.assertIn("[0:00:06] (Dee) {Brother Hiro}: Welcome, [travellers].\n", text)
+        self.assertIn("[0:00:07] (Dee) {non-game_content}: brb\n", text)
+
+    def test_an_entity_is_tidied_and_an_off_topic_run_hides_it(self) -> None:
+        tidy = dataclasses.replace(line(5, DEE, "x"), entity="  Brother \n Hiro " + "z" * 200)
+        self.assertEqual(tidy.entity, ("Brother Hiro " + "z" * 200)[:120].strip())
+        self.assertEqual(dataclasses.replace(line(5, DEE, "x"), entity="  ").entity, "")
+        hidden = dataclasses.replace(
+            line(6, DEE, "my boss"), entity="Hiro", topic="off_topic", duration_ms=3000
+        )
+        cleaned = export.render("X", session(), [hidden], {DEE: "Dee"}, version=export.CLEANED)
+        self.assertIn("(Dee) [3s of off-topic chat skipped]", cleaned)
+        self.assertNotIn("Hiro", cleaned)
+
     def test_each_player_has_their_character(self) -> None:
         text = export.render(
             "X",

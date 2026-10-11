@@ -672,6 +672,14 @@ TRANSCRIPT_TOPICS = """
         ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0);
     """
 
+TRANSCRIPT_ENTITY = """
+    -- Who a line was said as (#53): NULL when nobody is named (the player's character is
+    -- shown from the sheet), 'narrating' for the DM's narration, or the confirmed, non-secret
+    -- name of the NPC the DM was voicing. Never a secret name: the writer checks that.
+    ALTER TABLE transcript_lines
+        ADD COLUMN entity TEXT CHECK (entity IS NULL OR length(entity) BETWEEN 1 AND 120);
+    """
+
 TRANSCRIPT_SIDEBAR = """
     -- DM sidebar lines (#935): the DM's question and DMbot's answer, NULL for table speech.
     -- In the as-heard (raw) transcript for everyone who may read transcripts, never in the
@@ -1770,6 +1778,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0043_test_voice_consent", TEST_VOICE_CONSENT),
     ("0044_memory_kinds", MEMORY_KINDS),
     ("0045_campaign_guilds", CAMPAIGN_GUILDS),
+    ("0046_transcript_entity", TRANSCRIPT_ENTITY),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

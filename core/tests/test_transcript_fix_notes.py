@@ -219,6 +219,14 @@ class RelabelTest(unittest.TestCase):
         (line,) = buffer.take(lambda _: True)
         self.assertEqual((line.heard, line.text), ("I saw Beleros", "I saw Beleros"))
 
+    def test_a_waiting_lines_entity(self) -> None:
+        buffer = TranscriptBuffer()
+        buffer.add(Line(1000, MIA, "The door creaks.", "The door creaks."))
+        self.assertTrue(buffer.set_entity(MIA, 1000, "narrating"))
+        self.assertFalse(buffer.set_entity(MIA, 9999, "narrating"))
+        (line,) = buffer.take(lambda _: True)
+        self.assertEqual(line.entity, "narrating")
+
     def test_a_waiting_lines_topic(self) -> None:
         # #52: the off-topic filter labels a line still waiting to be saved; the rest of
         # it (the fixed words, its length) is kept.
