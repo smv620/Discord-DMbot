@@ -2513,8 +2513,9 @@ the address), with the plan's variant; the $1.99 first month of Table is a once-
 code made in Lemon Squeezy, and a first-month checkout for a plan with no code set is refused
 rather than charged in full. The billing page is the customer's portal link; account deletion
 cancels at the end of the paid period (a cancel that is already done succeeds). The +10 hours
-checkout exists in the adapter and has no route until the bot's add-hours button does. The owner's
-sandbox steps and run (#498 item 5) are a follow-up once the Lemon Squeezy account exists.
+checkout exists in the adapter and has no route until the bot's add-hours button does. A refunded extra-hours order stays credited (`order_refunded` is not used): a refund is a manual
+step for now. The owner's sandbox steps and run (#498 item 5) are a follow-up once the Lemon Squeezy
+account exists.
 **Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
 Feedback and Ask a question, posted by the web API as GitHub Discussions in this
 repository (categories Feedback and Questions; a discussions-only token from the

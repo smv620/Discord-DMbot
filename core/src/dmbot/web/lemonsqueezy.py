@@ -93,10 +93,10 @@ class HttpTransport:
         self, method: str, path: str, body: dict[str, Any] | None
     ) -> tuple[int, Any]:
         if self._http is None:
-            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10, connect=3))
+            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6, connect=3))
         try:
             async with self._http.request(
-                method, self._base + path, json=body, headers=self._headers
+                method, self._base + path, json=body, headers=self._headers, allow_redirects=False
             ) as response:
                 try:
                     parsed = await response.json(content_type=None)
@@ -296,19 +296,17 @@ class LemonSqueezyProvider:
         when = _seconds(attributes.get("updated_at") or attributes["created_at"])
         stamp = str(attributes.get("updated_at") or attributes["created_at"])
         event_id = f"{name}:{object_id}:{stamp}"
-        custom = meta.get("custom_data") or {}
-        user_id = int(custom["user_id"]) if isinstance(custom, dict) else 0
-        if user_id <= 0:
-            raise ValueError("a payment event has no user_id in its custom data")
-
+        # The person is needed only for an event that will be applied: one DMbot ignores (an
+        # order or subscription made outside its checkout, say) must be a quiet 200, not an
+        # error someone is asked to look at.
         if name == "order_created":
-            return self._order(attributes, event_id, user_id, when)
+            return self._order(attributes, event_id, meta, when)
         if name == "subscription_payment_failed":
             return PaymentEvent(
                 provider=self.name,
                 event_id=event_id,
                 kind="payment_failed",
-                user_id=user_id,
+                user_id=_person(meta),
                 occurred_at=when,
                 customer_id=_text(attributes.get("customer_id")),
                 subscription_id=_text(attributes.get("subscription_id")),
@@ -318,12 +316,20 @@ class LemonSqueezyProvider:
         if kind is None:
             return None
         plan = self._plan_of_variant.get(str(attributes.get("variant_id")))
+        if plan is None and kind != "subscription_ended":
+            # A variant id missing from the settings: the writer will refuse it (422) and
+            # Lemon Squeezy will retry, so say which, for the person setting this up.
+            log.error(
+                "Lemon Squeezy event %.60s has variant %.20r, which no plan is set to",
+                event_id,
+                str(attributes.get("variant_id")),
+            )
         period_start, period_end = _period(attributes)
         return PaymentEvent(
             provider=self.name,
             event_id=event_id,
             kind=kind,
-            user_id=user_id,
+            user_id=_person(meta),
             occurred_at=when,
             plan=plan,
             period_start=period_start,
@@ -333,7 +339,7 @@ class LemonSqueezyProvider:
         )
 
     def _order(
-        self, attributes: dict[str, Any], event_id: str, user_id: int, when: int
+        self, attributes: dict[str, Any], event_id: str, meta: dict[str, Any], when: int
     ) -> PaymentEvent | None:
         """An order is extra hours only when it is for that variant and paid: every plan
         payment also makes an order, and those are not ours to count twice."""
@@ -346,7 +352,7 @@ class LemonSqueezyProvider:
             provider=self.name,
             event_id=event_id,
             kind="extra_hours_bought",
-            user_id=user_id,
+            user_id=_person(meta),
             occurred_at=when,
             customer_id=_text(attributes.get("customer_id")),
         )
@@ -377,6 +383,15 @@ _USED = (
 )
 
 
+def _person(meta: dict[str, Any]) -> int:
+    """Our Discord user id, from the checkout's custom data."""
+    custom = meta.get("custom_data")
+    user_id = int(custom["user_id"]) if isinstance(custom, dict) else 0
+    if user_id <= 0:
+        raise ValueError("a payment event has no user_id in its custom data")
+    return user_id
+
+
 def _text(value: object) -> str | None:
     return None if value is None else str(value)
 
@@ -391,7 +406,8 @@ def _seconds(stamp: object) -> int:
 def _period(attributes: dict[str, Any]) -> tuple[int | None, int | None]:
     """This billing period: it ends when the subscription renews, and began one calendar
     month before (clamped to the month's last day, like the plan's own months). Lemon
-    Squeezy sends no period start, and this is the same for every event in the period."""
+    Squeezy sends no period start, and this is the same for every event in the period.
+    Monthly plans only (all of plans.json): a yearly variant would need its own rule."""
     renews = attributes.get("renews_at")
     if not isinstance(renews, str):
         return None, None

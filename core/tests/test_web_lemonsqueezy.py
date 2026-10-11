@@ -225,6 +225,44 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises((ValueError, KeyError)):
                 self.provider.parse(body)
 
+    def test_events_dmbot_ignores_need_no_person(self) -> None:
+        # An order, or a pending update, made outside DMbot's checkout: a quiet ignore.
+        order = event(
+            "order_created",
+            kind="orders",
+            custom={},
+            status="paid",
+            first_order_item={"variant_id": 1001},
+        )
+        self.assertIsNone(self.provider.parse(order))
+        paused = event("subscription_updated", custom={}, **subscription(status="paused"))
+        self.assertIsNone(self.provider.parse(paused))
+
+    def test_the_billing_period_clamps_to_the_months_last_day_and_rolls_the_year(self) -> None:
+        jan31_to_mar = event(
+            "subscription_updated", **subscription(renews_at="2027-03-31T00:00:00.000000Z")
+        )
+        parsed = self.provider.parse(jan31_to_mar)
+        assert parsed and parsed.period_start
+        self.assertEqual(datetime.fromtimestamp(parsed.period_start, UTC).day, 28)  # Feb 28
+        jan = self.provider.parse(
+            event("subscription_updated", **subscription(renews_at="2027-01-15T00:00:00.000000Z"))
+        )
+        assert jan and jan.period_start
+        self.assertEqual(datetime.fromtimestamp(jan.period_start, UTC).year, 2026)
+
+    def test_a_missing_updated_at_falls_back_to_created_at(self) -> None:
+        body = json.loads(event("subscription_created", **subscription()))
+        del body["data"]["attributes"]["updated_at"]
+        parsed = self.provider.parse(json.dumps(body).encode())
+        assert parsed
+        self.assertEqual(parsed.occurred_at, T0)
+
+    def test_a_body_that_is_not_an_object_is_unreadable(self) -> None:
+        for body in (b"[]", b"3"):
+            with self.assertRaises((ValueError, TypeError, AttributeError)):
+                self.provider.parse(body)
+
     def test_the_event_id_is_the_same_on_redelivery_and_new_for_a_new_change(self) -> None:
         one = self.provider.parse(event("subscription_updated", **subscription()))
         again = self.provider.parse(event("subscription_updated", **subscription()))
@@ -341,7 +379,39 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             )
         self.assertNotIn("example.com", str(caught.exception))
 
+    def test_an_uppercase_or_spaced_signature(self) -> None:
+        body = event("subscription_created", **subscription())
+        self.assertFalse(self.provider.verify(body, {"x-signature": self.sign(body).upper()}))
+        self.assertTrue(self.provider.verify(body, {"x-signature": " " + self.sign(body) + " "}))
+
     # Billing page and cancel
+
+    async def test_the_billing_page_refuses_a_foreign_address_and_failures(self) -> None:
+        path = ("GET", "/v1/customers/777")
+        for answer in (
+            (
+                200,
+                {"data": {"attributes": {"urls": {"customer_portal": "https://evil.example/p"}}}},
+            ),
+            (200, {"data": {"attributes": {}}}),
+            (404, None),
+            (500, None),
+        ):
+            self.http.answers[path] = answer
+            with self.assertRaises(PaymentError):
+                await self.provider.billing_url(customer_id="777", return_url="https://x.example")
+
+    async def test_cancel_failures(self) -> None:
+        self.http.answers[("GET", "/v1/subscriptions/55")] = (500, None)
+        with self.assertRaises(PaymentError):
+            await self.provider.cancel(subscription_id="55")
+        with self.assertRaises(PaymentError):
+            await self.provider.cancel(subscription_id="five")
+        self.http.answers[("GET", "/v1/subscriptions/55")] = (
+            200,
+            {"data": {"attributes": {"status": "expired"}}},
+        )
+        await self.provider.cancel(subscription_id="55")  # nothing to do
 
     async def test_the_billing_page_is_the_customers_portal(self) -> None:
         portal = "https://dmbot-test.lemonsqueezy.com/billing?expires=1&signature=s"
@@ -419,6 +489,12 @@ class Config(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "LEMONSQUEEZY"):
                 load_web_settings({**self.ENV, name: ""})
 
+    def test_two_plans_cannot_share_a_variant(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "different"):
+            load_web_settings({**self.ENV, "LEMONSQUEEZY_VARIANT_GUILD": "1001"})
+        with self.assertRaisesRegex(ConfigError, "different"):
+            load_web_settings({**self.ENV, "LEMONSQUEEZY_VARIANT_EXTRA_HOURS": "1002"})
+
     def test_it_needs_the_webhook_secret_and_a_valid_mode(self) -> None:
         with self.assertRaisesRegex(ConfigError, "PAYMENT_WEBHOOK_SECRET"):
             load_web_settings({**self.ENV, "PAYMENT_WEBHOOK_SECRET": ""})
@@ -488,6 +564,65 @@ class Routes(DatabaseTest):
         got = await entitlements.get(self.db, ALICE.id)
         assert got is not None
         self.assertEqual((got.plan, got.status), ("try-it", "active"))
+
+    async def test_an_expired_subscription_ends_the_plan(self) -> None:
+        await self.deliver(self.mine("subscription_created", **subscription()))
+        expired = self.mine(
+            "subscription_expired", **subscription(status="expired", updated_at=ts(T0 + 100))
+        )
+        self.assertEqual((await self.deliver(expired)).status_code, 200)
+        got = await entitlements.get(self.db, ALICE.id)
+        assert got is not None
+        self.assertEqual(got.status, "lapsed")
+
+    async def test_paid_extra_hours_are_credited(self) -> None:
+        await self.deliver(self.mine("subscription_created", **subscription()))
+        order = self.mine(
+            "order_created",
+            data_id="31",
+            kind="orders",
+            status="paid",
+            first_order_item={"variant_id": 2001},
+            updated_at=ts(T0 + 50),
+        )
+        self.assertEqual((await self.deliver(order)).status_code, 200)
+        got = await entitlements.get(self.db, ALICE.id)
+        assert got is not None
+        self.assertEqual(got.extra_hours, 10)
+
+    async def test_unused_events_are_a_quiet_200_and_unreadable_signed_ones_a_400(self) -> None:
+        unused = self.mine("subscription_payment_success", **subscription())
+        self.assertEqual((await self.deliver(unused)).status_code, 200)
+        no_person = event("subscription_created", custom={}, **subscription())
+        self.assertEqual((await self.deliver(no_person)).status_code, 400)
+        self.assertEqual((await self.deliver(b"not json")).status_code, 400)
+
+    async def test_an_update_right_after_creation_grants_nothing_twice(self) -> None:
+        await self.deliver(self.mine("subscription_created", **subscription()))
+        same = self.mine("subscription_updated", **subscription())  # same time, same period
+        self.assertEqual((await self.deliver(same)).status_code, 200)
+        got = await entitlements.get(self.db, ALICE.id)
+        assert got is not None
+        self.assertEqual((got.plan, got.extra_hours), ("table", 0))
+
+    async def test_an_older_update_arriving_late_changes_nothing(self) -> None:
+        newer = self.mine("subscription_created", **subscription(updated_at=ts(T0 + 500)))
+        await self.deliver(newer)
+        older = self.mine(
+            "subscription_updated", **subscription(variant_id=1002, updated_at=ts(T0 + 100))
+        )
+        self.assertEqual((await self.deliver(older)).status_code, 200)
+        got = await entitlements.get(self.db, ALICE.id)
+        assert got is not None
+        self.assertEqual(got.plan, "table")
+
+    async def test_a_billing_failure_is_payments_unavailable(self) -> None:
+        await self.deliver(self.mine("subscription_created", **subscription()))
+        self.http.answers[("GET", "/v1/customers/777")] = (500, None)
+        response = await self.client.post("/billing/portal", headers={"X-DMbot-Request": "1"})
+        self.assertEqual(
+            (response.status_code, response.json()), (502, {"error": "payments_unavailable"})
+        )
 
     async def test_checkout_through_the_route_builds_a_lemon_squeezy_checkout(self) -> None:
         self.http.answers[("POST", "/v1/checkouts")] = (

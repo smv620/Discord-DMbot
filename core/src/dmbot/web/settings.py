@@ -260,6 +260,9 @@ def _lemonsqueezy(get: Callable[[str], str]) -> LemonSqueezyConfig:
     extra = get("LEMONSQUEEZY_VARIANT_EXTRA_HOURS")
     if not extra.isascii() or not extra.isdigit():
         raise ConfigError("LEMONSQUEEZY_VARIANT_EXTRA_HOURS must be the extra hours' variant id.")
+    ids = [*variants.values(), extra]
+    if len(set(ids)) != len(ids):
+        raise ConfigError("Each LEMONSQUEEZY_VARIANT_* must be a different variant.")
     mode = (get("LEMONSQUEEZY_TEST_MODE") or "0").lower()
     if mode not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'LEMONSQUEEZY_TEST_MODE must be 1 (test) or 0 (live), got "{mode}".')

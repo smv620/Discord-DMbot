@@ -527,7 +527,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="bad_signature")
         try:
             event = payments.parse(body)
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (ValueError, KeyError, TypeError, AttributeError, OverflowError):
             log.error("A signed payment event couldn't be read: needs a person to look at it")
             raise HTTPException(status_code=400, detail="bad_event") from None
         if event is None:
