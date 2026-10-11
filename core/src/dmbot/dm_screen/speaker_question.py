@@ -34,6 +34,7 @@ class SpeakerQuestionButton(
         super().__init__(
             discord.ui.Button(
                 label=label or "?",
+                row=1 if pick == sq.SKIP else 0,  # the way out sits on a row of its own
                 style=discord.ButtonStyle.primary
                 if pick not in (sq.TYPE, sq.SKIP)
                 else discord.ButtonStyle.secondary,
@@ -68,7 +69,7 @@ class TypeForm(discord.ui.Modal):
     label may take, and checks again that the question is still open and they are the DM."""
 
     name: discord.ui.TextInput[TypeForm] = discord.ui.TextInput(
-        label=sq.FORM_FIELD, max_length=sq.TYPED_MAX
+        label=sq.FORM_FIELD, placeholder=sq.FORM_HINT, max_length=sq.TYPED_MAX
     )
 
     def __init__(self, guild_id: int, question_id: str) -> None:

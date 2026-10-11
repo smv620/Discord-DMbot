@@ -128,6 +128,12 @@ class OfferedTest(unittest.TestCase):
         self.assertEqual(names[2], "Auril")  # then alphabetical
         self.assertEqual(len(set(names)), len(names))
 
+    def test_a_secret_name_is_never_offered(self) -> None:
+        look = lookup()
+        names = speaker_ai.offered(look, {VANE: 9.0, HIRO: 1.0})
+        self.assertNotIn("Silas Vane", names)
+        self.assertEqual(names[:2], ["The Baron", "Brother Hiro"])
+
     def test_two_entries_with_one_name_are_offered_once(self) -> None:
         twin = person(MARY, "Brother Hiro")
         look = lookup(twin, extra_aliases=(alias(MARY, "Brother Hiro"),))

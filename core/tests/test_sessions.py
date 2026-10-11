@@ -1637,7 +1637,7 @@ class SaveAndResume(SessionTests):
         assert asked is not None
         # Only the DM may answer; a player is told so and the question stays open.
         text, done = await self.bot.answer_speaker_question(GUILD, asked.id, "0", PLAYER)
-        self.assertEqual((text, done), ("Only the DM can answer this.", False))
+        self.assertEqual((text, done), ("Only the DM can answer this. Ask your DM.", False))
         # A name typed in is checked like the buttons: a secret name is refused.
         text, done = await self.bot.answer_speaker_question(
             GUILD, asked.id, "type", DM, "Silas Vane"

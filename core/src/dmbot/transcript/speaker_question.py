@@ -21,28 +21,29 @@ from enum import Enum
 from dmbot.transcript.models import NARRATING
 
 NARRATING_PICK, TYPE, SKIP = "narrating", "type", "skip"
-QUESTION_TTL_S = 300.0  # an unanswered question expires after this long
+QUESTION_TTL_S = 120.0  # an unanswered question expires after this long
 COOLDOWN_S = 150.0  # after a question closes, however it closed, before the next
 MAX_OPTIONS = 3  # NPC names on the buttons
 LABEL_MAX = 25  # names on buttons: fits a phone
 CONTEXT_MAX = 70  # the bit of the line shown with the question
 TYPED_MAX = 60
 
-EXPIRED = "⌛ This question is closed, so that line has no label."
-ONLY_DM = "Only the DM can answer this."
+EXPIRED = "This question has closed. That line stays unlabelled."
+ONLY_DM = "Only the DM can answer this. Ask your DM."
 BUSY = "Already saving an answer to this. One moment."
-GONE = "This question is closed: that person stopped being recorded."
+GONE = "This question is closed. That person stopped being recorded."
 CANT_CHECK = "DMbot can't check the names right now. Try again in a moment."
 NOT_ALLOWED = (
-    "DMbot can't write that name in the transcript. It may be a secret name, or not one of "
-    "the campaign's NPCs. Pick a button, or ignore the question."
+    "That name can't go in the transcript (it may be secret, or not in this campaign). "
+    "Pick a button, or ignore this question."
 )
 FORM_TITLE = "Who was speaking?"
-FORM_FIELD = "The NPC's name, as the campaign spells it"
+FORM_FIELD = "NPC name"
+FORM_HINT = "As written in your campaign"
 TYPE_LABEL = "Type it…"
 NARRATING_LABEL = "Narrating"
 SKIP_LABEL = "Not sure"
-SKIPPED = "👍 Okay, that line has no label."
+SKIPPED = "Okay. That line stays unlabelled."
 
 STOPPED, ENDED, NOT_POSTED, EXPIRED_WHY, ANSWERED = (
     "stopped",
@@ -171,7 +172,7 @@ def question_text(context: str) -> str:
     line = f' ("…{_short(context, CONTEXT_MAX)}…")' if context else ""
     return (
         f"❓ **Who was speaking just now?**{line}\n"
-        "Not sure? Ignore this and that line gets no label."
+        "Not sure? Ignore this and that line stays unlabelled."
     )
 
 
@@ -181,4 +182,4 @@ def answered_text(label: str) -> str:
 
 
 def not_answered_text() -> str:
-    return "⌛ Not answered: that line has no label."
+    return "No answer. That line stays unlabelled."
