@@ -2341,8 +2341,12 @@ renewal or a top-up. On a downgrade or lapse the first N campaigns started after
 are active (N = new cap), the rest are paused with their data kept. Retention: 60 days
 after the last session on Try It, 6 months on Table, 1 year on the other plans, and 120
 days after a plan stops paying; the DM is warned at 14 and 3 days; deletion on request is
-immediate. **Deleting an account (decided 2026-10-08, #435, #552):** the account and the
-campaigns it owns go at once (that is what delete means); the paid subscription is
+immediate. **Deleting an account (decided 2026-10-08, #435, #552; changed by the owner
+2026-10-11, #922):** the account goes at once, **but the campaigns it owns stay**, because
+the players may still want to read or download them. They are treated like a campaign
+whose plan stopped paying (kept 120 days, then deleted, with the usual warnings), and any
+DM of the campaign, or anyone who restores a backup, can take it over as its new owner
+(#437, #1059); the paid subscription is
 cancelled at the end of the period already paid for, so the person is never charged
 again, and the rest of that period is not paid back unless they ask before deleting (the
 refunds page says so, and so does the delete screen); after deletion DMbot keeps only
