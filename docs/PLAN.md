@@ -2318,6 +2318,18 @@ it; the job looks again right before each delete. **Safety:** behind `DMBOT_ENFO
 log line with counts); a run that would delete more than 10% of all campaigns (and more than
 3, so a small deployment isn't stuck on one old campaign) stops and logs an error instead, before any warning goes out; at most 300 warnings go out per run (the rest wait a day).
 
+*Retention follow-ups (2026-10-11, #989):* (1) **Servers the bot has left:** the job takes its
+server list from the database (`campaign_guilds`, migration 0045, server IDs only, filled by a
+trigger on `campaigns` and backfilled; a server with no campaigns left is dropped from it), not
+from the bot's current servers, so a left server's campaigns are kept and deleted by the same
+rules. The warn-before-delete rule is unchanged: if no one can be reached by private message,
+nothing is deleted. (2) **One message per person:** a person with several campaigns past a
+warning gets one private message listing them (six to a message at most, to stay under Discord's
+limit); each campaign still has its own remembered warning. A single campaign reads as before.
+(3) **A missed run is caught up:** the finish time of each run is kept in `retention_last_run`
+in the data directory; at start-up, if the last run was over a day ago, the job runs once two
+minutes after the bot is connected. A bot with no recorded run waits for the next 03:00.
+
 Rules: checks at `/dmbot start` (plan active or in the 7-day payment grace, hours left,
 campaign active, under the campaign cap) and at anything that spends tokens (AI Find
 names, later story memory and rules lookups), plus backup, restore and transcript

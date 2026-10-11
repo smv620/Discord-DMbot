@@ -10,16 +10,19 @@ it touches as arguments.
 A campaign with no owner is kept by Try It's rule: DMbot doesn't know a last owner's plan,
 and the shortest rule is the safe one for storage; its DMs get the warnings instead.
 
-Everything runs per campaign in that campaign's own server scope. The only read across
-servers is the owner's plan, through `usage.py`'s owner-scoped door.
+Everything runs per campaign in that campaign's own server scope. The only reads across
+servers are the owner's plan, through `usage.py`'s owner-scoped door, and the list of server
+IDs that hold campaigns (a routing table), so a server DMbot has left is still reached.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from dmbot import plans
 from dmbot.campaigns import Campaign, CampaignStore
@@ -34,6 +37,9 @@ RUN_HOUR_UTC = 3  # after hours for the people playing
 # deletions the guard doesn't apply, so a small deployment isn't stuck on one old campaign.
 MAX_SHARE_PER_RUN = 0.10
 MIN_FOR_GUARD = 3
+LAST_RUN_FILE = "retention_last_run"
+CATCH_UP_AFTER = DAY  # a run later than this since the last one is overdue (#989)
+CATCH_UP_DELAY_S = 120  # after start-up, once the bot has its servers and is connected
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +86,33 @@ def next_run_after(now: int) -> int:
     return int(at.timestamp())
 
 
+def catch_up_due(last_run: int | None, now: int) -> bool:
+    """Was the last run more than a day ago? A bot that was down at 03:00 would otherwise
+    skip that day. Never run before (a new install, or the first start after this was
+    added) is not overdue: the next 03:00 run is the first."""
+    return last_run is not None and now - last_run > CATCH_UP_AFTER
+
+
+def read_last_run(state_dir: Path) -> int | None:
+    """When the job last finished, or None if never or the file is unreadable."""
+    try:
+        return int((state_dir / LAST_RUN_FILE).read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def write_last_run(state_dir: Path, now: int) -> None:
+    """Keep the finish time of a run. Written aside and moved into place so a crash can't
+    leave half a number; a failure is logged and only costs a catch-up next start."""
+    tmp = state_dir / (LAST_RUN_FILE + ".tmp")
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(str(int(now)))
+        os.replace(tmp, state_dir / LAST_RUN_FILE)
+    except OSError:
+        log.exception("Retention: couldn't record the time of this run")
+
+
 def _date(ts: int) -> str:
     return f"<t:{ts}:D>"
 
@@ -116,6 +149,50 @@ def warning_text(
         f"⏳ {last}**{_md(campaign.name)}** (in **{_md(server)}**) will be deleted on "
         f"{_date(delete)}, in {left}: {why}. Its story, notes and transcripts go, and that "
         f"can't be undone. To keep it, {options}."
+    )
+
+
+WARNINGS_PER_MESSAGE = 6  # keeps a message well under Discord's 2000 characters
+NAME_SHOWN = 50
+
+
+def grouped_warning_text(
+    items: list[tuple[Campaign, Standing, int]],
+    now: int,
+    server_name: Callable[[int], str],
+    site_url: str = "",
+) -> str:
+    """One private message for several campaigns of one person (#989): a line each with its
+    delete date, then how to keep one. A single campaign gets `warning_text` as before."""
+    if len(items) == 1:
+        campaign, standing, at = items[0]
+        return warning_text(campaign, at, now, standing, server_name(campaign.guild_id), site_url)
+    lines = []
+    for campaign, _standing, at in items:
+        days = max(1, round((at - now) / DAY))
+        name = campaign.name
+        if len(name) > NAME_SHOWN:
+            name = name[: NAME_SHOWN - 1] + "…"
+        lines.append(
+            f"• **{_md(name)}** (in **{_md(server_name(campaign.guild_id))}**): "
+            f"{_date(at)}, in {days} day" + ("" if days == 1 else "s")
+        )
+    last = "Last warning: " if any(warning_stage(at, now) == 2 for _c, _s, at in items) else ""
+    keep = ["play a session in its server (that starts the clock again)"]
+    if any(s.backups for _c, s, _a in items):
+        keep.append("download a backup with `/dmbot backup` in its server")
+    if any(c.owner_user_id is not None and s.lapsed_at is not None for c, s, _a in items):
+        keep.append(f"pick a plan again at {_plans_page(site_url)}")
+    options = (
+        keep[0]
+        if len(keep) == 1
+        else ", ".join(keep[:-1]) + (", or " if len(keep) > 2 else " or ") + keep[-1]
+    )
+    return (
+        f"⏳ {last}These campaigns will be deleted because no one has played them for a long "
+        f"time. Their story, notes and transcripts go, and that can't be undone.\n"
+        + "\n".join(lines)
+        + f"\nTo keep one, {options}."
     )
 
 
@@ -179,7 +256,8 @@ class RetentionJob:
         *,
         campaigns: CampaignStore,
         standing_of: StandingOf,
-        guild_ids: Callable[[], list[int]],
+        guild_ids: Callable[[], Awaitable[list[int]]],
+        forget_guild: Callable[[int], Awaitable[bool]] | None = None,
         running: Callable[[], set[str]],
         send: Send,
         enforce: bool,
@@ -188,10 +266,13 @@ class RetentionJob:
     ) -> None:
         """`standing_of(guild_id, owner_id, now)`: the owner's plan (raises if it can't be
         read: then that campaign is left alone). `running()`: campaigns in a session now.
-        `send(user_id, text)`: a private message; False if it couldn't be sent."""
+        `send(user_id, text)`: a private message; False if it couldn't be sent.
+        `guild_ids()`: every server that holds campaigns, from the database (#989).
+        `forget_guild(guild_id)`: called for a server with no campaigns left."""
         self._campaigns = campaigns
         self._standing_of = standing_of
         self._guild_ids = guild_ids
+        self._forget_guild = forget_guild
         self._running = running
         self._send = send
         self._enforce = enforce
@@ -209,8 +290,14 @@ class RetentionJob:
         warn: list[tuple[Campaign, Standing, int, int]] = []  # campaign, plan, date, stage
         owners: dict[int, Standing] = {}
         running = self._running()
-        for guild_id in self._guild_ids():
-            for campaign in await self._campaigns.list_campaigns(guild_id):
+        for guild_id in await self._guild_ids():
+            campaigns = await self._campaigns.list_campaigns(guild_id)
+            if not campaigns and self._enforce and self._forget_guild is not None:
+                try:
+                    await self._forget_guild(guild_id)
+                except Exception:  # only a tidy-up: the next run tries again
+                    log.exception("Retention: couldn't drop an empty server from the list")
+            for campaign in campaigns:
                 result.scanned += 1
                 if campaign.created_at > now:  # the clock is wrong: touch nothing this run
                     log.error("Retention: a campaign is newer than the clock; doing nothing")
@@ -268,10 +355,9 @@ class RetentionJob:
             result.warnings = len(warn)
             self._log(result)
             return result
-        for campaign, standing, at, stage in warn[:MAX_WARNINGS_PER_RUN]:
-            if await self._warn(campaign, standing, at, stage, now):
-                result.warnings += 1
-                result.stages[stage] = result.stages.get(stage, 0) + 1
+        for _campaign, stage in await self._warn_all(warn[:MAX_WARNINGS_PER_RUN], now):
+            result.warnings += 1
+            result.stages[stage] = result.stages.get(stage, 0) + 1
         for campaign, _at in due:
             if await self._delete(campaign, now, owners):
                 result.deleted += 1
@@ -303,18 +389,33 @@ class RetentionJob:
             return False
         return True
 
-    async def _warn(
-        self, campaign: Campaign, standing: Standing, at: int, stage: int, now: int
-    ) -> bool:
-        text = warning_text(
-            campaign, at, now, standing, self._server_name(campaign.guild_id), self._site_url
-        )
-        told = False
-        for user_id in self._recipients(campaign):
-            told = await self._send(user_id, text) or told
-        if not told:
-            return False  # nobody could be reached: try again tomorrow
-        return await self._remember(campaign, stage, at)
+    async def _warn_all(
+        self, warn: list[tuple[Campaign, Standing, int, int]], now: int
+    ) -> list[tuple[Campaign, int]]:
+        """Send the warnings, one private message per person however many campaigns they
+        have (#989). A campaign counts as warned (and is remembered) when at least one of
+        its people was reached; the others are tried again tomorrow. Returns those."""
+        by_user: dict[int, list[tuple[Campaign, Standing, int, int]]] = {}
+        for item in warn:
+            for user_id in self._recipients(item[0]):
+                by_user.setdefault(user_id, []).append(item)
+        told: set[str] = set()
+        for user_id, items in by_user.items():
+            for start in range(0, len(items), WARNINGS_PER_MESSAGE):
+                chunk = items[start : start + WARNINGS_PER_MESSAGE]
+                text = grouped_warning_text(
+                    [(c, st, at) for c, st, at, _stage in chunk],
+                    now,
+                    self._server_name,
+                    self._site_url,
+                )
+                if await self._send(user_id, text):
+                    told.update(c.id for c, _st, _at, _stage in chunk)
+        done: list[tuple[Campaign, int]] = []
+        for campaign, _standing, at, stage in warn:
+            if campaign.id in told and await self._remember(campaign, stage, at):
+                done.append((campaign, stage))
+        return done
 
     async def _delete(self, stale: Campaign, now: int, owners: dict[int, Standing]) -> bool:
         """Delete one campaign, after looking again: a session may have started, it may

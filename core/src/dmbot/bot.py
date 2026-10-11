@@ -515,7 +515,8 @@ class DMBot(commands.AutoShardedBot):
             self.retention = RetentionJob(
                 campaigns=campaigns,
                 standing_of=meter.retention_standing,
-                guild_ids=lambda: [g.id for g in self.guilds],
+                guild_ids=campaigns.guilds_with_campaigns,
+                forget_guild=campaigns.forget_guild_if_empty,
                 running=lambda: {t.campaign_id for t in self.tables.values() if t.campaign_id},
                 send=self._dm_user,
                 enforce=settings.enforce_plans,
@@ -1514,13 +1515,26 @@ class DMBot(commands.AutoShardedBot):
         """Once a day, after hours (UTC), warn about and delete campaigns past their keep
         date (#964). Safe to run twice; a failed run is logged and tried again tomorrow."""
         assert self.retention is not None
+        state_dir = self.settings.data_dir
+        # A bot that was down at 03:00 would skip that day: if the last run was over a day
+        # ago, run once shortly after start-up (#989).
+        if retention.catch_up_due(retention.read_last_run(state_dir), int(time.time())):
+            await self.wait_until_ready()
+            await asyncio.sleep(retention.CATCH_UP_DELAY_S)
+            await self._retention_once(state_dir)
         while True:
             now = int(time.time())
             await asyncio.sleep(max(60, retention.next_run_after(now) - now))
-            try:
-                await self.retention.run_once(int(time.time()))
-            except Exception:
-                log.exception("The daily retention job failed")
+            await self._retention_once(state_dir)
+
+    async def _retention_once(self, state_dir: Path) -> None:
+        assert self.retention is not None
+        try:
+            await self.retention.run_once(int(time.time()))
+        except Exception:
+            log.exception("The daily retention job failed")
+            return
+        retention.write_last_run(state_dir, int(time.time()))
 
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
