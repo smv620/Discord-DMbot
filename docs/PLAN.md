@@ -2118,8 +2118,8 @@ grace). It calls `POST /billing/extra-hours`, which answers `{url}` like checkou
 provider's `extra_hours_checkout_url` (the same billing rate-limit group); Try It, a lapsed plan and
 no plan get `no_paid_plan`, free access and grants get `has_free_access`. The purchase arrives as
 the signed `extra_hours_bought` event, which the writer applies to this period only (a new period
-starts at zero). The page says so in one line: "Extra hours are for this month only. They don't roll
-over." The bot's "hours are used up" message to the owner already points to the account page.
+starts at zero). The page says so in one line: "You pay once, on our payment company's page. These 10 hours
+are for this month only and don't roll over." The bot's "hours are used up" message to the owner already points to the account page.
 
 **Free access and the admin page (owner decision, 2026-10-08).** The owner's own Discord
 account never needs a plan: it is listed in the server's settings (`DMBOT_FREE_USERS`, Discord
