@@ -59,7 +59,6 @@ SCENE_CHARS = 1_200
 RECENT_LINES = 40
 MIN_WORDS = 2  # "ok" or "thanks" is not a question
 READ_TIMEOUT_S = 30.0
-CHAT_PER_MINUTE = 6  # questions typed or spoken in the DM chat, per DM
 NOTE_KEEP = 1_000
 DECODE_AT_ONCE = 2
 MESSAGE_LIMIT = 2_000  # Discord's
@@ -68,7 +67,6 @@ NOTE_EVERY_S = 30.0  # the same kind of note to the same person, at most this of
 NO_SESSION = "No game is running with you as DM. Start one with /dmbot start, then ask again."
 NOT_YET = "Quick answers aren't switched on yet."
 NOT_SOON_AGAIN = "Still on your last question. One moment."
-ONE_A_MINUTE = "One spoken question a minute. Message me here to ask now."
 FAILED = "I couldn't answer that. Try again, or type it here."
 NO_WORDS = "I couldn't make out any words. Try again."
 NOT_AGREED = (
@@ -98,7 +96,7 @@ HOUSE_NOT_AGREED = (
 )
 HOUSE_WHICH = "Which game is this house rule for?"
 WHICH = "Which game is this for?"
-SLOW_DOWN = "That's a lot of questions. Try again in a minute."
+TOO_MANY = "That's a lot of questions at once. Ask again in a minute."
 TYPE_INSTEAD = "I can only read typed questions and voice messages."
 NOT_YOURS = "This isn't your question."
 TOO_LONG = memo.TOO_LONG
@@ -207,7 +205,6 @@ class SidebarService:
         self._clock = clock
         self._busy: set[tuple[int, str]] = set()  # campaigns with a question being answered
         self._noted: dict[tuple[int, str], float] = {}
-        self._asked_at: dict[int, deque[float]] = {}  # per DM: when lately (chat path)
         self._tasks: set[asyncio.Task[None]] = set()
         self._decoding = asyncio.Semaphore(DECODE_AT_ONCE)
         self._known_dms: set[int] = set()  # seen as a campaign's DM since DMbot started
@@ -334,21 +331,10 @@ class SidebarService:
             self._known_dms.add(user_id)
         return mine
 
-    def _chat_ok(self, user_id: int) -> bool:
-        """A few questions a minute in the DM chat: each one can spend speech-to-text and
-        AI money (the spoken trigger has its own one-a-minute limit)."""
-        now = self._clock()
-        recent = self._asked_at.setdefault(user_id, deque(maxlen=CHAT_PER_MINUTE))
-        if len(recent) == CHAT_PER_MINUTE and now - recent[0] < 60.0:
-            return False
-        recent.append(now)
-        return True
-
     def _note_ok(self, user_id: int, kind: str) -> bool:
         now = self._clock()
         if len(self._noted) > NOTE_KEEP:  # strangers can message DMbot: keep this small
             self._noted = {k: at for k, at in self._noted.items() if now - at < NOTE_EVERY_S}
-            self._asked_at = {u: d for u, d in self._asked_at.items() if now - d[-1] < 60.0}
         if now - self._noted.get((user_id, kind), -NOTE_EVERY_S) < NOTE_EVERY_S:
             return False
         self._noted[(user_id, kind)] = now
@@ -362,9 +348,9 @@ class SidebarService:
             if self._note_ok(user_id, "busy"):
                 await reply(NOT_SOON_AGAIN)
             return
-        if not self._chat_ok(user_id):
-            if self._note_ok(user_id, "slow"):
-                await reply(SLOW_DOWN)
+        if not table.sidebar_limiter.allow(self._clock()):
+            if self._note_ok(user_id, "limit"):
+                await reply(TOO_MANY)
             return
         self._busy.add(_campaign_key(table))
         try:
@@ -438,8 +424,8 @@ class SidebarService:
         self, table: Table, user_id: int, text: str, *, in_character: bool = False
     ) -> bool:
         """The DM's line at the table: if it clearly asks for a look-up, answer it
-        privately, in the background. Only the campaign's own DM's lines count, at most one
-        a minute. True if a question was started."""
+        privately, in the background. Only the campaign's own DM's lines count, within the
+        safety limit. True if a question was started."""
         if self.answerer is None or table.campaign_id is None or not _is_dm(table, user_id):
             return False  # no engine: quietly nothing, and the minute is not used up
         request = request_in(text, in_character=in_character)
@@ -448,8 +434,8 @@ class SidebarService:
         if _campaign_key(table) in self._busy:
             self._note_later(user_id, "busy", NOT_SOON_AGAIN)
             return False
-        if not table.sidebar_limiter.allow(self._clock()):  # last: it uses up the minute
-            self._note_later(user_id, "limit", ONE_A_MINUTE)
+        if not table.sidebar_limiter.allow(self._clock()):  # last: it counts the question
+            self._note_later(user_id, "limit", TOO_MANY)
             return False
         self._busy.add(_campaign_key(table))
         task = asyncio.create_task(self._table_question(table, user_id, request), name="sidebar")
