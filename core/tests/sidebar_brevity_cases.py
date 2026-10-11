@@ -77,7 +77,7 @@ CASES: tuple[Case, ...] = (
         (reply("No. A solid wall blocks the blast.", "SRD 5.2.1 p. 131", "uncertain"),),
         ("not in dmbot's rules",),
         yes_no=True,
-        must_not=("confident)", ", confident"),
+        must_not=("confident)", ", confident", ", sure)"),
     ),
     Case(  # no Yes/No first: asked once more
         "can fireball spread around a corner",
@@ -132,7 +132,7 @@ CASES: tuple[Case, ...] = (
         (reply("Yes. A spell attack can crit on a natural 20.", "none", "confident"),),
         ("not in dmbot's rules",),
         yes_no=True,
-        must_not=("confident)", ", confident"),
+        must_not=("confident)", ", confident", ", sure)"),
     ),
     Case(
         "what's my house rule for criticals",
@@ -216,6 +216,6 @@ CASES: tuple[Case, ...] = (
         (reply("No. Sneak Attack needs a weapon attack.", "none", "confident"),),
         ("not in dmbot's rules",),
         yes_no=True,
-        must_not=("confident)", ", confident"),
+        must_not=("confident)", ", confident", ", sure)"),
     ),
 )

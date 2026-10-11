@@ -215,7 +215,7 @@ Two more checks on a library run, both off by default:
 `--with-rules` runs the real card spotter over the saved and today's transcript and lists the
 cards gained, lost or changed. It is free. `--with-sidebar` asks every saved DM sidebar question
 again through the real answer path (today's prompt and tier) and compares each new answer with
-the saved one: its source, sure or not sure, the length rule, and the share of words in common
+the saved one: its source, confident or uncertain, the length rule, and the share of words in common
 (same, changed, worse or better; no judging of style). **It costs money:** it needs
 ANTHROPIC_API_KEY and prints the calls, tokens and dollars at the end. A question that cannot be
 answered is counted as failed and the rest go on. `--log` adds counts per flag, never text.
