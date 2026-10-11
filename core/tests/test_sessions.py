@@ -1531,6 +1531,100 @@ class SaveAndResume(SessionTests):
         self.assertEqual(topics["we sneak past the guards"], "game")
         self.assertEqual((table.topic_calls, table.topic_tokens), (1, [50, 6]))
 
+    async def speaking(
+        self, answer: str, now: Any = None, *, hold: asyncio.Event | None = None
+    ) -> Any:
+        """A session with the speaker labels on (#53): the DM's lines go to the AI stand-in
+        (`answer` for the speaker question, everyone game for the off-topic one), and the
+        campaign's names come from `now()` each time they are asked for."""
+        from dmbot.ai import Reply
+        from tests.test_transcript_speaker_ai import lookup as npc_lookup
+
+        asked: list[str] = []
+
+        async def complete(system: str, text: str, *, max_tokens: int = 0) -> Reply:
+            if text.startswith("Characters:"):
+                asked.append(text)
+                if hold is not None:
+                    await hold.wait()  # the AI is slow
+                return Reply(answer, cut=False, input_tokens=70, output_tokens=5)
+            return Reply("1 game\n2 game", cut=False, input_tokens=5, output_tokens=2)
+
+        names = npc_lookup()
+        got = now or (lambda: names)
+
+        async def get_within(guild_id: int, campaign_id: str, wait_s: float) -> Any:
+            return got()
+
+        self.speaker_asks = asked
+        self.addCleanup(setattr, self.bot, "lookup", self.bot.lookup)
+        self.bot.lookup = SimpleNamespace(get_within=get_within)  # type: ignore[assignment]
+        table = await self.filtered("1 game\n2 game")
+        self.bot.topic_ai = SimpleNamespace(complete=complete)  # type: ignore[assignment]
+        table.name_lookup = names
+        table.dm_user_ids = frozenset({DM})
+        table.speakers.window_lines = 2
+        return table
+
+    async def test_the_dms_lines_get_who_was_speaking(self) -> None:
+        table = await self.speaking("1 npc 2\n2 narrating")
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        self.said(table, "My lines are not asked about.", user=PLAYER, at_ms=1_000)
+        self.said(table, "The door creaks open slowly.", user=DM, at_ms=5_000)
+        await self.settle()
+        self.assertEqual(len(self.speaker_asks), 1)  # the DM's two lines, one call
+        self.assertIn("Welcome, weary travellers", self.speaker_asks[0])
+        self.assertNotIn("not asked about", self.speaker_asks[0])
+        said_as = {line.text: line.entity for line in table.unsaved._waiting}
+        self.assertEqual(said_as["Welcome, weary travellers, sit by the fire."], "Brother Hiro")
+        self.assertEqual(said_as["The door creaks open slowly."], "narrating")
+        self.assertEqual(said_as["My lines are not asked about."], "")
+        self.assertEqual((table.speaker_calls, table.speaker_tokens), (1, [70, 5]))
+
+    async def test_a_maybe_or_an_unsure_line_gets_no_label(self) -> None:
+        table = await self.speaking("1 npc 2 maybe\n2 unsure")
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        self.said(table, "The door creaks open slowly.", user=DM, at_ms=5_000)
+        await self.settle()
+        self.assertEqual([line.entity for line in table.unsaved._waiting], ["", ""])
+
+    async def test_a_name_made_secret_while_the_ai_thinks_is_not_written(self) -> None:
+        from tests.test_transcript_speaker_ai import HIRO, alias, lookup
+
+        before = lookup()
+        after = lookup(
+            extra_aliases=(alias(HIRO, "Brother Hiro", secret=True),),
+        )
+        seen = iter([before, after])  # the names asked for before the call, then after it
+        table = await self.speaking("1 npc 2\n2 narrating", lambda: next(seen))
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        self.said(table, "The door creaks open slowly.", user=DM, at_ms=5_000)
+        await self.settle()
+        said_as = {line.text: line.entity for line in table.unsaved._waiting}
+        self.assertEqual(said_as["Welcome, weary travellers, sit by the fire."], "")  # secret now
+        self.assertEqual(said_as["The door creaks open slowly."], "narrating")
+
+    async def test_a_dm_who_stops_while_the_ai_thinks_gets_no_label(self) -> None:
+        # CLAUDE.md: consent is checked again after every wait.
+        hold = asyncio.Event()
+        table = await self.speaking("1 narrating\n2 narrating", hold=hold)
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        self.said(table, "The door creaks open slowly.", user=DM, at_ms=5_000)
+        await self.settle()
+        self.assertEqual(len(self.speaker_asks), 1)  # asked, and waiting for the answer
+        self.bot.stop_recording(GUILD, DM)
+        hold.set()
+        await self.settle()
+        self.assertTrue(all(line.entity == "" for line in table.unsaved._waiting))
+
+    async def test_a_dm_who_has_stopped_is_not_asked_about(self) -> None:
+        table = await self.speaking("1 narrating\n2 narrating")
+        self.bot.stop_recording(GUILD, DM)
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        self.said(table, "The door creaks open slowly.", user=DM, at_ms=5_000)
+        await self.settle()
+        self.assertEqual(self.speaker_asks, [])
+
     async def test_plainly_game_talk_isnt_asked_about(self) -> None:
         table = await self.filtered("1 other")
         self.said(table, "I roll a d20 for initiative")
