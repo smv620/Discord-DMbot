@@ -34,6 +34,8 @@ class RateLimit:
         most: int = MAX_WAITING,
         count: int = 1,
     ):
+        if count < 1:
+            raise ValueError("count must be at least 1")
         self._seconds = seconds
         self._clock = clock
         self._most = most
@@ -80,7 +82,8 @@ class RateLimit:
         return max(1, int(turns[0] + self._seconds - self._clock()) + 1)
 
     def give_back(self, address: str) -> None:
-        """The post failed: let the person try again straight away."""
+        """The post failed: let the person try again straight away. (The address stays where
+        its last turn put it, so it may be held a little past its window: bounded, harmless.)"""
         turns = self._turns.get(address)
         if turns:
             turns.pop()

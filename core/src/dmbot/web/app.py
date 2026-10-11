@@ -110,6 +110,17 @@ def create_app(
     install_cookie = f"{prefix}dmbot_install"
     account_page = f"{settings.site_url}/account"
 
+    def limit_key(address: str) -> str:
+        """One person can hold a whole IPv6 /64, so count by that block; an IPv4 address,
+        or "unknown", is its own key."""
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            return address
+        if ip.version == 6:
+            return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+        return address
+
     def self_limit(request: Request) -> Response | None:
         """The API's own per-address limit on sign-in, install, billing and account
         deletion (#1082). The webhook is never limited here: its signature is the gate.
@@ -119,7 +130,7 @@ def create_app(
         if name is None or request.method not in ("GET", "POST"):
             return None
         limit = route_limits[name]
-        address = client_address(request)
+        address = limit_key(client_address(request))
         verdict = limit.take(address)
         if verdict == "ok":
             return None
@@ -138,17 +149,19 @@ def create_app(
         # The payment company's webhook is checked by its signature instead (it can't send
         # our header or come from the website).
         webhook = request.url.path.startswith("/webhooks/")
-        slowed = self_limit(request)
-        if slowed is not None:
-            return slowed
         if request.method not in ("GET", "HEAD", "OPTIONS") and not webhook:
             origin = request.headers.get("origin")
             if request.headers.get(REQUEST_HEADER) != "1" or (
                 origin is not None and origin != settings.site_origin
             ):
                 return JSONResponse({"error": "not_allowed"}, status_code=403)
+        # After the cross-site check, so a forged POST from another site can't use up a
+        # visitor's count. (A forged GET to a sign-in route still can; that is accepted:
+        # the wait is minutes, and the proxy's rules are the first line.)
+        response = self_limit(request)
         try:
-            response = await call_next(request)
+            if response is None:
+                response = await call_next(request)
         except Exception:
             # Any crash is still JSON the website can read, inside the CORS wrapper below
             # (a FastAPI Exception handler runs outside it). The log has the path, no data.

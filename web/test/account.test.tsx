@@ -52,6 +52,11 @@ describe("states", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(text.tooManyTries);
   });
 
+  it("signed in after too many install tries: says to wait", async () => {
+    show("table", "?install=slow");
+    expect(await screen.findByText(text.install["slow"] ?? "")).toBeTruthy();
+  });
+
   it("API down: says so with a Try again button", async () => {
     const { api } = show("down");
     expect((await screen.findByRole("alert")).textContent).toContain(text.down);

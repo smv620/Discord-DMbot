@@ -58,6 +58,25 @@ class Sliding(unittest.TestCase):
         self.assertEqual(self.limit.take("a"), "ok")
         self.assertEqual(self.limit.take("a"), "wait")
 
+    def test_a_refused_try_does_not_extend_the_wait(self) -> None:
+        self.limit = RateLimit(seconds=600, clock=lambda: self.time, count=1)
+        self.assertEqual(self.limit.take("a"), "ok")
+        self.time = 500
+        self.assertEqual(self.limit.take("a"), "wait")
+        self.assertEqual(self.limit.retry_after("a"), 101)
+        self.time = 600
+        self.assertEqual(self.limit.take("a"), "ok")
+
+    def test_a_count_below_one_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            RateLimit(count=0)
+
+    def test_giving_the_last_turn_back_forgets_the_address(self) -> None:
+        self.limit = RateLimit(seconds=600, clock=lambda: self.time, count=1)
+        self.limit.take("a")
+        self.limit.give_back("a")
+        self.assertEqual(len(self.limit), 0)
+
     def test_giving_a_turn_back(self) -> None:
         self.assertEqual([self.limit.take("a") for _ in range(3)], ["ok"] * 3)
         self.limit.give_back("a")
@@ -173,3 +192,53 @@ class Routes(DatabaseTest):
             await self.client.options("/account/delete/request", headers={"Origin": SITE})
             self.assertEqual((await self.hit("GET", "/health")).status_code, 200)
         self.assertEqual((await self.hit("POST", "/account/delete/request")).status_code, 401)
+
+    async def test_a_cross_site_post_is_refused_before_it_is_counted(self) -> None:
+        for _ in range(10):
+            forged = await self.client.post(
+                "/account/delete/request", headers={"CF-Connecting-IP": "203.0.113.5"}
+            )
+            self.assertEqual(forged.status_code, 403)
+        self.assertEqual((await self.hit("POST", "/account/delete/request")).status_code, 401)
+
+    async def test_the_refusal_is_never_cached(self) -> None:
+        for _ in range(5):
+            await self.hit("POST", "/account/delete/request")
+        over = await self.hit("POST", "/account/delete/request")
+        self.assertEqual(over.headers["Cache-Control"], "no-store")
+        self.assertEqual(over.headers["X-Content-Type-Options"], "nosniff")
+
+    async def test_busy_on_a_sign_in_goes_back_to_the_site_and_says_wait_a_minute(self) -> None:
+        self.make_client(**{"sign-in": RateLimit(600, clock=lambda: self.time, count=20, most=1)})
+        await self.hit("GET", "/auth/discord/start", ip="203.0.113.1")
+        over = await self.hit("GET", "/auth/discord/start", ip="203.0.113.2")
+        self.assertEqual(over.headers["location"], f"{SITE}/account?signin=slow")
+        self.assertEqual(over.headers["Retry-After"], "60")
+
+    async def test_an_ipv6_block_counts_as_one_address(self) -> None:
+        for n in range(5):
+            await self.hit("POST", "/account/delete/request", ip=f"2001:db8:0:1::{n + 1}")
+        same_block = await self.hit("POST", "/account/delete/request", ip="2001:db8:0:1:9::1")
+        self.assertEqual(same_block.status_code, 429)
+        other = await self.hit("POST", "/account/delete/request", ip="2001:db8:0:2::1")
+        self.assertEqual(other.status_code, 401)
+
+    async def test_head_is_not_counted(self) -> None:
+        for _ in range(30):
+            await self.hit("HEAD", "/install")
+        self.assertNotIn("slow", (await self.hit("GET", "/install")).headers["location"])
+
+    async def test_the_real_limits_are_wired_by_default(self) -> None:
+        app = create_app(settings(client_ip_header="CF-Connecting-IP"), self.db, FakeDiscord())
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API)
+        self.addAsyncCleanup(client.aclose)
+        codes = [
+            (
+                await client.post(
+                    "/account/delete/request",
+                    headers={**HEADERS, "CF-Connecting-IP": "203.0.113.5"},
+                )
+            ).status_code
+            for _ in range(6)
+        ]
+        self.assertEqual(codes, [401] * 5 + [429])
