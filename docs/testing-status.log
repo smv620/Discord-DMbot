@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-11 by dev1 (core 0f39e35; Test F next)
+Last updated: 2026-10-11 by dev2 (#1079 ready to deploy)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -10,6 +10,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
 (nothing waiting; core 0f39e35 deployed 2026-10-11 05:55 UTC took everything merged so far: see the history)
+- #1079 (dev2, core only): transcript downloads tag table talk {table_talk} and off-topic talk {non-game_content} instead of the character (#53, part). Check: download a transcript (both versions); table talk and off-topic lines carry the tags, the cleaned file still skips off-topic runs with a note. No migration, no setting.
 
 ------------------------------------------------------------------------------
 LIVE NOW
