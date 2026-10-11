@@ -9,6 +9,9 @@ The transcript is open to the whole server, so a label can never reveal a secret
   name reads "narrating" is left out (it could not be told from narration).
 - **`check_entity`:** the last gate before a label is saved: anything not in that list
   becomes no label at all.
+- **A snapshot goes stale.** `identify` checks its answers against the lookup it was given;
+  a name the DM makes secret while the call is out would still pass. The caller therefore
+  fetches the lookup again and runs `check_entity` once more right before saving.
 - **The AI never writes a name.** It is shown the allowed names, numbered, and answers with
   a number; a name it makes up, or a number outside the list, is no answer. A line it
   isn't sure of gets no label (never a guess in the file); the caller may ask the DM.
@@ -42,7 +45,7 @@ Answer with one line per number, like "1 narrating" or "2 npc 3" or "3 unsure", 
 else."""
 
 _ANSWER = re.compile(
-    r"^\s*(\d+)\s*[:.)\-]?\s*(narrating|npc\s*(\d+)|unsure)\b(\s+maybe\b)?",
+    r"^\s*(\d{1,4})\s*[:.)\-]?\s*(narrating|npc\s*(\d{1,4})|unsure)\b(\s+maybe\b)?",
     re.IGNORECASE | re.MULTILINE,
 )
 

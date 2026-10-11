@@ -81,6 +81,21 @@ class WhichNamesTest(unittest.TestCase):
         both = lookup(twin, extra_aliases=(alias(MARY, "Silas Vane"),))
         self.assertEqual(check_entity(both, "Silas Vane"), "")
 
+    def test_spelling_variants_of_a_secret_name_are_refused(self) -> None:
+        both = lookup(
+            person(SECRET_VANE, "Silás  Vane"),
+            extra_aliases=(alias(SECRET_VANE, "Silás  Vane", secret=True),),
+        )
+        self.assertEqual([n for n in speakers(both) if "ane" in n and "Baron" not in n], [])
+        for name in ("Silas-Vane", "silás vane", "SILAS VANE"):
+            with self.subTest(name=name):
+                self.assertEqual(check_entity(both, name), "")
+
+    def test_a_merged_away_entity_is_never_a_label(self) -> None:
+        gone = Entity(MARY, "character", "Old Hiro", "", "merged", HIRO, "dm", 0, role=NPC)
+        look = lookup(gone, extra_aliases=(alias(MARY, "Old Hiro"),))
+        self.assertEqual(check_entity(look, "Old Hiro"), "")
+
     def test_players_proposed_and_unknown_names_are_refused(self) -> None:
         look = lookup()
         for name in ("Cerric", "Newcomer", "Gandalf", ""):
@@ -119,6 +134,10 @@ class AnswerTest(unittest.TestCase):
         self.assertEqual(read_answer("1 Silas Vane", 1, NAMES), [Guess()])
         self.assertEqual(read_answer("", 2, NAMES), [Guess(), Guess()])
 
+    def test_a_huge_number_is_no_answer_and_no_crash(self) -> None:
+        self.assertEqual(read_answer("1 npc " + "9" * 5000, 1, NAMES), [Guess()])
+        self.assertEqual(read_answer("9" * 5000 + " narrating", 1, NAMES), [Guess()])
+
     def test_the_prompt_lists_names_and_lines(self) -> None:
         text = speaker_ai.prompt(["a\nb", "c"], ["Auril"])
         self.assertEqual(text, "Characters:\n1. Auril\n\nLines:\n1. a b\n2. c")
@@ -136,3 +155,4 @@ class IdentifyTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Brother Hiro", sent)
         self.assertNotIn("Silas Vane", sent)
         self.assertNotIn("Cerric", sent)
+        self.assertNotIn("Vane", sent)  # nothing secret goes to the AI provider either
