@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-11 by dev2 (#1090 ready to deploy)
+Last updated: 2026-10-11 18:15 UTC by dev1 (core e8fe8e3 deployed, migration 0046)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,13 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting; core 383470a (2026-10-11 17:01 UTC) and web-api (17:27 UTC, #1084) are deployed: see the history)
-- #1090 (dev2, core only, **migration 0046_transcript_entity**): transcript lines can say who they were said as ({narrating} or an NPC's name) and downloads print it. Nothing sets it yet, so no visible change until the next PR. Check after deploy: the core log shows migration 0046 applied; a transcript download still works. No setting.
+(nothing waiting; core e8fe8e3 (2026-10-11 18:11 UTC) and web-api (17:27 UTC) are deployed: see the history)
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core 383470a (2026-10-11 17:01 UTC, migration 0045 campaign_guilds, retention follow-ups #1080, transcript table-talk tags #1079; before that 0f39e35 05:55 UTC, "confident / uncertain" #1072; before that 4f2a957 05:03 UTC, entry facts #1064; before that 5383938 04:44 UTC, migrations through 0044 memory kinds #1053; before that 4904c12 04:08 UTC; sidebar header facts #1045, fixes #1039; before that ccb8f47 03:31 UTC; wake phrase "Hey DMbot" #1048, consent age line #1044; before that 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
+core e8fe8e3 (2026-10-11 18:11 UTC, migration 0046 transcript entity #1090; before that 383470a 17:01 UTC, migration 0045 campaign_guilds, retention follow-ups #1080, transcript table-talk tags #1079; before that 0f39e35 05:55 UTC, "confident / uncertain" #1072; before that 4f2a957 05:03 UTC, entry facts #1064; before that 5383938 04:44 UTC, migrations through 0044 memory kinds #1053; before that 4904c12 04:08 UTC; sidebar header facts #1045, fixes #1039; before that ccb8f47 03:31 UTC; wake phrase "Hey DMbot" #1048, consent age line #1044; before that 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
 consent, AI tiers, the 16-or-older consent words), web-api from 383470a (2026-10-11 17:27 UTC, per-address limits #1084), ears 21c5ff1, web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
