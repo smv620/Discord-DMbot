@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import facts from "../src/content/plans.json";
-import { deletionWarnings, notAffiliated, retentionRows } from "../src/content/legal";
+import { deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -97,7 +97,7 @@ describe("the facts #433 asks for", () => {
   const terms = (): string => text(doc("terms").querySelector("main"));
 
   it("names what we keep and who helps us", () => {
-    for (const fact of ["Discord account number", "email", "ids of your Discord servers that use DMbot", "Deepgram", "Anthropic"]) {
+    for (const fact of ["Discord account number", "email", "names and numbers of the Discord servers you are in", "Deepgram", "Anthropic"]) {
       expect(privacy()).toContain(fact);
     }
   });
@@ -107,9 +107,64 @@ describe("the facts #433 asks for", () => {
     expect(privacy()).toContain("everyone in the Discord server");
   });
 
-  it("sets the minimum age at 13", () => {
-    expect(terms()).toContain("at least 13");
-    expect(privacy()).toContain("at least 13");
+  it("sets the minimum age at 16, with no 'older where local law requires' marker", () => {
+    expect(terms()).toContain("at least 16");
+    expect(privacy()).toContain("at least 16");
+    expect(terms()).not.toContain("older age");
+    expect(privacy()).not.toContain("older age");
+  });
+
+  // Owner's answers of 2026-10-10 (#922): who runs DMbot, how to reach them, and the rules.
+  it("names DMbot LLC and email-only contact, with no postal address field", () => {
+    for (const page of ["terms", "privacy", "refunds"]) {
+      const body = text(doc(page).querySelector("main"));
+      expect(body).not.toContain("{{OWNER");
+      expect(body).not.toContain("{{CONTACT EMAIL}}");
+    }
+    expect(terms()).toContain("DMbot is run by DMbot LLC");
+    expect(privacy()).toContain("DMbot is run by DMbot LLC");
+    expect(terms()).toContain("dmbot.admin@gmail.com");
+    // The owner chose email-only contact (2026-10-10): the address field must not come back.
+    expect(Object.keys(operator)).toEqual(["name", "email"]);
+    for (const page of ["terms", "privacy", "refunds"]) {
+      expect(text(doc(page).querySelector("main"))).not.toMatch(/postal address|street|OWNER ADDRESS/i);
+    }
+  });
+
+  it("names OVH US as the host and the US companies, with Lemon Squeezy as seller of record", () => {
+    expect(privacy()).toContain("OVH US LLC (OVHcloud, U.S.A.)");
+    expect(privacy()).toContain("Its servers are in the United States");
+    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub and Lemon Squeezy/);
+    expect(privacy()).toContain("Lemon Squeezy is the seller of record and handles withdrawal rights, invoices and tax");
+    expect(privacy()).not.toContain("HOSTING PROVIDER");
+  });
+
+  it("states the owner's choices on prices, closing, Try It, takedowns and service level", () => {
+    expect(terms()).toContain("Prices may change at any time. The price shown when you buy is the price you pay for that period.");
+    expect(terms()).toContain("at least 30 days' notice");
+    expect(terms()).toContain("Try It never turns into a paid plan by itself, and it needs no payment details");
+    expect(terms()).toContain("Write to dmbot.admin@gmail.com with a link to the material");
+    expect(terms()).toContain("DMbot is provided as is, with no promise it will always be available.");
+  });
+
+  it("states the refund rules the owner chose", () => {
+    const refunds = text(doc("refunds").querySelector("main"));
+    expect(refunds).toContain("within 14 days of paying and we'll refund it. A monthly renewal is not a new plan.");
+    expect(refunds).toContain("can't be refunded, used or not.");
+    expect(refunds).toContain("within 5 working days");
+    expect(refunds).toContain("Lemon Squeezy is the seller");
+    expect(refunds).not.toContain("{{CHECK");
+  });
+
+  it("says what the code does about sign-in, cookies and backups", () => {
+    expect(privacy()).toContain("We use it once to read your account, then cancel it. We never keep it.");
+    expect(privacy()).toContain("one cookie to keep you signed in, and two short ones");
+    expect(privacy()).toContain("but not what was said");
+    expect(privacy()).toContain("(they last 10 minutes)");
+    expect(privacy()).toContain("We keep this only while you are signed in.");
+    expect(privacy()).toContain("your Discord name");
+    expect(privacy()).toContain("only if Discord has confirmed it is yours");
+    expect(privacy()).toContain("This removes your sign-in details and your plan, straight away.");
   });
 
   it("says we are not connected to the publisher, once, on the terms page", () => {
@@ -142,7 +197,7 @@ describe("the facts #433 asks for", () => {
   });
 
   it("uses one sign-in cookie and no tracking", () => {
-    expect(privacy()).toMatch(/one cookie, only to keep you signed in/);
+    expect(privacy()).toMatch(/one cookie to keep you signed in/);
     expect(privacy()).toContain("no tracking or ad cookies");
   });
 

@@ -23,7 +23,7 @@ const firstMonth = {
 >
   <h2>Who we are</h2>
   <p>
-    DMbot is run by {operator.name}, {operator.address} ("we"). By adding DMbot to a server or
+    DMbot is run by {operator.name} ("we"). Write to {operator.email}. By adding DMbot to a server or
     signing in, you agree to these terms.
   </p>
 
@@ -31,7 +31,6 @@ const firstMonth = {
   <ul>
     <li>
       You must be at least {minimumAge}, and follow Discord's own rules.
-      {"{{CHECK: older age where local law requires it}}"}
     </li>
     <li>
       The person who adds DMbot to a server, or runs a campaign, is responsible for using it
@@ -69,7 +68,7 @@ const firstMonth = {
     </li>
     <li>
       We work hard to keep DMbot running, but we can't promise it never stops or never loses a
-      line. {"{{CHECK: service-level wording}}"}
+      line. DMbot is provided as is, with no promise it will always be available.
     </li>
   </ul>
 
@@ -77,8 +76,9 @@ const firstMonth = {
   <ul>
     <li>
       Plans, prices and hours are on the <a href="/pricing">Prices</a> page. Paid plans renew
-      every month until you stop them. The first month of {firstMonth.plan} after Try It costs {firstMonth.price}.
-      {"{{CHECK: does Try It turn into a paid plan by itself after 30 days, or only when you pick one? Say so here.}}"}
+      every month until you stop them. If you pick {firstMonth.plan} after Try It, the first month costs {firstMonth.price}.
+      Try It never turns into a paid plan by itself, and it needs no payment details. To keep
+      going after Try It, pick a plan.
     </li>
     <li>
       Payments are taken by {paymentProvider}, who is the seller. Their terms apply to the
@@ -86,8 +86,7 @@ const firstMonth = {
     </li>
     <li>
       You can change or stop your plan any time from <a href="/account">My Account</a>. A stopped
-      plan runs until the end of the month you paid for.
-      {"{{CHECK: confirm with the payment company's cancellation rules}}"}
+      plan keeps working until the end of the period you already paid for.
     </li>
     <li>
       If a renewal payment fails, there is a short grace period to fix it before the plan stops.
@@ -97,8 +96,8 @@ const firstMonth = {
     </li>
     <li>Refunds are explained on the <a href="/legal/refunds">Refunds</a> page.</li>
     <li>
-      We may change prices. We'll tell you at least {"{{CHECK: 30}}"} days before a change
-      reaches your plan.
+      Prices may change at any time. The price shown when you buy is the price you pay for
+      that period.
     </li>
   </ul>
 
@@ -115,7 +114,7 @@ const firstMonth = {
     </li>
     <li>
       If someone tells us shared material breaks their rights, we may remove it.
-      {"{{CHECK: notice-and-takedown address and process}}"}
+      Write to {operator.email} with a link to the material.
     </li>
     <li>
       Backups of a paid campaign hold the campaign, including the game master's secrets.
@@ -134,14 +133,14 @@ const firstMonth = {
   <h2>Ending</h2>
   <ul>
     <li>
-      You can delete your account and data any time from <a href="/account">My Account</a>.
-      Deleting ends your plan at once; you won't be charged again, and the rest of the month isn't
-      paid back. If you want money back, ask before you delete (see
-      <a href="/legal/refunds#stopping">Refunds</a>).
-      {"{{CHECK: what account deletion removes (#435)}}"}
+      You can delete your account any time from <a href="/account">My Account</a>.
+      Deleting removes your sign-in details and ends your plan at once; you won't be charged
+      again, and the rest of the month isn't paid back. If you want money back, ask before you
+      delete (see <a href="/legal/refunds#stopping">Refunds</a>).
+      {"{{CHECK: do the campaigns you own go when you delete? PLAN says yes; the code does not delete them yet (#922)}}"}
     </li>
     <li>
-      We may stop offering DMbot. If we do, we'll give paid users at least {"{{CHECK: 30}}"} days'
+      We may stop offering DMbot. If we do, we'll give paid users at least 30 days'
       notice and time to download their backups.
     </li>
   </ul>

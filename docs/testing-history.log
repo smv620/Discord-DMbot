@@ -1974,3 +1974,14 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   03:00:00 UTC, core log: one line, "Retention dry run: campaigns=1 past_keep_date=0 deleted=0 warned=0 skipped=0"
   (counts only). No ERROR in the last 3 hours. Nothing warned or deleted, as designed while
   DMBOT_ENFORCE_PLANS is off. Result: PASS.
+
+==============================================================================
+2026-10-11  dev1: deploy of core ccb8f47 (#1048 sidebar wake phrase and safety limit, #1044 consent age line)
+==============================================================================
+  03:30 UTC, no live session. Backup first: 39 tables, verified. Core only, no migration. Core log:
+  gateway and ears connected, "Connected to 1 server(s)", 0 ERROR; /health 404, /admin/auth/ways 200;
+  DMBOT_SIDEBAR=1 inside core. Sidebar re-test: 17 of 19 passed (answers on #954): the two misses are
+  fireball line-of-sight answers that say "not in DMbot's rules" although Fireball is in the SRD (the
+  02:4x run had the same fault on grappled instead; it varies by run). Sidebar stays on (no answer was
+  wrong AND "sure"). Not yet tested live: "Hey DMbot ..." at the table (add to the next sidebar test).
+  Result: PASS (deploy); the "not in DMbot's rules" fault goes to CloudDev.

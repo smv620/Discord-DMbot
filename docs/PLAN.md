@@ -2046,6 +2046,12 @@ and is never "sure" ("a spell attack can crit on a 20" is not house rule 3).
 both entries by their own names and pages ("Goblin Warrior SRD 5.2.1 p. 290; Goblin SRD 5.1 p. 315
 [Legacy 2014]"). Brevity is unchanged; tags and sources are added after the cut.
 
+*Built, header facts (#1039, CloudDev, 2026-10-10; prompt version `sidebar-4`):* each rules entry sent to
+the sidebar's AI now starts with its facts (a spell's level, casting time, range, components and duration; a
+creature's size and type, AC, HP, speed, CR, senses and initiative), which the entries keep apart from their text.
+Range, casting-time and duration questions were answered "not stated". The facts are outside the text cut and count
+as the entry's own words for the SRD-citation check (#1015). A condition has none.
+
 *Built, wake phrase (#1040, CloudDev, 2026-10-10; corrected by the owner the same day):* besides "Hold on, I
 need to find…", the campaign's DM can call **"Hey DMbot, …" anywhere in a line** (people talking fast run it into
 what came before: "…so they're in the cave, hey DMbot what's the range of fireball"); the text after it, to the
@@ -2467,8 +2473,9 @@ the provider's webhook. No D&D or Wizards trademarks or art: "for 5e-compatible 
 games". Terms, privacy and refund pages before launch: **signed off by the owner on
 2026-10-09, which is their effective date** (#498). Also approved for go-live that day:
 rate limits at the proxy, the separate `dmbot_web` database role, and Cloudflare in front
-of the API. The Discord app stays private until the rest of #498 is done and the owner
-says go. Settings stay in Discord for now;
+of the API. **Legal values (owner, 2026-10-10, #922):** DMbot LLC, email-only contact (no
+postal address on the site or in this repo), minimum age 16, OVH US hosting. The Discord app
+stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
 **Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
 Feedback and Ask a question, posted by the web API as GitHub Discussions in this
