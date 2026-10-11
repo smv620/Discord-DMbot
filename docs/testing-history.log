@@ -2028,3 +2028,13 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
     top line is unchanged; live, ask "Hey DMbot, what's the range of fireball?" (answer "150 feet"). When the model fails
     twice, a range / casting time / duration / AC question is answered with that field alone, with its page.
   Result: #1064 was deployed by dev1 at 05:03 UTC (core 4f2a957); its checks are in that entry.
+
+==============================================================================
+2026-10-11  dev1: deploy of core 0f39e35 (#1072, the sidebar says confident / uncertain instead of sure / not sure)
+==============================================================================
+  05:55 UTC, no live session. No queue line; the PR page said "Core only, no migration". Backup first: 40
+  tables, verified. Core log: gateway and ears connected, "Connected to 1 server(s)", 0 ERROR; /health 404,
+  /admin/auth/ways 200. Sidebar re-test (22 cases): 21 pass; answers end "(SRD 5.2.1 p. 131, confident)".
+  The one miss is checker wording only (fireball sets things on fire: the word "burning"). Posted on #954.
+  Note for the next sidebar test page: say "confident / uncertain", not "sure / not sure".
+  Result: PASS.
