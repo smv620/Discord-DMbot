@@ -206,16 +206,16 @@ export const text = {
   deleteStart: "Start deleting",
   /** Three short lines, the consequence first. */
   deleteWarning: [
-    "This deletes your account and your plan. Deleting your account doesn't delete your campaigns. Players can still read and download them. They're deleted after 120 days unless another DM takes them over.",
-    "To keep one, hand it over first. To save a copy, type /dmbot backup in Discord.",
-    "Backups people already have stay, and so do lines you said in other people's games.",
+    "This deletes your account and your plan.",
+    "Your campaigns are kept for 120 days. Players can still read and download them. After that they're deleted, unless another DM takes one on.",
+    "To keep one, hand it over first. To save a copy, type /dmbot backup in Discord. Backups people already downloaded stay with them, and so do the lines you said in other people's games.",
   ],
   /** The first warning line for someone with free access (#806): no plan, and it goes too. */
   deleteWarningFree:
-    "This deletes your account and your free access. Your campaigns are not deleted: players can still read and download them, and they're deleted after 120 days unless another DM takes them over.",
+    "This deletes your account and your free access. Your campaigns are kept for 120 days (players can still read and download them), then deleted unless another DM takes them on.",
   /** The same, while a paid plan is still being paid for: the payments stop too. */
   deleteWarningFreePaying:
-    "This deletes your account and your free access, and stops your payments. Your campaigns are not deleted: players can still read and download them, and they're deleted after 120 days unless another DM takes them over.",
+    "This deletes your account and your free access, and stops your payments. Your campaigns are kept for 120 days (players can still read and download them), then deleted unless another DM takes them on.",
   /** Shown with the warning when a paid plan would otherwise renew (#435: cancelled at the
    * end of the paid period). */
   deletePlanStops:
@@ -225,8 +225,8 @@ export const text = {
   deleteNext: "Delete everything",
   keep: "Keep my account",
   deleteSure:
-    "Last check: your account goes for good, and your campaigns are deleted in 120 days unless another DM takes them over. This can't be undone.",
+    "Last check: your account is deleted for good and this can't be undone. Your campaigns are kept 120 days, then deleted unless another DM takes them on.",
   deleteConfirm: "Yes, delete it all now",
   deleted:
-    "Done. Your account is deleted. Your campaigns stay for 120 days unless another DM takes them over. You can close this page.",
+    "Done. Your account is deleted. Your campaigns stay for 120 days. To save one, one of its DMs presses 🤝 Take it on in ⚙️ Settings, in that Discord server. You can close this page.",
 };

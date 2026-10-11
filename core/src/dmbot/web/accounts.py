@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 from dmbot.db import Database
+
+log = logging.getLogger(__name__)
 
 
 async def account_email(db: Database, user_id: int) -> str | None:
@@ -105,9 +108,12 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
     download them: they go 120 days later unless another DM takes them on (#1059; owner,
     2026-10-11). A database function does that across every server (0047)."""
     async with db.user(user_id) as conn:
-        await conn.execute(
-            "SELECT dmbot_orphan_owned_campaigns(%s)", (int(time.time()) if now is None else now,)
+        cur = await conn.execute(
+            "SELECT dmbot_orphan_owned_campaigns(%s) AS n",
+            (int(time.time()) if now is None else now,),
         )
+        row = await cur.fetchone()
+        log.info("Account deletion: %s campaign(s) kept, ownerless", row["n"] if row else 0)
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.

@@ -2466,7 +2466,7 @@ played (a session doesn't restart it); the usual 14- and 3-day warnings go as pr
 the campaign's DMs (there is no owner), naming the **Take it on** button. **Taking it over** is the
 existing ⚙️ Settings **Take it on** button (needs a free campaign slot), which clears
 `owner_left_at`; replacing the campaign with a backup does the same for whoever restores it. Stays
-dormant with `DMBOT_ENFORCE_PLANS` off, like all retention. The delete screen and the legal pages
+dormant with `DMBOT_ENFORCE_PLANS` off, like all retention. If the person who left was the campaign's only DM, nobody can take it on and it simply expires after the 120 days (players can still read and download it until then). The delete screen and the legal pages
 say it in plain words. *Not done:* the warnings are private messages to the DMs, not posts on the
 DM screen as #1059 asked: the retention job has no Discord channel to post to, and a private
 message reaches the same people and keeps DM-screen content out of any shared place.

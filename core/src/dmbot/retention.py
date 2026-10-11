@@ -77,6 +77,8 @@ def delete_date(campaign: Campaign, standing: Standing) -> int:
     owner, 2026-10-11): the players may still read and download it until then, and any DM
     can take it on. Every other campaign follows `delete_at`."""
     if campaign.owner_left_at is not None and campaign.owner_user_id is None:
+        # Tied on purpose to the 120 days a lapsed plan's campaigns are kept (the same
+        # promise on the legal pages), not a separate setting.
         return campaign.owner_left_at + plans.load().keep_after_plan_stops_paying.days * DAY
     return delete_at(campaign.last_active_at, standing)
 
@@ -154,7 +156,7 @@ def warning_text(
     if owner_left(campaign):
         # A fixed date, not a clock a session restarts: only taking it on keeps it.
         why = "the DM who ran it deleted their account and no one has taken it on"
-        keep = [f"take it on: open ⚙️ Settings {where} and press 🤝 **{TAKE_ON}**"]
+        keep = [f"any of its DMs can open ⚙️ Settings {where} and press 🤝 **{TAKE_ON}**"]
     if standing.backups:
         keep.append(f"download a backup with `/dmbot backup` {where}")
     if campaign.owner_user_id is not None and standing.lapsed_at is not None:
@@ -197,6 +199,7 @@ def grouped_warning_text(
             + ("" if days == 1 else "s")
             + f" ({_date(at)})"
             + (", plan ended" if ended else "")
+            + (", its DM left" if owner_left(campaign) else "")
         )
     last = "Last warning: " if any(warning_stage(at, now) == 2 for _c, _s, at in items) else ""
     keep = []
@@ -204,8 +207,8 @@ def grouped_warning_text(
         keep.append("play a session in that campaign's server (it is then safe for a while)")
     if any(owner_left(c) for c, _s, _a in items):
         keep.append(
-            "for one whose DM left, open ⚙️ Settings in its server and press "
-            f"🤝 **{TAKE_ON}** (a session doesn't keep it)"
+            "for one whose DM left, any of its DMs can open ⚙️ Settings in its server and "
+            f"press 🤝 **{TAKE_ON}** (a session doesn't keep it)"
         )
     if any(s.backups for _c, s, _a in items):
         keep.append("download a backup with `/dmbot backup` in that server")
@@ -220,7 +223,7 @@ def grouped_warning_text(
         f"⏳ {last}These campaigns will be deleted for good: their story, notes and "
         f"transcripts can't be brought back.\n"
         + "\n".join(lines)
-        + f"\nTo keep a campaign, {options}. Each one is judged on its own."
+        + f"\nTo keep a campaign, {options}."
     )
 
 
