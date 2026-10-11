@@ -2112,6 +2112,15 @@ messages use the same ones.
 | Pro | 217 ("about 50 hours a week"); needs the bigger server | 20 | coming soon |
 | Extra hours | +10 this month | — | $4.99 |
 
+*How extra hours are bought (2026-10-11, #1089):* an **Add 10 hours ($4.99)** button on the account
+page, under the hours left, shown only over a paid plan that works now (active, or in the 7-day
+grace). It calls `POST /billing/extra-hours`, which answers `{url}` like checkout, from the payment
+provider's `extra_hours_checkout_url` (the same billing rate-limit group); Try It, a lapsed plan and
+no plan get `no_paid_plan`, free access and grants get `has_free_access`. The purchase arrives as
+the signed `extra_hours_bought` event, which the writer applies to this period only (a new period
+starts at zero). The page says so in one line: "Extra hours are for this month only. They don't roll
+over." The bot's "hours are used up" message to the owner already points to the account page.
+
 **Free access and the admin page (owner decision, 2026-10-08).** The owner's own Discord
 account never needs a plan: it is listed in the server's settings (`DMBOT_FREE_USERS`, Discord
 ids, never in the repository) and counts as having every feature with no hours or campaign

@@ -125,6 +125,8 @@ export interface AccountApi {
   checkoutUrl(plan: PlanId): Promise<string>;
   /** The payment company's page to change plan, fix a payment or stop. */
   billingPortalUrl(): Promise<string>;
+  /** The payment company's page to buy more hours for this month (a paid, working plan). */
+  extraHoursUrl(): Promise<string>;
   /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
   installUrl(serverId: string): string;
   /** Say you added DMbot to a server it joined through a plain link. */
@@ -220,6 +222,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     },
     checkoutUrl: (plan) => url("/billing/checkout", { plan }),
     billingPortalUrl: () => url("/billing/portal"),
+    extraHoursUrl: () => url("/billing/extra-hours"),
     installUrl: (serverId) => `${root}/install?server_id=${encodeURIComponent(serverId)}`,
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
