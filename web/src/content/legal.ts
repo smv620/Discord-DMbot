@@ -12,10 +12,13 @@ import facts from "./plans.json";
 export const notAffiliated =
   "DMbot is not affiliated with or endorsed by Wizards of the Coast. It works with 5e-compatible tabletop games.";
 
+/**
+ * Who runs DMbot (owner, 2026-10-10, #922). There is no address on purpose: the owner chose
+ * email-only contact, and a postal address never goes on this public site or in this repo.
+ */
 export const operator = {
-  name: "{{OWNER NAME}}",
-  address: "{{OWNER ADDRESS}}",
-  email: "{{CONTACT EMAIL}}",
+  name: "DMbot LLC",
+  email: "dmbot.admin@gmail.com",
 };
 
 /** The payment company, chosen by the owner (2026-10-09). It is the seller (merchant of record). */
@@ -24,7 +27,8 @@ export const paymentProvider = "Lemon Squeezy";
 /** The day the owner signed the legal pages off (2026-10-09); shown on all three. */
 export const effectiveDate = "9 October 2026";
 
-export const minimumAge = 13;
+/** The minimum age to use DMbot (owner, 2026-10-10): 16, on the terms and privacy pages. */
+export const minimumAge = 16;
 
 /** Days to fix a failed payment before the plan stops (#437). */
 export const paymentGraceDays = facts.paymentGraceDays;
