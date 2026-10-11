@@ -2058,3 +2058,15 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   "ears connected", 0 ERROR. campaign_guilds holds 1 row (one server with campaigns). /health 404, /admin/auth/ways 200,
   DMBOT_SIDEBAR=1. Not yet checked in Discord: the transcript tags (#1079). Retention check: after the next 03:00 UTC run,
   one "Retention dry run" line and no "Retention: couldn't" error. #1084 (web API limits) still waits for its author's answer.
+
+==============================================================================
+2026-10-11  dev1  Deploy: web-api (per-address limits on sign-in, install, billing, account delete; #1084)
+==============================================================================
+  CloudDev and Supervisor both said to deploy web-api only (no migration). The web-api container has the client-address
+  header setting set (checked "set / not set" only). Image rebuilt from development 383470a+ and restarted; healthy,
+  uvicorn started, no error lines.
+  Check from inside the container (the tunnel publishes only /admin), with the website header the guard needs and a
+  documentation address 192.0.2.10: five POSTs to /account/delete/request gave 401 (signed out), the sixth 429 with a
+  Retry-After of 3600; one more from 192.0.2.11 gave 401 again, so the count is per address. (A first try without the
+  website's request header got 403 from the cross-site guard, as designed.)
+  Result: PASS.
