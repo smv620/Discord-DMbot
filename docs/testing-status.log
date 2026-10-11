@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-11 19:35 UTC by dev1 (core + web-api 8391df7 deployed)
+Last updated: 2026-10-11 by dev2 (#1100 ready to deploy)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -10,6 +10,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
 (nothing waiting; core and web-api 8391df7 (2026-10-11 19:30 UTC) are deployed: see the history)
+- #1100 (dev2, core only, no migration, no setting; needs the AI key on and the DM screen not on Quiet): when the AI is not sure who the DM was speaking as, the DM screen (only) asks 'Who was speaking just now?' with [Narrating] [up to 3 NPCs] [Type it…] [Not sure] (#53, part). Check: in a session where the DM speaks a vague line as an NPC, the question appears in the DM screen only; pick an NPC; the as-heard transcript download shows that label on the line; typing a secret NPC's name is refused; a player pressing a button is told only the DM can answer.
 
 ------------------------------------------------------------------------------
 LIVE NOW
