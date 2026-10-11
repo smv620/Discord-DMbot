@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-11 17:35 UTC by dev1 (web-api deployed)
+Last updated: 2026-10-11 by dev2 (#1090 ready to deploy)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -10,6 +10,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
 (nothing waiting; core 383470a (2026-10-11 17:01 UTC) and web-api (17:27 UTC, #1084) are deployed: see the history)
+- #1090 (dev2, core only, **migration 0046_transcript_entity**): transcript lines can say who they were said as ({narrating} or an NPC's name) and downloads print it. Nothing sets it yet, so no visible change until the next PR. Check after deploy: the core log shows migration 0046 applied; a transcript download still works. No setting.
 
 ------------------------------------------------------------------------------
 LIVE NOW
