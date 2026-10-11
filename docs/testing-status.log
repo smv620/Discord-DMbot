@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-11 by dev1 (core 4f2a957; Test F next)
+Last updated: 2026-10-11 by dev1 (core 0f39e35; Test F next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,12 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting; core 4f2a957 deployed 2026-10-11 05:03 UTC took everything merged so far: see the history)
+(nothing waiting; core 0f39e35 deployed 2026-10-11 05:55 UTC took everything merged so far: see the history)
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core 4f2a957 (2026-10-11 05:03 UTC, entry facts #1064; before that 5383938 04:44 UTC, migrations through 0044 memory kinds #1053; before that 4904c12 04:08 UTC; sidebar header facts #1045, fixes #1039; before that ccb8f47 03:31 UTC; wake phrase "Hey DMbot" #1048, consent age line #1044; before that 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
+core 0f39e35 (2026-10-11 05:55 UTC, "confident / uncertain" #1072; before that 4f2a957 05:03 UTC, entry facts #1064; before that 5383938 04:44 UTC, migrations through 0044 memory kinds #1053; before that 4904c12 04:08 UTC; sidebar header facts #1045, fixes #1039; before that ccb8f47 03:31 UTC; wake phrase "Hey DMbot" #1048, consent age line #1044; before that 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
 consent, AI tiers, the 16-or-older consent words), web-api 75a62d0, ears 21c5ff1, web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
