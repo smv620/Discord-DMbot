@@ -1996,3 +1996,17 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   The two misses are checker wording only (answers right). Posted on #954. Supervisor (03:43): the
   fireball line-of-sight "not in DMbot's rules" answers are correct; counted as passes.
   Result: PASS. Not yet tested live: "Hey DMbot ..." at the table (next sidebar test).
+
+==============================================================================
+2026-10-11  dev1: deploy of core 5383938 (#1053 memory kinds, migration 0044; #1062 test recording manifest fix)
+==============================================================================
+  04:43 UTC, no live session. Found through the Supervisor's deploy line on the PR and dev2's queue line
+  (#1067). Backup first: 39 tables, verified. Core log: "Database updated: 0044_memory_kinds", gateway
+  and ears connected, "Connected to 1 server(s)", 0 ERROR; /health 404, /admin/auth/ways 200.
+  Counts by kind before -> after (numbers only), 150 entries both times, nothing deleted:
+    npc 49, deity 5, creature 12 -> character 66 (role npc 49, role god 5, creatures role none);
+    spell 5 + concept 6 -> concept 11; needs_look = 17 (12 creatures + 5 spells), as designed;
+    event 2, faction 15, item 9, place 47 unchanged. memory_rule_links empty, row security on and forced.
+  Not yet checked in Discord (owner): /dmbot names cards read "character · NPC" / "place"; "Fireball | spell"
+  is refused with the /dmbot rule hint; "goblin | monster" refused, "Snot | monster" kept.
+  Result: PASS (deploy and data check).
