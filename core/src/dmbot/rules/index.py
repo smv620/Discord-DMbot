@@ -107,6 +107,21 @@ class Entry:
         """What an alert cites: `SRD 5.2.1, Spell Descriptions, p. 131`."""
         return f"{self.source}, {self.section}, p. {self.page}"
 
+    @property
+    def facts(self) -> str:
+        """The metadata the SRD keeps apart from the text (range, casting time, AC, ...), as one
+        plain line. See dmbot.rules.facts: the one place that knows the fields (#1063)."""
+        from dmbot.rules import facts
+
+        return facts.line(self)
+
+    @property
+    def full_text(self) -> str:
+        """The facts, then the text: what to read, search or check an answer against."""
+        from dmbot.rules import facts
+
+        return facts.full_text(self)
+
 
 @dataclass(frozen=True, slots=True)
 class Hit:

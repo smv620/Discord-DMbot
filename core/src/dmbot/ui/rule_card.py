@@ -15,6 +15,7 @@ from collections.abc import Iterable, Sequence
 
 import discord
 
+from dmbot.rules import facts as rule_facts
 from dmbot.rules import index
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Entry, Hit, monster_keys, normalize
@@ -36,8 +37,6 @@ TAG_WORDS = {"[2024]": "[Newer 2024 rules]"}  # a tag as the DM reads it
 ONLY_FREE_RULES = "_Only the free rules are in DMbot so far, not your own books._"
 KIND_WORDS = {"spell": "spell", "condition": "condition", "monster": "creature"}
 
-_ORDINALS = {1: "1st", 2: "2nd", 3: "3rd"}
-
 
 def _md(text: str) -> str:
     return discord.utils.escape_markdown(text)
@@ -53,39 +52,11 @@ def _fit(text: str, limit: int) -> str:
     return cut + "…"
 
 
-def level_words(entry: Entry) -> str:
-    """ "3rd-level Evocation", "Evocation cantrip", "1st-level Divination (ritual)"."""
-    level, school = int(entry.details["level"]), str(entry.details["school"])
-    ritual = " (ritual)" if entry.details.get("ritual") else ""
-    if level == 0:
-        return f"{school} cantrip"
-    return f"{_ORDINALS.get(level, f'{level}th')}-level {school}{ritual}"
-
-
 def facts(entry: Entry) -> str:
     """The short line under the name: a spell's level, school, casting time, range,
     components and duration; a creature's size and type, AC, HP, speed and CR; nothing for
-    a condition."""
-    d = entry.details
-    if entry.kind == "spell":
-        parts = [
-            level_words(entry),
-            f"Casting time: {d['casting_time']}",
-            f"Range: {d['range']}",
-            f"Components: {d['components']}",
-            f"Duration: {d['duration']}",
-        ]
-    elif entry.kind == "monster":
-        parts = [
-            f"{d['size']} {d['type']}",
-            f"AC {d['ac']}",
-            f"HP {d['hp']} ({d['hit_dice']})",
-            f"Speed {d['speed']}",
-            f"CR {d['cr']}",
-        ]
-    else:
-        return ""
-    return _fit(" · ".join(_md(str(p)) for p in parts), FACTS_MAX)
+    a condition. The fields come from `dmbot.rules.facts` (#1063)."""
+    return _fit(" · ".join(_md(part) for part in rule_facts.card_parts(entry)), FACTS_MAX)
 
 
 def house_matches(rules: Iterable[HouseRule], names: Iterable[str]) -> list[HouseRule]:
