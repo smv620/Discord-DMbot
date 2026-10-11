@@ -1985,3 +1985,14 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   02:4x run had the same fault on grappled instead; it varies by run). Sidebar stays on (no answer was
   wrong AND "sure"). Not yet tested live: "Hey DMbot ..." at the table (add to the next sidebar test).
   Result: PASS (deploy); the "not in DMbot's rules" fault goes to CloudDev.
+
+==============================================================================
+2026-10-11  dev1: deploy of core 4904c12 (#1045, the DM sidebar sends a rules entry's header facts; fixes #1039)
+==============================================================================
+  04:07 UTC, no live session. Backup first: 39 tables, verified. Core only, no migration. Core log:
+  gateway and ears connected, "Connected to 1 server(s)", 0 ERROR; /health 404, /admin/auth/ways 200;
+  DMBOT_SIDEBAR=1 inside core. Sidebar re-test (now 22 cases): 20 pass; fireball range, how long Bless
+  lasts and Shield's casting time are all right and "sure" with SRD page citations (the #1039 cases).
+  The two misses are checker wording only (answers right). Posted on #954. Supervisor (03:43): the
+  fireball line-of-sight "not in DMbot's rules" answers are correct; counted as passes.
+  Result: PASS. Not yet tested live: "Hey DMbot ..." at the table (next sidebar test).
