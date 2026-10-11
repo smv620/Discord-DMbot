@@ -397,6 +397,26 @@ class CampaignStore:
             dms = await self._dms_for(conn, guild_id)
         return [_to_campaign(r, dms.get(r["id"], set())) for r in rows]
 
+    async def guilds_with_campaigns(self) -> list[int]:
+        """Every server that has held a campaign, from the database and not from the bot's
+        current servers, so the campaigns of a server DMbot has left are still reached
+        (#989). Server IDs only."""
+        async with self._db.unscoped() as conn:
+            cur = await conn.execute("SELECT guild_id FROM campaign_guilds ORDER BY guild_id")
+            return [int(r["guild_id"]) for r in await cur.fetchall()]
+
+    async def forget_guild_if_empty(self, guild_id: int) -> bool:
+        """Drop a server from the list once it holds no campaigns. Check and delete are one
+        statement in the server's own scope, so a campaign made a moment ago keeps it listed."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM campaign_guilds WHERE guild_id = %s"
+                " AND NOT EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %s)"
+                " RETURNING guild_id",
+                (guild_id, guild_id),
+            )
+            return await cur.fetchone() is not None
+
     async def last_used(self, guild_id: int) -> Campaign | None:
         """The default for `/dmbot start`: the campaign played (or created) most recently."""
         async with self._db.guild(guild_id) as conn:

@@ -4,13 +4,17 @@ the setting off (a dry run only), and isolation. Needs Postgres for the store te
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from datetime import UTC, datetime
+from pathlib import Path
 
 from dmbot import entitlements, plans, retention
 from dmbot.campaigns import CampaignStore
+from dmbot.db import Database, drop_schema
 from dmbot.retention import DAY, RetentionJob, Standing
-from tests.pg import DatabaseTest
+from dmbot.schema import MIGRATIONS
+from tests.pg import TEST_URL, DatabaseTest
 
 GUILD_A, GUILD_B = 111, 222
 ALICE, BOB = 7, 8
@@ -50,6 +54,22 @@ class KeepDates(unittest.TestCase):
         self.assertEqual(retention.next_run_after(before), now)
 
 
+class CatchUp(unittest.TestCase):
+    def test_overdue_only_when_the_last_run_was_over_a_day_ago(self) -> None:
+        self.assertFalse(retention.catch_up_due(None, T0))  # never run: the 03:00 run is first
+        self.assertFalse(retention.catch_up_due(T0 - DAY, T0))
+        self.assertTrue(retention.catch_up_due(T0 - DAY - 1, T0))
+
+    def test_the_last_run_is_kept_in_a_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "sub"
+            self.assertIsNone(retention.read_last_run(state))
+            retention.write_last_run(state, T0)
+            self.assertEqual(retention.read_last_run(state), T0)
+            (state / retention.LAST_RUN_FILE).write_text("junk")
+            self.assertIsNone(retention.read_last_run(state))
+
+
 class Job(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -68,11 +88,17 @@ class Job(DatabaseTest):
         self.sent.append((user_id, text))
         return True
 
-    def job(self, guilds: tuple[int, ...] = (GUILD_A, GUILD_B)) -> RetentionJob:
+    def job(self, guilds: tuple[int, ...] | None = None) -> RetentionJob:
+        """`guilds` limits the servers asked about; None takes them from the database."""
+
+        async def listed() -> list[int]:
+            return list(guilds) if guilds is not None else await self.store.guilds_with_campaigns()
+
         return RetentionJob(
             campaigns=self.store,
             standing_of=self.standing_of,
-            guild_ids=lambda: list(guilds),
+            guild_ids=listed,
+            forget_guild=self.store.forget_guild_if_empty,
             running=lambda: self.running,
             send=self.send,
             enforce=self.enforce,
@@ -341,3 +367,86 @@ class Job(DatabaseTest):
         out = await self.job().run_once(T0 + 59 * DAY + 61 * DAY)
         self.assertEqual(out.deleted, 0)
         self.assertTrue(await self.exists(GUILD_A, cid))
+
+    async def test_a_server_the_bot_has_left_is_still_retained(self) -> None:
+        # The list of servers comes from the database, not from the bot's own servers.
+        a = await self.make(GUILD_A, "Left behind", ALICE, T0)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+        self.assertEqual(await self.store.guilds_with_campaigns(), [GUILD_A, GUILD_B])
+        await self.job().run_once(T0 + 58 * DAY)
+        out = await self.job().run_once(T0 + 61 * DAY)
+        self.assertEqual(out.deleted, 1)
+        self.assertFalse(await self.exists(GUILD_A, a))
+
+    async def test_an_empty_server_is_dropped_from_the_list(self) -> None:
+        a = await self.make(GUILD_A, "Only", ALICE, T0)
+        await self.make(GUILD_B, "Other", BOB, T0 + 300 * DAY)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "DELETE FROM campaigns WHERE guild_id = %s AND id = %s", (GUILD_A, a)
+            )
+        await self.job().run_once(T0 + 10 * DAY)
+        self.assertEqual(await self.store.guilds_with_campaigns(), [GUILD_B])
+        self.assertFalse(await self.store.forget_guild_if_empty(GUILD_B))  # still has one
+
+    async def test_an_owner_with_several_campaigns_gets_one_message(self) -> None:
+        for n in range(3):
+            await self.make(GUILD_A, f"Tale {n}", ALICE, T0)
+        for n in range(8):  # filler so the guard stays out of it
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+        keep = plans.load().by_id["try-it"].keep_after_last_session.days
+        self.now = T0 + keep * DAY - 14 * DAY
+        out = await self.job().run_once(self.now)
+        self.assertEqual(out.warnings, 3)  # every campaign counts as warned
+        self.assertEqual([u for u, _ in self.sent], [ALICE])
+        for n in range(3):
+            self.assertIn(f"Tale {n}", self.sent[0][1])
+        self.assertEqual((await self.job().run_once(self.now + 3600)).warnings, 0)
+        self.assertEqual(len(self.sent), 1)  # remembered: none repeated
+
+    async def test_a_long_list_is_split_into_messages_of_a_few_campaigns(self) -> None:
+        for n in range(7):
+            await self.make(GUILD_A, f"Tale {n}", ALICE, T0)
+        for n in range(80):
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+        keep = plans.load().by_id["try-it"].keep_after_last_session.days
+        out = await self.job().run_once(T0 + keep * DAY - 14 * DAY)
+        self.assertEqual(out.warnings, 7)
+        self.assertEqual(len(self.sent), 2)
+        self.assertTrue(all(len(text) < 1900 for _u, text in self.sent))
+
+    async def test_a_left_server_nobody_can_reach_is_never_deleted(self) -> None:
+        a = await self.make(GUILD_A, "Unreachable", ALICE, T0)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+
+        async def nobody(user_id: int, text: str) -> bool:
+            return False
+
+        self.send = nobody  # type: ignore[method-assign]
+        await self.job().run_once(T0 + 58 * DAY)
+        out = await self.job().run_once(T0 + 70 * DAY)
+        self.assertEqual(out.deleted, 0)
+        self.assertTrue(await self.exists(GUILD_A, a))
+
+
+class Migration0045(DatabaseTest):
+    """Migrations run with no server set, so the backfill must open `campaigns` for itself,
+    or the list of servers starts empty and the job reaches none of the old ones."""
+
+    async def test_servers_that_already_hold_campaigns_are_listed(self) -> None:
+        before = [m for m in MIGRATIONS if m[0] < "0045"]
+        await self.db.close()
+        await drop_schema(TEST_URL, self.schema)
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        old = CampaignStore(self.db, clock=lambda: 1)
+        await old.create(GUILD_A, "One", ALICE)
+        await old.create(GUILD_A, "Two", ALICE)
+        await old.create(GUILD_B, "Three", BOB)
+        await self.db.close()
+        self.db = await Database.open(TEST_URL, schema=self.schema)
+        store = CampaignStore(self.db, clock=lambda: 1)
+        self.assertEqual(await store.guilds_with_campaigns(), [GUILD_A, GUILD_B])
+        await store.create(333, "New", ALICE)  # and the trigger keeps it going
+        self.assertEqual(await store.guilds_with_campaigns(), [GUILD_A, GUILD_B, 333])
