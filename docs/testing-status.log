@@ -9,7 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting; the 2026-10-11 02:38 UTC deploy took #1031, #1023, #1013 and #1033: see the history)
+- CloudDev, #1045 (#1039): the sidebar's AI now gets each entry's facts (a spell's casting time, range, components,
+  duration; a creature's AC, HP, speed): core only, no migration, prompt version sidebar-4. Check: rerun
+  `python -m dmbot.devtools.sidebar_check` (new cases: fireball range "150 feet", Bless "a minute", Shield casting
+  time "reaction") and post the table on #954; live, ask "Hey DMbot, what's the range of fireball?".
+  (#1025 and #1038, the test-recordings replay and library run, are devtools only: nothing to deploy;
+  `scripts/replay --session` and `python -m dmbot.devtools.test_library run` work once a session is kept.)
 
 ------------------------------------------------------------------------------
 LIVE NOW
