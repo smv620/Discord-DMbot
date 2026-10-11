@@ -44,9 +44,11 @@ SIDEBAR_NOTE = (
 SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
 HOW_TO_READ = (
     "Each line: [time since start] (person) {their character}: what they said. "
-    "{narrating} or an NPC's name is the DM speaking as them; "
-    "{table_talk} is talk about the rules or running the game; {non-game_content} is "
-    "chat that isn't about the game (the Cleaned version only notes how long it lasted)."
+    "{narrating} means the DM is describing the scene; an NPC's name in braces means the DM "
+    "is speaking as that character. {table_talk} is talk about the rules or running the "
+    "game; {non-game_content} is chat that isn't about the game (these are not characters). "
+    "The cleaned file replaces off-topic chat with a note of how long it lasted; the "
+    "as-heard file keeps every word."
 )
 # What a line is when it is not the person's character speaking (#53).
 TOPIC_TAGS = {TABLE_TALK: "table_talk", OFF_TOPIC: "non-game_content"}
