@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-10 by dev1 (core 40b3c79, sidebar ON; Test E done; game clock test next)
+Last updated: 2026-10-11 by dev1 (core 470d389, migrations through 0043; Test F next)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,54 +9,17 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- dev3, #1031 (#1019), merged into development with CloudDev's #1025 (replay): TEST RECORDINGS, part 1,
-  saving live test sessions. Core only. Migration **0043** (test_voice_consent). A NEW volume
-  `test-recordings` (compose and Dockerfile are updated): `docker compose up -d --build`. Nothing is saved
-  until you set `DMBOT_TEST_RECORDING_GUILDS=<the test server's number>` in `.env` and restart core
-  (`DMBOT_TEST_RECORDINGS_DIR` has a good default). Then, in that server: `/dmbot start` says once in the
-  DM screen "Test session..."; each player's consent message ends with "A second choice... You can skip
-  it" and a **Save my voice for tests** button (only works after the recording yes); ⚙️ Menu then has
-  **Stop saving my voice**. Check: after a two-speaker live test (docs/test-scripts/dm-and-player.md, both
-  people pressing Save my voice for tests) `python -m dmbot.devtools.test_library list` shows the session,
-  2 speakers, complete, no ids; `... keep <folder> --name two-speaker-live --note "what passed"`; a person
-  who presses Stop saving my voice (or Stop recording me) has their files gone from every session. Files
-  live only in the volume; unkept sessions go after 7 days. Core logs no ERROR.
-- dev3, #1023 (#1018): the consent question now says "You must be 16 or older to be recorded." and
-  the button reads "I'm 16 or older, record me". Core only, no migration. The consent terms version goes
-  from 3 to 4, so EVERYONE who agreed before is asked again at their next join and is NOT recorded until
-  they press the new button: deploy between sessions, not mid-test, and tell the people at the table.
-  Check: the private message and `/consent give` show the age line and "Younger than 16? Press No thanks.
-  You can still play."; an old "I consent" button from before shows the new question and saves nothing;
-  `/dmbot help` names the new button; 0 ERROR. (docs/next-test-step.md still says "I consent": update it.)
-- CloudDev, #1013 (#1006): AI model tiers (FAST / CAREFUL / DEEP, a fallback down the tiers, one usage
-  line per call). Core only, no migration. Three optional new settings in .env.example (the defaults work;
-  the old AI_MODEL still works with a log line). BLOCKED for dev1 on 2026-10-10: the permission checker refused
-  scripts/update-env ("Feature Flag Writes"); needs the owner's go. Check: start-up log shows
-  "AI models in use: fast=... careful=... deep=...", 0 ERROR, one usage line per AI call.
-- dev2, PR #1013 (9bdfca7, #1006: AI model tiers). Core only, no migration. Three new OPTIONAL `.env`
-  settings, AI_MODEL_FAST, AI_MODEL_CAREFUL and AI_MODEL_DEEP (the defaults work: Haiku, Sonnet, Opus).
-  The old AI_MODEL still works: it is read as AI_MODEL_FAST with a warning in the start-up log, and it
-  now covers every quick job, not only Find names, so rename it (same value). A malformed value stops
-  start-up and names the setting. Check: the core start-up log has "AI models in use: fast=...
-  careful=... deep=..." (or "AI is off" with no key) and no settings error; every AI call logs one
-  "AI call: tier=... model=... in=... out=... cache_read=..." line (counts only). If a model is not
-  available to the key, one warning says which setting to check and the next tier down is used.
-- dev2, PR #1033 (#1017, AI tiers part 2; fix-log #1032). Core only, no migration. Find names now runs on
-  CAREFUL (Sonnet), and the sidebar gets a CAREFUL second try when the quick answer fails. Proof for dev1:
-  rerun `python -m dmbot.devtools.sidebar_check` (it prints the model that answered): all cases pass, a
-  CAREFUL model answers only the cases the quick one failed, times under about 5 s; paste the result on #954.
-  Also: from one test session, grep the core log for "Sidebar second try" and for the "AI call: tier=..."
-  lines per tier, and compare with #979's estimate. 0 ERROR.
+(nothing waiting; the 2026-10-11 02:38 UTC deploy took #1031, #1023, #1013 and #1033: see the history)
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core 40b3c79 (2026-10-10 05:05 UTC, migrations through 0042: retention #985, house-rules file #988,
-TimeBot #994 and #1008, sidebar accuracy #997 and #1010), web-api 75a62d0, ears 21c5ff1, web-api
+core 470d389 (2026-10-11 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
+consent, AI tiers, the 16-or-older consent words), web-api 75a62d0, ears 21c5ff1, web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the
 website's go-live, #498, after #910's fixes). DMBOT_FREE_USERS is empty again (set by mistake for a few hours on 2026-10-10, see the history).
-DMBOT_SIDEBAR is 1 (ON since 2026-10-10 05:47 UTC: Supervisor said "sidebar may go on" on #954 after 18 of 19; the owner set it, dev1 cannot edit .env). If a live answer is wrong AND says "sure", post it on #954 and set it back to 0. DMBOT_ADMIN_PRIMARY_ID is set; DMBOT_ADMIN_SECONDARY_ID waits for the owner. The app stays
+DMBOT_SIDEBAR is 1 (ON since 2026-10-10 05:47 UTC: Supervisor said "sidebar may go on" on #954 after 18 of 19; the owner set it, dev1 cannot edit .env; test recordings are OFF until DMBOT_TEST_RECORDING_GUILDS is set). If a live answer is wrong AND says "sure", post it on #954 and set it back to 0. DMBOT_ADMIN_PRIMARY_ID is set; DMBOT_ADMIN_SECONDARY_ID waits for the owner. The app stays
 private (no install link) until the website launches.
 
 ------------------------------------------------------------------------------
