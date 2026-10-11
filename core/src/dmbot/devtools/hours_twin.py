@@ -14,14 +14,18 @@ bot's exact words.
 What it shares with the bot: `hours.warning_crossed` / `warning_text`, `hours.cap_action`,
 `grace_started_text`, `stop_soon_text`, `stopped_text`, `hours.refusal`, and the meter's
 database writes (`usage.add_minutes`, `start_grace`, `check_start`). What it does not: the
-bot's loop around them (`Bot._meter_write`, `_enforce_cap`) needs Discord, so the order of the
-steps here follows those methods and a test pins that the words come from the same functions.
+bot's loop around them (`Bot._meter_write`, `_enforce_cap`) needs Discord, so `play` is a
+**copy of those steps that can drift**: change it with them. It leaves out what a replay does
+not need: the paused-campaign and campaign-cap checks at start, the ownerless branch, the
+rounded-up final charge at a stop, and the fail-open timeouts. It bills a flat minute a tick.
 Enforcement is on for this replay only. Nothing here is a real person: the owner and server
 numbers are made up, and no player's words are used.
 """
 
 from __future__ import annotations
 
+import logging
+import math
 import uuid
 from dataclasses import dataclass, field
 
@@ -40,6 +44,9 @@ DAY = 86400
 PLAN_IDS: tuple[str, ...] = ("try-it", "table", "two-tables", "guild")
 
 
+log = logging.getLogger(__name__)
+
+
 class TwinError(ValueError):
     """The options don't make a scenario (a plain message for the person running it)."""
 
@@ -54,8 +61,8 @@ class Scenario:
     def check(self) -> None:
         if self.plan not in PLAN_IDS:
             raise TwinError(f"--plan must be one of {', '.join(PLAN_IDS)}")
-        if self.hours_used < 0:
-            raise TwinError("--hours-used can't be negative")
+        if not math.isfinite(self.hours_used) or self.hours_used < 0:
+            raise TwinError("--hours-used must be a number of hours, 0 or more")
         if self.grace and self.plan == "try-it":
             raise TwinError("--grace is for a paid plan: Try It has no payment")
         if self.session_minutes < 1:
@@ -116,6 +123,7 @@ async def _set_up(db: Database, scenario: Scenario) -> str:
             await entitlements_writer.apply_event(db, failed, now=NOW - DAY)
     campaign = await CampaignStore(db, clock=lambda: NOW).create(GUILD, "Twin campaign", OWNER)
     used = round(scenario.hours_used * 60)
+    # Dated two days before NOW, in the same plan month as the session (NOW is mid-month).
     if used:  # an earlier session, so this one starts with the hours already spent
         await usage.add_minutes(
             db,
@@ -216,10 +224,7 @@ def report(result: Result) -> list[str]:
         out.append("  start refused:")
         out.append(f"    {result.start_refusal}")
         return out
-    notices = sorted(
-        [(m, t) for m, t in result.warnings] + [(m, t) for m, t in result.grace],
-        key=lambda x: x[0],
-    )
+    notices = sorted(result.warnings + result.grace, key=lambda x: x[0])
     out += [_screen(m, t) for m, t in notices]
     if not notices and result.stopped_at is None:
         out.append("  no warning: the session ended before 80% of the hours")
@@ -234,9 +239,15 @@ def report(result: Result) -> list[str]:
 async def run(url: str, scenario: Scenario, *, site_url: str = "") -> Result:
     """`play` in a throwaway schema of the database at `url`, dropped afterwards."""
     schema = f"twin_{uuid.uuid4().hex[:12]}"
-    db = await Database.open(url, schema=schema, max_size=2)
+    db: Database | None = None
     try:
+        db = await Database.open(url, schema=schema, max_size=2)
         return await play(db, scenario, site_url=site_url)
     finally:
-        await db.close()
-        await drop_schema(url, schema)
+        # Also when opening failed half way: the schema is made before it is migrated.
+        try:
+            if db is not None:
+                await db.close()
+            await drop_schema(url, schema)
+        except Exception:
+            log.warning("The throwaway schema %s may be left behind: drop it by hand", schema)

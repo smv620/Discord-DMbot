@@ -399,7 +399,6 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--hours-used",
         type=float,
-        default=0.0,
         metavar="N",
         help="hours the owner has already used this month (with --plan)",
     )
@@ -439,9 +438,14 @@ async def _hours(args: argparse.Namespace, session: Session) -> int:
         )
         return 2
     longest = max((u.end_ms for u in session.utterances), default=0)
-    minutes = args.session_minutes or max(1, -(-longest // 60_000))
-    scenario = hours_twin.Scenario(args.plan, args.hours_used, args.grace, minutes)
+    minutes = (
+        args.session_minutes if args.session_minutes is not None else max(1, -(-longest // 60_000))
+    )
+    scenario = hours_twin.Scenario(
+        args.plan, args.hours_used if args.hours_used is not None else 0.0, args.grace, minutes
+    )
     try:
+        scenario.check()  # before any connection is made
         result = await hours_twin.run(url, scenario, site_url=os.environ.get("WEB_SITE_URL", ""))
     except hours_twin.TwinError as exc:
         print(f"replay: {exc}", file=sys.stderr)
@@ -479,7 +483,12 @@ async def main_async(args: argparse.Namespace) -> int:
         code = await _hours(args, session)
         if code or args.hours_only:
             return code
-    elif args.hours_used or args.grace or args.session_minutes or args.hours_only:
+    elif (
+        args.hours_used is not None
+        or args.grace
+        or args.session_minutes is not None
+        or args.hours_only
+    ):
         print(
             "replay: --hours-used, --grace, --session-minutes and --hours-only need --plan",
             file=sys.stderr,

@@ -27,7 +27,9 @@ class Options(unittest.TestCase):
     def test_bad_options_are_refused_in_plain_words(self) -> None:
         for scenario, words in (
             (twin.Scenario("platinum"), "--plan must be one of"),
-            (twin.Scenario("table", -1), "can't be negative"),
+            (twin.Scenario("table", -1), "0 or more"),
+            (twin.Scenario("table", float("nan")), "0 or more"),
+            (twin.Scenario("table", float("inf")), "0 or more"),
             (twin.Scenario("try-it", 0, True), "Try It has no payment"),
             (twin.Scenario("table", 0, False, 0), "at least 1"),
         ):
@@ -155,7 +157,7 @@ class FromTheCommandLine(unittest.IsolatedAsyncioTestCase):
             self.skipTest("needs Postgres")
         code, out, _ = await self.run_cli(
             "--plan", "table", "--hours-used", "17.9", "--hours-only", "--session-minutes", "200",
-            env={"DATABASE_URL": TEST_URL, "DISCORD_TOKEN": ""},
+            env={"DATABASE_URL": TEST_URL, "DISCORD_TOKEN": "", "WEB_SITE_URL": ""},
         )  # fmt: skip
         self.assertEqual(code, 0)
         self.assertIn("hours twin: plan table", out)
@@ -166,20 +168,43 @@ class FromTheCommandLine(unittest.IsolatedAsyncioTestCase):
         if not TEST_URL:
             self.skipTest("needs Postgres")
         code, out, _ = await self.run_cli(
-            "--plan", "guild", "--hours-only", env={"DATABASE_URL": TEST_URL, "DISCORD_TOKEN": ""}
+            "--plan",
+            "guild",
+            "--hours-only",
+            env={"DATABASE_URL": TEST_URL, "DISCORD_TOKEN": "", "WEB_SITE_URL": ""},
         )
         self.assertEqual(code, 0)
         self.assertIn("a 1 min session", out)  # the saved session is under a minute long
 
+    async def test_an_explicit_zero_is_still_checked(self) -> None:
+        code, _, err = await self.run_cli(
+            "--plan", "table", "--session-minutes", "0", "--hours-only",
+            env={"DATABASE_URL": "postgresql://x", "DISCORD_TOKEN": "", "WEB_SITE_URL": ""},
+        )  # fmt: skip
+        self.assertEqual(code, 2)
+        self.assertIn("at least 1", err)
+
+    async def test_a_zero_without_a_plan_is_still_refused(self) -> None:
+        code, _, err = await self.run_cli(
+            "--hours-used", "0", env={"DISCORD_TOKEN": "", "WEB_SITE_URL": ""}
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("need --plan", err)
+
     async def test_a_plan_needs_a_database(self) -> None:
         code, _, err = await self.run_cli(
-            "--plan", "table", "--hours-only", env={"DATABASE_URL": "", "DISCORD_TOKEN": ""}
+            "--plan",
+            "table",
+            "--hours-only",
+            env={"DATABASE_URL": "", "DISCORD_TOKEN": "", "WEB_SITE_URL": ""},
         )
         self.assertEqual(code, 2)
         self.assertIn("needs DATABASE_URL", err)
 
     async def test_the_hours_flags_need_a_plan(self) -> None:
-        code, _, err = await self.run_cli("--hours-used", "3", env={"DISCORD_TOKEN": ""})
+        code, _, err = await self.run_cli(
+            "--hours-used", "3", env={"DISCORD_TOKEN": "", "WEB_SITE_URL": ""}
+        )
         self.assertEqual(code, 2)
         self.assertIn("need --plan", err)
 
@@ -188,7 +213,7 @@ class FromTheCommandLine(unittest.IsolatedAsyncioTestCase):
             self.skipTest("needs Postgres")
         code, _, err = await self.run_cli(
             "--plan", "try-it", "--grace", "--hours-only",
-            env={"DATABASE_URL": TEST_URL, "DISCORD_TOKEN": ""},
+            env={"DATABASE_URL": TEST_URL, "DISCORD_TOKEN": "", "WEB_SITE_URL": ""},
         )  # fmt: skip
         self.assertEqual(code, 2)
         self.assertIn("Try It has no payment", err)

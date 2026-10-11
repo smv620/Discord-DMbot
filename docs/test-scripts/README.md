@@ -231,10 +231,12 @@ It prints, in order: the 80% and 90% warnings, the cap and the one 2-hour grace,
 about 15 minutes" notice, the stop, and what the owner is told at the next `/dmbot start`. An owner
 already at the cap is refused at start and no session runs (Try It: "change your plan", no extra
 hours). Example: `--plan table --hours-used 14 --session-minutes 400` shows 80% at 24 min, 90% at
-132, the grace at 240, the stop warning at 345 and the stop at 360. The loop around the rules
-(`Bot._meter_write`, `_enforce_cap`) needs Discord, so the twin follows its steps and a test pins
-that the words come from the same functions; if the bot's loop changes, change `hours_twin.play`
-with it.
+132, the grace at 240, the stop warning at 345 and the stop at 360. The words and the numbers come from the bot's own functions and
+meter, but the loop around them (`Bot._meter_write`, `_enforce_cap`) needs Discord, so
+`hours_twin.play` is a copy of its steps that can drift: if the bot's loop changes, change `play`
+with it. It leaves out the paused-campaign and campaign-cap checks at start, the ownerless branch
+and the rounded-up final charge. Use a scratch database for `DATABASE_URL` if you can: the twin
+only makes and drops its own schema, but it does run the migrations and take their lock.
 
 Two more checks on a library run, both off by default:
 
