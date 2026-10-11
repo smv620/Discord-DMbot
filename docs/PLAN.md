@@ -2495,6 +2495,26 @@ of the API. **Legal values (owner, 2026-10-10, #922):** DMbot LLC, email-only co
 postal address on the site or in this repo), minimum age 16, OVH US hosting. The Discord app
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
+**The Lemon Squeezy adapter (2026-10-11, #1083, #498 item 5):** `dmbot.web.lemonsqueezy`
+(`PAYMENT_PROVIDER=lemonsqueezy`; keys and ids in `.env.example`, set through `scripts/set-key`).
+It meets every rule in `payments.py`. **Events** (signature = HMAC-SHA256 of the raw body in
+`X-Signature`, compared as bytes): `subscription_created` with status `active` is
+`subscription_started` (Lemon Squeezy creates it only after the first payment);
+`subscription_updated` with status `active` is `subscription_renewed` (a renewal, or a plan
+change at the moment it takes effect; the plan comes from the variant id); `subscription_payment_failed`
+is `payment_failed` (the writer gives grace only after an earlier payment); `subscription_expired`
+is `subscription_ended` (a cancelled plan runs to its end); a paid `order_created` for the
+extra-hours variant is `extra_hours_bought`; everything else is ignored. `occurred_at` is the
+object's `updated_at`; an event's id is its name, the object's id and that time. The person is the
+`user_id` in the checkout's custom data. A billing period is taken to end at `renews_at` and to
+begin one calendar month before (Lemon Squeezy sends no start). Test events are ignored in live
+mode and live events in test mode. **Checkout** is a call to the API (email server-side, never in
+the address), with the plan's variant; the $1.99 first month of Table is a once-only discount
+code made in Lemon Squeezy, and a first-month checkout for a plan with no code set is refused
+rather than charged in full. The billing page is the customer's portal link; account deletion
+cancels at the end of the paid period (a cancel that is already done succeeds). The +10 hours
+checkout exists in the adapter and has no route until the bot's add-hours button does. The owner's
+sandbox steps and run (#498 item 5) are a follow-up once the Lemon Squeezy account exists.
 **Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
 Feedback and Ask a question, posted by the web API as GitHub Discussions in this
 repository (categories Feedback and Questions; a discussions-only token from the

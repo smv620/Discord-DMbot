@@ -775,5 +775,5 @@ class PaymentSettings(unittest.TestCase):
             load_web_settings({**fake, "PAYMENT_WEBHOOK_SECRET": ""})
 
     def test_companies_not_built_yet_are_refused(self) -> None:
-        with self.assertRaisesRegex(ConfigError, "isn't built yet"):
+        with self.assertRaisesRegex(ConfigError, "isn.t built"):
             load_web_settings({**self.ENV, "PAYMENT_PROVIDER": "paddle"})

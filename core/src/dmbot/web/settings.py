@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from dmbot.config import ConfigError
 from dmbot.entitlements import parse_free_users
 from dmbot.web.admin_hash import decode_hash
+from dmbot.web.lemonsqueezy import LemonSqueezyConfig
+from dmbot.web.payments import paid_plan_ids
 
 REQUIRED = (
     "DATABASE_URL",
@@ -41,6 +43,8 @@ class WebSettings:
     payment_provider: str = ""
     # Checks that payment events really come from the payment company.
     payment_webhook_secret: bytes = field(default=b"", repr=False)
+    # Lemon Squeezy's keys and ids, when payment_provider is "lemonsqueezy" (#1083).
+    lemonsqueezy: LemonSqueezyConfig | None = field(default=None, repr=False)
     # Connect as any database user, not only dmbot_web: for testing on localhost only.
     any_db_role: bool = False
     # The "Say hello" forms (#665): a GitHub token that can only write Discussions in
@@ -130,10 +134,11 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError("WEB_SESSION_DAYS must be between 1 and 90.")
     provider = get("PAYMENT_PROVIDER").lower()
     webhook_secret = get("PAYMENT_WEBHOOK_SECRET")
-    if provider not in ("", "fake"):
+    if provider not in ("", "fake", "lemonsqueezy"):
         raise ConfigError(
-            f"PAYMENT_PROVIDER={provider} isn't built yet. Leave it empty for now (see #435)."
+            f"PAYMENT_PROVIDER={provider} isn't built. Use lemonsqueezy, or leave it empty."
         )
+    lemonsqueezy = _lemonsqueezy(get) if provider == "lemonsqueezy" else None
     if provider == "fake" and urlsplit(get("WEB_API_URL")).hostname not in (
         "localhost",
         "127.0.0.1",
@@ -220,6 +225,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         free_users=free_users,
         payment_provider=provider,
         payment_webhook_secret=webhook_secret.encode("utf-8"),
+        lemonsqueezy=lemonsqueezy,
         any_db_role=any_db_role,
         feedback_token=feedback_token,
         feedback_repo=feedback_repo,
@@ -229,4 +235,39 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         admin_password_hash=admin_password_hash,
         google_client_id=google_client_id,
         google_client_secret=google_client_secret,
+    )
+
+
+def _lemonsqueezy(get: Callable[[str], str]) -> LemonSqueezyConfig:
+    """Lemon Squeezy's settings (#1083). Every buyable plan needs its variant, so a missing
+    one stops the API starting instead of failing at someone's checkout."""
+    api_key = get("LEMONSQUEEZY_API_KEY")
+    store_id = get("LEMONSQUEEZY_STORE_ID")
+    if not api_key or not store_id.isascii() or not store_id.isdigit():
+        raise ConfigError("LEMONSQUEEZY_API_KEY and a numeric LEMONSQUEEZY_STORE_ID must be set.")
+    variants: dict[str, str] = {}
+    codes: dict[str, str] = {}
+    for plan_id in paid_plan_ids():
+        suffix = plan_id.upper().replace("-", "_")
+        variant = get(f"LEMONSQUEEZY_VARIANT_{suffix}")
+        if not variant.isascii() or not variant.isdigit():
+            raise ConfigError(
+                f"LEMONSQUEEZY_VARIANT_{suffix} must be the plan's numeric variant id."
+            )
+        variants[plan_id] = variant
+        if code := get(f"LEMONSQUEEZY_FIRST_MONTH_CODE_{suffix}"):
+            codes[plan_id] = code
+    extra = get("LEMONSQUEEZY_VARIANT_EXTRA_HOURS")
+    if not extra.isascii() or not extra.isdigit():
+        raise ConfigError("LEMONSQUEEZY_VARIANT_EXTRA_HOURS must be the extra hours' variant id.")
+    mode = (get("LEMONSQUEEZY_TEST_MODE") or "0").lower()
+    if mode not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'LEMONSQUEEZY_TEST_MODE must be 1 (test) or 0 (live), got "{mode}".')
+    return LemonSqueezyConfig(
+        api_key=api_key,
+        store_id=store_id,
+        variants=variants,
+        extra_hours_variant=extra,
+        first_month_codes=codes,
+        test_mode=mode in ("1", "true", "on"),
     )
