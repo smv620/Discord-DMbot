@@ -9,7 +9,11 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting; core 5383938 deployed 2026-10-11 04:44 UTC took #1045 earlier and #1053 + #1062 now: see the history)
+- CloudDev, #1064 (#1063): the rule card and the sidebar's AI now read an entry's facts from one place (rules/facts.py);
+  core only, no migration, prompt version sidebar-4. Check: look up Fireball and Goblin with 📖 Look up a rule: the card's
+  top line is unchanged; live, ask "Hey DMbot, what's the range of fireball?" (answer "150 feet"). When the model fails
+  twice, a range / casting time / duration / AC question is answered with that field alone, with its page.
+(core 5383938 deployed 2026-10-11 04:44 UTC took #1045, #1053 and #1062: see the history)
 
 ------------------------------------------------------------------------------
 LIVE NOW
