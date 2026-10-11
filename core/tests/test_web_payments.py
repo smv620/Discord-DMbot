@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import unittest
 from typing import Any, ClassVar
 from urllib.parse import parse_qs, urlsplit
@@ -710,6 +711,58 @@ class Payments(DatabaseTest):
         self.assertEqual((none.status_code, none.json()), (409, {"error": "no_paid_plan"}))
         await self.start_table()
         self.assertIn("fake_billing", (await self.post("/billing/portal")).json()["url"])
+
+    # Cancelled on the payment page (#824)
+
+    async def test_a_cancel_is_stored_and_a_renewal_or_resume_clears_it(self) -> None:
+        await self.start_table()
+        end = self.now + 30 * DAY
+        response = await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            occurred_at=self.now + 5,
+            period_end=end,
+        )
+        self.assertEqual(response.status_code, 200)
+        got = await self.plan()
+        self.assertEqual((got.status, got.ends_at), ("active", end))  # still works
+        me = (await self.client.get("/me")).json()
+        self.assertEqual(me["plan"]["endsOn"], time.strftime("%Y-%m-%d", time.gmtime(end)))
+        # The same news twice changes nothing; a resume (an active event) clears it.
+        await self.start_table(
+            kind="subscription_renewed", occurred_at=self.now + 9, id="evt-resume"
+        )
+        self.assertIsNone((await self.plan()).ends_at)
+        self.assertNotIn("endsOn", (await self.client.get("/me")).json()["plan"])
+
+    async def test_a_cancel_needs_its_end_date_and_an_older_one_is_stale(self) -> None:
+        await self.start_table()
+        missing = await self.send(
+            kind="subscription_cancelled", subscription_id="sub_1", occurred_at=self.now + 5
+        )
+        self.assertEqual(missing.status_code, 422)  # rejected: nothing to store
+        await self.start_table(
+            kind="subscription_renewed", occurred_at=self.now + 50, id="evt-renew"
+        )
+        late = await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            occurred_at=self.now + 10,
+            period_end=self.now + 30 * DAY,
+        )
+        self.assertEqual(late.status_code, 200)
+        self.assertIsNone((await self.plan()).ends_at)  # older than the renewal: not applied
+
+    async def test_a_cancel_for_another_subscription_changes_nothing(self) -> None:
+        await self.start_table()
+        other = await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_other",
+            occurred_at=self.now + 5,
+            period_end=self.now + 30 * DAY,
+        )
+        self.assertEqual(other.status_code, 200)
+        self.assertIsNone((await self.plan()).ends_at)
 
     # Extra hours (#1089)
 

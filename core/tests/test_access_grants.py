@@ -8,7 +8,7 @@ from typing import Any
 
 from psycopg import errors
 
-from dmbot import entitlements
+from dmbot import entitlements, hours
 from dmbot.campaigns.store import plan_works
 from dmbot.db import Database
 from dmbot.web import accounts, grants, sessions
@@ -173,6 +173,21 @@ class AccountPage(AccessTest):
         assert session is not None
         return await build_me(self.db, session, now=self.now)
 
+    async def access_page(self) -> dict[str, Any]:
+        """The access part of /me without its hours (they have their own tests)."""
+        access = dict((await self.me())["access"])
+        access.pop("hours", None)
+        return access
+
+    async def set_plan(self, **changes: Any) -> None:
+        """Change the plan row the way the payment events would (the writer's door)."""
+        sets = ", ".join(f"{name} = %({name})s" for name in changes)
+        async with self.db.plan_writer(ALICE.id) as conn:
+            await conn.execute(
+                f"UPDATE entitlements SET {sets} WHERE user_id = %(user)s",
+                {**changes, "user": ALICE.id},
+            )
+
     async def test_access_for_each_kind(self) -> None:
         self.now = int(time.time())
         self.assertEqual((await self.me())["access"], {"kind": "none"})
@@ -180,18 +195,78 @@ class AccountPage(AccessTest):
         await grants.give(self.db, ADMIN, ALICE.id, "guild", ends_at=until, note="", now=self.now)
         ends_on = time.strftime("%Y-%m-%d", time.gmtime(until))  # a date, as renewsOn
         # One kind for people: "Free access", never why (the list or a grant).
-        self.assertEqual((await self.me())["access"], {"kind": "free", "endsOn": ends_on})
+        self.assertEqual(await self.access_page(), {"kind": "free", "endsOn": ends_on})
         await self.give_plan(ALICE.id)
+        await self.set_plan(provider_customer_id="cus_1")  # the billing page can open
         self.assertEqual(
-            (await self.me())["access"],
+            await self.access_page(),
             {"kind": "free", "endsOn": ends_on, "stillPaying": True, "paidPlan": "Table"},
         )
         await grants.revoke(self.db, ADMIN, ALICE.id, now=self.now)
-        self.assertEqual((await self.me())["access"], {"kind": "paid"})
+        self.assertEqual(await self.access_page(), {"kind": "paid"})
         entitlements.configure_free_users({ALICE.id})
         self.assertEqual(
-            (await self.me())["access"], {"kind": "free", "stillPaying": True, "paidPlan": "Table"}
+            await self.access_page(), {"kind": "free", "stillPaying": True, "paidPlan": "Table"}
         )
+
+    async def test_still_paying_needs_a_billing_page_that_can_open(self) -> None:
+        # #824: a plan set by hand has no payment-company customer, so "stop paying" would
+        # open nothing: no stillPaying.
+        self.now = int(time.time())
+        entitlements.configure_free_users({ALICE.id})
+        await self.give_plan(
+            ALICE.id, period_start=self.now - 86400, period_end=self.now + 20 * 86400
+        )
+        self.assertEqual(await self.access_page(), {"kind": "free"})
+        await self.set_plan(provider_customer_id="cus_1")
+        self.assertEqual((await self.access_page())["stillPaying"], True)
+
+    async def test_a_cancelled_plan_says_when_it_ends_and_stops_asking_to_stop_paying(
+        self,
+    ) -> None:
+        self.now = int(time.time())
+        entitlements.configure_free_users({ALICE.id})
+        ends = self.now + 20 * 86400
+        await self.give_plan(ALICE.id, period_start=self.now - 86400, period_end=ends)
+        await self.set_plan(provider_customer_id="cus_1", ends_at=ends)
+        ends_on = time.strftime("%Y-%m-%d", time.gmtime(ends))
+        self.assertEqual(
+            await self.access_page(),
+            {"kind": "free", "paidPlan": "Table", "paidPlanEndsOn": ends_on},
+        )
+        # Resumed (or renewed): the payment events clear it, and the plan asks again.
+        await self.set_plan(ends_at=None)
+        self.assertEqual((await self.access_page())["stillPaying"], True)
+
+    async def test_a_capped_grant_shows_its_hours_and_a_paid_plan_its_hours_used(self) -> None:
+        self.now = int(time.time())
+        await grants.give(self.db, ADMIN, ALICE.id, "guild", ends_at=None, note="", now=self.now)
+        hours_line = (await self.me())["access"]["hours"]
+        self.assertEqual((hours_line["used"], hours_line["cap"]), (0.0, 87))
+        # 90 minutes of listening in the grant's month show as 1.5 hours.
+        month = hours.month_from_anchor(self.now, self.now)
+        await self.record_minutes(ALICE.id, month.start, 90)
+        hours_line = (await self.me())["access"]["hours"]
+        self.assertEqual(hours_line["used"], 1.5)
+        self.assertEqual(hours_line["renewsOn"], time.strftime("%Y-%m-%d", time.gmtime(month.end)))
+        # No limits: no hours line. A paid plan carries its used hours in the plan block.
+        await grants.give(
+            self.db, ADMIN, ALICE.id, "unlimited", ends_at=None, note="", now=self.now
+        )
+        self.assertNotIn("hours", (await self.me())["access"])
+        await grants.revoke(self.db, ADMIN, ALICE.id, now=self.now)
+        await self.give_plan(
+            ALICE.id, period_start=self.now - 86400, period_end=self.now + 20 * 86400
+        )
+        await self.record_minutes(ALICE.id, self.now - 86400, 150)
+        self.assertEqual((await self.me())["plan"]["hoursUsed"], 2.5)
+
+    async def record_minutes(self, user_id: int, month_start: int, minutes: int) -> None:
+        async with self.db.meter(THURSDAY.id, user_id) as conn:
+            await conn.execute(
+                "INSERT INTO owner_hours (owner_user_id, month_start, minutes) VALUES (%s, %s, %s)",
+                (user_id, month_start, minutes),
+            )
 
 
 class WebRole(AccessTest):

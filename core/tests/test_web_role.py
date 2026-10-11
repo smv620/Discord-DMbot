@@ -25,6 +25,7 @@ from tests.test_web_feedback import FakeDiscussions
 
 WEB_PASSWORD = "dmbot_web"
 OUTSIDER = DiscordGuild(id=555, name="Not In Alice's List", manage=True)
+OTHER_USER = 424242  # made-up: another person
 
 
 async def ensure_web_role() -> None:
@@ -200,6 +201,31 @@ class WebRole(DatabaseTest):
         for row in rows:
             self.assertNotIn(schema.WEB_ROLE, list(row["roles"]))
             self.assertNotIn("public", list(row["roles"]))
+
+    async def test_the_hours_door_gives_only_ones_own_minutes_and_the_table_stays_closed(
+        self,
+    ) -> None:
+        # #824: the account page's hours come through one function, not the table.
+        for owner, minutes in ((ALICE.id, 95), (OTHER_USER, 400)):
+            async with self.db.meter(THURSDAY.id, owner) as conn:
+                await conn.execute(
+                    "INSERT INTO owner_hours (owner_user_id, month_start, minutes)"
+                    " VALUES (%s, 1000, %s)",
+                    (owner, minutes),
+                )
+        session = await self.alice()
+        async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+            cur = await conn.execute("SELECT dmbot_hours_used(1000) AS n")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 95)  # hers, never the other person's 400
+            cur = await conn.execute("SELECT dmbot_hours_used(2000) AS n")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)  # a month with nothing recorded
+        with self.assertRaises(errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                await conn.execute("SELECT * FROM owner_hours")
 
     async def test_its_limits_apply_to_it_and_never_to_the_bot(self) -> None:
         async with self.db.unscoped() as conn:

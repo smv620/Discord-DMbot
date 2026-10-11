@@ -49,6 +49,7 @@ EventKind = Literal[
     "subscription_started",  # a new paid plan, or a plan change (a new plan id)
     "subscription_renewed",  # paid for the next period
     "payment_failed",  # the 7-day grace starts, if they have paid before (#922)
+    "subscription_cancelled",  # cancelled: works to the period's end (period_end), then ends
     "subscription_ended",  # stopped paying, or cancelled at the period's end
     "extra_hours_bought",  # +10 hours for this period
 ]
@@ -168,6 +169,7 @@ class FakeProvider:
             "subscription_started",
             "subscription_renewed",
             "payment_failed",
+            "subscription_cancelled",
             "subscription_ended",
             "extra_hours_bought",
         ):

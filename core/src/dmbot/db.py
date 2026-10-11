@@ -28,7 +28,14 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from dmbot.schema import MIGRATIONS, WEB_ROLE, WEB_ROLE_GRANTS, WEB_ROLE_POLICIES, Migration
+from dmbot.schema import (
+    MIGRATIONS,
+    WEB_ROLE,
+    WEB_ROLE_FUNCTIONS,
+    WEB_ROLE_GRANTS,
+    WEB_ROLE_POLICIES,
+    Migration,
+)
 
 log = logging.getLogger(__name__)
 
@@ -367,35 +374,20 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     # once its own migration has run, since this runs after every migration.
     cur = await conn.execute("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
     existing = {r["tablename"] for r in await cur.fetchall()}
-    # The one function the site may call (the owner's own campaign count, schema.py 0034).
-    # REVOKE first, so a run on every start leaves exactly this; only once it exists.
-    cur = await conn.execute(
-        "SELECT 1 FROM pg_proc WHERE proname = 'dmbot_owned_campaigns'"
-        " AND pronamespace = current_schema()::regnamespace"
-    )
-    if await cur.fetchone() is not None:
-        await conn.execute(
-            sql.SQL("REVOKE ALL ON FUNCTION dmbot_owned_campaigns() FROM {}").format(role)
+    # The few functions the site may call, each a door across a boundary its own role can't
+    # cross: the owner's campaign count (0034), account deletion making campaigns ownerless
+    # (0047) and the hours used in a month (0048). REVOKE first, so a run on every start leaves
+    # exactly these; each only once it exists.
+    for name, signature in WEB_ROLE_FUNCTIONS:
+        cur = await conn.execute(
+            "SELECT 1 FROM pg_proc WHERE proname = %s"
+            " AND pronamespace = current_schema()::regnamespace",
+            (name,),
         )
-        await conn.execute(
-            sql.SQL("GRANT EXECUTE ON FUNCTION dmbot_owned_campaigns() TO {}").format(role)
-        )
-    # The door account deletion uses to make a person's campaigns ownerless (0047, #1059).
-    cur = await conn.execute(
-        "SELECT 1 FROM pg_proc WHERE proname = 'dmbot_orphan_owned_campaigns'"
-        " AND pronamespace = current_schema()::regnamespace"
-    )
-    if await cur.fetchone() is not None:
-        await conn.execute(
-            sql.SQL("REVOKE ALL ON FUNCTION dmbot_orphan_owned_campaigns(BIGINT) FROM {}").format(
-                role
-            )
-        )
-        await conn.execute(
-            sql.SQL("GRANT EXECUTE ON FUNCTION dmbot_orphan_owned_campaigns(BIGINT) TO {}").format(
-                role
-            )
-        )
+        if await cur.fetchone() is not None:
+            door = sql.SQL(signature)  # constants from schema.py, never input
+            await conn.execute(sql.SQL("REVOKE ALL ON FUNCTION {} FROM {}").format(door, role))
+            await conn.execute(sql.SQL("GRANT EXECUTE ON FUNCTION {} TO {}").format(door, role))
     for privileges, tables in WEB_ROLE_GRANTS:
         present = [t for t in tables if t in existing]
         if not present:

@@ -162,9 +162,20 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_a_cancelled_plan_runs_to_its_end_and_ends_only_when_it_expires(self) -> None:
-        cancelled = event("subscription_updated", **subscription(status="cancelled"))
-        self.assertIsNone(self.provider.parse(cancelled))
-        self.assertIsNone(self.provider.parse(event("subscription_cancelled", **subscription())))
+        # A cancel is stored (it works to ends_at); only the expiry ends the plan.
+        ends = ts(RENEWS + 5 * 86400)
+        for name in ("subscription_updated", "subscription_cancelled"):
+            cancelled = event(
+                name, **subscription(status="cancelled", renews_at=None, ends_at=ends)
+            )
+            parsed = self.provider.parse(cancelled)
+            assert parsed is not None
+            self.assertEqual((parsed.kind, parsed.plan), ("subscription_cancelled", "table"))
+            self.assertEqual(parsed.period_end, RENEWS + 5 * 86400)
+            self.assertIsNone(parsed.period_start)
+        resumed = self.provider.parse(event("subscription_resumed", **subscription()))
+        assert resumed is not None
+        self.assertEqual(resumed.kind, "subscription_renewed")  # active again: clears a cancel
         expired = self.provider.parse(
             event("subscription_expired", **subscription(status="expired"))
         )
@@ -193,7 +204,7 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.provider.parse(unpaid))
 
     def test_events_dmbot_does_not_use_are_ignored(self) -> None:
-        for name in ("subscription_payment_success", "subscription_resumed", "license_key_created"):
+        for name in ("subscription_payment_success", "license_key_created"):
             self.assertIsNone(self.provider.parse(event(name, **subscription())), name)
 
     def test_an_unknown_variant_has_no_plan_so_the_writer_rejects_it(self) -> None:
