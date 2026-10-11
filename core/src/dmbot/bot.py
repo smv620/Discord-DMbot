@@ -408,7 +408,7 @@ class Table:
     topic_paused_until: float = 0.0  # monotonic seconds
     hidden: set[tuple[int, int]] = field(default_factory=set)  # lines shown as a marker
     # The DM sidebar (#935): what was said lately (the scene for an answer), and the
-    # one-question-a-minute limit on asking at the table.
+    # safety limit on questions (6 a minute, 120 a session; #1040), spoken and typed.
     recent: Recent = field(default_factory=Recent.new)
     # Test recordings (#1019): the saved session, only in a test server.
     test_session: TestSession | None = None
