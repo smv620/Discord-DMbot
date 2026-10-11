@@ -83,6 +83,21 @@ class OneFactsFunction(unittest.TestCase):
                 assert got is not None
                 self.assertTrue(got.startswith(label), got)
         self.assertIsNone(facts.asked_field(e, "does fireball set things on fire"))
+        # Wrong fields would be stated as fact with an SRD page (reviewer, #1063).
+        for question in (
+            "what was the last thing fireball hit",
+            "can fireball reach the ceiling",
+            "what is the range, duration of fireball",  # two fields: the description instead
+        ):
+            with self.subTest(question):
+                self.assertIsNone(facts.asked_field(e, question))
+        self.assertEqual(
+            facts.asked_field(e, "how long does fireball take to cast"), "Casting time Action"
+        )
+        self.assertEqual(facts.asked_field(e, "what's the range, fireball?"), "Range 150 feet")
+        gob = entry("goblin warrior", "monster")
+        self.assertEqual(facts.asked_field(gob, "what's its AC"), "AC 15")
+        self.assertIsNone(facts.asked_field(gob, "can the goblin cr"))
         self.assertIsNone(facts.asked_field(entry("grappled", "condition"), "what is the range"))
 
 
@@ -108,29 +123,35 @@ class TheFallbackAnswersWithTheField(unittest.TestCase):
 
 
 class NoReaderSkipsTheMetadata(unittest.TestCase):
-    """A new reader of a rules entry's `.text` that forgets the facts is how #1039 happened.
-    Only these files may read it, each because it shows or picks from the text on purpose."""
+    """A new reader of a rules entry's `.text` that forgets the facts is how #1039 happened. Each
+    file that reads it is listed with how many times and why, so a new read anywhere fails here
+    until someone decides, on purpose, that it needs no facts."""
 
-    ALLOWED: ClassVar[dict[str, str]] = {
-        "ui/rule_card.py": "shows the facts on their own line above the text",
-        "sidebar/context.py": "sends the facts in front of the text as FACTS:",
-        "sidebar/answer.py": "the fallback's first sentences; a field question uses the facts",
+    # file -> (reads of `.text` on a rules entry, why the text alone is right there)
+    READS: ClassVar[dict[str, tuple[int, str]]] = {
+        "ui/rule_card.py": (1, "shows the facts on their own line above the text"),
+        "sidebar/context.py": (1, "sends the facts in front of the text as FACTS:"),
+        "sidebar/answer.py": (1, "the fallback's first sentences; a field question uses facts"),
     }
+    # Where the entry is made and its words are indexed or matched.
+    OWN: ClassVar[set[str]] = {"rules/index.py", "rules/facts.py"}
 
     def test_only_the_known_readers_use_entry_text(self) -> None:
         root = Path(__file__).resolve().parents[1] / "src" / "dmbot"
-        pattern = re.compile(r"\b(?:hit\.entry|h\.entry|\.entry)\.text\b|\bentry\.text\b")
-        rules_users = []
+        # Any `.entry.text`, and `entry.text` / `e.text` on a name bound to a rules entry.
+        pattern = re.compile(r"\.entry\.text\b|\bentry\.text\b|\be\.text\b")
+        counts: dict[str, int] = {}
         for path in root.rglob("*.py"):
             rel = path.relative_to(root).as_posix()
-            if rel.startswith("rules/"):
+            if rel in self.OWN:
                 continue
             source = path.read_text(encoding="utf-8")
-            if "dmbot.rules" not in source:  # memory entries also have a .text; not these
+            # Memory entries also have a `.text`; only files that use the rules index count.
+            if "dmbot.rules" not in source and not rel.startswith("rules/"):
                 continue
-            if pattern.search(source):
-                rules_users.append(rel)
-        self.assertEqual(sorted(set(rules_users) - set(self.ALLOWED)), [], "add the facts")
+            if found := len(pattern.findall(source)):
+                counts[rel] = found
+        self.assertEqual(counts, {f: n for f, (n, _) in self.READS.items()}, "add the facts")
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ exist. A field an entry lacks is left out; a condition has none.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,22 +19,25 @@ if TYPE_CHECKING:
 
 _ORDINALS = {1: "1st", 2: "2nd", 3: "3rd"}
 _COMPONENT_WORDS = {"V": "Verbal", "S": "Somatic", "M": "Material"}
-# Words that name a field in a question, for the fallback that answers with that field alone.
+# Phrases that name a field in a question, for the fallback that answers with that field alone.
+# Whole words only (the question is split into words first), and nothing that is also everyday
+# talk ("last", "reach", "cr"): a wrong field would be stated as fact with an SRD page.
 ASKED_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Range", ("range", "how far", "reach")),
-    ("Casting time", ("casting time", "cast time", "how long to cast", "how long does it take")),
-    ("Duration", ("duration", "how long does", "how long do", "last", "lasts")),
+    ("Casting time", ("casting time", "cast time", "take to cast", "how long to cast")),
+    ("Range", ("range", "how far")),
+    ("Duration", ("duration", "how long does", "how long do", "how long will", "how long is")),
     ("Components", ("components", "component")),
     ("AC", ("ac", "armor class")),
     ("HP", ("hp", "hit points")),
     ("Speed", ("speed", "how fast")),
-    ("CR", ("cr", "challenge rating", "challenge")),
+    ("CR", ("challenge rating",)),
 )
+_WORDS = re.compile(r"[a-z']+")
 
 
 def level_words(entry: Entry) -> str:
     """ "3rd-level Evocation", "Evocation cantrip", "1st-level Divination (ritual)"."""
-    level, school = int(entry.details["level"]), str(entry.details["school"])
+    level, school = int(entry.details.get("level", 0)), str(entry.details.get("school", ""))
     ritual = " (ritual)" if entry.details.get("ritual") else ""
     if level == 0:
         return f"{school} cantrip"
@@ -120,10 +124,17 @@ def full_text(entry: Entry) -> str:
 def asked_field(entry: Entry, question: str) -> str | None:
     """The one fact the question asks for ("Range 150 feet"), or None. Used when the model failed
     and the entry itself must answer: a question about a field gets the field, not the
-    description."""
-    asked = f" {question.lower()} "
+    description. A question that names two fields, or none the entry has, gets None (the
+    description is the safer answer than the wrong field)."""
+    words = _WORDS.findall(question.lower())
+    asked = f" {' '.join(words)} "
     have = dict(pairs(entry))
-    for label, words in ASKED_FIELDS:
-        if label in have and any(f" {w} " in asked or f" {w}?" in asked for w in words):
-            return f"{label} {have[label]}"
-    return None
+    found = []
+    for label, phrases in ASKED_FIELDS:
+        if label not in have:
+            continue
+        if label == "Duration" and "cast" in words:
+            continue  # "how long does it take to cast" is the casting time, not the duration
+        if any(f" {p} " in asked for p in phrases):
+            found.append(label)
+    return f"{found[0]} {have[found[0]]}" if len(found) == 1 else None
