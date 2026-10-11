@@ -1948,3 +1948,29 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   to the AI, only the description text. Bug #1039 (CloudDev). Owner suggestions: wake phrase "Hey
   DMbot" / "DMbot, ..." in the open channel, and drop the one-question-a-minute limit: #1040
   (Supervisor decides). Result: PASS with bugs; sidebar stays on (no answer was wrong AND "sure").
+
+==============================================================================
+2026-10-11  dev1: deploy of core 470d389 (#1031 test recordings part 1, migration 0043; #1023 age words; #1013, #1033 AI tiers)
+==============================================================================
+  02:36 UTC, nobody playing (no live session). Backup first: 38 tables, verified. Built core, then
+  `up -d --no-build core`. .env untouched (dev1 cannot edit it; the AI_MODEL_* settings were already
+  there, and the two new DMBOT_TEST_RECORDING_* settings use their defaults).
+  Core log: "Database updated: 0043_test_voice_consent"; "AI models in use: fast=haiku careful=sonnet
+  deep=opus"; a warning that .env still has both AI_MODEL and AI_MODEL_FAST (only FAST is used: the
+  owner may delete the AI_MODEL line) and a warning that the two new test-recording settings are missing
+  (defaults used); gateway, ears connected, "Connected to 1 server(s)"; 0 ERROR. Table
+  test_voice_consent empty, row security on and forced. /health 404, /admin/auth/ways 200, tunnel token
+  blank inside core, DMBOT_SIDEBAR=1. Volume discord-dmbot_test-recordings exists.
+  Consent words (#1023): everyone who agreed before is asked again at their next join; the age line
+  needs the owner's eyes at the next join.
+  Test recordings stay OFF (no DMBOT_TEST_RECORDING_GUILDS), so nothing is saved.
+  Sidebar re-test (19 cases): 18 pass, all answered by the quick model; miss: #8 grappled now says "not in
+  DMbot's rules" (regression, posted on #954). Fireball behind a wall now passes. Range still #1039.
+  Result: PASS (deploy); sidebar regression to CloudDev.
+
+==============================================================================
+2026-10-11  dev1: retention, first daily run (#985, plans off)
+==============================================================================
+  03:00:00 UTC, core log: one line, "Retention dry run: campaigns=1 past_keep_date=0 deleted=0 warned=0 skipped=0"
+  (counts only). No ERROR in the last 3 hours. Nothing warned or deleted, as designed while
+  DMBOT_ENFORCE_PLANS is off. Result: PASS.
