@@ -49,6 +49,18 @@ class Render(unittest.TestCase):
             body.splitlines(), ["[0:00:05] (Mia): I cast Shield.", "[0:42:10] (Dee): Run!"]
         )
 
+    def test_a_line_said_as_someone_shows_that_instead_of_the_character(self) -> None:
+        # #53: the DM narrating or voicing an NPC; a topic tag still wins; brackets are stripped.
+        lines = [
+            dataclasses.replace(line(5, DEE, "The door creaks."), entity="narrating"),
+            dataclasses.replace(line(6, DEE, "Welcome, [travellers]."), entity="Brother {Hiro}"),
+            dataclasses.replace(line(7, DEE, "brb"), entity="narrating", topic="off_topic"),
+        ]
+        text = export.render("X", session(), lines, {DEE: "Dee"}, characters={DEE: "Cerric"})
+        self.assertIn("[0:00:05] (Dee) {narrating}: The door creaks.\n", text)
+        self.assertIn("[0:00:06] (Dee) {Brother Hiro}: Welcome, [travellers].\n", text)
+        self.assertIn("[0:00:07] (Dee) {non-game_content}: brb\n", text)
+
     def test_each_player_has_their_character(self) -> None:
         text = export.render(
             "X",

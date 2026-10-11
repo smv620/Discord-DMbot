@@ -22,6 +22,7 @@ class TranscriptSession:
     engines: tuple[str, ...] = ()  # "engine model host" of each speech-to-text used
 
 
+NARRATING = "narrating"  # a line's `entity` when the DM was narrating (#53)
 SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
 VIA_VOICE, VIA_TYPED, VIA_TABLE = "voice-memo", "typed", "table-trigger"
 VIAS = (VIA_VOICE, VIA_TYPED, VIA_TABLE)
@@ -69,6 +70,10 @@ class Line:
     # and shown as DMbot). Only in the as-heard download, never the cleaned one.
     sidebar: str = ""
     lineage: Lineage = NO_LINEAGE
+    # Who the line was said as (#53): "" for nobody named (the player's character shows),
+    # NARRATING, or the confirmed, non-secret name of an NPC the DM was voicing. Never a
+    # secret name: whatever sets it checks (the transcript is open to the whole server).
+    entity: str = ""
 
     def __post_init__(self) -> None:
         if self.sidebar not in ("", SIDEBAR_QUESTION, SIDEBAR_ANSWER):  # not at the database
@@ -128,6 +133,17 @@ class TranscriptBuffer:
                 started_ms,
             ) and not waiting.sidebar:
                 self._waiting[i] = replace(waiting, topic=topic)
+                return True
+        return False
+
+    def set_entity(self, user_id: int, started_ms: int, entity: str) -> bool:
+        """A waiting line's entity (#53); True if it was here."""
+        for i, waiting in enumerate(self._waiting):
+            if (waiting.user_id, waiting.started_ms) == (
+                user_id,
+                started_ms,
+            ) and not waiting.sidebar:
+                self._waiting[i] = replace(waiting, entity=entity)
                 return True
         return False
 
