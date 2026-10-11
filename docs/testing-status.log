@@ -9,12 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- CloudDev, #1072 (#1071): the sidebar says "confident" / "uncertain" after the source, never "sure" / "not sure"
-  (owner, 2026-10-11). Core only, no migration, prompt version sidebar-5. Check: live, ask "Hey DMbot, what's the
-  range of fireball?": the answer ends "(SRD 5.2.1 p. 131, confident)"; ask something the rules don't cover: it
-  says so (and "uncertain" only when the answer does not already say it). dev1: docs/next-test-step.md may still
-  say "sure" and is yours to update.
-(core 4f2a957 deployed 2026-10-11 05:03 UTC took everything merged before #1072: see the history)
+(nothing waiting; core 0f39e35 deployed 2026-10-11 05:55 UTC took everything merged so far: see the history)
 
 ------------------------------------------------------------------------------
 LIVE NOW
