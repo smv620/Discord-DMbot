@@ -20,7 +20,7 @@ The transcript is open to the whole server, so a label can never reveal a secret
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -63,10 +63,10 @@ class Completes(Protocol):
     async def complete(self, system: str, text: str, *, max_tokens: int = ...) -> Reply: ...
 
 
-def speakers(lookup: CampaignLookup) -> list[str]:
-    """Names a label may take, sorted. A name is allowed only if it is a confirmed NPC's or
-    god's own name, itself confirmed and not secret, and no secret name of anything reads
-    the same."""
+def _allowed(lookup: CampaignLookup) -> dict[str, str]:
+    """Entity ID → the name a label may take. A name is allowed only if it is a confirmed
+    NPC's or god's own name, itself confirmed and not secret, and no secret name of anything
+    reads the same."""
     secret_keys = {entry.key for entry in lookup.names if entry.secret}
     open_keys = {
         (entry.entity_id, entry.key)
@@ -74,6 +74,7 @@ def speakers(lookup: CampaignLookup) -> list[str]:
         if not entry.secret and entry.confirmed
     }
     found: dict[str, str] = {}
+    taken: set[str] = set()
     for entity in lookup.entities.values():
         key = name_key(entity.name)
         if (
@@ -87,8 +88,25 @@ def speakers(lookup: CampaignLookup) -> list[str]:
             or (entity.id, key) not in open_keys
         ):
             continue
-        found.setdefault(key, " ".join(entity.name.split()))
-    return sorted(found.values(), key=str.casefold)
+        if key not in taken:  # two entries with one name: the label is the same
+            taken.add(key)
+            found[entity.id] = " ".join(entity.name.split())
+    return found
+
+
+def speakers(lookup: CampaignLookup) -> list[str]:
+    """Every name a label may take, sorted (see `_allowed`)."""
+    return sorted(_allowed(lookup).values(), key=str.casefold)
+
+
+def offered(lookup: CampaignLookup, last_said: Mapping[str, float]) -> list[str]:
+    """The names to offer the AI, at most `MAX_NAMES`: the ones said most recently first
+    (`last_said`: entity ID → when it was last said, from the scene), then the rest
+    alphabetically, so a big campaign's later-alphabet NPCs aren't lost."""
+    allowed = _allowed(lookup)
+    recent = sorted((e for e in allowed if e in last_said), key=lambda e: -last_said[e])
+    rest = sorted((e for e in allowed if e not in last_said), key=lambda e: allowed[e].casefold())
+    return [allowed[e] for e in [*recent, *rest]][:MAX_NAMES]
 
 
 def check_entity(lookup: CampaignLookup, entity: str) -> str:
@@ -136,12 +154,15 @@ def read_answer(answer: str, count: int, names: Sequence[str]) -> list[Guess]:
 
 
 async def identify(
-    ai: Completes, lookup: CampaignLookup, texts: Sequence[str]
+    ai: Completes,
+    lookup: CampaignLookup,
+    texts: Sequence[str],
+    last_said: Mapping[str, float] | None = None,
 ) -> tuple[list[Guess], Reply]:
     """One call for a window of the DM's lines. Every name that comes back was checked
     against `speakers` here, so none can be a secret. Raises the client's error if the call
     fails (the caller leaves the lines without a label)."""
-    names = speakers(lookup)[:MAX_NAMES]
+    names = offered(lookup, last_said or {})
     reply = await ai.complete(
         SYSTEM, prompt(texts, names), max_tokens=TOKENS_PER_LINE * len(texts) + 16
     )
