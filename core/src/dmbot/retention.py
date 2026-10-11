@@ -168,32 +168,38 @@ def grouped_warning_text(
         campaign, standing, at = items[0]
         return warning_text(campaign, at, now, standing, server_name(campaign.guild_id), site_url)
     lines = []
-    for campaign, _standing, at in items:
+    for campaign, standing, at in sorted(items, key=lambda i: i[2]):  # soonest first
         days = max(1, round((at - now) / DAY))
-        name = campaign.name
-        if len(name) > NAME_SHOWN:
-            name = name[: NAME_SHOWN - 1] + "…"
+        ended = campaign.owner_user_id is not None and standing.lapsed_at is not None
         lines.append(
-            f"• **{_md(name)}** (in **{_md(server_name(campaign.guild_id))}**): "
-            f"{_date(at)}, in {days} day" + ("" if days == 1 else "s")
+            f"• **{_md(_short(campaign.name))}** ({_md(_short(server_name(campaign.guild_id)))}): "
+            f"in {days} day"
+            + ("" if days == 1 else "s")
+            + f" ({_date(at)})"
+            + (", plan ended" if ended else "")
         )
     last = "Last warning: " if any(warning_stage(at, now) == 2 for _c, _s, at in items) else ""
-    keep = ["play a session in its server (that starts the clock again)"]
+    keep = ["play a session in that campaign's server (it is then safe for a while)"]
     if any(s.backups for _c, s, _a in items):
-        keep.append("download a backup with `/dmbot backup` in its server")
+        keep.append("download a backup with `/dmbot backup` in that server")
     if any(c.owner_user_id is not None and s.lapsed_at is not None for c, s, _a in items):
-        keep.append(f"pick a plan again at {_plans_page(site_url)}")
+        keep.append(f"where the plan ended, pick a plan again at {_plans_page(site_url)}")
     options = (
         keep[0]
         if len(keep) == 1
         else ", ".join(keep[:-1]) + (", or " if len(keep) > 2 else " or ") + keep[-1]
     )
     return (
-        f"⏳ {last}These campaigns will be deleted because no one has played them for a long "
-        f"time. Their story, notes and transcripts go, and that can't be undone.\n"
+        f"⏳ {last}These campaigns will be deleted for good: their story, notes and "
+        f"transcripts can't be brought back.\n"
         + "\n".join(lines)
-        + f"\nTo keep one, {options}."
+        + f"\nTo keep a campaign, {options}. Each one is judged on its own."
     )
+
+
+def _short(text: str) -> str:
+    """Names are cut so six lines always fit in one message."""
+    return text if len(text) <= NAME_SHOWN else text[: NAME_SHOWN - 1] + "…"
 
 
 def _plans_page(site_url: str) -> str:
@@ -394,7 +400,8 @@ class RetentionJob:
     ) -> list[tuple[Campaign, int]]:
         """Send the warnings, one private message per person however many campaigns they
         have (#989). A campaign counts as warned (and is remembered) when at least one of
-        its people was reached; the others are tried again tomorrow. Returns those."""
+        its people was reached; a campaign no one could be reached for is tried again tomorrow.
+        Returns those remembered."""
         by_user: dict[int, list[tuple[Campaign, Standing, int, int]]] = {}
         for item in warn:
             for user_id in self._recipients(item[0]):

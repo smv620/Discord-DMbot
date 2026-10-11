@@ -406,13 +406,16 @@ class CampaignStore:
             return [int(r["guild_id"]) for r in await cur.fetchall()]
 
     async def forget_guild_if_empty(self, guild_id: int) -> bool:
-        """Drop a server from the list once it holds no campaigns. Looks first, in the
-        server's own scope, so a campaign made a moment ago keeps it listed."""
-        if await self.list_campaigns(guild_id):
-            return False
-        async with self._db.unscoped() as conn:
-            await conn.execute("DELETE FROM campaign_guilds WHERE guild_id = %s", (guild_id,))
-        return True
+        """Drop a server from the list once it holds no campaigns. Check and delete are one
+        statement in the server's own scope, so a campaign made a moment ago keeps it listed."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM campaign_guilds WHERE guild_id = %s"
+                " AND NOT EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %s)"
+                " RETURNING guild_id",
+                (guild_id, guild_id),
+            )
+            return await cur.fetchone() is not None
 
     async def last_used(self, guild_id: int) -> Campaign | None:
         """The default for `/dmbot start`: the campaign played (or created) most recently."""

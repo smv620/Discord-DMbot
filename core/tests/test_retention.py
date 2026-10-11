@@ -416,6 +416,20 @@ class Job(DatabaseTest):
         self.assertEqual(len(self.sent), 2)
         self.assertTrue(all(len(text) < 1900 for _u, text in self.sent))
 
+    async def test_a_left_server_nobody_can_reach_is_never_deleted(self) -> None:
+        a = await self.make(GUILD_A, "Unreachable", ALICE, T0)
+        for n in range(9):
+            await self.make(GUILD_B, f"x{n}", BOB, T0 + 300 * DAY)
+
+        async def nobody(user_id: int, text: str) -> bool:
+            return False
+
+        self.send = nobody  # type: ignore[method-assign]
+        await self.job().run_once(T0 + 58 * DAY)
+        out = await self.job().run_once(T0 + 70 * DAY)
+        self.assertEqual(out.deleted, 0)
+        self.assertTrue(await self.exists(GUILD_A, a))
+
 
 class Migration0045(DatabaseTest):
     """Migrations run with no server set, so the backfill must open `campaigns` for itself,
