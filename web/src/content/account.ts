@@ -3,7 +3,8 @@
  */
 import { byId, data, formatPeriod, formatPrice, type PlanId } from "./pricing";
 
-const extra = `${data.extraHours.hours} hours for ${formatPrice(data.extraHours.priceCents)}`;
+const extraHours = data.extraHours.hours;
+const extraPrice = formatPrice(data.extraHours.priceCents);
 
 /** "Oct 14", in the reader's own language and time zone. */
 /** A day and a time, for deadlines that end partway through a day ("Oct 14, 3:00 PM"). */
@@ -44,7 +45,7 @@ export function hoursLeftLine(
   const more =
     plan === "try-it"
       ? "Pick a plan below to keep playing."
-      : `Need more now? Tap Change plan, then add ${extra}.`;
+      : `Need more now? Tap Add ${extraHours} hours below.`;
   return again ? `${again} ${more}` : more;
 }
 
@@ -117,6 +118,8 @@ export const text = {
   startTryItNote: "Free for 30 days. No card needed.",
   orPick: "Or pick a plan:",
   choose: (id: PlanId): string => `Choose ${planName(id)}`,
+  addHours: `Add ${extraHours} hours (${extraPrice})`,
+  addHoursNote: `You pay once, on our payment company's page. These ${extraHours} hours are for this month only and don't roll over.`,
   changePlan: "Change plan",
   pickPlan: "Pick a plan",
   hoursBarLabel: "Hours used this month",

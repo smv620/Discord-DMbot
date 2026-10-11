@@ -370,6 +370,16 @@ function PlanSection({ me }: { me: Me }) {
   const { api, go, refresh } = useShared();
   const { busy, notice, run } = useAction();
   const plan = me.plan;
+  const extraHours = (): void =>
+    void run(
+      async () => go(await api.extraHoursUrl()),
+      (error) => {
+        // The plan changed since the page opened (it stopped, or free access began):
+        // show what's true now.
+        if (error.kind === "no-paid-plan" || error.kind === "free-access") void refresh();
+        return null;
+      },
+    );
   const portal = (): void =>
     void run(
       async () => go(await api.billingPortalUrl()),
@@ -485,9 +495,17 @@ function PlanSection({ me }: { me: Me }) {
               {plan.id === "try-it" ? (
                 choices(text.pickPlan)
               ) : (
-                <ActionButton busy={busy} kind="secondary" onClick={portal}>
-                  {text.changePlan}
-                </ActionButton>
+                <>
+                  {/* Only over a paid plan that works now (active, or in the payment grace):
+                      the API refuses the rest, and a lapsed plan is handled above. */}
+                  <ActionButton busy={busy} onClick={extraHours}>
+                    {text.addHours}
+                  </ActionButton>
+                  <p class="muted small">{text.addHoursNote}</p>
+                  <ActionButton busy={busy} kind="secondary" onClick={portal}>
+                    {text.changePlan}
+                  </ActionButton>
+                </>
               )}
             </>
           )}

@@ -219,8 +219,8 @@ class LemonSqueezyProvider:
     async def extra_hours_checkout_url(
         self, *, user_id: int, email: str | None, return_url: str
     ) -> str:
-        """The page to buy +10 hours for this month (plans.json `extraHours`). Not part of
-        `PaymentProvider` yet: no route sells it until the bot's "add hours" button exists."""
+        """The page to buy +10 hours for this month (plans.json `extraHours`); sold by
+        `POST /billing/extra-hours` (#1089)."""
         return await self._checkout(
             variant=self._config.extra_hours_variant,
             user_id=user_id,

@@ -666,11 +666,48 @@ describe("redirects", () => {
   });
 });
 
+describe("extra hours (#1089)", () => {
+  it("shows the button, with the price and the this-month-only line, over a paid plan", async () => {
+    show("table");
+    const button = await screen.findByRole("button", { name: text.addHours });
+    expect(text.addHours).toBe("Add 10 hours ($4.99)");
+    expect(button).toBeTruthy();
+    expect(screen.getByText(text.addHoursNote)).toBeTruthy();
+    expect(text.addHoursNote).toMatch(/this month only/);
+  });
+
+  it("sends the person to the payment company's page when pressed", async () => {
+    const { api, go } = show("table");
+    fireEvent.click(await screen.findByRole("button", { name: text.addHours }));
+    await waitFor(() => expect(go).toHaveBeenCalledWith("#demo-extra-hours"));
+    expect(api.calls).toContain("extra-hours");
+  });
+
+  it("shows it in the payment grace, where the plan still works", async () => {
+    show("grace");
+    expect(await screen.findByRole("button", { name: text.addHours })).toBeTruthy();
+  });
+
+  it.each(["try-it", "lapsed", "no-plan"] as const)("hides it on %s", async (scenario) => {
+    show(scenario);
+    await waitFor(() => expect(screen.queryByText(text.loading)).toBeNull());
+    expect(screen.queryByRole("button", { name: text.addHours })).toBeNull();
+  });
+
+  it("refreshes the page when the plan changed under it", async () => {
+    const api = mockApi("table");
+    api.extraHoursUrl = () => Promise.reject(new ApiError("no-paid-plan"));
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.addHours }));
+    await waitFor(() => expect(api.calls.filter((c) => c === "me")).toHaveLength(2));
+  });
+});
+
 describe("hours words", () => {
   it("tells a Try It user and a paid user different next steps at the cap", () => {
     expect(hoursLeftLine(8, 8, null, "try-it")).toBe("Pick a plan below to keep playing.");
     expect(hoursLeftLine(18, 18, "2026-10-14", "table")).toBe(
-      "Your hours start again on Oct 14. Need more now? Tap Change plan, then add 10 hours for $4.99.",
+      "Your hours start again on Oct 14. Need more now? Tap Add 10 hours below.",
     );
   });
 

@@ -88,6 +88,13 @@ class PaymentProvider(Protocol):
         the company server-side only, never put in the returned address."""
         ...
 
+    async def extra_hours_checkout_url(
+        self, *, user_id: int, email: str | None, return_url: str
+    ) -> str:
+        """The company's page to buy the extra hours (plans.json `extraHours`) for this
+        month. Same rules as `checkout_url`: the email goes server-side only."""
+        ...
+
     async def billing_url(self, *, customer_id: str, return_url: str) -> str: ...
 
     async def cancel(self, *, subscription_id: str) -> None:
@@ -133,6 +140,11 @@ class FakeProvider:
         if first_month_cents is not None:
             query["first_month"] = str(first_month_cents)
         return f"{return_url}?{urlencode(query)}"
+
+    async def extra_hours_checkout_url(
+        self, *, user_id: int, email: str | None, return_url: str
+    ) -> str:
+        return f"{return_url}?{urlencode({'fake_extra_hours': '1'})}"
 
     async def billing_url(self, *, customer_id: str, return_url: str) -> str:
         return f"{return_url}?{urlencode({'fake_billing': '1'})}"

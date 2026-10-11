@@ -258,6 +258,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("portal");
       return "#demo-billing";
     },
+    async extraHoursUrl() {
+      calls.push("extra-hours");
+      return "#demo-extra-hours";
+    },
     installUrl: (serverId: string) => `#demo-install-${serverId}`,
     async linkServer(serverId: string) {
       calls.push(`link:${serverId}`);
