@@ -139,8 +139,8 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
 
         if month is not None:
             cur = await conn.execute("SELECT dmbot_hours_used(%s) AS minutes", (month.start,))
-            row = await cur.fetchone()
-            used_minutes = int(row["minutes"]) if row else 0
+            hours_row = await cur.fetchone()
+            used_minutes = int(hours_row["minutes"]) if hours_row else 0
         # The person's own installs, in the same transaction (one connection per /me).
         # The last server's setting is cleared first, so only the installer rule applies:
         # otherwise that server's installs row would be visible here too.
