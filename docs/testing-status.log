@@ -52,8 +52,7 @@ entry "Status log as it stood before it was trimmed"):
      /dmbot houserules shows them (needs the quick-answers side: #944).
  15. ⏸️ Pause / ▶️ Unpause a campaign on ⚙️ Settings (#962; owner only; plans off).
  16. The DM sidebar (#944, #954): Test E done 2026-10-10; re-check range questions after #1039 is fixed.
- 17. Retention (#985, plans off): after its first 03:00 UTC run (2026-10-11), the core log has
-     ONE dry-run line with counts and no ERROR; nothing is warned or deleted.
+ 17. Retention (#985, plans off): first 03:00 UTC run done 2026-10-11, PASS (one dry-run line, no ERROR).
  18. House-rules file (#988): put two rules in a Google Doc (anyone with the link can view),
      ⚙️ Settings > 📄 House-rules file > 🔗 Connect a file; the comparison shows 2 to add;
      Review > Accept one and Skip the other.

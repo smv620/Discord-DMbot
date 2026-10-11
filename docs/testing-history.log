@@ -1967,3 +1967,10 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Sidebar re-test (19 cases): 18 pass, all answered by the quick model; miss: #8 grappled now says "not in
   DMbot's rules" (regression, posted on #954). Fireball behind a wall now passes. Range still #1039.
   Result: PASS (deploy); sidebar regression to CloudDev.
+
+==============================================================================
+2026-10-11  dev1: retention, first daily run (#985, plans off)
+==============================================================================
+  03:00:00 UTC, core log: one line, "Retention dry run: campaigns=1 past_keep_date=0 deleted=0 warned=0 skipped=0"
+  (counts only). No ERROR in the last 3 hours. Nothing warned or deleted, as designed while
+  DMBOT_ENFORCE_PLANS is off. Result: PASS.
