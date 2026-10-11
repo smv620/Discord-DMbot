@@ -237,10 +237,15 @@ class TestSession:
             self.flush()
 
     async def _flush_later(self) -> None:
-        await asyncio.sleep(FLUSH_EVERY_S)
-        text = self._text()  # on the loop, so nothing changes under it
-        with contextlib.suppress(OSError):  # the next change, or the end, writes it again
-            await asyncio.to_thread(files.write_text, self.folder / files.MANIFEST, text)
+        while True:
+            await asyncio.sleep(FLUSH_EVERY_S)
+            text = self._text()  # on the loop, so nothing changes under it
+            with contextlib.suppress(OSError):  # the next change, or the end, writes it again
+                await asyncio.to_thread(files.write_text, self.folder / files.MANIFEST, text)
+            # A change that came in during the write saw this task still running and did not
+            # schedule its own: write again. No await between this check and the return.
+            if self._text() == text:
+                return
 
 
 def _write(path: Path, data: bytes) -> None:
