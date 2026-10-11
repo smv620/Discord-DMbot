@@ -10,6 +10,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
 (nothing waiting; core e8fe8e3 (2026-10-11 18:11 UTC) and web-api (17:27 UTC) are deployed: see the history)
+- #1083 / PR #1086 + #1089 / PR #1097 (CloudDev, web-api only, no migration, no new setting needed to start): the Lemon Squeezy adapter (PAYMENT_PROVIDER stays empty until the owner's store exists, #1096) and the extra-hours button and route. Deploy web-api (the container gets the new LEMONSQUEEZY_* names from docker-compose.yml, all empty). Check: /health answers; from a signed-in browser POST /billing/checkout and POST /billing/extra-hours both still say payments_off (503); the account page shows no payment error. Nothing to check in Discord.
 - #1093 + #1095 (dev2, core only, no migration, no setting; needs the AI key on): the DM's lines get who was speaking, {narrating} or {NPC name}, in the saved transcript (#53, part). One small AI call per ~6 DM lines, only when the campaign has confirmed NPCs. Check: in a session where the DM speaks as a confirmed NPC and narrates, download the as-heard transcript: the DM's lines carry {narrating} or the NPC's name; a secret name never appears; core log shows 'Speaker labels: N calls' at the end.
 
 ------------------------------------------------------------------------------
