@@ -4,32 +4,28 @@
 
 ---
 
-## Test E: try the DM sidebar at the table
+## Test F: the game clock and a timer
 
 **People:** 1 (you, as the DM)
 **Time:** about 5 minutes
-**Why:** the DM sidebar lets you ask DMbot a quick question in the middle of the game and get a short answer in your private chat with it. DMbot checked 19 sample questions and the Supervisor says it may go on. Now see it work for real.
-
-### Before you start
-- The sidebar is on (dev1 checked). It only answers **you, the DM**, while a game is running.
-- **Where to ask matters.** DMbot answers in its **private chat with you** (open it from DMbot's name in the member list, **Message**), not in the **dmb-dm-screen** channel. Questions typed or sent as voice notes in the DM screen channel are ignored.
+**Why:** DMbot now keeps your game's clock and can time a spell like Bless. Check that you can start a timer and that DMbot tells you, only on your DM screen, when it has likely ended. It never ends one by itself.
 
 ### Steps
 1. Join your voice channel. Type `/dmbot start`, press **▶ Continue last campaign**, then **▶ Start listening**.
-2. **Typed:** open your private chat with DMbot and type **"do you need line of sight for fireball?"**. Wait up to 30 seconds.
-3. **Voice note:** in the same private chat, hold the microphone button and send a voice note: **"how much damage does fireball do?"**
-4. **At the table, out loud** (in the voice channel, as the DM): say **"Hold on, I need to find if you need line of sight for fireball."** Use those words: DMbot only reacts to "hold on, I need to find / look up / check ...". Wait up to 30 seconds. The answer comes to your private chat.
-5. Check each answer: short, names a source (like "SRD 5.2.1 p. 131") and says "sure" or "not sure".
-6. Type `/dmbot stop`, then open the **raw** transcript: your questions and DMbot's answers show as lines tagged **[DM Sidebar]** and **DMbot**.
+2. Open **⚙️ Settings** and press **Game clock**. Set a day and a time. A clock message appears in **dmb-dm-screen** with buttons.
+3. On the clock message press **Start a timer**. In the form write **Bless**, who it is on (a name), and **1 minute** for how long. Press submit.
+4. The clock message now lists the timer. Press **+10 min**.
+5. The DM screen should say "⏳ Bless on (the name) has likely ended" with two buttons: **Ended** and **Still going +10 min**. Press **Still going +10 min**, then press **+10 min** twice more and see it say so again. Press **Ended** this time.
+6. Type `/dmbot stop`.
 
 ### It worked if
-- Each question got a short answer in your **private chat** with DMbot (nothing in any public channel), and the raw transcript has the **[DM Sidebar]** lines.
+- The clock shows the time you set and moves with the buttons.
+- The "has likely ended" line shows **only** on the DM screen (never in the transcript or a public channel) and only after you pressed a button that passed the time.
 
-**If not:** type `/dmbot stop`, then tell dev1. If an answer was wrong **and** said "sure", copy it for dev1.
+**If not:** type `/dmbot stop`, then tell dev1 what you saw at the step where it went wrong.
 
 ### Tell dev1
-- **Worked** or **didn't work**.
-- If it didn't: what you saw (or didn't see) at the step where it went wrong.
+- **Worked** or **didn't work**, and anything that felt confusing.
 
 ---
 

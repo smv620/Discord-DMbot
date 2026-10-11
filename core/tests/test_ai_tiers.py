@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
+from unittest.mock import patch
 
 from dmbot import ai as ai_module
 from dmbot.ai import (
@@ -137,13 +138,15 @@ class Tiers(unittest.TestCase):
         self.assertEqual(
             FEATURE_TIERS,
             {
-                Feature.NAMES: AIModelTier.FAST,
+                Feature.NAMES: AIModelTier.CAREFUL,
                 Feature.TOPIC: AIModelTier.FAST,
                 Feature.AUDIO_CHECK: AIModelTier.FAST,
                 Feature.SIDEBAR: AIModelTier.FAST,
                 Feature.RULES: AIModelTier.FAST,
                 Feature.CLEANER: AIModelTier.FAST,
                 Feature.HOUSE_RULES: AIModelTier.CAREFUL,
+                Feature.SIDEBAR_RETRY: AIModelTier.CAREFUL,
+                Feature.RULES_CONFIRM: AIModelTier.CAREFUL,
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
@@ -408,6 +411,35 @@ class Fallback(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((reply.model, service.asked), (MODELS.deep, [MODELS.deep]))
         self.assertEqual((deep.tier, deep.model), (AIModelTier.DEEP, MODELS.deep))
         self.assertNotIn("sk-secret", repr(deep) + repr(client))
+
+
+class Timeouts(unittest.IsolatedAsyncioTestCase):
+    async def test_the_slower_tiers_get_longer_to_answer(self) -> None:
+        self.assertEqual(ai_module.TIER_TIMEOUT_S[AIModelTier.FAST], ai_module.REQUEST_TIMEOUT_S)
+        for tier in (AIModelTier.CAREFUL, AIModelTier.DEEP):
+            self.assertGreater(ai_module.TIER_TIMEOUT_S[tier], ai_module.REQUEST_TIMEOUT_S)
+
+    async def test_a_request_that_takes_too_long_is_a_busy_error_not_a_hang(self) -> None:
+        class Hangs(Service):
+            def post(self, url: str, *, json: Any, headers: Any) -> Any:
+                class Never:
+                    async def __aenter__(self) -> Any:
+                        await asyncio.sleep(60)
+
+                    async def __aexit__(self, *_: Any) -> None:
+                        return None
+
+                return Never()
+
+        client = AnthropicClient("k", MODELS, session=Hangs({}))  # type: ignore[arg-type]
+        with (
+            patch.dict(ai_module.TIER_TIMEOUT_S, {AIModelTier.CAREFUL: 0.05}),
+            self.assertLogs("dmbot.ai"),
+            self.assertRaises(AIError) as caught,
+        ):
+            await client.complete("s", "t", tier=AIModelTier.CAREFUL)
+        self.assertEqual(str(caught.exception), ai_module.BUSY)
+        self.assertEqual(client._refused, {})  # a slow answer doesn't blame the model
 
 
 class UsageLine(unittest.IsolatedAsyncioTestCase):

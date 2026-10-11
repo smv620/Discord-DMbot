@@ -30,9 +30,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from dmbot.ai import AIError
+from dmbot.devtools import recheck
 from dmbot.devtools.common import HISTORY, commit, history_entry
 from dmbot.devtools.costs import model
 from dmbot.devtools.replay import audio
+from dmbot.devtools.replay.run import Replay
 from dmbot.devtools.session_replay import (
     Diff,
     Session,
@@ -44,6 +47,7 @@ from dmbot.devtools.session_replay import (
     summary,
     today_lines,
 )
+from dmbot.sidebar.answer import Sidebar
 from dmbot.test_recording import library
 
 DEFAULT_DIR = Path("/var/lib/dmbot/test-recordings")
@@ -80,10 +84,67 @@ def why_incomplete(session: Session) -> str:
     return "it holds no speech. Keep a different session."
 
 
-def dollars_line(speech_s: float, sends_out: bool) -> str:
+def make_sidebar(ai: recheck.CountingAI) -> Sidebar:
+    """The real answer path, asked about a sample campaign with no house rules (a saved
+    session holds none) and no plan check."""
+    from dmbot.campaigns.models import Campaign
+    from dmbot.rules.house import HouseRule
+    from dmbot.rules.index import srd
+
+    async def gate(campaign: Campaign, user: int) -> str | None:
+        return None
+
+    async def houses(campaign: Campaign) -> Sequence[HouseRule]:
+        return []
+
+    async def names(campaign: Campaign) -> None:
+        return None
+
+    return Sidebar(ai, srd(), gate=gate, houses=houses, names=names)
+
+
+def dollars_line(speech_s: float, sends_out: bool, ai: recheck.CountingAI | None = None) -> str:
     minutes = speech_s / 60
     cost = model.stt_dollars(minutes) if sends_out else 0.0
-    return f"speech-to-text {minutes:.2f} min (${cost:.3f}); AI tokens 0 (the replay calls no AI)"
+    line = f"speech-to-text {minutes:.2f} min (${cost:.3f}); "
+    return line + (ai.budget() if ai else "AI tokens 0 (the replay calls no AI)")
+
+
+async def recheck_case(
+    args: argparse.Namespace,
+    session: Session,
+    result: Replay,
+    sidebar: Sidebar | None,
+) -> tuple[list[tuple[str, recheck.Counts]], list[str]]:
+    """The opt-in comparisons for one case: (flag name, counts) for the log, and detail lines
+    for the screen only."""
+    got: list[tuple[str, recheck.Counts]] = []
+    detail: list[str] = []
+    if args.with_rules:
+        from dmbot.campaigns.models import DEFAULT_TARGET
+        from dmbot.dm_screen.rules_cards import spotter_for
+
+        spotter = spotter_for(DEFAULT_TARGET, "2014")
+        then = recheck.cards([x.text for x in session.produced.transcript], spotter)
+        now = recheck.cards([x.text for x in today_lines(result)], spotter)
+        counts, notes = recheck.compare_cards(then, now)
+        got.append(("rules cards", counts))
+        detail += notes
+    if sidebar is not None:
+        table = [(x.start_ms, x.text) for x in today_lines(result)]
+        campaign = recheck.sample_campaign()
+
+        async def answer(question: str, scene: str) -> str | None:
+            try:
+                reply = await sidebar.answer(campaign, question, asker_id=1, scene=scene)
+            except AIError:
+                return None
+            return None if reply.refused else reply.text
+
+        done = await recheck.recheck_sidebar(table, recheck.pairs(session.produced.shown), answer)
+        got.append(("sidebar", done.counts))
+        detail += done.detail
+    return got, detail
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -116,6 +177,16 @@ async def main_async(args: argparse.Namespace) -> int:
     if args.log and not args.history.parent.is_dir():
         print(f"test_library: no {args.history.parent} here; give --history", file=sys.stderr)
         return 2
+    sidebar: Sidebar | None = None
+    ai_client: object | None = None
+    counting: recheck.CountingAI | None = None
+    if args.with_sidebar:
+        try:
+            ai_client, counting = recheck.make_ai()
+        except SystemExit as exc:
+            print(f"test_library: {exc}", file=sys.stderr)
+            return 2
+        sidebar = make_sidebar(counting)
     with_nice(NICE)
     lines: list[str] = []  # on screen: folder names and the reasons
     logged: list[str] = []  # in the public log: case names, verdicts and counts only
@@ -125,47 +196,61 @@ async def main_async(args: argparse.Namespace) -> int:
         logged.append(shown if public is None else public)
 
     verdicts: dict[str, int] = {}
+    totals: dict[str, recheck.Counts] = {}
     speech_s = 0.0
     unkept = 0
     trouble = False
-    for path in cases(folder):
-        try:
-            session = load(path)
-        except SessionError as exc:
-            trouble = True
-            note(
-                f"{path.name}: refused ({exc}). Don't copy this folder; delete it and "
-                "save the session again with the recorder.",
-                "a saved session was refused (not a usable session)",
+    try:
+        for path in cases(folder):
+            try:
+                session = load(path)
+            except SessionError as exc:
+                trouble = True
+                note(
+                    f"{path.name}: refused ({exc}). Don't copy this folder; delete it and "
+                    "save the session again with the recorder.",
+                    "a saved session was refused (not a usable session)",
+                )
+                continue
+            if not session.kept:
+                unkept += 1  # unkept sessions are not part of the library
+                continue
+            name = public_name(session)
+            label = f"{name} [{path.name}]"
+            if not session.complete:
+                note(
+                    f"{label}: skipped, {why_incomplete(session)}", f"{name}: skipped (incomplete)"
+                )
+                continue
+            try:
+                result = await run(
+                    session,
+                    build_transcriber(settings),
+                    realtime=not args.no_timing,
+                    outside=settings.sends_audio_out,
+                )
+            except (TranscriberUnavailable, OSError, audio.DecodeError) as exc:
+                trouble = True
+                note(
+                    f"{label}: could not run ({exc}). Check the speech-to-text engine and the "
+                    "files in that folder, then run again.",
+                    f"{name}: could not run",
+                )
+                continue
+            speech_s += result.sent_s
+            diff: Diff = compare(
+                session.produced, today_lines(result), result.alerts, session.expected
             )
-            continue
-        if not session.kept:
-            unkept += 1  # unkept sessions are not part of the library
-            continue
-        name = public_name(session)
-        label = f"{name} [{path.name}]"
-        if not session.complete:
-            note(f"{label}: skipped, {why_incomplete(session)}", f"{name}: skipped (incomplete)")
-            continue
-        try:
-            result = await run(
-                session,
-                build_transcriber(settings),
-                realtime=not args.no_timing,
-                outside=settings.sends_audio_out,
-            )
-        except (TranscriberUnavailable, OSError, audio.DecodeError) as exc:
-            trouble = True
-            note(
-                f"{label}: could not run ({exc}). Check the speech-to-text engine and the "
-                "files in that folder, then run again.",
-                f"{name}: could not run",
-            )
-            continue
-        speech_s += result.sent_s
-        diff: Diff = compare(session.produced, today_lines(result), result.alerts, session.expected)
-        verdicts[diff.verdict] = verdicts.get(diff.verdict, 0) + 1
-        note(f"{label}: {summary(diff)}", f"{name}: {summary(diff)}")
+            verdicts[diff.verdict] = verdicts.get(diff.verdict, 0) + 1
+            note(f"{label}: {summary(diff)}", f"{name}: {summary(diff)}")
+            rechecked, detail = await recheck_case(args, session, result, sidebar)
+            for flag, counts in rechecked:
+                totals[flag] = totals.get(flag, recheck.Counts()) + counts
+                note(f"  {flag}: {counts.line()}")
+            lines.extend(f"    {x}" for x in detail)  # on screen only: never in the log
+    finally:
+        if ai_client is not None:
+            await ai_client.close()  # type: ignore[attr-defined]
     total = ", ".join(f"{n} {v}" for v, n in sorted(verdicts.items())) or "no cases run"
     note(f"total: {total}")
     if unkept:
@@ -175,7 +260,9 @@ async def main_async(args: argparse.Namespace) -> int:
         )
     if verdicts.keys() & {"changed", "worse"}:
         lines.append("To read the words: scripts/replay --session FOLDER --transcriber ENGINE")
-    note(dollars_line(speech_s, settings.sends_audio_out))
+    for flag, counts in totals.items():
+        note(f"total {flag}: {counts.line()}")
+    note(dollars_line(speech_s, settings.sends_audio_out, counting))
     print("\n".join(lines))
     if args.log:
         header = [f"commit: {commit(args.commit, tool='test_library')}   engine: {settings.engine}"]
@@ -208,6 +295,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     runner = commands.add_parser("run", help="replay every kept, complete case")
     runner.add_argument("--transcriber", help="overrides TRANSCRIBER")
     runner.add_argument("--no-timing", action="store_true", help="queue at once, not in real time")
+    runner.add_argument(
+        "--with-rules",
+        action="store_true",
+        help="also compare the rules cards the transcript would show (free, no AI)",
+    )
+    runner.add_argument(
+        "--with-sidebar",
+        action="store_true",
+        help="also ask each saved sidebar question again with the real AI and compare "
+        "(COSTS MONEY; needs ANTHROPIC_API_KEY)",
+    )
     runner.add_argument("--log", action="store_true", help="append to docs/testing-history.log")
     runner.add_argument("--commit", help="the commit being replayed (default: GIT_COMMIT, git)")
     runner.add_argument("--history", type=Path, default=HISTORY, help=argparse.SUPPRESS)

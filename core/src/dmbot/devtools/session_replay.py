@@ -83,6 +83,7 @@ class Shown:
     speaker: int
     kind: str
     text: str
+    at_ms: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +129,7 @@ def _lines(raw: Any) -> tuple[Line, ...]:
 def _produced(raw: Any) -> Produced:
     raw = raw or {}
     shown = tuple(
-        Shown(int(r["speaker"]), str(r.get("kind", "")), str(r["text"]))
+        Shown(int(r["speaker"]), str(r.get("kind", "")), str(r["text"]), int(r.get("at_ms", 0)))
         for r in raw.get("shown") or ()
     )
     return Produced(_lines(raw.get("transcript")), shown)

@@ -1922,3 +1922,29 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Waiting for the owner: either set DMBOT_SIDEBAR=1 in .env, or allow dev1 to change plain settings;
   then dev1 restarts core by name, checks the start-up log (0 ERROR) and records it here.
   #1013 can also be deployed without the new settings (the defaults work).
+
+==============================================================================
+2026-10-10  dev1: DMBOT_SIDEBAR switched on (owner), and a correction
+==============================================================================
+  Supervisor's go on #954 ("Sidebar may go on", 18 of 19). dev1 could not edit .env (the permission
+  checker refused), so the owner set DMBOT_SIDEBAR=1; dev1 restarted core by name (no live session):
+  gateway and ears connected, 0 ERROR, DMBOT_SIDEBAR=1 inside core.
+  Correction: the entry "Test D" above says DMBOT_DEBUG_AUDIO was not on. The owner says it was
+  already 1; dev1 cannot read .env, so it could not tell. #914's counts may therefore have been
+  exercised in Test D (not checked in the log).
+
+==============================================================================
+2026-10-10  Test E: the DM sidebar at the table (owner, one person)
+==============================================================================
+  First try (06:03 UTC): FAILED, dev1's mistake. The page told the owner to ask in the dmb-dm-screen
+  channel and with "DMbot, ...". The sidebar only answers a typed message or voice note in the DM's
+  private chat with DMbot, or the spoken words "Hold on, I need to find ..." (sidebar/service.py,
+  ask.py). The log showed no sidebar activity. Page fixed (#1037).
+  Second try (06:09 to 06:15 UTC): all three ways in answered, 0 ERROR, 1.0 to 2.5 s each.
+  1. Typed, "What's the range of fireball?": answered "doesn't state the range ... not sure" (wrong).
+  2. Voice note: correct; the owner liked "No." first, then context, then "sure".
+  3. Spoken "hold on, I need to find the range on Fireball": answered with the description, not the range.
+  Cause of 1 and 3: the spell header fields (range, casting time, components, duration) are not sent
+  to the AI, only the description text. Bug #1039 (CloudDev). Owner suggestions: wake phrase "Hey
+  DMbot" / "DMbot, ..." in the open channel, and drop the one-question-a-minute limit: #1040
+  (Supervisor decides). Result: PASS with bugs; sidebar stays on (no answer was wrong AND "sure").
