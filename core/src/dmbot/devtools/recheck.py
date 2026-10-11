@@ -4,8 +4,8 @@
 today's, and compares the cards each would show: no AI, no cost. `--with-sidebar` asks every
 sidebar question saved in the session again through the real `Sidebar` answer path (today's
 prompt and tier, the real AI, so it costs money) and compares each new answer with the saved
-one: its source, "sure" or "not sure", the length rule, and how many of its words are the same.
-It judges no style. Both are off by default.
+one: its source, "confident" or "uncertain", the length rule, and how many of its words are
+the same. It judges no style. Both are off by default.
 
 Everything here is numbers and short comparisons; the words of a session are players' words and
 never go in the public log (the caller logs only `Counts`).
@@ -31,7 +31,9 @@ from dmbot.sidebar import brevity
 SAME_OVERLAP = 0.8  # this share of the words in common (and the same source) is "same"
 SCENE_LINES = 8  # the table lines before the question that the sidebar is given as the scene
 QUESTION_KIND, ANSWER_KIND = "sidebar question", "sidebar answer"
-_SUFFIX = re.compile(r" \((?P<source>.+?)(?:, (?P<sure>not sure|sure))?\)$")
+_SUFFIX = re.compile(
+    r" \((?P<source>.+?)(?:, (?P<confidence>not sure|sure|uncertain|confident))?\)$"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,12 +130,18 @@ def pairs(shown: Sequence[Shown]) -> list[tuple[int, str, str]]:
     return out
 
 
+_OLD = {"sure": "confident", "not sure": "uncertain"}
+
+
 def split_answer(text: str) -> tuple[str, str | None, str | None]:
-    """The answer, its source and its "sure" or "not sure" (None when not there)."""
+    """The answer, its source and its "confident" or "uncertain" (None when not there).
+    Answers saved before #1071 say "sure" or "not sure": read as the new words, so an old
+    session and a new answer compare."""
     match = _SUFFIX.search(text)
     if match is None:
         return text, None, None
-    return text[: match.start()], match["source"], match["sure"]
+    said = match["confidence"]
+    return text[: match.start()], match["source"], _OLD.get(said, said)
 
 
 def overlap(a: str, b: str) -> float:
@@ -146,27 +154,29 @@ def overlap(a: str, b: str) -> float:
 class AnswerCheck:
     verdict: str  # same, changed, worse or better
     source_same: bool
-    sure_same: bool
+    confidence_same: bool
     length_then: bool
     length_now: bool
     overlap: float
 
 
 def compare_answer(then: str, now: str) -> AnswerCheck:
-    body_then, source_then, sure_then = split_answer(then)
-    body_now, source_now, sure_now = split_answer(now)
+    body_then, source_then, confidence_then = split_answer(then)
+    body_now, source_now, confidence_now = split_answer(now)
     ok_then, ok_now = brevity.within_limit(body_then), brevity.within_limit(body_now)
     shared = overlap(body_then, body_now)
-    source_same, sure_same = source_then == source_now, sure_then == sure_now
-    if (ok_then and not ok_now) or (sure_then == "sure" and sure_now != "sure"):
+    source_same, confidence_same = source_then == source_now, confidence_then == confidence_now
+    if (ok_then and not ok_now) or (
+        confidence_then == "confident" and confidence_now != "confident"
+    ):
         verdict = "worse"
     elif not ok_then and ok_now:
         verdict = "better"
-    elif source_same and sure_same and shared >= SAME_OVERLAP:
+    elif source_same and confidence_same and shared >= SAME_OVERLAP:
         verdict = "same"
     else:
         verdict = "changed"
-    return AnswerCheck(verdict, source_same, sure_same, ok_then, ok_now, shared)
+    return AnswerCheck(verdict, source_same, confidence_same, ok_then, ok_now, shared)
 
 
 class CountingAI:
@@ -235,7 +245,7 @@ async def recheck_sidebar(
             result.detail.append(
                 f"sidebar question {number}: {check.verdict} "
                 f"(source {'same' if check.source_same else 'differs'}, "
-                f"sure {'same' if check.sure_same else 'differs'}, "
+                f"confidence {'same' if check.confidence_same else 'differs'}, "
                 f"{check.overlap:.0%} of the words shared)"
             )
     return result

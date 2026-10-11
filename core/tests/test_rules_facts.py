@@ -104,13 +104,13 @@ class OneFactsFunction(unittest.TestCase):
 class TheFallbackAnswersWithTheField(unittest.TestCase):
     def test_a_range_question_that_falls_back_answers_with_the_range(self) -> None:
         # The model says "don't say" twice with the entry in front of it; the entry answers.
-        nope = reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "not sure")
+        nope = reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "uncertain")
         got = run(engine(FakeAI([nope, nope])).answer(campaign(), "what's the range of fireball"))
         self.assertIn("150 feet", got.text)
         self.assertIn("SRD 5.2.1 p. 131", got.text)
 
     def test_other_questions_still_fall_back_to_the_description(self) -> None:
-        nope = reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "not sure")
+        nope = reply("The free rules don't say. Your call.", "SRD 5.2.1 p. 131", "uncertain")
         got = run(
             engine(FakeAI([nope, nope])).answer(
                 campaign(), "do you need line of sight for fireball"

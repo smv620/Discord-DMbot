@@ -167,7 +167,8 @@ class Limits(unittest.TestCase):
 class Source(unittest.TestCase):
     def test_the_source_and_confidence_come_after(self) -> None:
         self.assertEqual(
-            brevity.join_source("No.", "SRD 5.2.1 p. 131", "sure"), "No. (SRD 5.2.1 p. 131, sure)"
+            brevity.join_source("No.", "SRD 5.2.1 p. 131", "confident"),
+            "No. (SRD 5.2.1 p. 131, confident)",
         )
 
     def test_with_neither_the_answer_stands_alone(self) -> None:

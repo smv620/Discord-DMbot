@@ -21,7 +21,7 @@ FIREBALL = "find if you need line of sight for fireball"
 
 @dataclass
 class FakeAnswer:
-    text: str = "No: its origin is a point you choose. (SRD 5.2.1, sure)"
+    text: str = "No: its origin is a point you choose. (SRD 5.2.1, confident)"
     in_game: bool = True
     refused: bool = False
     model: str = "model-1"

@@ -42,10 +42,10 @@ class Cards(unittest.TestCase):
 
 
 class Answers(unittest.TestCase):
-    def test_the_source_and_sure_are_read_from_the_suffix(self) -> None:
+    def test_the_source_and_confidence_are_read_from_the_suffix(self) -> None:
         self.assertEqual(
-            recheck.split_answer("No. A point you choose. (SRD 5.2.1 p. 131, sure)"),
-            ("No. A point you choose.", "SRD 5.2.1 p. 131", "sure"),
+            recheck.split_answer("No. A point you choose. (SRD 5.2.1 p. 131, confident)"),
+            ("No. A point you choose.", "SRD 5.2.1 p. 131", "confident"),
         )
         self.assertEqual(
             recheck.split_answer("Yes. (not in DMbot's rules, check your book)"),
@@ -53,17 +53,27 @@ class Answers(unittest.TestCase):
         )
         self.assertEqual(recheck.split_answer("Plain."), ("Plain.", None, None))
 
-    def test_losing_sure_is_worse_and_the_same_words_are_same(self) -> None:
+    def test_answers_saved_with_the_old_words_are_read_as_the_new_ones(self) -> None:
+        self.assertEqual(
+            recheck.split_answer("No. A point. (SRD 5.2.1 p. 131, sure)"),
+            ("No. A point.", "SRD 5.2.1 p. 131", "confident"),
+        )
+        self.assertEqual(recheck.split_answer("No. A point. (SRD 5.2.1, not sure)")[2], "uncertain")
         then = "No. It starts at a point you choose. (SRD 5.2.1 p. 131, sure)"
+        now = "No. It starts at a point you choose. (SRD 5.2.1 p. 131, confident)"
+        self.assertEqual(recheck.compare_answer(then, now).verdict, "same")
+
+    def test_losing_confidence_is_worse_and_the_same_words_are_same(self) -> None:
+        then = "No. It starts at a point you choose. (SRD 5.2.1 p. 131, confident)"
         self.assertEqual(recheck.compare_answer(then, then).verdict, "same")
-        lost = "No. It starts at a point you choose. (SRD 5.2.1 p. 131, not sure)"
+        lost = "No. It starts at a point you choose. (SRD 5.2.1 p. 131, uncertain)"
         self.assertEqual(recheck.compare_answer(then, lost).verdict, "worse")
         other = "Yes. Walls matter a lot here. (the scene)"
         self.assertEqual(recheck.compare_answer(then, other).verdict, "worse")
 
     def test_a_broken_length_rule_is_worse_and_a_fixed_one_better(self) -> None:
-        short = "Yes. (SRD 5.2.1 p. 131, sure)"
-        long = " ".join(["Yes. It goes on and on."] * 20) + " (SRD 5.2.1 p. 131, sure)"
+        short = "Yes. (SRD 5.2.1 p. 131, confident)"
+        long = " ".join(["Yes. It goes on and on."] * 20) + " (SRD 5.2.1 p. 131, confident)"
         self.assertEqual(recheck.compare_answer(short, long).verdict, "worse")
         self.assertEqual(recheck.compare_answer(long, short).verdict, "better")
 
@@ -165,7 +175,7 @@ class LibraryFlags(unittest.TestCase):
                 "speaker": 1001,
                 "at_ms": 905,
                 "kind": "sidebar answer",
-                "text": "Yes. It deals fire damage. (SRD 5.2.1 p. 131, sure)",
+                "text": "Yes. It deals fire damage. (SRD 5.2.1 p. 131, confident)",
             },
         ]
         path.write_text(json.dumps(data), encoding="utf-8")
@@ -213,13 +223,13 @@ class LibraryFlags(unittest.TestCase):
         self.assertNotIn("sidebar", out)
 
     def test_with_sidebar_asks_again_and_prints_the_budget(self) -> None:
-        fake = FakeAnthropic(reply("Yes. It deals fire damage.", "SRD 5.2.1 p. 131", "sure"))
+        fake = FakeAnthropic(reply("Yes. It deals fire damage.", "SRD 5.2.1 p. 131", "confident"))
         _, out, _ = self.run_library("--with-sidebar", fake=fake)
         self.assertIn("sidebar: 1 same", out)
         self.assertIn("AI 1 calls, 300 tokens in, 30 out", out)
 
-    def test_with_sidebar_notices_a_lost_sure(self) -> None:
-        fake = FakeAnthropic(reply("Yes. It deals fire damage.", "SRD 5.2.1 p. 131", "not sure"))
+    def test_with_sidebar_notices_a_lost_confidence(self) -> None:
+        fake = FakeAnthropic(reply("Yes. It deals fire damage.", "SRD 5.2.1 p. 131", "uncertain"))
         _, out, _ = self.run_library("--with-sidebar", fake=fake)
         self.assertIn("sidebar: 1 worse", out)
 
