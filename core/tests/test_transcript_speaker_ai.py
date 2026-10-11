@@ -134,10 +134,20 @@ class OfferedTest(unittest.TestCase):
         self.assertEqual(speakers(look).count("Brother Hiro"), 1)
 
     def test_the_work_is_done_once_for_one_lookup(self) -> None:
+        book = speaker_ai.NameBook()
         look = lookup()
-        first = speaker_ai._allowed(look)
-        self.assertIs(speaker_ai._allowed(look), first)
-        self.assertIsNot(speaker_ai._allowed(lookup()), first)  # a new lookup: worked again
+        first = book.allowed(look)
+        self.assertIs(book.allowed(look), first)
+        self.assertIsNot(book.allowed(lookup()), first)  # a new lookup: worked again
+
+    def test_two_campaigns_never_share_names(self) -> None:
+        other = lookup(
+            person(MARY, "Mary of Otherland"), extra_aliases=(alias(MARY, "Mary of Otherland"),)
+        )
+        mine, theirs = speaker_ai.NameBook(), speaker_ai.NameBook()
+        for _ in range(2):  # alternately: each book only ever holds its own campaign's names
+            self.assertNotIn("Mary of Otherland", mine.allowed(lookup()).values())
+            self.assertIn("Mary of Otherland", theirs.allowed(other).values())
 
 
 class AnswerTest(unittest.TestCase):

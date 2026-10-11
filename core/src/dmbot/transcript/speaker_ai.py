@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from dmbot.ai import Reply
@@ -63,19 +63,22 @@ class Completes(Protocol):
     async def complete(self, system: str, text: str, *, max_tokens: int = ...) -> Reply: ...
 
 
-_last: tuple[CampaignLookup, dict[str, str]] | None = None  # the newest lookup's answer
+@dataclass(slots=True)
+class NameBook:
+    """The allowed names of one campaign's newest lookup, worked out once: they are asked
+    for on every line the DM says, and a lookup never changes (a reload is a new one). One
+    book belongs to one running session (so one campaign); nothing is shared between them."""
+
+    _lookup: CampaignLookup | None = None
+    _names: dict[str, str] = field(default_factory=dict)
+
+    def allowed(self, lookup: CampaignLookup) -> dict[str, str]:
+        if self._lookup is not lookup:
+            self._lookup, self._names = lookup, _allowed(lookup)
+        return self._names
 
 
 def _allowed(lookup: CampaignLookup) -> dict[str, str]:
-    """`_work`, remembered for the newest lookup: it is asked for on every line the DM
-    says, and a lookup never changes (a reload is a new one), so it is worked out once."""
-    global _last
-    if _last is None or _last[0] is not lookup:
-        _last = (lookup, _work(lookup))
-    return _last[1]
-
-
-def _work(lookup: CampaignLookup) -> dict[str, str]:
     """Entity ID → the name a label may take. A name is allowed only if it is a confirmed
     NPC's or god's own name, itself confirmed and not secret, and no secret name of anything
     reads the same."""
@@ -111,11 +114,13 @@ def speakers(lookup: CampaignLookup) -> list[str]:
     return sorted(_allowed(lookup).values(), key=str.casefold)
 
 
-def offered(lookup: CampaignLookup, last_said: Mapping[str, float]) -> list[str]:
+def offered(
+    lookup: CampaignLookup, last_said: Mapping[str, float], book: NameBook | None = None
+) -> list[str]:
     """The names to offer the AI, at most `MAX_NAMES`: the ones said most recently first
     (`last_said`: entity ID → when it was last said, from the scene), then the rest
     alphabetically, so a big campaign's later-alphabet NPCs aren't lost."""
-    allowed = _allowed(lookup)
+    allowed = book.allowed(lookup) if book is not None else _allowed(lookup)
     recent = sorted((e for e in allowed if e in last_said), key=lambda e: -last_said[e])
     rest = sorted((e for e in allowed if e not in last_said), key=lambda e: allowed[e].casefold())
     return [allowed[e] for e in [*recent, *rest]][:MAX_NAMES]
@@ -170,11 +175,12 @@ async def identify(
     lookup: CampaignLookup,
     texts: Sequence[str],
     last_said: Mapping[str, float] | None = None,
+    book: NameBook | None = None,
 ) -> tuple[list[Guess], Reply]:
     """One call for a window of the DM's lines. Every name that comes back was checked
     against `speakers` here, so none can be a secret. Raises the client's error if the call
     fails (the caller leaves the lines without a label)."""
-    names = offered(lookup, last_said or {})
+    names = offered(lookup, last_said or {}, book)
     reply = await ai.complete(
         SYSTEM, prompt(texts, names), max_tokens=TOKENS_PER_LINE * len(texts) + 16
     )

@@ -411,6 +411,7 @@ class Table:
     # Who the DM was speaking as (#53): the DM's lines waiting for the AI, a window at a
     # time, and the same bookkeeping as the off-topic filter.
     speakers: TopicWindow = field(default_factory=TopicWindow)
+    speaker_book: speaker_ai.NameBook = field(default_factory=speaker_ai.NameBook)
     speaker_calls: int = 0
     speaker_tokens: list[int] = field(default_factory=lambda: [0, 0])  # in, out
     speaker_tasks: set[asyncio.Task[None]] = field(default_factory=set)  # awaited at the end
@@ -3039,7 +3040,7 @@ class DMBot(commands.AutoShardedBot):
             or table.name_lookup is None
             or self.tables.get(table.guild_id) is not table
             or time.monotonic() < table.speaker_paused_until
-            or not speaker_ai.speakers(table.name_lookup)
+            or not table.speaker_book.allowed(table.name_lookup)
         ):
             return
         first = not table.speakers.lines
@@ -3107,7 +3108,9 @@ class DMBot(commands.AutoShardedBot):
         last_said = {e: times[-1][0] for e, times in table.scene.said.items() if times}
         try:
             guesses, reply = await asyncio.wait_for(
-                speaker_ai.identify(self.topic_ai, lookup, [w.text for w in lines], last_said),
+                speaker_ai.identify(
+                    self.topic_ai, lookup, [w.text for w in lines], last_said, table.speaker_book
+                ),
                 TOPIC_CALL_TIMEOUT_S,
             )
             table.speaker_calls += 1
