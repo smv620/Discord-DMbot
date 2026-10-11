@@ -2492,7 +2492,11 @@ games". Terms, privacy and refund pages before launch: **signed off by the owner
 2026-10-09, which is their effective date** (#498). Also approved for go-live that day:
 rate limits at the proxy, the separate `dmbot_web` database role, and Cloudflare in front
 of the API. **Legal values (owner, 2026-10-10, #922):** DMbot LLC, email-only contact (no
-postal address on the site or in this repo), minimum age 16, OVH US hosting. The Discord app
+postal address on the site or in this repo), minimum age 16, OVH US hosting. **Final legal
+text signed off by the owner on 2026-10-11 (#922, #1077):** campaigns outlive a deleted
+account (120 days unless another DM takes them over), rights requests by email answered
+within 30 days, no claim about how the database is encrypted, and the owner's own "Our
+responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4. The Discord app
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
 **Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
