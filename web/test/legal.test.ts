@@ -177,6 +177,34 @@ describe("the facts #433 asks for", () => {
     expect(terms()).toMatch(/confirm they have the right to use it\. We don't check this/);
   });
 
+  // Owner's decisions of 2026-10-11 (#922): campaigns outlive the account, the rights wording,
+  // and the "Our responsibility" text. No placeholder is left on any legal page.
+  it("says campaigns stay when an account is deleted", () => {
+    for (const body of [terms(), privacy()]) {
+      expect(body).toContain("Your campaigns are not deleted with your account");
+      expect(body).toContain("the other players may still want to download them");
+    }
+  });
+
+  it("tells people how to ask about their information, with a 30-day answer", () => {
+    expect(privacy()).toContain(
+      "You can ask us to show you, correct, send you a copy of, or delete the information we hold about you, by emailing dmbot.admin@gmail.com. We answer within 30 days.",
+    );
+  });
+
+  it("uses the owner's approved 'Our responsibility' text", () => {
+    expect(terms()).toContain(
+      "DMbot LLC, its affiliates and any contributors to the DMbot project make no claims or promises about the accuracy or stability of the product's performance.",
+    );
+    expect(terms()).toContain("users agree to hold DMbot LLC and its affiliates harmless for any losses, whether material, non-material or deemed.");
+  });
+
+  it("leaves no placeholder on any legal page", () => {
+    for (const page of ["terms", "privacy", "refunds"]) {
+      expect(text(doc(page).querySelector("main"))).not.toMatch(/\{\{/);
+    }
+  });
+
   it("describes the three DM-screen settings and that peeks are seen", () => {
     expect(privacy()).toMatch(/players who choose to peek \(the usual setting/);
     expect(privacy()).toContain("the game master can see who peeked");
