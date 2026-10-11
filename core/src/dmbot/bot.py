@@ -3253,7 +3253,9 @@ class DMBot(commands.AutoShardedBot):
                 book.close(speaker_q.ANSWERED, time.monotonic())
                 return speaker_q.SKIPPED, True
             wanted = typed if pick == speaker_q.TYPE else speaker_q.pick_to_name(asked, pick)
-            lookup = await self._names_now(table)  # a name may have been made secret since
+            # As they are now (a name may have been made secret since), and never waited on
+            # for long: the question can't be answered meanwhile.
+            lookup = await self._current_names(table)
             if lookup is None:
                 book.failed(question_id)
                 return speaker_q.CANT_CHECK, False
@@ -3272,7 +3274,8 @@ class DMBot(commands.AutoShardedBot):
         except BaseException:
             book.failed(question_id)
             raise
-        book.close(speaker_q.ANSWERED, time.monotonic())
+        if book.is_open(question_id):
+            book.close(speaker_q.ANSWERED, time.monotonic())
         return speaker_q.answered_text(discord.utils.escape_markdown(name)), True
 
     async def _save_entity(self, table: Table, waiting: Waiting, entity: str) -> None:

@@ -24,6 +24,7 @@ from dmbot.memory import sheets
 from dmbot.memory.sheet_store import CharacterSheet
 from dmbot.sessions import SessionStore
 from dmbot.transcript import questions as name_questions
+from dmbot.transcript import speaker_question as speaker_q
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
 from tests.pg import DatabaseTest
 
@@ -1642,7 +1643,7 @@ class SaveAndResume(SessionTests):
         text, done = await self.bot.answer_speaker_question(
             GUILD, asked.id, "type", DM, "Silas Vane"
         )
-        self.assertFalse(done)
+        self.assertEqual((text, done), (speaker_q.NOT_ALLOWED, False))
         self.assertTrue(table.speaker_questions.is_open(asked.id))
         text, done = await self.bot.answer_speaker_question(GUILD, asked.id, "0", DM)
         self.assertTrue(done)
@@ -1650,6 +1651,28 @@ class SaveAndResume(SessionTests):
         said_as = {line.text: line.entity for line in table.unsaved._waiting}
         self.assertEqual(said_as[asked.context], "Brother Hiro")
         self.assertIsNone(table.speaker_questions.open)
+
+    async def test_a_name_made_secret_before_the_answer_is_refused(self) -> None:
+        from tests.test_transcript_speaker_ai import HIRO, alias, lookup
+
+        before, after = lookup(), lookup(extra_aliases=(alias(HIRO, "Brother Hiro", secret=True),))
+        calls: list[int] = []
+
+        def now() -> Any:
+            calls.append(1)
+            return before if len(calls) <= 2 else after  # asking: 2 looks; the answer: after
+
+        table = await self.speaking("1 npc 2 maybe\n2 unsure", now)
+        self.bot.post_message = AsyncMock(return_value=MagicMock(edit=AsyncMock()))  # type: ignore[method-assign]
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        self.said(table, "The door creaks open slowly.", user=DM, at_ms=5_000)
+        await self.settle()
+        asked = table.speaker_questions.open
+        assert asked is not None
+        text, done = await self.bot.answer_speaker_question(GUILD, asked.id, "0", DM)
+        self.assertEqual((text, done), (speaker_q.NOT_ALLOWED, False))
+        self.assertTrue(table.speaker_questions.is_open(asked.id))  # the DM may pick another
+        self.assertTrue(all(line.entity == "" for line in table.unsaved._waiting))
 
     async def test_a_dm_who_has_stopped_is_not_asked_about(self) -> None:
         table = await self.speaking("1 narrating\n2 narrating")
