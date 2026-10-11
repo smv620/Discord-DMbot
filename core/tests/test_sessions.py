@@ -1531,7 +1531,9 @@ class SaveAndResume(SessionTests):
         self.assertEqual(topics["we sneak past the guards"], "game")
         self.assertEqual((table.topic_calls, table.topic_tokens), (1, [50, 6]))
 
-    async def speaking(self, answer: str, now: Any = None) -> Any:
+    async def speaking(
+        self, answer: str, now: Any = None, *, hold: asyncio.Event | None = None
+    ) -> Any:
         """A session with the speaker labels on (#53): the DM's lines go to the AI stand-in
         (`answer` for the speaker question, everyone game for the off-topic one), and the
         campaign's names come from `now()` each time they are asked for."""
@@ -1543,6 +1545,8 @@ class SaveAndResume(SessionTests):
         async def complete(system: str, text: str, *, max_tokens: int = 0) -> Reply:
             if text.startswith("Characters:"):
                 asked.append(text)
+                if hold is not None:
+                    await hold.wait()  # the AI is slow
                 return Reply(answer, cut=False, input_tokens=70, output_tokens=5)
             return Reply("1 game\n2 game", cut=False, input_tokens=5, output_tokens=2)
 
@@ -1600,7 +1604,20 @@ class SaveAndResume(SessionTests):
         self.assertEqual(said_as["Welcome, weary travellers, sit by the fire."], "")  # secret now
         self.assertEqual(said_as["The door creaks open slowly."], "narrating")
 
-    async def test_nobody_is_labelled_without_consent_or_names(self) -> None:
+    async def test_a_dm_who_stops_while_the_ai_thinks_gets_no_label(self) -> None:
+        # CLAUDE.md: consent is checked again after every wait.
+        hold = asyncio.Event()
+        table = await self.speaking("1 narrating\n2 narrating", hold=hold)
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        self.said(table, "The door creaks open slowly.", user=DM, at_ms=5_000)
+        await self.settle()
+        self.assertEqual(len(self.speaker_asks), 1)  # asked, and waiting for the answer
+        self.bot.stop_recording(GUILD, DM)
+        hold.set()
+        await self.settle()
+        self.assertTrue(all(line.entity == "" for line in table.unsaved._waiting))
+
+    async def test_a_dm_who_has_stopped_is_not_asked_about(self) -> None:
         table = await self.speaking("1 narrating\n2 narrating")
         self.bot.stop_recording(GUILD, DM)
         self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)

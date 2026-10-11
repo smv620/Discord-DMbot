@@ -3072,7 +3072,15 @@ class DMBot(commands.AutoShardedBot):
     async def _label_speakers_later(self, table: Table, opened_at: float | None) -> None:
         await asyncio.sleep(table.speakers.window_s)
         if table.speakers.lines and table.speakers.opened_at == opened_at:
-            await self._label_speakers(table, table.speakers.take())
+            lines = table.speakers.take()
+            # Awake and working: the end of the session waits for it like any window
+            # instead of cancelling it mid-call with the other timers.
+            this = asyncio.current_task()
+            if this is not None and this in table.speaker_timers:
+                table.speaker_timers.discard(this)
+                table.speaker_tasks.add(this)
+                this.add_done_callback(table.speaker_tasks.discard)
+            await self._label_speakers(table, lines)
 
     async def _current_names(self, table: Table) -> CampaignLookup | None:
         """The campaign's names as they are now (a name may just have been made secret), or
