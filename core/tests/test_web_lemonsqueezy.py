@@ -388,15 +388,14 @@ class Provider(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_billing_page_refuses_a_foreign_address_and_failures(self) -> None:
         path = ("GET", "/v1/customers/777")
-        for answer in (
-            (
-                200,
-                {"data": {"attributes": {"urls": {"customer_portal": "https://evil.example/p"}}}},
-            ),
+        foreign = {"data": {"attributes": {"urls": {"customer_portal": "https://evil.example/p"}}}}
+        answers: list[tuple[int, Any]] = [
+            (200, foreign),
             (200, {"data": {"attributes": {}}}),
             (404, None),
             (500, None),
-        ):
+        ]
+        for answer in answers:
             self.http.answers[path] = answer
             with self.assertRaises(PaymentError):
                 await self.provider.billing_url(customer_id="777", return_url="https://x.example")
