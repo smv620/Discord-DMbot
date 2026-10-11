@@ -151,7 +151,7 @@ from dmbot.timebot import durations
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
-from dmbot.transcript import fix_notes, left_out
+from dmbot.transcript import fix_notes, left_out, speaker_ai
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
@@ -206,6 +206,7 @@ HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
 TOPIC_CALL_TIMEOUT_S = 8.0
 TOPIC_FAILURES_BEFORE_REST = 3
 TOPIC_REST_S = 300.0
+SPEAKER_WAIT_S = 1.0  # the longest the names are waited for, before a label is saved
 EDIT_TIMEOUT_S = 5.0  # a transcript message edit, at most (it holds the post lock)
 PUT_BACK_TIMEOUT_S = 5.0  # saving a Put it back, at most (it holds the save lock; #677)
 HINT_PEOPLE_S = 5.0  # who's in the voice channel, for name hints: looked at this often
@@ -407,6 +408,16 @@ class Table:
     topic_failures: int = 0  # in a row: after a few, the filter rests a while
     topic_paused_until: float = 0.0  # monotonic seconds
     hidden: set[tuple[int, int]] = field(default_factory=set)  # lines shown as a marker
+    # Who the DM was speaking as (#53): the DM's lines waiting for the AI, a window at a
+    # time, and the same bookkeeping as the off-topic filter.
+    speakers: TopicWindow = field(default_factory=TopicWindow)
+    speaker_book: speaker_ai.NameBook = field(default_factory=speaker_ai.NameBook)
+    speaker_calls: int = 0
+    speaker_tokens: list[int] = field(default_factory=lambda: [0, 0])  # in, out
+    speaker_tasks: set[asyncio.Task[None]] = field(default_factory=set)  # awaited at the end
+    speaker_timers: set[asyncio.Task[None]] = field(default_factory=set)  # cancelled then
+    speaker_failures: int = 0
+    speaker_paused_until: float = 0.0  # monotonic seconds
     # The DM sidebar (#935): what was said lately (the scene for an answer), and the
     # safety limit on questions (6 a minute, 120 a session; #1040), spoken and typed.
     recent: Recent = field(default_factory=Recent.new)
@@ -1390,6 +1401,13 @@ class DMBot(commands.AutoShardedBot):
                     " since the restart" if table.after_restart else "",
                 )
                 await self._finish_topics(table)  # bounded: saving comes first
+                await self._finish_speakers(table)
+                if table.speaker_calls:  # for cost per session hour (#53)
+                    log.info(
+                        "Speaker labels: %d calls, %d tokens in, %d out",
+                        table.speaker_calls,
+                        *table.speaker_tokens,
+                    )
                 if table.topic_calls:  # for cost per session hour (#52)
                     log.info(
                         "Off-topic filter: %d calls, %d tokens in, %d out",
@@ -2633,6 +2651,7 @@ class DMBot(commands.AutoShardedBot):
             table.unsaved.add(
                 Line(utterance.start_ms, utterance.user_id, text, cleaned or text, duration_ms)
             )
+            self._speaker_pending(table, utterance, str(cleaned or text))
         saving = (
             table.test_session is not None
             and self.test_voice is not None
@@ -3010,6 +3029,125 @@ class DMBot(commands.AutoShardedBot):
                 hide.append(waiting)
         if hide:
             await self._hide_lines(table, hide, lines)
+
+    def _speaker_pending(self, table: Table, utterance: Utterance, text: str) -> None:
+        """Who the DM was speaking as (#53): the DM's own lines, not other people's, wait
+        for the AI a window at a time. No AI key, no names to choose from, a session
+        already finishing, or a resting helper: no label (never a guess in the file)."""
+        if (
+            self.topic_ai is None
+            or utterance.user_id not in table.dm_user_ids
+            or table.name_lookup is None
+            or self.tables.get(table.guild_id) is not table
+            or time.monotonic() < table.speaker_paused_until
+            or not table.speaker_book.allowed(table.name_lookup)
+        ):
+            return
+        first = not table.speakers.lines
+        waiting = Waiting(utterance.user_id, utterance.start_ms, text, utterance.duration_s)
+        if table.speakers.add(waiting, time.monotonic()):
+            self._speaker_task(table, self._label_speakers(table, table.speakers.take()))
+        elif first:
+            later = self._label_speakers_later(table, table.speakers.opened_at)
+            self._speaker_task(table, later, timer=True)
+
+    def _speaker_task(self, table: Table, work: Awaitable[None], *, timer: bool = False) -> None:
+        task = self._track(work, "speakers")
+        if task is not None:
+            tasks = table.speaker_timers if timer else table.speaker_tasks
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
+    async def _finish_speakers(self, table: Table) -> None:
+        """At the end of a session: wait (bounded) for windows being labelled, then label
+        the last one. On shutdown there's no time: those lines get no label."""
+        for timer in list(table.speaker_timers):
+            timer.cancel()
+        pending = [t for t in table.speaker_tasks if not t.done()]
+        if pending:
+            await asyncio.wait(pending, timeout=TOPIC_CALL_TIMEOUT_S + 2)
+        lines = table.speakers.take()
+        if lines and not self._closing:
+            await self._label_speakers(table, lines)
+
+    async def _label_speakers_later(self, table: Table, opened_at: float | None) -> None:
+        await asyncio.sleep(table.speakers.window_s)
+        if table.speakers.lines and table.speakers.opened_at == opened_at:
+            lines = table.speakers.take()
+            # Awake and working: the end of the session waits for it like any window
+            # instead of cancelling it mid-call with the other timers.
+            this = asyncio.current_task()
+            if this is not None and this in table.speaker_timers:
+                table.speaker_timers.discard(this)
+                table.speaker_tasks.add(this)
+                this.add_done_callback(table.speaker_tasks.discard)
+            await self._label_speakers(table, lines)
+
+    async def _current_names(self, table: Table) -> CampaignLookup | None:
+        """The campaign's names as they are now (a name may just have been made secret), or
+        None if they can't be had quickly."""
+        if self.lookup is None or table.campaign_id is None:
+            return None
+        try:
+            return await self.lookup.get_within(table.guild_id, table.campaign_id, SPEAKER_WAIT_S)
+        except Exception:
+            log.warning("Speaker labels: couldn't load the names", exc_info=True)
+            return None
+
+    async def _label_speakers(self, table: Table, lines: list[Waiting]) -> None:
+        """Ask the AI about a window of the DM's lines (one call, bounded) and save the
+        labels it is sure of. A "maybe", a slow or failed call, or a name that is no longer
+        allowed when the answer comes back: no label. Consent is checked again after every
+        wait, and so are the names, right before a label is saved."""
+        if not lines or self.topic_ai is None:
+            return
+        lines = [w for w in lines if self.consent.has_consent(table.guild_id, w.speaker)]
+        lookup = await self._current_names(table)
+        if not lines or lookup is None:
+            return
+        last_said = {e: times[-1][0] for e, times in table.scene.said.items() if times}
+        try:
+            guesses, reply = await asyncio.wait_for(
+                speaker_ai.identify(
+                    self.topic_ai, lookup, [w.text for w in lines], last_said, table.speaker_book
+                ),
+                TOPIC_CALL_TIMEOUT_S,
+            )
+            table.speaker_calls += 1
+            table.speaker_tokens[0] += reply.input_tokens
+            table.speaker_tokens[1] += reply.output_tokens
+            table.speaker_failures = 0
+        except Exception as exc:
+            table.speaker_failures += 1
+            if table.speaker_failures >= TOPIC_FAILURES_BEFORE_REST:
+                table.speaker_paused_until = time.monotonic() + TOPIC_REST_S
+                table.speaker_failures = 0
+                log.warning("Speaker labels: resting after failures (%s)", type(exc).__name__)
+            else:
+                log.info("Speaker labels: couldn't ask (%s); no labels", type(exc).__name__)
+            return
+        now = await self._current_names(table)  # the DM may have made a name secret meanwhile
+        if now is None:
+            return
+        for waiting, guess in zip(lines, guesses, strict=True):
+            entity = speaker_ai.check_entity(now, guess.entity) if guess.sure else ""
+            if entity:
+                await self._save_entity(table, waiting, entity)
+
+    async def _save_entity(self, table: Table, waiting: Waiting, entity: str) -> None:
+        """Save who a line was said as, waiting or saved. Only while its speaker is recorded."""
+        guild_id, speaker, started = table.guild_id, waiting.speaker, waiting.started_ms
+        async with table.save_lock:
+            if self.consent.has_consent(guild_id, speaker):
+                found = table.unsaved.set_entity(speaker, started, entity)
+                session_id = table.transcript_session_id
+                if not found and self.transcripts is not None and session_id is not None:
+                    try:
+                        await self.transcripts.set_entity(
+                            guild_id, session_id, speaker, started, entity
+                        )
+                    except Exception:
+                        log.exception("Couldn't save who a line was said as")
 
     async def _save_topic(self, table: Table, waiting: Waiting, topic: str) -> None:
         """Save a line's topic, waiting or saved. Only while its speaker is recorded."""

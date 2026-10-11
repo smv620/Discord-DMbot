@@ -116,6 +116,40 @@ class WhichNamesTest(unittest.TestCase):
 NAMES = ["Auril", "Brother Hiro"]
 
 
+class OfferedTest(unittest.TestCase):
+    def test_the_most_recently_said_come_first_and_the_list_is_capped(self) -> None:
+        npcs = [person(f"{i:032d}", f"Npc {i:02d}") for i in range(60)]
+        aliases = tuple(alias(n.id, n.name) for n in npcs)
+        look = lookup(*npcs, extra_aliases=aliases)
+        last = {npcs[59].id: 5.0, npcs[58].id: 9.0}
+        names = speaker_ai.offered(look, last)
+        self.assertEqual(len(names), speaker_ai.MAX_NAMES)
+        self.assertEqual(names[:2], ["Npc 58", "Npc 59"])  # newest first
+        self.assertEqual(names[2], "Auril")  # then alphabetical
+        self.assertEqual(len(set(names)), len(names))
+
+    def test_two_entries_with_one_name_are_offered_once(self) -> None:
+        twin = person(MARY, "Brother Hiro")
+        look = lookup(twin, extra_aliases=(alias(MARY, "Brother Hiro"),))
+        self.assertEqual(speakers(look).count("Brother Hiro"), 1)
+
+    def test_the_work_is_done_once_for_one_lookup(self) -> None:
+        book = speaker_ai.NameBook()
+        look = lookup()
+        first = book.allowed(look)
+        self.assertIs(book.allowed(look), first)
+        self.assertIsNot(book.allowed(lookup()), first)  # a new lookup: worked again
+
+    def test_two_campaigns_never_share_names(self) -> None:
+        other = lookup(
+            person(MARY, "Mary of Otherland"), extra_aliases=(alias(MARY, "Mary of Otherland"),)
+        )
+        mine, theirs = speaker_ai.NameBook(), speaker_ai.NameBook()
+        for _ in range(2):  # alternately: each book only ever holds its own campaign's names
+            self.assertNotIn("Mary of Otherland", mine.allowed(lookup()).values())
+            self.assertIn("Mary of Otherland", theirs.allowed(other).values())
+
+
 class AnswerTest(unittest.TestCase):
     def test_reading_numbers_and_confidence(self) -> None:
         answer = "1 narrating\n2 npc 2\n3 npc 1 maybe\n4 unsure"
