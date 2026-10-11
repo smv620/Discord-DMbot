@@ -2166,6 +2166,21 @@ a bypass for Pages' preview login). When the site goes live,
 `WEB_SITE_URL` becomes `getdmbot.com` and the path limit comes off. Built in #836 (tunnel)
 and #837 (the dev site's API address).
 
+**The API limits its own routes (2026-10-11, #1082, #498 item 1).** The proxy rules (Cloudflare or
+Caddy) are the first line and are dev1's at go-live; the API holds a second line so it is safe
+even if the proxy is set up wrong. `dmbot.web.limits` is an in-memory sliding count per address
+(the proxy's header only; IPv6 is counted by its /64 block; a missing or garbage header falls back to the connection's own address, which behind the proxy is shared by everyone like that; nothing stored or
+logged). Starting numbers, all in `limits.LIMITS` for dev1 to tune: sign-in
+(`/auth/discord/start`, `/callback`) and install (`/install`, `/install/callback`) **20 per 10
+minutes** each group; billing (`/billing/checkout`, `/billing/portal`) **10 per 10 minutes**
+together; `/account/delete/request` **5 per hour**. The payment webhook has **no** per-address
+limit (the provider sends from a few addresses and retries): its signature is the gate and its body
+is capped at 64 KB. The refusal sets the same no-store headers as any answer, and a cross-site POST is refused before it is counted. The API's port must be reachable only through the proxy (otherwise anyone could invent the header). Over the limit: a browser visit goes back to the account page with
+`?signin=slow` or `?install=slow` ("Too many tries. Wait a few minutes and try again.") and a
+`Retry-After` header; calls from the page get 429 `slow_down` with `Retry-After`. Each limiter holds
+at most 20,000 addresses; past that new addresses get 503 `busy`. `/feedback` uses the same limiter
+with a count of one per 10 minutes.
+
 **The hours meter (#437 part 2), decided 2026-10-09 with Supervisor, built in slices.**
 *2a, recording:* listening minutes are written once a minute while a session runs and once
 more, rounded up, when it stops (a restart carries on from what is stored and counts none

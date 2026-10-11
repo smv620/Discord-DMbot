@@ -64,6 +64,7 @@ export const text = {
   haveAccount: "Already have a plan?",
   seePrices: "See the plans",
   signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",
+  tooManyTries: "Too many tries. Wait about 10 minutes, then tap Sign in with Discord again.",
 
   // Errors
   down: "DMbot isn't answering right now. Tap Try again in a minute.",
@@ -83,6 +84,8 @@ export const text = {
       "You need a DMbot plan with room for one more campaign. Tap See my plan, then tap Accept again.",
     "offer-gone": "That offer has ended. We've updated this page.",
     "confirm-again": "That took too long. Tap Start deleting again.",
+    "slow-down":
+      "Too many tries. Wait about 10 minutes, then try again. (Deleting an account can need an hour.)",
     // Only an out-of-date page gets this, so the page updates itself (like no-paid-plan).
     "free-access": "You have free access, so there's nothing to pay. We've updated this page.",
     "no-paid-plan":
@@ -91,6 +94,7 @@ export const text = {
   install: {
     done: "Done! DMbot is in your server. In Discord, type /dmbot start to begin.",
     failed: "DMbot wasn't added. Tap Add DMbot to try again.",
+    slow: "Too many tries. Wait about 10 minutes, then tap Add DMbot again.",
     not_allowed: "You can only add DMbot to a server you run. Ask its owner to add DMbot.",
     already_linked:
       "DMbot is in your server. Someone else is listed as the one who added it.",

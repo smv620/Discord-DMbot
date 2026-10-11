@@ -17,9 +17,7 @@ import datetime
 import ipaddress
 import logging
 import re
-import time
 import unicodedata
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -40,9 +38,6 @@ TITLES: dict[Kind, str] = {
 }
 MAX_MESSAGE = 2000
 MAX_CONTACT = 200
-WAIT_SECONDS = 10 * 60
-# More addresses than this waiting at once is a flood, not people: everyone waits.
-MAX_WAITING = 20_000
 GITHUB_GRAPHQL = "https://api.github.com/graphql"
 TURNSTILE_VERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
@@ -201,47 +196,6 @@ class Turnstile:
             and raw.get("success") is True
             and raw.get("hostname") == self._hostname
         )
-
-
-class RateLimit:
-    """One post per address per 10 minutes, kept in memory: the API runs as one process,
-    and a restart forgetting the last 10 minutes does no harm. Addresses are never
-    stored in the database or logged."""
-
-    def __init__(
-        self,
-        seconds: int = WAIT_SECONDS,
-        clock: Callable[[], float] = time.monotonic,
-        most: int = MAX_WAITING,
-    ):
-        self._seconds = seconds
-        self._clock = clock
-        self._most = most
-        self._last: dict[str, float] = {}  # oldest first: entries are added in time order
-
-    def __len__(self) -> int:
-        return len(self._last)
-
-    def take(self, address: str) -> Literal["ok", "wait", "busy"]:
-        """Claim this address's turn: "wait" if it posted (or is posting) too recently,
-        "busy" if too many addresses are waiting already (a flood)."""
-        now = self._clock()
-        # Forget addresses whose wait is over, from the oldest, so each call is cheap.
-        while self._last:
-            oldest = next(iter(self._last))
-            if now - self._last[oldest] < self._seconds:
-                break
-            del self._last[oldest]
-        if address in self._last:
-            return "wait"
-        if len(self._last) >= self._most:
-            return "busy"
-        self._last[address] = now
-        return "ok"
-
-    def give_back(self, address: str) -> None:
-        """The post failed: let the person try again straight away."""
-        self._last.pop(address, None)
 
 
 @dataclass(frozen=True)
