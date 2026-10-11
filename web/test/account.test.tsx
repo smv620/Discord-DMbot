@@ -925,7 +925,9 @@ describe("free access (#806)", () => {
   it("a cancelled plan says when it ends and offers no Stop paying", async () => {
     showFree("table", { kind: "free", paidPlan: "Table", paidPlanEndsOn: "2026-10-14" });
     expect(await screen.findByText(text.planEnds("Table", "2026-10-14"))).toBeTruthy();
-    expect(text.planEnds("Table", "2026-10-14")).toBe("Your Table plan ends on Oct 14.");
+    expect(text.planEnds("Table", "2026-10-14")).toBe(
+      "Your Table plan ends on Oct 14. You won't be charged again.",
+    );
     expect(screen.queryByRole("button", { name: text.stopPaying })).toBeNull();
   });
 
@@ -937,11 +939,19 @@ describe("free access (#806)", () => {
     expect(await screen.findByText("About 11 of 87 hours used")).toBeTruthy();
     const bar = screen.getByLabelText(text.hoursBarLabel) as HTMLProgressElement;
     expect([bar.value, bar.max]).toEqual([11.2, 87]);
-    expect(screen.getByText(text.freeHoursLeft("2026-11-11"))).toBeTruthy();
+    expect(screen.getByText(text.freeHoursLeft(11.2, 87, "2026-11-11"))).toBeTruthy();
+  });
+
+  it("a capped grant that is used up says when the hours come back, or where to ask", () => {
+    expect(text.freeHoursLeft(87, 87, "2026-11-11")).toBe(
+      "You're out of hours until Nov 11. Then they start again.",
+    );
+    expect(text.freeHoursLeft(87, 87, null)).toMatch(/Write to us/);
+    expect(text.freeHoursLeft(1, 87, null)).toBe("");
   });
 
   it("no limits: no hours line, and campaigns say 'You run it', not 'Uses your hours'", async () => {
-    showFree("table", { kind: "free" });
+    showFree("table", { kind: "free", unlimited: true });
     await screen.findByText(text.freeAccess);
     expect(screen.queryByRole("progressbar")).toBeNull();
     expect((await screen.findAllByText(text.youRunItFree)).length).toBeGreaterThan(0);
@@ -955,12 +965,21 @@ describe("free access (#806)", () => {
   });
 
   it("an offer to a no-limits person doesn't talk about slots or hours", async () => {
-    showFree("offers", { kind: "free" });
+    showFree("offers", { kind: "free", unlimited: true });
     const lines = await screen.findAllByText(/wants to hand you/);
     for (const line of lines) {
       expect(line.textContent).not.toMatch(/slot|hours/);
       expect(line.textContent).toContain("it becomes yours");
       expect(line.textContent).toContain("stays on as a DM");
+    }
+  });
+
+  it("an offer to a capped grant says slots and hours, not a plan", async () => {
+    showFree("offers", { kind: "free", hours: { used: 1, cap: 87, renewsOn: null } });
+    const lines = await screen.findAllByText(/wants to hand you/);
+    for (const line of lines) {
+      expect(line.textContent).toContain("one of your campaign slots and your hours");
+      expect(line.textContent).not.toContain("plan");
     }
   });
 

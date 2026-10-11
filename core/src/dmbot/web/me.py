@@ -170,7 +170,9 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             "status": "lapsed" if plan.status == "active" and not plan.usable(now) else plan.status,
             # Listening hours are metered by the bot (#437): the minutes used this month, in
             # hours to one decimal.
-            "hoursUsed": round(used_minutes / 60, 1),
+            # Only from the plan's own month (a lapsed plan beside a grant would read the
+            # grant's minutes).
+            "hoursUsed": round(used_minutes / 60, 1) if plan.usable(now) else 0,
             "hoursCap": plan.hours_this_period,
             "renewsOn": _iso_date(plan.period_end),
             "graceEndsOn": _iso_date(plan.grace_ends_at),
@@ -188,6 +190,14 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
         | (
             {"paidPlan": access.ending_plan, "paidPlanEndsOn": _iso_date(access.ending_at)}
             if access.ending_plan
+            else {}
+        )
+        # No limit at all: the page leaves "your hours" and "slots" out of its words (#824).
+        | (
+            {"unlimited": True}
+            if access.kind in ("free", "grant")
+            and access.hours_cap is None
+            and access.campaign_cap is None
             else {}
         )
         # A capped grant ("like Guild") has hours too: the page shows them (#824).

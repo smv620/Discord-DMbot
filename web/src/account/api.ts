@@ -76,6 +76,8 @@ export interface Access {
   paidPlan?: string;
   /** ISO date a cancelled paid plan under free access ends (then it is not "still paying"). */
   paidPlanEndsOn?: string;
+  /** Free access with no hours or campaign limit at all (the API says so; it is not guessed). */
+  unlimited?: boolean;
   /** Hours for free access that has a cap (a grant "like Guild"); missing when it has none. */
   hours?: { used: number; cap: number; renewsOn: string | null };
 }

@@ -177,6 +177,7 @@ class AccountPage(AccessTest):
         """The access part of /me without its hours (they have their own tests)."""
         access = dict((await self.me())["access"])
         access.pop("hours", None)
+        access.pop("unlimited", None)  # has its own test
         return access
 
     async def set_plan(self, **changes: Any) -> None:
@@ -237,6 +238,27 @@ class AccountPage(AccessTest):
         # Resumed (or renewed): the payment events clear it, and the plan asks again.
         await self.set_plan(ends_at=None)
         self.assertEqual((await self.access_page())["stillPaying"], True)
+
+    async def test_unlimited_is_said_by_the_api_not_guessed(self) -> None:
+        self.now = int(time.time())
+        entitlements.configure_free_users({ALICE.id})  # the owner's list: no limits at all
+        self.assertEqual((await self.me())["access"]["unlimited"], True)
+        entitlements.configure_free_users(set())
+        await grants.give(
+            self.db, ADMIN, ALICE.id, "unlimited", ends_at=None, note="", now=self.now
+        )
+        self.assertEqual((await self.me())["access"]["unlimited"], True)
+        await grants.give(self.db, ADMIN, ALICE.id, "guild", ends_at=None, note="", now=self.now)
+        self.assertNotIn("unlimited", (await self.me())["access"])  # a cap: hours and slots
+
+    async def test_a_lapsed_plan_beside_a_grant_does_not_borrow_the_grants_hours(self) -> None:
+        self.now = int(time.time())
+        await grants.give(self.db, ADMIN, ALICE.id, "guild", ends_at=None, note="", now=self.now)
+        month = hours.month_from_anchor(self.now, self.now)
+        await self.record_minutes(ALICE.id, month.start, 600)
+        await self.give_plan(ALICE.id, status="lapsed", lapsed_at=self.now - 86400)
+        plan = (await self.me())["plan"]
+        self.assertEqual(plan["hoursUsed"], 0)
 
     async def test_a_capped_grant_shows_its_hours_and_a_paid_plan_its_hours_used(self) -> None:
         self.now = int(time.time())

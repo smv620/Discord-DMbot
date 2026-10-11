@@ -184,7 +184,7 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
   );
 
   const access = state.kind === "signed-in" ? state.me.access : undefined;
-  const noLimits = access?.kind === "free" && access.hours === undefined;
+  const noLimits = access?.kind === "free" && access.unlimited === true;
   const shared: Shared = { api, go: safeGo, refresh, signedOut, noLimits };
 
   let body: JSX.Element;
@@ -442,7 +442,9 @@ function PlanSection({ me }: { me: Me }) {
               value={Math.min(Math.max(access.hours.used, 0), access.hours.cap)}
               aria-label={text.hoursBarLabel}
             />
-            <p class="muted small">{text.freeHoursLeft(access.hours.renewsOn)}</p>
+            <p class="muted small">
+              {text.freeHoursLeft(access.hours.used, access.hours.cap, access.hours.renewsOn)}
+            </p>
           </>
         )}
         {!access.stillPaying && access.paidPlanEndsOn && (
@@ -593,7 +595,11 @@ function OfferRow({
   return (
     <li data-offer={offer.id}>
       <p>
-        {(noLimits ? text.offerIncomingFree : text.offerIncoming)(
+        {(noLimits
+          ? text.offerIncomingFree
+          : free
+            ? text.offerIncomingCapped
+            : text.offerIncoming)(
           offer.personName,
           offer.campaignName,
           offer.serverName,

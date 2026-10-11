@@ -333,7 +333,7 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
             )
         else:  # subscription_ended
             await conn.execute(
-                "UPDATE entitlements SET status = 'lapsed', grace_ends_at = NULL,"
+                "UPDATE entitlements SET status = 'lapsed', grace_ends_at = NULL, ends_at = NULL,"
                 " lapsed_at = %s, last_event_at = %s, updated_at = %s WHERE user_id = %s",
                 (event.occurred_at, event.occurred_at, now, event.user_id),
             )
@@ -366,6 +366,7 @@ async def start_try_it(db: Database, user_id: int, *, now: int) -> TryItResult:
             " hours_cap = EXCLUDED.hours_cap, extra_hours = 0,"
             " campaign_cap = EXCLUDED.campaign_cap, period_start = EXCLUDED.period_start,"
             " period_end = EXCLUDED.period_end, grace_ends_at = NULL, lapsed_at = NULL,"
+            " ends_at = NULL,"
             " plan_changed_at = EXCLUDED.plan_changed_at, provider = EXCLUDED.provider,"
             # The stopped plan's company ids go: no billing page for Try It, and its late
             # events are then about a plan the person no longer has.

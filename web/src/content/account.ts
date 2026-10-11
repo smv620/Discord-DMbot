@@ -142,10 +142,15 @@ export const text = {
   },
   /** A plan that was cancelled and works to its end: nothing more to stop (#824). */
   planEnds: (plan: string | null, iso: string): string =>
-    `${plan ? `Your ${plan} plan` : "Your plan"} ends on ${shortDate(iso)}.`,
+    `${plan ? `Your ${plan} plan` : "Your plan"} ends on ${shortDate(iso)}. You won't be charged again.`,
   /** Hours for free access with a cap (#824); renewal only, since free people buy no more. */
-  freeHoursLeft: (iso: string | null): string =>
-    iso ? `Your hours start again on ${shortDate(iso)}.` : "",
+  freeHoursLeft: (used: number, cap: number, iso: string | null): string => {
+    if (used < cap) return iso ? `Your hours start again on ${shortDate(iso)}.` : "";
+    // Out of hours: free people can't buy more, so say when they come back, or where to ask.
+    return iso
+      ? `You're out of hours until ${shortDate(iso)}. Then they start again.`
+      : "You're out of hours for now. Write to us if you need more.";
+  },
   stopPaying: "Stop paying",
   freeNext: "In Discord, type /dmbot start to play.",
   // Only without a paid plan: with one, the plan's own date is above, and what happens
@@ -183,6 +188,9 @@ export const text = {
   offersHeading: "Campaigns offered to you",
   offerIncoming: (person: string, campaign: string, server: string): string =>
     `${person} wants to hand you ${campaign} in ${server}. If you accept, it uses one of your campaign slots and your plan's hours, and ${person} stays on as a DM. Tap Accept or No thanks.`,
+  /** A capped grant has hours but no "plan" to name (#824). */
+  offerIncomingCapped: (person: string, campaign: string, server: string): string =>
+    `${person} wants to hand you ${campaign} in ${server}. If you accept, it uses one of your campaign slots and your hours, and ${person} stays on as a DM. Tap Accept or No thanks.`,
   offerIncomingFree: (person: string, campaign: string, server: string): string =>
     `${person} wants to hand you ${campaign} in ${server}. If you accept, it becomes yours and ${person} stays on as a DM. Tap Accept or No thanks.`,
   offerExpires: (iso: string): string => `Answer by ${shortDateTime(iso)}.`,

@@ -735,6 +735,31 @@ class Payments(DatabaseTest):
         self.assertIsNone((await self.plan()).ends_at)
         self.assertNotIn("endsOn", (await self.client.get("/me")).json()["plan"])
 
+    async def test_a_cancelled_plan_that_ended_leaves_no_end_date_and_try_it_starts_clean(
+        self,
+    ) -> None:
+        await self.start_table()
+        await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            occurred_at=self.now + 5,
+            period_end=self.now + 30 * DAY,
+        )
+        await self.send(
+            kind="subscription_ended", subscription_id="sub_1", occurred_at=self.now + 9
+        )
+        ended = await self.plan()
+        self.assertEqual((ended.status, ended.ends_at), ("lapsed", None))
+        # Try It after that starts with no old end date either.
+        await self.start_table(
+            kind="subscription_cancelled",
+            id="evt-again",
+            occurred_at=self.now + 1,
+            period_end=self.now + 99,
+        )  # (older than the end: stale, changes nothing)
+        await self.post("/plan/try-it")
+        self.assertIsNone((await self.plan()).ends_at)
+
     async def test_a_cancel_needs_its_end_date_and_an_older_one_is_stale(self) -> None:
         await self.start_table()
         missing = await self.send(
