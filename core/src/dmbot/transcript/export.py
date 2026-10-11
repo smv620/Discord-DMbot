@@ -18,7 +18,7 @@ import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
 from dmbot.transcript.models import SIDEBAR_QUESTION, Line, TranscriptSession
-from dmbot.transcript.topics import GAME, Spoken, collapse
+from dmbot.transcript.topics import GAME, OFF_TOPIC, TABLE_TALK, Spoken, collapse
 
 UNKNOWN_SPEAKER = "Someone"
 _BRACKETS = str.maketrans("", "", "()[]{}")
@@ -42,7 +42,13 @@ SIDEBAR_NOTE = (
     "came from. They are left out of the Cleaned version."
 )
 SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
-HOW_TO_READ = "Each line: [time since start] (person) {their character}: what they said."
+HOW_TO_READ = (
+    "Each line: [time since start] (person) {their character}: what they said. "
+    "{table_talk} is talk about the rules or the table; {non-game_content} is talk "
+    "that isn't about the game."
+)
+# What a line is when it is not the person's character speaking (#53).
+TOPIC_TAGS = {TABLE_TALK: "table_talk", OFF_TOPIC: "non-game_content"}
 
 AS_HEARD, CLEANED = "as-heard", "cleaned"
 VERSIONS = (CLEANED, AS_HEARD)
@@ -152,9 +158,11 @@ def sidebar_tag(line: Line) -> str:
     return f"[DM Sidebar {shown}]" if shown else SIDEBAR_TAG
 
 
-def label(when: str, speaker: str, character: str | None = None) -> str:
-    """`[0:42:10] (Mia) {Cerric}`, or `[0:42:10] (Sam)` without a character."""
+def label(when: str, speaker: str, character: str | None = None, topic: str = GAME) -> str:
+    """`[0:42:10] (Mia) {Cerric}`, or `[0:42:10] (Sam)` without a character. Table talk and
+    off-topic talk say so instead of the character: `[0:42:10] (Mia) {table_talk}`."""
     speaker, character = _plain(speaker), _plain(character) if character else None
+    character = TOPIC_TAGS.get(topic, character)
     return f"[{when}] ({speaker}) {{{character}}}" if character else f"[{when}] ({speaker})"
 
 
@@ -195,6 +203,7 @@ def render(
             line.duration_ms / 1000,
             line.text if version == CLEANED else line.heard,
             line.topic if version == CLEANED else GAME,
+            line.topic,
         )
         for line in table_lines
     ]
@@ -206,7 +215,7 @@ def render(
                 clean_name(character) if character else None,
             )
         when = clock((item.started_ms - start_ms) / 1000)
-        who = label(when, *shown[item.speaker])
+        who = label(when, *shown[item.speaker], item.said_as)
         if item.skipped:  # "[0:12:04] (Mia) [1m 22s of off-topic chat skipped]"
             timed.append((item.started_ms, f"{who} {item.text}"))
         else:

@@ -91,12 +91,21 @@ class Render(unittest.TestCase):
         cleaned = export.render("X", session(), lines, names, version=export.CLEANED)
         self.assertIn("[0:00:05] (Dee) [1m 22s of off-topic chat skipped]\n", cleaned)
         self.assertNotIn("boss", cleaned)
-        self.assertIn("(Mia): is it my turn?", cleaned)  # table talk stays
+        self.assertIn(
+            "(Mia) {table_talk}: is it my turn?", cleaned
+        )  # table talk stays, tagged (#53)
         self.assertIn("Chat clearly not about the game is left out", cleaned)
         heard = export.render("X", session(), lines, names)
         self.assertIn("my boss called", heard)
         self.assertIn("he wants me Monday", heard)
         self.assertNotIn("skipped]", heard)
+        self.assertIn("[0:00:05] (Dee) {non-game_content}: my boss called", heard)
+        self.assertIn("[0:00:01] (Mia): I search the chest", heard)
+        with_character = export.render(
+            "X", session(), lines, names, characters={MIA: "Cerric"}, version=export.CLEANED
+        )
+        self.assertIn("(Mia) {Cerric}: I search the chest", with_character)
+        self.assertIn("(Mia) {table_talk}: is it my turn?", with_character)  # not {Cerric}
 
     def test_the_header_says_which_speech_to_text_wrote_it_in_plain_words(self) -> None:
         engines = ("deepgram nova-3 api.deepgram.com",)
