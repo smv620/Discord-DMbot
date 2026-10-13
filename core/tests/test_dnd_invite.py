@@ -195,7 +195,8 @@ class Card(unittest.IsolatedAsyncioTestCase):
         channel.pins = AsyncMock(return_value=existing)
 
         async def history(limit: int = 0) -> Any:
-            for message in []:
+            empty: list[Any] = []
+            for message in empty:
                 yield message
 
         channel.history = history
@@ -289,7 +290,7 @@ class DmSide(unittest.IsolatedAsyncioTestCase):
                 "dmbot:invite:" in str(getattr(i, "custom_id", ""))
                 or (
                     isinstance(getattr(i, "item", None), discord.ui.Button)
-                    and "invite" in str(i.item.custom_id)
+                    and "invite" in str(cast(Any, i).item.custom_id)
                 )
                 for i in view.children
             )
@@ -587,13 +588,9 @@ class KeepsTheButton(unittest.TestCase):
     def test_the_link_survives_the_players_next_press(self) -> None:
         from dmbot.consent_dm import consent_view, keep_invite, menu_view, warning_view
 
-        for build in (
-            lambda: menu_view(GUILD),
-            lambda: consent_view(GUILD),
-            lambda: warning_view(GUILD),
-        ):
+        for view in (menu_view(GUILD), consent_view(GUILD), warning_view(GUILD)):
             it = cast(Any, SimpleNamespace(message=self.message(LINK), client=SimpleNamespace()))
-            [button] = link_buttons(keep_invite(it, build(), GUILD))
+            [button] = link_buttons(keep_invite(it, view, GUILD))
             self.assertEqual(button.url, LINK)
 
     def test_nothing_is_added_where_there_was_nothing_or_already_one(self) -> None:
