@@ -1,2 +1,6 @@
 User-agent: *
 Allow: /
+Disallow: /account
+Disallow: /admin
+
+Sitemap: https://getdmbot.com/sitemap.xml
