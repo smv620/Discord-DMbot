@@ -297,8 +297,8 @@ class NewCampaignForm(discord.ui.Modal, title="New campaign"):
         max_length=80,
     )
     invite: discord.ui.TextInput[NewCampaignForm] = discord.ui.TextInput(
-        label="D&D Beyond campaign invite (optional)",
-        placeholder="https://www.dndbeyond.com/campaigns/join/…",
+        label="D&D Beyond invite (optional)",
+        placeholder="Paste your campaign's D&D Beyond invite link.",
         required=False,
         max_length=200,
     )

@@ -69,13 +69,13 @@ GONE = messages.DM_CAMPAIGN_GONE
 FAILED = "Sorry, that didn't save. Please try again."
 LOAD_FAILED = messages.LOAD_FAILED
 SAVED = "Saved. Press ⚙️ Settings again to see your settings."
-INVITE_SET = "• **D&D Beyond invite:** players see a **Join on D&D Beyond** button with your link."
+INVITE_SET = "• **D&D Beyond invite:** set. Players get a **Join on D&D Beyond** button."
 INVITE_NOT_SET = (
-    "• **D&D Beyond invite:** not set. Paste your D&D Beyond campaign's invite link and "
-    "DMbot puts a **Join on D&D Beyond** button where players see it."
+    "• **D&D Beyond invite:** not set. Tap **D&D Beyond invite** to add your campaign's link "
+    "for players."
 )
-INVITE_SAVED = "✅ Saved. Players now see a **Join on D&D Beyond** button."
-INVITE_REMOVED = "✅ Removed. Players no longer see a D&D Beyond button."
+INVITE_SAVED = "✅ Saved. Players get a **Join on D&D Beyond** button on new messages from DMbot."
+INVITE_REMOVED = "✅ Removed. New messages from DMbot won't have the D&D Beyond button."
 
 
 def _tick(label: str, current: bool) -> str:
@@ -377,10 +377,10 @@ class InviteButton(
         await interaction.response.send_modal(InviteForm(campaign))
 
 
-class InviteForm(discord.ui.Modal, title="D&D Beyond campaign invite"):
+class InviteForm(discord.ui.Modal, title="D&D Beyond invite"):
     link: discord.ui.TextInput[InviteForm] = discord.ui.TextInput(
-        label="Your campaign's invite link (empty removes it)",
-        placeholder="https://www.dndbeyond.com/campaigns/join/…",
+        label="Campaign invite link",
+        placeholder="Paste your D&D Beyond invite link. Blank removes it.",
         required=False,
         max_length=200,
     )

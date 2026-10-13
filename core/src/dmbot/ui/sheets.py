@@ -51,21 +51,20 @@ NO_CHARACTER = (
     "`/dmbot names`, then **🧑 Add a player's character**."
 )
 NO_CHARACTER_LINK = (
-    "DMbot doesn't know your character in this campaign yet. If you play on D&D Beyond, "
-    "press **Link my D&D Beyond sheet** and DMbot adds your character from it. If not, ask "
-    "your DM to add it: `/dmbot names`, then **🧑 Add a player's character**."
+    "DMbot doesn't know your character yet. If you play on D&D Beyond, tap **Link my D&D "
+    "Beyond sheet**. Otherwise ask your DM to add it."
 )
-NOTHING_ADDED = "\nNothing was added. Press **Link my D&D Beyond sheet** to try again."
+NOTHING_ADDED = "\nNothing was added. Tap **Link my D&D Beyond sheet** to try again."
 ADDED_FROM_SHEET = (
-    "✅ Linked. DMbot read **{name}**'s sheet and added **{name}** as your character{who}. "
-    "It listens for its spell, feature and item names, and reads the sheet again when each "
-    "session starts."
+    "✅ Linked. DMbot added **{name}**{who} from your sheet. It will listen for your spells "
+    "and items, and check your sheet again at the start of each session. Your DM can change "
+    "this."
 )
-CHARACTER_NOT_ADDED = (
-    "DMbot read the sheet but couldn't add the character ({why}). Ask your DM to add it: "
-    "`/dmbot names`, then **🧑 Add a player's character**."
+CHARACTER_NOT_ADDED = "DMbot read the sheet but couldn't add the character. Ask your DM to add it."
+DM_ADDED = (
+    "🧑 {name}'s player linked a D&D Beyond sheet; DMbot added {name}. Open the card to "
+    "rename or remove it."
 )
-DM_ADDED = "🧑 {name}'s player linked a D&D Beyond sheet; DMbot added {name}."
 NOT_AVAILABLE = "Character sheets aren't available on DMbot right now. Try again later."
 NOT_AVAILABLE_DM = (
     "The character is saved, but character sheets aren't available on DMbot right now, so "
@@ -397,7 +396,8 @@ async def add_from_sheet(
         try:
             entity = await save_name(memory, campaign, name, PC, [], [], played_by=me)
         except MemoryRuleError as exc:
-            await _tell(interaction, CHARACTER_NOT_ADDED.format(why=_md(str(exc))))
+            log.info("A character from a sheet wasn't added: %s", exc)
+            await _tell(interaction, CHARACTER_NOT_ADDED)
             return
         changed(interaction, campaign)
         try:
@@ -435,7 +435,7 @@ class OpenCardButton(
     def __init__(self, campaign_id: str, entity_id: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label="Open its card",
+                label="Open character card",
                 emoji="🧑",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:namecard:{campaign_id}:{entity_id}",

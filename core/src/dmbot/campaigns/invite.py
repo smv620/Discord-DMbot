@@ -14,8 +14,8 @@ import re
 from dmbot.campaigns.models import CampaignError
 
 NOT_AN_INVITE = (
-    "That isn't a D&D Beyond campaign invite link. On D&D Beyond open your campaign and copy "
-    "its invite link: it starts https://www.dndbeyond.com/campaigns/join/"
+    "That isn't a D&D Beyond invite link. Open your campaign on D&D Beyond, copy its invite "
+    "link, and paste only the link. It starts with https://www.dndbeyond.com/campaigns/join/"
 )
 PREFIX = "https://www.dndbeyond.com/campaigns/join/"
 _INVITE = re.compile(

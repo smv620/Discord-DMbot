@@ -429,7 +429,7 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channel_id, 555)
         self.assertEqual(
             text,
-            "🧑 Test Character's player linked a D&D Beyond sheet; DMbot added Test Character.",
+            ui.DM_ADDED.format(name="Test Character"),
         )
         [button] = view.children
         self.assertEqual(button.item.custom_id, f"dmbot:namecard:{CAMPAIGN}:{ENTITY}")
