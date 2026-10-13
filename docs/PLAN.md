@@ -2716,6 +2716,19 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     campaign; can be turned back on from 📜 My character sheet).
   - **Cost:** FAST tier, one call per player at most every 2 minutes, only while in combat. It
     counts toward the hours meter's AI cost like every other job.
+*Built, part D1: the fields and the import status (2026-10-13, #1124):* the D&D Beyond snapshot (still version 1; a
+kept snapshot without the new fields reads them as unknown) now also holds hit points now (`hp`: the maximum minus the
+damage taken, never below 0) and temporary hit points, active conditions with the exhaustion level, resistances,
+immunities and vulnerabilities, skill expertise, tool, weapon and armor proficiencies, the background, and the
+inventory's size (`count` of inventory lines, `weight` in pounds as quantity times weight divided by the bundle size,
+and the lines per rarity; a line with no rarity is common). Names and numbers only, through the same allow list, size
+cap and backup path. `memory/sheet_checks.py` gives each part ✅, ⚠️ or ⛔ from the rules index (spells), a short name
+list in `memory/sheet_names.py` (classes, species and feats: names only, in the SRD or a real book's name DMbot has no
+rules for) and arithmetic (levels over 20, hit points over the maximum plus temporary, expertise without proficiency,
+rarity counts that don't add up, a negative number, a part that couldn't be read). A name from D&D Beyond that DMbot
+doesn't know is ⚠️ (it is D&D Beyond's own data); a typed or document name is ⛔ only when it is nothing like a known
+name. The card is one private message after the player's own link or typing (not after the DM links a sheet, and not
+yet after a re-read: `sheet_checks.changed` is ready for D4), and the DM's name card adds only "HP 11 / 26 + 0, AC 18".
 *Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
 just to the character: if the DM gives the character to someone else, the old sheet is
 never shown to the new player (it shows only while that player still plays it). The
