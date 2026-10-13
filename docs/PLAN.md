@@ -2712,9 +2712,10 @@ Proficiencies, Features and feats, Background, Speed and senses, Languages, Inve
 time. A typed or document sheet shows **Edit <part>** (for example **Edit Skills**) on the open section: a form with that section's fields (names
 and numbers only; abilities are six numbers in order), checked in plain words before anything is saved, run through the
 same allow list as an import, and answered with a card that names what changed. A D&D Beyond sheet has no Edit anywhere:
-an **Open on D&D Beyond** link button to the player's own sheet instead, because D&D Beyond is the record. Every press
-looks up again that the person still plays the character and is still in the server, and the save is refused for anyone
-else (`memory/sheet_view.py`, `ui/sheet_view.py`).
+an **Open on D&D Beyond** link button to the player's own sheet instead, because D&D Beyond is the record. Every part opened and every save
+looks up again that the person still plays the character and is still in the server (the Edit button itself looks
+up nothing, to answer within Discord's 3 seconds), and the save is refused for anyone else, or if the sheet changed since the form
+was opened (`memory/sheet_view.py`, `ui/sheet_view.py`).
 *Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
 just to the character: if the DM gives the character to someone else, the old sheet is
 never shown to the new player (it shows only while that player still plays it). The

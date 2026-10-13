@@ -46,6 +46,7 @@ NO_SHEET = (
 )
 SAVED = "✏️ Saved. Changed: {what}."
 SAME = "Nothing changed."
+CHANGED_SINCE = "Your sheet changed since you opened this. Press the part again to open it fresh."
 ONLY_YOU = "Only you see this."  # a sheet-view line: the link line in ui.sheets is about links
 MESSAGE_MAX = 2000  # Discord's limit for one message
 MORE = "… and more"
@@ -142,7 +143,7 @@ class SheetView(_Menu):
             return
         section = sheet_view.BY_KEY[self.open_key]
         await interaction.response.send_modal(
-            SectionForm(self.guild_id, self.character, section, self.snapshot)
+            SectionForm(self.guild_id, self.character, section, self.snapshot, view=self)
         )
 
 
@@ -187,9 +188,12 @@ class SectionForm(discord.ui.Modal):
         character: PlayerCharacter,
         section: sheet_view.Section,
         snapshot: dict[str, Any],
+        view: SheetView | None = None,
     ) -> None:
         super().__init__(title=f"Edit: {section.label}"[:45], timeout=VIEW_TIMEOUT_S)
         self.guild_id, self.character, self.section = guild_id, character, section
+        self._opened = sheet_view.owned(snapshot, section)  # what the boxes were filled from
+        self._view = view
         now = section.fill(snapshot)
         # Names a box can't hold are kept here and added back on submit (never cut).
         self._kept: dict[str, list[str]] = {}
@@ -198,9 +202,14 @@ class SectionForm(discord.ui.Modal):
             shown, left_out = sheet_view.fit(now.get(field.key, ""))
             if left_out:
                 self._kept[field.key] = left_out
+            hidden = len(left_out)
             box: discord.ui.TextInput[SectionForm] = discord.ui.TextInput(
                 label=field.label[:45],
-                placeholder=field.placeholder[:100] or None,
+                placeholder=(
+                    f"{hidden} more names not shown here are kept"
+                    if hidden
+                    else field.placeholder[:100] or None
+                ),
                 default=shown or None,
                 style=discord.TextStyle.paragraph if field.long else discord.TextStyle.short,
                 required=False,
@@ -224,6 +233,9 @@ class SectionForm(discord.ui.Modal):
             await _tell(interaction, DDB_NOTE)
             return
         old = sheet.sheet or {}
+        if sheet_view.owned(old, self.section) != self._opened:
+            await _tell(interaction, CHANGED_SINCE)  # a form filled long ago must not revert a save
+            return
         new, problem = sheet_view.edit(old, self.section, values, kept=self._kept)
         if new is None:
             await _tell(
@@ -250,6 +262,8 @@ class SectionForm(discord.ui.Modal):
         except SheetRefused:
             await _tell(interaction, ui.NOT_YOURS)
             return
+        if self._view is not None:
+            self._view.snapshot = new  # the next Edit on this message starts from the save
         ui._bot(interaction).sheets_changed(self.guild_id, c.campaign_id)
         log.info("A sheet part was edited: guild=%s campaign=%s", self.guild_id, c.campaign_id)
         card = await ui.status_card(ui._bot(interaction), self.guild_id, c.campaign_id, new)

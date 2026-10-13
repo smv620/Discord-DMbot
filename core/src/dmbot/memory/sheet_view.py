@@ -343,7 +343,10 @@ def _fill_background(s: Mapping[str, Any]) -> dict[str, str]:
 def _apply_background(
     s: Mapping[str, Any], v: Mapping[str, str]
 ) -> tuple[dict[str, Any], str | None]:
-    return {"background": v["background"].strip() or None}, None
+    text = v["background"].strip()
+    if len(text) > sheets.NAME_MAX:  # clean would drop it and clear the old one without a word
+        return {}, f"'{text[:20]}…' is too long for a name."
+    return {"background": text or None}, None
 
 
 def _fill_speed(s: Mapping[str, Any]) -> dict[str, str]:
@@ -414,8 +417,12 @@ def _apply_inventory(
     count = sum(rarity.values())
     old = s.get("inventory") if isinstance(s.get("inventory"), Mapping) else {}
     assert isinstance(old, Mapping)
-    if not count and s.get("origin") == sheets.ORIGIN_DOCUMENT:
-        # A document seldom gives rarities, so its item count isn't their sum: leave it.
+    old_rarity = old.get("rarity") if isinstance(old.get("rarity"), Mapping) else {}
+    assert isinstance(old_rarity, Mapping)
+    same = rarity == {r: old_rarity.get(r, 0) for r in sheets.RARITIES}
+    if s.get("origin") == sheets.ORIGIN_DOCUMENT and same:
+        # A document seldom gives rarities, so its item count isn't their sum: while the
+        # rarity box is as it was, the count stays.
         kept = old.get("count")
         count = kept if isinstance(kept, int) else 0
     inventory = {"count": count, "weight": weight, "rarity": rarity} if (count or weight) else None
@@ -554,6 +561,12 @@ OWNS: dict[str, tuple[str, ...]] = {
 FLAG_OF = {"abilities": "abilities", "inventory": "inventory"}
 
 
+def owned(snapshot: Mapping[str, Any], section: Section) -> dict[str, Any]:
+    """The stored values a section's form edits, to tell whether the sheet changed since a
+    form was filled from it."""
+    return {k: snapshot.get(k) for k in OWNS[section.key]}
+
+
 def edit(
     snapshot: Mapping[str, Any],
     section: Section,
@@ -575,6 +588,8 @@ def edit(
             return None, f"'{too_long[:20]}…' is too long for a name."
         if kept and kept.get(field.key):
             values[field.key] = ", ".join([values[field.key], *kept[field.key]]).strip(", ")
+        if len(split_names(values[field.key])) > sheets.LIST_MAX:
+            return None, f"{field.label}: at most {sheets.LIST_MAX} names."
     changes, problem = section.apply(snapshot, values)
     if problem:
         return None, problem

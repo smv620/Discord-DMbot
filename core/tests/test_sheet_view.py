@@ -211,6 +211,49 @@ class Editing(unittest.TestCase):
             for key in sheet_view.OWNS[section.key]:
                 self.assertEqual(new.get(key), snap.get(key), (section.key, key))
 
+    def test_an_unchanged_rarity_box_keeps_a_documents_count(self) -> None:
+        old = sheets.clean(
+            {
+                **typed(),
+                "origin": sheets.ORIGIN_DOCUMENT,
+                "inventory": {
+                    "count": 40,
+                    "weight": 12.0,
+                    "rarity": {**dict.fromkeys(sheets.RARITIES, 0), "common": 3},
+                },
+            }
+        )
+        assert old is not None
+        section = sheet_view.BY_KEY["inventory"]
+        values = section.fill(old)
+        new, _ = sheet_view.edit(old, section, values)
+        assert new is not None
+        self.assertEqual(new["inventory"]["count"], 40)
+        self.assertEqual(sheet_view.changed_sections(old, new), [])
+        values["rarity"] = "common 5"  # the player did change it: now the count is theirs
+        new, _ = sheet_view.edit(old, section, values)
+        assert new is not None
+        self.assertEqual(new["inventory"]["count"], 5)
+
+    def test_a_background_that_is_too_long_is_said_not_dropped(self) -> None:
+        old = {**typed(), "background": "Sage"}
+        new, problem = sheet_view.edit(
+            old, sheet_view.BY_KEY["background"], {"background": "x" * 80}
+        )
+        self.assertIsNone(new)
+        self.assertIn("too long for a name", problem or "")
+
+    def test_more_than_the_list_limit_is_refused_in_plain_words(self) -> None:
+        full = [f"Lang {i:03d}" for i in range(sheets.LIST_MAX)]
+        old = sheets.clean({**typed(), "languages": full}) or {}
+        section = sheet_view.BY_KEY["languages"]
+        new, problem = sheet_view.edit(old, section, {"languages": ", ".join([*full, "Extra"])})
+        self.assertIsNone(new)
+        self.assertIn(f"at most {sheets.LIST_MAX} names", problem or "")
+
+    def test_every_section_has_its_stored_keys(self) -> None:
+        self.assertEqual({s.key for s in sheet_view.SECTIONS}, set(sheet_view.OWNS))
+
     def test_a_name_after_the_25th_is_a_change(self) -> None:
         names = [f"Feature {i:02d}" for i in range(40)]
         old = sheets.clean({**typed(), "features": names}) or {}
@@ -418,6 +461,43 @@ class Views(unittest.IsolatedAsyncioTestCase):
         self.assertIn("DMbot read your sheet", text)
         self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])
         it.client.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)
+
+    async def test_a_form_opened_before_a_save_cannot_revert_it(self) -> None:
+        snap = typed()
+        it = self.it(sheet_of(snap, linked=False))
+        await ui.show_my_sheet(it, GUILD, CHARACTER)
+        _, view = self.sent(it)
+        shown = cast(Any, view)
+        # The player opens Skills and saves a change through the view's own form.
+        opened = ui.SectionForm(GUILD, CHARACTER, sheet_view.BY_KEY["skills"], snap, view=shown)
+        opened._inputs["trained"]._value = "Perception"
+        fresh = copy.deepcopy(snap)
+        await opened.on_submit(it)
+        saved = it.client.sheets.save.await_args.args[3]
+        self.assertEqual(saved["skills"], ["perception"])
+        self.assertEqual(shown.snapshot["skills"], ["perception"])  # the view moved on
+        # The store now holds the save; a form filled from the OLD snapshot must not undo it.
+        again = self.it(sheet_of(saved, linked=False))
+        stale = ui.SectionForm(GUILD, CHARACTER, sheet_view.BY_KEY["skills"], fresh)
+        await stale.on_submit(again)
+        again.client.sheets.save.assert_not_awaited()
+        self.assertIn(ui.CHANGED_SINCE, self.told(again))
+        # A form from the view after the save starts from it and goes through.
+        edit = self.it(sheet_of(saved, linked=False))
+        current = ui.SectionForm(GUILD, CHARACTER, sheet_view.BY_KEY["skills"], shown.snapshot)
+        current._inputs["trained"]._value = "Perception, Stealth"
+        await current.on_submit(edit)
+        edit.client.sheets.save.assert_awaited_once()
+
+    async def test_names_a_box_cannot_show_are_said_to_be_kept(self) -> None:
+        names = [f"Name {i:02d} " + "x" * 50 for i in range(70)]
+        snap = sheets.clean({**typed(), "features": names}) or {}
+        form = ui.SectionForm(GUILD, CHARACTER, sheet_view.BY_KEY["features"], snap)
+        hidden = len(form._kept["features"])
+        self.assertGreater(hidden, 0)
+        box = form._inputs["features"]
+        box.default = None  # a cleared box shows the placeholder
+        self.assertIn(f"{hidden} more names", str(box.placeholder))
 
     async def test_a_mistake_saves_nothing(self) -> None:
         snap = typed()
