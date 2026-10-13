@@ -1533,7 +1533,7 @@ class SaveAndResume(SessionTests):
         self.assertEqual((table.topic_calls, table.topic_tokens), (1, [50, 6]))
 
     async def speaking(
-        self, answer: str, now: Any = None, *, hold: asyncio.Event | None = None
+        self, answer: str | Exception, now: Any = None, *, hold: asyncio.Event | None = None
     ) -> Any:
         """A session with the speaker labels on (#53): the DM's lines go to the AI stand-in
         (`answer` for the speaker question, everyone game for the off-topic one), and the
@@ -1548,6 +1548,8 @@ class SaveAndResume(SessionTests):
                 asked.append(text)
                 if hold is not None:
                     await hold.wait()  # the AI is slow
+                if isinstance(answer, Exception):
+                    raise answer
                 return Reply(answer, cut=False, input_tokens=70, output_tokens=5)
             return Reply("1 game\n2 game", cut=False, input_tokens=5, output_tokens=2)
 
@@ -1673,6 +1675,54 @@ class SaveAndResume(SessionTests):
         self.assertEqual((text, done), (speaker_q.NOT_ALLOWED, False))
         self.assertTrue(table.speaker_questions.is_open(asked.id))  # the DM may pick another
         self.assertTrue(all(line.entity == "" for line in table.unsaved._waiting))
+
+    async def test_three_failures_in_a_row_rest_the_labels(self) -> None:
+        from dmbot.ai import AIError
+
+        table = await self.speaking(AIError("busy"))
+        for window in range(4):  # four windows of two lines each
+            self.said(
+                table, "Welcome, weary travellers, sit by the fire.", user=DM, at_ms=window * 10_000
+            )
+            self.said(table, "The door creaks open slowly.", user=DM, at_ms=window * 10_000 + 5_000)
+            await self.settle()
+        self.assertEqual(len(self.speaker_asks), 3)  # the fourth window wasn't asked
+        self.assertGreater(table.speaker_paused_until, time.monotonic())
+        self.assertTrue(all(line.entity == "" for line in table.unsaved._waiting))
+
+    async def test_a_line_already_saved_is_labelled_in_the_database(self) -> None:
+        hold = asyncio.Event()
+        table = await self.speaking("1 narrating\n2 narrating", hold=hold)
+        saved = AsyncMock(return_value=1)
+        self.bot.transcripts = SimpleNamespace(set_entity=saved)  # type: ignore[assignment]
+        table.transcript_session_id = "session-1"
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        self.said(table, "The door creaks open slowly.", user=DM, at_ms=5_000)
+        await self.settle()
+        table.unsaved.take(lambda _: True)  # saved while the AI thought
+        hold.set()
+        await self.settle()
+        self.assertEqual(saved.await_count, 2)
+        saved.assert_any_await(GUILD, "session-1", DM, 0, "narrating")
+
+    async def test_a_question_closed_while_it_is_being_posted_is_taken_down(self) -> None:
+        posting = asyncio.Event()
+        message = MagicMock(edit=AsyncMock())
+
+        async def slow_post(channel_id: int, text: str, view: Any = None) -> Any:
+            await posting.wait()
+            return message
+
+        table = await self.speaking("1 npc 2 maybe\n2 unsure")
+        self.bot.post_message = slow_post  # type: ignore[method-assign]
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        self.said(table, "The door creaks open slowly.", user=DM, at_ms=5_000)
+        await self.settle()
+        self.bot.stop_recording(GUILD, DM)  # the question closes before it is on screen
+        posting.set()
+        await self.settle()
+        message.edit.assert_awaited()
+        self.assertIsNone(message.edit.await_args.kwargs.get("view"))
 
     async def test_a_dm_who_has_stopped_is_not_asked_about(self) -> None:
         table = await self.speaking("1 narrating\n2 narrating")
