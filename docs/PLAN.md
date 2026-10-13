@@ -1911,8 +1911,8 @@ clocks, reading time from narration, AI.
   | Time | Word |
   |---|---|
   | 03:30–04:59 | pre-dawn |
-  | 05:00–05:59 | dawn |
-  | 06:00–09:59 | morning |
+  | 05:00–06:14 | dawn |
+  | 06:15–09:59 | morning |
   | 10:00–11:29 | late morning |
   | 11:30–12:59 | about noon |
   | 13:00–14:59 | afternoon |
