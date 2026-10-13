@@ -21,7 +21,7 @@ from dmbot.web import entitlements_writer
 from dmbot.web.app import create_app
 from dmbot.web.payments import PaymentError
 from dmbot.web.settings import load_web_settings
-from dmbot.web.stripe import HttpTransport, StripeConfig, StripeProvider
+from dmbot.web.stripe import API_VERSION, HttpTransport, StripeConfig, StripeProvider
 from tests.pg import DatabaseTest
 from tests.test_web_api import ALICE, API, FakeDiscord, settings
 from tests.test_web_payments import PaymentSettings
@@ -270,7 +270,8 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_updates_that_change_no_price_or_cancel_state_are_ignored(self) -> None:
-        for previous in ({}, {"default_payment_method": None}, {"metadata": {}}):
+        unchanged: list[dict[str, Any]] = [{}, {"default_payment_method": None}, {"metadata": {}}]
+        for previous in unchanged:
             body = event("customer.subscription.updated", subscription(), previous=previous)
             self.assertIsNone(self.provider.parse(body), str(previous))
         no_previous = event("customer.subscription.updated", subscription())
@@ -508,6 +509,44 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(form["discounts[0][coupon]"], "FIRST199")
         self.assertNotIn("customer_email", form)  # none known: none sent
 
+    async def test_managed_payments_is_asked_for_only_when_switched_on(self) -> None:
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        plan = plans.load().by_id["table"]
+        for factory in (self.provider.extra_hours_checkout_url,):
+            await factory(user_id=USER, email=None, return_url="https://dmbot.example/account")
+        await self.provider.checkout_url(
+            user_id=USER,
+            email=None,
+            plan=plan,
+            first_month_cents=None,
+            return_url="https://x.example",
+        )
+        for _, _, form in self.http.calls:
+            self.assertNotIn("managed_payments[enabled]", form)
+        managed = StripeProvider(
+            StripeConfig(
+                secret_key="sk_test_not_real",
+                prices=CONFIG.prices,
+                extra_hours_price="price_extra",
+                managed_payments=True,
+            ),
+            SECRET,
+            transport=self.http,
+        )
+        self.http.calls.clear()
+        await managed.checkout_url(
+            user_id=USER,
+            email=None,
+            plan=plan,
+            first_month_cents=None,
+            return_url="https://x.example",
+        )
+        await managed.extra_hours_checkout_url(
+            user_id=USER, email=None, return_url="https://x.example"
+        )
+        for _, _, form in self.http.calls:
+            self.assertEqual(form["managed_payments[enabled]"], "true")
+
     async def test_a_first_month_without_its_coupon_is_refused_not_charged_in_full(self) -> None:
         with self.assertRaises(PaymentError):
             await self.provider.checkout_url(
@@ -701,7 +740,10 @@ class Transport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got, (200, {"ok": True}))
         args, kwargs = sent.call_args
         self.assertEqual(args, ("POST", "https://api.stripe.com/v1/checkout/sessions"))
-        self.assertEqual(kwargs["headers"], {"Authorization": "Bearer sk_test_not_real"})
+        self.assertEqual(
+            kwargs["headers"],
+            {"Authorization": "Bearer sk_test_not_real", "Stripe-Version": API_VERSION},
+        )
         self.assertEqual(kwargs["data"], {"mode": "payment"})
         self.assertFalse(kwargs["allow_redirects"])
 
@@ -734,8 +776,16 @@ class Config(unittest.TestCase):
         self.assertEqual(config.extra_hours_price, "price_4")
         self.assertEqual(config.first_month_coupons, {"table": "FIRST199"})
         self.assertFalse(config.live)
+        self.assertFalse(config.managed_payments)
         self.assertNotIn("key_not_real", repr(loaded))
         self.assertNotIn("key_not_real", repr(config))
+
+    def test_managed_payments_is_a_switch_that_must_be_a_switch(self) -> None:
+        on = load_web_settings({**self.ENV, "STRIPE_MANAGED_PAYMENTS": "1"})
+        assert on.stripe is not None
+        self.assertTrue(on.stripe.managed_payments)
+        with self.assertRaisesRegex(ConfigError, "STRIPE_MANAGED_PAYMENTS"):
+            load_web_settings({**self.ENV, "STRIPE_MANAGED_PAYMENTS": "maybe"})
 
     def test_a_live_key_is_live(self) -> None:
         live = load_web_settings({**self.ENV, "STRIPE_SECRET_KEY": "sk_live_key_not_real"})

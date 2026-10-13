@@ -58,6 +58,12 @@ SIGNATURE_HEADER = "stripe-signature"
 # How far a signed timestamp may be from now, either way (Stripe's own default).
 TOLERANCE_SECONDS = 300
 
+# The API version every call is made on, so the payload shapes we tested are the shapes we get
+# (an account's default version can change under us in the dashboard). The webhook endpoint
+# must be created on this same version: an endpoint has its own, and it decides the shape of
+# the events. Checkout Sessions with Managed Payments are supported from this release.
+API_VERSION = "2026-04-22.dahlia"
+
 # (method, path, form fields or None) -> (HTTP status, parsed JSON or None). Faked in tests.
 # Stripe takes form-encoded bodies; nested fields are written the way it reads them
 # ("line_items[0][price]").
@@ -79,6 +85,10 @@ class StripeConfig:
     # price (#435). Missing: a first-month checkout for that plan is refused, so nobody is
     # charged more than was promised.
     first_month_coupons: Mapping[str, str] = field(default_factory=dict)
+    # Stripe's Managed Payments (Stripe as the merchant of record, owner decision on #1096):
+    # asks each Checkout Session to opt in. Off by default until the sandbox run (#1096) has
+    # shown the parameter is accepted; the owner also accepts Stripe's terms in the dashboard.
+    managed_payments: bool = False
 
     @property
     def live(self) -> bool:
@@ -91,7 +101,7 @@ class HttpTransport:
     """The real calls, with short timeouts: a person is waiting on the button."""
 
     def __init__(self, secret_key: str, base: str = API_BASE) -> None:
-        self._headers = {"Authorization": f"Bearer {secret_key}"}
+        self._headers = {"Authorization": f"Bearer {secret_key}", "Stripe-Version": API_VERSION}
         self._base = base
         self._http: aiohttp.ClientSession | None = None
 
@@ -158,6 +168,8 @@ class StripeProvider:
     # --- asking Stripe ---
 
     async def _checkout(self, form: dict[str, str], email: str | None) -> str:
+        if self._config.managed_payments:
+            form["managed_payments[enabled]"] = "true"
         if email:
             form["customer_email"] = email  # server-side only: never in the address returned
         status, answer = await self._http("POST", "/v1/checkout/sessions", form)

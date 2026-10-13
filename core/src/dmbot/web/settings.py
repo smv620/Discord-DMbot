@@ -266,8 +266,12 @@ def _stripe(get: Callable[[str], str]) -> StripeConfig:
     ids = [*prices.values(), extra]
     if len(set(ids)) != len(ids):
         raise ConfigError("Each STRIPE_PRICE_* must be a different price.")
+    managed = (get("STRIPE_MANAGED_PAYMENTS") or "0").lower()
+    if managed not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'STRIPE_MANAGED_PAYMENTS must be 1 or 0, got "{managed}".')
     return StripeConfig(
         secret_key=key,
+        managed_payments=managed in ("1", "true", "on"),
         prices=prices,
         extra_hours_price=extra,
         first_month_coupons=coupons,
