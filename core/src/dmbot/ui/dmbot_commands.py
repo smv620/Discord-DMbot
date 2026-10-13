@@ -53,8 +53,8 @@ Handler = Callable[[discord.Interaction], Awaitable[None]]
 
 
 RESTORE_FAILED = "Something went wrong, so nothing was restored. Run `/dmbot restore` again."
-START_FAILED = "Something went wrong starting. Pick the channel and press Start listening again."
-STARTING = "⏳ Starting… joining {channel} and getting the DM screen ready."
+START_FAILED = "Couldn't start. Press ▶ Start listening to try again."
+STARTING = "⏳ Starting in {channel}… the DM screen will be ready in a moment."
 STOP_COMMAND_FAILED = "Something went wrong stopping DMbot. Please try `/dmbot stop` again."
 
 
