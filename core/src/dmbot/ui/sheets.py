@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 import discord
@@ -211,9 +212,24 @@ async def link_and_read(
     if not saved:  # forgotten or linked again while it was read
         return LINK_CHANGED if player is not None else DM_NOT_LINKED
     if report is not None:
-        report.append(sheet_checks.card(snapshot))
+        report.append(await status_card(bot, guild_id, campaign_id, snapshot))
     who = sheets.who(snapshot)
     return LINKED_READ.format(name=_md(snapshot["name"]), who=f" ({_md(who)})" if who else "")
+
+
+async def status_card(
+    bot: DMBot, guild_id: int, campaign_id: str, snapshot: Mapping[str, Any]
+) -> str:
+    """The import status card for this campaign (#1124): names are checked against its own
+    rulesets (a campaign with no fallback never sees an older-edition-only spell as ✅), and
+    escaped for Discord."""
+    campaign = await bot.campaigns.get(guild_id, campaign_id)
+    target, fallback = (
+        (campaign.target_ruleset, campaign.fallback_ruleset)
+        if campaign is not None
+        else ("2024", "none")
+    )
+    return sheet_checks.card(snapshot, target=target, fallback=fallback, escape=_md)
 
 
 async def _send_card(interaction: discord.Interaction, report: list[str]) -> None:
@@ -517,7 +533,10 @@ class TypedForm(discord.ui.Modal, title="Type in your character"):
         if len(kept) < len(typed):
             said += TYPED_DROPPED.format(n=len(typed) - len(kept))
         await show_panel(interaction, self.guild_id, c, note=said)
-        await _send_card(interaction, [sheet_checks.card(snapshot)])
+        await _send_card(
+            interaction,
+            [await status_card(_bot(interaction), self.guild_id, c.campaign_id, snapshot)],
+        )
 
 
 # ---- the DM's side ------------------------------------------------------------------

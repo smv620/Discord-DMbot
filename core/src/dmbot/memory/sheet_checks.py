@@ -22,10 +22,14 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-import discord
-
 from dmbot.memory import sheet_names
-from dmbot.memory.sheets import ABILITIES, RARITIES, SOURCE_DNDBEYOND, SOURCE_TYPED
+from dmbot.memory.sheets import (
+    ABILITIES,
+    INVENTORY_MAX,
+    RARITIES,
+    SOURCE_DNDBEYOND,
+    SOURCE_TYPED,
+)
 from dmbot.rules.index import srd
 
 OK, WARN, BAD = "ok", "warn", "bad"
@@ -171,7 +175,7 @@ def checks(
     typed in has only the parts the form asks for, so only those are checked."""
     out = [_basic(snapshot)]
     if snapshot.get("source") == SOURCE_TYPED:
-        out.append(_features(snapshot))
+        out.append(_typed_names(snapshot, target, fallback))
         return out
     out += [
         _abilities(snapshot),
@@ -248,7 +252,9 @@ def _basic(snapshot: Mapping[str, Any]) -> Check:
     summary = ", ".join(
         p for p in (snapshot.get("name"), class_line(snapshot), vitals(snapshot)) if p
     )
-    text = f"Character: {summary}" + (f" ({'; '.join(problems)})" if problems else "")
+    # The reason comes first, so it is always what is read (a long line is cut at its end);
+    # the character follows in brackets.
+    text = f"Character: {'; '.join(problems)}. ({summary})" if problems else f"Character: {summary}"
     return Check("basic", status, text)
 
 
@@ -311,6 +317,25 @@ def _proficiencies(snapshot: Mapping[str, Any]) -> Check:
     return Check("proficiencies", OK, f"Trained with: {', '.join(parts)}")
 
 
+def _typed_names(snapshot: Mapping[str, Any], target: str, fallback: str) -> Check:
+    """The spell, feature and item names a player typed in (#1124): ✅ if one is a spell in
+    the rules index or an SRD feat, else ⚠️ (it may be a class feature, an item, or from a
+    book), with "did you mean" when it is nearly a spell or feat. Never ⛔: the form mixes
+    kinds of names, so a name that is none of the two lists is not an error."""
+    index = srd()
+
+    def status(name: str) -> str:
+        if index.lookup(name, target, fallback, kind="spell") is not None:
+            return OK
+        return OK if sheet_names.where("feat", name) == "srd" else WARN
+
+    def near(name: str) -> str | None:
+        found = index.suggest(name, target, fallback, limit=1)
+        return found[0].name if found else sheet_names.close("feat", name)
+
+    return _named("features", "Names you typed", _list(snapshot, "features"), status, near)
+
+
 def _features(snapshot: Mapping[str, Any]) -> Check:
     names = _list(snapshot, "features")
     return Check(
@@ -343,7 +368,8 @@ def _inventory(snapshot: Mapping[str, Any]) -> Check:
     rarity = inv.get("rarity") if isinstance(inv.get("rarity"), Mapping) else {}
     assert isinstance(rarity, Mapping)
     count = inv.get("count") or 0
-    if sum(rarity.get(r, 0) for r in RARITIES) != count:
+    capped = count >= INVENTORY_MAX  # a count cut at the limit can't be matched to its parts
+    if not capped and sum(rarity.get(r, 0) for r in RARITIES) != count:
         return Check(
             "inventory",
             BAD,
@@ -352,16 +378,24 @@ def _inventory(snapshot: Mapping[str, Any]) -> Check:
     counts = [f"{rarity[r]} {r}" for r in reversed(RARITIES) if rarity.get(r)]
     weight = f"{inv.get('weight') or 0:.2f}"
     tail = f": {', '.join(counts)}" if counts else ""
-    return Check("inventory", OK, f"Inventory ({count} items, {weight} lb){tail}")
+    return Check("inventory", OK, f"Inventory ({_plural(count, 'item')}, {weight} lb){tail}")
 
 
 # ---- the card ---------------------------------------------------------------------------
 
 
-def card(snapshot: Mapping[str, Any], *, target: str = "2024", fallback: str = "2014") -> str:
+def card(
+    snapshot: Mapping[str, Any],
+    *,
+    target: str = "2024",
+    fallback: str = "2014",
+    escape: Callable[[str], str] = str,
+) -> str:
     """The import status card text: a summary first, then one line per part with the ones to
-    look at at the top, then what the marks mean. Under one message: a long line is cut,
-    never the footer."""
+    look at at the top, then what the marks mean. `escape` makes a line safe for Discord's
+    markdown (names are other people's words): the caller gives it, so this module doesn't
+    need Discord. Under one message: a ✅ line is shortened or folded first; a ⚠️ or ⛔ line
+    is never cut, so the reason is always there, and neither is the footer."""
     done = checks(snapshot, target=target, fallback=fallback)
     done.sort(key=lambda c: -_WORST[c.status])  # stable: ⛔ first, then ⚠️, then ✅
     bad = sum(c.status == BAD for c in done)
@@ -385,13 +419,22 @@ def card(snapshot: Mapping[str, Any], *, target: str = "2024", fallback: str = "
         )
     if not (bad or warn):
         notes.append("DMbot only checks names and numbers. You know your character best.")
-    name = discord.utils.escape_markdown(str(snapshot.get("name")))
+    name = escape(str(snapshot.get("name")))
     head = f"📜 **{name}**: DMbot read your sheet. {summary} Only you see this."
-    lines = [
-        ln if len(ln) <= LINE_MAX else ln[: LINE_MAX - 1] + "…" for ln in (c.line for c in done)
-    ]
-    text = "\n".join([head, *lines, *notes])
-    return text if len(text) <= CARD_MAX else "\n".join([head, *lines[:8], "…", *notes])
+    lines = []
+    for c in done:
+        text = escape(c.text)
+        if c.status == OK and len(text) > LINE_MAX:
+            text = text[: LINE_MAX - 1] + "…"
+        lines.append(f"{EMOJI[c.status]} {text}")
+    fine = [i for i, c in enumerate(done) if c.status == OK]
+    out = "\n".join([head, *lines, *notes])
+    while len(out) > CARD_MAX and fine:  # too long: fold the ✅ lines away, last first
+        lines[fine.pop()] = ""
+        shown = [ln for ln in lines if ln]
+        more = len(lines) - len(shown)
+        out = "\n".join([head, *shown, f"✅ and {more} more parts fine", *notes])
+    return out
 
 
 def changed(old: Mapping[str, Any] | None, new: Mapping[str, Any]) -> bool:

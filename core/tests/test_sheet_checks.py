@@ -299,6 +299,96 @@ class Statuses(unittest.TestCase):
         self.assertEqual(sheet_names.close("feat", "Sharpshoter"), "Sharpshooter")
 
 
+class ReviewFixes(unittest.TestCase):
+    def setUp(self) -> None:
+        self.s = sheets.parse(belleros())
+
+    def test_the_reason_for_a_problem_is_never_cut(self) -> None:
+        snap = copy.deepcopy(self.s)
+        snap["name"] = "N" * 55
+        snap["classes"] = [{"name": "Ranger", "level": 15, "subclass": None},
+                           {"name": "Druid", "level": 9, "subclass": None}]  # fmt: skip
+        snap["hp"], snap["temp_hp"] = 99, 0
+        text = checks.card(snap)
+        self.assertIn("class levels add up to 24; the most is 20. Check your levels", text)
+        self.assertIn("HP 99 is above the maximum 26 + 0. Check HP on your sheet", text)
+        self.assertLess(len(text), 2000)
+
+    def test_typed_names_are_checked_with_a_did_you_mean(self) -> None:
+        typed = sheets.typed(
+            "Mira",
+            species="Elf",
+            class_name="Wizard",
+            level=3,
+            names=["Shield", "Mistey Step", "Alert", "Sneak Attack"],
+        )
+        assert typed is not None
+        line = {c.part: c for c in checks.checks(typed)}["features"]
+        self.assertEqual(line.status, checks.WARN)  # never an error: the form mixes kinds
+        self.assertIn("'Mistey Step'", line.text)
+        self.assertIn("did you mean Misty Step?", line.text)
+        self.assertIn("'Sneak Attack'", line.text)
+        ok = sheets.typed(
+            "Mira", species="Elf", class_name="Wizard", level=3, names=["Shield", "Alert"]
+        )
+        assert ok is not None
+        self.assertEqual({c.part: c.status for c in checks.checks(ok)}["features"], checks.OK)
+
+    def test_names_are_checked_against_the_campaigns_own_rulesets(self) -> None:
+        snap = {**self.s, "spells": ["Shining Smite"]}  # in the 2024 SRD, not the older one
+        newer = {c.part: c.status for c in checks.checks(snap, target="2024", fallback="none")}
+        older = {c.part: c.status for c in checks.checks(snap, target="2014", fallback="none")}
+        self.assertEqual((newer["spells"], older["spells"]), (checks.OK, checks.WARN))
+
+    def test_one_item_is_not_one_items(self) -> None:
+        inv = {"count": 1, "weight": 1.0, "rarity": {**self.s["inventory"]["rarity"], "common": 1,
+                                                       "uncommon": 0, "rare": 0}}  # fmt: skip
+        line = {c.part: c.text for c in checks.checks({**self.s, "inventory": inv})}["inventory"]
+        self.assertTrue(line.startswith("Inventory (1 item, 1.00 lb)"))
+
+    def test_every_name_on_the_card_is_escaped_by_the_caller(self) -> None:
+        snap = {**self.s, "spells": ["Odd_Spell*"]}
+        text = checks.card(snap, escape=lambda t: t.replace("_", "\\_").replace("*", "\\*"))
+        self.assertIn("'Odd\\_Spell\\*'", text)
+
+    def test_a_capped_inventory_count_is_not_checked_against_its_parts(self) -> None:
+        inv = {**self.s["inventory"], "count": sheets.INVENTORY_MAX}
+        self.assertEqual(
+            {c.part: c.status for c in checks.checks({**self.s, "inventory": inv})}["inventory"],
+            checks.OK,
+        )
+
+    def test_a_huge_weight_never_breaks_a_read(self) -> None:
+        data = belleros()
+        data["data"]["inventory"][0]["definition"]["weight"] = 10**400
+        data["data"]["inventory"][1]["definition"]["weight"] = float("inf")
+        snap = sheets.parse(data)
+        self.assertEqual(snap["inventory"]["count"], 5)
+        self.assertLess(snap["inventory"]["weight"], 100)
+        kept = {**snap, "inventory": {**snap["inventory"], "weight": 10**400}}
+        cleaned = sheets.clean(kept)
+        assert cleaned is not None
+        self.assertEqual(cleaned["inventory"]["weight"], 0.0)
+
+    def test_a_background_too_long_falls_back_to_the_custom_one(self) -> None:
+        data = belleros()
+        data["data"]["background"] = {
+            "definition": {"name": "word " * 40},
+            "customBackground": {"name": "Hermit"},
+        }
+        self.assertEqual(sheets.parse(data)["background"], "Hermit")
+
+    def test_the_checks_do_not_need_discord(self) -> None:
+        import sys
+
+        import dmbot.memory.sheet_checks as module
+
+        self.assertNotIn(
+            "discord",
+            {n.split(".")[0] for n in vars(module) if isinstance(vars(module)[n], type(sys))},
+        )
+
+
 class Card(unittest.TestCase):
     def test_the_card_is_a_summary_one_line_per_part_and_one_message(self) -> None:
         text = checks.card(sheets.parse(belleros()))
@@ -342,7 +432,10 @@ class Card(unittest.TestCase):
         self.assertTrue(text.endswith("DMbot has changed nothing."))
 
     def test_the_names_are_escaped(self) -> None:
-        text = checks.card({**sheets.parse(belleros()), "name": "Bel*le_ros"})
+        text = checks.card(
+            {**sheets.parse(belleros()), "name": "Bel*le_ros"},
+            escape=lambda t: t.replace("_", "\\_").replace("*", "\\*"),
+        )
         self.assertIn("Bel\\*le\\_ros", text.split("\n")[0])
 
     def test_plurals_and_no_languages(self) -> None:

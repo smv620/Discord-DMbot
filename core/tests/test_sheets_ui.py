@@ -42,6 +42,7 @@ def interaction(found: list[PlayerCharacter], current: CharacterSheet | None = N
     it.guild = None  # in a private message
     it.type = discord.InteractionType.component
     it.client = MagicMock(sheets=store)
+    it.client.campaigns.get = AsyncMock(return_value=None)  # no rulesets: the defaults
     done = {"yes": False}
 
     async def answered(*_: Any, **__: Any) -> None:
@@ -318,9 +319,18 @@ class Linking(unittest.IsolatedAsyncioTestCase):
         with patch.object(sheets, "fetch", AsyncMock(return_value=sheets.parse(answer()))):
             await self.form(URL).on_submit(it)
         [card] = cards(it)
-        self.assertIn("Character: Testa Placeholder", card)
+        self.assertIn("Character:", card)
+        self.assertIn("Testa Placeholder, Test Class 3 + Second Class 2", card)
         sent = [c for c in it.followup.send.await_args_list if CARD in str(c.args[0])]
         self.assertTrue(sent[0].kwargs["ephemeral"])  # only the player sees it
+
+    async def test_a_dm_linking_a_sheet_gets_no_card(self) -> None:
+        it = interaction([TESTA])
+        it.client.sheets_changed = MagicMock()
+        with patch.object(sheets, "fetch", AsyncMock(return_value=sheets.parse(answer()))):
+            said_to_dm = await ui.link_and_read(it.client, GUILD, CAMPAIGN, ENTITY, 42)
+        self.assertIn("Linked", said_to_dm)
+        self.assertEqual(cards(it), [])  # the card is the player's, so only they ever get one
 
     async def test_no_card_when_the_sheet_could_not_be_read(self) -> None:
         it = interaction([TESTA])

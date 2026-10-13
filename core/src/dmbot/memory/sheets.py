@@ -226,10 +226,8 @@ def _full(
         "armor_profs": _names(
             m.get("friendlySubtypeName") for m in proficiencies if _sub(m) in _ARMOR_KINDS
         ),
-        "background": _name(
-            _get(data, "background", "definition", "name")
-            or _get(data, "background", "customBackground", "name")
-        ),
+        "background": _name(_get(data, "background", "definition", "name"))
+        or _name(_get(data, "background", "customBackground", "name")),
         "inventory": _inventory(data),
     }
 
@@ -270,6 +268,18 @@ def _flags(data: Mapping[str, Any]) -> list[str]:
     return sorted(flags)
 
 
+def _weight(value: Any) -> float | None:
+    """A weight in pounds, or None. The range is checked before the number is made a float:
+    a huge integer would raise OverflowError and lose the whole sheet."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if not 0 <= value <= WEIGHT_MAX:
+        return None
+    return float(value)
+
+
 def _modifier_names(modifiers: list[Mapping[str, Any]], kind: str) -> list[str]:
     return _names(
         str(m["friendlySubtypeName"]).capitalize()
@@ -291,10 +301,10 @@ def _inventory(data: Mapping[str, Any]) -> dict[str, Any]:
         count += 1
         quantity = _int(item.get("quantity"), 0, 100_000)
         quantity = 1 if quantity is None else quantity  # no amount given: one
-        each = _get(item, "definition", "weight")
+        each = _weight(_get(item, "definition", "weight"))
         bundle = _int(_get(item, "definition", "bundleSize"), 1, 1000) or 1
-        if isinstance(each, (int, float)) and not isinstance(each, bool) and math.isfinite(each):
-            weight += max(0.0, float(each)) * quantity / bundle
+        if each is not None:
+            weight += each * quantity / bundle
         word = _get(item, "definition", "rarity")
         key = word.strip().lower() if isinstance(word, str) else "common"
         rarity[key if key in rarity else "common"] += 1
@@ -552,15 +562,10 @@ def _clean_full(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     inventory = snapshot.get("inventory")
     if isinstance(inventory, Mapping):
         rarity_in = inventory.get("rarity")
-        weight = inventory.get("weight")
+        weight = _weight(inventory.get("weight"))
         out["inventory"] = {
             "count": _int(inventory.get("count"), 0, INVENTORY_MAX) or 0,
-            "weight": round(float(weight), 2)
-            if isinstance(weight, (int, float))
-            and not isinstance(weight, bool)
-            and math.isfinite(weight)
-            and 0 <= weight <= WEIGHT_MAX
-            else 0.0,
+            "weight": round(weight, 2) if weight is not None else 0.0,
             "rarity": {
                 r: (_int(rarity_in.get(r), 0, INVENTORY_MAX) or 0)
                 if isinstance(rarity_in, Mapping)
