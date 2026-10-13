@@ -52,7 +52,8 @@ def time_of_day(minute: int) -> int:
 
 
 # The players' approximate words (docs/PLAN.md, "TimeBot", the game-time channel): the minute
-# of the day each word starts at, fixed hours, no seasons. "near midnight" spans midnight
+# of the day each word starts at, fixed hours, no seasons (Supervisor, 2026-10-13: dawn is
+# 05:00 to 06:14 and morning 06:15 to 09:59, so 06:00, the dawn mark, reads "dawn"). "near midnight" spans midnight
 # (23:15 to 00:44), so the day starts inside "near midnight" and the table below begins at
 # 00:45 with "late night".
 _DAY_PARTS: tuple[tuple[int, str], ...] = (
@@ -60,7 +61,7 @@ _DAY_PARTS: tuple[tuple[int, str], ...] = (
     (45, "late night"),
     (3 * 60 + 30, "pre-dawn"),
     (5 * 60, "dawn"),
-    (6 * 60, "morning"),
+    (6 * 60 + 15, "morning"),  # dawn runs to 06:14 so "Skip to dawn" (06:00) reads "dawn"
     (10 * 60, "late morning"),
     (11 * 60 + 30, "about noon"),
     (13 * 60, "afternoon"),
