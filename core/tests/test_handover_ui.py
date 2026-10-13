@@ -608,7 +608,7 @@ class TakingItOn(unittest.IsolatedAsyncioTestCase):
             with self.subTest(message=message[:30]):
                 it = interaction(OTHER)
                 it.client.start_campaign_session = AsyncMock(return_value=(False, message))
-                it.response.is_done.return_value = True  # the press was deferred
+                it.response.is_done.return_value = True  # the press was answered with "Starting…"
                 await VoicePicker(campaign(owner=None), 5)._start(it)
                 sent = it.followup.send.await_args
                 self.assertEqual(sent.args[0], message)
