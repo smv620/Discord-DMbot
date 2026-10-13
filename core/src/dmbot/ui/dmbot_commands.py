@@ -20,6 +20,7 @@ from discord import app_commands
 
 from dmbot import hours
 from dmbot.campaigns import DEFAULT_DM_SCREEN_VISIBILITY, Campaign, CampaignError
+from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_LEVEL,
     DEFAULT_FALLBACK,
@@ -295,6 +296,12 @@ class NewCampaignForm(discord.ui.Modal, title="New campaign"):
         placeholder="For example: Rime of the Frostmaiden",
         max_length=80,
     )
+    invite: discord.ui.TextInput[NewCampaignForm] = discord.ui.TextInput(
+        label="D&D Beyond invite (optional)",
+        placeholder="Paste your campaign's D&D Beyond invite link.",
+        required=False,
+        max_length=200,
+    )
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         set_log_context(guild_id=interaction.guild_id)  # tag this form's logs
@@ -307,6 +314,7 @@ class NewCampaignForm(discord.ui.Modal, title="New campaign"):
             return
         try:
             name = clean_name(self.name.value)
+            invite = parse_invite(self.invite.value)  # refused with one plain line
         except CampaignError as exc:
             await _tell(interaction, str(exc))
             return
@@ -318,7 +326,7 @@ class NewCampaignForm(discord.ui.Modal, title="New campaign"):
                 "`/dmbot start`, or choose another name.",
             )
             return
-        view = NewCampaignSettings(name)
+        view = NewCampaignSettings(name, invite)
         await _send(interaction, view.text(), view)
 
 
@@ -327,9 +335,10 @@ class NewCampaignSettings(_Menu):
     buttons per setting, short enough for a phone (#112): one tap to change a setting,
     the chosen one blue with a tick, the full wording in the message above."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, invite: str | None = None) -> None:
         super().__init__()
         self.name = name
+        self.invite = invite  # the D&D Beyond campaign invite, already checked (#1119)
         self.target = DEFAULT_TARGET
         self.fallback = DEFAULT_FALLBACK
         self.optional = True
@@ -412,6 +421,7 @@ class NewCampaignSettings(_Menu):
                 optional_rules_default=self.optional,
                 dm_screen_visibility=self.visibility,
                 dm_screen_level=self.level,
+                dndbeyond_invite=self.invite,  # saved with the campaign (#1119)
             )
         except CampaignError as exc:
             await _tell(interaction, str(exc))
