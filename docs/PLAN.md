@@ -1933,7 +1933,26 @@ clocks, reading time from narration, AI.
   - Vague narration ("you walk for a while") is never guessed. At most it is a suggestion on the
     DM screen.
 
-  Text channels are not read: that needs Discord's Message Content permission, an owner question.
+  **Typed chat counts too** (owner, 2026-10-13), as described under "Typed chat at the table".
+- **Players see only the approximate time** (owner, 2026-10-13): never `h:mm`, in any message.
+
+**Typed chat at the table (owner, 2026-10-13).** DMbot reads what is typed at the table as well
+as what is said, so the clock and the other listeners hear "we take a long rest" either way.
+- **Where:** only the table voice channel's own text chat, plus at most one text channel the DM
+  picks in ⚙️ Settings ("Table chat"). Never any other channel, and never between campaigns or
+  servers.
+- **When and whose:** only while DMbot is listening, and only messages from people who agreed to
+  be recorded. Bots are never read.
+- **What happens to them:** a typed line goes to the same listeners as a spoken one (clock phrases,
+  house rules, names heard, "Hey DMbot"). It goes into the **raw** transcript tagged `(typed)`,
+  never the cleaned one. Commands and DMbot's own messages are skipped.
+- **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
+  That changes what people agree to, so the consent terms version goes up and everyone is asked
+  again.
+- **Discord:** this needs the guild-messages intent and the privileged **Message Content** intent.
+  The owner switches Message Content on in the Developer Portal (Bot, Privileged Gateway
+  Intents). Once DMbot is in 100 or more servers, Discord must approve that intent, so it is part
+  of the go-live checklist (#498).
 
 **DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
 DMbot is there to help the game move quickly, never to bog it down or distract. The
@@ -2555,6 +2574,20 @@ and stays a later browser extension in the DM's own session; never a password or
 on our side. Order: part A (link, snapshot, hints, unlink, fallback form; one developer,
 no table work), part B with phase 3 (the rules advisor reads the snapshot), part C later
 (the extension).
+*The D&D Beyond campaign invite (owner, 2026-10-13):* DMbot can't create a D&D Beyond campaign or
+add people to one (there is no official API), so it passes on the DM's own invite.
+- **The DM** pastes the campaign's invite link from D&D Beyond (Campaigns, then the campaign, then
+  the invite link) when creating the DMbot campaign, or later in ⚙️ Settings. Only
+  `dndbeyond.com/campaigns/join/<code>` links are accepted.
+- **Players** see a **Join on D&D Beyond** link button on the consent message and on each
+  session's reminder, and in the transcript channel's pinned card. Nothing more is asked of them
+  there.
+- **Where it shows:** the link stays inside that Discord server and goes into the campaign's
+  backup. The DM can change or remove it.
+- **A character from the sheet.** When a player links a sheet and the DM hasn't added their
+  character yet, DMbot adds it from the sheet's name, as that player's character, and tells the
+  DM on the DM screen. The DM can rename, merge or remove it there.
+- **Part C (the browser extension in the DM's own D&D Beyond session) stays later.**
 *Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
 just to the character: if the DM gives the character to someone else, the old sheet is
 never shown to the new player (it shows only while that player still plays it). The
@@ -2632,12 +2665,15 @@ stays, and so does the meaning of each event kind:
   `cancel_at_period_end` (a cancel that is already done succeeds). A refunded extra-hours order
   stays credited (manual for now).
 
-**Who the seller is, an owner question (#1096).** Lemon Squeezy was the seller of record (it
-handled tax, invoices and EU/UK withdrawal rights), and the signed-off legal pages say so. Plain
-Stripe makes DMbot LLC the seller. Stripe's own merchant-of-record option would keep the legal
-pages as they are. Until the owner answers, the legal pages keep their signed-off wording, and
-the website names Stripe only where the wording stays true. The owner's account setup and the
-test-mode run of #498 item 5 move to Stripe (#1096).
+**Stripe is the seller (owner, 2026-10-13, #1096: answer A).** DMbot sells through Stripe's
+merchant-of-record option, so Stripe stays the seller of record, as Lemon Squeezy was. It handles
+sales tax, invoices and EU/UK withdrawal rights. The signed-off legal pages keep their wording,
+with the payment company's name changed to Stripe (#1111). If Stripe doesn't offer that option
+to this account, this comes back to the owner before anything is sold: a plain Stripe account
+would make DMbot LLC the seller. The owner's account setup and the test-mode run of #498 item 5
+are on #1096.
+**Hosting cost (owner, 2026-10-13):** the server costs **$11 a month**. That is the
+`--hosting-monthly` input for docs/costs.md.
 **Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
 Feedback and Ask a question, posted by the web API as GitHub Discussions in this
 repository (categories Feedback and Questions; a discussions-only token from the
