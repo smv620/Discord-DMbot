@@ -2154,3 +2154,12 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Also: the owner confirmed Test G's answers ended properly with confident/uncertain (07:10 UTC).
   Still to check in Discord: Test F again (timer shows the total and says it was extended, a note on Still going), and the
   new game-time channel after /dmbot start.
+
+==============================================================================
+2026-10-13  dev1  Server rebooted (16:16 UTC); stack came back by itself, still fc09d9c
+  The machine restarted at 16:16 UTC. Every container came back on its own (restart: unless-stopped): postgres
+  (healthy), core, ears, web-api (healthy) and cloudflared. Core log: "ears connected", "logged in as"; 0 ERROR in core,
+  ears, web-api or cloudflared in the first 10 minutes. No game was running (0 rows in active_sessions), so nothing needed
+  resuming. The tmux sessions came back too (@reboot cron).
+  "Ready to deploy" cleared: #1120, #1123, #1130 and #1131 were already in fc09d9c (07:07 UTC). development has gained
+  only docs since then (#1135, #1136, #1138, #1149), so nothing to build.
