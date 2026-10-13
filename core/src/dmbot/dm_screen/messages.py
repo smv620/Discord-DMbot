@@ -427,3 +427,19 @@ TEST_SESSION = (
     '🧪 Test session. Only players who chose "Save my voice for tests" have their voice kept. '
     "Everyone else is still written down as usual. Players can stop any time in ⚙️ Menu."
 )
+
+
+# ---- the players' game-time channel (#1116) ----------------------------------------
+
+GAMETIME_FAILED = (
+    "⚠️ **Couldn't make the game-time channel** ({cause}). The game goes on; players just "
+    "have no clock channel yet. To retry, fix that and run `/dmbot start`."
+)
+
+
+def gametime_failed(cause: str) -> str:
+    return GAMETIME_FAILED.format(cause=cause)
+
+
+def gametime_topic(campaign_name: str) -> str:
+    return f"{campaign_name}: the day and a rough time of day. Posted by DMbot, view only."

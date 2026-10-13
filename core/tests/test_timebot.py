@@ -28,16 +28,20 @@ class Arithmetic(unittest.TestCase):
         c = Clock(game.from_day_and_time(1, 23, 50), 0)
         self.assertEqual(game.day_of(game.advance(c, 10).minute), 2)
         self.assertEqual(game.clock_time(game.advance(c, 10).minute), "00:00")
-        self.assertEqual(game.label(game.from_day_and_time(4, 14, 30)), "Day 4, afternoon (14:30)")
+        self.assertEqual(
+            game.label(game.from_day_and_time(4, 14, 30)), "Day 4, afternoon (14:30)"
+        )  # the DM sees the exact time
 
     def test_the_words_for_the_time_of_day(self) -> None:
+        # The approximate words (the full table is in tests/test_gametime.py).
         words = {
-            h: game.phase(game.from_day_and_time(1, h)) for h in (0, 4, 5, 11, 12, 16, 17, 20, 21)
+            h: game.day_part(game.from_day_and_time(1, h))
+            for h in (0, 4, 5, 11, 12, 16, 17, 20, 21)
         }
         self.assertEqual(
             words,
-            {0: "night", 4: "night", 5: "morning", 11: "morning", 12: "afternoon",
-             16: "afternoon", 17: "evening", 20: "evening", 21: "night"},
+            {0: "near midnight", 4: "pre-dawn", 5: "dawn", 11: "late morning", 12: "about noon",
+             16: "late afternoon", 17: "early evening", 20: "evening", 21: "late evening"},
         )  # fmt: skip
 
     def test_dawn_noon_and_dusk_are_found_as_they_pass(self) -> None:
@@ -407,8 +411,9 @@ class Wiring(unittest.TestCase):
         )
 
     def test_five_buttons_at_most_to_a_row(self) -> None:
-        rows: dict[int, int] = {}
-        for _label, _emoji, _style, row in ui.ACTIONS.values():
-            rows[row] = rows.get(row, 0) + 1
-        self.assertTrue(all(n <= 5 for n in rows.values()))
-        self.assertEqual(sorted(rows), [0, 1, 2])
+        for names in (ui.PINNED, ui.PANEL):
+            rows: dict[int, int] = {}
+            for action in names:
+                row = ui.ACTIONS[action][3]
+                rows[row] = rows.get(row, 0) + 1
+            self.assertTrue(all(n <= 5 for n in rows.values()))

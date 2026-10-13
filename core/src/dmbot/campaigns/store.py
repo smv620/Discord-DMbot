@@ -280,6 +280,7 @@ _SETTABLE = frozenset(
         "dm_screen_level",
         "channel_number",
         "transcript_channel_id",
+        "gametime_channel_id",
         "rules_cards",
     }
 )
@@ -565,6 +566,12 @@ class CampaignStore:
     ) -> Campaign:
         """Store the campaign's live transcript channel (#124)."""
         return await self._set(guild_id, campaign_id, "transcript_channel_id", channel_id)
+
+    async def set_gametime_channel(
+        self, guild_id: int, campaign_id: str, channel_id: int | None
+    ) -> Campaign:
+        """Store the campaign's game-time channel (#1116): not part of a backup."""
+        return await self._set(guild_id, campaign_id, "gametime_channel_id", channel_id)
 
     async def set_dm_screen_visibility(
         self, guild_id: int, campaign_id: str, visibility: str
@@ -1298,6 +1305,10 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         dm_screen_visibility=row["dm_screen_visibility"],
         channel_number=row_int(row, "channel_number"),
         transcript_channel_id=row_int(row, "transcript_channel_id"),
+        # Absent in a schema older than #1116 (a migration test opens one).
+        gametime_channel_id=row_int(row, "gametime_channel_id")
+        if "gametime_channel_id" in row
+        else None,
         dm_screen_level=row["dm_screen_level"],
         owner_user_id=row_int(row, "owner_user_id"),
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none

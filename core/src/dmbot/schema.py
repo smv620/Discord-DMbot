@@ -1587,6 +1587,17 @@ GAME_EFFECTS_EXTENDED = """
         CHECK (extended >= 0);
 """
 
+GAMETIME_CHANNEL = """
+    -- The players' game-time channel (docs/PLAN.md, "TimeBot"; #1116): `dmb-gametime-<slug>`,
+    -- everyone reads, only DMbot posts, with the players' pinned clock ("Day 5, morning")
+    -- edited in place. Its ids are channel and message ids: they mean nothing in another
+    -- server, so (like the DM screen's) none goes into a backup. Nullable columns: no row
+    -- changes, so no row-level-security policy is needed.
+    ALTER TABLE campaigns ADD COLUMN gametime_channel_id BIGINT;
+    ALTER TABLE game_clocks ADD COLUMN players_channel_id BIGINT;
+    ALTER TABLE game_clocks ADD COLUMN players_message_id BIGINT;
+"""
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -1919,6 +1930,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0047_owner_left", OWNER_LEFT),
     ("0048_plan_ends", PLAN_ENDS),
     ("0049_game_effects_extended", GAME_EFFECTS_EXTENDED),
+    ("0050_gametime_channel", GAMETIME_CHANNEL),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

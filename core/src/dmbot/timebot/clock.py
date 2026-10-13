@@ -51,30 +51,58 @@ def time_of_day(minute: int) -> int:
     return minute % MINUTES_PER_DAY
 
 
-def phase(minute: int) -> str:
-    """A word for the time of day, as a person would say it."""
+# The players' approximate words (docs/PLAN.md, "TimeBot", the game-time channel): the minute
+# of the day each word starts at, fixed hours, no seasons (Supervisor, 2026-10-13: dawn is
+# 05:00 to 06:14 and morning 06:15 to 09:59, so 06:00, the dawn mark, reads "dawn").
+# "near midnight" spans midnight (23:15 to 00:44), so the day starts inside "near midnight"
+# and the table below begins at 00:45 with "late night".
+_DAY_PARTS: tuple[tuple[int, str], ...] = (
+    (0, "near midnight"),
+    (45, "late night"),
+    (3 * 60 + 30, "pre-dawn"),
+    (5 * 60, "dawn"),
+    (6 * 60 + 15, "morning"),  # dawn runs to 06:14, so the dawn mark (06:00) reads "dawn"
+    (10 * 60, "late morning"),
+    (11 * 60 + 30, "about noon"),
+    (13 * 60, "afternoon"),
+    (15 * 60, "late afternoon"),
+    (17 * 60, "early evening"),
+    (18 * 60, "dusk"),
+    (19 * 60, "evening"),
+    (20 * 60 + 30, "late evening"),
+    (22 * 60, "night"),
+    (23 * 60 + 15, "near midnight"),
+)
+
+
+def day_part(minute: int) -> str:
+    """The approximate word for the time of day: one of exactly 14, for the players' clock
+    ("Day 5, morning") and, with the exact time, the DM's."""
     t = time_of_day(minute)
-    if t < 5 * 60 or t >= 21 * 60:
-        return "night"
-    if t < NOON:
-        return "morning"
-    if t < 17 * 60:
-        return "afternoon"
-    return "evening"
+    word = _DAY_PARTS[0][1]
+    for start, name in _DAY_PARTS:
+        if t < start:
+            break
+        word = name
+    return word
 
 
 def clock_time(minute: int) -> str:
+    """ "06:20": the form's default, which the Set time form reads back."""
     t = time_of_day(minute)
     return f"{t // 60:02d}:{t % 60:02d}"
 
 
 def label(minute: int) -> str:
-    """ "Day 4, afternoon (14:30)": the pinned message's words."""
-    return f"Day {day_of(minute)}, {phase(minute)} ({clock_time(minute)})"
+    """ "Day 5, morning (6:20)": the DM's pinned message (the players see only short_label)."""
+    t = time_of_day(minute)
+    return f"Day {day_of(minute)}, {day_part(minute)} ({t // 60}:{t % 60:02d})"
 
 
 def short_label(minute: int) -> str:
-    return f"Day {day_of(minute)}, {phase(minute)}"
+    """ "Day 5, morning": the players' clock, with no exact time (also used in the DM's short
+    notes)."""
+    return f"Day {day_of(minute)}, {day_part(minute)}"
 
 
 def advance(clock: Clock, delta: int) -> Clock:

@@ -122,13 +122,14 @@ async def _ensure_card(
 
 async def _repair(
     channel: discord.TextChannel,
-    campaign: Campaign,
+    name: str,
     plan: dict[Target, Perms],
     held: set[str],
     topic: str,
     reason: str,
 ) -> None:
-    """Make an existing channel view-only again, changing only what differs."""
+    """Make an existing channel view-only again, changing only what differs. `name` is the
+    campaign's current name for it (shared with the game-time channel, #1116)."""
     guild = channel.guild
     current = current_overwrites(channel)
     merged = merge_overwrites(current, plan, guild_id=guild.id)
@@ -146,12 +147,11 @@ async def _repair(
         await asyncio.wait_for(edit, timeout)
     elif channel.topic != topic:
         await asyncio.wait_for(channel.edit(topic=topic, reason=reason), timeout)
-    name = transcript_channel_name(campaign)
     if channel.name != name:  # a renamed campaign; best effort (rate limited)
         try:
             await asyncio.wait_for(channel.edit(name=name, reason=reason), RENAME_TIMEOUT_S)
         except (TimeoutError, discord.HTTPException) as exc:
-            log.info("Rename of transcript channel %s postponed: %s", channel.id, exc)
+            log.info("Rename of channel %s postponed: %s", channel.id, exc)
 
 
 async def setup_transcript_channel(
@@ -203,7 +203,7 @@ async def setup_transcript_channel(
                         await channel.delete(reason="DMbot: could not save the transcript channel")
                     raise
             else:
-                await _repair(channel, campaign, plan, held, topic, reason)
+                await _repair(channel, transcript_channel_name(campaign), plan, held, topic, reason)
         except discord.Forbidden as exc:
             raise TranscriptChannelError(messages.TRANSCRIPT_FORBIDDEN) from exc
         except discord.HTTPException as exc:

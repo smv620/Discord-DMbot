@@ -1953,6 +1953,19 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
   The owner switches Message Content on in the Developer Portal (Bot, Privileged Gateway
   Intents). Once DMbot is in 100 or more servers, Discord must approve that intent, so it is part
   of the go-live checklist (#498).
+*Built, part 3: the players' game-time channel (2026-10-13, #1116):* `dmb-gametime-<short name>` is made
+or repaired at every `/dmbot start` next to the DM screen (`dm_screen/gametime_channel.py`, on the
+transcript channel's permissions: everyone reads, only DMbot posts; a failure is a note on the DM
+screen and never stops the session; existing campaigns get it at their next start). Migration 0050
+adds `campaigns.gametime_channel_id` and the players' message ids on `game_clocks`; none goes into a
+backup. The players' pinned message is "🕰️ Day 5, morning": the day and one of 14 approximate words
+(`timebot.clock.day_part`, PLAN's hour table, "near midnight" spanning midnight), never the exact
+time, a timer or a button; it is edited in place wherever the DM's clock changes (a button, a rest
+said at the table, Undo). One short line is posted there when a rest finishes ("Long rest done. Day
+6, dawn.") or a new day begins, and nothing else (no tired line, no effect or dawn/noon/dusk lines).
+The DM's pinned clock reads "Day 5, morning (6:20)" and keeps +10 min, +1 hour, Set time… and Start a
+timer; **Short rest, Long rest and Skip to dawn** moved into the private panel **Set time…** opens
+(an ephemeral message with them and "Type the time…").
 
 **DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
 DMbot is there to help the game move quickly, never to bog it down or distract. The
