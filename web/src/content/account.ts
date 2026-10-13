@@ -128,6 +128,9 @@ export const text = {
       ? `Your last payment didn't go through. Fix it by ${shortDate(date)} to keep your plan.`
       : "Your last payment didn't go through. Fix it soon to keep your plan.",
   fixPayment: "Fix my payment",
+  // A first payment has no grace: nothing started, so there is nothing to fix, only to retry (#922).
+  firstPaymentFailed:
+    "Your first payment didn't go through, so no plan has started. Pick a plan below to try again.",
   // Free access (#806): never why someone has it.
   freeAccess: "Free access",
   freeAccessUntil: (iso: string): string => `Free access until ${shortDate(iso)}`,

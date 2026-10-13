@@ -143,6 +143,21 @@ class Payments(DatabaseTest):
         got = await self.plan()
         self.assertEqual((got.status, got.lapsed_at), ("lapsed", self.now + 8 * DAY))
 
+    async def test_a_failed_first_payment_is_remembered_and_me_says_so(self) -> None:
+        self.assertNotIn("firstPaymentFailed", (await self.client.get("/me")).json())
+        response = await self.send(kind="payment_failed", occurred_at=self.now + 10)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(await entitlements.get(self.db, ALICE.id))  # no plan, no grace
+        self.assertTrue((await self.client.get("/me")).json()["firstPaymentFailed"])
+        # A repeat delivery is a duplicate and changes nothing.
+        await self.send(kind="payment_failed", occurred_at=self.now + 10)
+        self.assertTrue((await self.client.get("/me")).json()["firstPaymentFailed"])
+
+    async def test_the_notice_goes_once_a_payment_goes_through(self) -> None:
+        await self.send(kind="payment_failed", occurred_at=self.now + 10)
+        await self.start_table(occurred_at=self.now + 20)
+        self.assertNotIn("firstPaymentFailed", (await self.client.get("/me")).json())
+
     async def test_a_renewal_resets_extra_hours_and_keeps_the_plan_change_time(self) -> None:
         await self.start_table()
         await self.send(kind="extra_hours_bought", occurred_at=self.now + 1)
