@@ -135,7 +135,9 @@ class Button(unittest.IsolatedAsyncioTestCase):
         it.client.sheets.characters_of.assert_any_await(GUILD, PLAYER, CAMPAIGN)
         self.assertIn("**Testa** (Frost\\*maiden): no sheet yet", said(it))
         labels = [b.label for b in sent_view(it).children]
-        self.assertEqual(labels, [ui.LINK_LABEL, ui.TELL_LABEL])  # nothing to unlink yet
+        self.assertEqual(
+            labels, [ui.LINK_LABEL, ui.TELL_LABEL, ui.DOC_LABEL, ui.FILE_LABEL]
+        )  # nothing to unlink yet
 
     async def test_several_characters_ask_which(self) -> None:
         other = PlayerCharacter("d" * 32, "Second", "f" * 32, "Testa Two")

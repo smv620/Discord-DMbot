@@ -27,6 +27,9 @@ from dmbot.memory.models import name_key
 
 SOURCE_DNDBEYOND = "dndbeyond"
 SOURCE_TYPED = "typed"
+# A typed sheet whose fields were read from the player's own document by the AI (#1125). It is
+# "typed" for editing (no link), but is checked like a full sheet.
+ORIGIN_DOCUMENT = "document"
 SNAPSHOT_VERSION = 1
 
 API = "https://character-service.dndbeyond.com/character/v5/character/{id}"
@@ -528,6 +531,8 @@ def clean(snapshot: Any) -> dict[str, Any] | None:
     for key in _NAME_LISTS:
         out[key] = _names(_list(snapshot.get(key)))
     out.update(_clean_full(snapshot))
+    if source == SOURCE_TYPED and snapshot.get("origin") == ORIGIN_DOCUMENT:
+        out["origin"] = ORIGIN_DOCUMENT  # read from a document by the AI (#1125): the full checks
     out["flags"] = sorted(f for f in _list(snapshot.get("flags")) if f in FLAG_PARTS)
     # Never bigger than SNAPSHOT_MAX_BYTES as Postgres stores it (UTF-8, not \u escapes):
     # the longest lists lose their last entries. Each pass shrinks a list or returns, so

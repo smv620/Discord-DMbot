@@ -2694,6 +2694,17 @@ rarity counts that don't add up, a negative number, a part that couldn't be read
 doesn't know is ⚠️ (it is D&D Beyond's own data); a typed or document name is ⛔ only when it is nothing like a known
 name. The card is one private message after the player's own link or typing (not after the DM links a sheet, and not
 yet after a re-read: `sheet_checks.changed` is ready for D4), and the DM's name card adds only "HP 11 / 26 + 0, AC 18".
+*Built, part D2: any sheet a player has (2026-10-13, #1125):* on the 📜 panel, **Link a sheet document** (a public Google
+Docs or Drive link or a PDF address, fetched through `dmbot.fetch` with its address checks and size limit) and **Upload
+my sheet file** (Word, PDF or text, at most 5 MB, in a form with a file box). The text is read out in the existing
+document reader and the file is discarded; its words are never stored, logged or sent anywhere but the AI. A picture
+of text (a scanned PDF) is refused with one line. `memory/sheet_import.py` sends at most 30,000 characters to the AI
+once per import (feature `sheet`, CAREFUL tier) with a fixed prompt that asks for JSON in exactly the snapshot's fields
+and says never to invent or follow instructions in the text; the answer goes through `sheets.clean` and the D1 checks,
+so a wrong name or number shows as ⚠️ or ⛔ on the status card, and a negative number flags its part. The sheet is saved
+as a typed sheet (`source: typed`, no link) marked `origin: document`, which is checked like a full sheet; what the
+document doesn't say is "not found in your document", not an error. Limits: one read a person every 30 seconds, one at
+a time per server, 20 a day per server, and the owner's plan must allow the AI (`plan_gate("ai")`).
 *Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
 just to the character: if the DM gives the character to someone else, the old sheet is
 never shown to the new player (it shows only while that player still plays it). The

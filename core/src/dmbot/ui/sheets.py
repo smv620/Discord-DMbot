@@ -44,6 +44,8 @@ log = logging.getLogger(__name__)
 BUTTON_LABEL = SHEET_LABEL  # the same button, built where the consent messages are
 LINK_LABEL = "Link my D&D Beyond sheet"
 TELL_LABEL = "Type in my character"
+DOC_LABEL = "Link a sheet document"  # reads a public Google Docs, Drive or PDF link (#1125)
+FILE_LABEL = "Upload my sheet file"  # a Word, PDF or text file, kept only as names and numbers
 FORGET_LABEL = "Forget my sheet"
 NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "
@@ -375,6 +377,9 @@ class SheetPanel(_Menu):
         self.guild_id, self.character = guild_id, character
         self.add_item(_Button(self._link, label=LINK_LABEL, style=discord.ButtonStyle.primary))
         self.add_item(_Button(self._typed, label=TELL_LABEL, style=discord.ButtonStyle.secondary))
+        # A document or a file the player already has (#1125); the forms live in sheet_import.
+        self.add_item(_Button(self._doc, label=DOC_LABEL, style=discord.ButtonStyle.secondary))
+        self.add_item(_Button(self._file, label=FILE_LABEL, style=discord.ButtonStyle.secondary))
         if has_sheet:
             self.add_item(
                 _Button(self._forget, label=FORGET_LABEL, style=discord.ButtonStyle.secondary)
@@ -392,6 +397,18 @@ class SheetPanel(_Menu):
     async def _typed(self, interaction: discord.Interaction) -> None:
         self.origin = None
         await interaction.response.send_modal(TypedForm(self.guild_id, self.character))
+
+    async def _doc(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.sheet_import import DocumentLinkForm
+
+        self.origin = None
+        await interaction.response.send_modal(DocumentLinkForm(self.guild_id, self.character))
+
+    async def _file(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.sheet_import import DocumentFileForm
+
+        self.origin = None
+        await interaction.response.send_modal(DocumentFileForm(self.guild_id, self.character))
 
     async def _forget(self, interaction: discord.Interaction) -> None:
         store = _store(interaction)

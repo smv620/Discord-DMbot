@@ -26,6 +26,7 @@ from dmbot.memory import sheet_names
 from dmbot.memory.sheets import (
     ABILITIES,
     INVENTORY_MAX,
+    ORIGIN_DOCUMENT,
     RARITIES,
     SOURCE_DNDBEYOND,
     SOURCE_TYPED,
@@ -174,7 +175,7 @@ def checks(
     """One check per part of the sheet, in the order the card shows them. A sheet someone
     typed in has only the parts the form asks for, so only those are checked."""
     out = [_basic(snapshot)]
-    if snapshot.get("source") == SOURCE_TYPED:
+    if snapshot.get("source") == SOURCE_TYPED and snapshot.get("origin") != ORIGIN_DOCUMENT:
         out.append(_typed_names(snapshot, target, fallback))
         return out
     out += [
@@ -265,6 +266,12 @@ def _abilities(snapshot: Mapping[str, Any]) -> Check:
     if "abilities" in (snapshot.get("flags") or []):
         return Check(
             "abilities", BAD, "Ability scores: a score on the sheet is below zero. Check your sheet"
+        )
+    if missing and snapshot.get("origin") == ORIGIN_DOCUMENT:  # the AI leaves out what isn't there
+        if len(missing) == 6:
+            return Check("abilities", OK, "Ability scores: not found in your document")
+        return Check(
+            "abilities", WARN, f"Ability scores: {_few(missing, 6)} not found in your document"
         )
     if missing:
         what = "couldn't be read" if len(missing) == 6 else f"{_few(missing, 6)} couldn't be read"
@@ -359,6 +366,8 @@ def _more(snapshot: Mapping[str, Any]) -> Check:
 
 def _inventory(snapshot: Mapping[str, Any]) -> Check:
     inv = snapshot.get("inventory")
+    if not isinstance(inv, Mapping) and snapshot.get("origin") == ORIGIN_DOCUMENT:
+        return Check("inventory", OK, "Inventory: not found in your document")
     if not isinstance(inv, Mapping):
         return Check("inventory", BAD, "Inventory: couldn't be read. Link the sheet again")
     if "inventory" in (snapshot.get("flags") or []):
