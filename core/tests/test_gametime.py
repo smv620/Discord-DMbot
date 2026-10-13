@@ -456,11 +456,16 @@ class PlayersClock(DatabaseTest):
             self.assertNotIn("⏳", text)
 
 
+def _button(item: Any) -> Any:
+    """The real button inside a dynamic item (or the item itself), untyped for the tests."""
+    return getattr(item, "item", item)
+
+
 class Buttons(unittest.TestCase):
     CID = "0123456789abcdef0123456789abcdef"
 
     def labels(self, view: discord.ui.View) -> list[str]:
-        return [str(getattr(item, "item", item).label) for item in view.children]
+        return [str(_button(item).label) for item in view.children]
 
     def test_the_pinned_dm_clock_has_no_rest_buttons(self) -> None:
         view = ui.clock_view(self.CID)
@@ -473,7 +478,7 @@ class Buttons(unittest.TestCase):
         self.assertEqual(
             self.labels(view), ["Short rest", "Long rest", "Skip to dawn", "Type the time…"]
         )
-        rows = [getattr(item, "item", item).row for item in view.children]
+        rows = [_button(item).row for item in view.children]
         self.assertTrue(all(isinstance(r, int) for r in rows))
 
     def test_every_button_id_fits_and_matches_the_template(self) -> None:
@@ -522,7 +527,7 @@ class SetTimePanel(PlayersClock):
         sent = it.response.send_message.await_args
         self.assertTrue(sent.kwargs["ephemeral"])  # only the DM who pressed sees it
         self.assertFalse(sent.args[0].startswith("🕰️"))  # never taken for the clock message
-        labels = [getattr(i, "item", i).label for i in sent.kwargs["view"].children]
+        labels = [_button(i).label for i in sent.kwargs["view"].children]
         self.assertEqual(labels, ["Short rest", "Long rest", "Skip to dawn", "Type the time…"])
 
     async def test_typing_a_time_and_the_first_time_open_the_form(self) -> None:
