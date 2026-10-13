@@ -284,8 +284,6 @@ _SETTABLE = frozenset(
         "gametime_channel_id",
         "dndbeyond_invite",
         "rules_cards",
-        "table_chat",
-        "table_chat_channel_id",
     }
 )
 
@@ -593,8 +591,14 @@ class CampaignStore:
         """Typed chat at the table (#1118): the DM's switch and the one extra text channel
         (None = only the voice channel's own chat). Not part of a backup: a channel ID means
         nothing in another server."""
-        await self._set(guild_id, campaign_id, "table_chat", on)
-        return await self._set(guild_id, campaign_id, "table_chat_channel_id", channel_id)
+        async with self._db.guild(guild_id) as conn:
+            await self._require(conn, guild_id, campaign_id)
+            await conn.execute(  # one statement: the two never get out of step
+                "UPDATE campaigns SET table_chat = %s, table_chat_channel_id = %s"
+                " WHERE guild_id = %s AND id = %s",
+                (on, channel_id, guild_id, campaign_id),
+            )
+            return await self._require(conn, guild_id, campaign_id)
 
     async def set_dndbeyond_invite(
         self, guild_id: int, campaign_id: str, invite: str | None

@@ -23,8 +23,15 @@ log = logging.getLogger(__name__)
 
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 NO_PINGS = discord.AllowedMentions.none()
-ONLY_DM = "Only this campaign's DM (or a server manager) can change table chat."
+ONLY_DM = (
+    "Only this campaign's DM (or a server manager) can change table chat. "
+    "Ask them to open ⚙️ Settings."
+)
 FAILED = "Sorry, that didn't save. Please try again."
+NOT_THAT_ONE = (
+    "DMbot won't read the DM screen, the transcript or the game-time channel as chat. "
+    "Pick another channel."
+)
 TEXT_TYPES = [discord.ChannelType.text]
 
 
@@ -32,14 +39,18 @@ def line(campaign: Campaign) -> str:
     """The one-line status on the settings card."""
     if not campaign.table_chat:
         return "• **Table chat: Off.** DMbot doesn't read what people type."
-    return f"• **Table chat: On.** {_where(campaign)}"
+    extra = f" and <#{campaign.table_chat_channel_id}>" if campaign.table_chat_channel_id else ""
+    return (
+        "• **Table chat: On.** Reads typing from people who agreed, in the voice channel's "
+        f"chat{extra}."
+    )
 
 
 def _where(campaign: Campaign) -> str:
     extra = f" and <#{campaign.table_chat_channel_id}>" if campaign.table_chat_channel_id else ""
     return (
         "While it's listening, DMbot reads what people who agreed to be recorded type in the "
-        f"table's voice channel chat{extra}. No other channel."
+        f"voice channel's chat{extra}. No other channel."
     )
 
 
@@ -47,13 +58,15 @@ def panel_text(campaign: Campaign) -> str:
     if not campaign.table_chat:
         return (
             "💬 **Table chat is off.** DMbot doesn't read what people type. "
-            'Turn it on to let it hear "we take a long rest" typed as well as said.'
+            'Turn it on to let DMbot also pick up "we take a long rest" typed in chat. '
+            "Only people who agreed to the new consent message are read. Typed lines are in "
+            "transcripts the whole server can read."
         )
     return (
         f"💬 **Table chat is on.** {_where(campaign)}\n"
-        "It treats typed lines like spoken ones (the game clock, house rules, names). They go "
-        "into the as-heard transcript tagged (typed), never the cleaned one. "
-        "Pick a text channel below to read one more, or turn it off."
+        "It uses typed lines the same way as spoken ones, and they show in the transcript "
+        "marked (typed). DMbot only advises you. "
+        "Pick one more text channel below, or turn it off."
     )
 
 
@@ -70,7 +83,7 @@ class _Channels(discord.ui.ChannelSelect["TableChatPanel"]):
         )
         super().__init__(
             channel_types=TEXT_TYPES,
-            placeholder="Also read one more text channel",
+            placeholder="Also read one text channel",
             default_values=default,
             row=0,
         )
@@ -99,7 +112,7 @@ class TableChatPanel(discord.ui.View):
         self.turn_on = not campaign.table_chat
         if campaign.table_chat_channel_id:
             only: discord.ui.Button[TableChatPanel] = discord.ui.Button(
-                label="Only the voice channel's chat", style=discord.ButtonStyle.secondary, row=1
+                label="Voice chat only", style=discord.ButtonStyle.secondary, row=1
             )
             only.callback = self._only_voice  # type: ignore[method-assign]
             self.add_item(only)
@@ -122,6 +135,7 @@ class TableChatPanel(discord.ui.View):
         guild = interaction.guild
         store = getattr(interaction.client, "campaigns", None)
         if guild is None or store is None:
+            await interaction.response.send_message(FAILED, ephemeral=True)
             return
         campaign: Campaign | None = await store.get(guild.id, self.campaign_id)
         if campaign is None:
@@ -134,6 +148,14 @@ class TableChatPanel(discord.ui.View):
             chosen = guild.get_channel(channel_id)  # only a channel of this server
             if not isinstance(chosen, discord.TextChannel):
                 await interaction.response.send_message(FAILED, ephemeral=True)
+                return
+            # DM-screen content never goes into transcripts, so these are never read as chat.
+            if channel_id in (
+                campaign.dm_screen_channel_id,
+                campaign.transcript_channel_id,
+                campaign.gametime_channel_id,
+            ):
+                await interaction.response.send_message(NOT_THAT_ONE, ephemeral=True)
                 return
         try:
             saved: Campaign = await store.set_table_chat(

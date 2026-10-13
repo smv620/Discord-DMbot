@@ -1968,6 +1968,9 @@ campaign columns go into a backup (a channel ID means nothing in another server)
 (one added sentence), so everyone is asked again. **Owner step after merge:** switch on Message Content Intent at
 https://discord.com/developers/applications (the DMbot app, then Bot, then Privileged Gateway Intents, then Message
 Content Intent, then Save Changes; not Reset Token). The privacy page and help wording are WebDev's follow-up.
+An edited or deleted message is not read again, and a typed line the person deletes later stays in the raw transcript, as a
+spoken line does (the raw transcript is unedited). DMbot keeps no message cache (`max_messages=None`), so the text of
+messages it does not read is never held.
 
 *Built, part 3: the players' game-time channel (2026-10-13, #1116):* `dmb-gametime-<short name>` is made
 or repaired at every `/dmbot start` next to the DM screen (`dm_screen/gametime_channel.py`, on the

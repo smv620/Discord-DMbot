@@ -16,7 +16,7 @@ from dmbot.ui.logic import HELP_TEXT
 # The "What's new" note for people asked again (consent_dm.RENEWED) explains a change
 # rather than adding terms, so it isn't part of the fingerprint.
 PINNED_VERSION = 5  # #1118: DMbot also reads the table's typed chat while it's listening
-PINNED_FINGERPRINT = "aed7693cecbe362822120f36c4acf886ba0189b08b4f9a829c7eb1ebe4ef3e0b"
+PINNED_FINGERPRINT = "379a7c5bb036cdaeb6db1de741341ab85dd49e9b6ff8194196d18fa3e2b1bf1d"
 
 
 def fingerprint() -> str:
@@ -81,14 +81,17 @@ class TermsVersion(unittest.TestCase):
         )
 
     def test_the_note_for_people_asked_again_says_why(self) -> None:
-        self.assertIn("type in the table's chat", RENEWED)
+        self.assertIn("type in the voice channel's chat", RENEWED)
         self.assertIn("asking you again", RENEWED)
-        self.assertIn("won't record you until you press the button", RENEWED)
+        self.assertIn("it records nothing from you", RENEWED)
         self.assertIn("Press **No thanks** and keep playing.", RENEWED)
 
     def test_the_request_says_typed_chat_is_read(self) -> None:
         text = request_text("Server", voice="Table", dm="Dee", cloud=False)
-        self.assertIn("also reads what you type in the table's chat while it's listening", text)
+        self.assertIn("reads what you type in the voice channel's chat", text)
+        self.assertIn("one more channel if your DM picks one", text)
+        self.assertIn("Anyone in this server can read and download that text", text)
+        self.assertIn("ignores your voice and your typing", text)
 
     def test_no_age_or_birthdate_is_kept_anywhere(self) -> None:
         # Pressing the button is the confirmation (#1018): no column for it.

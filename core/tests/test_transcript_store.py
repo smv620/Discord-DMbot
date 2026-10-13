@@ -55,6 +55,14 @@ class StoreTests(DatabaseTest):
         await self.store.add_lines(GUILD, sid, [typed, line(9, PLAYER, "said")])
         [first, second] = await self.store.lines(GUILD, sid)
         self.assertEqual((first.typed, second.typed), (True, False))
+        # In one batch, in either order, each row keeps its own flag; typed lines are speech
+        # for the counts.
+        more = [line(20, PLAYER, "said"), Line(START * 1000 + 30, DM, "t", "t", typed=True)]
+        await self.store.add_lines(GUILD, sid, more)
+        flags = {x.heard: x.typed for x in await self.store.lines(GUILD, sid)}
+        self.assertEqual(
+            (flags["said"], flags["t"], flags["we take a long rest"]), (False, True, True)
+        )
 
     async def test_table_chat_defaults_on_and_is_kept_per_campaign(self) -> None:
         self.assertEqual(

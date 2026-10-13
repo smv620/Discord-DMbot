@@ -531,6 +531,10 @@ class DMBot(commands.AutoShardedBot):
             shard_count=settings.shards.count,
             shard_ids=list(settings.shards.ids),
             tree_cls=DMBotTree,
+            # No message cache (#1118): with the guild-messages intent every message in every
+            # server would be kept in memory, including those of people who never agreed and
+            # channels that are not table chat. Nothing here reads cached messages.
+            max_messages=None,
         )
         self.settings = settings
         # With an outside speech-to-text company, only yeses given knowing that count
@@ -2793,8 +2797,8 @@ class DMBot(commands.AutoShardedBot):
             return
         if not table_chat.is_table_chat(
             message.channel.id, table.voice_channel_id, table.chat_channel_id
-        ):
-            return
+        ) or message.channel.id in (table.screen_channel_id, table.transcript_channel_id):
+            return  # the DM screen and the transcript channel are never read as chat
         author = message.author
         if (
             author.bot
@@ -2891,6 +2895,13 @@ class DMBot(commands.AutoShardedBot):
             return
         said = await self._less_what_a_rest_covers(table, campaign, said, now)
         if said is None:
+            return
+        # Consent and the session are checked again after the awaits above, as for a voice line.
+        if (
+            self.tables.get(table.guild_id) is not table
+            or not table.listening
+            or not self.consent.has_consent(table.guild_id, user_id)
+        ):
             return
         table.clock_said[said.key] = now
         try:
