@@ -231,14 +231,14 @@ export const text = {
   // My characters (#1164): read-only. Changing a sheet stays in Discord.
   charactersHeading: "My characters",
   charactersNone: "No characters yet. In Discord, press 📜 My character sheet in your campaign.",
-  characterUnread: "Linked sheet, not read yet",
+  characterUnread: "Sheet saved. Its details show up after DMbot reads it.",
   characterWhere: (server: string, campaign: string | null): string =>
     campaign ? `${server} · ${campaign}` : server,
   characterLevel: (n: number): string => `Level ${n}`,
-  characterHp: (n: number): string => `${n} hit points`,
-  characterAc: (n: number): string => `Armour class ${n}`,
-  characterOpen: "Open the online sheet",
-  characterChange: "To change it, use 📜 My character sheet in Discord.",
+  characterHp: (n: number): string => `Most hit points: ${n}`,
+  characterAc: (n: number): string => `Armor class (AC) ${n}`,
+  characterOpen: "Open the online sheet (new tab)",
+  characterChange: "Change a character in Discord with 📜 My character sheet.",
 
   // Download my data (#1150)
   exportHeading: "Download my data",

@@ -685,9 +685,11 @@ describe("safety", () => {
     const testa = (await screen.findByText("Testa")).closest("li") as HTMLElement;
     expect(within(testa).getByText("Bard 2")).toBeTruthy();
     expect(within(testa).getByText(text.characterWhere("Thursday Table", "The Brynwater Crossing"))).toBeTruthy();
-    expect(within(testa).getByText("Level 2 · 14 hit points · Armour class 13")).toBeTruthy();
+    for (const fact of [text.characterLevel(2), text.characterHp(14), text.characterAc(13)]) {
+      expect(within(testa).getByText(fact)).toBeTruthy();
+    }
     expect(within(testa).queryByRole("link", { name: text.characterOpen })).toBeNull();
-    expect(within(testa).getByText(text.characterChange)).toBeTruthy();
+    expect(screen.getAllByText(text.characterChange)).toHaveLength(1); // once, under the heading
     const brannoch = screen.getByText("Brannoch").closest("li") as HTMLElement;
     expect(within(brannoch).getByText("Ranger 3 / Druid 3")).toBeTruthy();
     const link = within(brannoch).getByRole("link", { name: text.characterOpen });

@@ -4,23 +4,21 @@ Read exactly as the data export reads them (export.read_sheet_rows): one server 
 servers in this session's list only, the person's own rows only, under the website's role.
 Never another player's sheet, the DM's notes or a server outside the list. Changing a sheet
 stays in Discord.
+
+Known gap: the bot shows a sheet only while the character is still the person's (not removed,
+merged or given to someone else). The website's role cannot read the memory tables to check, so a
+sheet of a character since removed or handed on can still be listed here until the bot cleans it
+up.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.web.export import read_sheet_rows
+from dmbot.web.export import _iso, read_sheet_rows
 from dmbot.web.me import MAX_GUILDS
 from dmbot.web.sessions import Session
-
-
-def _iso(seconds: int | None) -> str | None:
-    if seconds is None:
-        return None
-    return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
 
 
 def class_line(snapshot: dict[str, Any] | None) -> str | None:

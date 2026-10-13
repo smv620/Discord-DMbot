@@ -43,7 +43,9 @@ async def read_sheet_rows(conn: Conn, guild_id: int, user_id: int) -> list[dict[
             (guild_id, [r["campaign_id"] for r in rows]),
         )
         names = {r["id"]: r["name"] for r in await cur.fetchall()}
-    return [{**r, "campaign": names.get(r["campaign_id"])} for r in rows]
+    named = [{**r, "campaign": names.get(r["campaign_id"])} for r in rows]
+    # By campaign name, then as stored: campaign ids are random, so their order means nothing.
+    return sorted(named, key=lambda r: (r["campaign"] or "", r["campaign_id"]))
 
 
 async def _read_server(

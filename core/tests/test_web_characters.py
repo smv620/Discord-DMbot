@@ -19,6 +19,7 @@ from dmbot.web import sessions
 from dmbot.web.app import create_app
 from dmbot.web.characters import build_characters, class_line
 from dmbot.web.discord import DiscordUser
+from dmbot.web.export import read_sheet_rows
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
@@ -81,7 +82,7 @@ class Characters(DatabaseTest):
 
     async def test_she_sees_only_her_own_sheets_never_bobs_in_the_same_campaign(self) -> None:
         cards = await build_characters(self.web, self.alice)
-        self.assertEqual({c["name"] for c in cards} - {None}, {"Testa"})
+        self.assertEqual(sorted(str(c["name"]) for c in cards), ["None", "Testa"])  # the linked one has no name
         text = json.dumps(cards)
         for other in ("Cameo", "Secretus", "Monk", "Rogue", str(BOB.id)):
             self.assertNotIn(other, text)
@@ -116,6 +117,39 @@ class Characters(DatabaseTest):
         )
         self.assertEqual(typed["serverName"], THURSDAY.name)
         self.assertIsNone(typed["sheetLink"])
+        self.assertTrue(typed["readAt"])
+        # Exactly these fields and no others: nothing else of the snapshot can leak.
+        self.assertEqual(
+            set(typed),
+            {
+                "serverName",
+                "campaign",
+                "name",
+                "classLine",
+                "level",
+                "maxHp",
+                "ac",
+                "sheetLink",
+                "typedIn",
+                "readAt",
+            },
+        )
+
+    async def test_the_database_holds_the_role_whatever_the_code_asks(self) -> None:
+        # Not just the loop over her servers: a read aimed straight at a server not on her
+        # list, or at someone else's rows, finds nothing.
+        async with self.web.user(ALICE.id, session=self.alice.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(OUTSIDE),))
+            self.assertEqual(await read_sheet_rows(conn, OUTSIDE, ALICE.id), [])
+        async with self.web.user(ALICE.id, session=self.alice.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            self.assertEqual(await read_sheet_rows(conn, THURSDAY.id, BOB.id), [])
+            names = {r["campaign"] for r in await read_sheet_rows(conn, THURSDAY.id, ALICE.id)}
+            self.assertEqual(names, {self.mine.name})
+
+    async def test_cards_come_in_campaign_name_order(self) -> None:
+        cards = await build_characters(self.web, self.bob)
+        self.assertEqual([c["campaign"] for c in cards], sorted(c["campaign"] for c in cards))
 
 
 class Words(unittest.TestCase):
@@ -129,7 +163,7 @@ class Words(unittest.TestCase):
 
 
 class Route(DatabaseTest):
-    async def test_it_needs_a_sign_in_and_lists_the_persons_own(self) -> None:
+    async def test_it_needs_a_sign_in_and_answers_with_a_characters_list(self) -> None:
         app = create_app(
             settings(),
             self.db,

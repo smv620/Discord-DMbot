@@ -905,7 +905,9 @@ function CharactersSection() {
       {list.length === 0 ? (
         <p>{text.charactersNone}</p>
       ) : (
-        <ul class="campaigns">
+        <>
+          <p class="muted small">{text.characterChange}</p>
+          <ul class="campaigns">
           {list.map((c, i) => {
             const facts = [
               c.level !== null ? text.characterLevel(c.level) : null,
@@ -917,17 +919,26 @@ function CharactersSection() {
                 <p class="plan-name">{c.name ?? text.characterUnread}</p>
                 {c.classLine && <p>{c.classLine}</p>}
                 <p class="muted small">{text.characterWhere(c.serverName, c.campaign)}</p>
-                {facts.length > 0 && <p class="small">{facts.join(" · ")}</p>}
+                {facts.length > 0 && (
+                  <p class="small facts">
+                    {facts.map((fact, n) => (
+                      <span key={fact}>
+                        {n > 0 && " · "}
+                        <span class="nowrap">{fact}</span>
+                      </span>
+                    ))}
+                  </p>
+                )}
                 {c.sheetLink && (
                   <a href={c.sheetLink} target="_blank" rel="noopener noreferrer">
                     {text.characterOpen}
                   </a>
                 )}
-                <p class="muted small">{text.characterChange}</p>
               </li>
             );
           })}
-        </ul>
+          </ul>
+        </>
       )}
     </section>
   );
