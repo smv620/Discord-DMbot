@@ -232,7 +232,7 @@ class Card(unittest.IsolatedAsyncioTestCase):
         card.content = text
         card.pinned = True
         card.delete = AsyncMock()
-        card.components = [SimpleNamespace(children=[SimpleNamespace(url=LINK)])]
+        card.components = [SimpleNamespace(children=[SimpleNamespace(label=JOIN_LABEL, url=LINK)])]
         same = self.channel([card])
         await transcript._ensure_card(same, self.campaign(LINK), self.me())
         same.send.assert_not_awaited()
