@@ -440,7 +440,7 @@ class Importing(unittest.IsolatedAsyncioTestCase):
         from dmbot.memory import document_reader
         from dmbot.ui import name_lists
 
-        self.assertIs(ui.READING, document_reader.READING)
+        self.assertIs(getattr(ui, "READING"), document_reader.READING)
         self.assertIs(name_lists._PARSING, document_reader.READING)
 
     async def test_a_link_problem_and_a_big_link_are_worded_for_the_sheet(self) -> None:
