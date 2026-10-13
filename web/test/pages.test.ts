@@ -31,6 +31,7 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/legal/terms", "legal/terms.astro", "Terms of use · DMbot", false],
   ["/legal/privacy", "legal/privacy.astro", "Privacy · DMbot", false],
   ["/legal/refunds", "legal/refunds.astro", "Refunds · DMbot", false],
+  ["/help", "help.astro", "Help · DMbot", false],
   ["/hello", "hello.astro", "Say hello · DMbot", false],
   ["/admin", "admin.astro", "Admin · DMbot", true],
   ["/404", "404.astro", "Page not found · DMbot", true],
@@ -122,8 +123,8 @@ describe("menu", () => {
       request: new Request("https://dmbot.example/"),
     });
     const nav = html.slice(html.indexOf('<nav aria-label="Main"'), html.indexOf("</nav>"));
-    expect(nav.match(/<a /g)).toHaveLength(4);
-    expect(nav.match(/<svg[^>]*aria-hidden="true"/g)).toHaveLength(4);
+    expect(nav.match(/<a /g)).toHaveLength(5);
+    expect(nav.match(/<svg[^>]*aria-hidden="true"/g)).toHaveLength(5);
   });
 
   // A static build renders /pricing as pricing.html, and the page sees that path.
