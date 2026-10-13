@@ -54,10 +54,9 @@ FORGET_LABEL = "Forget my sheet"
 QUESTIONS_ON = "Turn sheet questions off"  # shown while DMbot may ask
 QUESTIONS_OFF = "Turn sheet questions on"
 QUESTIONS_NOW_ON = (
-    "✅ DMbot may ask you, privately, when your D&D Beyond sheet doesn't show what was said at "
-    "the table."
+    "✅ Sheet questions are on. DMbot may privately ask if your sheet doesn't match what was said."
 )
-QUESTIONS_NOW_OFF = "✅ DMbot won't ask you about your D&D Beyond sheet any more."
+QUESTIONS_NOW_OFF = "✅ Sheet questions are off."
 NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "
     "`/dmbot names`, then **🧑 Add a player's character**."
