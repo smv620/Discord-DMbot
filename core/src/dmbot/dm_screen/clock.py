@@ -30,7 +30,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.rules import optional
 from dmbot.timebot import clock as game
-from dmbot.timebot import effects
+from dmbot.timebot import durations, effects
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.store import ClockStore, Stored
 
@@ -103,7 +103,9 @@ class Result:
     changed: bool = False
 
 
-def _apply(action: str, clock: Clock | None, set_to: int | None) -> Clock | None:
+def _apply(
+    action: str, clock: Clock | None, set_to: int | None, minutes: int | None = None
+) -> Clock | None:
     """The new clock for a press, or None to change nothing (no clock yet, or nonsense)."""
     if action == "set":
         if set_to is None:
@@ -115,6 +117,8 @@ def _apply(action: str, clock: Clock | None, set_to: int | None) -> Clock | None
         return None
     if action == "m10":
         return game.advance(clock, 10)
+    if action == "advance":  # "an hour later", said by the DM (#1117)
+        return None if minutes is None else game.advance(clock, minutes)
     if action in ("h1", "short"):
         return game.advance(clock, game.SHORT_REST_MIN)
     if action == "long":
@@ -127,7 +131,7 @@ def _apply(action: str, clock: Clock | None, set_to: int | None) -> Clock | None
 def _speaks(action: str) -> bool:
     """Dawn, noon and dusk are said when time passes by a button or a rest; not when the
     DM says what time it is (the DM already knows)."""
-    return action in ("m10", "h1", "short", "long")
+    return action in ("m10", "h1", "short", "long", "advance")
 
 
 async def press(
@@ -138,17 +142,18 @@ async def press(
     action: str,
     *,
     set_to: int | None = None,
+    minutes: int | None = None,
 ) -> Result:
     """Do one thing to the clock. Raises CampaignError (plain words) if the person isn't a
     DM of the campaign. The 24-hour line is worked out here, once, in the same change."""
     store: ClockStore = client.clocks
-    tired_on = action in ("m10", "h1", "short", "long") and await _tired_rule_on(
+    tired_on = action in ("m10", "h1", "short", "long", "advance") and await _tired_rule_on(
         client, guild_id, campaign_id
     )
     result = Result(None, None)
 
     def change(current: Clock | None) -> Clock | None:
-        new = _apply(action, current, set_to)
+        new = _apply(action, current, set_to, minutes)
         if new is None:
             return None
         if tired_on and game.tired_due(new):
@@ -385,39 +390,41 @@ _locks: dict[str, asyncio.Lock] = {}  # one press at a time per campaign, so the
 
 async def run_press(
     interaction: discord.Interaction, campaign_id: str, action: str, *, set_to: int | None = None
-) -> None:
-    """A press after the interaction was answered: change the clock, show it, say the lines."""
+) -> bool:
+    """A press after the interaction was answered: change the clock, show it, say the lines.
+    True if the clock was changed; a failure is told to the presser and returns False, so a
+    caller that says "done" can tell."""
     async with _locks.setdefault(campaign_id, asyncio.Lock()):
-        await _run_press(interaction, campaign_id, action, set_to)
+        return await _run_press(interaction, campaign_id, action, set_to)
 
 
 async def _run_press(
     interaction: discord.Interaction, campaign_id: str, action: str, set_to: int | None
-) -> None:
+) -> bool:
     client: Any = interaction.client
     guild = interaction.guild
     campaign = await client.campaigns.get(guild.id, campaign_id) if guild else None
     if campaign is None:
         await _reply(interaction, GONE)
-        return
+        return False
     try:
         result = await press(
             client, campaign.guild_id, campaign.id, interaction.user.id, action, set_to=set_to
         )
     except CampaignError as exc:
         await _reply(interaction, str(exc))
-        return
+        return False
     except Exception:
         log.exception("Couldn't change the game clock")
         await _reply(interaction, FAILED)
-        return
+        return False
     if result.after is None:
         await _reply(interaction, SET_FIRST)
-        return
+        return False
     stored = await client.clocks.get(campaign.guild_id, campaign.id)
     if stored is None:
         await _reply(interaction, FAILED)
-        return
+        return False
     message = await _show_here(interaction, client, campaign, stored)
     if message is None:
         await _reply(interaction, OFF_SCREEN)
@@ -440,11 +447,15 @@ async def _run_press(
         view.add_item(ClockUndoButton(campaign.id, undo_id(result.before, result.after)))
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(note, view=view, ephemeral=True)
+    return True
 
 
-def rest_note(action: str, clock: Clock) -> str:
+def rest_note(action: str, clock: Clock, minutes: int | None = None) -> str:
     if action == "dawn":
         return f"🌅 Skipped to dawn. Now {game.short_label(clock.minute)}."
+    if action == "advance" and minutes is not None:
+        later = durations.words(minutes).capitalize()
+        return f"⏩ {later} later. Now {game.short_label(clock.minute)}."
     kind, emoji = ("Short", "🛌") if action == "short" else ("Long", "🌙")
     return f"{emoji} {kind} rest. Now {game.short_label(clock.minute)}."
 
@@ -573,6 +584,91 @@ class ClockButton(
         )
 
 
+_answered: set[int] = set()  # suggestion messages already answered (bounded below)
+SUGGEST_GAP_S = 300  # at most one rest suggestion per campaign in this long (#1117)
+NOT_A_DM = "Only this campaign's DMs can use the clock."
+
+
+def suggestion_view(campaign_id: str, kind: str) -> discord.ui.View:
+    """The two buttons under a player's suggestion: take the rest, or not now."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(SuggestionButton(campaign_id, kind, "yes"))
+    view.add_item(SuggestionButton(campaign_id, kind, "no"))
+    return view
+
+
+class SuggestionButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:clocksuggest:{_ID}:(?P<kind>short|long):(?P<answer>yes|no)",
+):
+    """A player said "let's take a short rest": the DM decides. **Short rest** moves the clock
+    like the button in the Set time… panel; **Not now** just closes the question. Nothing
+    moves until a DM of the campaign presses (checked again when the clock changes)."""
+
+    def __init__(self, campaign_id: str, kind: str, answer: str) -> None:
+        yes = answer == "yes"
+        super().__init__(
+            discord.ui.Button(
+                label=f"{kind.capitalize()} rest" if yes else "Not now",
+                emoji="🛌" if yes else None,
+                style=discord.ButtonStyle.primary if yes else discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:clocksuggest:{campaign_id}:{kind}:{answer}",
+            )
+        )
+        self.campaign_id, self.kind, self.answer = campaign_id, kind, answer
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SuggestionButton:
+        return cls(match["campaign"], match["kind"], match["answer"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        client: Any = interaction.client
+        guild = interaction.guild
+        if guild is None:
+            return
+        await interaction.response.defer()
+        try:
+            campaign = await client.campaigns.get(guild.id, self.campaign_id)
+            if campaign is None:
+                await _reply(interaction, GONE)
+                return
+            if interaction.user.id not in campaign.dm_user_ids:
+                await _reply(interaction, NOT_A_DM)
+                return
+            message_id = interaction.message.id if interaction.message is not None else 0
+            if message_id in _answered:
+                return  # a second press (or a second DM) on a question already answered
+            if message_id:
+                _answered.add(message_id)  # before any await below: one answer per question
+                if len(_answered) > 500:
+                    _answered.clear()
+            if self.answer == "yes" and await client.clocks.get(guild.id, campaign.id) is None:
+                _answered.discard(message_id)  # nothing happened: the question stays open
+                await _reply(interaction, SET_FIRST)
+                return
+            asked = interaction.message.content if interaction.message is not None else ""
+            who = discord.utils.escape_markdown(getattr(interaction.user, "display_name", "a DM"))
+            ended = (
+                f"Dismissed by {who}."
+                if self.answer == "no"
+                else f"✅ {self.kind.capitalize()} rest, chosen by {who}."
+            )
+            if self.answer == "yes" and not await run_press(interaction, campaign.id, self.kind):
+                # The press failed (and told the DM): never say the rest was taken, and keep
+                # the buttons up so the DM can try again.
+                _answered.discard(message_id)
+                return
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=f"{asked}\n{ended}", view=None, allowed_mentions=NO_PINGS
+                )
+        except Exception:
+            log.exception("A rest suggestion's button failed")
+            await _reply(interaction, FAILED)
+
+
 class SimpleGuild:
     """Just the server's id (the undo works from it alone)."""
 
@@ -647,7 +743,11 @@ class ClockUndoButton(
             await _reply(interaction, str(exc))
             return
         if moved or after is None:
-            await _reply(interaction, "The clock has moved since, so there is nothing to undo.")
+            await _reply(
+                interaction,
+                "The clock has moved since, so there is nothing to undo. "
+                "Use **Set time…** to fix it.",
+            )
             return
         stored = await client.clocks.get(guild.id, campaign.id)
         if stored is not None:
