@@ -476,6 +476,13 @@ class Views(unittest.IsolatedAsyncioTestCase):
         saved = it.client.sheets.save.await_args.args[3]
         self.assertEqual(saved["skills"], ["perception"])
         self.assertEqual(shown.snapshot["skills"], ["perception"])  # the view moved on
+        shown.origin = SimpleNamespace(edit_original_response=AsyncMock())
+        opened2 = ui.SectionForm(GUILD, CHARACTER, sheet_view.BY_KEY["skills"], saved, view=shown)
+        opened2._inputs["trained"]._value = "Perception, Stealth"
+        shown.open_key = "skills"
+        await opened2.on_submit(self.it(sheet_of(saved, linked=False)))
+        redrawn = shown.origin.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("Stealth", redrawn)  # the open part shows what was just saved
         # The store now holds the save; a form filled from the OLD snapshot must not undo it.
         again = self.it(sheet_of(saved, linked=False))
         stale = ui.SectionForm(GUILD, CHARACTER, sheet_view.BY_KEY["skills"], fresh)

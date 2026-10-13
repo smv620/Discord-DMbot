@@ -15,8 +15,10 @@ as a document.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
+from dataclasses import replace
 from typing import Any
 
 import discord
@@ -136,6 +138,17 @@ class SheetView(_Menu):
             view_text(self.character, sheet, key),
             SheetView(self.guild_id, self.character, sheet, key),
         )
+
+    async def redraw(self, sheet: CharacterSheet) -> None:
+        """Show the saved values in the message the view is on, so it never shows the old ones
+        beside a "Saved" (best effort: the message may be gone or too old to edit)."""
+        origin = self.origin
+        if origin is None:
+            return
+        with contextlib.suppress(discord.HTTPException):
+            await origin.edit_original_response(
+                content=view_text(self.character, sheet, self.open_key), view=self
+            )
 
     async def _edit(self, interaction: discord.Interaction) -> None:
         # No lookup before the form (Discord gives 3 seconds): `on_submit` looks again.
@@ -264,6 +277,7 @@ class SectionForm(discord.ui.Modal):
             return
         if self._view is not None:
             self._view.snapshot = new  # the next Edit on this message starts from the save
+            await self._view.redraw(replace(sheet, sheet=new))
         ui._bot(interaction).sheets_changed(self.guild_id, c.campaign_id)
         log.info("A sheet part was edited: guild=%s campaign=%s", self.guild_id, c.campaign_id)
         card = await ui.status_card(ui._bot(interaction), self.guild_id, c.campaign_id, new)
