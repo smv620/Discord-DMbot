@@ -1009,7 +1009,7 @@ def keep_invite(interaction: discord.Interaction, view: discord.ui.View) -> disc
     it to `view` unless the view has one already."""
     if any(getattr(item, "url", None) for item in view.children):
         return view
-    message = interaction.message
+    message = getattr(interaction, "message", None)
     for row in getattr(message, "components", None) or []:
         for part in getattr(row, "children", None) or []:
             url = getattr(part, "url", None)
