@@ -278,6 +278,46 @@ class AtTheTableTyped(AtTheTable):
         await self.bot._tell_chat_channel(self.live)
         self.assertEqual(len(posts), 1)  # off: nothing to say
 
+    async def test_a_chat_channel_set_mid_session_is_told_once(self) -> None:
+        posts: list[tuple[int, str]] = []
+
+        async def post(channel_id: int, text: str, view: Any = None) -> bool:
+            posts.append((channel_id, text))
+            return True
+
+        self.bot.post = post  # type: ignore[method-assign]
+        self.live.chat_channel_id, self.live.chat_notice_posted = None, False
+        saved = await self.campaigns.set_table_chat(GUILD_A, self.a.id, on=True, channel_id=EXTRA)
+        self.bot.after_chat_change(saved)
+        await asyncio.gather(*list(self.bot._asking))
+        self.assertEqual([c for c, _ in posts], [EXTRA])
+        self.bot.after_chat_change(saved)  # nothing changed: nothing said again
+        await asyncio.gather(*list(self.bot._asking))
+        self.assertEqual(len(posts), 1)
+        other = await self.campaigns.set_table_chat(GUILD_A, self.a.id, on=True, channel_id=OTHER)
+        self.bot.after_chat_change(other)  # a different channel hasn't been told
+        await asyncio.gather(*list(self.bot._asking))
+        self.assertEqual([c for c, _ in posts], [EXTRA, OTHER])
+        off = await self.campaigns.set_table_chat(GUILD_A, self.a.id, on=False, channel_id=OTHER)
+        self.bot.after_chat_change(off)  # turning it off says nothing
+        self.live.listening = False
+        back = await self.campaigns.set_table_chat(GUILD_A, self.a.id, on=True, channel_id=OTHER)
+        self.bot.after_chat_change(back)  # not listening: told when listening starts instead
+        await asyncio.gather(*list(self.bot._asking))
+        self.assertEqual(len(posts), 2)
+
+    async def test_a_purge_takes_back_the_unsaved_lines_it_deletes(self) -> None:
+        msgs = [message(f"line {i}", author=PLAYER) for i in range(4)]
+        for m in msgs:
+            await self.hear(m)
+        await self.bot.on_raw_bulk_message_delete(
+            SimpleNamespace(
+                guild_id=GUILD_A, message_ids={msgs[0].id, msgs[2].id}, channel_id=VOICE
+            )  # type: ignore[arg-type]
+        )
+        left = self.live.unsaved.take(lambda _u: True)
+        self.assertEqual([x.heard for x in left], ["line 1", "line 3"])
+
     async def test_consent_taken_back_while_the_clock_waits_stops_the_move(self) -> None:
         await self.press("set", set_to=NOON4)
         original = self.bot._less_what_a_rest_covers

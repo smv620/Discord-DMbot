@@ -2888,6 +2888,13 @@ class DMBot(commands.AutoShardedBot):
             )
         )
 
+    async def on_raw_bulk_message_delete(self, payload: discord.RawBulkMessageDeleteEvent) -> None:
+        """Several typed messages deleted at once (a moderator's purge): the same as one."""
+        table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
+        if table is not None:
+            for message_id in payload.message_ids:
+                table.unsaved.drop_message(message_id)
+
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         """A typed message deleted before its line was saved is taken back (#1118). A line
         already saved stays in the raw transcript, as PLAN says."""
@@ -2899,8 +2906,16 @@ class DMBot(commands.AutoShardedBot):
         """A running session reads typed chat from now on as the DM just set it (#1118)."""
         table = self.tables.get(campaign.guild_id)
         if table is not None and table.campaign_id == campaign.id:
+            changed = (table.chat_on, table.chat_channel_id) != (
+                campaign.table_chat,
+                campaign.table_chat_channel_id,
+            )
             table.chat_on = campaign.table_chat
             table.chat_channel_id = campaign.table_chat_channel_id
+            if changed and table.listening:
+                # Turned on, or a different channel: that channel hasn't been told yet.
+                table.chat_notice_posted = False
+                self._track(self._tell_chat_channel(table), "chat-notice")
 
     def _note_rules(self, table: Table, user_id: int, line: str) -> None:
         """A spell, condition or creature named at the table (#931): a short card for the DM
