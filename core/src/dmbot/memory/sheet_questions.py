@@ -69,19 +69,27 @@ class Questions:
     def any_waiting(self) -> bool:
         return bool(self.waiting or self.cards)
 
+    def due(self, player: int, now: float) -> bool:
+        """Is there anything for this player that may go now: a card, or questions once 15
+        minutes have passed since the last message? (No database read needed to know.)"""
+        if player in self.cards:
+            return True
+        if not self.waiting.get(player):
+            return False
+        return now - self.last_asked.get(player, -1e9) >= QUESTION_GAP_S
+
     def ready(
         self,
         player: int,
         now: float,
         *,
-        in_combat: bool,
         shown_now: Callable[[str], tuple[Any, ...] | None],
     ) -> list[Waiting]:
-        """The questions to send this player now, or none: not in combat, not within 15
-        minutes of the last, and only those the sheet still doesn't answer. Sending marks
-        them asked."""
+        """The questions to send this player now, or none: not within 15 minutes of the last,
+        and only those the sheet still doesn't answer. (Combat is the caller's check.)
+        Sending marks them asked."""
         held = self.waiting.get(player)
-        if not held or in_combat:
+        if not held:
             return []
         if now - self.last_asked.get(player, -1e9) < QUESTION_GAP_S:
             return []

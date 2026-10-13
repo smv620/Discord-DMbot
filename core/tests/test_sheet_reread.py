@@ -498,6 +498,56 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         fetched.assert_not_awaited()
         bot.user.send.assert_not_awaited()
 
+    async def test_a_speaker_who_withdraws_during_the_read_gets_no_question(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table)
+        self.say(table, "Belleros takes 8 damage", user_id=5)
+        self.say(table, "Belleros is poisoned", user_id=6)
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+
+        async def withdraws_meanwhile(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            bot.consent = SimpleNamespace(has_consent=lambda g, u: u != 5)
+            return base()
+
+        with (
+            patch.object(sheets, "fetch", withdraws_meanwhile),
+            patch("time.monotonic", return_value=1e6),
+        ):
+            await self.read(bot, table)
+        bot.user.send.assert_awaited_once()  # the other speaker's question still goes
+        text = bot.user.send.await_args.args[0]
+        self.assertIn("poisoned", text)
+        self.assertNotIn("8 damage", text)
+
+    async def test_a_question_held_for_a_speaker_who_later_withdraws_is_not_sent(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table, in_combat=True)
+        self.say(table, "Belleros takes 8 damage", user_id=5)
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)  # held through the fight
+            bot.clocks.in_combat = AsyncMock(return_value=False)
+            bot.consent = SimpleNamespace(has_consent=lambda g, u: u != 5)  # no hook ran
+            await sheet_reread.tick(bot, table)
+        bot.user.send.assert_not_awaited()
+
+    async def test_each_question_carries_its_own_lines_speaker(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table, in_combat=True)
+        self.say(table, "Belleros takes 8 damage", user_id=5)
+        self.say(table, "Belleros is poisoned", user_id=6)
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+        speakers = {w.text: w.speaker for w in table.sheet_questions.waiting[PLAYER]}
+        self.assertEqual(sorted(speakers.values()), [5, 6])
+        table.sheet_questions.drop_speaker(5)  # one withdraws: only theirs goes
+        (left,) = table.sheet_questions.waiting[PLAYER]
+        self.assertEqual(left.speaker, 6)
+
+    def test_with_no_campaign_the_project_default_rulesets_are_used(self) -> None:
+        self.assertEqual(sheet_checks.NO_CAMPAIGN_RULESETS, ("2024", "2014"))
+
     async def test_the_withdrawal_hook_clears_what_they_said(self) -> None:
         table = self.table(snapshot_sheet())
         self.say(table, "Belleros takes 8 damage", user_id=5)

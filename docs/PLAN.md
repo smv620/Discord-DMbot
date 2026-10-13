@@ -2734,7 +2734,7 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     - A question is asked once per change heard, only if the sheet shows nothing of it (damage
       that didn't lower HP, healing that didn't raise it unless already full, a condition not
       listed). Hit points and temporary hit points count together. The player's switch is
-      **Sheet questions: on/off** on 📜 My character sheet (per character).
+      **Turn sheet questions off/on** on 📜 My character sheet (per character).
     - The status card is sent again only when a part that was ✅ became ⚠️ or ⛔, and not in
       combat (it waits for the fight to end).
     - **Questions must be rare** (decided by Supervisor, 2026-10-13, #1171), because the game

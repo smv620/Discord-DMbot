@@ -18,7 +18,7 @@ from typing import Any
 
 import discord
 
-from dmbot.memory import sheet_changes, sheet_checks, sheet_questions, sheets
+from dmbot.memory import sheet_changes, sheet_checks, sheet_questions, sheet_watch, sheets
 from dmbot.memory.sheet_store import CharacterSheet
 
 log = logging.getLogger(__name__)
@@ -108,8 +108,8 @@ async def reread(bot: Any, table: Any, entity_id: str, client: Any) -> None:
     noted = table.sheet_watch.take(entity_id, now)
     # Consent is checked again here: a speaker may have stopped being recorded since they
     # were heard. If every change waiting was theirs and the schedule isn't asking, no read.
-    heard = [n.heard for n in noted if bot.consent.has_consent(table.guild_id, n.speaker)]
-    speakers = {n.speaker for n in noted if bot.consent.has_consent(table.guild_id, n.speaker)}
+    agreed = [n for n in noted if bot.consent.has_consent(table.guild_id, n.speaker)]
+    heard = [n.heard for n in agreed]
     if noted and not heard and not periodic:
         return
     try:
@@ -165,25 +165,30 @@ async def reread(bot: Any, table: Any, entity_id: str, client: Any) -> None:
         return
     if bot.tables.get(table.guild_id) is not table or not table.listening:
         return  # the session ended meanwhile
-    _hold_questions(table, fresh, heard, speakers, before, after)
+    _hold_questions(bot, table, fresh, agreed, before, after)
     await _hold_card(bot, table, fresh, before, after)
     await _flush(bot, table, time.monotonic())
 
 
 def _hold_questions(
+    bot: Any,
     table: Any,
     sheet: CharacterSheet,
-    heard: list[sheet_changes.Heard],
-    speakers: set[int],
+    agreed: list[sheet_watch.Noted],
     before: dict[str, Any] | None,
     after: dict[str, Any],
 ) -> None:
     """Put what the sheet doesn't show on the player's list of questions (sent later, rarely).
-    Damage and healing of the same size cancel out; nothing is asked about those."""
+    Damage and healing of the same size cancel out; nothing is asked about those. Each
+    question carries the speaker of its own line, and consent is checked again here: the
+    read took seconds, and a speaker may have stopped being recorded meanwhile."""
     if sheet.played_by is None or sheet.url is None or not sheet.asks:
         return
-    speaker = next(iter(speakers), 0)
-    for h in sheet_changes.net(heard):
+    left = list(agreed)  # each line's speaker is used once
+    for h in sheet_changes.net([n.heard for n in agreed]):
+        speaker = _take_speaker(left, h)
+        if speaker is None or not bot.consent.has_consent(table.guild_id, speaker):
+            continue
         text = sheet_changes.mismatch(h, before, after, sheet.name)
         if text:
             table.sheet_questions.add(
@@ -197,6 +202,15 @@ def _hold_questions(
                     sheet.url,
                 ),
             )
+
+
+def _take_speaker(left: list[sheet_watch.Noted], h: sheet_changes.Heard) -> int | None:
+    """Whose line this change came from: the first one not yet used that says the same."""
+    for n in left:
+        if n.heard == h:
+            left.remove(n)
+            return n.speaker
+    return None
 
 
 async def _hold_card(
@@ -224,7 +238,8 @@ async def _flush(bot: Any, table: Any, now: float) -> None:
     """Send what is ready: each player's waiting questions as one message (not in combat, at
     most one every 15 minutes), and a waiting status card (not in combat)."""
     questions: sheet_questions.Questions = table.sheet_questions
-    players = {*questions.waiting, *questions.cards}
+    # The cheap checks first: this runs every few seconds, and most of the time nothing is due.
+    players = {p for p in {*questions.waiting, *questions.cards} if questions.due(p, now)}
     if not players:
         return
     if await _in_combat(bot, table):
@@ -235,12 +250,16 @@ async def _flush(bot: Any, table: Any, now: float) -> None:
             return
         if not bot.consent.has_consent(table.guild_id, player):
             continue
+        # Whoever said it must still agree to be recorded: their questions go if not.
+        for speaker in {w.speaker for w in questions.waiting.get(player, [])}:
+            if not bot.consent.has_consent(table.guild_id, speaker):
+                questions.drop_speaker(speaker)
 
         def shown_now(entity_id: str) -> tuple[Any, ...] | None:
             have = table.sheet_links.get(entity_id)
             return None if have is None or have.sheet is None else sheet_changes.shown(have.sheet)
 
-        ready = questions.ready(player, now, in_combat=False, shown_now=shown_now)
+        ready = questions.ready(player, now, shown_now=shown_now)
         if ready:
             await _ask(bot, table, player, ready, campaign)
         card = questions.take_card(player)
@@ -264,15 +283,22 @@ async def _ask(
     kept: list[sheet_questions.Waiting] = []
     for w in ready:
         fresh = await bot.sheets.sheet(table.guild_id, table.campaign_id, w.entity_id)
-        if fresh is not None and fresh.asks and fresh.played_by == player:
+        # Checked after the await too: the speaker may have withdrawn while it ran.
+        if (
+            fresh is not None
+            and fresh.asks
+            and fresh.played_by == player
+            and bot.consent.has_consent(table.guild_id, w.speaker)
+        ):
             kept.append(w)
     if not kept:
         return
     where = f" in **{discord.utils.escape_markdown(campaign.name)}**" if campaign else ""
     view = discord.ui.View(timeout=None)
-    view.add_item(
-        discord.ui.Button(label=OPEN_LABEL, style=discord.ButtonStyle.link, url=kept[0].url)
-    )
+    if len({w.url for w in kept}) == 1:  # two characters: no button, it could be the wrong one
+        view.add_item(
+            discord.ui.Button(label=OPEN_LABEL, style=discord.ButtonStyle.link, url=kept[0].url)
+        )
     text = f"📜 About your D&D Beyond sheet{where}:\n" + "\n".join(
         dict.fromkeys(w.text for w in kept)
     )

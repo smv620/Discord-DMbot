@@ -23,6 +23,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET
 from dmbot.memory import sheet_names
 from dmbot.memory.sheets import (
     ABILITIES,
@@ -35,8 +36,9 @@ from dmbot.memory.sheets import (
 from dmbot.rules.index import srd
 
 OK, WARN, BAD = "ok", "warn", "bad"
-# The rulesets to check names against when a campaign can't be found (the same everywhere).
-NO_CAMPAIGN_RULESETS = ("2024", "none")
+# The rulesets to check names against when a campaign can't be found: the project defaults
+# (2024, then 2014), the same everywhere.
+NO_CAMPAIGN_RULESETS = (DEFAULT_TARGET, DEFAULT_FALLBACK)
 EMOJI = {OK: "✅", WARN: "⚠️", BAD: "⛔"}
 _WORST = {OK: 0, WARN: 1, BAD: 2}
 SHOWN_NAMES = 3  # names listed before "and N more": the card stays under one message
