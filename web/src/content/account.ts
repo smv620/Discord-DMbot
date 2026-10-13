@@ -110,6 +110,9 @@ export const text = {
 
   greeting: (name: string): string => `Hi, ${name}.`,
   signOut: "Sign out",
+  signOutEverywhere: "Sign out everywhere",
+  signOutEverywhereNote: "Ends your sign-in on every computer and phone, this one too.",
+  signOutEverywhereWait: "Wait a minute, then try again.",
 
   // Plan
   planHeading: "Your plan",

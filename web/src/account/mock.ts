@@ -231,6 +231,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return me;
     },
     signInUrl: () => "#demo-sign-in",
+    async signOutEverywhere() {
+      calls.push("signOutEverywhere");
+      me = null;
+    },
     async signOut() {
       calls.push("signOut");
       me = null;

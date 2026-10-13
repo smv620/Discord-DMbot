@@ -318,6 +318,23 @@ function SignedIn({
         >
           {text.signOut}
         </button>
+        <button
+          type="button"
+          class="link"
+          disabled={busy}
+          onClick={() =>
+            void run(
+              async () => {
+                await api.signOutEverywhere();
+                onSignedOutByChoice();
+              },
+              (error) => (error.kind === "slow-down" ? text.signOutEverywhereWait : null),
+            )
+          }
+        >
+          {text.signOutEverywhere}
+        </button>
+        <p class="muted small">{text.signOutEverywhereNote}</p>
       </div>
       <Notice message={notice} />
       {installMessage && <ForgetInstallResult />}

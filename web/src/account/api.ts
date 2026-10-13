@@ -129,6 +129,8 @@ export interface AccountApi {
   /** Where the "Sign in with Discord" button goes. */
   signInUrl(): string;
   signOut(): Promise<void>;
+  /** End every sign-in this person has, this one too (#1163). */
+  signOutEverywhere(): Promise<void>;
   /** Start the free Try It plan (no card). */
   startTryIt(): Promise<void>;
   /** The payment company's checkout page for a paid plan. */
@@ -226,6 +228,9 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     signInUrl: () => `${root}/auth/discord/start`,
     signOut: async () => {
       await call("POST", "/auth/logout");
+    },
+    signOutEverywhere: async () => {
+      await call("POST", "/me/sign-out-everywhere");
     },
     startTryIt: async () => {
       await call("POST", "/plan/try-it");

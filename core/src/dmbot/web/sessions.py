@@ -148,6 +148,15 @@ async def sign_out(db: Database, user_id: int, token: str) -> None:
         await conn.execute("DELETE FROM web_sessions WHERE id_hash = %s", (hash_token(token),))
 
 
+async def sign_out_everywhere(db: Database, user_id: int) -> int:
+    """End every sign-in this person has, on every computer and phone (#1163). Returns how many
+    there were. Held to the person's own rows by the website role's row-level security, as
+    sign_out is: nobody else's session can be touched."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute("DELETE FROM web_sessions WHERE user_id = %s", (user_id,))
+        return cur.rowcount
+
+
 async def delete_expired(db: Database, *, now: int) -> int:
     """Remove expired sessions. Returns how many. Expired by the API's clock here, and the
     database's row-level security only lets the sweep see rows expired by its own clock."""
