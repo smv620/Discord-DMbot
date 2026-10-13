@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
@@ -218,7 +218,7 @@ class Views(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(view.children), 10)  # one button per part, no Edit yet
         self.assertFalse([b for b in labels_of(view) if b.startswith(ui.EDIT_LABEL + " ")])
         self.assertFalse(has_link(view))
-        await view.children[3]._handler(it)  # Skills  # type: ignore[attr-defined]
+        await cast(Any, view.children[3]).callback(it)  # Skills
         edited = it.response.edit_message.await_args or it.edit_original_response.await_args
         self.assertIn("Trained: Perception, Survival", edited.kwargs["content"])
         self.assertIn("Edit Skills", labels_of(edited.kwargs["view"]))
@@ -231,7 +231,7 @@ class Views(unittest.IsolatedAsyncioTestCase):
         self.assertIn(ui.DDB_LABEL, labels_of(view))
         self.assertFalse([b for b in labels_of(view) if b.startswith(ui.EDIT_LABEL + " ")])
         self.assertIn("change it there", text)
-        await view.children[3]._handler(it)  # type: ignore[attr-defined]
+        await cast(Any, view.children[3]).callback(it)
         edited = it.response.edit_message.await_args or it.edit_original_response.await_args
         self.assertFalse(
             [b for b in labels_of(edited.kwargs["view"]) if b.startswith(ui.EDIT_LABEL + " ")]

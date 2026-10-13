@@ -229,7 +229,8 @@ def _apply_conditions(
     s: Mapping[str, Any], v: Mapping[str, str]
 ) -> tuple[dict[str, Any], str | None]:
     known = {c.casefold(): c for c in sheets.CONDITIONS}
-    names, unknown = [], []
+    names: list[str] = []
+    unknown: list[str] = []
     for name in split_names(v["names"]):
         found = known.get(name.casefold())
         (names if found else unknown).append(found or name)
