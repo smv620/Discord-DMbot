@@ -686,6 +686,9 @@ class DMBot(commands.AutoShardedBot):
         # runs waits on it rather than starting another (a stalled database would pile up).
         self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
         self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
+        # Loops that last as long as a session (#1128, #1129): kept apart from `_asking`, which
+        # tests and `close()` wait on until it is empty.
+        self._loops: set[asyncio.Task[None]] = set()
         self._finishing: set[asyncio.Task[None]] = set()  # stopped sessions winding down
         # The hours follow-up (warn, grace, stop) in flight, per server (#437).
         self._follow_ups: dict[int, asyncio.Task[None]] = {}
@@ -831,9 +834,11 @@ class DMBot(commands.AutoShardedBot):
             )
         lookups = list(self._lookups.values())  # so the database can close at once
         await self.sidebar.close()
-        for task in [*self._background, *self._asking, *lookups]:
+        for task in [*self._background, *self._asking, *self._loops, *lookups]:
             task.cancel()
-        await asyncio.gather(*self._background, *self._asking, *lookups, return_exceptions=True)
+        await asyncio.gather(
+            *self._background, *self._asking, *self._loops, *lookups, return_exceptions=True
+        )
         await self.pipeline.transcriber.close()
         if self.ai_client is not None:
             await self.ai_client.close()
@@ -1165,6 +1170,25 @@ class DMBot(commands.AutoShardedBot):
         task.add_done_callback(self._asking.discard)
         return task
 
+    def _track_loop(self, work: Awaitable[Any], name: str) -> asyncio.Task[None] | None:
+        """Run a loop that lasts as long as a session; the session's end and close() cancel
+        it. Not part of `_asking`: nothing waits for it to finish."""
+        if self._closing:
+            if inspect.iscoroutine(work):
+                work.close()
+            return None
+
+        async def guarded() -> None:
+            try:
+                await work
+            except Exception:
+                log.exception("Background %s failed", name)
+
+        task = asyncio.create_task(guarded(), name=name)
+        self._loops.add(task)
+        task.add_done_callback(self._loops.discard)
+        return task
+
     def start_asking(
         self, table: Table, members: list[discord.Member], *, only_renewals: bool = False
     ) -> None:
@@ -1356,8 +1380,12 @@ class DMBot(commands.AutoShardedBot):
         table.sheet_task = self._track(
             self._sheet_hints(table, refresh=not table.resumed), "sheets"
         )
+<<<<<<< HEAD
         table.watch_task = self._track(sheet_reread.run(self, table), "sheet-watch")  # #1128
-        table.fight_task = self._track(fightbot.run(self, table), "fightbot")  # #1129
+        table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
+=======
+        table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
+>>>>>>> clouddev-1128
         return sent
 
     async def _secret_keys(self, guild_id: int, campaign_id: str) -> frozenset[str] | None:
