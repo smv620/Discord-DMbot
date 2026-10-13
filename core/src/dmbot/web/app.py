@@ -306,6 +306,14 @@ def create_app(
         if guild_id not in {int(g.id) for g in session.guilds}:
             raise HTTPException(status_code=404, detail="not_found")
         scoped = db.as_person(session.user_id, session.id_hash)
+        async with scoped.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM consent WHERE guild_id = %s AND user_id = %s",
+                (guild_id, session.user_id),
+            )
+            has_row = await cur.fetchone() is not None
+        if not has_row:
+            return Response(status_code=204)  # nothing to stop: no notice for the bot either
         async with db.user(session.user_id, session=session.id_hash) as conn:
             await consent_notify.send(conn, guild_id, session.user_id)
         await ConsentStore(scoped).revoke(guild_id, session.user_id)

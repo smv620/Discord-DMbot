@@ -150,6 +150,10 @@ class ConsentStore:
         """Servers whose consent is held in memory."""
         return list(self._cache)
 
+    def consenting_now(self, guild_id: int) -> frozenset[int]:
+        """Who the cache says is consenting here, without reading the database."""
+        return self._cache.get(guild_id, frozenset())
+
     async def reload(self, guild_id: int) -> frozenset[int]:
         """Read this server's consent from the database again (a stop saved by another
         process, such as the website, #1151). A stop made here and not yet saved still

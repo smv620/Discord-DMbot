@@ -1072,17 +1072,26 @@ class DMBot(commands.AutoShardedBot):
 
     async def _stop_from_site(self, guild_id: int, user_id: int) -> None:
         """Someone pressed Stop recording me on the website: stop them as the Discord button
-        does (out of the cache and ears at once, before any await), then save."""
-        self.stop_recording(guild_id, user_id)
+        does. withdraw_consent stops capture before its first await, tells the DM, pushes
+        ears' allowlist and saves. (No separate stop_recording first: that would clear the
+        cache before withdraw_consent asks whether they were recorded, and the DM would
+        never be told.)"""
         await self.withdraw_consent(guild_id, user_id)
 
     async def _resync_consent(self) -> None:
-        """After the stop listener (re)connects: read each cached server's consent again, and
-        tell ears, in case a stop was saved while nobody listened."""
+        """After the stop listener (re)connects: read each cached server's consent again. A
+        person whose consent is gone now (a stop saved while nobody listened) is stopped here
+        as everywhere: capture, transcript state and saved voice. One server failing never
+        skips the others."""
         for guild_id in self.consent.cached_guilds():
-            await self.consent.reload(guild_id)
-            with contextlib.suppress(Exception):
+            try:
+                before = self.consent.consenting_now(guild_id)
+                after = await self.consent.reload(guild_id)
+                for user_id in before - after:
+                    self.stop_recording(guild_id, user_id)
                 await self.push_allowlist(guild_id)
+            except Exception as exc:
+                log.error("Couldn't read consent again for a server (%s)", type(exc).__name__)
 
     @staticmethod
     def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
