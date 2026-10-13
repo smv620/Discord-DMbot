@@ -248,7 +248,8 @@ export const text = {
     "You get one file with the things DMbot keeps about you: your account, your plan and payments, the servers where you said yes to recording, your campaign names and your character sheets. It does not include table transcripts: read those in Discord with /transcript.",
   exportButton: "Download my data",
   exportWait:
-    "The file starts downloading in a moment. If you press again too soon, wait a minute and try again.",
+    "The file starts downloading in a moment. You can get it once a minute.",
+  exportTooSoon: "Wait a minute, then try again.",
 
   // Delete
   deleteHeading: "Delete my account and data",

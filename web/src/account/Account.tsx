@@ -963,17 +963,38 @@ function RecordingRow({ entry, onStopped }: { entry: RecordingEntry; onStopped: 
   );
 }
 
-/** Download my data (#1150): one file with what DMbot holds about this person. A plain link, so
- * the browser downloads it with the sign-in cookie; the API refuses a second one inside a minute. */
+/** Save a file the page fetched, under the name the browser's download offers. */
+function saveFile(file: Blob, name: string): void {
+  const address = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = address;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(address);
+}
+
+/** Download my data (#1150): one file with what DMbot holds about this person. Fetched here, so
+ * "once a minute" and "sign in again" are said in words, not shown as a raw error page. */
 function ExportSection() {
   const { api } = useShared();
+  const { busy, notice, run } = useAction();
   return (
     <section aria-labelledby="export-heading" class="panel">
       <h2 id="export-heading">{text.exportHeading}</h2>
       <p>{text.exportWhat}</p>
-      <a class="button secondary" href={api.exportUrl()} download>
+      <ActionButton
+        busy={busy}
+        kind="secondary"
+        onClick={() =>
+          void run(
+            async () => saveFile(await api.downloadExport(), "dmbot-my-data.json"),
+            (error) => (error.kind === "slow-down" ? text.exportTooSoon : null),
+          )
+        }
+      >
         {text.exportButton}
-      </a>
+      </ActionButton>
+      <Notice message={notice} />
       <p class="muted small">{text.exportWait}</p>
     </section>
   );

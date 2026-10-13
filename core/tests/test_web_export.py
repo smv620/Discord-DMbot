@@ -17,7 +17,7 @@ from dmbot.memory import sheets
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
-from dmbot.web import entitlements_writer, sessions
+from dmbot.web import entitlements_writer, grants, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
 from dmbot.web.export import build_export
@@ -150,7 +150,9 @@ class Export(DatabaseTest):
         self.assertEqual({c["name"] for c in data["campaigns"]}, {self.bobs.name})
 
     async def test_the_policies_hold_the_role_even_without_a_where_clause(self) -> None:
-        async def rows(user: DiscordUser, session: sessions.Session, guild: int, query: str):
+        async def rows(
+            user: DiscordUser, session: sessions.Session, guild: int, query: str
+        ) -> list[int]:
             async with self.web.user(user.id, session=session.id_hash) as conn:
                 await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(guild),))
                 cur = await conn.execute(query)
@@ -173,6 +175,22 @@ class Export(DatabaseTest):
         assert narrow is not None
         self.assertEqual(await rows(ALICE, narrow, THURSDAY.id, consent_sql), [])
         self.assertEqual(await rows(ALICE, narrow, THURSDAY.id, sheets_sql), [])
+
+    async def test_free_access_is_in_the_export_without_who_gave_it(self) -> None:
+        admin = "admin@example.invalid"
+        await grants.give(
+            self.db, admin, ALICE.id, "guild", ends_at=None, note="a private note", now=self.now
+        )
+        data = await build_export(self.web, self.alice, now=self.now)
+        self.assertEqual(
+            (data["freeAccess"]["level"], data["freeAccess"]["endsAt"]), ("guild", None)
+        )
+        self.assertTrue(data["freeAccess"]["givenAt"])
+        text = json.dumps(data)
+        self.assertNotIn(admin, text)
+        self.assertNotIn("a private note", text)
+        bobs = await build_export(self.web, self.bob, now=self.now)
+        self.assertIsNone(bobs["freeAccess"])
 
     async def test_the_plan_is_in_the_export(self) -> None:
         started = await entitlements_writer.start_try_it(self.web, ALICE.id, now=self.now)

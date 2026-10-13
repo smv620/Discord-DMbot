@@ -149,8 +149,9 @@ export interface AccountApi {
   billingPortalUrl(): Promise<string>;
   /** The payment company's page to buy more hours for this month (a paid, working plan). */
   extraHoursUrl(): Promise<string>;
-  /** Where "Download my data" goes: the API sends one file with the person's own data (#1150). */
-  exportUrl(): string;
+  /** The file for "Download my data": the person's own data as JSON (#1150). Fetched from the
+   * page, so a refusal (once a minute, or signed out) can be said in words. */
+  downloadExport(): Promise<Blob>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
   stopRecording(serverId: string): Promise<void>;
   /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
@@ -197,7 +198,12 @@ const errorKinds: Record<string, ApiErrorKind> = {
 export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi {
   const root = base.replace(/\/+$/, "");
 
-  async function call(method: "GET" | "POST", path: string, body?: unknown): Promise<unknown> {
+  async function call(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    asFile = false,
+  ): Promise<unknown> {
     let response: Response;
     try {
       const init: RequestInit = {
@@ -224,7 +230,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       throw new ApiError(errorKinds[code] ?? (response.status === 403 ? "not-allowed" : "server"));
     }
     if (response.status === 204) return null;
-    return response.json();
+    return asFile ? response.blob() : response.json();
   }
 
   const url = async (path: string, body?: unknown): Promise<string> =>
@@ -249,7 +255,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     checkoutUrl: (plan) => url("/billing/checkout", { plan }),
     billingPortalUrl: () => url("/billing/portal"),
     extraHoursUrl: () => url("/billing/extra-hours"),
-    exportUrl: () => `${root}/me/export`,
+    downloadExport: async () => (await call("GET", "/me/export", undefined, true)) as Blob,
     installUrl: (serverId) => `${root}/install?server_id=${encodeURIComponent(serverId)}`,
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
