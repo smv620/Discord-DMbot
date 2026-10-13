@@ -43,6 +43,7 @@ QUIET = "🤫 Okay, quiet until the next session."
 NO_SESSION = "There is no game running just now, so there is nothing to quiet."
 NEVER = "🚫 FightBot is off. Turn it back on in 📜 My character sheet."
 NOT_SAVED = "Sorry, that didn't save. Please try again."
+NOT_PLAYING = "FightBot is only for players who have a character in this campaign."
 FOOTER = "FightBot reminder. Only you see this. It's your call."
 INTRO = (
     "FightBot reminds you of your own spells and features during a fight. "
@@ -52,11 +53,12 @@ INTRO = (
 
 @dataclass(slots=True)
 class FightState:
-    """What one session remembers in memory only: the last state each player was reminded
-    about (so nothing is said twice for the same thing) and who has been told what FightBot is.
-    Everything that must survive a restart is in the database (`fightbot_players`)."""
+    """What one session remembers in memory only: the last state each player's character was
+    reminded about (so nothing is said twice for the same thing) and who has been told what
+    FightBot is. Everything that must survive a restart is in the database
+    (`fightbot_players`)."""
 
-    last_fp: dict[int, tuple[Any, ...]] = field(default_factory=dict)
+    last_fp: dict[tuple[int, str], tuple[Any, ...]] = field(default_factory=dict)
     introduced: set[int] = field(default_factory=set)
 
 
@@ -120,16 +122,17 @@ async def tick(bot: Any, table: Any) -> None:
     secrets: list[str] | None = None
     allowed: bool | None = None
     calls = 0
+    done: set[int] = set()  # players called this pass: one call each, however many characters
     for sheet in found:
         user = sheet.played_by
-        if user is None or sheet.sheet is None or user not in present:
+        if user is None or sheet.sheet is None or user not in present or user in done:
             continue
         if not may_remind(players.get(user, FightPlayer()), table.started_at, wall):
             continue
         if not bot.consent.has_consent(table.guild_id, user):
             continue
         fp = fight_prompt.fingerprint(sheet.sheet, round_number)
-        if fight.last_fp.get(user) == fp:
+        if fight.last_fp.get((user, sheet.entity_id)) == fp:
             continue  # nothing new since the last reminder
         if calls >= MAX_CALLS_PER_TICK:
             break  # the rest next time
@@ -150,7 +153,8 @@ async def tick(bot: Any, table: Any) -> None:
         ):
             return
         calls += 1
-        fight.last_fp[user] = fp
+        done.add(user)
+        fight.last_fp[(user, sheet.entity_id)] = fp
         await bot.sheets.fight_called(table.guild_id, table.campaign_id, user, int(wall))
         said = fight_prompt.safe_lines(_table_lines(bot, table, time.monotonic()), secrets)
         try:
@@ -233,8 +237,9 @@ class FightButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:fight:(?P<guild>\d{{1,20}}):{_ID}:(?P<do>snooze|quiet|never)",
 ):
-    """One of a reminder's three silences. It only ever changes the presser's own settings,
-    so the message needs no check of who it was sent to."""
+    """One of a reminder's three silences. It only ever changes the presser's own settings, and
+    only when they play a character in the campaign the button names (a button id is just text
+    that anyone's client can send, so a row is never written for a stranger)."""
 
     def __init__(self, guild_id: int, campaign_id: str, action: str) -> None:
         label, emoji, style = _LABELS[action]
@@ -259,6 +264,10 @@ class FightButton(
         user = interaction.user.id
         # Only ever the presser's own settings, saved whether or not a session is running.
         try:
+            found = await bot.sheets.sheets(self.guild_id, self.campaign_id)
+            if not any(s.played_by == user for s in found):
+                await interaction.response.send_message(NOT_PLAYING, ephemeral=True)
+                return
             if self.action == "never":
                 await bot.sheets.set_fightbot(self.guild_id, self.campaign_id, user, False)
                 said = NEVER

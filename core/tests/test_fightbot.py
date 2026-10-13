@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import unittest
 from collections import deque
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -266,6 +267,28 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         await fightbot.tick(bot, table)  # the next tick takes the next ones
         self.assertEqual(bot.fight_ai.complete.await_count, 2 * fightbot.MAX_CALLS_PER_TICK)
 
+    async def test_a_player_with_two_characters_gets_one_call_a_pass_and_they_take_turns(
+        self,
+    ) -> None:
+        table = self.table()
+        two = [replace(sheet(), entity_id="a1"), replace(sheet(), entity_id="a2", name="Cousin")]
+        bot = self.bot(table, sheets_=two)
+        await fightbot.tick(bot, table)
+        self.assertEqual(bot.fight_ai.complete.await_count, 1)  # not two in one pass
+        self.assertEqual(bot.user.send.await_count, 1)
+        self.now += 130  # past the gap: the other character's turn
+        bot.sheets.fight_players = AsyncMock(
+            return_value={PLAYER: FightPlayer(last_call_at=int(self.now - 130))}
+        )
+        await fightbot.tick(bot, table)
+        self.assertEqual(bot.fight_ai.complete.await_count, 2)
+        self.now += 130
+        bot.sheets.fight_players = AsyncMock(
+            return_value={PLAYER: FightPlayer(last_call_at=int(self.now - 130))}
+        )
+        await fightbot.tick(bot, table)  # nothing new on either: no flip-flop
+        self.assertEqual(bot.fight_ai.complete.await_count, 2)
+
     async def test_the_gap_is_kept_in_the_database_so_a_restart_cannot_send_sooner(self) -> None:
         table = self.table()
         recent = FightPlayer(
@@ -432,6 +455,7 @@ class Runner(unittest.IsolatedAsyncioTestCase):
 class Buttons(unittest.IsolatedAsyncioTestCase):
     def interaction(self, table: Any, user: int = PLAYER) -> Any:
         sheets_ = SimpleNamespace(
+            sheets=AsyncMock(return_value=[CharacterSheet("e1", "Mira", user, None, base(), 1)]),
             set_fightbot=AsyncMock(),
             fight_snooze=AsyncMock(),
             fight_quiet=AsyncMock(),
@@ -483,6 +507,23 @@ class Buttons(unittest.IsolatedAsyncioTestCase):
         it = self.interaction(self.table())
         await fightbot.FightButton(GUILD, "b" * 32, "quiet").callback(it)
         it.client.sheets.fight_quiet.assert_not_awaited()
+
+    async def test_someone_who_plays_no_character_here_writes_nothing(self) -> None:
+        for action in ("snooze", "quiet", "never"):
+            it = self.interaction(self.table(), user=8)
+            it.client.sheets.sheets = AsyncMock(
+                return_value=[CharacterSheet("e1", "Mira", PLAYER, None, base(), 1)]
+            )
+            await fightbot.FightButton(GUILD, CAMPAIGN, action).callback(it)
+            saved = it.client.sheets
+            self.assertEqual(
+                saved.fight_snooze.await_count
+                + saved.fight_quiet.await_count
+                + saved.set_fightbot.await_count,
+                0,
+                action,
+            )
+            self.assertEqual(it.response.send_message.await_args.args[0], fightbot.NOT_PLAYING)
 
     async def test_a_save_that_fails_says_so(self) -> None:
         it = self.interaction(self.table())

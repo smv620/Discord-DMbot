@@ -14,7 +14,13 @@ import discord
 
 from dmbot.consent_dm import consent_view, options_view, request_view
 from dmbot.memory import sheets
-from dmbot.memory.sheet_store import CharacterSheet, PlayerCharacter, SheetRefused, SheetStore
+from dmbot.memory.sheet_store import (
+    CharacterSheet,
+    FightPlayer,
+    PlayerCharacter,
+    SheetRefused,
+    SheetStore,
+)
 from dmbot.ui import sheets as ui
 from tests.test_sheets import answer
 
@@ -422,6 +428,35 @@ class Refreshing(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FightSwitch(unittest.IsolatedAsyncioTestCase):
+    """The FightBot button flips what is stored now, not what the panel showed (#1174)."""
+
+    async def press(self, shown: bool, never: bool) -> Any:
+        current = sheet(url=sheets.sheet_url(1))
+        it = interaction([PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa")], current)
+        it.client.sheets.fight_players = AsyncMock(return_value={PLAYER: FightPlayer(never=never)})
+        it.client.sheets.set_fightbot = AsyncMock()
+        it.guild = None
+        panel = ui.SheetPanel(
+            GUILD, PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa"), has_sheet=True, fight=shown
+        )
+        with patch("dmbot.ui.sheets._still_member", AsyncMock(return_value=True)):
+            await panel._fightbot(it)
+        return it
+
+    async def test_it_turns_off_what_is_on_now_even_if_the_panel_was_old(self) -> None:
+        it = await self.press(shown=False, never=False)  # an old panel says off; it is on
+        it.client.sheets.set_fightbot.assert_awaited_once_with(GUILD, CAMPAIGN, PLAYER, False)
+
+    async def test_and_the_other_way(self) -> None:
+        it = await self.press(shown=True, never=True)
+        it.client.sheets.set_fightbot.assert_awaited_once_with(GUILD, CAMPAIGN, PLAYER, True)
+
+    def test_the_button_says_what_it_does(self) -> None:
+        self.assertEqual(ui.FIGHTBOT_ON, "Turn FightBot off")
+        self.assertEqual(ui.FIGHTBOT_OFF, "Turn FightBot on")
 
 
 class QuestionSwitch(unittest.IsolatedAsyncioTestCase):
