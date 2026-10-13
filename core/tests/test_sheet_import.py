@@ -4,10 +4,13 @@ documents are made up (a Google Doc export as text, a Word file and a PDF built 
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
+import time
 import unittest
 import zipfile
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -183,7 +186,7 @@ class OddAnswers(unittest.IsolatedAsyncioTestCase):
                 return_value=Reply('{"a":' + "[" * 200_000 + "]" * 200_000 + "}", False)
             )
         )
-        with self.assertRaises((AIError,)) as caught:
+        with self.assertRaises(AIError) as caught:
             await sheet_import.read_character(ai, "hi")  # type: ignore[arg-type]
         self.assertEqual(str(caught.exception), sheet_import.UNCLEAR)
 
@@ -301,14 +304,14 @@ class Importing(unittest.IsolatedAsyncioTestCase):
         it = self.it()
         it.client.sheet_ai = None
         await ui.import_sheet(it, GUILD, CHARACTER, attachment=file("s.txt", SHEET_TEXT.encode()))
-        self.assertIn(ui.NO_AI, str(it.response.send_message.await_args))
+        self.assertIn(ui.NO_AI, self.everything(it))
         it.client.sheets.save.assert_not_awaited()
 
     async def test_the_plan_can_refuse_and_a_person_must_wait_between_reads(self) -> None:
         it = self.it()
         it.client.plan_gate = AsyncMock(return_value="Your plan doesn't cover the AI.")
         await ui.import_sheet(it, GUILD, CHARACTER, attachment=file("s.txt", b"x"))
-        self.assertIn("plan", str(it.response.send_message.await_args))
+        self.assertIn("plan", self.everything(it))
         ui._last.clear()
         again = self.it()
         await ui.import_sheet(
@@ -318,7 +321,7 @@ class Importing(unittest.IsolatedAsyncioTestCase):
         await ui.import_sheet(
             second, GUILD, CHARACTER, attachment=file("s.txt", SHEET_TEXT.encode())
         )
-        self.assertIn(ui.WAIT, str(second.response.send_message.await_args))
+        self.assertIn(ui.WAIT, self.everything(second))
 
     async def test_an_ai_that_fails_or_finds_nothing_saves_nothing(self) -> None:
         for reply in (AIError("The AI is busy."), Reply("no character here", False)):
@@ -341,13 +344,10 @@ class Importing(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_day_has_a_limit_per_server(self) -> None:
         it = self.it()
-        import time
-        from datetime import UTC, datetime
-
         day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
         ui._reads[(GUILD, day)] = ui.READS_PER_DAY
         await ui.import_sheet(it, GUILD, CHARACTER, attachment=file("s.txt", SHEET_TEXT.encode()))
-        self.assertIn(ui.DAILY, str(it.response.send_message.await_args))
+        self.assertIn(ui.DAILY, self.everything(it))
         self.ai.complete.assert_not_awaited()
 
     async def test_the_documents_words_never_reach_the_log(self) -> None:
@@ -360,8 +360,6 @@ class Importing(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(secret, "\n".join(logs.output))
 
     async def test_two_imports_at_once_for_one_server_read_only_once(self) -> None:
-        import asyncio
-
         started = asyncio.Event()
 
         async def slow(*_a: Any, **_kw: Any) -> bool:
@@ -406,6 +404,91 @@ class Importing(unittest.IsolatedAsyncioTestCase):
         self.assertIn(ui.SHORTENED.strip(), " ".join(self.texts(it)))
         sent = self.ai.complete.await_args.args[1]
         self.assertEqual(len(sent), sheet_import.TEXT_MAX)
+
+    async def test_an_empty_ai_inventory_or_made_up_rarities_is_not_an_error(self) -> None:
+        for inventory in (
+            {"count": 5, "weight": 20, "rarity": dict.fromkeys(sheet_import.sheets.RARITIES, 0)},
+            {"count": 5, "weight": 20, "rarity": {"common": 2, "rare": 9}},
+        ):
+            snap = sheet_import.parse_reply(answer(inventory=inventory))
+            assert snap is not None
+            card = checks.card(snap)
+            self.assertNotIn("⛔", card)
+            self.assertNotIn("Link the sheet again", card)
+
+    def test_a_document_sheet_never_says_link_it_again(self) -> None:
+        snap = sheet_import.parse_reply(answer(classes=[], abilities={"str": 10}))
+        assert snap is not None
+        card = checks.card(snap)
+        self.assertNotIn("ink the sheet", card)
+        self.assertIn("check your document, or press Type in my character", card)
+
+    def test_values_outside_a_sheets_ranges_show_as_errors(self) -> None:
+        for odd in (
+            {"abilities": {"str": 45}},
+            {"ac": 99},
+            {"max_hp": 0},
+            {"classes": [{"name": "Ranger", "level": 25}]},
+            {"inventory": {"count": 3, "weight": 10**7}},
+        ):
+            snap = sheet_import.parse_reply(answer(**odd))
+            assert snap is not None, odd
+            self.assertTrue(snap["flags"], odd)
+            self.assertIn("⛔", checks.card(snap), odd)
+
+    async def test_the_reader_uses_the_one_shared_limit(self) -> None:
+        from dmbot.memory import document_reader
+        from dmbot.ui import name_lists
+
+        self.assertIs(ui.READING, document_reader.READING)
+        self.assertIs(name_lists._PARSING, document_reader.READING)
+
+    async def test_a_link_problem_and_a_big_link_are_worded_for_the_sheet(self) -> None:
+        for error, expect in (
+            (fetch.LinkError(fetch.NOT_A_LINK), "Copy the whole link to your sheet"),
+            (fetch.LinkError(fetch.TOO_BIG), "over 5 MB"),
+            (fetch.LinkError(fetch.NOT_SHARED), "Upload my sheet file"),
+            (
+                fetch.LinkError("A sign-in page: something new and unmapped"),
+                "Save your sheet as Word",
+            ),
+        ):
+            ui._last.clear()
+            it = self.it()
+            with patch.object(fetch, "fetch", AsyncMock(side_effect=error)):
+                await ui.import_sheet(it, GUILD, CHARACTER, link="https://example.com/x")
+            said = self.everything(it)
+            self.assertIn(expect, said)
+            for names_screen in ("Paste a list", "📎", "10 MB", "one at a time"):
+                self.assertNotIn(names_screen, said)
+            it.client.sheets.save.assert_not_awaited()
+            self.assertEqual(sum(ui._reads.values()), 0)  # no AI read used
+        self.ai.complete.assert_not_awaited()
+
+    async def test_an_empty_text_file_is_not_called_a_picture(self) -> None:
+        it = self.it()
+        await ui.import_sheet(it, GUILD, CHARACTER, attachment=file("empty.txt", b"   \n"))
+        said = self.everything(it)
+        self.assertIn(ui.NO_WORDS, said)
+        self.assertNotIn("picture", said)
+
+    async def test_a_cut_off_answer_is_unclear_not_no_character(self) -> None:
+        ai = SimpleNamespace(complete=AsyncMock(return_value=Reply(answer()[:20], True)))
+        with self.assertRaises(AIError) as caught:
+            await sheet_import.read_character(ai, "hello")  # type: ignore[arg-type]
+        self.assertEqual(str(caught.exception), sheet_import.UNCLEAR)
+
+    async def test_the_daily_count_survives_midnight_and_a_left_member(self) -> None:
+        day = "2026-10-13"
+        ui._reads.clear()
+        ui._give_back(GUILD, day)  # the key was cleared meanwhile: no error
+        self.assertEqual(ui._reads[(GUILD, day)], 0)
+        it = self.it()
+        it.client.get_guild = MagicMock(return_value=None)  # no longer in the server
+        today = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
+        await ui.import_sheet(it, GUILD, CHARACTER, attachment=file("s.txt", SHEET_TEXT.encode()))
+        self.assertEqual(ui._reads.get((GUILD, today), 0), 0)
+        self.ai.complete.assert_not_awaited()
 
     async def test_the_panel_offers_both_ways(self) -> None:
         view = sheets_ui.SheetPanel(GUILD, CHARACTER, has_sheet=False)

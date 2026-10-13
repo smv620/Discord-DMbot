@@ -52,6 +52,11 @@ _SEP = b"\n"  # between the parts of an answer: kind, error kind, text
 # cancelled, or DMbot is closing (shutdown() below).
 _POLL_S = 0.25
 
+# Documents read at once, across every way in (the names screen, a player's sheet): each read
+# is a child process of up to MEMORY_BYTES, and `_WAITERS` below is sized for this many. One
+# shared limit, so two screens can't between them read twice as many (#251, #1125).
+READING = asyncio.Semaphore(2)
+
 Parse = Callable[[str, bytes], str]
 # Threads that wait on the children: their own, so files that hang can't take the
 # shared ones that live work uses (hints, backups). Two read at once (name_lists'

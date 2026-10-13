@@ -111,24 +111,43 @@ def parse_reply(reply: str) -> dict[str, Any] | None:
 
 
 def _flags(data: Mapping[str, Any]) -> list[str]:
-    """Which parts had a number below zero (the allow list would just drop it)."""
+    """Which parts had a number that fails a check: below zero, or outside what a sheet field
+    can hold (STR 45, AC 99, max HP 0, a level over 20). The allow list would just drop it and
+    the card would say "not found", so the part is flagged and shows ⛔."""
 
-    def negative(value: Any) -> bool:
-        return isinstance(value, (int, float)) and not isinstance(value, bool) and value < 0
+    def outside(value: Any, low: int, high: int) -> bool:
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and not low <= value <= high
+        )
 
     flags: set[str] = set()
     classes = data.get("classes")
-    if any(negative(data.get(k)) for k in ("max_hp", "hp", "temp_hp", "ac")) or (
-        isinstance(classes, list)
-        and any(isinstance(c, Mapping) and negative(c.get("level")) for c in classes)
+    if (
+        outside(data.get("max_hp"), 1, 9999)
+        or outside(data.get("hp"), 0, 99999)
+        or outside(data.get("temp_hp"), 0, 9999)
+        or outside(data.get("ac"), 1, 50)
+        or outside(data.get("speed"), 0, 200)
+        or (
+            isinstance(classes, list)
+            and any(
+                isinstance(c, Mapping) and outside(c.get("level"), 1, sheets.LEVEL_MAX)
+                for c in classes
+            )
+        )
     ):
         flags.add("basic")
     abilities = data.get("abilities")
-    if isinstance(abilities, Mapping) and any(negative(v) for v in abilities.values()):
+    if isinstance(abilities, Mapping) and any(
+        outside(v, 1, sheets.SCORE_MAX) for v in abilities.values()
+    ):
         flags.add("abilities")
     inventory = data.get("inventory")
-    if isinstance(inventory, Mapping) and any(
-        negative(inventory.get(k)) for k in ("count", "weight")
+    if isinstance(inventory, Mapping) and (
+        outside(inventory.get("count"), 0, sheets.INVENTORY_MAX)
+        or outside(inventory.get("weight"), 0, sheets.WEIGHT_MAX)
     ):
         flags.add("inventory")
     return sorted(flags)
@@ -138,6 +157,8 @@ async def read_character(ai: TierClient, text: str) -> dict[str, Any] | None:
     """One AI call for one import: the document's text (cut at TEXT_MAX) in, the allow-listed
     snapshot out, or None if the AI found no character. Raises AIError in plain words."""
     reply = await ai.complete(PROMPT, text[:TEXT_MAX], max_tokens=MAX_TOKENS)
+    if reply.cut:  # the answer stopped half way: that isn't "no character found"
+        raise AIError(UNCLEAR)
     try:
         return parse_reply(reply.text)
     except (TypeError, ValueError, OverflowError, KeyError, RecursionError):
