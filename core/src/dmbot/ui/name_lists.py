@@ -23,7 +23,7 @@ from dmbot import fetch
 from dmbot.ai import AIError, Reply, TierClient
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
-from dmbot.memory.document_reader import read_document
+from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
     CONFIRMED,
@@ -492,7 +492,7 @@ class Upload:
     document: bool = False  # not meant as a names list: straight to the AI
 
 
-_PARSING = asyncio.Semaphore(2)  # documents read at once, across all servers
+_PARSING = READING  # the one limit on documents read at once, shared (document_reader)
 
 
 async def _document(filename: str, raw: bytes, label: str) -> tuple[Upload | None, str | None]:

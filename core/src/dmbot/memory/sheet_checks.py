@@ -67,6 +67,19 @@ def _plural(n: int, word: str, many: str | None = None) -> str:
     return f"{n} {word if n == 1 else many or word + 's'}"
 
 
+def _again(snapshot: Mapping[str, Any]) -> str:
+    """What to do about a part that couldn't be read: a linked sheet is linked again; a sheet
+    read from a document has no link, so it is the document that is checked."""
+    if snapshot.get("origin") == ORIGIN_DOCUMENT:
+        return "check your document, or press Type in my character"
+    return "link the sheet again"
+
+
+def _again_sentence(snapshot: Mapping[str, Any]) -> str:
+    text = _again(snapshot)
+    return text[0].upper() + text[1:]
+
+
 def _worse(a: str, b: str) -> str:
     return a if _WORST[a] >= _WORST[b] else b
 
@@ -210,7 +223,7 @@ def _basic(snapshot: Mapping[str, Any]) -> Check:
     total = sum(c["level"] for c in classes if isinstance(c.get("level"), int))
     if not classes:
         status = BAD
-        problems.append("no class or level could be read; link the sheet again")
+        problems.append(f"no class or level could be read; {_again(snapshot)}")
     elif total > MAX_LEVEL:
         status = BAD
         problems.append(
@@ -221,7 +234,7 @@ def _basic(snapshot: Mapping[str, Any]) -> Check:
     if not isinstance(top, int):
         if not typed:
             status = BAD
-            problems.append("hit points couldn't be read; link the sheet again")
+            problems.append(f"hit points couldn't be read; {_again(snapshot)}")
     elif isinstance(hp, int) and hp > top + temp:
         status = BAD
         problems.append(f"HP {hp} is above the maximum {top} + {temp}. Check HP on your sheet")
@@ -275,7 +288,7 @@ def _abilities(snapshot: Mapping[str, Any]) -> Check:
         )
     if missing:
         what = "couldn't be read" if len(missing) == 6 else f"{_few(missing, 6)} couldn't be read"
-        return Check("abilities", BAD, f"Ability scores: {what}. Link the sheet again")
+        return Check("abilities", BAD, f"Ability scores: {what}. {_again_sentence(snapshot)}")
     shown = " ".join(f"{a.upper()} {scores[a]}" for a in ABILITIES)
     return Check("abilities", OK, f"Ability scores: {shown}")
 
@@ -369,7 +382,7 @@ def _inventory(snapshot: Mapping[str, Any]) -> Check:
     if not isinstance(inv, Mapping) and snapshot.get("origin") == ORIGIN_DOCUMENT:
         return Check("inventory", OK, "Inventory: not found in your document")
     if not isinstance(inv, Mapping):
-        return Check("inventory", BAD, "Inventory: couldn't be read. Link the sheet again")
+        return Check("inventory", BAD, f"Inventory: couldn't be read. {_again_sentence(snapshot)}")
     if "inventory" in (snapshot.get("flags") or []):
         return Check(
             "inventory", BAD, "Inventory: an amount on the sheet is below zero. Check your sheet"
@@ -378,11 +391,14 @@ def _inventory(snapshot: Mapping[str, Any]) -> Check:
     assert isinstance(rarity, Mapping)
     count = inv.get("count") or 0
     capped = count >= INVENTORY_MAX  # a count cut at the limit can't be matched to its parts
-    if not capped and sum(rarity.get(r, 0) for r in RARITIES) != count:
+    # A player's own document almost never says the rarity of each thing, so the counts the AI
+    # gives can't be held to the total (#1125).
+    from_document = snapshot.get("origin") == ORIGIN_DOCUMENT
+    if not capped and not from_document and sum(rarity.get(r, 0) for r in RARITIES) != count:
         return Check(
             "inventory",
             BAD,
-            "Inventory: DMbot couldn't count your items properly. Link the sheet again",
+            f"Inventory: DMbot couldn't count your items properly. {_again_sentence(snapshot)}",
         )
     counts = [f"{rarity[r]} {r}" for r in reversed(RARITIES) if rarity.get(r)]
     weight = f"{inv.get('weight') or 0:.2f}"

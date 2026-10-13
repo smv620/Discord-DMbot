@@ -21,8 +21,14 @@ import discord
 from dmbot import fetch
 from dmbot.ai import AIError
 from dmbot.memory import sheet_import
-from dmbot.memory.document_reader import read_document
-from dmbot.memory.name_documents import NO_TEXT, SCANNED_PDF, DocumentError
+from dmbot.memory.document_reader import READING, RESTARTING, TOO_SLOW, read_document
+from dmbot.memory.name_documents import (
+    NO_TEXT,
+    SCANNED_PDF,
+    TYPES_HELP,
+    UNREADABLE,
+    DocumentError,
+)
 from dmbot.memory.sheet_store import PlayerCharacter, SheetRefused
 from dmbot.ui import sheets as ui
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _answer_first, _failed, _tell
@@ -41,6 +47,49 @@ WRONG_TYPE = (
     "DMbot reads Word (.docx), PDF and text (.txt) files. Save your sheet as one of those and "
     "try again."
 )
+NO_WORDS = (
+    "DMbot found no words in that file. Check it's the right one, or press **Type in my "
+    "character**."
+)
+CANT_READ = (
+    "DMbot couldn't read that. Save your sheet as Word (.docx), PDF or text (.txt) and try "
+    "again, or press **Type in my character**."
+)
+# The names screen's wording points at its own buttons ("📋 Paste a list") and a 10 MB limit.
+# A sheet's refusals say what to do on *this* panel, ending with a next step.
+_UPLOAD = "upload the file with **Upload my sheet file**"
+_TYPE_IT = "or press **Type in my character**"
+SHEET_WORDS = {
+    fetch.NOT_A_LINK: (
+        "That doesn't look like a link. Copy the whole link to your sheet and paste it "
+        f"here, {_TYPE_IT}."
+    ),
+    fetch.ONLY_HTTPS: (
+        "DMbot can only open links that start with https://. Try the same link with "
+        f"https://, or {_UPLOAD}."
+    ),
+    fetch.NOT_PUBLIC: f"DMbot can't open that link. Use a link anyone can open, or {_UPLOAD}.",
+    fetch.NOT_SHARED: (
+        "DMbot can't open that link: it may be private or mistyped. If it's a Google Doc, press "
+        f'Share and set General access to "Anyone with the link", then try again. Or {_UPLOAD}.'
+    ),
+    fetch.DRIVE_PAGE: (
+        "DMbot can't open that Google Drive file: it may be private (Share > \"Anyone with the "
+        f'link") or too big to share by link. Download it and {_UPLOAD}.'
+    ),
+    fetch.TOO_BIG: "That's over 5 MB. Save a smaller copy, " + _TYPE_IT + ".",
+    fetch.WRONG_TYPE: (
+        "DMbot reads web pages and PDF, Word or text files. That link is something else. "
+        f"Save your sheet as one of those and {_UPLOAD}."
+    ),
+    fetch.UNREACHABLE: fetch.UNREACHABLE,  # (no button named in it)
+    TYPES_HELP: WRONG_TYPE,
+    UNREADABLE: UNREADABLE,
+    NO_TEXT: NO_WORDS,
+    SCANNED_PDF: sheet_import.PICTURES,
+    TOO_SLOW: "That took too long to read. Try a smaller file, " + _TYPE_IT + ".",
+    RESTARTING: RESTARTING,
+}
 NO_FILE = "No file came through. Press **Upload my sheet file** and choose one before sending."
 TOO_LONG = "That took too long, so nothing was saved. Try again, or press **Type in my character**."
 GENERIC = (
@@ -59,7 +108,6 @@ FILE_TYPES = (".docx", ".pdf", ".txt", ".md", ".text")
 _last: dict[tuple[int, int], float] = {}
 _busy: set[int] = set()  # servers with a sheet being read right now
 _reads: dict[tuple[int, str], int] = {}  # (server, day) → AI reads
-_PARSING = asyncio.Semaphore(2)  # documents opened at once, across all servers
 
 
 class DocumentLinkForm(discord.ui.Modal, title="Read my sheet from a link"):
@@ -137,15 +185,17 @@ async def _text_of(
             raw, filename = got.data, got.filename
             if len(raw) > sheet_import.FILE_MAX_BYTES:
                 return None, TOO_BIG
-        async with _PARSING:
+        async with READING:  # the same limit as the names screen
             return await read_document(filename, raw), None
-    except fetch.LinkError as exc:
-        return None, str(exc)
-    except DocumentError as exc:
-        text = str(exc)
-        if text in (SCANNED_PDF, NO_TEXT):  # pictures of text, not text
-            return None, sheet_import.PICTURES
-        return None, text
+    except (fetch.LinkError, DocumentError) as exc:
+        return None, SHEET_WORDS.get(str(exc), CANT_READ)
+
+
+def _give_back(guild_id: int, day: str) -> None:
+    """A read that never reached the AI doesn't count against the day. (Another server's import
+    may already have cleared yesterday's key just after midnight.)"""
+    key = (guild_id, day)
+    _reads[key] = max(0, _reads.get(key, 0) - 1)
 
 
 async def import_sheet(
@@ -170,6 +220,7 @@ async def import_sheet(
         if problem is not None:  # before downloading anything
             await _tell(interaction, problem)
             return
+    await _answer_first(interaction)  # the lookups below can pass Discord's 3 seconds
     campaign = await bot.campaigns.get(guild_id, character.campaign_id)
     if campaign is None:
         await _tell(interaction, ui.NOT_YOURS)
@@ -196,12 +247,12 @@ async def import_sheet(
         del _reads[old]  # only today counts
     _reads[(guild_id, day)] = _reads.get((guild_id, day), 0) + 1
     try:
-        await _answer_first(interaction)
         if not await ui._still_member(interaction, guild_id):
+            _give_back(guild_id, day)
             return
         text, problem = await _text_of(link=link, attachment=attachment)
         if text is None:
-            _reads[(guild_id, day)] -= 1  # nothing was sent to the AI: no read used
+            _give_back(guild_id, day)  # nothing was sent to the AI: no read used
             await _tell(interaction, problem or "DMbot couldn't read that.")
             return
         shortened = len(text) > sheet_import.TEXT_MAX
