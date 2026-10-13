@@ -197,14 +197,16 @@ class EffectButton(
                 effect: Effect = await client.effects.end(
                     guild.id, campaign.id, interaction.user.id, self.number
                 )
-                note = f"✅ {effect.name} ended."
+                note = f"✅ {effect.name}{f' on {effect.target}' if effect.target else ''} ended."
             else:
                 effect = await client.effects.extend(
                     guild.id, campaign.id, interaction.user.id, self.number
                 )
                 who = f" on {effect.target}" if effect.target else ""
                 total = durations.words(effect.minutes + effect.extended)
-                note = f"⏳ {effect.name}{who} extended by {EXTRA_MINUTES} min ({total} in all)."
+                note = (
+                    f"⏳ {effect.name}{who} extended by {EXTRA_MINUTES} minutes ({total} in all)."
+                )
         except CampaignError as exc:
             await _reply(interaction, str(exc))
             return

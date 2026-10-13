@@ -263,7 +263,7 @@ class Timers(DatabaseTest):
             await button.callback(interaction)
         assert edit.await_args is not None
         note = edit.await_args.kwargs["content"]
-        self.assertEqual(note, "⏳ Bless on Mira extended by 10 min (11 minutes in all).")
+        self.assertEqual(note, "⏳ Bless on Mira extended by 10 minutes (11 minutes in all).")
         self.assertEqual(self.client.posted, [])  # nothing posted anywhere but this message
 
     async def test_the_extension_survives_a_backup_round_trip_and_old_backups_still_load(
