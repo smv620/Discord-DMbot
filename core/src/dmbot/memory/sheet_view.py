@@ -416,7 +416,8 @@ def _apply_inventory(
     assert isinstance(old, Mapping)
     if not count and s.get("origin") == sheets.ORIGIN_DOCUMENT:
         # A document seldom gives rarities, so its item count isn't their sum: leave it.
-        count = old.get("count") if isinstance(old.get("count"), int) else 0
+        kept = old.get("count")
+        count = kept if isinstance(kept, int) else 0
     inventory = {"count": count, "weight": weight, "rarity": rarity} if (count or weight) else None
     return {"items": split_names(v["items"]), "inventory": inventory}, None
 
