@@ -114,7 +114,7 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
               setMessage(e.currentTarget.value);
               if (refusal) setRefusal(null); // an old warning goes once they type again
             }}
-            aria-describedby={`${id}-public ${id}-left`}
+            aria-describedby={`${id}-public ${id}-left${messageWrong ? ` ${id}-error` : ""}`}
           />
           <p id={`${id}-public`} class="small muted">
             {text.messageHint}
@@ -134,7 +134,7 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
             value={contact}
             aria-invalid={contactWrong}
             onInput={(e) => setContact(e.currentTarget.value)}
-            aria-describedby={`${id}-hint`}
+            aria-describedby={`${id}-hint${contactWrong ? ` ${id}-error` : ""}`}
           />
           <p id={`${id}-hint`} class="small muted">
             {words.contactHint}
@@ -155,7 +155,7 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
             />
           ))}
         {refusal && (
-          <p class="warn" role="alert">
+          <p class="warn" role="alert" id={`${id}-error`}>
             {text.errors[refusal]}
           </p>
         )}

@@ -52,6 +52,16 @@ CI runs all of the above on every pull request. Never merge red CI.
   (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
   author round-trip. A conflict whose resolution touches the PR's own logic goes back to
   the author and needs a fresh "approved".
+  **A stacked PR whose base has merged** (2026-10-13, Supervisor, after #1139 merged under
+  #1152/#1166/#1168): its patch-id against `development` changes only because the merged
+  PR's commits drop out of its diff. The approval still carries over when `git range-diff`
+  shows the PR's **own commits** unchanged and every line that left the diff is in the merged
+  PR's diff. RepoManager notes "approval carried over from <sha> (stacked base merged)".
+  Anything else in the range-diff needs a fresh "approved".
+  **Merging a batch** (2026-10-13, Supervisor, to stop one merge per CI cycle): RepoManager
+  may merge up to four approved PRs back to back when one CI run is green on a single branch
+  of `development` plus all of them merged in the planned order, and each PR's own patch is
+  unchanged. That run is the "CI on the combination". If it fails, merge one at a time again.
   **Supervisor's own docs-only PRs** (owner, 2026-10-10): a PR by Supervisor that changes
   only `docs/PLAN.md`, `docs/STORY_MEMORY.md` or `CLAUDE.md` merges on Supervisor's
   "Supervisor review: approved" on its current head, plus RepoManager's compliance check

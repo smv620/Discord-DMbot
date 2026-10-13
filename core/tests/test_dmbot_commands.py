@@ -265,6 +265,7 @@ class NewCampaignButtons(unittest.IsolatedAsyncioTestCase):
                 "optional_rules_default": False,
                 "dm_screen_visibility": "open",
                 "dm_screen_level": "quiet",
+                "dndbeyond_invite": None,
             },
         )
 
