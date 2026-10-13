@@ -8,6 +8,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest import mock
 from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignError, CampaignStore
@@ -231,6 +232,57 @@ class Timers(DatabaseTest):
         self.assertEqual(await self.effects.running(GUILD_A, self.a.id), [])
         with self.assertRaises(CampaignError):
             await self.effects.end(GUILD_A, self.a.id, DM, effect.number)
+
+    async def test_a_timer_kept_going_says_its_total_and_that_the_dm_extended_it(self) -> None:
+        await self.set_clock()
+        effect = await self.effects.start(GUILD_A, self.a.id, DM, "Bless", "Mira", 1, True)
+        self.assertNotIn("extended", effect.ended_line())
+        self.assertIn("(1 minute)", effect.ended_line())
+        once = await self.effects.extend(GUILD_A, self.a.id, DM, effect.number)
+        self.assertIn("(11 minutes, extended by the DM)", once.ended_line())
+        twice = await self.effects.extend(GUILD_A, self.a.id, DM, effect.number)
+        self.assertIn("(21 minutes, extended by the DM)", twice.ended_line())
+        self.assertEqual((twice.minutes, twice.extended), (1, 20))  # the first length is kept
+        [stored] = await self.effects.running(GUILD_A, self.a.id)
+        self.assertEqual(stored.extended, 20)
+
+    async def test_pressing_still_going_says_so_on_the_dm_screen_only(self) -> None:
+        await self.set_clock()
+        effect = await self.effects.start(GUILD_A, self.a.id, DM, "Bless", "Mira", 1, True)
+        edit = AsyncMock()
+        interaction = SimpleNamespace(
+            client=self.client,
+            guild=SimpleNamespace(id=GUILD_A),
+            user=SimpleNamespace(id=DM),
+            response=SimpleNamespace(defer=AsyncMock(), is_done=lambda: True),
+            followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=edit,
+        )
+        button = fx.EffectButton(self.a.id, effect.number, "more")
+        with mock.patch.object(fx, "_show_clock", AsyncMock()):
+            await button.callback(interaction)
+        assert edit.await_args is not None
+        note = edit.await_args.kwargs["content"]
+        self.assertEqual(note, "⏳ Bless on Mira extended by 10 min (11 minutes in all).")
+        self.assertEqual(self.client.posted, [])  # nothing posted anywhere but this message
+
+    async def test_the_extension_survives_a_backup_round_trip_and_old_backups_still_load(
+        self,
+    ) -> None:
+        await self.set_clock()
+        effect = await self.effects.start(GUILD_A, self.a.id, DM, "Bless", None, 1, True)
+        await self.effects.extend(GUILD_A, self.a.id, DM, effect.number)
+        section = EffectsSection()
+        async with self.db.guild(GUILD_A) as conn:
+            dumped = await section.dump(conn, GUILD_A, self.a.id)
+        self.assertEqual(dumped[0]["extended"], 10)
+        checked = section.check(dumped)
+        self.assertEqual(checked[0]["extended"], 10)
+        old = [{k: v for k, v in dumped[0].items() if k != "extended"}]
+        self.assertEqual(section.check(old)[0]["extended"], 0)  # a backup from before #1112
+        for bad in (-1, "10", True, 10**9):
+            with self.assertRaises(CampaignError):
+                section.check([{**dumped[0], "extended": bad}])
 
     async def test_the_clock_message_lists_the_soonest_five(self) -> None:
         await self.set_clock()
