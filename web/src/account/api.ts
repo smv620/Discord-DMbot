@@ -91,6 +91,8 @@ export interface Me {
   servers: Server[];
   // The API also sends `installs` (servers this person added DMbot to); the servers list
   // already says "You added DMbot here", so the page doesn't use it (#497).
+  /** A first payment failed and none has gone through since (#922): the page says to try again. */
+  firstPaymentFailed?: boolean;
   /** Hand-overs offered to you, and the ones you offered (#614). */
   offers: { incoming: Offer[]; outgoing: Offer[] };
 }

@@ -64,6 +64,12 @@ async def _paid_before(conn: Conn, user_id: int) -> bool:
 # through; see payments.py.)
 _PAID_KINDS = ("subscription_started", "subscription_renewed", "extra_hours_bought")
 
+# SQL for "a payment on record": a row with no kind was recorded before kinds were kept and
+# counts as paid. Shared with /me and the first-month price, so a recorded failure is never
+# mistaken for a payment (#922).
+PAID_EVENT_SQL = "(kind IS NULL OR kind = ANY(%(paid)s))"
+PAID_KINDS = list(_PAID_KINDS)
+
 
 async def _has_paid(conn: Conn, user_id: int) -> bool:
     """This person has an earlier successful payment on record. Called before the event
@@ -282,6 +288,11 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
             await _record(conn, event, now)
             return "ignored"
         if row is None:
+            if event.kind == "payment_failed" and not await _has_paid(conn, event.user_id):
+                # A first payment that failed: no plan starts. Recorded (as a failure, not a
+                # payment) so /me can say so, and a repeat delivery is a duplicate (#922).
+                await _record(conn, event, now)
+                return "ignored"
             # Nothing to change yet: the company may have sent this before the "started"
             # event. Not recorded, so its next delivery is applied.
             return "retry"

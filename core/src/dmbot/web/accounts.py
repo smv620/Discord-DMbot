@@ -6,6 +6,7 @@ import logging
 import time
 
 from dmbot.db import Database
+from dmbot.web.entitlements_writer import PAID_EVENT_SQL, PAID_KINDS
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +33,9 @@ async def first_paid_month_after_trial(db: Database, user_id: int) -> bool:
     async with db.user(user_id) as conn:
         cur = await conn.execute(
             "SELECT EXISTS (SELECT 1 FROM try_it_used WHERE user_id = %(u)s) AS tried,"
-            " EXISTS (SELECT 1 FROM payment_events WHERE user_id = %(u)s) AS paid",
-            {"u": user_id},
+            f" EXISTS (SELECT 1 FROM payment_events WHERE user_id = %(u)s AND {PAID_EVENT_SQL})"
+            " AS paid",
+            {"u": user_id, "paid": PAID_KINDS},
         )
         row = await cur.fetchone()
     return bool(row and row["tried"] and not row["paid"])
