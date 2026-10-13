@@ -53,8 +53,8 @@ class DayPart(unittest.TestCase):
 
     TABLE = (
         ((3, 30), (4, 59), "pre-dawn"),
-        ((5, 0), (5, 59), "dawn"),
-        ((6, 0), (9, 59), "morning"),
+        ((5, 0), (6, 14), "dawn"),  # Supervisor, 2026-10-13: 06:00 (the dawn mark) is dawn
+        ((6, 15), (9, 59), "morning"),
         ((10, 0), (11, 29), "late morning"),
         ((11, 30), (12, 59), "about noon"),
         ((13, 0), (14, 59), "afternoon"),
@@ -130,7 +130,7 @@ class PlayersLines(unittest.TestCase):
         )
         dawn = Clock(game.from_day_and_time(5, 6), 0)
         self.assertEqual(
-            ui.players_line("dawn", Clock(NOON4, 0), dawn), "A new day begins. Day 5, morning."
+            ui.players_line("dawn", Clock(NOON4, 0), dawn), "A new day begins. Day 5, dawn."
         )
 
     def test_a_rest_that_crosses_midnight_is_one_line_not_two(self) -> None:
