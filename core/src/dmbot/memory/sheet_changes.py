@@ -55,9 +55,10 @@ _DAMAGE = re.compile(
 )
 _HIT = re.compile(rf"\b(?:is|are) hit for\s+(?P<n>{_NUMBER})\b", re.IGNORECASE)
 _DAMAGE_TO = re.compile(rf"\b(?P<n>{_NUMBER})\s+(?:[a-z]+\s+)?damage\s+to\b", re.IGNORECASE)
-# "heals 5", "regains 5 hit points", "recovers 5 hp", "gets 5 hit points back"
+# The one who is healed is the subject: "regains 5 hit points", "recovers 5 hp", "is healed for
+# 5". "Mira heals 5" is left out on purpose: Mira may be the healer, and DMbot doesn't guess.
 _HEAL = re.compile(
-    rf"\b(?:heals?|healed|healing)\s+(?:for\s+)?(?P<n>{_NUMBER})\b"
+    rf"\b(?:is|are)\s+healed\s+for\s+(?P<n>{_NUMBER})\b"
     rf"|\b(?:regains?|recovers?|gains?|gets?)\s+(?P<m>{_NUMBER})\s+(?:hit points?|hp)\b",
     re.IGNORECASE,
 )
@@ -134,6 +135,18 @@ def find(line: str) -> list[Heard]:
     return found
 
 
+def net(heard: list[Heard]) -> list[Heard]:
+    """What is left after damage and healing of the same size cancel out within the same
+    minute (hit points are back where they were): nothing to ask about those."""
+    left = list(heard)
+    for h in [x for x in left if x.kind == "damage"]:
+        twin = next((x for x in left if x.kind == "heal" and x.amount == h.amount), None)
+        if twin is not None:
+            left.remove(h)
+            left.remove(twin)
+    return left
+
+
 def about(line: str, heard: Heard, name: str) -> bool:
     """Is this change plainly about the character called `name`? Their name stands just before
     the words ("Belleros takes 8 damage"), or follows "to" or "on" ("8 damage to Belleros").
@@ -165,6 +178,16 @@ def _effective_hp(snapshot: Mapping[str, Any]) -> int | None:
         return None
     temp = snapshot.get("temp_hp")
     return base + (temp if isinstance(temp, int) else 0)
+
+
+def shown(snapshot: Mapping[str, Any]) -> tuple[Any, ...]:
+    """What a sheet shows about the things a question can be about: hit points (with
+    temporary) and conditions. A question is dropped once this changes."""
+    have = snapshot.get("conditions")
+    conditions = (
+        tuple(sorted(c for c in have if isinstance(c, str))) if isinstance(have, list) else ()
+    )
+    return (_effective_hp(snapshot), conditions)
 
 
 def _hp_text(snapshot: Mapping[str, Any]) -> str | None:

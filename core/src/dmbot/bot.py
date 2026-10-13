@@ -147,6 +147,7 @@ from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
+from dmbot.memory.sheet_questions import Questions as SheetQuestions
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import CharacterSheet, SheetStore
@@ -347,6 +348,7 @@ class Table:
     # last read, the schedule, and the loop that runs it (cancelled at the end).
     sheet_links: dict[str, CharacterSheet] = field(default_factory=dict)
     sheet_watch: SheetWatch = field(default_factory=SheetWatch)
+    sheet_questions: SheetQuestions = field(default_factory=SheetQuestions)
     watch_task: asyncio.Task[None] | None = None
     # FightBot's memory for this session and its loop (#1129).
     fight: FightState = field(default_factory=FightState)
@@ -953,6 +955,8 @@ class DMBot(commands.AutoShardedBot):
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
+            table.sheet_watch.drop_speaker(user_id)  # no sheet is read again for what they said
+            table.sheet_questions.drop_speaker(user_id)  # nor asked about it (#1128)
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
             if table.fix_notes.drop_speaker(user_id):  # their fixes leave the DM screen

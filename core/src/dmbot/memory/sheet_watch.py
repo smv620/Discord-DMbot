@@ -27,10 +27,18 @@ HEARD_MAX = 20  # changes kept per sheet waiting for a read; more is a flood, no
 PER_PASS = 2  # sheets started in one pass (every 20 s): a table never bursts at D&D Beyond
 
 
+@dataclass(frozen=True, slots=True)
+class Noted:
+    """A change heard, and who said it (so it goes if they stop being recorded)."""
+
+    heard: Heard
+    speaker: int
+
+
 @dataclass(slots=True)
 class _Sheet:
     next_periodic: float
-    pending: list[Heard] = field(default_factory=list)
+    pending: list[Noted] = field(default_factory=list)
     due_at: float | None = None  # when the changes waiting are to be read
     last_read: float = -1e9
     blocked_until: float = 0.0
@@ -51,7 +59,7 @@ class SheetWatch:
         for i, entity_id in enumerate(fresh):
             self._sheets[entity_id] = _Sheet(now + PERIOD_S * (i + 1) / (len(fresh) + 1))
 
-    def note(self, entity_id: str, heard: list[Heard], now: float) -> bool:
+    def note(self, entity_id: str, heard: list[Heard], now: float, speaker: int = 0) -> bool:
         """Something was said about this character. False if the sheet isn't tracked."""
         sheet = self._sheets.get(entity_id)
         if sheet is None or not heard:
@@ -59,8 +67,33 @@ class SheetWatch:
         if sheet.due_at is None:
             sheet.due_at = now + CHANGE_DELAY_S
         room = HEARD_MAX - len(sheet.pending)
-        sheet.pending.extend(heard[: max(room, 0)])
+        sheet.pending.extend(Noted(h, speaker) for h in heard[: max(room, 0)])
         return True
+
+    def drop_speaker(self, user_id: int) -> None:
+        """Someone stopped being recorded: what they said waits for no read, and a sheet left
+        with nothing waiting is not read for it."""
+        for sheet in self._sheets.values():
+            sheet.pending = [n for n in sheet.pending if n.speaker != user_id]
+            if not sheet.pending:
+                sheet.due_at = None
+
+    def periodic_due(self, entity_id: str, now: float) -> bool:
+        """Is the schedule (not a change) asking for this sheet?"""
+        sheet = self._sheets.get(entity_id)
+        return sheet is not None and now >= sheet.next_periodic
+
+    def defer(self, entity_id: str, heard: list[Noted]) -> None:
+        """The read was held back (the bot-wide limit): nothing is lost and nobody penalised.
+        The changes wait for the next pass."""
+        sheet = self._sheets.get(entity_id)
+        if sheet is None:
+            return
+        room = HEARD_MAX - len(sheet.pending)
+        sheet.pending = [*heard[: max(room, 0)], *sheet.pending][:HEARD_MAX]
+        sheet.last_read = -1e9
+        if heard:
+            sheet.due_at = sheet.due_at if sheet.due_at is not None else 0.0
 
     def due(self, now: float, *, in_combat: bool) -> list[str]:
         """The sheets to read now, oldest wish first. A sheet read, or refused, a moment ago
@@ -81,7 +114,7 @@ class SheetWatch:
                 out.append((sheet.next_periodic, entity_id))
         return [entity_id for _, entity_id in sorted(out)][:PER_PASS]
 
-    def take(self, entity_id: str, now: float) -> list[Heard]:
+    def take(self, entity_id: str, now: float) -> list[Noted]:
         """A read is starting: the changes it covers, and the time counts as a read."""
         sheet = self._sheets.get(entity_id)
         if sheet is None:
@@ -97,7 +130,7 @@ class SheetWatch:
             sheet.blocked_until = 0.0
             sheet.next_periodic = now + PERIOD_S
 
-    def read_failed(self, entity_id: str, now: float, heard: list[Heard]) -> None:
+    def read_failed(self, entity_id: str, now: float, heard: list[Noted]) -> None:
         """D&D Beyond refused or errored: wait twice as long as last time (at most 30
         minutes). The changes that were to be checked go back, to be read after the wait."""
         sheet = self._sheets.get(entity_id)

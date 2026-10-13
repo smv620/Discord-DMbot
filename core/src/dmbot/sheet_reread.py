@@ -18,12 +18,11 @@ from typing import Any
 
 import discord
 
-from dmbot.memory import sheet_changes, sheet_checks, sheets
+from dmbot.memory import sheet_changes, sheet_checks, sheet_questions, sheets
 from dmbot.memory.sheet_store import CharacterSheet
 
 log = logging.getLogger(__name__)
 
-MAX_QUESTIONS = 3  # in one message: a long list of questions is a chore, not a courtesy
 TICK_S = 20  # how often the watch looks for sheets that are due
 OPEN_LABEL = "Open on D&D Beyond"
 _FIRST_PERSON = re.compile(r"^(?:and |so |ok |okay )?(?:i|i'm|i am|i've)\b", re.IGNORECASE)
@@ -56,12 +55,12 @@ def note_line(table: Any, user_id: int, line: str) -> None:
         if len(named) == 1:  # more than one, or none: unclear
             by_character.setdefault(named[0], []).append(h)
     for entity_id, changes in by_character.items():
-        table.sheet_watch.note(entity_id, changes, now)
+        table.sheet_watch.note(entity_id, changes, now, user_id)
 
 
 async def run(bot: Any, table: Any) -> None:
-    """The loop for one session: every few seconds, read the sheets that are due. Ends with
-    the session."""
+    """The loop for one session: every few seconds, read the sheets that are due and send
+    the questions that are ready. Ends with the session."""
     while bot.tables.get(table.guild_id) is table:
         await asyncio.sleep(TICK_S)
         if not table.listening or table.campaign_id is None or bot.sheets is None:
@@ -72,14 +71,22 @@ async def run(bot: Any, table: Any) -> None:
             log.error("Sheet re-reads: a pass failed (%s)", type(exc).__name__)
 
 
+async def _in_combat(bot: Any, table: Any) -> bool:
+    return bot.clocks is not None and bool(
+        await bot.clocks.in_combat(table.guild_id, table.campaign_id)
+    )
+
+
 async def tick(bot: Any, table: Any) -> None:
     now = time.monotonic()
+    if table.sheet_questions.any_waiting():
+        await _flush(bot, table, now)
     # Most ticks have nothing due: look at the clock (a database read) only when something is.
     if not table.sheet_watch.due(now, in_combat=False):
         return
-    in_combat = bot.clocks is not None and await bot.clocks.in_combat(
-        table.guild_id, table.campaign_id
-    )
+    if sheets.wait_time() > 0.0:
+        return  # D&D Beyond is paused or the bot-wide limit is full: wait, penalise no one
+    in_combat = await _in_combat(bot, table)
     due = table.sheet_watch.due(now, in_combat=in_combat)
     if not due:
         return
@@ -87,6 +94,8 @@ async def tick(bot: Any, table: Any) -> None:
         for entity_id in due:
             if bot.tables.get(table.guild_id) is not table or not table.listening:
                 break
+            if sheets.wait_time() > 0.0:
+                break  # the limit filled up during the pass
             await reread(bot, table, entity_id, client)
 
 
@@ -95,21 +104,41 @@ async def reread(bot: Any, table: Any, entity_id: str, client: Any) -> None:
     if sheet is None or sheet.character is None:
         return
     now = time.monotonic()
-    heard = table.sheet_watch.take(entity_id, now)
+    periodic = table.sheet_watch.periodic_due(entity_id, now)
+    noted = table.sheet_watch.take(entity_id, now)
+    # Consent is checked again here: a speaker may have stopped being recorded since they
+    # were heard. If every change waiting was theirs and the schedule isn't asking, no read.
+    heard = [n.heard for n in noted if bot.consent.has_consent(table.guild_id, n.speaker)]
+    speakers = {n.speaker for n in noted if bot.consent.has_consent(table.guild_id, n.speaker)}
+    if noted and not heard and not periodic:
+        return
     try:
         snapshot = await sheets.fetch(sheet.character, session=client)
     except sheets.SheetError as exc:
-        table.sheet_watch.read_failed(entity_id, now, heard)
+        if exc.limited:  # D&D Beyond (or our own limit) said wait: not this sheet's fault
+            table.sheet_watch.defer(entity_id, noted)
+            log.info(
+                "Sheet re-read of entry %s held back (%s); every sheet waits",
+                entity_id,
+                exc.status or "busy",
+            )
+            return
+        table.sheet_watch.read_failed(entity_id, now, noted)
         reason = "not public" if exc.refused else "unreachable"
         log.info("Sheet re-read of entry %s failed (%s); waiting", entity_id, reason)
         return
     except Exception as exc:
-        table.sheet_watch.read_failed(entity_id, now, heard)
+        table.sheet_watch.read_failed(entity_id, now, noted)
         log.error("Sheet re-read of entry %s failed (%s)", entity_id, type(exc).__name__)
         return
-    kept = await bot.sheets.save(
-        table.guild_id, table.campaign_id, entity_id, snapshot, int(time.time()), url=sheet.url
-    )
+    try:
+        kept = await bot.sheets.save(
+            table.guild_id, table.campaign_id, entity_id, snapshot, int(time.time()), url=sheet.url
+        )
+    except Exception as exc:  # never the text: it can quote a row
+        table.sheet_watch.read_failed(entity_id, now, noted)
+        log.error("Sheet re-read of entry %s couldn't be kept (%s)", entity_id, type(exc).__name__)
+        return
     if not kept:  # unlinked or relinked while it was being read: stop watching it
         table.sheet_links.pop(entity_id, None)
         table.sheet_watch.track(list(table.sheet_links), now)
@@ -129,58 +158,126 @@ async def reread(bot: Any, table: Any, entity_id: str, client: Any) -> None:
     )
     if before != after:
         bot.sheets_changed(table.guild_id, table.campaign_id)  # new names for the hints
-    # Who plays it, and whether they want questions, as stored now (not as loaded at the start
-    # of the session): a character given to someone else gets nothing about the old sheet.
+    # Who plays it now, and whether they want questions, as stored now (not as loaded at the
+    # start of the session): a character given to someone else gets nothing about the old one.
     fresh = await bot.sheets.sheet(table.guild_id, table.campaign_id, entity_id)
     if fresh is None or fresh.played_by is None or fresh.url is None:
         return
     if bot.tables.get(table.guild_id) is not table or not table.listening:
         return  # the session ended meanwhile
-    await _questions(bot, table, fresh, heard, before, after)
-    await _card(bot, table, fresh, before, after)
+    _hold_questions(table, fresh, heard, speakers, before, after)
+    await _hold_card(bot, table, fresh, before, after)
+    await _flush(bot, table, time.monotonic())
 
 
-async def _questions(
-    bot: Any,
+def _hold_questions(
     table: Any,
     sheet: CharacterSheet,
     heard: list[sheet_changes.Heard],
+    speakers: set[int],
     before: dict[str, Any] | None,
     after: dict[str, Any],
 ) -> None:
-    """Ask the player, privately and once per change, about what the sheet doesn't show."""
-    questions = [q for h in heard if (q := sheet_changes.mismatch(h, before, after, sheet.name))]
-    if not questions or sheet.played_by is None or sheet.url is None or not sheet.asks:
-        return  # nothing to ask, or they turned the questions off
-    view = discord.ui.View(timeout=None)
-    view.add_item(
-        discord.ui.Button(label=OPEN_LABEL, style=discord.ButtonStyle.link, url=sheet.url)
-    )
-    text = "\n".join(list(dict.fromkeys(questions))[:MAX_QUESTIONS])  # the same one once
-    text += "\nTurn these questions off any time in 📜 My character sheet. Only you see this."
-    await _dm(bot, sheet.played_by, text, view)
+    """Put what the sheet doesn't show on the player's list of questions (sent later, rarely).
+    Damage and healing of the same size cancel out; nothing is asked about those."""
+    if sheet.played_by is None or sheet.url is None or not sheet.asks:
+        return
+    speaker = next(iter(speakers), 0)
+    for h in sheet_changes.net(heard):
+        text = sheet_changes.mismatch(h, before, after, sheet.name)
+        if text:
+            table.sheet_questions.add(
+                sheet.played_by,
+                sheet_questions.Waiting(
+                    sheet.entity_id,
+                    (h.kind, h.amount, h.condition),
+                    text,
+                    sheet_changes.shown(after),
+                    speaker,
+                    sheet.url,
+                ),
+            )
 
 
-async def _card(
+async def _hold_card(
     bot: Any,
     table: Any,
     sheet: CharacterSheet,
     before: dict[str, Any] | None,
     after: dict[str, Any],
 ) -> None:
-    """The status card (#1124), but only when a part that was ✅ is now ⚠️ or ⛔."""
+    """The status card (#1124) waits for a quiet moment, and only when a part that was ✅ is
+    now ⚠️ or ⛔."""
     if sheet.played_by is None or before is None or before == after:
         return
-    from dmbot.ui import sheets as sheets_ui
-
     campaign = await bot.campaigns.get(table.guild_id, table.campaign_id)
     target, fallback = (
-        (campaign.target_ruleset, campaign.fallback_ruleset) if campaign else ("2024", "none")
+        (campaign.target_ruleset, campaign.fallback_ruleset)
+        if campaign
+        else sheet_checks.NO_CAMPAIGN_RULESETS
     )
-    if not sheet_checks.got_worse(before, after, target=target, fallback=fallback):
+    if sheet_checks.got_worse(before, after, target=target, fallback=fallback):
+        table.sheet_questions.hold_card(sheet.played_by, after)
+
+
+async def _flush(bot: Any, table: Any, now: float) -> None:
+    """Send what is ready: each player's waiting questions as one message (not in combat, at
+    most one every 15 minutes), and a waiting status card (not in combat)."""
+    questions: sheet_questions.Questions = table.sheet_questions
+    players = {*questions.waiting, *questions.cards}
+    if not players:
         return
-    card = await sheets_ui.status_card(bot, table.guild_id, table.campaign_id, after)
-    await _dm(bot, sheet.played_by, card, None)
+    if await _in_combat(bot, table):
+        return  # nothing is sent during a fight; it all waits
+    campaign = await bot.campaigns.get(table.guild_id, table.campaign_id)
+    for player in players:
+        if bot.tables.get(table.guild_id) is not table or not table.listening:
+            return
+        if not bot.consent.has_consent(table.guild_id, player):
+            continue
+
+        def shown_now(entity_id: str) -> tuple[Any, ...] | None:
+            have = table.sheet_links.get(entity_id)
+            return None if have is None or have.sheet is None else sheet_changes.shown(have.sheet)
+
+        ready = questions.ready(player, now, in_combat=False, shown_now=shown_now)
+        if ready:
+            await _ask(bot, table, player, ready, campaign)
+        card = questions.take_card(player)
+        if card is not None:
+            from dmbot.ui import sheets as sheets_ui
+
+            text = await sheets_ui.status_card(bot, table.guild_id, table.campaign_id, card)
+            await _dm(bot, player, text, None)
+
+
+async def _ask(
+    bot: Any,
+    table: Any,
+    player: int,
+    ready: list[sheet_questions.Waiting],
+    campaign: Any,
+) -> None:
+    """One private message with the questions, naming the campaign (a player may be in two
+    servers) and with the Open on D&D Beyond link. Not if they turned the questions off or no
+    longer play the character."""
+    kept: list[sheet_questions.Waiting] = []
+    for w in ready:
+        fresh = await bot.sheets.sheet(table.guild_id, table.campaign_id, w.entity_id)
+        if fresh is not None and fresh.asks and fresh.played_by == player:
+            kept.append(w)
+    if not kept:
+        return
+    where = f" in **{discord.utils.escape_markdown(campaign.name)}**" if campaign else ""
+    view = discord.ui.View(timeout=None)
+    view.add_item(
+        discord.ui.Button(label=OPEN_LABEL, style=discord.ButtonStyle.link, url=kept[0].url)
+    )
+    text = f"📜 About your D&D Beyond sheet{where}:\n" + "\n".join(
+        dict.fromkeys(w.text for w in kept)
+    )
+    text += "\nTurn these questions off any time in 📜 My character sheet. Only you see this."
+    await _dm(bot, player, text, view)
 
 
 async def _dm(bot: Any, user_id: int, text: str, view: discord.ui.View | None) -> None:

@@ -50,8 +50,9 @@ TELL_LABEL = "Type in my character"
 DOC_LABEL = "Use a document link"  # any public web page or PDF link (#1125)
 FILE_LABEL = "Upload my sheet file"  # a Word, PDF or text file, kept only as names and numbers
 FORGET_LABEL = "Forget my sheet"
-QUESTIONS_ON = "Sheet questions: on"  # DMbot may ask when D&D Beyond doesn't match what was said
-QUESTIONS_OFF = "Sheet questions: off"
+# The button says what it does, not what is set now (#1171): pressing "Turn off" turns off.
+QUESTIONS_ON = "Turn sheet questions off"  # shown while DMbot may ask
+QUESTIONS_OFF = "Turn sheet questions on"
 QUESTIONS_NOW_ON = (
     "✅ DMbot may ask you, privately, when your D&D Beyond sheet doesn't show what was said at "
     "the table."
@@ -260,7 +261,7 @@ async def status_card(
     target, fallback = (
         (campaign.target_ruleset, campaign.fallback_ruleset)
         if campaign is not None
-        else ("2024", "none")
+        else sheet_checks.NO_CAMPAIGN_RULESETS
     )
     return sheet_checks.card(snapshot, target=target, fallback=fallback, escape=_md)
 
@@ -669,7 +670,11 @@ class SheetPanel(_Menu):
         if not await _still_member(interaction, self.guild_id):
             return
         c = self.character
-        turn_on = not self.asks
+        # The stored value, not what the panel showed when it was drawn: it may have changed.
+        current = await store.sheet(
+            self.guild_id, c.campaign_id, c.entity_id, player=interaction.user.id
+        )
+        turn_on = not (current.asks if current is not None else bool(self.asks))
         if await store.set_questions(
             self.guild_id, c.campaign_id, c.entity_id, interaction.user.id, turn_on
         ):
