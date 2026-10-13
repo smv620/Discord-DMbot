@@ -490,9 +490,9 @@ class Views(unittest.IsolatedAsyncioTestCase):
         again.client.sheets.save.assert_not_awaited()
         self.assertIn(ui.CHANGED_SINCE, self.told(again))
         # A form from the view after the save starts from it and goes through.
-        edit = self.it(sheet_of(saved, linked=False))
+        edit = self.it(sheet_of(shown.snapshot, linked=False))
         current = ui.SectionForm(GUILD, CHARACTER, sheet_view.BY_KEY["skills"], shown.snapshot)
-        current._inputs["trained"]._value = "Perception, Stealth"
+        current._inputs["trained"]._value = "Perception"
         await current.on_submit(edit)
         edit.client.sheets.save.assert_awaited_once()
 
