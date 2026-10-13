@@ -19,7 +19,7 @@ from dmbot.memory import sheet_changes as changes
 from dmbot.memory import sheet_checks, sheets
 from dmbot.memory import sheet_watch as watch
 from dmbot.memory.sheet_changes import Heard
-from dmbot.memory.sheet_store import CharacterSheet
+from dmbot.memory.sheet_store import CharacterSheet, PlayerCharacter
 from dmbot.memory.sheet_watch import SheetWatch
 from tests.test_memory_store import GUILD_A
 from tests.test_sheet_store import CHARACTER, PLAYER, SheetTest
@@ -293,8 +293,13 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         user = SimpleNamespace(send=AsyncMock())
         sent_to: list[int] = []
 
+        def get_user(uid: int) -> Any:
+            sent_to.append(uid)
+            return user
+
         async def stored(guild_id: int, campaign_id: str, entity_id: str) -> CharacterSheet:
-            return replace(table.sheet_links[entity_id], asks=asks, played_by=played_by)
+            current: CharacterSheet = table.sheet_links[entity_id]
+            return replace(current, asks=asks, played_by=played_by)
 
         return SimpleNamespace(
             tables={GUILD: table},
@@ -306,7 +311,7 @@ class Runner(unittest.IsolatedAsyncioTestCase):
                 )
             ),
             sheets_changed=MagicMock(),
-            get_user=lambda uid: sent_to.append(uid) or user,
+            get_user=get_user,
             sent_to=sent_to,
             fetch_user=AsyncMock(return_value=user),
             user=user,
@@ -526,7 +531,7 @@ class Switch(SheetTest):
     async def test_the_panel_shows_the_switch_only_for_a_dndbeyond_sheet(self) -> None:
         from dmbot.ui import sheets as ui
 
-        pc = ui.PlayerCharacter(self.c, "C", self.pc, "Testa")
+        pc = PlayerCharacter(self.c, "C", self.pc, "Testa")
 
         def labels(view: discord.ui.View) -> list[str]:
             return [str(getattr(i, "label", "")) for i in view.children]
