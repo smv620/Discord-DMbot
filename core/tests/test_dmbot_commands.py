@@ -367,7 +367,6 @@ class StartAnswersWithStarting(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_press_is_answered_with_starting_not_a_bare_defer(self) -> None:
         gate = asyncio.Event()
-        shown_while_waiting: list[Any] = []
 
         async def start(*_: Any, **__: Any) -> tuple[bool, str]:
             await gate.wait()
@@ -382,7 +381,6 @@ class StartAnswersWithStarting(unittest.IsolatedAsyncioTestCase):
         call = it.response.edit_message.await_args
         self.assertIn("Starting", call.kwargs["content"])
         self.assertIn("<#55>", call.kwargs["content"])
-        shown_while_waiting.append(call.kwargs["view"])
         self.assertIs(call.kwargs["view"], picker)
         # Nothing pressable and nothing that says "Start listening" while it works.
         self.assertTrue(picker.start_button.disabled)
@@ -412,6 +410,46 @@ class StartAnswersWithStarting(unittest.IsolatedAsyncioTestCase):
             it.followup.send.await_args.args[0], "You've used all your hours this month."
         )
         self.assertFalse(picker.is_finished())
+
+    async def test_a_double_press_cannot_bring_the_picker_back_over_listening(self) -> None:
+        gate = asyncio.Event()
+        calls = 0
+
+        async def start(*_: Any, **__: Any) -> tuple[bool, str]:
+            nonlocal calls
+            calls += 1
+            await gate.wait()
+            return True, "🎙️ Listening to <#55>."
+
+        picker, first, _ = self.press(start)
+        second = fake_interaction(SimpleNamespace(start_campaign_session=start))  # type: ignore[arg-type]
+        second.edit_original_response = AsyncMock()
+        pressing = asyncio.create_task(picker._start(first))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        await picker._start(second)  # the second press while the first is starting
+        gate.set()
+        await pressing
+        self.assertEqual(calls, 1)  # only one start
+        self.assertTrue(second.response.deferred)
+        second.edit_original_response.assert_not_awaited()
+        # And a later failure on a finished picker puts nothing back.
+        await picker._show_picker_again(first)
+        self.assertIsNone(first.edit_original_response.await_args.kwargs["view"])
+
+    async def test_a_failed_first_edit_leaves_the_picker_usable(self) -> None:
+        picker, it, _ = self.press(AsyncMock())
+        it.response.edit_message = AsyncMock(side_effect=discord.NotFound(MagicMock(), "gone"))
+        with self.assertRaises(discord.NotFound):
+            await picker._start(it)
+        self.assertFalse(picker.start_button.disabled)
+        self.assertEqual(picker.start_button.label, "▶ Start listening")
+
+    async def test_a_picker_that_cannot_be_shown_again_is_logged_not_swallowed(self) -> None:
+        picker, it, _ = self.press(AsyncMock(return_value=(False, "No.")))
+        it.edit_original_response = AsyncMock(side_effect=discord.HTTPException(MagicMock(), "x"))
+        with self.assertLogs("dmbot.ui.dmbot_commands", "WARNING"):
+            await picker._start(it)
 
     async def test_an_error_never_leaves_it_on_starting(self) -> None:
         picker, it, seen = self.press(AsyncMock(side_effect=RuntimeError("voice down")))

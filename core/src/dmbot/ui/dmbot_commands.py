@@ -53,7 +53,9 @@ Handler = Callable[[discord.Interaction], Awaitable[None]]
 
 
 RESTORE_FAILED = "Something went wrong, so nothing was restored. Run `/dmbot restore` again."
-START_FAILED = "Couldn't start. Press ▶ Start listening to try again."
+START_FAILED = (
+    "Couldn't start. If this message doesn't say Listening, press ▶ Start listening again."
+)
 STARTING = "⏳ Starting in {channel}… the DM screen will be ready in a moment."
 STOP_COMMAND_FAILED = "Something went wrong stopping DMbot. Please try `/dmbot stop` again."
 
@@ -427,7 +429,8 @@ class VoicePicker(_Menu):
         self.campaign = campaign
         self.channel_id = default_id
         # The words above the picker, kept so it can be shown again after a failed start.
-        self.text = ""
+        self.text = "**Which voice channel is the table in?**"
+        self._starting = False  # a second press while one is running does nothing
         default = (
             [discord.SelectDefaultValue(id=default_id, type=discord.SelectDefaultValueType.channel)]
             if default_id is not None
@@ -464,11 +467,15 @@ class VoicePicker(_Menu):
 
     async def _show_picker_again(self, interaction: discord.Interaction) -> None:
         """Give the picker back, enabled, once the outcome is known."""
+        if self.is_finished():
+            return  # a start already succeeded: never put the picker back over "Listening"
         self._busy(False)
-        with contextlib.suppress(discord.HTTPException):
+        try:
             await interaction.edit_original_response(
-                content=self.text or None, view=self, allowed_mentions=NO_PINGS
+                content=self.text, view=self, allowed_mentions=NO_PINGS
             )
+        except discord.HTTPException:
+            log.warning("Couldn't show the voice picker again after a start", exc_info=True)
 
     async def _start(self, interaction: discord.Interaction) -> None:
         if self.channel_id is None:
@@ -477,12 +484,24 @@ class VoicePicker(_Menu):
         # Starting takes a few seconds (database, voice service, DM screen setup). The answer
         # itself is the "starting" state: a bare defer() on a button changes nothing, so
         # Discord shows the old, pressable button again until the work is done (#1115).
+        if self._starting:
+            # A double press: the first is already starting. Answer and do nothing, so the
+            # second can't bring the picker back over the first one's "Listening" line.
+            if not interaction.response.is_done():
+                await interaction.response.defer()
+            return
+        self._starting = True
         self._busy(True)
-        await interaction.response.edit_message(
-            content=STARTING.format(channel=f"<#{self.channel_id}>"),
-            view=self,
-            allowed_mentions=NO_PINGS,
-        )
+        try:
+            await interaction.response.edit_message(
+                content=STARTING.format(channel=f"<#{self.channel_id}>"),
+                view=self,
+                allowed_mentions=NO_PINGS,
+            )
+        except Exception:
+            self._starting = False
+            self._busy(False)  # nothing changed on screen, so the view mustn't claim it did
+            raise
         self.origin = interaction  # so a timeout can still edit this message
         try:
             ok, message = await _bot(interaction).start_campaign_session(
@@ -491,6 +510,7 @@ class VoicePicker(_Menu):
         except Exception:
             # Never leave it on "Starting…": the picker comes back with try-again words.
             log.exception("Starting a session failed")
+            self._starting = False
             await self._show_picker_again(interaction)
             await _tell(interaction, START_FAILED)
             return
@@ -508,6 +528,7 @@ class VoicePicker(_Menu):
             view = None
             if message == hours.NO_OWNER_ASK:
                 view = handover.take_on_only_view(self.campaign.id)
+            self._starting = False
             await self._show_picker_again(interaction)  # only now that the outcome is known
             await _tell(interaction, message, view=view)
 
