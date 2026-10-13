@@ -555,14 +555,15 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
-        for now in (NOW, NOW + 299.0, NOW + 301.0):
+        start = (int(NOW) // 300 + 1) * 300.0  # the first second of a window
+        for now in (start, start + 299.0, start + 301.0):  # its first, its last, the next's
             provider = StripeProvider(CONFIG, SECRET, transport=self.http, clock=lambda n=now: n)
             await provider.extra_hours_checkout_url(
                 user_id=USER, email=None, return_url="https://dmbot.example/account"
             )
             expires = int(self.http.calls[-1][2]["expires_at"])
-            self.assertGreaterEqual(expires - now, 1800)
-            self.assertLessEqual(expires - now, 1800 + 300)
+            self.assertGreaterEqual(expires - now, 1800 + 60)  # a margin even in the last second
+            self.assertLessEqual(expires - now, 1800 + 120 + 300)
         keys = self.http.keys
         self.assertEqual(len(keys), 3)
         self.assertNotEqual(keys[0], keys[2])  # five minutes later: a new checkout is allowed

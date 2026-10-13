@@ -2756,7 +2756,7 @@ stays, and so does the meaning of each event kind:
   full. Each checkout request carries an **idempotency key** (a hash of the request) and the same
   expiry for every request in a five-minute window, so a double-click or a retry after a timeout
   gets the same session instead of a second live one (two completed checkouts would be two
-  subscriptions). The session expires 30 to 35 minutes after it is made (#1122).
+  subscriptions). The session expires 32 to 37 minutes after it is made (#1122).
 - **A plan change while a cancel is pending** (decided on #1122, not two events): Stripe sends
   one update, which DMbot treats as the cancel. Only the end date is stored, and the new plan
   applies if they resume or resubscribe. It is logged ("only the end date is stored") so the

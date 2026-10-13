@@ -43,7 +43,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -64,11 +64,22 @@ TOLERANCE_SECONDS = 300
 # the events. Checkout Sessions with Managed Payments are supported from this release.
 API_VERSION = "2026-04-22.dahlia"
 
+
 # (method, path, form fields or None) -> (HTTP status, parsed JSON or None). Faked in tests.
 # Stripe takes form-encoded bodies; nested fields are written the way it reads them
 # ("line_items[0][price]").
-# A checkout also passes an idempotency key (see `StripeProvider._checkout`); other calls don't.
-Transport = Callable[..., Awaitable["tuple[int, Any]"]]
+class Transport(Protocol):
+    """The calls to Stripe. A checkout also passes an idempotency key (see
+    `StripeProvider._checkout`); other calls don't."""
+
+    def __call__(
+        self,
+        method: str,
+        path: str,
+        form: dict[str, str] | None,
+        idempotency_key: str | None = None,
+    ) -> Awaitable[tuple[int, Any]]: ...
+
 
 _CUSTOMER = re.compile(r"cus_[A-Za-z0-9]+")
 _SUBSCRIPTION = re.compile(r"sub_[A-Za-z0-9]+")
@@ -186,6 +197,8 @@ class StripeProvider:
         # already made. The expiry is the window's end plus Stripe's 30-minute minimum, so it
         # is the same for every call in the window (a different one under the same key would be
         # refused) and an abandoned page stops working soon after.
+        # (Stripe keeps the first answer under a key, a failure too: a retry in the same window
+        # gets the same failure, and one in the next window starts afresh.)
         window = int(self._clock() // IDEMPOTENCY_WINDOW_S)
         form["expires_at"] = str((window + 1) * IDEMPOTENCY_WINDOW_S + CHECKOUT_LIFETIME_S)
         key = _idempotency_key(form)
@@ -476,7 +489,10 @@ class StripeProvider:
 EXTRA_HOURS_ITEM = "extra_hours"
 
 IDEMPOTENCY_WINDOW_S = 300  # one checkout request, however many times it is sent in this long
-CHECKOUT_LIFETIME_S = 1800  # Stripe's minimum for a Checkout Session's expiry
+# Stripe's minimum for a Checkout Session's expiry is 30 minutes from when it gets the request, by
+# its clock: two minutes more, so a request in the last second of a window, network time and a
+# little clock difference never land under it.
+CHECKOUT_LIFETIME_S = 1800 + 120
 
 
 def _idempotency_key(form: Mapping[str, str]) -> str:
