@@ -42,9 +42,10 @@ class DmWords(unittest.TestCase):
         for line in (
             "the next morning you wake up",
             "The next morning.",
-            "next morning, the mist is gone",
-            "at dawn the camp stirs",
-            "At dawn, the camp stirs",
+            "The next morning, the party wakes",
+            "At dawn, you break camp",
+            "Okay so, at dawn you wake",
+            "at dawn",
         ):
             self.assertEqual(phrases.find_clock(line), Said("dawn"), line)
 
@@ -100,6 +101,10 @@ class DmWords(unittest.TestCase):
             "An hour, then ten minutes later",
             "after your long rest you hear a noise",
             "a hours later",
+            # An NPC talking, not the narration: the cut needs the narration's subject.
+            "At dawn, meet me at the gate",
+            "The next morning, the guards will come",
+            "next morning, the mist is gone",
         ):
             said = phrases.find_clock(line)
             if line == "The next morning was cold":
@@ -153,6 +158,17 @@ class DmWords(unittest.TestCase):
         ]
         self.assertEqual(keys, ["long", "long", "+60", "+120"])
 
+    def test_words_after_the_amount_do_not_cancel_it_and_two_fillers_are_allowed(self) -> None:
+        self.assertEqual(
+            phrases.find_clock("An hour later, you can see the tower"), Said("advance", 60)
+        )
+        self.assertEqual(phrases.find_clock("okay so, an hour later"), Said("advance", 60))
+        self.assertIsNone(phrases.find_clock("if an hour later you can"))
+
+    def test_a_finish_is_marked_so_it_is_not_a_second_rest(self) -> None:
+        self.assertTrue(phrases.find_clock("you finish your long rest").ends)  # type: ignore[union-attr]
+        self.assertFalse(phrases.find_clock("we take a long rest").ends)  # type: ignore[union-attr]
+
     def test_the_old_start_phrases_still_work_and_still_refuse(self) -> None:
         self.assertEqual(phrases.find("We take a short rest."), "short")
         self.assertIsNone(phrases.find("let's take a short rest"))
@@ -198,6 +214,18 @@ _message_ids = itertools.count(1000)  # every question is its own message
 class AtTheTableMore(AtTheTable):
     """What the bot does with the words: the DM's move the clock, a player's ask the DM."""
 
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        plain = self.bot.post_message
+
+        async def post_message(channel_id: int, text: str, view: Any = None) -> Any:
+            await plain(channel_id, text, view)
+            # A suggestion that was posted is a message; a failed post is None (and frees the
+            # slot for the next ask). Everything else keeps the harness's plain None.
+            return SimpleNamespace(id=1) if "suggests" in text else None
+
+        self.bot.post_message = post_message  # type: ignore[method-assign]
+
     async def say(self, user: int, line: str) -> None:
         await self.bot._note_clock_phrase(cast(Any, self.table), user, line)
 
@@ -212,6 +240,42 @@ class AtTheTableMore(AtTheTable):
         await self.say(DM, "we take a long rest")
         await self.say(DM, "you finish your long rest")
         self.assertEqual(await self.minute(), NOON4 + 480)
+
+    async def test_a_rest_then_an_amount_it_covers_moves_once(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "you take a short rest")
+        await self.say(DM, "an hour later, the door opens")
+        self.assertEqual(await self.minute(), NOON4 + 60)  # not 120
+
+    async def test_a_finish_of_the_same_rest_adds_nothing_however_late(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "we take a long rest")
+        self.bot.tables[GUILD_A].clock_said.clear()  # the five-minute window has long passed
+        table = cast(Any, self.table)
+        kind, took, minute, at = table.clock_spoken_rest
+        table.clock_spoken_rest = (kind, took, minute, at - 3600)
+        await self.say(DM, "you finish your long rest")
+        self.assertEqual(await self.minute(), NOON4 + 480)
+
+    async def test_an_amount_adds_only_what_the_rest_did_not_cover(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "we take a long rest")
+        await self.say(DM, "ten hours later")
+        self.assertEqual(await self.minute(), NOON4 + 600)  # 8 h for the rest, 2 h on top
+
+    async def test_after_a_button_the_clock_is_taken_as_said(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "we take a short rest")
+        await self.press("m10")  # the DM moved it by hand: the rest no longer covers anything
+        await self.say(DM, "an hour later")
+        self.assertEqual(await self.minute(), NOON4 + 60 + 10 + 60)
+
+    async def test_dawn_when_already_at_dawn_moves_and_says_nothing(self) -> None:
+        await self.press("set", set_to=game.from_day_and_time(4, 6))
+        before = len(self.posted)
+        await self.say(DM, "the next morning you wake up")
+        self.assertEqual(await self.minute(), game.from_day_and_time(4, 6))
+        self.assertEqual(len(self.posted), before)
 
     async def test_the_next_morning_is_the_same_as_skip_to_dawn(self) -> None:
         await self.press("set", set_to=NOON4)
@@ -258,9 +322,9 @@ class AtTheTableMore(AtTheTable):
         views: list[Any] = []
         original = self.bot.post_message
 
-        async def record(channel_id: int, text: str, view: Any = None) -> None:
+        async def record(channel_id: int, text: str, view: Any = None) -> Any:
             views.append(view)
-            await original(channel_id, text, view)
+            return await original(channel_id, text, view)
 
         self.bot.post_message = record  # type: ignore[method-assign]
         await self.say(PLAYER, "let's take a short rest")
@@ -279,6 +343,16 @@ class AtTheTableMore(AtTheTable):
         self.table.clock_suggested_at -= ui.SUGGEST_GAP_S + 1
         await self.say(PLAYER, "can we take a short rest")
         self.assertEqual(len(self.posted), 2)
+
+    async def test_a_suggestion_that_could_not_be_posted_frees_the_slot(self) -> None:
+        await self.press("set", set_to=NOON4)
+
+        async def failing(channel_id: int, text: str, view: Any = None) -> None:
+            return None
+
+        self.bot.post_message = failing  # type: ignore[method-assign]
+        await self.say(PLAYER, "let's take a short rest")
+        self.assertIsNone(self.table.clock_suggested_at)
 
     async def test_without_a_clock_a_suggestion_has_nothing_to_move_and_asks_nothing(self) -> None:
         await self.say(PLAYER, "let's take a short rest")
@@ -304,6 +378,23 @@ class AtTheTableMore(AtTheTable):
         self.assertIsNone(edit["view"])  # the question is closed
         self.assertIn("✅ Short rest, chosen by", edit["content"])
         self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])  # the Undo note
+
+    async def test_a_failed_press_does_not_say_the_rest_was_taken(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.campaigns import CampaignError
+
+        await self.press("set", set_to=NOON4)
+        it = self.interaction(DM)
+        it.message.id = 779
+        with patch.object(ui, "press", AsyncMock(side_effect=CampaignError("Not now."))):
+            await ui.SuggestionButton(self.a.id, "short", "yes").callback(it)
+        it.edit_original_response.assert_not_awaited()  # the buttons stay up
+        self.assertNotIn(779, ui._answered)
+        again = self.interaction(DM)
+        again.message.id = 779
+        await ui.SuggestionButton(self.a.id, "short", "yes").callback(again)
+        self.assertEqual(await self.minute(), NOON4 + 60)
 
     async def test_not_now_changes_nothing(self) -> None:
         await self.press("set", set_to=NOON4)

@@ -1977,6 +1977,13 @@ and any question, wish, condition or long line are ignored. **A player's suggest
 rest", "can we long rest?") moves nothing: it posts one DM-screen line, "Mira suggests a short rest", with
 **Short rest** and **Not now**, at most one per campaign every 5 minutes, and only once a clock is set; only
 a DM of the campaign can press them. The players' clock and rest/new-day lines (#1116) follow every change.
+**Never counted twice (Supervisor, 2026-10-13):** while the last clock change was a rest said at the table
+and the clock is still where it left it, a finish of the same kind adds nothing (however long ago), and an
+amount said soon after adds only what is more than the rest took ("you take a long rest", then "ten hours
+later" is +2 h on top). A button, an Undo or any other change forgets it. "The next morning" and "at dawn"
+count only as the narration's own cut ("At dawn, you…", "The next morning, the party…") or standing alone,
+never an NPC's line ("At dawn, meet me at the gate"). A press from a suggestion that fails says so and leaves
+the buttons up; the heard words are shown with Discord's markdown escaped.
 
 **DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
 DMbot is there to help the game move quickly, never to bog it down or distract. The

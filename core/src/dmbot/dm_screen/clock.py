@@ -390,39 +390,41 @@ _locks: dict[str, asyncio.Lock] = {}  # one press at a time per campaign, so the
 
 async def run_press(
     interaction: discord.Interaction, campaign_id: str, action: str, *, set_to: int | None = None
-) -> None:
-    """A press after the interaction was answered: change the clock, show it, say the lines."""
+) -> bool:
+    """A press after the interaction was answered: change the clock, show it, say the lines.
+    True if the clock was changed; a failure is told to the presser and returns False, so a
+    caller that says "done" can tell."""
     async with _locks.setdefault(campaign_id, asyncio.Lock()):
-        await _run_press(interaction, campaign_id, action, set_to)
+        return await _run_press(interaction, campaign_id, action, set_to)
 
 
 async def _run_press(
     interaction: discord.Interaction, campaign_id: str, action: str, set_to: int | None
-) -> None:
+) -> bool:
     client: Any = interaction.client
     guild = interaction.guild
     campaign = await client.campaigns.get(guild.id, campaign_id) if guild else None
     if campaign is None:
         await _reply(interaction, GONE)
-        return
+        return False
     try:
         result = await press(
             client, campaign.guild_id, campaign.id, interaction.user.id, action, set_to=set_to
         )
     except CampaignError as exc:
         await _reply(interaction, str(exc))
-        return
+        return False
     except Exception:
         log.exception("Couldn't change the game clock")
         await _reply(interaction, FAILED)
-        return
+        return False
     if result.after is None:
         await _reply(interaction, SET_FIRST)
-        return
+        return False
     stored = await client.clocks.get(campaign.guild_id, campaign.id)
     if stored is None:
         await _reply(interaction, FAILED)
-        return
+        return False
     message = await _show_here(interaction, client, campaign, stored)
     if message is None:
         await _reply(interaction, OFF_SCREEN)
@@ -445,6 +447,7 @@ async def _run_press(
         view.add_item(ClockUndoButton(campaign.id, undo_id(result.before, result.after)))
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(note, view=view, ephemeral=True)
+    return True
 
 
 def rest_note(action: str, clock: Clock, minutes: int | None = None) -> str:
@@ -652,8 +655,11 @@ class SuggestionButton(
                 if self.answer == "no"
                 else f"✅ {self.kind.capitalize()} rest, chosen by {who}."
             )
-            if self.answer == "yes":
-                await run_press(interaction, campaign.id, self.kind)
+            if self.answer == "yes" and not await run_press(interaction, campaign.id, self.kind):
+                # The press failed (and told the DM): never say the rest was taken, and keep
+                # the buttons up so the DM can try again.
+                _answered.discard(message_id)
+                return
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(
                     content=f"{asked}\n{ended}", view=None, allowed_mentions=NO_PINGS

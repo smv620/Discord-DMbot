@@ -366,6 +366,11 @@ class Table:
     # When a player's "let's take a rest" last became a question for the DM (monotonic
     # seconds): at most one every few minutes (#1117).
     clock_suggested_at: float | None = None
+    # The last clock change if it was a rest said at the table: (kind, minutes it moved the
+    # clock, the clock minute after it, monotonic seconds). A later "you finish your long
+    # rest" or "an hour later" that it already covers adds nothing (#1117). Dropped when the
+    # clock is no longer where the rest left it (a button, an Undo, another phrase).
+    clock_spoken_rest: tuple[str, int, int, float] | None = None
     resumed: bool = False  # picked up again after a restart
     announce_resume: bool = True  # post "listening again" when voice is back
     # Asked privately about recording (or reminded) this session: at most once each.
@@ -2767,10 +2772,13 @@ class DMBot(commands.AutoShardedBot):
         last = table.clock_said.get(said.key)
         if last is not None and now - last < CLOCK_PHRASE_GAP_S:
             return  # a rest said as starting and finishing, or the same words twice: once
-        table.clock_said[said.key] = now
         campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
         if campaign is None or user_id not in campaign.dm_user_ids:
             return
+        said = await self._less_what_a_rest_covers(table, campaign, said, now)
+        if said is None:
+            return
+        table.clock_said[said.key] = now
         try:
             result = await clock_screen.press(
                 self,
@@ -2783,9 +2791,18 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("The game clock couldn't take what was said at the table")
             return
-        if result.before is None or result.after is None:
+        if (
+            result.before is None
+            or result.after is None
+            or result.after.minute == result.before.minute
+        ):
             table.clock_said.pop(said.key, None)  # nothing moved: don't burn the window
-            return  # no clock set yet: nothing to move
+            return  # no clock set yet, or already there ("at dawn" at dawn): nothing to say
+        table.clock_spoken_rest = (
+            (said.action, result.after.minute - result.before.minute, result.after.minute, now)
+            if said.action in ("short", "long")
+            else None
+        )
         stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
         if stored is None:
             return
@@ -2798,11 +2815,36 @@ class DMBot(commands.AutoShardedBot):
             [
                 clock_screen.rest_note(said.action, result.after, said.minutes),
                 # What was heard, so the DM can tell a misheard line from a real one.
-                f"(heard: “{' '.join(line.split())[:80]}”)",
+                f"(heard: “{discord.utils.escape_markdown(' '.join(line.split())[:80])}”)",
                 *result.lines,
             ],
             clock_screen.undo_id(result.before, result.after),
         )
+
+    async def _less_what_a_rest_covers(
+        self, table: Table, campaign: Campaign, said: clock_phrases.Said, now: float
+    ) -> clock_phrases.Said | None:
+        """A rest said at the table, then its finish or an amount that it already covers, must
+        not move the clock twice (#1117). If the last clock change was a spoken rest and the
+        clock is still where it left it: a finish of the same kind adds nothing, however long
+        ago; an amount said soon after adds only what is more than the rest took. Anything
+        else, or a clock that has since moved, is taken as said."""
+        spoken = table.clock_spoken_rest
+        if spoken is None:
+            return said
+        kind, took, minute, at = spoken
+        stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
+        if stored is None or stored.clock.minute != minute:
+            table.clock_spoken_rest = None  # a button, an Undo or another phrase moved it
+            return said
+        if said.ends and said.action == kind:
+            return None
+        if said.action == "advance" and said.minutes is not None and now - at < CLOCK_PHRASE_GAP_S:
+            extra = said.minutes - took
+            if extra <= 0:
+                return None
+            return clock_phrases.Said("advance", extra)
+        return said
 
     async def _suggest_rest(self, table: Table, user_id: int, line: str) -> None:
         """A player's "let's take a short rest": one line on the DM screen with **Short rest**
@@ -2827,11 +2869,13 @@ class DMBot(commands.AutoShardedBot):
             table.clock_suggested_at = None  # nothing was asked: don't hold the next one off
             return
         name = discord.utils.escape_markdown(self.name_of(table.guild_id, user_id))
-        await self.post_message(
+        posted = await self.post_message(
             campaign.dm_screen_channel_id,
             f"🛌 {name} suggests a {kind} rest.",
             clock_screen.suggestion_view(campaign.id, kind),
         )
+        if posted is None:
+            table.clock_suggested_at = None  # the DM never saw it: don't hold the next one off
 
     def _check_house_file(self, campaign: Campaign, screen_id: int) -> None:
         """At a session start: read the campaign's linked house-rules file, if any, and put

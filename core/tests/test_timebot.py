@@ -359,6 +359,7 @@ class AtTheTable(Clocks):
             dm_user_ids=frozenset({DM, OTHER_DM}),
             clock_said={},
             clock_suggested_at=None,
+            clock_spoken_rest=None,
         )
         self.bot.tables[GUILD_A] = cast(Any, self.table)
 

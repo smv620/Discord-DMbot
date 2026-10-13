@@ -12,7 +12,7 @@ it only lets DMbot ask the DM with one button (`suggested_rest`).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 Rest = Literal["short", "long"]
@@ -29,6 +29,9 @@ class Said:
 
     action: Action
     minutes: int | None = None  # for "advance"
+    ends: bool = field(
+        default=False, compare=False
+    )  # a rest said as finishing ("you finish your long rest"), not starting
 
     @property
     def key(self) -> str:
@@ -116,16 +119,22 @@ _NUMBER_WORD = "|".join(
 # A time cut is how a scene starts: "Two hours later, the guards come." The words must open the
 # line (after "and", "then" or "so"), because anywhere else they tell the story ("he left the
 # next morning", "the guard returned ten minutes later"), which is not the clock moving.
-_OPENS = r"^(?:(?:and|then|so|okay|ok|alright)[, ]+)?"
+_OPENS = r"^(?:(?:and|then|so|okay|ok|alright|um|uh|well)[, ]+){0,2}"
 _AMOUNT = re.compile(
     rf"{_OPENS}(?P<n>\d{{1,4}}|{_NUMBER_WORD}|an|a|half an)\s+"
     r"(?P<unit>hours?|minutes?|mins?)\s+later\b",
     re.IGNORECASE,
 )
-_DAWN = re.compile(rf"{_OPENS}(?:(?:the\s+)?next\s+morning|at\s+dawn)\b", re.IGNORECASE)
+# The cut must be followed by the narration's subject ("At dawn, you...", "The next morning, the
+# party...") or stand alone as a sentence: "At dawn, meet me at the gate" is an NPC talking.
+_DAWN = re.compile(
+    rf"{_OPENS}(?:(?:the\s+)?next\s+morning|at\s+dawn)"
+    r"(?:[.!,]?$|,?\s+(?:you|your|you all|all of you|the party|the group|everyone|we)\b)",
+    re.IGNORECASE,
+)
 _SUGGESTS = re.compile(
     r"\b(?:let'?s|lets|can we|could we|should we|we should|we could|shall we|how about|"
-    r"why don'?t we|why not|we need|i think we (?:should|need)|can i get|i'?d like)\b"
+    r"we need|i think we (?:should|need)|can i get|i'?d like)\b"
     r"[^.?!]{0,30}?\b(short|long)\s+rest\b",
     re.IGNORECASE,
 )
@@ -177,10 +186,10 @@ def _number(word: str) -> int | None:
 def _amount(text: str) -> int | None:
     """Game minutes for "an hour later", "two hours later", "ten minutes later", "half an hour
     later"; None when it isn't one or is out of range (0, or more than 24 hours)."""
-    if _NOT_THE_TIME.search(text):
-        return None
     found = _AMOUNT.match(text)
-    if found is None:
+    # Only the words up to "later" can make it not a time: what follows is the scene ("An hour
+    # later, you can see the tower").
+    if found is None or _NOT_THE_TIME.search(text[: found.end()]):
         return None
     word, unit = found.group("n").lower(), found.group("unit").lower()
     hours = unit.startswith("hour")
@@ -206,7 +215,10 @@ def find_clock(line: str) -> Said | None:
     text = _clean(line)
     if text is None:
         return None
-    rest = find(text) or _finished(text)
+    rest = _finished(text)
+    if rest is not None:
+        return Said(rest, ends=True)
+    rest = find(text)
     if rest is not None:
         return Said(rest)
     if not _NOT_THE_TIME.search(text) and _DAWN.match(text):
