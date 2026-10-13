@@ -260,7 +260,7 @@ class Timers(DatabaseTest):
         )
         button = fx.EffectButton(self.a.id, effect.number, "more")
         with mock.patch.object(fx, "_show_clock", AsyncMock()):
-            await button.callback(interaction)
+            await button.callback(cast(Any, interaction))
         assert edit.await_args is not None
         note = edit.await_args.kwargs["content"]
         self.assertEqual(note, "⏳ Bless on Mira extended by 10 minutes (11 minutes in all).")
