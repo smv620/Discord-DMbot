@@ -12,7 +12,7 @@ import itertools
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -21,6 +21,7 @@ from dmbot.audio.segmenter import Segmenter
 from dmbot.bot import Table
 from dmbot.consent import TERMS_VERSION
 from dmbot.dm_screen import table_chat_panel as panel
+from dmbot.sidebar.service import Recent
 from dmbot.transcript import export
 from dmbot.transcript.models import Line, TranscriptSession
 from tests.test_timebot import (
@@ -107,6 +108,85 @@ class AtTheTableTyped(AtTheTable):
         stored = await self.clocks.get(GUILD_A, self.a.id)
         assert stored is not None
         return stored.clock.minute
+
+    async def test_a_flood_from_one_person_skips_the_listeners_but_stays_in_the_transcript(
+        self,
+    ) -> None:
+        asked: list[str] = []
+        cast(Any, self.bot.sidebar).ask_at_table = lambda t, u, text, typed=False: asked.append(
+            text
+        )
+        for i in range(table_chat.TYPED_PER_MINUTE + 5):
+            await self.hear(message(f"line {i}", author=PLAYER))
+        self.assertEqual(len(asked), table_chat.TYPED_PER_MINUTE)  # the rest never reached them
+        self.assertEqual(len(self.live.unsaved), table_chat.TYPED_PER_MINUTE + 5)  # all kept raw
+
+    async def test_lines_over_the_limit_stay_out_of_recent_and_the_rest_are_typed(self) -> None:
+        added: list[tuple[str, bool]] = []
+        original = Recent.add
+
+        def spy(this: Recent, user_id: int, text: str, now: float, *, typed: bool = False) -> None:
+            added.append((text, typed))
+            original(this, user_id, text, now, typed=typed)
+
+        with patch.object(Recent, "add", spy):
+            for i in range(table_chat.TYPED_PER_MINUTE + 5):
+                await self.hear(message(f"line {i}", author=PLAYER))
+        self.assertEqual(len(added), table_chat.TYPED_PER_MINUTE)  # the rest never got in
+        self.assertTrue(all(typed for _, typed in added))  # and FightBot only reads spoken lines
+        self.assertNotIn(f"line {table_chat.TYPED_PER_MINUTE}", [text for text, _ in added])
+        self.assertEqual(len(self.live.unsaved), table_chat.TYPED_PER_MINUTE + 5)  # all kept raw
+
+    async def test_one_persons_flood_does_not_silence_another(self) -> None:
+        await self.press("set", set_to=NOON4)
+        for i in range(table_chat.TYPED_PER_MINUTE + 5):
+            await self.hear(message(f"chatter {i}", author=PLAYER))
+        await self.hear(message("we take a long rest"))  # the DM, still heard
+        self.assertEqual(await self.minute(), NOON4 + 480)
+
+    async def test_a_flood_is_one_log_line_with_no_text(self) -> None:
+        with self.assertLogs("dmbot.bot", level="INFO") as logs:
+            for i in range(table_chat.TYPED_PER_MINUTE + 30):
+                await self.hear(message(f"secret text {i}", author=PLAYER))
+        floods = [r for r in logs.records if "flood" in r.getMessage()]
+        self.assertEqual(len(floods), 1)
+        self.assertNotIn("secret text", floods[0].getMessage())
+
+    async def test_the_cap_holds_real_waiting_checks_and_gives_places_back(self) -> None:
+        release = asyncio.Event()
+        started = 0
+
+        async def slow(table: Any, user_id: int, line: str) -> None:
+            nonlocal started
+            started += 1
+            await release.wait()
+
+        cast(Any, self.bot)._note_clock_phrase = slow
+        for i in range(table_chat.CLOCK_WAITING_MAX + 3):
+            self.bot._hear_typed(message(f"we wait {i}", author=PLAYER + i))
+        await asyncio.sleep(0)
+        self.assertEqual(started, table_chat.CLOCK_WAITING_MAX)
+        self.assertEqual(self.live.clock_waiting, table_chat.CLOCK_WAITING_MAX)
+        release.set()
+        await asyncio.gather(*list(self.bot._asking))
+        self.assertEqual(self.live.clock_waiting, 0)
+
+    async def test_speech_is_never_skipped_by_the_typed_cap(self) -> None:
+        await self.press("set", set_to=NOON4)
+        self.live.clock_waiting = table_chat.CLOCK_WAITING_MAX
+        self.bot._act_on_line(self.live, DM, "we take a long rest")  # spoken
+        await asyncio.gather(*list(self.bot._asking))
+        self.assertEqual(await self.minute(), NOON4 + 480)
+
+    async def test_clock_phrase_checks_waiting_at_once_are_capped(self) -> None:
+        self.live.clock_waiting = table_chat.CLOCK_WAITING_MAX
+        await self.press("set", set_to=NOON4)
+        await self.hear(message("we take a long rest"))
+        self.assertEqual(await self.minute(), NOON4)  # skipped while the cap is full
+        self.live.clock_waiting = 0
+        await self.hear(message("we take a long rest"))
+        self.assertEqual(await self.minute(), NOON4 + 480)
+        self.assertEqual(self.live.clock_waiting, 0)  # each finished check gives its place back
 
     async def test_a_typed_rest_from_the_dm_moves_the_clock_like_speech(self) -> None:
         await self.press("set", set_to=NOON4)
@@ -439,3 +519,24 @@ class Panel(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.set_table_chat.await_args.kwargs["channel_id"], EXTRA)
         await view.save(self.interaction(store), clear_channel=True)
         self.assertIsNone(store.set_table_chat.await_args.kwargs["channel_id"])
+
+
+class TypedRateRules(unittest.TestCase):
+    def test_twenty_a_minute_then_none_until_the_minute_is_up(self) -> None:
+        rate = table_chat.TypedRate()
+        self.assertTrue(all(rate.allow(1, 100.0 + i * 0.1) for i in range(20)))
+        self.assertFalse(rate.allow(1, 103.0))
+        self.assertTrue(rate.allow(1, 160.5))  # the first lines have aged out
+
+    def test_each_person_has_their_own_count(self) -> None:
+        rate = table_chat.TypedRate()
+        for _ in range(20):
+            rate.allow(1, 10.0)
+        self.assertFalse(rate.allow(1, 10.0))
+        self.assertTrue(rate.allow(2, 10.0))
+
+    def test_the_log_is_once_a_minute(self) -> None:
+        rate = table_chat.TypedRate()
+        self.assertTrue(rate.should_log(5.0))
+        self.assertFalse(rate.should_log(30.0))
+        self.assertTrue(rate.should_log(66.0))
