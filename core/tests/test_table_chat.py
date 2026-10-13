@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import itertools
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
@@ -33,6 +34,7 @@ from tests.test_timebot import (
 )
 
 VOICE, EXTRA, OTHER = 700, 701, 702
+_IDS = itertools.count(5000)
 
 
 class Rules(unittest.TestCase):
@@ -64,7 +66,9 @@ def message(
     interaction: object | None = None,
 ) -> Any:
     return SimpleNamespace(
+        id=next(_IDS),
         content=text,
+        clean_content=text,  # Discord's version with mentions turned into names
         author=SimpleNamespace(id=author, bot=bot),
         channel=SimpleNamespace(id=channel),
         guild=None if guild is None else SimpleNamespace(id=guild),
@@ -210,6 +214,82 @@ class AtTheTableTyped(AtTheTable):
         self.assertFalse(intents.members or intents.presences or intents.guild_reactions)
         self.assertIsNone(self.bot._connection._messages)  # no message cache
 
+    async def test_this_campaigns_screen_and_transcript_channels_are_never_read(self) -> None:
+        await self.press("set", set_to=NOON4)
+        for blocked in (self.live.screen_channel_id, 9001):
+            self.live.transcript_channel_id = 9001
+            self.live.chat_channel_id = blocked
+            await self.hear(message("we take a long rest", channel=blocked))
+        self.assertEqual(await self.minute(), NOON4)
+
+    async def test_another_campaigns_screen_cannot_be_the_chat_channel(self) -> None:
+        # Campaign B in the same server has a DM screen; A's DM points Table chat at it.
+        other = await self.campaigns.create(GUILD_A, "Beta", DM)
+        await self.campaigns.set_dm_screen(GUILD_A, other.id, EXTRA + 40)
+        self.live.chat_channel_id = EXTRA + 40
+        self.bot._chat_blocked.clear()
+        self.assertFalse(await self.bot._chat_channel_allowed(message("hi", channel=EXTRA + 40)))
+        self.assertTrue(await self.bot._chat_channel_allowed(message("hi", channel=VOICE)))
+        self.live.chat_channel_id = EXTRA
+        self.assertTrue(await self.bot._chat_channel_allowed(message("hi", channel=EXTRA)))
+
+    async def test_a_typed_hey_dmbot_says_it_was_typed(self) -> None:
+        calls: list[dict[str, Any]] = []
+        self.bot.sidebar = SimpleNamespace(  # type: ignore[assignment]
+            ask_at_table=lambda *a, **kw: calls.append(kw)
+        )
+        await self.hear(message("Hey DMbot, what is flanking?"))
+        self.assertEqual(calls, [{"typed": True}])
+
+    async def test_mentions_are_read_as_names(self) -> None:
+        msg = message("<@123> take a short rest <#700>")
+        msg.clean_content = "@Mira take a short rest #table"
+        await self.hear(msg)
+        [line] = self.live.unsaved.take(lambda _u: True)
+        self.assertEqual(line.heard, "@Mira take a short rest #table")
+
+    async def test_a_deleted_message_is_taken_back_while_unsaved(self) -> None:
+        keep, gone = message("stays", author=PLAYER), message("goes", author=PLAYER)
+        keep.id, gone.id = 11, 12
+        await self.hear(keep)
+        await self.hear(gone)
+        await self.bot.on_raw_message_delete(
+            SimpleNamespace(guild_id=GUILD_A, message_id=12, channel_id=VOICE)  # type: ignore[arg-type]
+        )
+        lines = self.live.unsaved.take(lambda _u: True)
+        self.assertEqual([x.heard for x in lines], ["stays"])
+        await self.bot.on_raw_message_delete(
+            SimpleNamespace(guild_id=None, message_id=1, channel_id=1)  # type: ignore[arg-type]
+        )  # a private message: nothing to do
+
+    async def test_the_chat_channel_hears_about_it_once(self) -> None:
+        posts: list[tuple[int, str]] = []
+
+        async def post(channel_id: int, text: str, **_kw: Any) -> bool:
+            posts.append((channel_id, text))
+            return True
+
+        self.bot.post = post  # type: ignore[method-assign]
+        await self.bot._tell_chat_channel(self.live)
+        await self.bot._tell_chat_channel(self.live)
+        self.assertEqual([c for c, _ in posts], [EXTRA])
+        self.assertIn("Only people who agreed are read", posts[0][1])
+        self.live.chat_notice_posted, self.live.chat_on = False, False
+        await self.bot._tell_chat_channel(self.live)
+        self.assertEqual(len(posts), 1)  # off: nothing to say
+
+    async def test_consent_taken_back_while_the_clock_waits_stops_the_move(self) -> None:
+        await self.press("set", set_to=NOON4)
+        original = self.bot._less_what_a_rest_covers
+
+        async def revoke_then_answer(*args: Any) -> Any:
+            self.bot.consent.has_consent = lambda g, u: False  # type: ignore[method-assign]
+            return await original(*args)
+
+        self.bot._less_what_a_rest_covers = revoke_then_answer  # type: ignore[method-assign]
+        await self.hear(message("we take a long rest"))
+        self.assertEqual(await self.minute(), NOON4)
+
     async def test_the_dm_screen_changes_reach_a_running_session(self) -> None:
         saved = await self.campaigns.set_table_chat(GUILD_A, self.a.id, on=False, channel_id=OTHER)
         self.bot.after_chat_change(saved)
@@ -287,26 +367,28 @@ class Panel(unittest.IsolatedAsyncioTestCase):
         store.set_table_chat.assert_not_awaited()
         self.assertIn("Only this campaign's DM", stranger.response.send_message.await_args.args[0])
 
-    async def test_the_dm_screen_and_transcript_channels_cannot_be_picked(self) -> None:
-        campaign = self.campaign(
-            dm_screen_channel_id=EXTRA,
-            transcript_channel_id=EXTRA + 1,
-            gametime_channel_id=EXTRA + 2,
+    async def test_another_campaigns_channel_cannot_be_picked(self) -> None:
+        campaign = self.campaign()
+        store = SimpleNamespace(
+            get=AsyncMock(return_value=campaign),
+            special_channel_ids=AsyncMock(return_value=frozenset({EXTRA})),
+            set_table_chat=AsyncMock(),
         )
-        store = SimpleNamespace(get=AsyncMock(return_value=campaign), set_table_chat=AsyncMock())
-        view = panel.TableChatPanel(campaign)
-        for bad in (EXTRA, EXTRA + 1, EXTRA + 2):
-            it = self.interaction(store)
-            it.guild.get_channel = MagicMock(
-                return_value=MagicMock(spec=discord.TextChannel, id=bad)
-            )
-            await view.save(it, channel_id=bad)
-            self.assertIn("won't read the DM screen", it.response.send_message.await_args.args[0])
+        it = self.interaction(store)
+        await panel.TableChatPanel(campaign).save(it, channel_id=EXTRA)
+        self.assertIn("won't read the DM screen", it.response.send_message.await_args.args[0])
         store.set_table_chat.assert_not_awaited()
+
+    async def test_a_store_that_fails_is_told_not_crashed(self) -> None:
+        store = SimpleNamespace(get=AsyncMock(side_effect=RuntimeError("down")))
+        it = self.interaction(store)
+        await panel.TableChatPanel(self.campaign()).save(it, turn_on=False)
+        self.assertEqual(it.response.send_message.await_args.args[0], panel.FAILED)
 
     async def test_the_extra_channel_is_saved_and_can_be_cleared(self) -> None:
         store = SimpleNamespace(
             get=AsyncMock(return_value=self.campaign(table_chat_channel_id=EXTRA)),
+            special_channel_ids=AsyncMock(return_value=frozenset()),
             set_table_chat=AsyncMock(return_value=self.campaign()),
         )
         view = panel.TableChatPanel(self.campaign(table_chat_channel_id=EXTRA))

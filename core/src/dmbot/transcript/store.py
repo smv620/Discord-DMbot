@@ -96,7 +96,8 @@ class TranscriptStore:
                 "   ORDER BY u)"
                 " WHERE id = %s",
                 # Sidebar lines (#935) are not speech: they don't make a session show up in
-                # /transcript, or list the DM as a speaker.
+                # /transcript, or list the DM as a speaker. Typed table chat (#1118) is the
+                # table's talk, so it counts like speech.
                 (
                     sum(not line.sidebar for line in lines),
                     sorted({line.user_id for line in lines if not line.sidebar}),

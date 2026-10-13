@@ -1963,8 +1963,13 @@ the game clock), and also into names heard, vocabulary, the sidebar's "Hey DMbot
 `Line(typed=True)`: tagged `(typed)` in the as-heard file, never in the cleaned one and never in the live transcript
 channel; it has no audio check and no cleaning. ⚙️ Settings has **💬 Table chat** (campaign DMs and server managers): a
 private panel that says which channels are read, picks the one extra text channel of this server, and turns it off.
-Migration 0052: `campaigns.table_chat` (default on) and `table_chat_channel_id`, `transcript_lines.typed`; none of the
-campaign columns go into a backup (a channel ID means nothing in another server). The consent terms went to version 5
+Migration 0052: `campaigns.table_chat` (default on) and `table_chat_channel_id`, `transcript_lines.typed`, and a new
+sidebar way-in `table-chat` (a typed "Hey DMbot" has no speech-to-text in its lineage). A backup carries the on/off
+switch only (a channel ID means nothing in another server; a restore keeps the campaign's own extra channel). Messages
+are read as Discord shows them (`clean_content`: mentions as names). A message deleted before its line is saved is taken
+back; a saved line stays. No campaign's DM screen, transcript or game-time channel in the server can be the extra channel
+(refused when picked, and again when a message arrives, from a one-minute cache). One line in the extra channel and
+"and what they type in this chat" in the voice channel notice tell people it is read. The consent terms went to version 5
 (one added sentence), so everyone is asked again. **Owner step after merge:** switch on Message Content Intent at
 https://discord.com/developers/applications (the DMbot app, then Bot, then Privileged Gateway Intents, then Message
 Content Intent, then Save Changes; not Reset Token). The privacy page and help wording are WebDev's follow-up.

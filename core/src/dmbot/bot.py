@@ -112,11 +112,11 @@ from dmbot.dm_screen.settings import (
     RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
-    TableChatButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
 from dmbot.dm_screen.speaker_question import question_view as speaker_question_view
+from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -237,6 +237,7 @@ METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
+CHAT_BLOCKED_TTL_S = 60  # how long the list of channels never read as chat is kept (#1118)
 CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once (#965)
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
@@ -387,6 +388,7 @@ class Table:
     # extra text channel (the voice channel's own chat is always read when it is on).
     chat_on: bool = True
     chat_channel_id: int | None = None
+    chat_notice_posted: bool = False  # the one line in the extra channel, once a session
     # The campaign's D&D Beyond invite link, for the Join button on the messages players see
     # this session (#1119); None when the DM set none.
     dndbeyond_invite: str | None = None
@@ -627,6 +629,9 @@ class DMBot(commands.AutoShardedBot):
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
         self.tables: dict[int, Table] = {}
+        # Channels of any campaign that must never be read as table chat, by server, with when
+        # the answer runs out (monotonic seconds) (#1118).
+        self._chat_blocked: dict[int, tuple[float, frozenset[int]]] = {}
         self.test_voice = test_voice  # the second yes, for test servers (#1019)
         self._test_key: bytes | None = None
         self._test_delete_locks: dict[tuple[int, int], asyncio.Lock] = {}
@@ -2530,12 +2535,13 @@ class DMBot(commands.AutoShardedBot):
                 # Players learn they're being recorded from this notice, so a failure
                 # must reach the DM; it is retried on the next join.
                 peek = await self._peek_view(table)
+                typed = " (what they say, and what they type in this chat)" if table.chat_on else ""
                 table.notice_posted = await self.post(
                     table.voice_channel_id,
                     "🔴 **DMbot is listening in this channel.** It gives the DM private "
                     "notes and never decides anything.\n"
                     "Everyone here gets a private message from DMbot asking if they agree "
-                    "to be recorded. Only people who say yes are recorded.\n"
+                    f"to be recorded. Only people who say yes are recorded{typed}.\n"
                     "No message from DMbot? Check your DMs and Message Requests, or type "
                     "`/consent give`. Change your mind any time with `/consent revoke`.",
                     view=peek,
@@ -2544,6 +2550,7 @@ class DMBot(commands.AutoShardedBot):
                 if table.notice_posted:
                     log.info("Recording notice posted in the voice channel's chat")
                     await self._remember_notice(table.guild_id)
+                    await self._tell_chat_channel(table)
                 else:
                     log.warning("Recording notice NOT posted; telling the DM")
                     await self.post(
@@ -2582,7 +2589,8 @@ class DMBot(commands.AutoShardedBot):
         the table (#1118): read only if it is in the table's chat and passes the checks."""
         if message.guild is not None:
             try:
-                self._hear_typed(message)
+                if await self._chat_channel_allowed(message):
+                    self._hear_typed(message)
             except Exception:
                 log.exception("Couldn't handle a typed message")
             return
@@ -2787,6 +2795,29 @@ class DMBot(commands.AutoShardedBot):
                 self._note_clock_phrase(table, user_id, line), "clock-phrase"
             )
 
+    async def _chat_channel_allowed(self, message: discord.Message) -> bool:
+        """False for a message in the DM's extra chat channel when that channel is any
+        campaign's DM screen, transcript or game-time channel in this server (#1118). Only the
+        extra channel is asked about (the voice channel's own chat can't be one), and the
+        answer is kept for a minute, so most messages cost nothing here."""
+        guild = message.guild
+        table = self.tables.get(guild.id) if guild is not None else None
+        if (
+            guild is None
+            or table is None
+            or table.chat_channel_id is None
+            or message.channel.id != table.chat_channel_id
+            or message.channel.id == table.voice_channel_id
+        ):
+            return True
+        now = time.monotonic()
+        cached = self._chat_blocked.get(guild.id)
+        if cached is None or cached[0] < now:
+            blocked = await self.campaigns.special_channel_ids(guild.id)
+            cached = (now + CHAT_BLOCKED_TTL_S, blocked)
+            self._chat_blocked[guild.id] = cached
+        return message.channel.id not in cached[1]
+
     def _hear_typed(self, message: discord.Message) -> None:
         """A message typed in a server (#1118). Only the table voice channel's chat and the
         DM's one extra channel, only while listening, only from someone who agreed, never a
@@ -2798,7 +2829,9 @@ class DMBot(commands.AutoShardedBot):
         if not table_chat.is_table_chat(
             message.channel.id, table.voice_channel_id, table.chat_channel_id
         ) or message.channel.id in (table.screen_channel_id, table.transcript_channel_id):
-            return  # the DM screen and the transcript channel are never read as chat
+            return  # this campaign's DM screen and transcript channel are never read as chat
+        # (any other campaign's are refused when the DM picks the channel and by
+        # `_chat_channel_allowed`, which asks the database)
         author = message.author
         if (
             author.bot
@@ -2808,12 +2841,16 @@ class DMBot(commands.AutoShardedBot):
             or getattr(message, "interaction_metadata", None) is not None
         ):
             return
-        text = table_chat.clean(message.content)
+        text = table_chat.clean(message.clean_content)  # names, not <@123> markup
         if text is None or not self.consent.has_consent(table.guild_id, author.id):
             return
-        self._deliver_typed(table, author.id, text, int(message.created_at.timestamp() * 1000))
+        self._deliver_typed(
+            table, author.id, text, int(message.created_at.timestamp() * 1000), message.id
+        )
 
-    def _deliver_typed(self, table: Table, user_id: int, text: str, start_ms: int) -> None:
+    def _deliver_typed(
+        self, table: Table, user_id: int, text: str, start_ms: int, message_id: int = 0
+    ) -> None:
         """A typed line goes where a spoken one goes (clock phrases, house rules, names heard,
         the "Hey DMbot" sidebar, the transcript), minus what only audio has: no cleaning, no
         off-topic filter, no audio check. In the transcript it is tagged (typed) and only in
@@ -2825,12 +2862,38 @@ class DMBot(commands.AutoShardedBot):
             table.heard_counts.update((entity_id, user_id) for entity_id in named)
         self._act_on_line(table, user_id, text)
         if self.transcripts is not None:
-            table.unsaved.add(Line(start_ms, user_id, text, text, typed=True))
+            table.unsaved.add(
+                Line(start_ms, user_id, text, text, typed=True, message_id=message_id)
+            )
         table.recent.add(user_id, text, time.monotonic())
         if self.tables.get(table.guild_id) is table:
-            self.sidebar.ask_at_table(table, user_id, text)
+            self.sidebar.ask_at_table(table, user_id, text, typed=True)
         if len(table.heard) < HEARD_MAX:
             table.heard.append((user_id, text))
+
+    async def _tell_chat_channel(self, table: Table) -> None:
+        """One line in the DM's extra Table chat channel when listening starts, so nobody finds
+        out later that it is read (#1118). The voice channel's own chat has the recording
+        notice. Once a session; a failure is only logged."""
+        extra = table.chat_channel_id
+        if not table.chat_on or extra is None or extra == table.voice_channel_id:
+            return
+        if table.chat_notice_posted:
+            return
+        table.chat_notice_posted = bool(
+            await self.post(
+                extra,
+                "💬 DMbot is reading this chat for the game while it listens. "
+                "Only people who agreed are read.",
+            )
+        )
+
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
+        """A typed message deleted before its line was saved is taken back (#1118). A line
+        already saved stays in the raw transcript, as PLAN says."""
+        table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
+        if table is not None:
+            table.unsaved.drop_message(payload.message_id)
 
     def after_chat_change(self, campaign: Campaign) -> None:
         """A running session reads typed chat from now on as the DM just set it (#1118)."""

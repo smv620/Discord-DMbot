@@ -137,7 +137,12 @@ class TableChatPanel(discord.ui.View):
         if guild is None or store is None:
             await interaction.response.send_message(FAILED, ephemeral=True)
             return
-        campaign: Campaign | None = await store.get(guild.id, self.campaign_id)
+        try:
+            campaign: Campaign | None = await store.get(guild.id, self.campaign_id)
+        except Exception:
+            log.exception("Couldn't load a campaign for table chat")
+            await interaction.response.send_message(FAILED, ephemeral=True)
+            return
         if campaign is None:
             await interaction.response.send_message(messages.DM_CAMPAIGN_GONE, ephemeral=True)
             return
@@ -149,12 +154,15 @@ class TableChatPanel(discord.ui.View):
             if not isinstance(chosen, discord.TextChannel):
                 await interaction.response.send_message(FAILED, ephemeral=True)
                 return
-            # DM-screen content never goes into transcripts, so these are never read as chat.
-            if channel_id in (
-                campaign.dm_screen_channel_id,
-                campaign.transcript_channel_id,
-                campaign.gametime_channel_id,
-            ):
+            # DM-screen content never goes into transcripts, so no campaign's DM screen,
+            # transcript or game-time channel in this server is ever read as chat.
+            try:
+                special = await store.special_channel_ids(guild.id)
+            except Exception:
+                log.exception("Couldn't list the channels that can't be table chat")
+                await interaction.response.send_message(FAILED, ephemeral=True)
+                return
+            if channel_id in special:
                 await interaction.response.send_message(NOT_THAT_ONE, ephemeral=True)
                 return
         try:

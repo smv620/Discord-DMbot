@@ -255,15 +255,15 @@ def render(
         said = " ".join(line.heard.split())
         tag = sidebar_tag(line)
         timed.append((line.started_ms, f"[{when}] ({_plain(asker)}) {tag}: {said}"))
-    for line in shown_typed:  # "[0:12:06] (Mia) (typed): we take a long rest"
+    for line in shown_typed:  # "[0:12:06] (Mia) {Cerric} (typed): we take a long rest"
         when = clock((line.started_ms - start_ms) / 1000)
         said = " ".join(line.heard.split())
-        timed.append(
-            (
-                line.started_ms,
-                f"[{when}] ({clean_name(names.get(line.user_id))}) {TYPED_TAG}: {said}",
-            )
+        who = label(
+            when,
+            clean_name(names.get(line.user_id)),
+            clean_name(playing[line.user_id]) if line.user_id in playing else None,
         )
+        timed.append((line.started_ms, f"{who} {TYPED_TAG}: {said}"))
     timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
     body = [text for _, text in timed]
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))

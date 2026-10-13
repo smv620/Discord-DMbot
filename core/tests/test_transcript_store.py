@@ -75,6 +75,31 @@ class StoreTests(DatabaseTest):
         other = await self.campaigns.create(GUILD, "Other", DM)
         self.assertEqual((other.table_chat, other.table_chat_channel_id), (True, None))
 
+    async def test_a_backup_carries_the_table_chat_switch_and_no_channel(self) -> None:
+        await self.campaigns.set_table_chat(GUILD, self.campaign.id, on=False, channel_id=77)
+        data = await self.campaigns.export(GUILD, self.campaign.id)
+        self.assertIs(data["campaign"]["table_chat"], False)
+        self.assertNotIn("table_chat_channel_id", data["campaign"])
+        copy = await self.campaigns.import_backup(GUILD + 1, data, DM)
+        self.assertEqual((copy.table_chat, copy.table_chat_channel_id), (False, None))
+        # Replacing keeps the campaign's own extra channel and takes the switch.
+        await self.campaigns.set_table_chat(GUILD, self.campaign.id, on=True, channel_id=88)
+        back = await self.campaigns.import_backup(
+            GUILD, data, DM, replace_campaign_id=self.campaign.id
+        )
+        self.assertEqual((back.table_chat, back.table_chat_channel_id), (False, 88))
+        del data["campaign"]["table_chat"]  # a backup from before: on, as a new campaign is
+        old = await self.campaigns.import_backup(GUILD + 2, data, DM)
+        self.assertTrue(old.table_chat)
+
+    async def test_the_channels_that_are_never_chat_cover_every_campaign(self) -> None:
+        other = await self.campaigns.create(GUILD, "Second", DM)
+        await self.campaigns.set_dm_screen(GUILD, self.campaign.id, 11)
+        await self.campaigns.set_dm_screen(GUILD, other.id, 12)
+        await self.campaigns.set_transcript_channel(GUILD, other.id, 13)
+        self.assertEqual(await self.campaigns.special_channel_ids(GUILD), frozenset({11, 12, 13}))
+        self.assertEqual(await self.campaigns.special_channel_ids(GUILD + 9), frozenset())
+
     async def test_sidebar_lines_are_kept_apart_and_never_edited(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
         asked_from = Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host")

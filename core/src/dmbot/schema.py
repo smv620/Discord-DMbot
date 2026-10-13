@@ -1620,6 +1620,10 @@ TABLE_CHAT = """
         ADD COLUMN table_chat BOOLEAN NOT NULL DEFAULT TRUE,
         ADD COLUMN table_chat_channel_id BIGINT;
     ALTER TABLE transcript_lines ADD COLUMN typed BOOLEAN NOT NULL DEFAULT FALSE;
+    -- A DM sidebar question typed in the table's chat has its own "via" (no speech-to-text).
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_via_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_via_check
+        CHECK (sidebar_via IN ('voice-memo', 'typed', 'table-trigger', 'table-chat'));
 """
 
 OWNER_CAMPAIGNS = (
