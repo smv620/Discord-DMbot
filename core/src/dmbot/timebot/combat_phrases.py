@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from dmbot.timebot.clock import MAX_ROUND
+from dmbot.timebot.phrases import normalise
 
 Kind = Literal["start", "round", "next", "end"]
 
@@ -70,7 +71,7 @@ class CombatSaid:
 
 def find_combat(line: str) -> CombatSaid | None:
     """The combat change a DM's line plainly says, or None."""
-    text = " ".join(line.split())
+    text = normalise(line)
     if not text or "?" in text or len(text.split()) > MAX_WORDS or _NOT_A_THING.search(text):
         return None
     if _START.match(text):

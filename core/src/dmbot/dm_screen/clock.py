@@ -75,6 +75,10 @@ ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
 PINNED = ("m10", "h1", "set", "timer")
 PANEL = ("short", "long", "dawn", "typed")
 COMBAT_ACTIONS = ("cstart", "cnext", "cend", "cround")  # "cround": a named round, said
+# The actions that move game time: they say dawn, noon and dusk as they pass, and the 24-hour
+# line (#1173: one list instead of two that could drift apart).
+ENDS_COMBAT = ("long", "dawn")
+TIME_MOVING = ("m10", "h1", "short", "long", "advance", "cnext", "cend", "cround")
 MARK_LINES = {"dawn": "🌅 Dawn", "noon": "☀️ Noon", "dusk": "🌇 Dusk"}
 
 
@@ -121,6 +125,10 @@ def _apply(
         return game.set_to(clock, set_to)
     if clock is None:
         return None
+    if action in ENDS_COMBAT and clock.combat_round is not None:
+        # A long rest or skipping to dawn means the fight is over: as if End combat was
+        # pressed first (#1173). A short rest and the other moves leave a fight running.
+        clock = game.combat_end(clock) or clock
     if action == "m10":
         return game.advance(clock, 10)
     if action == "advance":  # "an hour later", said by the DM (#1117)
@@ -145,7 +153,7 @@ def _apply(
 def _speaks(action: str) -> bool:
     """Dawn, noon and dusk are said when time passes by a button or a rest; not when the
     DM says what time it is (the DM already knows)."""
-    return action in ("m10", "h1", "short", "long", "advance", "cnext", "cend", "cround")
+    return action in TIME_MOVING
 
 
 async def press(
@@ -161,16 +169,7 @@ async def press(
     """Do one thing to the clock. Raises CampaignError (plain words) if the person isn't a
     DM of the campaign. The 24-hour line is worked out here, once, in the same change."""
     store: ClockStore = client.clocks
-    tired_on = action in (
-        "m10",
-        "h1",
-        "short",
-        "long",
-        "advance",
-        "cnext",
-        "cend",
-        "cround",
-    ) and await _tired_rule_on(client, guild_id, campaign_id)
+    tired_on = action in TIME_MOVING and await _tired_rule_on(client, guild_id, campaign_id)
     result = Result(None, None)
 
     def change(current: Clock | None) -> Clock | None:
@@ -185,6 +184,14 @@ async def press(
     before, after = await store.change(guild_id, campaign_id, user_id, change)
     result.before, result.after = before, after
     result.changed = after is not None and after != before
+    if (
+        action in ENDS_COMBAT
+        and before is not None
+        and after is not None
+        and before.combat_round is not None
+        and after.combat_round is None
+    ):
+        result.lines.insert(0, f"🏁 Combat is over (round {before.combat_round}).")
     if before is not None and after is not None and _speaks(action):
         marks = game.crossings(before.minute, after.minute)
         result.lines = [MARK_LINES[name] for _, name in marks] + result.lines

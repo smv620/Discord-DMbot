@@ -108,6 +108,19 @@ class AtTheTableTyped(AtTheTable):
         assert stored is not None
         return stored.clock.minute
 
+    async def test_a_typed_dm_line_reaches_combat(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.hear(message("roll initiative"))
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        self.assertEqual(stored.clock.combat_round, 1)
+        await self.hear(message("roll initiative", author=PLAYER))  # a player's words: never
+        self.live.clock_said.clear()
+        await self.hear(message("next round", author=PLAYER))
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        self.assertEqual(stored.clock.combat_round, 1)
+
     async def test_a_typed_rest_from_the_dm_moves_the_clock_like_speech(self) -> None:
         await self.press("set", set_to=NOON4)
         await self.hear(message("we take a long rest"))

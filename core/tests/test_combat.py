@@ -5,10 +5,11 @@ backup restore, and the question other parts ask. The store tests need Postgres.
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import discord
 
@@ -187,6 +188,18 @@ class Wiring(unittest.TestCase):
         self.assertNotIn("Combat", ui.clock_text(Clock(NOON4, 0)))
 
 
+class Curly(unittest.TestCase):
+    def test_a_phone_keyboards_apostrophe_matches(self) -> None:
+        for line in ("combat\u2019s over", "Combat\u2018s over.", "the fight\u02bcs over"):
+            found = phrases.find_combat(line)
+            assert found is not None, line
+            self.assertEqual(found.kind, "end")
+        from dmbot.timebot import phrases as clock_phrases
+
+        self.assertEqual(clock_phrases.suggested_rest("let\u2019s take a short rest"), "short")
+        self.assertIsNone(clock_phrases.find_clock("if we can\u2019t take a long rest"))
+
+
 class Stored(Clocks):
     async def test_the_buttons_run_a_fight_and_only_dms_may(self) -> None:
         await self.press("set", set_to=NOON4)
@@ -324,6 +337,68 @@ class Stored(Clocks):
         self.assertTrue(await self.clocks.in_combat(GUILD_A, self.a.id))
 
 
+class ForgottenFights(Clocks):
+    async def test_a_long_rest_or_skipping_to_dawn_ends_the_fight_and_a_short_rest_does_not(
+        self,
+    ) -> None:
+        for action, ends in (("long", True), ("dawn", True), ("short", False), ("h1", False)):
+            await self.press("set", set_to=NOON4)
+            await self.press("cstart")
+            await self.press("cnext")
+            result = await self.press(action)
+            stored = await self.clocks.get(GUILD_A, self.a.id)
+            assert stored is not None
+            self.assertEqual(stored.clock.combat_round is None, ends, action)
+            self.assertEqual(any("Combat is over" in line for line in result.lines), ends, action)
+            if ends:  # the fight's last round counted before the rest
+                self.assertGreaterEqual(stored.clock.minute, NOON4 + 1)
+            await self.clocks.change(GUILD_A, self.a.id, DM, lambda c: None)
+
+    async def test_a_rest_with_no_fight_says_nothing_about_one(self) -> None:
+        await self.press("set", set_to=NOON4)
+        result = await self.press("long")
+        self.assertFalse(any("Combat" in line for line in result.lines))
+
+
+class SessionStart(AtTheTable):
+    async def combat_round(self) -> int | None:
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        return stored.clock.combat_round
+
+    async def test_a_fight_left_running_is_pointed_out_once_and_not_ended(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        await self.press("cround", set_to=4)
+        table = cast(Any, self.table)
+        table.resumed = False
+        table.screen_channel_id = 555
+        sent: list[tuple[str, Any]] = []
+
+        async def post(channel_id: int, text: str, view: Any = None) -> bool:
+            sent.append((text, view))
+            return True
+
+        self.bot.post = post  # type: ignore[method-assign]
+        await self.bot._fight_left_over(table)
+        ((text, view),) = sent
+        self.assertIn("still running (round 4)", text)
+        self.assertEqual([str(i.item.label) for i in view.children], ["End combat"])
+        self.assertEqual(await self.combat_round(), 4)  # not ended without the DM
+
+    async def test_nothing_is_said_without_a_fight_or_after_a_restart(self) -> None:
+        await self.press("set", set_to=NOON4)
+        table = cast(Any, self.table)
+        table.screen_channel_id = 555
+        table.resumed = False
+        self.bot.post = AsyncMock()  # type: ignore[method-assign]
+        await self.bot._fight_left_over(table)
+        await self.press("cstart")
+        table.resumed = True  # picked up again after a restart: it is not "last time"
+        await self.bot._fight_left_over(table)
+        self.bot.post.assert_not_awaited()
+
+
 class Heard(AtTheTable):
     async def combat_round(self) -> int | None:
         stored = await self.clocks.get(GUILD_A, self.a.id)
@@ -389,6 +464,68 @@ class Heard(AtTheTable):
         await self.hear(DM, "roll initiative")
         self.assertIsNone(await self.clocks.get(GUILD_A, self.a.id))
         self.assertEqual(self.posted, [])
+
+
+class RacesAndConsent(AtTheTable):
+    async def test_the_same_combat_words_by_voice_and_chat_count_once(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        table = cast(Any, self.table)
+        await asyncio.gather(
+            self.bot._note_clock_phrase(table, DM, "next round"),
+            self.bot._note_clock_phrase(table, DM, "next round"),
+        )
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        self.assertEqual(stored.clock.combat_round, 2)
+
+    async def test_the_same_rest_by_voice_and_chat_counts_once(self) -> None:
+        await self.press("set", set_to=NOON4)
+        table = cast(Any, self.table)
+        await asyncio.gather(
+            self.bot._note_clock_phrase(table, DM, "we take a long rest"),
+            self.bot._note_clock_phrase(table, DM, "we take a long rest"),
+        )
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        self.assertEqual(stored.clock.minute, NOON4 + 480)
+
+    async def test_a_phrase_that_changes_nothing_does_not_burn_its_window(self) -> None:
+        await self.press("set", set_to=NOON4)
+        table = cast(Any, self.table)
+        await self.bot._note_clock_phrase(table, DM, "next round")  # not in combat
+        self.assertNotIn("combat-next-", table.clock_said)
+        await self.press("cstart")
+        await self.bot._note_clock_phrase(table, DM, "next round")  # now it counts
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        self.assertEqual(stored.clock.combat_round, 2)
+
+    async def test_consent_withdrawn_during_the_change_drops_the_quote_not_the_change(self) -> None:
+        real = ui.press
+
+        async def withdraw(*args: Any, **kwargs: Any) -> Any:
+            result = await real(*args, **kwargs)
+            self.bot.consent.has_consent = lambda g, u: False  # type: ignore[method-assign]
+            return result
+
+        for line, check in (("roll initiative", "combat"), ("we take a long rest", "clock")):
+            await self.press("set", set_to=NOON4)
+            table = cast(Any, self.table)
+            table.clock_said.clear()
+            self.posted.clear()
+            with patch.object(ui, "press", withdraw):
+                await self.bot._note_clock_phrase(table, DM, line)
+            self.bot.consent.has_consent = lambda g, u: True  # type: ignore[method-assign]
+            stored = await self.clocks.get(GUILD_A, self.a.id)
+            assert stored is not None
+            if check == "combat":
+                self.assertEqual(stored.clock.combat_round, 1)
+            else:
+                self.assertGreater(stored.clock.minute, NOON4)
+            said = " ".join(self.posted)
+            self.assertTrue(said, line)  # the DM still sees the change
+            self.assertNotIn("heard:", said, line)  # but not the quote of the words
 
 
 class Setting(Clocks):
