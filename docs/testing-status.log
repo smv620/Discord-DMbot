@@ -82,6 +82,10 @@ entry "Status log as it stood before it was trimmed"):
  19. TimeBot (#994, #1008): as a DM, ⚙️ Settings > Game clock; set a time; Start a timer (or Time it on
      a spell card); +1 hour: the DM screen says "has likely ended" with Ended / Still going +10 min.
  20. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
+ 21. #148 (1 person, ~2 min): take Speak away from DMbot's role (Server Settings > Roles > DMbot), /dmbot start,
+     talk for a minute: DMbot still hears you and ears logs no voice errors.
+ 22. #147 (1 person, ~5 min): /dmbot start, press Start listening twice, Stop listening, start again, then dev1
+     restarts core mid-session: it resumes, and the core log names every save and removal of the saved session.
 
 ------------------------------------------------------------------------------
 LATEST RESULTS
