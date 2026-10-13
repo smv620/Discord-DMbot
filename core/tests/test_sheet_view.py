@@ -153,7 +153,7 @@ class Editing(unittest.TestCase):
             ("skills", {"trained": "Stealth", "expert": "Arcana"}, "add it to Trained skills"),
             ("speed", {**NO_SENSES, "speed": "fast"}, "digits"),
             ("inventory", {"items": "", "weight": "heavy", "rarity": ""}, "pounds"),
-            ("inventory", {"items": "", "weight": "1", "rarity": "shiny 3"}, "rarities"),
+            ("inventory", {"items": "", "weight": "1", "rarity": "shiny 3"}, "isn't a rarity"),
         ):  # fmt: skip
             new, problem = sheet_view.edit(snap, by[key], values)
             self.assertIsNone(new, key)
