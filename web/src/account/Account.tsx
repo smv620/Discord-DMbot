@@ -11,6 +11,7 @@ import {
   ApiError,
   type AccountApi,
   type Campaign,
+  type Character,
   type Me,
   type Offer,
   type Person,
@@ -341,6 +342,7 @@ function SignedIn({
       <PlanSection me={me} />
       <CampaignsSection me={me} />
       <ServersSection me={me} />
+      <CharactersSection />
       <ExportSection />
       <DeleteSection
         paidPlan={me.plan !== null && me.plan.id !== "try-it" && me.plan.status !== "lapsed"}
@@ -878,6 +880,56 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
       {s.hasDmbot && s.canLink && <p class="muted small row-note">{text.linkNote}</p>}
       <Notice message={notice} />
     </li>
+  );
+}
+
+/** My characters (#1164): the person's own sheets, read-only. Loaded once the page is up; an
+ * API older than this, or a failed load, shows nothing rather than an error. */
+function CharactersSection() {
+  const { api } = useShared();
+  const [list, setList] = useState<Character[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .characters?.()
+      .then((found) => live && setList(found))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [api]);
+  if (list === null) return null;
+  return (
+    <section aria-labelledby="characters-heading" class="panel">
+      <h2 id="characters-heading">{text.charactersHeading}</h2>
+      {list.length === 0 ? (
+        <p>{text.charactersNone}</p>
+      ) : (
+        <ul class="campaigns">
+          {list.map((c, i) => {
+            const facts = [
+              c.level !== null ? text.characterLevel(c.level) : null,
+              c.maxHp !== null ? text.characterHp(c.maxHp) : null,
+              c.ac !== null ? text.characterAc(c.ac) : null,
+            ].filter((part) => part !== null);
+            return (
+              <li key={`${c.serverName}-${c.campaign}-${c.name}-${i}`} data-character>
+                <p class="plan-name">{c.name ?? text.characterUnread}</p>
+                {c.classLine && <p>{c.classLine}</p>}
+                <p class="muted small">{text.characterWhere(c.serverName, c.campaign)}</p>
+                {facts.length > 0 && <p class="small">{facts.join(" · ")}</p>}
+                {c.sheetLink && (
+                  <a href={c.sheetLink} target="_blank" rel="noopener noreferrer">
+                    {text.characterOpen}
+                  </a>
+                )}
+                <p class="muted small">{text.characterChange}</p>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 

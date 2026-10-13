@@ -23,6 +23,29 @@ def _iso(seconds: int | None) -> str | None:
     return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
 
 
+async def read_sheet_rows(conn: Conn, guild_id: int, user_id: int) -> list[dict[str, Any]]:
+    """The person's own character sheets in one server, each with the name of its campaign
+    (the export, #1150, and the account page's My characters, #1164, read them here). The
+    server must already be set on the connection: row-level security shows only that server's
+    rows, only the person's own, and only if the server is in this session's list. A campaign
+    is named by id from the person's own rows, never from a list of the server's campaigns
+    (they may play there without being a DM)."""
+    cur = await conn.execute(
+        "SELECT campaign_id, url, sheet, source, fetched_at FROM character_sheets"
+        " WHERE guild_id = %s AND player_id = %s ORDER BY campaign_id, entity_id",
+        (guild_id, user_id),
+    )
+    rows = await cur.fetchall()
+    names: dict[str, str] = {}
+    if rows:
+        cur = await conn.execute(
+            "SELECT id, name FROM campaigns WHERE guild_id = %s AND id = ANY(%s)",
+            (guild_id, [r["campaign_id"] for r in rows]),
+        )
+        names = {r["id"]: r["name"] for r in await cur.fetchall()}
+    return [{**r, "campaign": names.get(r["campaign_id"])} for r in rows]
+
+
 async def _read_server(
     conn: Conn, guild: DiscordGuild, user_id: int
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -61,32 +84,16 @@ async def _read_server(
         }
         for row in await cur.fetchall()
     ]
-    cur = await conn.execute(
-        "SELECT campaign_id, url, sheet, source, fetched_at FROM character_sheets"
-        " WHERE guild_id = %s AND player_id = %s ORDER BY campaign_id, entity_id",
-        (guild.id, user_id),
-    )
-    sheet_rows = await cur.fetchall()
-    # The name of each campaign the person has a sheet in, by id only: they play there but
-    # may not be a DM, so the list above doesn't have it. Ids from their own rows, never a
-    # list of the server's campaigns.
-    names: dict[str, str] = {}
-    if sheet_rows:
-        cur = await conn.execute(
-            "SELECT id, name FROM campaigns WHERE guild_id = %s AND id = ANY(%s)",
-            (guild.id, [r["campaign_id"] for r in sheet_rows]),
-        )
-        names = {r["id"]: r["name"] for r in await cur.fetchall()}
     characters = [
         {
             "serverName": guild.name,
-            "campaign": names.get(row["campaign_id"]),
+            "campaign": row["campaign"],
             "sheetLink": row["url"],
             "typedIn": row["source"] == "typed",
             "snapshot": row["sheet"],
             "readAt": _iso(row["fetched_at"]),
         }
-        for row in sheet_rows
+        for row in await read_sheet_rows(conn, guild.id, user_id)
     ]
     return consent, campaigns, characters
 

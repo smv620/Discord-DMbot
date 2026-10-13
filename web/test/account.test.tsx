@@ -680,6 +680,57 @@ describe("safety", () => {
     expect(screen.queryByRole("button", { name: text.exportButton })).toBeNull();
   });
 
+  it("lists the person's own characters, read-only, with a link only when there is one (#1164)", async () => {
+    show("table");
+    const testa = (await screen.findByText("Testa")).closest("li") as HTMLElement;
+    expect(within(testa).getByText("Bard 2")).toBeTruthy();
+    expect(within(testa).getByText(text.characterWhere("Thursday Table", "The Brynwater Crossing"))).toBeTruthy();
+    expect(within(testa).getByText("Level 2 · 14 hit points · Armour class 13")).toBeTruthy();
+    expect(within(testa).queryByRole("link", { name: text.characterOpen })).toBeNull();
+    expect(within(testa).getByText(text.characterChange)).toBeTruthy();
+    const brannoch = screen.getByText("Brannoch").closest("li") as HTMLElement;
+    expect(within(brannoch).getByText("Ranger 3 / Druid 3")).toBeTruthy();
+    const link = within(brannoch).getByRole("link", { name: text.characterOpen });
+    expect(link.getAttribute("href")).toBe("https://sheets.example/characters/12345678");
+    expect(link.getAttribute("rel")).toContain("noopener");
+  });
+
+  it("says what to do when there are no characters, and shows a link-only sheet (#1164)", async () => {
+    const api = mockApi("table");
+    api.characters = async () => [];
+    render(<Account api={api} go={vi.fn()} />);
+    expect(await screen.findByText(text.charactersNone)).toBeTruthy();
+    cleanup();
+    const linked = mockApi("table");
+    linked.characters = async () => [
+      {
+        serverName: "Thursday Table",
+        campaign: null,
+        name: null,
+        classLine: null,
+        level: null,
+        maxHp: null,
+        ac: null,
+        sheetLink: "https://sheets.example/characters/1",
+        typedIn: false,
+        readAt: null,
+      },
+    ];
+    render(<Account api={linked} go={vi.fn()} />);
+    expect(await screen.findByText(text.characterUnread)).toBeTruthy();
+    expect(screen.getByRole("link", { name: text.characterOpen })).toBeTruthy();
+  });
+
+  it("shows no characters card from an older API or when loading fails (#1164)", async () => {
+    const api = mockApi("table");
+    api.characters = async () => {
+      throw new ApiError("server");
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    await screen.findByRole("heading", { name: text.exportHeading });
+    expect(screen.queryByText(text.charactersHeading)).toBeNull();
+  });
+
   it("signed out: Start Try It is the main button, with the plans under it", async () => {
     show("signed-out");
     const links = await screen.findAllByRole("link");

@@ -97,6 +97,22 @@ export interface Me {
   offers: { incoming: Offer[]; outgoing: Offer[] };
 }
 
+/** One of the person's own characters (#1164), read-only. Fields are missing when the sheet has
+ * not been read yet (a link only) or does not hold them. */
+export interface Character {
+  serverName: string;
+  campaign: string | null;
+  name: string | null;
+  classLine: string | null;
+  level: number | null;
+  maxHp: number | null;
+  ac: number | null;
+  /** The online sheet's link, if there is one. */
+  sheetLink: string | null;
+  typedIn: boolean;
+  readAt: string | null;
+}
+
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
@@ -140,6 +156,8 @@ export interface AccountApi {
   /** The file for "Download my data": the person's own data as JSON (#1150). Fetched from the
    * page, so a refusal (once a minute, or signed out) can be said in words. */
   downloadExport(): Promise<Blob>;
+  /** The person's own characters. Missing from an API older than #1164. */
+  characters?(): Promise<Character[]>;
   /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
   installUrl(serverId: string): string;
   /** Say you added DMbot to a server it joined through a plain link. */
@@ -242,6 +260,8 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     billingPortalUrl: () => url("/billing/portal"),
     extraHoursUrl: () => url("/billing/extra-hours"),
     downloadExport: async () => (await call("GET", "/me/export", undefined, true)) as Blob,
+    characters: async () =>
+      ((await call("GET", "/me/characters")) as { characters: Character[] }).characters,
     installUrl: (serverId) => `${root}/install?server_id=${encodeURIComponent(serverId)}`,
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);

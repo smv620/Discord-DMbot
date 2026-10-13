@@ -228,6 +228,18 @@ export const text = {
   addTo: "Add DMbot",
   alreadyThere: "Already added",
 
+  // My characters (#1164): read-only. Changing a sheet stays in Discord.
+  charactersHeading: "My characters",
+  charactersNone: "No characters yet. In Discord, press 📜 My character sheet in your campaign.",
+  characterUnread: "Linked sheet, not read yet",
+  characterWhere: (server: string, campaign: string | null): string =>
+    campaign ? `${server} · ${campaign}` : server,
+  characterLevel: (n: number): string => `Level ${n}`,
+  characterHp: (n: number): string => `${n} hit points`,
+  characterAc: (n: number): string => `Armour class ${n}`,
+  characterOpen: "Open the online sheet",
+  characterChange: "To change it, use 📜 My character sheet in Discord.",
+
   // Download my data (#1150)
   exportHeading: "Download my data",
   exportWhat:
