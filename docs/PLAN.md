@@ -1906,6 +1906,17 @@ said at the table, Undo). One short line is posted there when a rest finishes ("
 The DM's pinned clock reads "Day 5, morning (6:20)" and keeps +10 min, +1 hour, Set time… and Start a
 timer; **Short rest, Long rest and Skip to dawn** moved into the private panel **Set time…** opens
 (an ephemeral message with them and "Type the time…").
+*Built, part 4: the clock follows what is said (2026-10-13, #1117):* still phrases only, no AI, only consented
+speakers' transcript lines, only while listening. **The DM's words that move the clock by themselves**,
+each with the Undo note: a rest *finishing* ("you finish your long rest", "the long rest is over", "after
+your short rest"; one rest said as starting and as finishing counts once), "the next morning" / "at dawn"
+(to the next dawn, like Skip to dawn), and explicit amounts up to 24 hours ("an hour later", "ten minutes
+later", "half an hour later", "forty-five minutes later"; words and digits; "an hour and ten minutes
+later" is two amounts and is not guessed at). Vague narration ("you walk for a while", "a few hours later")
+and any question, wish, condition or long line are ignored. **A player's suggestion** ("let's take a short
+rest", "can we long rest?") moves nothing: it posts one DM-screen line, "Mira suggests a short rest", with
+**Short rest** and **Not now**, at most one per campaign every 5 minutes, and only once a clock is set; only
+a DM of the campaign can press them. The players' clock and rest/new-day lines (#1116) follow every change.
 
 **DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
 DMbot is there to help the game move quickly, never to bog it down or distract. The

@@ -30,7 +30,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.rules import optional
 from dmbot.timebot import clock as game
-from dmbot.timebot import effects
+from dmbot.timebot import durations, effects
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.store import ClockStore, Stored
 
@@ -103,7 +103,9 @@ class Result:
     changed: bool = False
 
 
-def _apply(action: str, clock: Clock | None, set_to: int | None) -> Clock | None:
+def _apply(
+    action: str, clock: Clock | None, set_to: int | None, minutes: int | None = None
+) -> Clock | None:
     """The new clock for a press, or None to change nothing (no clock yet, or nonsense)."""
     if action == "set":
         if set_to is None:
@@ -115,6 +117,8 @@ def _apply(action: str, clock: Clock | None, set_to: int | None) -> Clock | None
         return None
     if action == "m10":
         return game.advance(clock, 10)
+    if action == "advance":  # "an hour later", said by the DM (#1117)
+        return None if minutes is None else game.advance(clock, minutes)
     if action in ("h1", "short"):
         return game.advance(clock, game.SHORT_REST_MIN)
     if action == "long":
@@ -127,7 +131,7 @@ def _apply(action: str, clock: Clock | None, set_to: int | None) -> Clock | None
 def _speaks(action: str) -> bool:
     """Dawn, noon and dusk are said when time passes by a button or a rest; not when the
     DM says what time it is (the DM already knows)."""
-    return action in ("m10", "h1", "short", "long")
+    return action in ("m10", "h1", "short", "long", "advance")
 
 
 async def press(
@@ -138,17 +142,18 @@ async def press(
     action: str,
     *,
     set_to: int | None = None,
+    minutes: int | None = None,
 ) -> Result:
     """Do one thing to the clock. Raises CampaignError (plain words) if the person isn't a
     DM of the campaign. The 24-hour line is worked out here, once, in the same change."""
     store: ClockStore = client.clocks
-    tired_on = action in ("m10", "h1", "short", "long") and await _tired_rule_on(
+    tired_on = action in ("m10", "h1", "short", "long", "advance") and await _tired_rule_on(
         client, guild_id, campaign_id
     )
     result = Result(None, None)
 
     def change(current: Clock | None) -> Clock | None:
-        new = _apply(action, current, set_to)
+        new = _apply(action, current, set_to, minutes)
         if new is None:
             return None
         if tired_on and game.tired_due(new):
@@ -442,9 +447,12 @@ async def _run_press(
             await interaction.followup.send(note, view=view, ephemeral=True)
 
 
-def rest_note(action: str, clock: Clock) -> str:
+def rest_note(action: str, clock: Clock, minutes: int | None = None) -> str:
     if action == "dawn":
         return f"🌅 Skipped to dawn. Now {game.short_label(clock.minute)}."
+    if action == "advance" and minutes is not None:
+        later = durations.words(minutes).capitalize()
+        return f"⏩ {later} later. Now {game.short_label(clock.minute)}."
     kind, emoji = ("Short", "🛌") if action == "short" else ("Long", "🌙")
     return f"{emoji} {kind} rest. Now {game.short_label(clock.minute)}."
 
@@ -571,6 +579,72 @@ class ClockButton(
         await _reply(
             interaction, ALREADY_SHOWN.format(where=message.jump_url) + players_see(campaign)
         )
+
+
+SUGGEST_GAP_S = 300  # at most one rest suggestion per campaign in this long (#1117)
+NOT_A_DM = "Only this campaign's DMs can use the clock."
+
+
+def suggestion_view(campaign_id: str, kind: str) -> discord.ui.View:
+    """The two buttons under a player's suggestion: take the rest, or not now."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(SuggestionButton(campaign_id, kind, "yes"))
+    view.add_item(SuggestionButton(campaign_id, kind, "no"))
+    return view
+
+
+class SuggestionButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:clocksuggest:{_ID}:(?P<kind>short|long):(?P<answer>yes|no)",
+):
+    """A player said "let's take a short rest": the DM decides. **Short rest** moves the clock
+    like the button in the Set time… panel; **Not now** just closes the question. Nothing
+    moves until a DM of the campaign presses (checked again when the clock changes)."""
+
+    def __init__(self, campaign_id: str, kind: str, answer: str) -> None:
+        yes = answer == "yes"
+        super().__init__(
+            discord.ui.Button(
+                label=f"{kind.capitalize()} rest" if yes else "Not now",
+                emoji="🛌" if yes else "🙅",
+                style=discord.ButtonStyle.primary if yes else discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:clocksuggest:{campaign_id}:{kind}:{answer}",
+            )
+        )
+        self.campaign_id, self.kind, self.answer = campaign_id, kind, answer
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SuggestionButton:
+        return cls(match["campaign"], match["kind"], match["answer"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        client: Any = interaction.client
+        guild = interaction.guild
+        if guild is None:
+            return
+        await interaction.response.defer()
+        try:
+            campaign = await client.campaigns.get(guild.id, self.campaign_id)
+            if campaign is None:
+                await _reply(interaction, GONE)
+                return
+            if interaction.user.id not in campaign.dm_user_ids:
+                await _reply(interaction, NOT_A_DM)
+                return
+            asked = interaction.message.content if interaction.message is not None else ""
+            ended = "Not now." if self.answer == "no" else f"✅ {self.kind.capitalize()} rest."
+            # The question is closed first, so a second press can't take the rest twice.
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=f"{asked}\n{ended}", view=None, allowed_mentions=NO_PINGS
+                )
+            if self.answer == "yes":
+                await run_press(interaction, campaign.id, self.kind)
+        except Exception:
+            log.exception("A rest suggestion's button failed")
+            await _reply(interaction, FAILED)
 
 
 class SimpleGuild:

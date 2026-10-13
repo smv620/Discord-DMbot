@@ -1,0 +1,303 @@
+"""The clock follows what is said (#1117): the DM's words that move it by themselves (a rest
+starting or finishing, the next morning, an amount of time later), what is refused, the
+dedupe of a rest said as both starting and finishing, a player's suggestion that only asks the
+DM, the suggestion limit, and who may press its buttons. Phrase tests need no database."""
+
+from __future__ import annotations
+
+import unittest
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock
+
+from dmbot.dm_screen import clock as ui
+from dmbot.timebot import clock as game
+from dmbot.timebot import phrases
+from dmbot.timebot.phrases import Said
+from tests.test_timebot import (
+    DM,
+    GUILD_A,
+    NOON4,
+    PLAYER,
+    AtTheTable,
+)
+
+
+class DmWords(unittest.TestCase):
+    def test_a_rest_finishing_moves_the_clock_like_one_starting(self) -> None:
+        for line, kind in (
+            ("you finish your long rest", "long"),
+            ("You finish a short rest.", "short"),
+            ("The party finishes... you all finish your long rest", "long"),
+            ("the long rest is over", "long"),
+            ("your short rest ends", "short"),
+            ("After your long rest, you wake", "long"),
+            ("and after the short rest we go on", "short"),
+            ("we take a long rest", "long"),
+        ):
+            self.assertEqual(phrases.find_clock(line), Said(cast(Any, kind)), line)
+
+    def test_the_next_morning_and_dawn_go_to_the_next_dawn(self) -> None:
+        for line in (
+            "the next morning you wake up",
+            "The next morning.",
+            "next morning, the mist is gone",
+            "at dawn the camp stirs",
+            "you leave at dawn",
+        ):
+            self.assertEqual(phrases.find_clock(line), Said("dawn"), line)
+
+    def test_explicit_amounts_in_words_and_digits(self) -> None:
+        cases = {
+            "an hour later": 60,
+            "An hour later, the door opens": 60,
+            "one hour later": 60,
+            "two hours later": 120,
+            "ten minutes later": 10,
+            "10 minutes later": 10,
+            "half an hour later": 30,
+            "a minute later": 1,
+            "thirty minutes later": 30,
+            "forty-five minutes later": 45,
+            "forty five minutes later": 45,
+            "ninety minutes later": 90,
+            "3 hours later": 180,
+            "twelve hours later": 720,
+            "twenty-four hours later": 1440,
+            "24 hours later": 1440,
+            "an hour and ten minutes later": None,  # two amounts: not guessed at
+        }
+        for line, minutes in cases.items():
+            said = phrases.find_clock(line)
+            if minutes is None:
+                self.assertIsNone(said, line)
+            else:
+                self.assertEqual(said, Said("advance", minutes), line)
+
+    def test_more_than_a_day_or_nothing_is_not_moved_by_itself(self) -> None:
+        for line in (
+            "25 hours later",
+            "thirty hours later",
+            "0 minutes later",
+            "2000 minutes later",
+        ):
+            self.assertIsNone(phrases.find_clock(line), line)
+
+    def test_vague_narration_is_never_guessed(self) -> None:
+        for line in (
+            "you walk for a while",
+            "after some time you arrive",
+            "a few hours later",
+            "some time later",
+            "hours later",
+            "much later",
+            "the days pass",
+            "you travel through the night",
+            "it gets dark",
+        ):
+            self.assertIsNone(phrases.find_clock(line), line)
+
+    def test_questions_wishes_conditions_and_long_lines_never_count(self) -> None:
+        for line in (
+            "Do you finish your long rest?",
+            "an hour later?",
+            "if you finish your long rest the guards come",
+            "maybe an hour later",
+            "I'll meet you an hour later",
+            "we could do the next morning",
+            "if we arrive at dawn we win",
+            "you can't finish your long rest here",
+            "when you finish your long rest we move on",
+            "they will finish your long rest tomorrow",
+            "should we skip to the next morning",
+            "the innkeeper says an hour later",
+            "he told me about the next morning",
+            "not the next morning",
+            "ten minutes later " + "and so on " * 6,
+            "",
+        ):
+            self.assertIsNone(phrases.find_clock(line), line)
+
+    def test_a_rest_said_as_starting_and_finishing_is_one_thing(self) -> None:
+        keys = [
+            getattr(phrases.find_clock(line), "key", None)
+            for line in (
+                "we take a long rest",
+                "you finish your long rest",
+                "an hour later",
+                "two hours later",
+            )
+        ]
+        self.assertEqual(keys, ["long", "long", "+60", "+120"])
+
+    def test_the_old_start_phrases_still_work_and_still_refuse(self) -> None:
+        self.assertEqual(phrases.find("We take a short rest."), "short")
+        self.assertIsNone(phrases.find("let's take a short rest"))
+        self.assertIsNone(phrases.find("the party took a long rest"))
+
+
+class PlayerWords(unittest.TestCase):
+    def test_a_suggestion_is_found_but_moves_nothing(self) -> None:
+        for line, kind in (
+            ("let's take a short rest", "short"),
+            ("Let's take a long rest.", "long"),
+            ("can we long rest?", "long"),
+            ("can we take a short rest", "short"),
+            ("should we take a long rest", "long"),
+            ("we should take a short rest", "short"),
+            ("I think we need a long rest", "long"),
+            ("how about a short rest", "short"),
+        ):
+            self.assertEqual(phrases.suggested_rest(line), kind, line)
+            self.assertIsNone(phrases.find_clock(line), line)  # never moves the clock
+
+    def test_other_talk_about_rests_is_not_a_suggestion(self) -> None:
+        for line in (
+            "we took a long rest yesterday",
+            "he said let's take a long rest",
+            "I love a long rest",
+            "my character rests",
+            "let's go to the tavern",
+            "let's take a long walk",
+            "",
+            "let's take a short rest " + "and talk " * 8,
+        ):
+            self.assertIsNone(phrases.suggested_rest(line), line)
+
+
+class AtTheTableMore(AtTheTable):
+    """What the bot does with the words: the DM's move the clock, a player's ask the DM."""
+
+    async def say(self, user: int, line: str) -> None:
+        await self.bot._note_clock_phrase(cast(Any, self.table), user, line)
+
+    async def test_a_rest_finishing_moves_the_clock_by_eight_hours(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "you finish your long rest")
+        self.assertEqual(await self.minute(), NOON4 + 480)
+        self.assertTrue(any("Long rest" in text for text in self.posted))
+
+    async def test_starting_then_finishing_the_same_rest_counts_once(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "we take a long rest")
+        await self.say(DM, "you finish your long rest")
+        self.assertEqual(await self.minute(), NOON4 + 480)
+
+    async def test_the_next_morning_is_the_same_as_skip_to_dawn(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "the next morning you wake up")
+        self.assertEqual(await self.minute(), game.from_day_and_time(5, 6))
+        self.assertTrue(any("dawn" in text.lower() for text in self.posted))
+
+    async def test_an_amount_moves_the_clock_with_an_undo_note(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "two hours later")
+        self.assertEqual(await self.minute(), NOON4 + 120)
+        self.assertTrue(any("2 hours later" in text for text in self.posted))
+        await self.say(DM, "two hours later")  # said again at once: counted once
+        self.assertEqual(await self.minute(), NOON4 + 120)
+        await self.say(DM, "ten minutes later")
+        self.assertEqual(await self.minute(), NOON4 + 130)
+
+    async def test_noon_and_dusk_are_said_as_an_amount_passes_them(self) -> None:
+        await self.press("set", set_to=game.from_day_and_time(4, 11))
+        await self.say(DM, "two hours later")
+        self.assertTrue(any("Noon" in text for text in self.posted))
+
+    async def test_vague_words_and_non_dms_never_move_it(self) -> None:
+        await self.press("set", set_to=NOON4)
+        for user, line in (
+            (DM, "after some time you arrive"),
+            (DM, "a few hours later"),
+            (PLAYER, "an hour later"),
+            (PLAYER, "the next morning"),
+            (PLAYER, "you finish your long rest"),
+        ):
+            await self.say(user, line)
+        self.assertEqual(await self.minute(), NOON4)
+
+    async def test_a_player_who_has_not_agreed_asks_nothing(self) -> None:
+        await self.press("set", set_to=NOON4)
+        self.bot.consent.has_consent = lambda guild_id, user_id: user_id != PLAYER  # type: ignore[method-assign]
+        await self.say(PLAYER, "let's take a short rest")
+        self.assertEqual(self.posted, [])
+
+    async def test_a_suggestion_asks_the_dm_and_moves_nothing(self) -> None:
+        await self.press("set", set_to=NOON4)
+        views: list[Any] = []
+        original = self.bot.post_message
+
+        async def record(channel_id: int, text: str, view: Any = None) -> None:
+            views.append(view)
+            await original(channel_id, text, view)
+
+        self.bot.post_message = record  # type: ignore[method-assign]
+        await self.say(PLAYER, "let's take a short rest")
+        self.assertEqual(await self.minute(), NOON4)
+        [text] = self.posted
+        self.assertTrue(text.endswith("suggests a short rest."))
+        labels = [i.item.label for i in views[0].children]
+        self.assertEqual(labels, ["Short rest", "Not now"])
+
+    async def test_at_most_one_suggestion_in_five_minutes(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.say(PLAYER, "let's take a short rest")
+        await self.say(OTHER_DM_AS_PLAYER, "can we long rest?")
+        await self.say(PLAYER, "can we take a short rest")
+        self.assertEqual(len(self.posted), 1)
+        self.table.clock_suggested_at -= ui.SUGGEST_GAP_S + 1
+        await self.say(PLAYER, "can we take a short rest")
+        self.assertEqual(len(self.posted), 2)
+
+    async def test_without_a_clock_a_suggestion_has_nothing_to_move_and_asks_nothing(self) -> None:
+        await self.say(PLAYER, "let's take a short rest")
+        self.assertEqual(self.posted, [])
+
+    def interaction(self, user: int, content: str = "🛌 Mira suggests a short rest.") -> Any:
+        return SimpleNamespace(
+            client=self.bot,
+            guild=SimpleNamespace(id=GUILD_A),
+            user=SimpleNamespace(id=user),
+            message=SimpleNamespace(content=content, id=1),
+            response=SimpleNamespace(defer=AsyncMock(), is_done=lambda: True),
+            followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(),
+        )
+
+    async def test_the_dm_takes_the_rest_with_the_button(self) -> None:
+        await self.press("set", set_to=NOON4)
+        it = self.interaction(DM)
+        await ui.SuggestionButton(self.a.id, "short", "yes").callback(it)
+        self.assertEqual(await self.minute(), NOON4 + 60)
+        edit = it.edit_original_response.await_args.kwargs
+        self.assertIsNone(edit["view"])  # the question is closed
+        self.assertIn("✅ Short rest.", edit["content"])
+        self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])  # the Undo note
+
+    async def test_not_now_changes_nothing(self) -> None:
+        await self.press("set", set_to=NOON4)
+        it = self.interaction(DM)
+        await ui.SuggestionButton(self.a.id, "short", "no").callback(it)
+        self.assertEqual(await self.minute(), NOON4)
+        self.assertIn("Not now.", it.edit_original_response.await_args.kwargs["content"])
+
+    async def test_a_player_cannot_press_it(self) -> None:
+        await self.press("set", set_to=NOON4)
+        for answer in ("yes", "no"):
+            it = self.interaction(PLAYER)
+            await ui.SuggestionButton(self.a.id, "long", answer).callback(it)
+            it.edit_original_response.assert_not_awaited()
+            self.assertIn("Only this campaign's DMs", it.followup.send.await_args.args[0])
+        self.assertEqual(await self.minute(), NOON4)
+
+    def test_the_button_ids_match_their_template(self) -> None:
+        for kind in ("short", "long"):
+            for answer in ("yes", "no"):
+                custom_id = ui.SuggestionButton(self.a.id, kind, answer).item.custom_id
+                assert custom_id is not None and len(custom_id) <= 100
+                self.assertIsNotNone(
+                    ui.SuggestionButton.__discord_ui_compiled_template__.fullmatch(custom_id)
+                )
+
+
+OTHER_DM_AS_PLAYER = PLAYER + 1000  # another player: the limit is per campaign, not per person

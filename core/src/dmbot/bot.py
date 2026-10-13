@@ -363,6 +363,9 @@ class Table:
     # When a rest said at the table last moved the game clock, by kind (monotonic seconds):
     # the same phrase twice in a few minutes is one rest (#965).
     clock_said: dict[str, float] = field(default_factory=dict)
+    # When a player's "let's take a rest" last became a question for the DM (monotonic
+    # seconds): at most one every few minutes (#1117).
+    clock_suggested_at: float | None = None
     resumed: bool = False  # picked up again after a restart
     announce_resume: bool = True  # post "listening again" when voice is back
     # Asked privately about recording (or reminded) this session: at most once each.
@@ -684,7 +687,9 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(*CONSENT_BUTTONS)
         # "Check new names" on the DM screen after a session.
         self.add_dynamic_items(ReviewButton)
-        self.add_dynamic_items(clock_screen.ClockButton, clock_screen.ClockUndoButton)  # #965
+        self.add_dynamic_items(  # #965, #1117
+            clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
+        )
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
         self.add_dynamic_items(UndoButton, UndoListButton)
@@ -2659,8 +2664,8 @@ class DMBot(commands.AutoShardedBot):
                     self._note_house_rule(table, utterance.user_id, str(cleaned or text))
             except Exception:
                 log.exception("House rules by voice: couldn't look at a line")
-            if utterance.user_id in table.dm_user_ids and self.clocks is not None:
-                self._track(  # only a DM's own line can move the clock
+            if self.clocks is not None:
+                self._track(  # a DM's words move the clock; a player's only ask the DM
                     self._note_clock_phrase(table, utterance.user_id, str(cleaned or text)),
                     "clock-phrase",
                 )
@@ -2740,30 +2745,43 @@ class DMBot(commands.AutoShardedBot):
         self._track(self._post_rules_card(table, user_id, mention, card_id, before), "rules-card")
 
     async def _note_clock_phrase(self, table: Table, user_id: int, line: str) -> None:
-        """A DM's clear "we take a short rest" / "you take a long rest" moves the game clock,
-        if the DM has set one (#965): no AI, and a player's line never does. One short note
-        on the DM screen with an Undo button."""
-        rest = clock_phrases.find(line)
-        if rest is None or table.campaign_id is None:
+        """What is said at the table that bears on the game clock (#965, #1117): no AI, and
+        only people who agreed to be recorded. A campaign's DM clearly saying a rest starts or
+        finishes, that the next morning has come, or how much time has passed ("an hour
+        later") moves the clock, with a short note on the DM screen and an Undo button. A
+        player suggesting a rest moves nothing: it asks the DM, with one button, at most once
+        every few minutes. Vague narration is ignored."""
+        if table.campaign_id is None or not table.listening:
             return
-        if not table.listening or self.tables.get(table.guild_id) is not table:
+        if self.tables.get(table.guild_id) is not table:
             return
-        if user_id not in table.dm_user_ids or not self.consent.has_consent(
-            table.guild_id, user_id
-        ):
+        if not self.consent.has_consent(table.guild_id, user_id):
+            return
+        if user_id not in table.dm_user_ids:
+            await self._suggest_rest(table, user_id, line)
+            return
+        said = clock_phrases.find_clock(line)
+        if said is None:
             return
         now = time.monotonic()
-        last = table.clock_said.get(rest)
+        last = table.clock_said.get(said.key)
         if last is not None and now - last < CLOCK_PHRASE_GAP_S:
-            return
-        table.clock_said[rest] = now
+            return  # a rest said as starting and finishing, or the same words twice: once
+        table.clock_said[said.key] = now
         campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
         if campaign is None or user_id not in campaign.dm_user_ids:
             return
         try:
-            result = await clock_screen.press(self, campaign.guild_id, campaign.id, user_id, rest)
+            result = await clock_screen.press(
+                self,
+                campaign.guild_id,
+                campaign.id,
+                user_id,
+                said.action,
+                minutes=said.minutes,
+            )
         except Exception:
-            log.exception("The game clock couldn't take a rest said at the table")
+            log.exception("The game clock couldn't take what was said at the table")
             return
         if result.before is None or result.after is None:
             return  # no clock set yet: nothing to move
@@ -2771,13 +2789,39 @@ class DMBot(commands.AutoShardedBot):
         if stored is None:
             return
         await clock_screen.show(self, campaign, stored)
-        await clock_screen.update_players(self, campaign, rest, result)  # #1116
+        await clock_screen.update_players(self, campaign, said.action, result)  # #1116
         await timer_screen.announce_due(self, campaign, stored.clock.minute)
         await clock_screen.say(
             self,
             campaign,
-            [clock_screen.rest_note(rest, result.after), *result.lines],
+            [clock_screen.rest_note(said.action, result.after, said.minutes), *result.lines],
             clock_screen.undo_id(result.before, result.after),
+        )
+
+    async def _suggest_rest(self, table: Table, user_id: int, line: str) -> None:
+        """A player's "let's take a short rest": one line on the DM screen with **Short rest**
+        and **Not now**. Nothing moves until a DM presses, and only if the DM has set a clock
+        (otherwise there is nothing for the button to move)."""
+        kind = clock_phrases.suggested_rest(line)
+        if kind is None or table.campaign_id is None or self.clocks is None:
+            return
+        now = time.monotonic()
+        if (
+            table.clock_suggested_at is not None
+            and now - table.clock_suggested_at < clock_screen.SUGGEST_GAP_S
+        ):
+            return
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or campaign.dm_screen_channel_id is None:
+            return
+        if await self.clocks.get(campaign.guild_id, campaign.id) is None:
+            return
+        table.clock_suggested_at = now
+        name = discord.utils.escape_markdown(self.name_of(table.guild_id, user_id))
+        await self.post_message(
+            campaign.dm_screen_channel_id,
+            f"🛌 {name} suggests a {kind} rest.",
+            clock_screen.suggestion_view(campaign.id, kind),
         )
 
     def _check_house_file(self, campaign: Campaign, screen_id: int) -> None:
