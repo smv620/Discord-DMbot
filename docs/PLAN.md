@@ -861,7 +861,7 @@ so the docs always show names the way Discord does. For the campaign
   the lowest free number from 2 up, on the screen name and every sub-channel name
   (transcript included). *Example:* "Frozen Sick" and
   "Frozens Cake" both shorten to `frznsck`. "Frozens Cake" was made second, so its
-  channels are `dmb-dm-screen-2frozens-cake` and `dmb-time-2frznsck` (and so on).
+  channels are `dmb-dm-screen-2frozens-cake` and `dmb-gametime-2frznsck` (and so on).
 - Clashes are checked on the **names Discord will actually show**, numbers included. So
   a name that starts with a digit can't land on another campaign's clash number:
   "2 Frozens Cake" next to "Frozens Cake" (already `2frznsck`) gets a number too.
