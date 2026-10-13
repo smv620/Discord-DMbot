@@ -646,8 +646,8 @@ class DMBot(commands.AutoShardedBot):
         # Stops made on the website (#1151): the same stop as the Stop button, for our servers.
         self.site_stops = SiteStops(
             is_ours=lambda guild_id: self.get_guild(guild_id) is not None,
-            stop=self._stop_from_site,
-            resync=self._resync_consent,
+            consent=self.consent,
+            stop=self.withdraw_consent,  # stops capture, tells the DM, pushes ears, saves
             spawn=self._track,
         )
 
@@ -1069,29 +1069,6 @@ class DMBot(commands.AutoShardedBot):
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
-
-    async def _stop_from_site(self, guild_id: int, user_id: int) -> None:
-        """Someone pressed Stop recording me on the website: stop them as the Discord button
-        does. withdraw_consent stops capture before its first await, tells the DM, pushes
-        ears' allowlist and saves. (No separate stop_recording first: that would clear the
-        cache before withdraw_consent asks whether they were recorded, and the DM would
-        never be told.)"""
-        await self.withdraw_consent(guild_id, user_id)
-
-    async def _resync_consent(self) -> None:
-        """After the stop listener (re)connects: read each cached server's consent again. A
-        person whose consent is gone now (a stop saved while nobody listened) is stopped here
-        as everywhere: capture, transcript state and saved voice. One server failing never
-        skips the others."""
-        for guild_id in self.consent.cached_guilds():
-            try:
-                before = self.consent.consenting_now(guild_id)
-                after = await self.consent.reload(guild_id)
-                for user_id in before - after:
-                    self.stop_recording(guild_id, user_id)
-                await self.push_allowlist(guild_id)
-            except Exception as exc:
-                log.error("Couldn't read consent again for a server (%s)", type(exc).__name__)
 
     @staticmethod
     def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:

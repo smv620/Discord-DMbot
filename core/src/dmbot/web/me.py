@@ -134,6 +134,9 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                         "serverName": guild.name,
                         "agreedOn": _iso_date(row["granted_at"]),
                         # Said yes under older wording: not recorded until they say yes again.
+                        # (Not checked here: the outside speech company the yes named, #170;
+                        # the bot knows which one is in use. A yes for another company shows
+                        # as on, and DMbot asks again in Discord.)
                         "on": row["terms_version"] == consent.TERMS_VERSION,
                     }
                 )

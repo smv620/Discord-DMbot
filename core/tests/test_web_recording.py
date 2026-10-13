@@ -5,6 +5,7 @@ at once through the notification."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -139,36 +140,69 @@ class Recording(DatabaseTest):
             with self.assertRaises(errors.InsufficientPrivilege):
                 await conn.execute("UPDATE consent SET granted_at = granted_at + 1")
 
+    async def test_a_bare_delete_removes_only_her_own_row_in_the_server_set(self) -> None:
+        # The database holds the website's role, whatever the code asks: signed in as Alice
+        # with Thursday set, DELETE with no WHERE removes her Thursday row and nothing else.
+        async with self.web.user(ALICE.id, session=await self.alice_hash()) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute("DELETE FROM consent RETURNING user_id, guild_id")
+            self.assertEqual(
+                [(r["user_id"], r["guild_id"]) for r in await cur.fetchall()],
+                [(ALICE.id, THURSDAY.id)],
+            )
+        self.assertFalse(await self.still_agreed(THURSDAY.id, ALICE.id))
+        self.assertTrue(await self.still_agreed(THURSDAY.id, BOB.id))  # someone else's
+        self.assertTrue(await self.still_agreed(GORRAK.id, ALICE.id))  # another of her servers
+        self.assertTrue(await self.still_agreed(4444, ALICE.id))  # a server not on her list
+
+    async def test_a_delete_in_a_server_not_on_her_list_removes_nothing(self) -> None:
+        async with self.web.user(ALICE.id, session=await self.alice_hash()) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", ("4444",))
+            cur = await conn.execute("DELETE FROM consent RETURNING user_id")
+            self.assertEqual(await cur.fetchall(), [])
+        self.assertTrue(await self.still_agreed(4444, ALICE.id))
+
+    async def alice_hash(self) -> str:
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY, GORRAK], now=self.now, days=30)
+        found = await sessions.find(self.web, token, now=self.now)
+        assert found is not None
+        return found.id_hash
+
     async def test_a_stop_on_the_website_stops_the_running_bot_at_once(self) -> None:
         # The bot has Alice in its consent cache, as in a live session.
         await self.bot.consenting(THURSDAY.id)
         self.assertTrue(self.bot.has_consent(THURSDAY.id, ALICE.id))
+        seen: list[bool] = []
+        stopped = asyncio.Event()
         listening = asyncio.Event()
 
-        async def stop(guild_id: int, user_id: int) -> None:
-            self.bot.stop_now(guild_id, user_id)  # the Stop button's first step, before any await
-            await self.bot.revoke(guild_id, user_id)
+        async def withdraw(guild_id: int, user_id: int) -> None:
+            # What the bot's withdraw path sees: still held, so the DM would be told.
+            seen.append(self.bot.has_consent(guild_id, user_id))
+            self.bot.stop_now(guild_id, user_id)
+            stopped.set()
 
-        async def resync() -> None:
-            listening.set()
+        def spawn(work: Awaitable[None], name: str) -> object:
+            task = asyncio.ensure_future(work)
+            if name == "consent-recheck":  # the connect check: the listener is now in effect
+                task.add_done_callback(lambda _t: listening.set())
+            return task
 
         follower = SiteStops(
             is_ours=lambda guild_id: guild_id == THURSDAY.id,
-            stop=stop,
-            resync=resync,
-            spawn=lambda work, name: asyncio.ensure_future(work),
+            consent=self.bot,
+            stop=withdraw,
+            spawn=spawn,
         )
         task = asyncio.ensure_future(follower.follow(self.db.listen))
         try:
             await asyncio.wait_for(listening.wait(), 10)
-            # The website's process has its own consent store; this bot's cache is only
-            # told through the notification.
-            stopped = await self.client.post(f"/me/recording/{THURSDAY.id}/stop", headers=HEADERS)
-            self.assertEqual(stopped.status_code, 204)
-            for _ in range(100):
-                if not self.bot.has_consent(THURSDAY.id, ALICE.id):
-                    break
-                await asyncio.sleep(0.1)
+            # The website's process has its own consent store; this bot's memory is only told
+            # through the notification, which names the server and the bot checks the database.
+            done = await self.client.post(f"/me/recording/{THURSDAY.id}/stop", headers=HEADERS)
+            self.assertEqual(done.status_code, 204)
+            await asyncio.wait_for(stopped.wait(), 10)
+            self.assertEqual(seen, [True])
             self.assertFalse(self.bot.has_consent(THURSDAY.id, ALICE.id))
             self.assertTrue(self.bot.has_consent(THURSDAY.id, BOB.id))
         finally:

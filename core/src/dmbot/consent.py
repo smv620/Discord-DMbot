@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -128,10 +128,19 @@ class ConsentStore:
         if guild_id in self._cache:
             self._cache[guild_id] = self._cache[guild_id] - {user_id}
 
-    async def revoke(self, guild_id: int, user_id: int) -> bool:
+    async def revoke(
+        self,
+        guild_id: int,
+        user_id: int,
+        *,
+        in_transaction: Callable[[Conn], Awaitable[None]] | None = None,
+    ) -> bool:
         """Revoke and save; True if a saved consent was removed.
 
-        If saving fails, the player stays stopped in this process.
+        If saving fails, the player stays stopped in this process. `in_transaction` runs in
+        the same transaction as the delete, only when a row was removed: the website sends its
+        notification to the bot there, so it is delivered when the delete commits and never
+        without it (#1151).
         """
         self.stop_now(guild_id, user_id)
         async with self._lock(guild_id):
@@ -141,6 +150,8 @@ class ConsentStore:
                     (guild_id, user_id),
                 )
                 removed = await cur.fetchone() is not None
+                if removed and in_transaction is not None:
+                    await in_transaction(conn)
                 users = await _select(conn, guild_id, self._outside)
             self._held_back[guild_id].discard(user_id)
             self._store(guild_id, users)
@@ -149,6 +160,12 @@ class ConsentStore:
     def cached_guilds(self) -> list[int]:
         """Servers whose consent is held in memory."""
         return list(self._cache)
+
+    async def stored(self, guild_id: int) -> frozenset[int]:
+        """Who the database says consents here now, without touching the cache: the bot compares
+        it with what it holds, so it can stop (and tell the DM about) whoever is gone (#1151)."""
+        async with self._db.guild(guild_id) as conn:
+            return await _select(conn, guild_id, self._outside)
 
     def consenting_now(self, guild_id: int) -> frozenset[int]:
         """Who the cache says is consenting here, without reading the database."""
