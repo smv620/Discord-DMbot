@@ -56,10 +56,10 @@ QUESTIONS_NOW_ON = (
     "✅ DMbot may ask you, privately, when your D&D Beyond sheet doesn't show what was said at "
     "the table."
 )
-FIGHTBOT_ON = "FightBot: on"  # private reminders of your own options during combat (#1129)
-FIGHTBOT_OFF = "FightBot: off"
+FIGHTBOT_ON = "Fight reminders: on"  # private reminders of your own options during combat (#1129)
+FIGHTBOT_OFF = "Fight reminders: off"
 FIGHTBOT_NOW_ON = "✅ FightBot may remind you of your own options during a fight, privately."
-FIGHTBOT_NOW_OFF = "✅ FightBot won't send you reminders any more."
+FIGHTBOT_NOW_OFF = "✅ No more fight reminders for you."
 QUESTIONS_NOW_OFF = "✅ DMbot won't ask you about your D&D Beyond sheet any more."
 NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "

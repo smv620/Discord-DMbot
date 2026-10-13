@@ -2783,6 +2783,8 @@ once. The new-campaign form's link is saved in the same step as the campaign.
       next session** and **Never**. Snooze and Quiet are kept in memory for the session; Never
       is kept on the player's sheet row (per player per campaign) and undone with **FightBot:
       on/off** on 📜 My character sheet.
+    - Forgetting a sheet deletes its row, so **Never** is forgotten with it (the switch lives on
+      the sheet row); pressing **Forget my sheet** and linking again starts with reminders on.
     - **Spell slots:** the sheet snapshot (D1) does not keep slot counts, so a reminder can name
       spells and features but not how many slots are left. Adding slots to the sheet is a
       follow-up.

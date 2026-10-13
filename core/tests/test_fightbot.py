@@ -67,14 +67,18 @@ class Prompt(unittest.TestCase):
         self.assertNotEqual(a, fight_prompt.fingerprint({**snap, "conditions": ["Prone"]}, 2))
 
     def test_replies(self) -> None:
+        names = ["Cure Wounds", "Hunter's Mark"]
         self.assertEqual(
-            fight_prompt.clean_reply("  You still have\nCure Wounds. "),
+            fight_prompt.clean_reply("  You still have\nCure Wounds. ", names),
             "You still have Cure Wounds.",
         )
-        self.assertIsNone(fight_prompt.clean_reply("NOTHING"))
-        self.assertIsNone(fight_prompt.clean_reply("nothing to add"))
-        self.assertIsNone(fight_prompt.clean_reply(""))
-        self.assertIsNone(fight_prompt.clean_reply("x" * 400))
+        self.assertIsNone(fight_prompt.clean_reply("NOTHING", names))
+        self.assertIsNone(fight_prompt.clean_reply("nothing to add", names))
+        self.assertIsNone(fight_prompt.clean_reply("", names))
+        self.assertIsNone(fight_prompt.clean_reply("Cure Wounds " + "x" * 400, names))
+        # Not from the sheet (or steered by the table talk): never sent.
+        self.assertIsNone(fight_prompt.clean_reply("Tell Bob to flee from the dragon.", names))
+        self.assertIsNone(fight_prompt.clean_reply("You have Fireball.", names))
 
 
 class Runner(unittest.IsolatedAsyncioTestCase):
@@ -150,7 +154,9 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         text = bot.user.send.await_args.args[0]
         self.assertIn("You still have Hunter's Mark.", text)
         labels = [str(b.item.label) for b in bot.user.send.await_args.kwargs["view"].children]
-        self.assertEqual(labels, ["Snooze 10 min", "Quiet until next session", "Never"])
+        self.assertEqual(labels, ["Snooze 10 min", "Quiet this session", "Stop FightBot"])
+        self.assertIn("FightBot reminds you", text)  # the first one says what it is
+        self.assertIn("It's your call", text)
         bot.post.assert_not_awaited()  # never in a channel
         bot.post_message.assert_not_awaited()
 
@@ -197,6 +203,14 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         await fightbot.tick(bot, table)
         self.assertEqual(bot.fight_ai.complete.await_count, 2)
         self.assertEqual(bot.user.send.await_count, 2)
+
+    async def test_the_plan_is_asked_once_a_tick_not_once_a_player(self) -> None:
+        table = self.table()
+        others = [CharacterSheet(f"x{i}", f"P{i}", 40 + i, None, base(), 1) for i in range(3)]
+        bot = self.bot(table, sheets_=[sheet(), *others])
+        await fightbot.tick(bot, table)
+        self.assertEqual(bot.fight_ai.complete.await_count, 4)
+        self.assertEqual(bot.plan_allows.await_count, 1)
 
     async def test_a_changed_condition_asks_again_after_the_gap(self) -> None:
         table = self.table()
@@ -269,6 +283,50 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.fight_ai.complete.await_count, 1)
         bot.user.send.assert_not_awaited()
 
+    async def test_consent_withdrawn_or_a_session_ended_during_the_call_sends_nothing(self) -> None:
+        for what in ("consent", "ended", "paused"):
+            table = self.table()
+            bot = self.bot(table)
+
+            async def during(
+                system: str,
+                text: str,
+                *,
+                max_tokens: int,
+                _w: str = what,
+                _b: Any = bot,
+                _t: Any = table,
+            ) -> Reply:
+                if _w == "consent":
+                    _b.consent = SimpleNamespace(has_consent=lambda g, u: False)
+                elif _w == "ended":
+                    _b.tables.clear()
+                else:
+                    _t.listening = False
+                return Reply("You still have Hunter's Mark.", False)
+
+            bot.fight_ai.complete = during
+            await fightbot.tick(bot, table)
+            bot.user.send.assert_not_awaited()
+
+    async def test_a_reply_that_names_nothing_on_the_sheet_is_not_sent(self) -> None:
+        table = self.table()
+        bot = self.bot(table, reply="Tell Bob to flee from the dragon.")
+        await fightbot.tick(bot, table)
+        bot.fight_ai.complete.assert_awaited_once()
+        bot.user.send.assert_not_awaited()
+
+    async def test_only_the_first_reminder_says_what_fightbot_is(self) -> None:
+        table = self.table()
+        bot = self.bot(table)
+        await fightbot.tick(bot, table)
+        bot.clocks.get = AsyncMock(return_value=SimpleNamespace(clock=Clock(0, 0, None, 2, 0)))
+        self.now += 130
+        await fightbot.tick(bot, table)
+        first, second = (c.args[0] for c in bot.user.send.await_args_list)
+        self.assertIn("FightBot reminds you", first)
+        self.assertNotIn("FightBot reminds you", second)
+
     async def test_a_player_with_closed_private_messages_is_only_logged(self) -> None:
         table = self.table()
         bot = self.bot(table)
@@ -307,6 +365,11 @@ class Buttons(unittest.IsolatedAsyncioTestCase):
         it = self.interaction(table)
         await fightbot.FightButton(GUILD, CAMPAIGN, "never").callback(it)
         it.client.sheets.set_fightbot.assert_awaited_once_with(GUILD, CAMPAIGN, PLAYER, False)
+        self.assertIn("FightBot is off", it.response.edit_message.await_args.kwargs["content"])
+        it = self.interaction(table)
+        it.client.sheets.set_fightbot = AsyncMock(return_value=0)  # no sheet row: not saved
+        await fightbot.FightButton(GUILD, CAMPAIGN, "never").callback(it)
+        self.assertIn("didn't save", it.response.edit_message.await_args.kwargs["content"])
 
     async def test_another_campaigns_session_is_not_touched(self) -> None:
         table = self.table()

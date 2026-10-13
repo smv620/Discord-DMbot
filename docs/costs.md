@@ -68,7 +68,7 @@ FightBot is the one AI job that scales with players, not with speech. Its limit 
 | Case | Calls an hour | Tokens in / out each | Cost an hour (FAST tier, list price) |
 |---|---|---|---|
 | 5 players, a full hour of combat, every call made (the ceiling) | 5 × 30 = 150 | about 700 / 60 | about $0.15 |
-| the same table where half the calls find nothing to say ("NOTHING") and a quarter are skipped because nothing changed | about 56 | about 700 / 40 | about $0.05 |
+| the same table where a quarter of the changes don't happen, and some answers are "NOTHING" (still a paid call) | about 112 | about 700 / 40 | about $0.10 |
 | 5 players, no combat | 0 | none | $0 |
 
-Per call: 700 tokens in at $1.0 per million is $0.0007, and 60 tokens out at $5.0 per million is $0.0003, so about $0.001 a call. The prompt is the player's sheet facts (about 150 tokens), the round, and at most 8 short table lines (at most 1200 characters). Tokens are estimates (size by about 3.5 characters each), like the rest of this file; the usage line in the log gives the real ones. It is counted in the AI cost like every other job: every call goes through the same client and watch.
+Per call: 700 tokens in at $1.0 per million is $0.0007, and 60 tokens out at $5.0 per million is $0.0003, so about $0.001 a call. The prompt is the instructions (about 230 tokens), the player's sheet facts (about 150, up to 300 for a caster), the round, and at most 8 short table lines (at most 1200 characters, about 340 tokens). Tokens are estimates (size by about 3.5 characters each), like the rest of this file; the usage line in the log gives the real ones. It is counted in the AI cost like every other job: every call goes through the same client and watch.

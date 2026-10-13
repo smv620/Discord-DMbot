@@ -36,13 +36,14 @@ SNOOZE_S = 600.0
 TICK_S = 30
 MAX_TOKENS = 120
 _ID = r"(?P<campaign>[0-9a-f]{32})"
-SNOOZED = "😴 Okay, no reminders for 10 minutes."
-QUIET = "🤫 Okay, no more reminders until the next session."
-NEVER = (
-    "🚫 Okay, no more fight reminders from DMbot in this campaign. You can turn them back on in "
-    "📜 My character sheet."
+SNOOZED = "😴 Okay, back in 10 minutes."
+QUIET = "🤫 Okay, quiet until the next session."
+NEVER = "🚫 FightBot is off. Turn it back on in 📜 My character sheet."
+FOOTER = "FightBot reminder. Only you see this. It's your call."
+INTRO = (
+    "FightBot reminds you of your own spells and features during a fight. "
+    "Tap **Stop FightBot** to turn it off.\n"
 )
-FOOTER = "Only you see this. DMbot only reminds; you decide."
 
 
 @dataclass(slots=True)
@@ -53,6 +54,7 @@ class FightState:
     last_fp: dict[int, tuple[Any, ...]] = field(default_factory=dict)
     snoozed_until: dict[int, float] = field(default_factory=dict)
     quiet: set[int] = field(default_factory=set)  # "quiet until next session"
+    introduced: set[int] = field(default_factory=set)  # told once what FightBot is
 
 
 def silenced(state: FightState, user_id: int, now: float) -> bool:
@@ -102,6 +104,7 @@ async def tick(bot: Any, table: Any) -> None:
     now = time.monotonic()
     found: list[CharacterSheet] = await bot.sheets.sheets(table.guild_id, table.campaign_id)
     secrets: list[str] | None = None
+    allowed: bool | None = None
     for sheet in found:
         user = sheet.played_by
         if user is None or sheet.sheet is None or not sheet.fightbot:
@@ -115,8 +118,10 @@ async def tick(bot: Any, table: Any) -> None:
             secrets = await _secret_texts(bot, table)
             if secrets is None:
                 return
-        campaign = await bot.campaigns.get(table.guild_id, table.campaign_id)
-        if campaign is None or not await bot.plan_allows("ai", table.guild_id, campaign):
+        if allowed is None:  # once a tick, when the first player is due
+            campaign = await bot.campaigns.get(table.guild_id, table.campaign_id)
+            allowed = campaign is not None and await bot.plan_allows("ai", table.guild_id, campaign)
+        if not allowed:
             return
         # Checked again after the awaits: the session, the pause and their consent.
         if (
@@ -137,9 +142,24 @@ async def tick(bot: Any, table: Any) -> None:
         except AIError as exc:
             log.info("FightBot: no reminder this time (%s)", type(exc).__name__)
             continue
-        text = fight_prompt.clean_reply(reply.text)
-        if text is not None:
-            await _send(bot, table, user, text)
+        text = fight_prompt.clean_reply(reply.text, fight_prompt.sheet_names(sheet.sheet))
+        # (A failed or empty answer still uses up this change: no retry until something new.)
+        if text is not None and _may_send(bot, table, user):
+            first = user not in fight.introduced
+            fight.introduced.add(user)
+            await _send(bot, table, user, text, intro=first)
+
+
+def _may_send(bot: Any, table: Any, user_id: int) -> bool:
+    """Checked again right before a message goes out: the AI call takes seconds, and the
+    session may have ended, the table paused, the player withdrawn their consent or silenced
+    FightBot meanwhile."""
+    return (
+        bot.tables.get(table.guild_id) is table
+        and table.listening
+        and bot.consent.has_consent(table.guild_id, user_id)
+        and not silenced(table.fight, user_id, time.monotonic())
+    )
 
 
 def _table_lines(bot: Any, table: Any, now: float) -> list[tuple[str, str]]:
@@ -160,11 +180,11 @@ def buttons(guild_id: int, campaign_id: str) -> discord.ui.View:
     return view
 
 
-async def _send(bot: Any, table: Any, user_id: int, text: str) -> None:
+async def _send(bot: Any, table: Any, user_id: int, text: str, *, intro: bool = False) -> None:
     try:
         user = bot.get_user(user_id) or await bot.fetch_user(user_id)
         await user.send(
-            f"⚔️ {text}\n{FOOTER}",
+            f"⚔️ {text}\n{INTRO if intro else ''}{FOOTER}",
             view=buttons(table.guild_id, table.campaign_id),
             allowed_mentions=discord.AllowedMentions.none(),
         )
@@ -174,8 +194,8 @@ async def _send(bot: Any, table: Any, user_id: int, text: str) -> None:
 
 _LABELS = {
     "snooze": ("Snooze 10 min", "😴", discord.ButtonStyle.secondary),
-    "quiet": ("Quiet until next session", "🤫", discord.ButtonStyle.secondary),
-    "never": ("Never", "🚫", discord.ButtonStyle.danger),
+    "quiet": ("Quiet this session", "🤫", discord.ButtonStyle.secondary),
+    "never": ("Stop FightBot", "🚫", discord.ButtonStyle.secondary),
 }
 
 
@@ -209,8 +229,8 @@ class FightButton(
         user = interaction.user.id
         try:
             if self.action == "never":
-                await bot.sheets.set_fightbot(self.guild_id, self.campaign_id, user, False)
-                said = NEVER
+                kept = await bot.sheets.set_fightbot(self.guild_id, self.campaign_id, user, False)
+                said = NEVER if kept else "Sorry, that didn't save. Please try again."
             else:
                 table = bot.tables.get(self.guild_id)
                 if table is not None and table.campaign_id == self.campaign_id:
