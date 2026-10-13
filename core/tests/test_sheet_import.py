@@ -392,6 +392,16 @@ class Importing(unittest.IsolatedAsyncioTestCase):
         )
         again.client.sheets.save.assert_awaited_once()
 
+    async def test_a_link_that_fetches_six_mb_is_too_big_and_costs_nothing(self) -> None:
+        it = self.it()
+        got = fetch.Fetched(b"x" * (6 * 1024 * 1024), "big.pdf")
+        with patch.object(fetch, "fetch", AsyncMock(return_value=got)):
+            await ui.import_sheet(it, GUILD, CHARACTER, link="https://example.com/big.pdf")
+        self.assertIn(ui.TOO_BIG, self.everything(it))
+        it.client.sheets.save.assert_not_awaited()
+        self.assertEqual(sum(ui._reads.values()), 0)
+        self.ai.complete.assert_not_awaited()
+
     async def test_a_server_that_fetched_nothing_keeps_its_reads(self) -> None:
         it = self.it()
         await ui.import_sheet(it, GUILD, CHARACTER, attachment=file("scan.pdf", blank_pdf()))
@@ -434,7 +444,12 @@ class Importing(unittest.IsolatedAsyncioTestCase):
             snap = sheet_import.parse_reply(answer(**odd))
             assert snap is not None, odd
             self.assertTrue(snap["flags"], odd)
+            self.assertNotIn("below zero", checks.card(snap), odd)  # too big isn't negative
             self.assertIn("⛔", checks.card(snap), odd)
+        wide = checks.card(sheet_import.parse_reply(answer(abilities={"str": 45})) or {})
+        self.assertIn("a score on the sheet can't be right (1 to 30)", wide)
+        big = checks.card(sheet_import.parse_reply(answer(ac=99)) or {})
+        self.assertIn("a number on the sheet can't be right", big)
 
     async def test_the_reader_uses_the_one_shared_limit(self) -> None:
         from dmbot.memory import document_reader

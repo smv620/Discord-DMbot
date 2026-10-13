@@ -7,7 +7,8 @@ of the sheet:
 - ⚠️ read, but a name isn't in DMbot's rules list (content outside the free rules, or
   homebrew). It may be perfectly fine, and the card says so plainly;
 - ⛔ couldn't be read, or doesn't add up (levels over 20, hit points over max plus temporary,
-  a number below zero, a name that is nothing like any DMbot knows).
+  a number that can't be right (below zero or far too big), a name that is nothing like
+  any DMbot knows).
 
 The checks are the rules index (`dmbot.rules.index`, spells and conditions of the SRD),
 `sheet_names` (classes, species and feats) and simple arithmetic. No AI, and nothing is
@@ -243,7 +244,9 @@ def _basic(snapshot: Mapping[str, Any]) -> Check:
         problems.append("armor class couldn't be worked out; check it on your sheet")
     if "basic" in (snapshot.get("flags") or []):
         status = BAD
-        problems.append("a number on the sheet is below zero. Check your sheet")
+        problems.append(
+            "a number on the sheet can't be right (too small or too big). Check your sheet"
+        )
     unknown: list[str] = []  # nothing like a name DMbot knows (⛔)
     unlisted: list[str] = []  # a real book's name, or D&D Beyond's own: DMbot just lacks it (⚠️)
     names = [(f"'{c.get('name')}'", "class", str(c.get("name"))) for c in classes]
@@ -278,7 +281,9 @@ def _abilities(snapshot: Mapping[str, Any]) -> Check:
     missing = [a.upper() for a in ABILITIES if a not in scores]
     if "abilities" in (snapshot.get("flags") or []):
         return Check(
-            "abilities", BAD, "Ability scores: a score on the sheet is below zero. Check your sheet"
+            "abilities",
+            BAD,
+            "Ability scores: a score on the sheet can't be right (1 to 30). Check your sheet",
         )
     if missing and snapshot.get("origin") == ORIGIN_DOCUMENT:  # the AI leaves out what isn't there
         if len(missing) == 6:
@@ -385,7 +390,9 @@ def _inventory(snapshot: Mapping[str, Any]) -> Check:
         return Check("inventory", BAD, f"Inventory: couldn't be read. {_again_sentence(snapshot)}")
     if "inventory" in (snapshot.get("flags") or []):
         return Check(
-            "inventory", BAD, "Inventory: an amount on the sheet is below zero. Check your sheet"
+            "inventory",
+            BAD,
+            "Inventory: an amount on the sheet can't be right. Check your sheet",
         )
     rarity = inv.get("rarity") if isinstance(inv.get("rarity"), Mapping) else {}
     assert isinstance(rarity, Mapping)
@@ -400,7 +407,10 @@ def _inventory(snapshot: Mapping[str, Any]) -> Check:
             BAD,
             f"Inventory: DMbot couldn't count your items properly. {_again_sentence(snapshot)}",
         )
-    counts = [f"{rarity[r]} {r}" for r in reversed(RARITIES) if rarity.get(r)]
+    # A document's breakdown is the AI's guess, so only the count and weight are shown.
+    counts = (
+        [] if from_document else [f"{rarity[r]} {r}" for r in reversed(RARITIES) if rarity.get(r)]
+    )
     weight = f"{inv.get('weight') or 0:.2f}"
     tail = f": {', '.join(counts)}" if counts else ""
     return Check("inventory", OK, f"Inventory ({_plural(count, 'item')}, {weight} lb){tail}")

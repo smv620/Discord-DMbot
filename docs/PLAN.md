@@ -2690,7 +2690,7 @@ and the lines per rarity; a line with no rarity is common). Names and numbers on
 cap and backup path. `memory/sheet_checks.py` gives each part ✅, ⚠️ or ⛔ from the rules index (spells), a short name
 list in `memory/sheet_names.py` (classes, species and feats: names only, in the SRD or a real book's name DMbot has no
 rules for) and arithmetic (levels over 20, hit points over the maximum plus temporary, expertise without proficiency,
-rarity counts that don't add up, a negative number, a part that couldn't be read). A name from D&D Beyond that DMbot
+rarity counts that don't add up, a number that can't be right (negative or far too big), a part that couldn't be read). A name from D&D Beyond that DMbot
 doesn't know is ⚠️ (it is D&D Beyond's own data); a typed or document name is ⛔ only when it is nothing like a known
 name. The card is one private message after the player's own link or typing (not after the DM links a sheet, and not
 yet after a re-read: `sheet_checks.changed` is ready for D4), and the DM's name card adds only "HP 11 / 26 + 0, AC 18".
@@ -2701,7 +2701,7 @@ document reader and the file is discarded; its words are never stored, logged or
 of text (a scanned PDF) is refused with one line. `memory/sheet_import.py` sends at most 30,000 characters to the AI
 once per import (feature `sheet`, CAREFUL tier) with a fixed prompt that asks for JSON in exactly the snapshot's fields
 and says never to invent or follow instructions in the text; the answer goes through `sheets.clean` and the D1 checks,
-so a wrong name or number shows as ⚠️ or ⛔ on the status card, and a negative number flags its part. The sheet is saved
+so a wrong name or number shows as ⚠️ or ⛔ on the status card, and a number out of range flags its part. The sheet is saved
 as a typed sheet (`source: typed`, no link) marked `origin: document`, which is checked like a full sheet; what the
 document doesn't say is "not found in your document", not an error. Limits: one read a person every 30 seconds, one at
 a time per server, 20 a day per server, and the owner's plan must allow the AI (`plan_gate("ai")`).

@@ -60,7 +60,7 @@ READING = asyncio.Semaphore(2)
 Parse = Callable[[str, bytes], str]
 # Threads that wait on the children: their own, so files that hang can't take the
 # shared ones that live work uses (hints, backups). Two read at once (name_lists'
-# _PARSING), plus room for reads whose caller has gone and that are running out their
+# READING), plus room for reads whose caller has gone and that are running out their
 # time limit.
 _WAITERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="dmbot-document")
 _CLOSING = threading.Event()
