@@ -15,6 +15,9 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   says "Starting in ..." and the button cannot be pressed until it is done (#1115). #1110 (Stripe adapter replaces
   Lemon Squeezy): payments stay off; nothing to change in .env until the owner has made the Stripe account (#1096),
   then replace the LEMONSQUEEZY_* values with the STRIPE_* ones (.env.example) through scripts/set-key.
+- web-api, merged 2026-10-13 (#1131, WebDev): no migration. Check: nothing to click; a failed FIRST payment is now recorded
+  (kind payment_failed) and GET /me then sends firstPaymentFailed, so the account page says "Your first payment didn't go
+  through, so you have no plan yet". Payments are still off until the Stripe account exists (#1096).
 
 ------------------------------------------------------------------------------
 LIVE NOW
