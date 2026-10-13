@@ -842,7 +842,7 @@ so the docs always show names the way Discord does. For the campaign
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
 | Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
-| Game time (clock, effects, rests) | `dmb-time-rmfthfrstmdn` | Phase 4 |
+| Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
 | NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Phase 5 |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
 
@@ -1893,6 +1893,47 @@ ended (1 minute)" with **Ended** and **Still going +10 min** (ten more game minu
 clock is, then said again); nothing ends silently or by itself. Only the campaign's DMs, checked in
 the transaction. Effects live on the game clock, so a restart keeps them. Not built: split-party
 clocks, reading time from narration, AI.
+*The game-time channel (owner, 2026-10-13, after Test F):*
+- **Players see the clock in its own channel.** The players see the clock in a game-time channel,
+  `dmb-gametime-<slug>`, without needing the DM screen. Like the transcript channel, everyone
+  can read it and only the bot posts in it. `/dmbot start` creates or repairs it, and a failure
+  never blocks the session.
+- **The players' clock.** A message pinned there shows the day and an approximate time only:
+  "🕰️ Day 5, morning". It has no buttons, and no timers (effects stay DM-screen content). It is
+  edited in place when the clock moves. One short line is posted when a rest finishes or a new
+  day begins, and nothing else.
+- **The DM's clock.** The DM screen keeps the exact time ("Day 5, morning (6:20)") and the
+  controls. **Short rest, Long rest and Skip to dawn leave the pinned DM-screen message** for the
+  private Set time… panel. Rests are rare buttons, because DMbot hears them, and players who peek
+  behind the DM screen could take them for D&D Beyond character-sheet links.
+- **Approximate times** (game time, fixed hours, no seasons yet):
+
+  | Time | Word |
+  |---|---|
+  | 03:30–04:59 | pre-dawn |
+  | 05:00–05:59 | dawn |
+  | 06:00–09:59 | morning |
+  | 10:00–11:29 | late morning |
+  | 11:30–12:59 | about noon |
+  | 13:00–14:59 | afternoon |
+  | 15:00–16:59 | late afternoon |
+  | 17:00–17:59 | early evening |
+  | 18:00–18:59 | dusk |
+  | 19:00–20:29 | evening |
+  | 20:30–21:59 | late evening |
+  | 22:00–23:14 | night |
+  | 23:15–00:44 | near midnight |
+  | 00:45–03:29 | late night |
+- **The clock follows what is said** (voice transcripts of people who agreed, as today):
+  - When **the DM** clearly says a rest starts or ends, or how much time passes, the clock moves
+    by itself, with an Undo note on the DM screen. Examples: "you finish your long rest", "an
+    hour later", "the next morning".
+  - When **a player** suggests one ("let's take a short rest"), the DM screen asks the DM with one
+    button. The DM decides.
+  - Vague narration ("you walk for a while") is never guessed. At most it is a suggestion on the
+    DM screen.
+
+  Text channels are not read: that needs Discord's Message Content permission, an owner question.
 
 **DM sidebar: quick answers for the DM (owner, 2026-10-09; replaces the 2026-10-04 note).**
 DMbot is there to help the game move quickly, never to bog it down or distract. The
