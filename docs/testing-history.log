@@ -2108,3 +2108,15 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   healthy, 0 ERROR. /health 404, /admin/auth/ways 200, DMBOT_SIDEBAR=1. Campaigns with owner_left_at set: 0 (as expected).
   Not run: a real account deletion (needs a throwaway account) and the #1100 question in Discord (needs a session where
   the DM speaks vaguely as an NPC).
+
+==============================================================================
+2026-10-13  dev1  Test F: the game clock and a timer (owner, 1 person, ~5 minutes)
+==============================================================================
+  Live at 03:22 UTC on core + web-api 6c26108 (first start at 03:15 was a false start, stopped after 1.1 minutes).
+  Result (owner): the functions worked: clock set, timer started, "has likely ended" shown on the DM screen after the
+  time was passed, Ended and Still going +10 min both worked. Core log: 0 ERROR. Two faults found, both in
+  core/src/dmbot/timebot/effects.py, filed as #1112: (1) after Still going, the next "has likely ended" line still says the
+  original length ("1 minute"), because extend() never changes the stored minutes; (2) no DM-screen note says the DM
+  extended it. Not intended; a fix is queued for a developer. Also seen: the 03:00 UTC retention job ran as a dry run
+  ("Retention dry run: campaigns=1 past_keep_date=0 deleted=0 warned=0 skipped=0"), no error: that check passes.
+  Nothing deployed during the test; commits on development since 6c26108 (hours twin #1103, website role #728) wait.
