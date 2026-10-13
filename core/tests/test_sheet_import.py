@@ -21,7 +21,7 @@ from pypdf import PdfWriter
 from dmbot import fetch
 from dmbot.ai import AIError, Reply
 from dmbot.memory import sheet_checks as checks
-from dmbot.memory import sheet_import
+from dmbot.memory import sheet_import, sheets
 from dmbot.memory.document_reader import read_document
 from dmbot.memory.sheet_store import PlayerCharacter, SheetRefused
 from dmbot.ui import sheet_import as ui
@@ -407,7 +407,7 @@ class Importing(unittest.IsolatedAsyncioTestCase):
 
     async def test_an_empty_ai_inventory_or_made_up_rarities_is_not_an_error(self) -> None:
         for inventory in (
-            {"count": 5, "weight": 20, "rarity": dict.fromkeys(sheet_import.sheets.RARITIES, 0)},
+            {"count": 5, "weight": 20, "rarity": dict.fromkeys(sheets.RARITIES, 0)},
             {"count": 5, "weight": 20, "rarity": {"common": 2, "rare": 9}},
         ):
             snap = sheet_import.parse_reply(answer(inventory=inventory))
