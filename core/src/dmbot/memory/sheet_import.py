@@ -25,10 +25,14 @@ TEXT_MAX = 30_000  # characters sent to the AI: a long document is cut here
 FILE_MAX_BYTES = 5 * 1024 * 1024  # an uploaded sheet, as the plan says
 MAX_TOKENS = 4_000  # a snapshot is small
 NOTHING_FOUND = (
-    "DMbot's AI couldn't find a character in that. Check it is the character sheet, or "
-    "press **Type in my character** instead."
+    "DMbot didn't find a character sheet in that. Check it's the right file, or press "
+    "**Type in my character**."
 )
-PICTURES = "DMbot can't read pictures of text yet; type it in instead."
+PICTURES = (
+    "That file is only a picture of text, which DMbot can't read yet. Press **Type in my "
+    "character** instead."
+)
+UNCLEAR = "DMbot couldn't read that properly. Try again."
 
 PROMPT = """You read a player's own character sheet, given as text, for a tabletop role-playing \
 game helper. Answer with ONE JSON object and nothing else, using exactly these keys.
@@ -86,13 +90,19 @@ def parse_reply(reply: str) -> dict[str, Any] | None:
         "origin": sheets.ORIGIN_DOCUMENT,
         "flags": _flags(data),
     }
-    # proficiency_bonus and the level are worked out, never taken from the AI's word
+    # The level and proficiency_bonus are worked out, never taken from the AI's word, and
+    # from the classes `clean` will keep (the first four, each with a level of 1 to 20).
+    classes = candidate.get("classes")
+    kept = classes[:4] if isinstance(classes, list) else []
     candidate["level"] = min(
         sheets.LEVEL_MAX,
         sum(
             c["level"]
-            for c in candidate.get("classes", [])
-            if isinstance(c, Mapping) and isinstance(c.get("level"), int) and c["level"] > 0
+            for c in kept
+            if isinstance(c, Mapping)
+            and isinstance(c.get("level"), int)
+            and not isinstance(c["level"], bool)
+            and 1 <= c["level"] <= sheets.LEVEL_MAX
         ),
     )
     level = candidate["level"]
@@ -130,5 +140,5 @@ async def read_character(ai: TierClient, text: str) -> dict[str, Any] | None:
     reply = await ai.complete(PROMPT, text[:TEXT_MAX], max_tokens=MAX_TOKENS)
     try:
         return parse_reply(reply.text)
-    except (TypeError, ValueError, OverflowError, KeyError):
-        raise AIError("DMbot couldn't make sense of the AI's answer. Try again.") from None
+    except (TypeError, ValueError, OverflowError, KeyError, RecursionError):
+        raise AIError(UNCLEAR) from None  # (a deeply nested answer is a RecursionError)

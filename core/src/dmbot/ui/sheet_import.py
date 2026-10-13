@@ -22,28 +22,35 @@ from dmbot import fetch
 from dmbot.ai import AIError
 from dmbot.memory import sheet_import
 from dmbot.memory.document_reader import read_document
-from dmbot.memory.name_documents import DocumentError
+from dmbot.memory.name_documents import NO_TEXT, SCANNED_PDF, DocumentError
 from dmbot.memory.sheet_store import PlayerCharacter, SheetRefused
 from dmbot.ui import sheets as ui
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _answer_first, _failed, _tell
 
 log = logging.getLogger(__name__)
 
-NO_AI = (
-    "DMbot can't read documents right now (its AI isn't switched on). Press **Type in my "
-    "character** instead."
+NO_AI = "Reading documents isn't available here yet. Press **Type in my character** instead."
+WAIT = "Please wait 30 seconds, then press the button again."
+BUSY = "DMbot is busy reading another sheet. Try again in a minute."
+DAILY = (
+    "This server has used up today's document reads. Try again tomorrow, or press **Type in "
+    "my character**."
 )
-WAIT = "Wait 30 seconds, then try again."
-BUSY = "DMbot is already reading a sheet for this server. Try again in a moment."
-DAILY = "This server has used today's sheet reads. Try again tomorrow, or type it in."
-TOO_BIG = "That file is too big (up to 5 MB)."
-WRONG_TYPE = "DMbot can read Word (.docx), PDF and text (.txt) files. Save it as one of those."
-NO_FILE = "No file was added. Press **Upload my sheet file** and pick one."
-TOO_LONG = "Reading took too long. Nothing was saved. Try a shorter document."
+TOO_BIG = "That file is over 5 MB. Save a smaller copy, or press **Type in my character**."
+WRONG_TYPE = (
+    "DMbot reads Word (.docx), PDF and text (.txt) files. Save your sheet as one of those and "
+    "try again."
+)
+NO_FILE = "No file came through. Press **Upload my sheet file** and choose one before sending."
+TOO_LONG = "That took too long, so nothing was saved. Try again, or press **Type in my character**."
+GENERIC = (
+    "Something went wrong and nothing was saved. Try again, or press **Type in my character**."
+)
 READ_OK = (
-    "✅ DMbot read **{name}** from {where}. It keeps only the names and numbers, not the "
-    "document. Linking a D&D Beyond sheet later replaces this."
+    "✅ Read **{name}** from {where}. DMbot kept the names and numbers, not the file. Check "
+    "the card below, since it may have misread something."
 )
+SHORTENED = " Only the first part of a long document was read."
 COOLDOWN_S = 30  # per person
 READS_PER_DAY = 20  # per server, for the operator's bill (bring-your-own keys: #50)
 TIME_LIMIT_S = 240  # well inside Discord's 15 minutes to answer
@@ -55,11 +62,13 @@ _reads: dict[tuple[int, str], int] = {}  # (server, day) → AI reads
 _PARSING = asyncio.Semaphore(2)  # documents opened at once, across all servers
 
 
-class DocumentLinkForm(discord.ui.Modal, title="Link a sheet document"):
-    link: discord.ui.TextInput[DocumentLinkForm] = discord.ui.TextInput(
-        label="Link to your character sheet",
-        placeholder="https://docs.google.com/document/d/…",
-        max_length=400,
+class DocumentLinkForm(discord.ui.Modal, title="Read my sheet from a link"):
+    link: discord.ui.Label[DocumentLinkForm] = discord.ui.Label(
+        text="Link to your sheet",
+        description="Anyone with the link must be able to open it. DMbot keeps no document.",
+        component=discord.ui.TextInput(
+            placeholder="https://docs.google.com/document/d/…", max_length=400
+        ),
     )
 
     def __init__(self, guild_id: int, character: PlayerCharacter) -> None:
@@ -72,13 +81,14 @@ class DocumentLinkForm(discord.ui.Modal, title="Link a sheet document"):
         await _failed(interaction, error)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        link = self.link.value.strip()
-        await import_sheet(interaction, self.guild_id, self.character, link=link)
+        field = cast(discord.ui.TextInput[DocumentLinkForm], self.link.component)
+        await import_sheet(interaction, self.guild_id, self.character, link=field.value.strip())
 
 
 class DocumentFileForm(discord.ui.Modal, title="Upload your sheet"):
     file: discord.ui.Label[DocumentFileForm] = discord.ui.Label(
-        text="A Word, PDF or text file (5 MB at most)",  # 45 characters at most
+        text="Your sheet file (Word, PDF or text)",  # 45 characters at most
+        description="Up to 5 MB. DMbot reads it once and doesn't keep the file.",
         component=discord.ui.FileUpload(max_values=1),
     )
 
@@ -133,7 +143,7 @@ async def _text_of(
         return None, str(exc)
     except DocumentError as exc:
         text = str(exc)
-        if "scanned" in text or "no text" in text:  # pictures of text, not text
+        if text in (SCANNED_PDF, NO_TEXT):  # pictures of text, not text
             return None, sheet_import.PICTURES
         return None, text
 
@@ -155,9 +165,6 @@ async def import_sheet(
         await _tell(interaction, NO_AI)
         return
     user = interaction.user.id
-    if ui._too_soon(_last, (guild_id, user), COOLDOWN_S):
-        await _tell(interaction, WAIT)
-        return
     if attachment is not None:
         problem = _refusal_for_file(attachment)
         if problem is not None:  # before downloading anything
@@ -172,24 +179,32 @@ async def import_sheet(
         await _tell(interaction, refused)
         return
     day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
+    # From here to `_busy.add` there is no await: two imports for one server can't both pass
+    # (the server's one-at-a-time rule and its daily cap would both be broken). The person's
+    # wait starts only now, so a wrong file or a busy server doesn't cost them 30 seconds.
     if guild_id in _busy:
         await _tell(interaction, BUSY)
         return
     if _reads.get((guild_id, day), 0) >= READS_PER_DAY:
         await _tell(interaction, DAILY)
         return
-    await _answer_first(interaction)
-    if not await ui._still_member(interaction, guild_id):
+    if ui._too_soon(_last, (guild_id, user), COOLDOWN_S):
+        await _tell(interaction, WAIT)
         return
     _busy.add(guild_id)
+    for old in [k for k in _reads if k[1] != day]:
+        del _reads[old]  # only today counts
+    _reads[(guild_id, day)] = _reads.get((guild_id, day), 0) + 1
     try:
+        await _answer_first(interaction)
+        if not await ui._still_member(interaction, guild_id):
+            return
         text, problem = await _text_of(link=link, attachment=attachment)
         if text is None:
+            _reads[(guild_id, day)] -= 1  # nothing was sent to the AI: no read used
             await _tell(interaction, problem or "DMbot couldn't read that.")
             return
-        for old in [k for k in _reads if k[1] != day]:
-            del _reads[old]  # only today counts
-        _reads[(guild_id, day)] = _reads.get((guild_id, day), 0) + 1
+        shortened = len(text) > sheet_import.TEXT_MAX
         try:
             async with asyncio.timeout(TIME_LIMIT_S):
                 snapshot = await sheet_import.read_character(ai, text)
@@ -199,15 +214,13 @@ async def import_sheet(
         except TimeoutError:
             await _tell(interaction, TOO_LONG)
             return
-        finally:
-            del text  # the document's words go no further than this call
         if snapshot is None:
             await _tell(interaction, sheet_import.NOTHING_FOUND)
             return
-        await _keep(interaction, guild_id, character, snapshot, link is not None)
+        await _keep(interaction, guild_id, character, snapshot, link is not None, shortened)
     except Exception:
         log.exception("Reading a sheet document failed")  # no text: the cause only
-        await _tell(interaction, "Something went wrong. Nothing was saved. Try again later.")
+        await _tell(interaction, GENERIC)
     finally:
         _busy.discard(guild_id)
 
@@ -218,6 +231,7 @@ async def _keep(
     character: PlayerCharacter,
     snapshot: dict[str, Any],
     from_link: bool,
+    shortened: bool = False,
 ) -> None:
     store = ui._store(interaction)
     assert store is not None
@@ -240,6 +254,8 @@ async def _keep(
     said = READ_OK.format(
         name=ui._md(str(snapshot["name"])), where="your link" if from_link else "your file"
     )
+    if shortened:
+        said += SHORTENED
     if before is not None and before.url is not None:
         said += ui.TYPED_REPLACED
     await ui.show_panel(interaction, guild_id, c, note=said)

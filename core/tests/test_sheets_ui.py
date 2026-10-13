@@ -136,7 +136,7 @@ class Button(unittest.IsolatedAsyncioTestCase):
         self.assertIn("**Testa** (Frost\\*maiden): no sheet yet", said(it))
         labels = [b.label for b in sent_view(it).children]
         self.assertEqual(
-            labels, [ui.LINK_LABEL, ui.TELL_LABEL, ui.DOC_LABEL, ui.FILE_LABEL]
+            labels, [ui.LINK_LABEL, ui.TELL_LABEL, ui.FILE_LABEL, ui.DOC_LABEL]
         )  # nothing to unlink yet
 
     async def test_several_characters_ask_which(self) -> None:

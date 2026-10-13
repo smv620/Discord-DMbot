@@ -269,7 +269,7 @@ def _abilities(snapshot: Mapping[str, Any]) -> Check:
         )
     if missing and snapshot.get("origin") == ORIGIN_DOCUMENT:  # the AI leaves out what isn't there
         if len(missing) == 6:
-            return Check("abilities", OK, "Ability scores: not found in your document")
+            return Check("abilities", WARN, "Ability scores: none found in your document")
         return Check(
             "abilities", WARN, f"Ability scores: {_few(missing, 6)} not found in your document"
         )

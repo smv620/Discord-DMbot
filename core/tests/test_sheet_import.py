@@ -157,6 +157,37 @@ class Replies(unittest.TestCase):
         self.assertNotIn(checks.BAD, [c.status for c in checks.checks(snap)])
 
 
+class OddAnswers(unittest.IsolatedAsyncioTestCase):
+    def test_odd_shapes_never_raise(self) -> None:
+        for odd in (
+            {"name": "X", "classes": 5},
+            {"name": "X", "classes": [{"name": "Ranger", "level": True}]},
+            {"name": "X", "classes": [{"name": "Ranger", "level": 99}] * 9},
+            {"name": "X", "abilities": 7, "inventory": [1], "feats": {"a": 1}},
+            {"name": "X", "hp": 10**400, "ac": float("nan")},
+        ):
+            snap = sheet_import.parse_reply(json.dumps(odd, allow_nan=True))
+            assert snap is not None, odd
+        # the level only counts the classes the allow list keeps
+        snap = sheet_import.parse_reply(
+            json.dumps(
+                {"name": "X", "classes": [{"name": "A", "level": 99}, {"name": "B", "level": 3}]}
+            )
+        )
+        assert snap is not None
+        self.assertEqual(snap["level"], 3)
+
+    async def test_a_deeply_nested_answer_is_a_plain_error(self) -> None:
+        ai = SimpleNamespace(
+            complete=AsyncMock(
+                return_value=Reply('{"a":' + "[" * 200_000 + "]" * 200_000 + "}", False)
+            )
+        )
+        with self.assertRaises((AIError,)) as caught:
+            await sheet_import.read_character(ai, "hi")  # type: ignore[arg-type]
+        self.assertEqual(str(caught.exception), sheet_import.UNCLEAR)
+
+
 class OneCall(unittest.IsolatedAsyncioTestCase):
     async def test_one_call_with_the_text_capped_and_the_fixed_prompt(self) -> None:
         ai = SimpleNamespace(complete=AsyncMock(return_value=Reply(answer(), False)))
@@ -233,7 +264,9 @@ class Importing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(args.kwargs.get("url"))  # a document sheet has no link
         self.assertEqual(args.kwargs["player"], PLAYER)
         self.assertTrue(any("DMbot read your sheet" in t for t in self.texts(it)))  # the card
-        self.assertTrue(any("keeps only the names and numbers" in t for t in self.texts(it)))
+        self.assertTrue(
+            any("kept the names and numbers, not the file" in t for t in self.texts(it))
+        )
 
     async def test_a_link_is_fetched_with_the_safe_fetcher_and_read(self) -> None:
         it = self.it()
@@ -325,6 +358,54 @@ class Importing(unittest.IsolatedAsyncioTestCase):
                 it, GUILD, CHARACTER, attachment=file("s.txt", f"{SHEET_TEXT}\n{secret}".encode())
             )
         self.assertNotIn(secret, "\n".join(logs.output))
+
+    async def test_two_imports_at_once_for_one_server_read_only_once(self) -> None:
+        import asyncio
+
+        started = asyncio.Event()
+
+        async def slow(*_a: Any, **_kw: Any) -> bool:
+            started.set()
+            await asyncio.sleep(0.05)
+            return True
+
+        first, second = self.it(), self.it()
+        first.user, second.user = MagicMock(id=PLAYER), MagicMock(id=PLAYER + 1)
+        for it in (first, second):
+            it.client.get_guild = MagicMock(return_value=MagicMock())
+        with patch.object(sheets_ui, "_still_member", slow):
+            await asyncio.gather(
+                ui.import_sheet(
+                    first, GUILD, CHARACTER, attachment=file("a.txt", SHEET_TEXT.encode())
+                ),
+                ui.import_sheet(
+                    second, GUILD, CHARACTER, attachment=file("b.txt", SHEET_TEXT.encode())
+                ),
+            )
+        self.assertEqual(self.ai.complete.await_count, 1)
+        self.assertIn(ui.BUSY, self.everything(first) + self.everything(second))
+
+    async def test_a_wrong_file_does_not_cost_the_30_second_wait(self) -> None:
+        it = self.it()
+        await ui.import_sheet(it, GUILD, CHARACTER, attachment=file("sheet.png", b"png"))
+        again = self.it()
+        await ui.import_sheet(
+            again, GUILD, CHARACTER, attachment=file("s.txt", SHEET_TEXT.encode())
+        )
+        again.client.sheets.save.assert_awaited_once()
+
+    async def test_a_server_that_fetched_nothing_keeps_its_reads(self) -> None:
+        it = self.it()
+        await ui.import_sheet(it, GUILD, CHARACTER, attachment=file("scan.pdf", blank_pdf()))
+        self.assertEqual(sum(ui._reads.values()), 0)  # the AI was never asked
+
+    async def test_a_long_document_says_only_the_start_was_read(self) -> None:
+        it = self.it()
+        long = (SHEET_TEXT + "\n" + "filler " * 10_000).encode()
+        await ui.import_sheet(it, GUILD, CHARACTER, attachment=file("long.txt", long))
+        self.assertIn(ui.SHORTENED.strip(), " ".join(self.texts(it)))
+        sent = self.ai.complete.await_args.args[1]
+        self.assertEqual(len(sent), sheet_import.TEXT_MAX)
 
     async def test_the_panel_offers_both_ways(self) -> None:
         view = sheets_ui.SheetPanel(GUILD, CHARACTER, has_sheet=False)
