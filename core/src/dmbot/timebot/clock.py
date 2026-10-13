@@ -61,7 +61,7 @@ _DAY_PARTS: tuple[tuple[int, str], ...] = (
     (45, "late night"),
     (3 * 60 + 30, "pre-dawn"),
     (5 * 60, "dawn"),
-    (6 * 60 + 15, "morning"),  # dawn runs to 06:14 so "Skip to dawn" (06:00) reads "dawn"
+    (6 * 60 + 15, "morning"),  # dawn runs to 06:14, so the dawn mark (06:00) reads "dawn"
     (10 * 60, "late morning"),
     (11 * 60 + 30, "about noon"),
     (13 * 60, "afternoon"),
