@@ -146,6 +146,19 @@ class ConsentStore:
             self._store(guild_id, users)
             return removed
 
+    def cached_guilds(self) -> list[int]:
+        """Servers whose consent is held in memory."""
+        return list(self._cache)
+
+    async def reload(self, guild_id: int) -> frozenset[int]:
+        """Read this server's consent from the database again (a stop saved by another
+        process, such as the website, #1151). A stop made here and not yet saved still
+        holds back its player, as in every other reload."""
+        async with self._lock(guild_id):
+            async with self._db.guild(guild_id) as conn:
+                users = await _select(conn, guild_id, self._outside)
+            return self._store(guild_id, users)
+
     async def consenting(self, guild_id: int) -> frozenset[int]:
         if guild_id not in self._cache:
             async with self._lock(guild_id):

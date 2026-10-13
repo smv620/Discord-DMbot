@@ -60,6 +60,7 @@ from dmbot.consent_dm import (
     warning_text,
     warning_view,
 )
+from dmbot.consent_site import SiteStops
 from dmbot.db import Database
 from dmbot.dm_screen import (
     DMScreenError,
@@ -642,6 +643,13 @@ class DMBot(commands.AutoShardedBot):
             spawn=self._track,
             post=self.post,  # the #dm-screen note on an accept made on the website
         )
+        # Stops made on the website (#1151): the same stop as the Stop button, for our servers.
+        self.site_stops = SiteStops(
+            is_ours=lambda guild_id: self.get_guild(guild_id) is not None,
+            stop=self._stop_from_site,
+            resync=self._resync_consent,
+            spawn=self._track,
+        )
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -729,6 +737,7 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self.site_offers.follow(self.campaigns.listen), "site-offers"),
             self._watched(self.site_offers.every_hour(), "site-offer-sweeps"),
             self._watched(self.site_offers.follow_decided(self.campaigns.listen), "site-decisions"),
+            self._watched(self.site_stops.follow(self.campaigns.listen), "site-consent-stops"),
         ]
 
     async def close(self) -> None:
@@ -1058,6 +1067,20 @@ class DMBot(commands.AutoShardedBot):
             return await self.consent.revoke(guild_id, user_id)
         finally:
             # Again, in case a grant that was saving meanwhile sent ears an older list.
+            with contextlib.suppress(Exception):
+                await self.push_allowlist(guild_id)
+
+    async def _stop_from_site(self, guild_id: int, user_id: int) -> None:
+        """Someone pressed Stop recording me on the website: stop them as the Discord button
+        does (out of the cache and ears at once, before any await), then save."""
+        self.stop_recording(guild_id, user_id)
+        await self.withdraw_consent(guild_id, user_id)
+
+    async def _resync_consent(self) -> None:
+        """After the stop listener (re)connects: read each cached server's consent again, and
+        tell ears, in case a stop was saved while nobody listened."""
+        for guild_id in self.consent.cached_guilds():
+            await self.consent.reload(guild_id)
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
 

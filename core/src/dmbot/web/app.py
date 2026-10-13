@@ -23,7 +23,8 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from dmbot import entitlements, install, plans
+from dmbot import consent_notify, entitlements, install, plans
+from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.web import admin_api, entitlements_writer, feedback, offers, sessions, tokens
 from dmbot.web.accounts import (
@@ -289,6 +290,27 @@ def create_app(
     async def me(signed: Signed) -> dict[str, Any]:
         session, _token = signed
         return await build_me(db, session, now=clock())
+
+    @app.post("/me/recording/{server_id}/stop", status_code=204)
+    async def stop_recording(server_id: str, signed: Signed) -> Response:
+        """Stop recording the signed-in person in one of their servers (#1151): the same stop
+        the bot's Menu writes (the consent store's own revoke). The bot is told first, so a
+        running session stops at once; saving it too means a lost notice changes nothing.
+        Only their own consent, only in servers on their session's list; asking twice is
+        fine. Starting again stays in Discord."""
+        session, _token = signed
+        try:
+            guild_id = int(server_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+        if guild_id not in {int(g.id) for g in session.guilds}:
+            raise HTTPException(status_code=404, detail="not_found")
+        scoped = db.as_person(session.user_id, session.id_hash)
+        async with db.user(session.user_id, session=session.id_hash) as conn:
+            await consent_notify.send(conn, guild_id, session.user_id)
+        await ConsentStore(scoped).revoke(guild_id, session.user_id)
+        log.info("A recording stop was made on the website")
+        return Response(status_code=204)
 
     @app.get("/me/export")
     async def me_export(signed: Signed) -> Response:
