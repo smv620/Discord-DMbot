@@ -41,10 +41,13 @@ class Arithmetic(unittest.TestCase):
         c = game.combat_start(Clock(NOON4, 0))
         assert c is not None
         for _ in range(9):
-            c = game.combat_next(c)  # type: ignore[assignment]
+            nxt = game.combat_next(c)
+            assert nxt is not None
+            c = nxt
         self.assertEqual((c.combat_round, c.minute, c.combat_secs), (10, NOON4, 54))
-        c = game.combat_next(c)  # type: ignore[assignment]
-        self.assertEqual((c.combat_round, c.minute, c.combat_secs), (11, NOON4 + 1, 0))
+        nxt = game.combat_next(c)
+        assert nxt is not None
+        self.assertEqual((nxt.combat_round, nxt.minute, nxt.combat_secs), (11, NOON4 + 1, 0))
 
     def test_a_named_round_spends_the_rounds_passed_and_going_back_spends_nothing(self) -> None:
         c = game.combat_start(Clock(NOON4, 0))
@@ -83,10 +86,11 @@ class Arithmetic(unittest.TestCase):
         self.assertFalse(game.in_combat(None))
         self.assertFalse(game.in_combat(Clock(NOON4, 0)))
         self.assertTrue(game.in_combat(game.combat_start(Clock(NOON4, 0))))
-        self.assertEqual(
-            game.combat_label(game.combat_round_to(game.combat_start(Clock(NOON4, 0)), 3)),  # type: ignore[arg-type]
-            "⚔️ Combat, round 3",
-        )
+        start = game.combat_start(Clock(NOON4, 0))
+        assert start is not None
+        third = game.combat_round_to(start, 3)
+        assert third is not None
+        self.assertEqual(game.combat_label(third), "⚔️ Combat, round 3")
 
 
 class Phrases(unittest.TestCase):
@@ -167,7 +171,9 @@ class Wiring(unittest.TestCase):
     def test_the_players_see_only_the_round(self) -> None:
         out = ui.players_text(Clock(NOON4, 0))
         self.assertNotIn("Combat", out)
-        inside = ui.players_text(game.combat_start(Clock(NOON4, 0)))  # type: ignore[arg-type]
+        fight = game.combat_start(Clock(NOON4, 0))
+        assert fight is not None
+        inside = ui.players_text(fight)
         self.assertIn("⚔️ Combat, round 1", inside)
         self.assertIn(game.short_label(NOON4), inside)
 
