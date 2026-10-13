@@ -135,6 +135,32 @@ class AtTheTableTyped(AtTheTable):
         self.assertEqual(len(floods), 1)
         self.assertNotIn("secret text", floods[0].getMessage())
 
+    async def test_the_cap_holds_real_waiting_checks_and_gives_places_back(self) -> None:
+        release = asyncio.Event()
+        started = 0
+
+        async def slow(table: Any, user_id: int, line: str) -> None:
+            nonlocal started
+            started += 1
+            await release.wait()
+
+        cast(Any, self.bot)._note_clock_phrase = slow
+        for i in range(table_chat.CLOCK_WAITING_MAX + 3):
+            self.bot._hear_typed(message(f"we wait {i}", author=PLAYER + i))
+        await asyncio.sleep(0)
+        self.assertEqual(started, table_chat.CLOCK_WAITING_MAX)
+        self.assertEqual(self.live.clock_waiting, table_chat.CLOCK_WAITING_MAX)
+        release.set()
+        await asyncio.gather(*list(self.bot._asking))
+        self.assertEqual(self.live.clock_waiting, 0)
+
+    async def test_speech_is_never_skipped_by_the_typed_cap(self) -> None:
+        await self.press("set", set_to=NOON4)
+        self.live.clock_waiting = table_chat.CLOCK_WAITING_MAX
+        self.bot._act_on_line(self.live, DM, "we take a long rest")  # spoken
+        await asyncio.gather(*list(self.bot._asking))
+        self.assertEqual(await self.minute(), NOON4 + 480)
+
     async def test_clock_phrase_checks_waiting_at_once_are_capped(self) -> None:
         self.live.clock_waiting = table_chat.CLOCK_WAITING_MAX
         await self.press("set", set_to=NOON4)

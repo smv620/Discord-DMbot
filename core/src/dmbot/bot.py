@@ -2779,7 +2779,7 @@ class DMBot(commands.AutoShardedBot):
                 utterance.start_ms,
             )
 
-    def _act_on_line(self, table: Table, user_id: int, line: str) -> None:
+    def _act_on_line(self, table: Table, user_id: int, line: str, *, typed: bool = False) -> None:
         """What a line of table talk can set off, said or typed (#1118): a rules card, a house
         rule, the game clock. The one place both ways in share, so a typed "we take a long
         rest" does what the spoken one does. Consent was checked by the caller."""
@@ -2793,8 +2793,8 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("House rules by voice: couldn't look at a line")
         if self.clocks is not None:
-            if table.clock_waiting >= table_chat.CLOCK_WAITING_MAX:
-                return  # a flood of lines: the clock phrase of this one is skipped (#1154)
+            if typed and table.clock_waiting >= table_chat.CLOCK_WAITING_MAX:
+                return  # typed flood: skip this clock phrase, never speech (#1154)
             table.clock_waiting += 1
             task = self._track(  # a DM's words move the clock; a player's only ask the DM
                 self._note_clock_phrase(table, user_id, line), "clock-phrase"
@@ -2877,7 +2877,7 @@ class DMBot(commands.AutoShardedBot):
                 named = mentions(table.name_lookup, text)
                 table.scene.note(named, user_id, now)
                 table.heard_counts.update((entity_id, user_id) for entity_id in named)
-            self._act_on_line(table, user_id, text)
+            self._act_on_line(table, user_id, text, typed=True)
         if self.transcripts is not None:
             table.unsaved.add(
                 Line(start_ms, user_id, text, text, typed=True, message_id=message_id)
