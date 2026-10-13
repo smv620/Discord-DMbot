@@ -37,6 +37,7 @@ from dmbot.web.accounts import (
 )
 from dmbot.web.admin import CSRF_HEADER, AdminSessions, FailedTries, GoogleSignIn
 from dmbot.web.discord import DiscordError, DiscordOAuth
+from dmbot.web.export import build_export
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
 from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.me import build_me
@@ -78,6 +79,7 @@ def create_app(
     discussions: Discussions | None = None,
     human_check: HumanCheck | None = None,
     feedback_limit: RateLimit | None = None,
+    export_limit: RateLimit | None = None,
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     admin_sessions: AdminSessions | None = None,
@@ -89,6 +91,9 @@ def create_app(
     no Turnstile check (settings allow that only on localhost)."""
     if feedback_limit is None:
         feedback_limit = RateLimit()
+    if export_limit is None:
+        # The data export (#1150): once a minute per person, counted by account, not address.
+        export_limit = RateLimit(60)
     # One limiter per group of routes in limits.LIMITS (#1082); tests pass fake clocks.
     if route_limits is None:
         route_limits = {
@@ -284,6 +289,29 @@ def create_app(
     async def me(signed: Signed) -> dict[str, Any]:
         session, _token = signed
         return await build_me(db, session, now=clock())
+
+    @app.get("/me/export")
+    async def me_export(signed: Signed) -> Response:
+        """Download everything DMbot holds about the signed-in person (#1150). Their own
+        rows only. The log says that an export happened, never what was in it."""
+        session, _token = signed
+        taken = export_limit.take(f"user-{session.user_id}")
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        try:
+            data = await build_export(db, session, now=clock())
+        except BaseException:
+            export_limit.give_back(f"user-{session.user_id}")  # a failed export costs no turn
+            raise
+        log.info("A data export was made")
+        return Response(
+            content=json.dumps(data, indent=2, ensure_ascii=False),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": 'attachment; filename="dmbot-my-data.json"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     # Adding DMbot to a server, and the account
 
