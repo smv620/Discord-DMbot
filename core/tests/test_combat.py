@@ -155,7 +155,10 @@ class Wiring(unittest.TestCase):
         out = ui.clock_view(cid, Clock(NOON4, 0))
         fight = game.combat_start(Clock(NOON4, 0))
         inside = ui.clock_view(cid, fight)
-        label = lambda v: [str(cast(Any, i).item.label) for i in v.children]  # noqa: E731
+
+        def label(view: discord.ui.View) -> list[str]:
+            return [str(cast(Any, i).item.label) for i in view.children]
+
         self.assertIn("Start combat", label(out))
         self.assertNotIn("Next round", label(out))
         self.assertIn("Next round", label(inside))
