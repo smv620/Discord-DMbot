@@ -2755,6 +2755,41 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     campaign; can be turned back on from 📜 My character sheet).
   - **Cost:** FAST tier, one call per player at most every 2 minutes, only while in combat. It
     counts toward the hours meter's AI cost like every other job.
+*Built, part D1: the fields and the import status (2026-10-13, #1124):* the D&D Beyond snapshot (still version 1; a
+kept snapshot without the new fields reads them as unknown) now also holds hit points now (`hp`: the maximum minus the
+damage taken, never below 0) and temporary hit points, active conditions with the exhaustion level, resistances,
+immunities and vulnerabilities, skill expertise, tool, weapon and armor proficiencies, the background, and the
+inventory's size (`count` of inventory lines, `weight` in pounds as quantity times weight divided by the bundle size,
+and the lines per rarity; a line with no rarity is common). Names and numbers only, through the same allow list, size
+cap and backup path. `memory/sheet_checks.py` gives each part ✅, ⚠️ or ⛔ from the rules index (spells), a short name
+list in `memory/sheet_names.py` (classes, species and feats: names only, in the SRD or a real book's name DMbot has no
+rules for) and arithmetic (levels over 20, hit points over the maximum plus temporary, expertise without proficiency,
+rarity counts that don't add up, a number that can't be right (negative or far too big), a part that couldn't be read). A name from D&D Beyond that DMbot
+doesn't know is ⚠️ (it is D&D Beyond's own data); a typed or document name is ⛔ only when it is nothing like a known
+name. The card is one private message after the player's own link or typing (not after the DM links a sheet, and not
+yet after a re-read: `sheet_checks.changed` is ready for D4), and the DM's name card adds only "HP 11 / 26 + 0, AC 18".
+*Built, part D2: any sheet a player has (2026-10-13, #1125):* on the 📜 panel, **Use a document link** (any public web page or
+PDF link, Google Docs and Drive included; fetched through `dmbot.fetch` with its address checks and size limit) and **Upload
+my sheet file** (Word, PDF or text, at most 5 MB, in a form with a file box). The text is read out in the existing
+document reader and the file is discarded; its words are never stored, logged or sent anywhere but the AI. A picture
+of text (a scanned PDF) is refused with one line. `memory/sheet_import.py` sends at most 30,000 characters to the AI
+once per import (feature `sheet`, CAREFUL tier) with a fixed prompt that asks for JSON in exactly the snapshot's fields
+and says never to invent or follow instructions in the text; the answer goes through `sheets.clean` and the D1 checks,
+so a wrong name or number shows as ⚠️ or ⛔ on the status card, and a number out of range flags its part. The sheet is saved
+as a typed sheet (`source: typed`, no link) marked `origin: document`, which is checked like a full sheet; what the
+document doesn't say is "not found in your document", not an error. Limits: one read a person every 30 seconds, one at
+a time per server, 20 a day per server, and the owner's plan must allow the AI (`plan_gate("ai")`).
+The documents read at once are limited to two across the whole bot (`document_reader.READING`, shared with the names screen), and every refusal (a link, a size, a scanned PDF, an empty file) is worded for the sheet panel, ending with **Type in my character**. A document's own rarity counts are not held to the item total, and any value outside a sheet field's range (STR 45, AC 99, max HP 0) shows ⛔.
+*Built, part D3: the player's sheet view (2026-10-13, #1126):* **Show my sheet** on the 📜 panel (when there is a sheet)
+opens a private view with the basic line on top and one button per section (Abilities, Conditions, Defenses, Skills,
+Proficiencies, Features and feats, Background, Speed and senses, Languages, Inventory); pressing one opens it, one at a
+time. A typed or document sheet shows **Edit <part>** (for example **Edit Skills**) on the open section: a form with that section's fields (names
+and numbers only; abilities are six numbers in order), checked in plain words before anything is saved, run through the
+same allow list as an import, and answered with a card that names what changed. A D&D Beyond sheet has no Edit anywhere:
+an **Open on D&D Beyond** link button to the player's own sheet instead, because D&D Beyond is the record. Every part opened and every save
+looks up again that the person still plays the character and is still in the server (the Edit button itself looks
+up nothing, to answer within Discord's 3 seconds), and the save is refused for anyone else, or if the sheet changed since the form
+was opened (`memory/sheet_view.py`, `ui/sheet_view.py`).
 *Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
 just to the character: if the DM gives the character to someone else, the old sheet is
 never shown to the new player (it shows only while that player still plays it). The
