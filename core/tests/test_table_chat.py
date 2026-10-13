@@ -311,9 +311,12 @@ class AtTheTableTyped(AtTheTable):
         for m in msgs:
             await self.hear(m)
         await self.bot.on_raw_bulk_message_delete(
-            SimpleNamespace(
-                guild_id=GUILD_A, message_ids={msgs[0].id, msgs[2].id}, channel_id=VOICE
-            )  # type: ignore[arg-type]
+            cast(
+                Any,
+                SimpleNamespace(
+                    guild_id=GUILD_A, message_ids={msgs[0].id, msgs[2].id}, channel_id=VOICE
+                ),
+            )
         )
         left = self.live.unsaved.take(lambda _u: True)
         self.assertEqual([x.heard for x in left], ["line 1", "line 3"])
