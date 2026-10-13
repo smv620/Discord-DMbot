@@ -9,15 +9,9 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- core + web-api, merged 2026-10-13 (#1120, #1123, #1130): deploy runs migration 0049 (a column on game_effects for #1112).
-  Check: Test F again, the Still going +10 min steps: the next "has likely ended" line shows the total ("11 minutes,
-  extended by the DM") and pressing it edits the DM-screen note; /dmbot start and press Start listening: the message
-  says "Starting in ..." and the button cannot be pressed until it is done (#1115). #1110 (Stripe adapter replaces
-  Lemon Squeezy): payments stay off; nothing to change in .env until the owner has made the Stripe account (#1096),
-  then replace the LEMONSQUEEZY_* values with the STRIPE_* ones (.env.example) through scripts/set-key.
-- web-api, merged 2026-10-13 (#1131, WebDev): no migration. Check: nothing to click; a failed FIRST payment is now recorded
-  (kind payment_failed) and GET /me then sends firstPaymentFailed, so the account page says "Your first payment didn't go
-  through, so you have no plan yet". Payments are still off until the Stripe account exists (#1096).
+(nothing: #1120, #1123, #1130 and #1131 are all live in fc09d9c)
+- Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env
+  with the STRIPE_* ones (.env.example) through scripts/set-key (#1110). Payments stay off until then.
 
 ------------------------------------------------------------------------------
 LIVE NOW
