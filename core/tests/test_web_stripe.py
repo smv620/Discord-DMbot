@@ -372,7 +372,7 @@ class Provider(unittest.IsolatedAsyncioTestCase):
     def test_events_dmbot_ignores_need_no_person(self) -> None:
         # A subscription or invoice made outside DMbot's checkout, with nothing to apply: a
         # quiet ignore, not an error someone is asked to look at.
-        nobody = {"metadata": {}}
+        nobody: dict[str, Any] = {"metadata": {}}
         self.assertIsNone(
             self.provider.parse(
                 event("invoice.paid", invoice("subscription_update", subscription_details=nobody))
@@ -388,7 +388,7 @@ class Provider(unittest.IsolatedAsyncioTestCase):
     def test_a_subscription_dmbot_did_not_make_is_a_quiet_ignore_for_every_event(self) -> None:
         # Made by hand in the dashboard, or sold some other way: no user_id, so not ours.
         # A 400 here would be retried by Stripe for days.
-        nobody = {"metadata": {}}
+        nobody: dict[str, Any] = {"metadata": {}}
         bodies = (
             event("invoice.paid", invoice(subscription_details=nobody)),
             event("invoice.payment_failed", invoice(subscription_details=nobody)),
@@ -404,7 +404,7 @@ class Provider(unittest.IsolatedAsyncioTestCase):
     def test_a_renewal_shown_as_an_update_with_the_same_price_is_not_a_second_renewal(self) -> None:
         # At renewal Stripe also sends an update whose previous items hold the old period:
         # the renewal invoice already renewed it, so this must not renew it again.
-        previous = {
+        previous: dict[str, Any] = {
             "items": {"data": [{"price": {"id": "price_table"}, "current_period_end": T0}]},
             "current_period_end": T0,
         }
