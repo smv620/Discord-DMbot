@@ -15,7 +15,7 @@
 
 ### Steps
 1. Both of you join your voice channel. Type `/dmbot start`, press **▶ Continue last campaign**, then **▶ Start listening** (once only).
-2. **Both of you get a new question from DMbot in a private message**, because the words changed: it now says DMbot also reads the table's chat. Each of you presses **I agree**. Until you do, DMbot doesn't record you.
+2. **Both of you get a new question from DMbot in a private message**, because the words changed: it now says DMbot also reads the table's chat. Each of you presses **I'm 16 or older, record me**. Until you do, DMbot doesn't record you.
 3. **Typed chat:** in the voice channel's own text chat, the DM types **we take a long rest**. The game clock on the DM screen moves on, with an **Undo** note.
 4. **A fight:** the DM says out loud **"Roll initiative."** The DM screen says combat started, round 1. Say **"Next round."** It says round 2. Say **"Combat's over."** It says the fight ended.
 5. **The player's sheet:** the player opens DMbot's reminder message (the one with the date they agreed), presses **📜 My character sheet**, then **Link my D&D Beyond sheet**, and pastes their link. The DM screen says DMbot added that character, with an **Open character card** button.
