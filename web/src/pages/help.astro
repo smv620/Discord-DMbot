@@ -1,0 +1,57 @@
+---
+import Base from "../layouts/Base.astro";
+import { dmSteps, helpHeading, helpIntro, playerSteps } from "../content/help";
+---
+
+<Base
+  title="Help"
+  description="How to use DMbot in Discord, step by step, for game masters and players."
+>
+  <h1>{helpHeading}</h1>
+  <p class="lead muted">{helpIntro}</p>
+
+  <section aria-labelledby="dm-heading">
+    <h2 id="dm-heading">For the game master</h2>
+    <ol>
+      {
+        dmSteps.map((s) => (
+          <li>
+            {s.text}
+            {s.text.startsWith("Add DMbot") && (
+              <>
+                {" "}
+                <a href="/install">Add to Discord</a>
+              </>
+            )}
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+
+  <section aria-labelledby="player-heading">
+    <h2 id="player-heading">For players</h2>
+    <ol>
+      {playerSteps.map((s) => <li>{s.text}</li>)}
+    </ol>
+  </section>
+
+  <p class="muted">
+    Stuck? <a href="/hello">Say hello</a> and tell us what you saw.
+  </p>
+</Base>
+
+<style>
+  ol {
+    max-width: var(--text-width);
+    padding-left: var(--space-6);
+  }
+
+  li {
+    margin-bottom: var(--space-4);
+  }
+
+  section {
+    margin-top: var(--space-8);
+  }
+</style>
