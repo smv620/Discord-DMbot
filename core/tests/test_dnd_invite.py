@@ -40,6 +40,10 @@ class Links(unittest.TestCase):
         ):
             self.assertEqual(parse_invite(given), LINK, given)
 
+    def test_the_join_campaign_shape_is_kept_as_given(self) -> None:
+        got = parse_invite("https://dndbeyond.com/join-campaign/AbC123xyz/")
+        self.assertEqual(got, "https://www.dndbeyond.com/join-campaign/AbC123xyz")
+
     def test_an_empty_box_removes_the_link(self) -> None:
         self.assertIsNone(parse_invite(""))
         self.assertIsNone(parse_invite("   "))
@@ -104,18 +108,27 @@ class Stored(DatabaseTest):
                     (self.campaign.id,),
                 )
 
-    async def test_it_is_in_a_backup_and_comes_back(self) -> None:
+    async def test_it_is_in_a_backup_but_a_new_campaign_made_from_it_gets_none(self) -> None:
         await self.store.set_dndbeyond_invite(GUILD, self.campaign.id, LINK)
         data = await self.store.export(GUILD, self.campaign.id)
         self.assertEqual(data["campaign"]["dndbeyond_invite"], LINK)
-        restored = await self.store.import_backup(OTHER_GUILD, data, DM)
-        self.assertEqual(restored.dndbeyond_invite, LINK)
-        # Replacing a campaign with the backup brings it back too.
+        # It is the original DM's join link for the original table: a copy made by someone
+        # else, here or in another server, doesn't show it to its own players.
+        copy = await self.store.import_backup(OTHER_GUILD, data, DM)
+        self.assertIsNone(copy.dndbeyond_invite)
+
+    async def test_replacing_a_campaign_brings_it_back_only_if_the_backup_has_one(self) -> None:
+        await self.store.set_dndbeyond_invite(GUILD, self.campaign.id, LINK)
+        data = await self.store.export(GUILD, self.campaign.id)
         await self.store.set_dndbeyond_invite(GUILD, self.campaign.id, None)
         again = await self.store.import_backup(
             GUILD, data, DM, replace_campaign_id=self.campaign.id
         )
         self.assertEqual(again.dndbeyond_invite, LINK)
+        # A backup without one (made before this, say) leaves the campaign's own alone.
+        del data["campaign"]["dndbeyond_invite"]
+        kept = await self.store.import_backup(GUILD, data, DM, replace_campaign_id=self.campaign.id)
+        self.assertEqual(kept.dndbeyond_invite, LINK)
 
     async def test_a_backup_from_before_has_none_and_a_damaged_link_is_refused(self) -> None:
         data = await self.store.export(GUILD, self.campaign.id)
@@ -484,6 +497,27 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(it.client.memory.add_entity.await_count, 1)
 
+    async def test_a_sheet_with_no_name_makes_no_character(self) -> None:
+        it = sheet_interaction()
+        nameless = sheets.parse(answer())
+        nameless["name"] = ""
+        with patch.object(sheets, "fetch", AsyncMock(return_value=nameless)):
+            await ui.add_from_sheet(it, GUILD, CAMPAIGN, 42)
+        it.client.memory.add_entity.assert_not_awaited()
+        self.assertEqual(said(it), ui.CHARACTER_NOT_ADDED)
+
+    async def test_the_dm_still_hears_of_a_character_whose_link_failed_and_the_lock_is_released(
+        self,
+    ) -> None:
+        it = sheet_interaction()
+        it.client.sheets.link = AsyncMock(side_effect=RuntimeError("db"))
+        fetched = patch.object(sheets, "fetch", AsyncMock(return_value=sheets.parse(answer())))
+        with fetched, self.assertRaises(RuntimeError):
+            await ui.add_from_sheet(it, GUILD, CAMPAIGN, 42)
+        it.client.sheets_changed.assert_called()
+        it.client.post_message.assert_awaited_once()  # the DM still hears of the character
+        self.assertEqual(ui._adding, {})  # no lock kept for a player who is done
+
     async def test_a_link_that_is_not_a_character_link_does_nothing(self) -> None:
         it = sheet_interaction()
         form = ui.NewSheetForm(GUILD, CAMPAIGN)
@@ -502,3 +536,62 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
         with patch("dmbot.ui.name_card.show_card", AsyncMock()) as show:
             await button.callback(MagicMock())
         show.assert_awaited_once()
+
+
+class KeepsTheButton(unittest.TestCase):
+    """A new view for an edited message keeps the Join button the message already has."""
+
+    def message(self, url: str | None) -> Any:
+        parts = (
+            [SimpleNamespace(label=JOIN_LABEL, url=url)]
+            if url
+            else [SimpleNamespace(label="x", url=None)]
+        )
+        return SimpleNamespace(components=[SimpleNamespace(children=parts)])
+
+    def test_the_link_survives_the_players_next_press(self) -> None:
+        from dmbot.consent_dm import consent_view, keep_invite, menu_view, warning_view
+
+        for build in (
+            lambda: menu_view(GUILD),
+            lambda: consent_view(GUILD),
+            lambda: warning_view(GUILD),
+        ):
+            it = SimpleNamespace(message=self.message(LINK))
+            [button] = link_buttons(keep_invite(it, build()))  # type: ignore[arg-type]
+            self.assertEqual(button.url, LINK)
+
+    def test_nothing_is_added_where_there_was_nothing_or_already_one(self) -> None:
+        from dmbot.consent_dm import keep_invite
+
+        for message in (self.message(None), SimpleNamespace(components=[]), None):
+            it = SimpleNamespace(message=message)
+            self.assertEqual(link_buttons(keep_invite(it, menu_view(GUILD))), [])  # type: ignore[arg-type]
+        it = SimpleNamespace(message=self.message(LINK))
+        once = keep_invite(it, menu_view(GUILD, invite=LINK))  # type: ignore[arg-type]
+        self.assertEqual(len(link_buttons(once)), 1)
+
+    def test_the_link_is_the_one_on_the_message_not_a_foreign_button(self) -> None:
+        from dmbot.consent_dm import keep_invite
+
+        other = SimpleNamespace(
+            message=SimpleNamespace(
+                components=[
+                    SimpleNamespace(
+                        children=[SimpleNamespace(label="Docs", url="https://example.com/")]
+                    )
+                ]
+            )
+        )
+        self.assertEqual(link_buttons(keep_invite(other, menu_view(GUILD))), [])  # type: ignore[arg-type]
+
+
+class Resumed(unittest.TestCase):
+    def test_a_resumed_session_table_carries_the_link(self) -> None:
+        import inspect
+
+        from dmbot.bot import DMBot
+
+        source = inspect.getsource(DMBot)
+        # Both places a table is built set it (a session that starts, and one that resumes).
+        self.assertEqual(source.count("dndbeyond_invite=campaign.dndbeyond_invite"), 2)

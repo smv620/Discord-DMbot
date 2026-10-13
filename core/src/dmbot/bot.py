@@ -2295,6 +2295,7 @@ class DMBot(commands.AutoShardedBot):
             resumed=True,
             announce_resume=not recently,
             transcript_channel_id=self._usable_transcript(guild, campaign),
+            dndbeyond_invite=campaign.dndbeyond_invite,
             started_at=saved.started_at,
         )
         if table.rules_on:
@@ -4965,7 +4966,10 @@ async def consent_give(interaction: discord.Interaction) -> None:
                 sheets=bot.sheets is not None,
                 test_voice=bot.test_voice_listed(guild.id),
             ),
-            view=menu_view(guild.id),
+            view=menu_view(
+                guild.id,
+                invite=bot.tables[guild.id].dndbeyond_invite if guild.id in bot.tables else None,
+            ),
             ephemeral=True,
         )
         return

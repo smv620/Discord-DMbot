@@ -522,10 +522,13 @@ class ConsentButton(
                 )
                 await interaction.edit_original_response(
                     content=f"{intro}\n\n{text}",
-                    view=request_view(
-                        self.guild_id,
-                        outside=engine,
-                        test_voice=actions.test_voice_listed(self.guild_id),
+                    view=keep_invite(
+                        interaction,
+                        request_view(
+                            self.guild_id,
+                            outside=engine,
+                            test_voice=actions.test_voice_listed(self.guild_id),
+                        ),
                     ),
                 )
                 return
@@ -546,7 +549,7 @@ class ConsentButton(
                     sheets=actions.sheets is not None,
                     test_voice=actions.test_voice_listed(self.guild_id),
                 ),
-                view=menu_view(self.guild_id),
+                view=keep_invite(interaction, menu_view(self.guild_id)),
             )
 
 
@@ -572,7 +575,7 @@ async def _stop(interaction: discord.Interaction, guild_id: int, button: str) ->
             return
         done = stopped_text if had_consented else declined_text
         await interaction.edit_original_response(
-            content=done(guild.name), view=consent_view(guild_id)
+            content=done(guild.name), view=keep_invite(interaction, consent_view(guild_id))
         )
 
 
@@ -637,7 +640,7 @@ class StopButton(
                 guild.name,
                 saving=_actions(interaction).test_voice_saving(self.guild_id, interaction.user.id),
             )
-            view = warning_view(self.guild_id, self.campaign_id)
+            view = keep_invite(interaction, warning_view(self.guild_id, self.campaign_id))
             message = interaction.message
             if _lasting(interaction) and message is not None:
                 # First in the message's own text (an embed can be hidden), so Keep
@@ -721,7 +724,7 @@ class KeepButton(
             )
             message = interaction.message
             if _lasting(interaction) and message is not None:
-                menu = menu_view(self.guild_id, self.campaign_id)
+                menu = keep_invite(interaction, menu_view(self.guild_id, self.campaign_id))
                 # The message's own text, as it was. For a server not served here it may
                 # still say "recording you": nothing is captured there, so that's safe.
                 if guild is None or recorded:
@@ -775,12 +778,15 @@ class MenuButton(
                 await interaction.response.send_message(NOT_HERE, ephemeral=True)
                 return
             actions = _actions(interaction)
-            view = options_view(
-                self.guild_id,
-                self.campaign_id,
-                recording=await actions.recorded(self.guild_id, interaction.user.id),
-                sheets=actions.sheets is not None,
-                test_voice=_test_voice_state(actions, self.guild_id, interaction.user.id),
+            view = keep_invite(
+                interaction,
+                options_view(
+                    self.guild_id,
+                    self.campaign_id,
+                    recording=await actions.recorded(self.guild_id, interaction.user.id),
+                    sheets=actions.sheets is not None,
+                    test_voice=_test_voice_state(actions, self.guild_id, interaction.user.id),
+                ),
             )
             if _lasting(interaction):
                 await interaction.response.edit_message(view=view)
@@ -824,7 +830,7 @@ class CloseButton(
         if _lasting(interaction) and message is not None:
             await interaction.response.edit_message(
                 content=without_warning(message.content),
-                view=menu_view(self.guild_id, self.campaign_id),
+                view=keep_invite(interaction, menu_view(self.guild_id, self.campaign_id)),
             )
             return
         await interaction.response.defer()
@@ -876,7 +882,10 @@ class StartButton(
                 test_voice=listed,
             )
             await interaction.response.edit_message(
-                content=text, view=request_view(self.guild_id, outside=engine, test_voice=listed)
+                content=text,
+                view=keep_invite(
+                    interaction, request_view(self.guild_id, outside=engine, test_voice=listed)
+                ),
             )
 
 
@@ -991,6 +1000,23 @@ def invite_button(url: str) -> discord.ui.Button[Any]:
     """A link button to the DM's D&D Beyond campaign invite (#1119): a plain link, nothing
     DMbot handles. `url` is a checked invite link (dmbot.campaigns.invite)."""
     return discord.ui.Button(label=JOIN_LABEL, style=discord.ButtonStyle.link, url=url)
+
+
+def keep_invite(interaction: discord.Interaction, view: discord.ui.View) -> discord.ui.View:
+    """The message being edited may carry the DM's Join on D&D Beyond button (#1119): a new
+    view built for it must keep that link, or the button vanishes the moment the player
+    answers. Reads the link off the message itself, so it works after a restart too, and adds
+    it to `view` unless the view has one already."""
+    if any(getattr(item, "url", None) for item in view.children):
+        return view
+    message = interaction.message
+    for row in getattr(message, "components", None) or []:
+        for part in getattr(row, "children", None) or []:
+            url = getattr(part, "url", None)
+            if isinstance(url, str) and getattr(part, "label", None) == JOIN_LABEL:
+                view.add_item(invite_button(url))
+                return view
+    return view
 
 
 def request_view(

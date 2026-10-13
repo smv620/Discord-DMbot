@@ -359,61 +359,81 @@ async def add_from_sheet(
     player's character"); a sheet it can't read makes nothing. A player who already has a
     character in the campaign gets the sheet linked to it instead, never a second one."""
     bot = _bot(interaction)
-    store = bot.sheets
-    memory = bot.memory
     campaign = await bot.campaigns.get(guild_id, campaign_id)
-    if store is None or memory is None or campaign is None:
+    if bot.sheets is None or bot.memory is None or campaign is None:
         await _tell(interaction, NOT_AVAILABLE)
         return
-    me = interaction.user.id
-    async with _adding.setdefault((guild_id, me, campaign_id), asyncio.Lock()):
-        existing = await store.characters_of(guild_id, me, campaign_id)
-        if existing:  # made a moment ago, or the DM added it: link that one
-            c = existing[0]
-            try:
-                said = await link_and_read(
-                    bot, guild_id, c.campaign_id, c.entity_id, number, player=me
-                )
-            except SheetRefused:
-                await _tell(interaction, NOT_YOURS)
-                return
-            await show_panel(interaction, guild_id, c, note=said)
-            return
-        try:
-            with log_context(guild_id=guild_id, campaign_id=campaign_id):
-                snapshot = await sheets.fetch(number)
-        except sheets.SheetError as exc:
-            log.info("A sheet to make a character from couldn't be read yet")
-            if exc.refused:
-                await _tell(interaction, sheets.NOT_PUBLIC + NOTHING_ADDED)
-            else:
-                await _tell(interaction, LINKED_UNREAD + NOTHING_ADDED)
-            return
-        from dmbot.memory.models import MemoryRuleError
-        from dmbot.ui.names import PC, changed, save_name
+    key = (guild_id, interaction.user.id, campaign_id)
+    lock = _adding.setdefault(key, asyncio.Lock())
+    made: list[Any] = []  # the character, as soon as it exists, so the DM hears of it either way
+    try:
+        async with lock:
+            await _add_locked(interaction, bot, campaign, number, made)
+    finally:
+        if not lock.locked():
+            _adding.pop(key, None)  # idle: nothing keeps a lock per player for good
+        if made:
+            await _tell_the_dm(bot, campaign, made[0].id, made[0].name)
 
-        name = logic.shorten(str(snapshot["name"]), sheets.NAME_MAX)
+
+async def _add_locked(
+    interaction: discord.Interaction, bot: DMBot, campaign: Any, number: int, made: list[Any]
+) -> None:
+    """`add_from_sheet`'s work, one at a time per player and campaign. A character it makes
+    is put in `made` at once, for the line to the DM."""
+    store, memory = bot.sheets, bot.memory
+    assert store is not None and memory is not None
+    guild_id, campaign_id, me = campaign.guild_id, campaign.id, interaction.user.id
+    existing = await store.characters_of(guild_id, me, campaign_id)
+    if existing:  # made a moment ago, or the DM added it: link that one
+        c = existing[0]
         try:
-            entity = await save_name(memory, campaign, name, PC, [], [], played_by=me)
-        except MemoryRuleError as exc:
-            log.info("A character from a sheet wasn't added: %s", exc)
-            await _tell(interaction, CHARACTER_NOT_ADDED)
+            said = await link_and_read(bot, guild_id, c.campaign_id, c.entity_id, number, player=me)
+        except SheetRefused:
+            await _tell(interaction, NOT_YOURS)
             return
-        changed(interaction, campaign)
-        try:
-            await store.link(guild_id, campaign_id, entity.id, number, player=me)
-            await store.save(
-                guild_id, campaign_id, entity.id, snapshot, int(time.time()),
-                url=sheets.sheet_url(number),
-            )  # fmt: skip
-        finally:
-            bot.sheets_changed(guild_id, campaign_id)
+        await show_panel(interaction, guild_id, c, note=said)
+        return
+    try:
+        with log_context(guild_id=guild_id, campaign_id=campaign_id):
+            snapshot = await sheets.fetch(number)
+    except sheets.SheetError as exc:
+        log.info("A sheet to make a character from couldn't be read yet")
+        unread = sheets.NOT_PUBLIC if exc.refused else LINKED_UNREAD
+        await _tell(interaction, unread + NOTHING_ADDED)
+        return
+    from dmbot.memory.models import MemoryRuleError
+    from dmbot.ui.names import PC, changed, save_name
+
+    name = logic.shorten(str(snapshot.get("name") or "").strip(), sheets.NAME_MAX)
+    if not name:  # a sheet with no name makes no character
+        await _tell(interaction, CHARACTER_NOT_ADDED)
+        return
+    try:
+        entity = await save_name(memory, campaign, name, PC, [], [], played_by=me)
+    except MemoryRuleError as exc:
+        log.info("A character from a sheet wasn't added: %s", exc)
+        await _tell(interaction, CHARACTER_NOT_ADDED)
+        return
+    made.append(entity)
+    changed(interaction, campaign)
+    try:
+        await store.link(guild_id, campaign_id, entity.id, number, player=me)
+        await store.save(
+            guild_id,
+            campaign_id,
+            entity.id,
+            snapshot,
+            int(time.time()),
+            url=sheets.sheet_url(number),
+        )
+    finally:
+        bot.sheets_changed(guild_id, campaign_id)
     who = sheets.who(snapshot)
     await _tell(
         interaction,
         ADDED_FROM_SHEET.format(name=_md(entity.name), who=f" ({_md(who)})" if who else ""),
     )
-    await _tell_the_dm(bot, campaign, entity.id, entity.name)
 
 
 async def _tell_the_dm(bot: DMBot, campaign: Any, entity_id: str, name: str) -> None:
@@ -430,7 +450,8 @@ class OpenCardButton(
     template=r"dmbot:namecard:(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32})",
 ):
     """Opens a character's name card (its rename, merge and remove buttons) privately, from
-    the DM-screen line saying DMbot added it. Only the campaign's DMs get the card."""
+    the DM-screen line saying DMbot added it. The card's own rule decides who gets it: the
+    campaign's DMs, and server managers (as for `/dmbot names`); a player is refused."""
 
     def __init__(self, campaign_id: str, entity_id: str) -> None:
         super().__init__(

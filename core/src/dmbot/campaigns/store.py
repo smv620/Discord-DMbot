@@ -1133,7 +1133,10 @@ class CampaignStore:
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
                     " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
-                    " dndbeyond_invite = %s,"
+                    # The invite link is the original DM's join capability: replacing a
+                    # campaign brings it back only if the backup has one, and a backup
+                    # without one keeps the campaign's own (#1119).
+                    " dndbeyond_invite = COALESCE(%s, dndbeyond_invite),"
                     " owner_user_id = COALESCE(owner_user_id, %s),"
                     " owner_left_at = CASE WHEN owner_user_id IS NULL THEN NULL"
                     "   ELSE owner_left_at END"
@@ -1175,12 +1178,8 @@ class CampaignStore:
                             " WHERE guild_id = %s AND id = %s",
                             (guild_id, campaign_id),
                         )
-                    if info["dndbeyond_invite"] is not None:
-                        await conn.execute(
-                            "UPDATE campaigns SET dndbeyond_invite = %s"
-                            " WHERE guild_id = %s AND id = %s",
-                            (info["dndbeyond_invite"], guild_id, campaign_id),
-                        )
+                    # A new campaign made from a backup gets no invite link: it is the
+                    # original DM's, for the original table. Its new DM sets their own.
                 except pg_errors.UniqueViolation as exc:
                     # Another restore took the same name a moment ago.
                     raise CampaignError(
