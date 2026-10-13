@@ -87,8 +87,8 @@ def _combat_line(campaign: Campaign) -> str:
     """The combat setting (#1127): DMbot follows rounds either way, never turn order."""
     way = "on" if campaign.side_initiative else "off"
     return (
-        f"• **Combat:** DMbot follows the round, never whose turn it is. Side-based initiative "
-        f"is {way}."
+        f"• **Combat:** DMbot counts the rounds, never whose turn it is. Side-based initiative "
+        f"(each side acts together) is {way}."
     )
 
 

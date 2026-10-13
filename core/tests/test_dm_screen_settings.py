@@ -83,7 +83,7 @@ class SettingsCardTest(unittest.TestCase):
         items: list[Any] = list(view.children)
         self.assertEqual(
             [i.row for i in items], [0, 0, 1, 1, 1, 2, 3, 3, 3, 3, 3, 4, 4]
-        )  # buttons: Take it on, Look up, Rules cards, Game clock, House file, Invite, Table chat, Side initiative
+        )  # buttons: Take it on, Look up, Rules cards, Game clock, House file, Invite, chat, sides
         labels = [i.item.label for i in items]
         self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
         self.assertEqual(labels[2], "✓ Only the DM")  # the current one, the same way

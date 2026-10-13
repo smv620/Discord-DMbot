@@ -32,7 +32,7 @@ _LEAD = (
 )
 _START = re.compile(
     rf"{_LEAD}(?:(?:roll|make) (?:for )?initiative"
-    r"|combat (?:starts|begins|starts now|begins now)|initiative)[.!]?$",
+    r"|combat (?:starts|begins|starts now|begins now))[.!]?$",
     re.IGNORECASE,
 )
 _ONES = {

@@ -3060,6 +3060,9 @@ class DMBot(commands.AutoShardedBot):
             result = await clock_screen.press(
                 self, campaign.guild_id, campaign.id, user_id, action, set_to=fight.number
             )
+        except CampaignError:
+            table.clock_said.pop(fight.key, None)  # no longer a DM: said quietly, not an error
+            return
         except Exception:
             log.exception("Combat couldn't take what was said at the table")
             table.clock_said.pop(fight.key, None)
@@ -3071,7 +3074,7 @@ class DMBot(commands.AutoShardedBot):
         if stored is None:
             return
         await clock_screen.show(self, campaign, stored)
-        await clock_screen.update_players(self, campaign, action, result)
+        await clock_screen.update_players(self, campaign, action, result, announce=False)
         await timer_screen.announce_due(self, campaign, stored.clock.minute)
         await clock_screen.say(
             self,

@@ -121,6 +121,7 @@ class Phrases(unittest.TestCase):
             "round 120",
             "round 0",
             "the fight ends badly for him",
+            "initiative",
             "I think combat is over",
             "after the fight ends we rest",
             "you don't roll initiative",
@@ -270,6 +271,32 @@ class Stored(Clocks):
         stored = await self.clocks.get(GUILD_A, self.a.id)
         assert stored is not None
         self.assertEqual((stored.clock.combat_round, stored.clock.minute), (1, NOON4))
+
+    async def test_undo_lets_the_24_hour_line_be_said_again(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        for _ in range(100):  # each round passes time; force the 24-hour line to be told
+            await self.press("h1")
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None and stored.clock.tired_told_for is not None
+        told = stored.clock
+        result = await self.press("cnext")
+        assert result.before is not None and result.after is not None
+        interaction = SimpleNamespace(
+            guild=SimpleNamespace(id=GUILD_A),
+            user=SimpleNamespace(id=DM),
+            client=self.client(),
+            response=SimpleNamespace(defer=AsyncMock(), is_done=lambda: True),
+            followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(),
+        )
+        interaction.client.post_message = AsyncMock(return_value=None)
+        spec = ui.combat_undo_id(result.before, result.after)
+        await ui.CombatUndoButton(self.a.id, spec).callback(cast(Any, interaction))
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        self.assertEqual(stored.clock.combat_round, told.combat_round)
+        self.assertIsNone(stored.clock.tired_told_for)
 
     async def test_a_player_cannot_undo(self) -> None:
         await self.press("set", set_to=NOON4)

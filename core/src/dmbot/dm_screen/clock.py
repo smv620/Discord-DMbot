@@ -474,7 +474,8 @@ async def _run_press(
             SET_DONE.format(label=game.short_label(result.after.minute), where=message.jump_url)
             + players_see(campaign),
         )
-    await update_players(client, campaign, action, result)  # the game-time channel (#1116)
+    # The game-time channel (#1116): the players get the round, no extra line about a new day.
+    await update_players(client, campaign, action, result, announce=action not in COMBAT_ACTIONS)
     if action in COMBAT_ACTIONS and result.before is not None:
         await say(  # one line with Undo, like what is heard at the table (#1127)
             client,
@@ -499,7 +500,7 @@ async def _run_press(
 
 NO_COMBAT_CHANGE = {
     "cstart": "Combat has already started.",
-    "cnext": "DMbot isn't in combat. Press **Start combat** first.",
+    "cnext": "DMbot isn't in combat, or this is the last round it counts (99).",
     "cend": "DMbot isn't in combat.",
     "cround": "DMbot isn't in combat, or it is already that round.",
 }
@@ -816,6 +817,7 @@ class CombatUndoButton(
                 combat_round=round_ or None,
                 combat_secs=secs,
                 last_long_rest=min(current.last_long_rest, minute),
+                tired_told_for=None,  # as for a rest's Undo: the 24-hour line may be said again
             )
 
         try:
@@ -828,7 +830,8 @@ class CombatUndoButton(
         if moved or after is None:
             await _reply(
                 interaction,
-                "The clock or the round has changed since, so there is nothing to undo.",
+                "The clock or round has changed since, so Undo does nothing. Use **Next round** or "
+                "**End combat** to fix it.",
             )
             return
         stored = await client.clocks.get(guild_id, campaign.id)
@@ -836,7 +839,8 @@ class CombatUndoButton(
             await show(client, campaign, stored)
             await show_players(client, campaign, stored)
         with contextlib.suppress(discord.HTTPException):
-            await interaction.edit_original_response(content="↩️ Undone.", view=None)
+            where = "Not in combat." if not round_ else f"Back to round {round_}."
+            await interaction.edit_original_response(content=f"↩️ Undone. {where}", view=None)
 
 
 class SimpleGuild:
