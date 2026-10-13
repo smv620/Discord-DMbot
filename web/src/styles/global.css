@@ -13,11 +13,12 @@
   --text: #1d1f1e;
   --text-muted: #555b58;
   --border: #dcdad3;
+  --control-edge: #7a807d; /* the edge of a text box: 3:1 against the page and the cards (#1146) */
   --accent: #2f5d50;
   --accent-text: #ffffff;
   --accent-soft: #e3eeea;
   --focus: #1f6feb;
-  --warn: #9a6700;
+  --warn: #8f5f00; /* 4.5:1 on its own pale background (#1146) */
   --warn-soft: #fff4d6;
   --danger: #b42318;
 
@@ -63,6 +64,7 @@
     --text: #ecebe6;
     --text-muted: #a9b3ae;
     --border: #2d3a35;
+    --control-edge: #6b7a74;
     --accent: #7fc4ad;
     --accent-text: #0f1a16;
     --accent-soft: #23332d;
