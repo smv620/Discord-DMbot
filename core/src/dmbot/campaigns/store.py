@@ -454,8 +454,12 @@ class CampaignStore:
         optional_rules_default: bool = True,
         dm_screen_visibility: str = DEFAULT_DM_SCREEN_VISIBILITY,
         dm_screen_level: str = DEFAULT_DM_SCREEN_LEVEL,
+        dndbeyond_invite: str | None = None,
     ) -> Campaign:
+        """`dndbeyond_invite`: the DM's D&D Beyond invite link (#1119), saved in the same
+        transaction so a campaign is never made without the link the DM typed."""
         clean = clean_name(name)
+        invite = None if dndbeyond_invite is None else parse_invite(dndbeyond_invite)
         check_rulesets(target_ruleset, fallback_ruleset)
         check_dm_screen_visibility(dm_screen_visibility)
         check_dm_screen_level(dm_screen_level)
@@ -478,6 +482,12 @@ class CampaignStore:
                     "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)",
                     (campaign_id, guild_id, dm_user_id),
                 )
+                if invite is not None:
+                    await conn.execute(
+                        "UPDATE campaigns SET dndbeyond_invite = %s"
+                        " WHERE guild_id = %s AND id = %s",
+                        (invite, guild_id, campaign_id),
+                    )
                 return await self._require(conn, guild_id, campaign_id)
         except pg_errors.UniqueViolation as exc:
             raise CampaignError(NAME_TAKEN) from exc
@@ -1133,10 +1143,9 @@ class CampaignStore:
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
                     " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
-                    # The invite link is the original DM's join capability: replacing a
-                    # campaign brings it back only if the backup has one, and a backup
-                    # without one keeps the campaign's own (#1119).
-                    " dndbeyond_invite = COALESCE(%s, dndbeyond_invite),"
+                    # The invite link is not touched: it is the DM's join link for this
+                    # server's table, and a backup doesn't record which server it came from,
+                    # so its link could be another server's (#1119).
                     " owner_user_id = COALESCE(owner_user_id, %s),"
                     " owner_left_at = CASE WHEN owner_user_id IS NULL THEN NULL"
                     "   ELSE owner_left_at END"
@@ -1149,7 +1158,6 @@ class CampaignStore:
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
                         info["rules_cards"],
-                        info["dndbeyond_invite"],
                         importer_id,
                         guild_id,
                         campaign_id,
@@ -1328,10 +1336,11 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         channel_number=row_int(row, "channel_number"),
         transcript_channel_id=row_int(row, "transcript_channel_id"),
         # Absent in a schema older than #1116 (a migration test opens one).
-        dndbeyond_invite=row.get("dndbeyond_invite"),
         gametime_channel_id=row_int(row, "gametime_channel_id")
         if "gametime_channel_id" in row
         else None,
+        # Absent in a schema older than #1119, for the same reason.
+        dndbeyond_invite=row.get("dndbeyond_invite"),
         dm_screen_level=row["dm_screen_level"],
         owner_user_id=row_int(row, "owner_user_id"),
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none

@@ -129,7 +129,7 @@ _CAMPAIGN = r"(?P<campaign>[0-9a-f]{32}|-)"
 
 _last_link: dict[tuple[int, int], float] = {}
 # One character from a sheet at a time per player and campaign: two quick links make one.
-_adding: dict[tuple[int, int, str], asyncio.Lock] = {}
+_adding: dict[tuple[int, int, str], list[Any]] = {}  # key -> [lock, users of it]
 _last_refresh: dict[tuple[int, str], float] = {}
 
 
@@ -364,13 +364,16 @@ async def add_from_sheet(
         await _tell(interaction, NOT_AVAILABLE)
         return
     key = (guild_id, interaction.user.id, campaign_id)
-    lock = _adding.setdefault(key, asyncio.Lock())
+    entry = _adding.setdefault(key, [asyncio.Lock(), 0])
+    entry[1] += 1  # counted, because a lock handed to a waiter reads as free for a moment
+    lock: asyncio.Lock = entry[0]
     made: list[Any] = []  # the character, as soon as it exists, so the DM hears of it either way
     try:
         async with lock:
             await _add_locked(interaction, bot, campaign, number, made)
     finally:
-        if not lock.locked():
+        entry[1] -= 1
+        if entry[1] == 0:
             _adding.pop(key, None)  # idle: nothing keeps a lock per player for good
         if made:
             await _tell_the_dm(bot, campaign, made[0].id, made[0].name)

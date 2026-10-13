@@ -110,6 +110,7 @@ from dmbot.dm_screen.speaker_question import question_view as speaker_question_v
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
+    refresh_card,
     setup_transcript_channel,
 )
 from dmbot.ears.protocol import (
@@ -2360,11 +2361,19 @@ class DMBot(commands.AutoShardedBot):
             log.warning("Could not post to channel %s: %s", channel_id, exc)
             return None
 
-    def after_invite_change(self, campaign: Campaign) -> None:
-        """A running session shows the DM's new D&D Beyond invite link from now on (#1119)."""
+    async def after_invite_change(self, campaign: Campaign) -> None:
+        """A running session shows the DM's new D&D Beyond invite link from now on, and the
+        transcript channel's pinned card follows (#1119). A removed link must not linger: a DM
+        removes one because it leaked or the table is full."""
         table = self.tables.get(campaign.guild_id)
         if table is not None and table.campaign_id == campaign.id:
             table.dndbeyond_invite = campaign.dndbeyond_invite
+        guild = self.get_guild(campaign.guild_id)
+        if guild is not None and campaign.transcript_channel_id is not None:
+            try:
+                await refresh_card(guild, campaign)
+            except Exception:
+                log.exception("Couldn't refresh the transcript channel's card")
 
     async def after_screen_change(self, campaign: Campaign, channel: discord.TextChannel) -> None:
         """Keep a live session in step after the DM changes who can see the DM screen."""

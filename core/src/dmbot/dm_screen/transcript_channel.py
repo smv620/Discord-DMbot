@@ -23,7 +23,7 @@ import logging
 import discord
 
 from dmbot.campaigns import Campaign, CampaignStore
-from dmbot.consent_dm import invite_button
+from dmbot.consent_dm import JOIN_LABEL, invite_button
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import (
     CACHE_WAIT_S,
@@ -94,7 +94,7 @@ def _card_link(card: discord.Message) -> str | None:
     for row in getattr(card, "components", None) or []:
         for part in getattr(row, "children", None) or []:
             url = getattr(part, "url", None)
-            if isinstance(url, str):
+            if isinstance(url, str) and getattr(part, "label", None) == JOIN_LABEL:
                 return url
     return None
 
@@ -172,6 +172,20 @@ async def _repair(
             await asyncio.wait_for(channel.edit(name=name, reason=reason), RENAME_TIMEOUT_S)
         except (TimeoutError, discord.HTTPException) as exc:
             log.info("Rename of channel %s postponed: %s", channel.id, exc)
+
+
+async def refresh_card(guild: discord.Guild, campaign: Campaign) -> None:
+    """Make the pinned card match the campaign's current invite link, when the channel is
+    there (#1119). Best effort, like the card itself."""
+    channel = guild.get_channel(campaign.transcript_channel_id or 0)
+    if not isinstance(channel, discord.TextChannel):
+        return
+    try:
+        me = _me(guild)
+    except DMScreenError:
+        return
+    async with campaign_lock(campaign.id):
+        await _ensure_card(channel, campaign, me)
 
 
 async def setup_transcript_channel(

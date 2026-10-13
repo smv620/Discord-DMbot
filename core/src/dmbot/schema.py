@@ -1605,7 +1605,7 @@ DNDBEYOND_INVITE = """
     -- backfill policy.
     ALTER TABLE campaigns ADD COLUMN dndbeyond_invite TEXT
         CHECK (dndbeyond_invite IS NULL OR dndbeyond_invite ~
-            '^https://www[.]dndbeyond[.]com/(campaigns/join|join-campaign)/[A-Za-z0-9]{4,64}$');
+            '^https://www[.]dndbeyond[.]com/campaigns/join/[A-Za-z0-9]{4,64}$');
 """
 
 OWNER_CAMPAIGNS = (

@@ -420,7 +420,8 @@ class InviteForm(discord.ui.Modal, title="D&D Beyond invite"):
             return
         follow = getattr(interaction.client, "after_invite_change", None)
         if follow is not None:
-            follow(saved)  # a running session shows the new link from now on
+            # A running session and the transcript channel's pinned card follow at once.
+            await follow(saved)
         await interaction.response.send_message(
             INVITE_SAVED if invite else INVITE_REMOVED, ephemeral=True
         )

@@ -2625,11 +2625,14 @@ transcript channel's pinned card (posted again when the link changes), only in t
 no character who presses 📜 My character sheet on a session's reminder gets **Link my D&D Beyond sheet**:
 a sheet DMbot can read makes the character from the sheet's name (played by that player, once, even for two
 quick links), and the DM screen gets "Mira's player linked a D&D Beyond sheet; DMbot added Mira." with
-**Open its card** (rename, merge, remove). A sheet it can't read makes nothing and shows the Public steps. The invite is in the backup file, but a *new* campaign
+**Open character card** (rename, merge, remove). A sheet it can't read makes nothing and shows the Public steps. The invite is in the backup file, but a *new* campaign
 made from a backup gets none (it is the original DM's join link for the original table), and replacing
-a campaign with a backup brings it back only if the backup has one. Both D&D Beyond address shapes
-(`/campaigns/join/<code>` and `/join-campaign/<code>`) are accepted, kept as given. The Join button
-stays on a consent or reminder message when the player answers it.
+a campaign with a backup keeps the campaign's own link and ignores the backup's (a backup doesn't record
+its server, so its link could belong to another server's table). Only the `/campaigns/join/<code>` shape
+is accepted; if a real invite has another shape, adding it is a one-line change. The Join button stays on a
+consent or reminder message when the player answers it, using the campaign's *current* link while a
+session runs. When the DM changes or removes the link, the running session and the pinned card follow at
+once. The new-campaign form's link is saved in the same step as the campaign.
 
 **Character sheets, part D: any sheet, an import status, live checks; combat and FightBot (owner, 2026-10-13).**
 

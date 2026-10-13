@@ -421,23 +421,11 @@ class NewCampaignSettings(_Menu):
                 optional_rules_default=self.optional,
                 dm_screen_visibility=self.visibility,
                 dm_screen_level=self.level,
+                dndbeyond_invite=self.invite,  # saved with the campaign (#1119)
             )
         except CampaignError as exc:
             await _tell(interaction, str(exc))
             return
-        if self.invite is not None:  # the optional D&D Beyond invite (#1119)
-            try:
-                campaign = await _bot(interaction).campaigns.set_dndbeyond_invite(
-                    guild.id, campaign.id, self.invite
-                )
-            except Exception:
-                # The campaign is made: say the link wasn't kept rather than invite a second try.
-                log.exception("Couldn't save the D&D Beyond invite of a new campaign")
-                await _tell(
-                    interaction,
-                    "The campaign is made, but the D&D Beyond link wasn't saved. Add it later "
-                    "with ⚙️ Settings, then **D&D Beyond invite**.",
-                )
         self.stop()
         await show_voice_step(interaction, campaign, created=True)
 
