@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { dmSteps, helpHeading, helpIntro, playerSteps } from "../content/help";
+import { dmSteps, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
 ---
 
 <Base
@@ -34,6 +34,7 @@ import { dmSteps, helpHeading, helpIntro, playerSteps } from "../content/help";
     <ol>
       {playerSteps.map((s) => <li>{s.text}</li>)}
     </ol>
+    <p class="muted">{playerNote}</p>
   </section>
 
   <p class="muted">

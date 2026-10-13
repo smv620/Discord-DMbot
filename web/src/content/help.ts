@@ -13,14 +13,14 @@ export interface Step {
 
 export const helpHeading = "How to use DMbot";
 export const helpIntro =
-  "Everything happens in Discord. These are the buttons and commands exactly as DMbot shows them.";
+  "Everything happens in Discord. Buttons and commands are written just as DMbot shows them.";
 
 const consent = `I'm ${minimumAge} or older, record me`;
 
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
   {
-    text: "Join your table's voice channel and type /dmbot start. Then press ▶ Continue last campaign, or ＋ New campaign to make one.",
+    text: "Type /dmbot start in any text channel. Then press ▶ Continue last campaign, or ＋ New campaign if this is your first game.",
     names: [
       { name: "/dmbot start", file: "bot.py" },
       { name: "▶ Continue last campaign", file: "ui/logic.py" },
@@ -28,11 +28,11 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "Pick the voice channel, then press ▶ Start listening. Players get a private message asking if they say yes. Only people who say yes are recorded.",
+    text: "Pick your table's voice channel, then press ▶ Start listening. Each player gets a private message asking if they say yes. Only people who say yes are recorded.",
     names: [{ name: "▶ Start listening", file: "ui/dmbot_commands.py" }],
   },
   {
-    text: "Press ⚙️ Settings on your DM screen to change the game clock, timers, house rules and who can peek behind the DM screen.",
+    text: "On your DM screen, press ⚙️ Settings to change the game clock, house rules, or who can peek behind the DM screen.",
     names: [{ name: "Settings", file: "dm_screen/settings.py" }],
   },
   {
@@ -43,21 +43,23 @@ export const dmSteps: Step[] = [
     names: [{ name: "/dmbot stop", file: "bot.py" }],
   },
   {
-    text: "To keep a copy of a campaign, type /dmbot backup. To give a campaign to another game master, press ⚙️ Settings, then Hand over. They must say yes.",
-    names: [
-      { name: "/dmbot backup", file: "ui/dmbot_commands.py" },
-      { name: "Hand over", file: "dm_screen/handover.py" },
-    ],
+    text: "To keep a copy of a campaign, type /dmbot backup (paid campaigns only).",
+    names: [{ name: "/dmbot backup", file: "ui/dmbot_commands.py" }],
+  },
+  {
+    text: "To give a campaign to another game master, press ⚙️ Settings, then Hand over. They must say yes.",
+    names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
 ];
 
 export const playerSteps: Step[] = [
   {
-    text: `DMbot sends you a private message asking to record you. Press ${consent} to say yes, or No thanks to say no. You can still play if you say no.`,
-    names: [
-      { name: "record me", file: "consent_words.py" },
-      { name: "No thanks", file: "consent_dm.py" },
-    ],
+    text: `DMbot sends you a private message. Press ${consent} to say yes.`,
+    names: [{ name: "record me", file: "consent_words.py" }],
+  },
+  {
+    text: "Want to say no? Press No thanks. You can still play.",
+    names: [{ name: "No thanks", file: "consent_dm.py" }],
   },
   {
     text: "To stop at any time, press ⚙️ Menu in that private message, then Stop recording me, then Yes, stop recording me.",
@@ -68,14 +70,18 @@ export const playerSteps: Step[] = [
     ],
   },
   {
-    text: "Press 📜 My character sheet to link your public online sheet, or to type in your character instead. A linked sheet only works if you set it to Public on the sheet's own site (anyone with the link can open it). The game masters see it on your character's card.",
-    names: [{ name: "📜 My character sheet", file: "consent_dm.py" }],
-  },
-  {
-    text: "To read what was said in a game, type /transcript. Anyone in the server can read and download it.",
+    text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
     names: [{ name: "/transcript", file: "ui/transcripts.py" }],
   },
   {
-    text: "Your game master can turn on a game clock. You will see the story's day and time, like \"Day 5, morning\", in your own channel.",
+    text: "Press 📜 My character sheet to link your online sheet, or to type your character in.",
+    names: [{ name: "📜 My character sheet", file: "consent_dm.py" }],
+  },
+  {
+    text: "A linked sheet must be set to Public on the sheet's own site, so anyone with the link can open it. Your game master sees it on your character's card.",
   },
 ];
+
+/** Not a step to do: what players may notice at the table. */
+export const playerNote =
+  'Your game master may show the story\'s day and time, like "Day 5, morning", in your own channel. You do not need to do anything.';
