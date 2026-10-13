@@ -24,6 +24,7 @@ MIN_GAP_S = 60.0  # at most one read per sheet per minute
 BACKOFF_START_S = 120.0
 BACKOFF_MAX_S = 30 * 60.0
 HEARD_MAX = 20  # changes kept per sheet waiting for a read; more is a flood, not a story
+PER_PASS = 2  # sheets started in one pass (every 20 s): a table never bursts at D&D Beyond
 
 
 @dataclass(slots=True)
@@ -65,6 +66,12 @@ class SheetWatch:
         """The sheets to read now, oldest wish first. A sheet read, or refused, a moment ago
         waits (its changes are kept)."""
         out: list[tuple[float, str]] = []
+        if in_combat:  # the schedule waits through a fight, then restarts spread out again
+            late = sorted(
+                e for e, s in self._sheets.items() if s.due_at is None and now >= s.next_periodic
+            )
+            for i, entity_id in enumerate(late):
+                self._sheets[entity_id].next_periodic = now + PERIOD_S * (i + 1) / (len(late) + 1)
         for entity_id, sheet in self._sheets.items():
             if now < sheet.blocked_until or now - sheet.last_read < MIN_GAP_S:
                 continue
@@ -72,7 +79,7 @@ class SheetWatch:
                 out.append((sheet.due_at, entity_id))
             elif not in_combat and now >= sheet.next_periodic:
                 out.append((sheet.next_periodic, entity_id))
-        return [entity_id for _, entity_id in sorted(out)]
+        return [entity_id for _, entity_id in sorted(out)][:PER_PASS]
 
     def take(self, entity_id: str, now: float) -> list[Heard]:
         """A read is starting: the changes it covers, and the time counts as a read."""

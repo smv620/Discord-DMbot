@@ -23,6 +23,7 @@ from dmbot.memory.sheet_store import CharacterSheet
 
 log = logging.getLogger(__name__)
 
+MAX_QUESTIONS = 3  # in one message: a long list of questions is a chore, not a courtesy
 TICK_S = 20  # how often the watch looks for sheets that are due
 OPEN_LABEL = "Open on D&D Beyond"
 _FIRST_PERSON = re.compile(r"^(?:and |so |ok |okay )?(?:i|i'm|i am|i've)\b", re.IGNORECASE)
@@ -73,6 +74,9 @@ async def run(bot: Any, table: Any) -> None:
 
 async def tick(bot: Any, table: Any) -> None:
     now = time.monotonic()
+    # Most ticks have nothing due: look at the clock (a database read) only when something is.
+    if not table.sheet_watch.due(now, in_combat=False):
+        return
     in_combat = bot.clocks is not None and await bot.clocks.in_combat(
         table.guild_id, table.campaign_id
     )
@@ -106,12 +110,16 @@ async def reread(bot: Any, table: Any, entity_id: str, client: Any) -> None:
     kept = await bot.sheets.save(
         table.guild_id, table.campaign_id, entity_id, snapshot, int(time.time()), url=sheet.url
     )
-    if not kept:  # unlinked or relinked while it was being read
+    if not kept:  # unlinked or relinked while it was being read: stop watching it
+        table.sheet_links.pop(entity_id, None)
+        table.sheet_watch.track(list(table.sheet_links), now)
         return
     table.sheet_watch.read_ok(entity_id, now)
     after = sheets.clean(snapshot) or snapshot
     before = sheet.sheet
-    table.sheet_links[entity_id] = replace(sheet, sheet=after, fetched_at=int(time.time()))
+    current = table.sheet_links.get(entity_id)  # may have been reloaded while we waited
+    if current is not None:
+        table.sheet_links[entity_id] = replace(current, sheet=after, fetched_at=int(time.time()))
     # One line, never the sheet: which entry, why, and whether anything differed.
     log.info(
         "Sheet re-read of entry %s: %d change(s) heard, %s",
@@ -121,8 +129,15 @@ async def reread(bot: Any, table: Any, entity_id: str, client: Any) -> None:
     )
     if before != after:
         bot.sheets_changed(table.guild_id, table.campaign_id)  # new names for the hints
-    await _questions(bot, table, sheet, heard, before, after)
-    await _card(bot, table, sheet, before, after)
+    # Who plays it, and whether they want questions, as stored now (not as loaded at the start
+    # of the session): a character given to someone else gets nothing about the old sheet.
+    fresh = await bot.sheets.sheet(table.guild_id, table.campaign_id, entity_id)
+    if fresh is None or fresh.played_by is None or fresh.url is None:
+        return
+    if bot.tables.get(table.guild_id) is not table or not table.listening:
+        return  # the session ended meanwhile
+    await _questions(bot, table, fresh, heard, before, after)
+    await _card(bot, table, fresh, before, after)
 
 
 async def _questions(
@@ -135,16 +150,13 @@ async def _questions(
 ) -> None:
     """Ask the player, privately and once per change, about what the sheet doesn't show."""
     questions = [q for h in heard if (q := sheet_changes.mismatch(h, before, after, sheet.name))]
-    if not questions or sheet.played_by is None or sheet.url is None:
-        return
-    fresh = await bot.sheets.sheet(table.guild_id, table.campaign_id, sheet.entity_id)
-    if fresh is None or not fresh.asks or fresh.played_by != sheet.played_by:
-        return  # they turned the questions off, or no longer play it
+    if not questions or sheet.played_by is None or sheet.url is None or not sheet.asks:
+        return  # nothing to ask, or they turned the questions off
     view = discord.ui.View(timeout=None)
     view.add_item(
         discord.ui.Button(label=OPEN_LABEL, style=discord.ButtonStyle.link, url=sheet.url)
     )
-    text = "\n".join(dict.fromkeys(questions))[:1800]  # the same question once
+    text = "\n".join(list(dict.fromkeys(questions))[:MAX_QUESTIONS])  # the same one once
     text += "\nTurn these questions off any time in 📜 My character sheet. Only you see this."
     await _dm(bot, sheet.played_by, text, view)
 
@@ -157,7 +169,7 @@ async def _card(
     after: dict[str, Any],
 ) -> None:
     """The status card (#1124), but only when a part that was ✅ is now ⚠️ or ⛔."""
-    if sheet.played_by is None or before is None:
+    if sheet.played_by is None or before is None or before == after:
         return
     from dmbot.ui import sheets as sheets_ui
 

@@ -7,6 +7,7 @@ switch. The store tests need Postgres."""
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -83,7 +84,7 @@ class Mismatch(unittest.TestCase):
         was, now = {**base(), "hp": 26}, {**base(), "hp": 26}
         question = changes.mismatch(Heard("damage", 8), was, now, "Belleros")
         assert question is not None
-        self.assertIn("8 damage to Belleros", question)
+        self.assertIn("Belleros took 8 damage", question)
         self.assertIn("still shows 26 HP", question)
         self.assertIn("Want to update it?", question)
 
@@ -106,7 +107,7 @@ class Mismatch(unittest.TestCase):
         hurt = {**base(), "hp": 10}
         heal = changes.mismatch(Heard("heal", 5), hurt, hurt, "Mira")
         assert heal is not None
-        self.assertIn("Mira healing 5", heal)
+        self.assertIn("Mira healed 5", heal)
         cond = changes.mismatch(Heard("condition", condition="Poisoned"), hurt, hurt, "Mira")
         assert cond is not None
         self.assertIn("poisoned", cond)
@@ -159,7 +160,7 @@ class Schedule(unittest.TestCase):
     def test_nothing_is_read_on_the_schedule_in_combat_but_changes_still_are(self) -> None:
         w = self.fresh()
         self.assertEqual(w.due(watch.PERIOD_S + 1, in_combat=True), [])
-        self.assertEqual(len(w.due(watch.PERIOD_S + 1, in_combat=False)), 3)
+        self.assertEqual(len(self.fresh().due(watch.PERIOD_S + 1, in_combat=False)), watch.PER_PASS)
         w.note("e1", [Heard("damage", 3)], 10.0)
         self.assertEqual(w.due(100.0, in_combat=True), ["e1"])
 
@@ -204,6 +205,35 @@ class Schedule(unittest.TestCase):
         self.assertFalse(w.note("e0", [Heard("slot")], 6.0))
         other = SheetWatch()  # another session (campaign) has its own
         self.assertFalse(other.note("e1", [Heard("slot")], 6.0))
+
+    def test_the_schedule_does_not_stampede_when_combat_ends(self) -> None:
+        w = self.fresh(5)
+        late = watch.PERIOD_S * 3  # a long fight: every sheet is overdue
+        self.assertEqual(w.due(late, in_combat=True), [])
+        due_times = sorted(s.next_periodic for s in w._sheets.values())
+        self.assertGreater(due_times[0], late)  # none due the moment combat ends
+        self.assertGreater(len({round(t) for t in due_times}), 1)  # and spread out again
+        self.assertEqual(w.due(late + 1, in_combat=False), [])
+
+    def test_a_busy_table_never_starts_more_than_two_reads_a_pass(self) -> None:
+        w = self.fresh(8)
+        for i in range(8):
+            w.note(f"e{i}", [Heard("damage", 1)], 0.0)
+        first = w.due(60.0, in_combat=True)
+        self.assertEqual(len(first), watch.PER_PASS)
+        for e in first:
+            w.take(e, 60.0)
+        self.assertEqual(len(w.due(61.0, in_combat=True)), watch.PER_PASS)  # the next two
+
+    def test_the_failure_sequence_ends_at_thirty_minutes_and_a_good_read_resets_it(self) -> None:
+        w = self.fresh(1)
+        now = 0.0
+        for _ in range(7):
+            w.read_failed("e0", now, [])
+            now = w._sheets["e0"].blocked_until
+        self.assertEqual(w._sheets["e0"].backoff, watch.BACKOFF_MAX_S)
+        w.read_ok("e0", now)
+        self.assertEqual(w._sheets["e0"].backoff, 0.0)
 
     def test_a_five_player_table_reads_about_twenty_times_an_hour_plus_changes(self) -> None:
         w = SheetWatch()
@@ -252,14 +282,23 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         sheet_reread.track(table, list(found))
         return table
 
-    def bot(self, table: Any, *, asks: bool = True, in_combat: bool = False) -> Any:
+    def bot(
+        self,
+        table: Any,
+        *,
+        asks: bool = True,
+        in_combat: bool = False,
+        played_by: int | None = PLAYER,
+    ) -> Any:
         user = SimpleNamespace(send=AsyncMock())
-        stored = SimpleNamespace(asks=asks, played_by=PLAYER)
+        sent_to: list[int] = []
+
+        async def stored(guild_id: int, campaign_id: str, entity_id: str) -> CharacterSheet:
+            return replace(table.sheet_links[entity_id], asks=asks, played_by=played_by)
+
         return SimpleNamespace(
             tables={GUILD: table},
-            sheets=SimpleNamespace(
-                save=AsyncMock(return_value=True), sheet=AsyncMock(return_value=stored)
-            ),
+            sheets=SimpleNamespace(save=AsyncMock(return_value=True), sheet=stored),
             clocks=SimpleNamespace(in_combat=AsyncMock(return_value=in_combat)),
             campaigns=SimpleNamespace(
                 get=AsyncMock(
@@ -267,7 +306,8 @@ class Runner(unittest.IsolatedAsyncioTestCase):
                 )
             ),
             sheets_changed=MagicMock(),
-            get_user=lambda uid: user,
+            get_user=lambda uid: sent_to.append(uid) or user,
+            sent_to=sent_to,
             fetch_user=AsyncMock(return_value=user),
             user=user,
         )
@@ -295,7 +335,7 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         fetched.assert_awaited_once()
         bot.user.send.assert_awaited_once()
         text = bot.user.send.await_args.args[0]
-        self.assertIn("8 damage to Belleros", text)
+        self.assertIn("Belleros took 8 damage", text)
         self.assertIn("still shows 26 HP", text)
         view = bot.user.send.await_args.kwargs["view"]
         (button,) = view.children
@@ -360,6 +400,60 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         self.assertIn("not public", joined)
         for secret in ("Belleros", "HP", "damage"):
             self.assertNotIn(secret, joined)
+
+    async def test_a_quiet_pass_asks_the_clock_nothing(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table)
+        with self.fetching(base()) as fetched, patch("time.monotonic", return_value=10.0):
+            await self.read(bot, table)  # nothing is due yet
+        fetched.assert_not_awaited()
+        bot.clocks.in_combat.assert_not_awaited()
+
+    async def test_an_unchanged_sheet_costs_no_card_look_up(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table)
+        table.sheet_watch._sheets["e1"].next_periodic = 0.0
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+        bot.campaigns.get.assert_not_awaited()
+
+    async def test_a_character_given_to_someone_else_gets_nothing(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table, played_by=777)  # the DM reassigned it during the session
+        self.say(table, "Belleros takes 8 damage")
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        worse = {**base(), "abilities": {**base()["abilities"], "str": 45}, "flags": ["abilities"]}
+        with self.fetching(worse), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+        # The messages go to whoever plays it now (777), never to the player it was loaded with.
+        self.assertTrue(bot.sent_to)
+        self.assertEqual(set(bot.sent_to), {777})
+
+    async def test_a_sheet_unlinked_while_it_was_read_is_dropped_from_the_watch(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table)
+        bot.sheets.save = AsyncMock(return_value=False)
+        table.sheet_watch._sheets["e1"].next_periodic = 0.0
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+        self.assertEqual(table.sheet_links, {})
+        self.assertEqual(table.sheet_watch.due(2e6, in_combat=False), [])
+        bot.user.send.assert_not_awaited()
+
+    async def test_a_session_that_ended_during_the_read_sends_nothing(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table)
+        self.say(table, "Belleros takes 8 damage")
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+
+        async def ended(*args: Any, **kwargs: Any) -> bool:
+            bot.tables.clear()
+            return True
+
+        bot.sheets.save = ended
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+        bot.user.send.assert_not_awaited()
 
     async def test_a_sheet_not_from_dndbeyond_is_never_read(self) -> None:
         typed = snapshot_sheet(linked=False)
