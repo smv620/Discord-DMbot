@@ -131,11 +131,11 @@ describe("the facts #433 asks for", () => {
     }
   });
 
-  it("names OVH US as the host and the US companies, with Lemon Squeezy as seller of record", () => {
+  it("names OVH US as the host and the US companies, with Stripe as seller of record", () => {
     expect(privacy()).toContain("OVH US LLC (OVHcloud, U.S.A.)");
     expect(privacy()).toContain("Its servers are in the United States");
-    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub and Lemon Squeezy/);
-    expect(privacy()).toContain("Lemon Squeezy is the seller of record and handles withdrawal rights, invoices and tax");
+    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub and Stripe/);
+    expect(privacy()).toContain("Stripe is the seller of record and handles withdrawal rights, invoices and tax");
     expect(privacy()).not.toContain("HOSTING PROVIDER");
   });
 
@@ -152,7 +152,7 @@ describe("the facts #433 asks for", () => {
     expect(refunds).toContain("within 14 days of paying and we'll refund it. A monthly renewal is not a new plan.");
     expect(refunds).toContain("can't be refunded, used or not.");
     expect(refunds).toContain("within 5 working days");
-    expect(refunds).toContain("Lemon Squeezy is the seller");
+    expect(refunds).toContain("Stripe is the seller");
     expect(refunds).not.toContain("{{CHECK");
   });
 
@@ -229,9 +229,9 @@ describe("the facts #433 asks for", () => {
     expect(terms()).not.toMatch(/\d+ days to fix it/);
   });
 
-  it("names Lemon Squeezy as the payment company on every legal page", () => {
+  it("names Stripe as the payment company on every legal page", () => {
     for (const page of ["terms", "privacy", "refunds"]) {
-      expect(text(doc(page).querySelector("main"))).toContain("Lemon Squeezy");
+      expect(text(doc(page).querySelector("main"))).toContain("Stripe");
     }
     expect(terms()).not.toMatch(/PAYMENT PROVIDER|Paddle/);
   });
