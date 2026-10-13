@@ -300,9 +300,12 @@ async def _ask(
             discord.ui.Button(label=OPEN_LABEL, style=discord.ButtonStyle.link, url=kept[0].url)
         )
     text = f"📜 About your D&D Beyond sheet{where}:\n" + "\n".join(
-        dict.fromkeys(w.text for w in kept)
+        f"• {t}" for t in dict.fromkeys(w.text for w in kept)
     )
-    text += "\nTurn these questions off any time in 📜 My character sheet. Only you see this."
+    text += (
+        "\nOnly you see this. To stop these, tap 📜 My character sheet, "
+        "then Turn sheet questions off."
+    )
     await _dm(bot, player, text, view)
 
 

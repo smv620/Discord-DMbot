@@ -54,15 +54,16 @@ FORGET_LABEL = "Forget my sheet"
 QUESTIONS_ON = "Turn sheet questions off"  # shown while DMbot may ask
 QUESTIONS_OFF = "Turn sheet questions on"
 QUESTIONS_NOW_ON = (
-    "✅ DMbot may ask you, privately, when your D&D Beyond sheet doesn't show what was said at "
-    "the table."
+    "✅ Sheet questions are on. DMbot may privately ask if your sheet doesn't match what was said."
 )
 # The button says what it does (#1129): the spec's words, FightBot on / off.
 FIGHTBOT_ON = "Turn FightBot off"  # shown while FightBot may remind this player
 FIGHTBOT_OFF = "Turn FightBot on"
-FIGHTBOT_NOW_ON = "✅ FightBot is on: it may remind you of your own options in a fight, privately."
+FIGHTBOT_NOW_ON = (
+    "✅ FightBot is on. In a fight it may privately remind you of your own spells and features."
+)
 FIGHTBOT_NOW_OFF = "✅ FightBot is off for you."
-QUESTIONS_NOW_OFF = "✅ DMbot won't ask you about your D&D Beyond sheet any more."
+QUESTIONS_NOW_OFF = "✅ Sheet questions are off."
 NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "
     "`/dmbot names`, then **🧑 Add a player's character**."

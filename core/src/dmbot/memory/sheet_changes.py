@@ -213,10 +213,10 @@ def mismatch(
         at = _hp_text(after)
         return (
             f"At the table it sounded like {name} took {heard.amount} damage. "
-            f"Your D&D Beyond sheet still shows {at}. Want to update it?"
+            f"Your D&D Beyond sheet still shows {at}. You may want to update it."
             if at
             else f"At the table it sounded like {name} took {heard.amount} damage. "
-            "Your D&D Beyond sheet doesn't show it yet. Want to update it?"
+            "Your D&D Beyond sheet doesn't show it yet. You may want to update it."
         )
     if heard.kind == "heal" and heard.amount is not None:
         was, now = _effective_hp(before), _effective_hp(after)
@@ -228,10 +228,10 @@ def mismatch(
         at = _hp_text(after)
         return (
             f"At the table it sounded like {name} healed {heard.amount}. "
-            f"Your D&D Beyond sheet still shows {at}. Want to update it?"
+            f"Your D&D Beyond sheet still shows {at}. You may want to update it."
             if at
             else f"At the table it sounded like {name} healed {heard.amount}. "
-            "Your D&D Beyond sheet doesn't show it yet. Want to update it?"
+            "Your D&D Beyond sheet doesn't show it yet. You may want to update it."
         )
     if heard.kind == "condition" and heard.condition is not None:
         have = after.get("conditions")
@@ -239,6 +239,6 @@ def mismatch(
             return None
         return (
             f"At the table it sounded like {name} is {heard.condition.lower()}. "
-            "Your D&D Beyond sheet doesn't show it. Want to update it?"
+            "Your D&D Beyond sheet doesn't show it. You may want to update it."
         )
     return None

@@ -87,7 +87,7 @@ class Mismatch(unittest.TestCase):
         assert question is not None
         self.assertIn("Belleros took 8 damage", question)
         self.assertIn("still shows 26 HP", question)
-        self.assertIn("Want to update it?", question)
+        self.assertIn("You may want to update it.", question)
 
     def test_a_sheet_that_shows_it_is_never_asked(self) -> None:
         was = {**base(), "hp": 26}
@@ -373,7 +373,7 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         (button,) = view.children
         self.assertEqual(button.label, sheet_reread.OPEN_LABEL)
         self.assertEqual(button.url, sheets.sheet_url(CHARACTER))
-        self.assertIn("Turn these questions off", text)
+        self.assertIn("Turn sheet questions off", text)
         bot.sheets.save.assert_awaited_once()
 
     async def test_a_sheet_that_shows_it_is_never_asked_about(self) -> None:

@@ -38,15 +38,15 @@ MAX_CALLS_PER_TICK = 2  # a table never gets a burst of AI calls
 TICK_S = 30
 MAX_TOKENS = 120
 _ID = r"(?P<campaign>[0-9a-f]{32})"
-SNOOZED = "😴 Okay, back in 10 minutes."
+SNOOZED = "😴 Okay, quiet for 10 minutes."
 QUIET = "🤫 Okay, quiet until the next session."
 NO_SESSION = "There is no game running just now, so there is nothing to quiet."
-NEVER = "🚫 FightBot is off. Turn it back on in 📜 My character sheet."
-NOT_SAVED = "Sorry, that didn't save. Please try again."
-NOT_PLAYING = "FightBot is only for players who have a character in this campaign."
+NEVER = "🚫 FightBot is off for you. To turn it on, tap 📜 My character sheet."
+NOT_SAVED = "That didn't save. Tap the button again."
+NOT_PLAYING = "FightBot is for players with a character in this campaign. Ask your DM to add yours."
 FOOTER = "FightBot reminder. Only you see this. It's your call."
 INTRO = (
-    "FightBot reminds you of your own spells and features during a fight. "
+    "FightBot privately reminds you of your own spells and features in a fight. "
     "Tap **Never** to turn it off.\n"
 )
 

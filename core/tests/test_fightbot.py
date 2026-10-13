@@ -203,7 +203,7 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         self.assertIn("You still have Hunter's Mark.", text)
         labels = [str(b.item.label) for b in bot.user.send.await_args.kwargs["view"].children]
         self.assertEqual(labels, ["Snooze 10 min", "Quiet until next session", "Never"])
-        self.assertIn("FightBot reminds you", text)  # the first one says what it is
+        self.assertIn("FightBot privately reminds you", text)  # the first one says what it is
         self.assertIn("It's your call", text)
         bot.post.assert_not_awaited()  # never in a channel
         bot.post_message.assert_not_awaited()
@@ -345,8 +345,8 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.fight_ai.complete.await_count, 2)
         self.assertEqual(bot.user.send.await_count, 2)
         first, second = (c.args[0] for c in bot.user.send.await_args_list)
-        self.assertIn("FightBot reminds you", first)
-        self.assertNotIn("FightBot reminds you", second)  # only the first says what it is
+        self.assertIn("FightBot privately reminds you", first)
+        self.assertNotIn("FightBot privately reminds you", second)  # only the first says what it is
 
     async def test_nothing_to_say_sends_nothing_and_does_not_ask_again_for_the_same_thing(
         self,
