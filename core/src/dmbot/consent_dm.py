@@ -984,16 +984,32 @@ CONSENT_BUTTONS = (
 )
 
 
+JOIN_LABEL = "Join on D&D Beyond"
+
+
+def invite_button(url: str) -> discord.ui.Button[Any]:
+    """A link button to the DM's D&D Beyond campaign invite (#1119): a plain link, nothing
+    DMbot handles. `url` is a checked invite link (dmbot.campaigns.invite)."""
+    return discord.ui.Button(label=JOIN_LABEL, style=discord.ButtonStyle.link, url=url)
+
+
 def request_view(
-    guild_id: int, *, outside: str | None = None, test_voice: bool = False
+    guild_id: int,
+    *,
+    outside: str | None = None,
+    test_voice: bool = False,
+    invite: str | None = None,
 ) -> discord.ui.View:
     """`outside`: the outside engine the request shown with it names, if any.
-    `test_voice`: a test server, which adds the second question's button (#1019)."""
+    `test_voice`: a test server, which adds the second question's button (#1019).
+    `invite`: the campaign's D&D Beyond invite link, shown as a Join button (#1119)."""
     view = discord.ui.View(timeout=None)
     view.add_item(ConsentButton(guild_id, outside=outside))
     view.add_item(DeclineButton(guild_id))
     if test_voice:
         view.add_item(SaveVoiceButton(guild_id))
+    if invite:
+        view.add_item(invite_button(invite))
     return view
 
 
@@ -1013,10 +1029,15 @@ def sheet_button(guild_id: int, campaign_id: str | None) -> discord.ui.Button[An
     )
 
 
-def menu_view(guild_id: int, campaign_id: str | None = None) -> discord.ui.View:
-    """Just ⚙️ Menu: what the messages that once had 🛑 carry (#807)."""
+def menu_view(
+    guild_id: int, campaign_id: str | None = None, *, invite: str | None = None
+) -> discord.ui.View:
+    """Just ⚙️ Menu: what the messages that once had 🛑 carry (#807). The session's reminder
+    adds the campaign's D&D Beyond Join button when the DM set one (#1119)."""
     view = discord.ui.View(timeout=None)
     view.add_item(MenuButton(guild_id, campaign_id))
+    if invite:
+        view.add_item(invite_button(invite))
     return view
 
 

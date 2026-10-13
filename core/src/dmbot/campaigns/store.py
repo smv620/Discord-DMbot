@@ -30,6 +30,7 @@ from psycopg import sql
 
 from dmbot import entitlements
 from dmbot.campaigns import offer_notify
+from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import (
     CONFIRMATION_PURPOSES,
     DEFAULT_DM_SCREEN_LEVEL,
@@ -281,6 +282,7 @@ _SETTABLE = frozenset(
         "channel_number",
         "transcript_channel_id",
         "gametime_channel_id",
+        "dndbeyond_invite",
         "rules_cards",
     }
 )
@@ -572,6 +574,18 @@ class CampaignStore:
     ) -> Campaign:
         """Store the campaign's game-time channel (#1116): not part of a backup."""
         return await self._set(guild_id, campaign_id, "gametime_channel_id", channel_id)
+
+    async def set_dndbeyond_invite(
+        self, guild_id: int, campaign_id: str, invite: str | None
+    ) -> Campaign:
+        """Keep (or, with None, remove) the DM's D&D Beyond invite link (#1119). Checked here
+        too, so no caller can store another kind of address."""
+        return await self._set(
+            guild_id,
+            campaign_id,
+            "dndbeyond_invite",
+            None if invite is None else parse_invite(invite),
+        )
 
     async def set_dm_screen_visibility(
         self, guild_id: int, campaign_id: str, visibility: str
@@ -1057,6 +1071,7 @@ class CampaignStore:
                 "dm_screen_visibility": campaign.dm_screen_visibility,
                 "dm_screen_level": campaign.dm_screen_level,
                 "rules_cards": campaign.rules_cards,
+                "dndbeyond_invite": campaign.dndbeyond_invite,
             },
             "sections": sections,
         }
@@ -1118,6 +1133,7 @@ class CampaignStore:
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
                     " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
+                    " dndbeyond_invite = %s,"
                     " owner_user_id = COALESCE(owner_user_id, %s),"
                     " owner_left_at = CASE WHEN owner_user_id IS NULL THEN NULL"
                     "   ELSE owner_left_at END"
@@ -1130,6 +1146,7 @@ class CampaignStore:
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
                         info["rules_cards"],
+                        info["dndbeyond_invite"],
                         importer_id,
                         guild_id,
                         campaign_id,
@@ -1157,6 +1174,12 @@ class CampaignStore:
                             "UPDATE campaigns SET rules_cards = TRUE"
                             " WHERE guild_id = %s AND id = %s",
                             (guild_id, campaign_id),
+                        )
+                    if info["dndbeyond_invite"] is not None:
+                        await conn.execute(
+                            "UPDATE campaigns SET dndbeyond_invite = %s"
+                            " WHERE guild_id = %s AND id = %s",
+                            (info["dndbeyond_invite"], guild_id, campaign_id),
                         )
                 except pg_errors.UniqueViolation as exc:
                     # Another restore took the same name a moment ago.
@@ -1306,6 +1329,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         channel_number=row_int(row, "channel_number"),
         transcript_channel_id=row_int(row, "transcript_channel_id"),
         # Absent in a schema older than #1116 (a migration test opens one).
+        dndbeyond_invite=row.get("dndbeyond_invite"),
         gametime_channel_id=row_int(row, "gametime_channel_id")
         if "gametime_channel_id" in row
         else None,
@@ -1492,6 +1516,17 @@ def _validate_backup(
     if not isinstance(rules_cards, bool):
         raise CampaignError(DAMAGED)
 
+    # Backups made before the invite link existed have none. A link that isn't one is damage.
+    invite = campaign.get("dndbeyond_invite")
+    if invite is not None:
+        if not isinstance(invite, str):
+            raise CampaignError(DAMAGED)
+        try:
+            if parse_invite(invite) != invite:
+                raise CampaignError(DAMAGED)
+        except CampaignError as exc:
+            raise CampaignError(DAMAGED) from exc
+
     unknown = set(sections) - known_sections
     if unknown:
         raise CampaignError("This backup was made by a newer DMbot. Update DMbot and try again.")
@@ -1509,5 +1544,6 @@ def _validate_backup(
         "dm_screen_visibility": visibility,
         "dm_screen_level": level,
         "rules_cards": rules_cards,
+        "dndbeyond_invite": invite,
     }
     return info, {name: list(rows) for name, rows in sections.items()}

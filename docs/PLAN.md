@@ -2616,6 +2616,16 @@ add people to one (there is no official API), so it passes on the DM's own invit
   character yet, DMbot adds it from the sheet's name, as that player's character, and tells the
   DM on the DM screen. The DM can rename, merge or remove it there.
 - **Part C (the browser extension in the DM's own D&D Beyond session) stays later.**
+*Built (2026-10-13, #1119):* the DM's invite is `campaigns.dndbeyond_invite` (migration 0051, a CHECK as
+well as `dmbot.campaigns.invite.parse_invite`: only `https://[www.]dndbeyond.com/campaigns/join/<code>`,
+stored in the `www` form; an empty box removes it), set in an optional field on the new-campaign form or
+by ⚙️ Settings, **🔗 D&D Beyond invite** (campaign DMs only), and in the campaign's backup. The
+**Join on D&D Beyond** link button is on the consent request, on each session's reminder and on the
+transcript channel's pinned card (posted again when the link changes), only in that server. A player with
+no character who presses 📜 My character sheet on a session's reminder gets **Link my D&D Beyond sheet**:
+a sheet DMbot can read makes the character from the sheet's name (played by that player, once, even for two
+quick links), and the DM screen gets "Mira's player linked a D&D Beyond sheet; DMbot added Mira." with
+**Open its card** (rename, merge, remove). A sheet it can't read makes nothing and shows the Public steps.
 
 **Character sheets, part D: any sheet, an import status, live checks; combat and FightBot (owner, 2026-10-13).**
 

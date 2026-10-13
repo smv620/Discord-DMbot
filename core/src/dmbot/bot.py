@@ -97,6 +97,7 @@ from dmbot.dm_screen.name_questions import (
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.settings import (
     HouseFileButton,
+    InviteButton,
     LevelButton,
     RuleLookupButton,
     RulesCardsButton,
@@ -185,7 +186,7 @@ from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
-from dmbot.ui.sheets import MySheetButton
+from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.transcripts import (
     DownloadButton,
     download_view,
@@ -363,6 +364,9 @@ class Table:
     # When a rest said at the table last moved the game clock, by kind (monotonic seconds):
     # the same phrase twice in a few minutes is one rest (#965).
     clock_said: dict[str, float] = field(default_factory=dict)
+    # The campaign's D&D Beyond invite link, for the Join button on the messages players see
+    # this session (#1119); None when the DM set none.
+    dndbeyond_invite: str | None = None
     resumed: bool = False  # picked up again after a restart
     announce_resume: bool = True  # post "listening again" when voice is back
     # Asked privately about recording (or reminded) this session: at most once each.
@@ -669,6 +673,7 @@ class DMBot(commands.AutoShardedBot):
             RuleLookupButton,
             RulesCardsButton,
             HouseFileButton,
+            InviteButton,
         )
         # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
         self.add_dynamic_items(
@@ -698,7 +703,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
         # A player's 📜 My character sheet, in their private messages (#723).
-        self.add_dynamic_items(MySheetButton)
+        self.add_dynamic_items(MySheetButton, OpenCardButton)  # #723, #1119
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -1159,7 +1164,7 @@ class DMBot(commands.AutoShardedBot):
                         company=company,
                         sheets=self.sheets is not None,
                     )
-                    view = menu_view(gid, table.campaign_id)
+                    view = menu_view(gid, table.campaign_id, invite=table.dndbeyond_invite)
                 else:
                     text = request_text(
                         server,
@@ -1173,7 +1178,10 @@ class DMBot(commands.AutoShardedBot):
                     if cloud and member.id in status.other_company:
                         text = f"{REASK_INTRO}\n\n{text}"  # why they're asked again
                     view = request_view(
-                        gid, outside=self.outside_engine, test_voice=self.test_voice_listed(gid)
+                        gid,
+                        outside=self.outside_engine,
+                        test_voice=self.test_voice_listed(gid),
+                        invite=table.dndbeyond_invite,
                     )
                 result = await send_prompt(member, text, view)
                 if result != "sent":
@@ -1951,6 +1959,7 @@ class DMBot(commands.AutoShardedBot):
             rules_on=campaign.rules_cards,
             rules_rulesets=(campaign.target_ruleset, campaign.fallback_ruleset),
             transcript_channel_id=transcript_id,
+            dndbeyond_invite=campaign.dndbeyond_invite,
             started_at=started_at,
         )
         if table.rules_on:
@@ -2350,6 +2359,12 @@ class DMBot(commands.AutoShardedBot):
             log.warning("Could not post to channel %s: %s", channel_id, exc)
             return None
 
+    def after_invite_change(self, campaign: Campaign) -> None:
+        """A running session shows the DM's new D&D Beyond invite link from now on (#1119)."""
+        table = self.tables.get(campaign.guild_id)
+        if table is not None and table.campaign_id == campaign.id:
+            table.dndbeyond_invite = campaign.dndbeyond_invite
+
     async def after_screen_change(self, campaign: Campaign, channel: discord.TextChannel) -> None:
         """Keep a live session in step after the DM changes who can see the DM screen."""
         table = self.tables.get(campaign.guild_id)
@@ -2547,6 +2562,7 @@ class DMBot(commands.AutoShardedBot):
             table.guild_id,
             outside=self.outside_engine,
             test_voice=self.test_voice_listed(table.guild_id),
+            invite=table.dndbeyond_invite,
         )
 
     async def sidebar_transcribe(self, table: Table, utterance: Utterance) -> str | None:
@@ -4967,7 +4983,10 @@ async def consent_give(interaction: discord.Interaction) -> None:
     await interaction.followup.send(
         text,
         view=request_view(
-            guild.id, outside=bot.outside_engine, test_voice=bot.test_voice_listed(guild.id)
+            guild.id,
+            outside=bot.outside_engine,
+            test_voice=bot.test_voice_listed(guild.id),
+            invite=table.dndbeyond_invite if table else None,
         ),
         ephemeral=True,
     )

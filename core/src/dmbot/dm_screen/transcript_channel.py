@@ -23,6 +23,7 @@ import logging
 import discord
 
 from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.consent_dm import invite_button
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import (
     CACHE_WAIT_S,
@@ -87,6 +88,17 @@ async def _fresh(guild: discord.Guild, campaign: Campaign) -> discord.TextChanne
     return channel
 
 
+def _card_link(card: discord.Message) -> str | None:
+    """The address on the card's link button, if it has one: the card is posted again when the
+    DM's invite link changed (#1119)."""
+    for row in getattr(card, "components", None) or []:
+        for part in getattr(row, "children", None) or []:
+            url = getattr(part, "url", None)
+            if isinstance(url, str):
+                return url
+    return None
+
+
 async def _ensure_card(
     channel: discord.TextChannel, campaign: Campaign, me: discord.Member
 ) -> None:
@@ -94,6 +106,7 @@ async def _ensure_card(
     thousands of messages) and the last few messages. Best effort: the channel works
     without it."""
     text = messages.transcript_card(campaign.name)
+    invite = campaign.dndbeyond_invite  # the Join on D&D Beyond button, if the DM set a link
     try:
         found: dict[int, discord.Message] = {}
         for pin in await channel.pins():
@@ -105,16 +118,23 @@ async def _ensure_card(
             ):
                 found.setdefault(recent.id, recent)
         cards = list(found.values())
-        if len(cards) == 1 and cards[0].content == text:
+        if len(cards) == 1 and cards[0].content == text and _card_link(cards[0]) == invite:
             if not cards[0].pinned:
                 await _pin(cards[0], PIN_REASON)
             return
         for old in cards:
             with contextlib.suppress(discord.HTTPException):
                 await old.delete()
-        card = await channel.send(
-            text, allowed_mentions=discord.AllowedMentions.none(), silent=True
-        )
+        if invite:
+            view = discord.ui.View(timeout=None)
+            view.add_item(invite_button(invite))
+            card = await channel.send(
+                text, view=view, allowed_mentions=discord.AllowedMentions.none(), silent=True
+            )
+        else:
+            card = await channel.send(
+                text, allowed_mentions=discord.AllowedMentions.none(), silent=True
+            )
         await _pin(card, PIN_REASON)
     except discord.HTTPException as exc:
         log.warning("Transcript channel card not updated: %s", exc)

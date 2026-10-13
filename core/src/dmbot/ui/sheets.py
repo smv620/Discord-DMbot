@@ -12,7 +12,9 @@ is still in the server: a DM may give the character to someone else meanwhile.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any, cast
 
@@ -48,6 +50,22 @@ NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "
     "`/dmbot names`, then **🧑 Add a player's character**."
 )
+NO_CHARACTER_LINK = (
+    "DMbot doesn't know your character in this campaign yet. If you play on D&D Beyond, "
+    "press **Link my D&D Beyond sheet** and DMbot adds your character from it. If not, ask "
+    "your DM to add it: `/dmbot names`, then **🧑 Add a player's character**."
+)
+NOTHING_ADDED = "\nNothing was added. Press **Link my D&D Beyond sheet** to try again."
+ADDED_FROM_SHEET = (
+    "✅ Linked. DMbot read **{name}**'s sheet and added **{name}** as your character{who}. "
+    "It listens for its spell, feature and item names, and reads the sheet again when each "
+    "session starts."
+)
+CHARACTER_NOT_ADDED = (
+    "DMbot read the sheet but couldn't add the character ({why}). Ask your DM to add it: "
+    "`/dmbot names`, then **🧑 Add a player's character**."
+)
+DM_ADDED = "🧑 {name}'s player linked a D&D Beyond sheet; DMbot added {name}."
 NOT_AVAILABLE = "Character sheets aren't available on DMbot right now. Try again later."
 NOT_AVAILABLE_DM = (
     "The character is saved, but character sheets aren't available on DMbot right now, so "
@@ -111,6 +129,8 @@ _GUILD = r"(?P<guild>[0-9]{1,20})"
 _CAMPAIGN = r"(?P<campaign>[0-9a-f]{32}|-)"
 
 _last_link: dict[tuple[int, int], float] = {}
+# One character from a sheet at a time per player and campaign: two quick links make one.
+_adding: dict[tuple[int, int, str], asyncio.Lock] = {}
 _last_refresh: dict[tuple[int, str], float] = {}
 
 
@@ -269,12 +289,170 @@ class MySheetButton(
             return
         found = await store.characters_of(self.guild_id, interaction.user.id, self.campaign_id)
         if not found:
+            if self.campaign_id is not None:  # a session's reminder: this campaign, so offer
+                await _send(  # to make the character from their sheet (#1119)
+                    interaction,
+                    NO_CHARACTER_LINK,
+                    NoCharacterPanel(self.guild_id, self.campaign_id),
+                )
+                return
             await _tell(interaction, NO_CHARACTER)
             return
         if len(found) == 1:
             await show_panel(interaction, self.guild_id, found[0])
             return
         await _send(interaction, PICK, CharacterChoice(self.guild_id, found))
+
+
+class NoCharacterPanel(_Menu):
+    """For a player with no character yet: **Link my D&D Beyond sheet** makes it from the sheet."""
+
+    def __init__(self, guild_id: int, campaign_id: str) -> None:
+        super().__init__()
+        self.guild_id, self.campaign_id = guild_id, campaign_id
+        self.add_item(_Button(self._link, label=LINK_LABEL, style=discord.ButtonStyle.primary))
+
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def _link(self, interaction: discord.Interaction) -> None:
+        self.origin = None  # the form's answer is a new message; this one stays
+        await interaction.response.send_modal(NewSheetForm(self.guild_id, self.campaign_id))
+
+
+class NewSheetForm(discord.ui.Modal, title="Link your D&D Beyond sheet"):
+    link: discord.ui.TextInput[NewSheetForm] = discord.ui.TextInput(
+        label="Your character's D&D Beyond link",
+        placeholder="https://www.dndbeyond.com/characters/12345678",
+        max_length=200,
+    )
+
+    def __init__(self, guild_id: int, campaign_id: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.guild_id, self.campaign_id = guild_id, campaign_id
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        number = sheets.character_id(self.link.value)
+        if number is None:
+            await _tell(interaction, sheets.NOT_A_LINK)
+            return
+        if _too_soon(_last_link, (self.guild_id, interaction.user.id), LINK_COOLDOWN_S):
+            await _tell(interaction, WAIT)
+            return
+        await _answer_first(interaction)  # reading D&D Beyond takes a moment
+        if not await _still_member(interaction, self.guild_id):
+            return
+        await add_from_sheet(interaction, self.guild_id, self.campaign_id, number)
+
+
+async def add_from_sheet(
+    interaction: discord.Interaction, guild_id: int, campaign_id: str, number: int
+) -> None:
+    """A player with no character links their sheet: a sheet DMbot can read makes the
+    character, from the sheet's name, played by that player (the same as the DM's "Add a
+    player's character"); a sheet it can't read makes nothing. A player who already has a
+    character in the campaign gets the sheet linked to it instead, never a second one."""
+    bot = _bot(interaction)
+    store = bot.sheets
+    memory = bot.memory
+    campaign = await bot.campaigns.get(guild_id, campaign_id)
+    if store is None or memory is None or campaign is None:
+        await _tell(interaction, NOT_AVAILABLE)
+        return
+    me = interaction.user.id
+    async with _adding.setdefault((guild_id, me, campaign_id), asyncio.Lock()):
+        existing = await store.characters_of(guild_id, me, campaign_id)
+        if existing:  # made a moment ago, or the DM added it: link that one
+            c = existing[0]
+            try:
+                said = await link_and_read(
+                    bot, guild_id, c.campaign_id, c.entity_id, number, player=me
+                )
+            except SheetRefused:
+                await _tell(interaction, NOT_YOURS)
+                return
+            await show_panel(interaction, guild_id, c, note=said)
+            return
+        try:
+            with log_context(guild_id=guild_id, campaign_id=campaign_id):
+                snapshot = await sheets.fetch(number)
+        except sheets.SheetError as exc:
+            log.info("A sheet to make a character from couldn't be read yet")
+            if exc.refused:
+                await _tell(interaction, sheets.NOT_PUBLIC + NOTHING_ADDED)
+            else:
+                await _tell(interaction, LINKED_UNREAD + NOTHING_ADDED)
+            return
+        from dmbot.memory.models import MemoryRuleError
+        from dmbot.ui.names import PC, changed, save_name
+
+        name = logic.shorten(str(snapshot["name"]), sheets.NAME_MAX)
+        try:
+            entity = await save_name(memory, campaign, name, PC, [], [], played_by=me)
+        except MemoryRuleError as exc:
+            await _tell(interaction, CHARACTER_NOT_ADDED.format(why=_md(str(exc))))
+            return
+        changed(interaction, campaign)
+        try:
+            await store.link(guild_id, campaign_id, entity.id, number, player=me)
+            await store.save(
+                guild_id, campaign_id, entity.id, snapshot, int(time.time()),
+                url=sheets.sheet_url(number),
+            )  # fmt: skip
+        finally:
+            bot.sheets_changed(guild_id, campaign_id)
+    who = sheets.who(snapshot)
+    await _tell(
+        interaction,
+        ADDED_FROM_SHEET.format(name=_md(entity.name), who=f" ({_md(who)})" if who else ""),
+    )
+    await _tell_the_dm(bot, campaign, entity.id, entity.name)
+
+
+async def _tell_the_dm(bot: DMBot, campaign: Any, entity_id: str, name: str) -> None:
+    """One line on the DM screen, with the name card's button: rename, merge or remove it."""
+    if campaign.dm_screen_channel_id is None:
+        return
+    view = discord.ui.View(timeout=None)
+    view.add_item(OpenCardButton(campaign.id, entity_id))
+    await bot.post_message(campaign.dm_screen_channel_id, DM_ADDED.format(name=_md(name)), view)
+
+
+class OpenCardButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:namecard:(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32})",
+):
+    """Opens a character's name card (its rename, merge and remove buttons) privately, from
+    the DM-screen line saying DMbot added it. Only the campaign's DMs get the card."""
+
+    def __init__(self, campaign_id: str, entity_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Open its card",
+                emoji="🧑",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:namecard:{campaign_id}:{entity_id}",
+            )
+        )
+        self.campaign_id, self.entity_id = campaign_id, entity_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> OpenCardButton:
+        return cls(match["campaign"], match["entity"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.name_card import show_card
+
+        await show_card(interaction, self.campaign_id, self.entity_id)
 
 
 def my_sheet_view(guild_id: int, campaign_id: str | None = None) -> discord.ui.View:
