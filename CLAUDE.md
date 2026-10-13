@@ -85,30 +85,31 @@ CI runs all of the above on every pull request. Never merge red CI.
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
 
-## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-08)
+## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-12)
 DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude
 sessions work on this repo. **Each one has a name, and its name is its issue label:**
-`session: dev1`, `session: dev2`, `session: dev3`, `session: CloudDev`, `session: WebDev`,
+`session: dev1`, `session: CloudDev`, `session: WebDev`,
 `session: RepoManager`, `session: Supervisor` (and `session: pycharm` when the owner's PC is used;
 **pycharm is offline from 2026-10-08 until the owner says otherwise: assign nothing to it**). **Assignments come from the issue
 list:** an open issue labelled with your name is yours; take them lowest number first
 unless an issue says otherwise. Say which session you are in every issue and PR. More
 developers can be added by adding a label.
+**Who gets what (owner, 2026-10-12, when dev2 and dev3 were archived):** coding goes to
+**CloudDev**; merges to **RepoManager**; deploys and any test or check that needs the
+server itself to **dev1**; the website's design, building and coding to **WebDev**. An
+issue that needs both code and the server is CloudDev's, with the server step handed to
+dev1 as a note on the issue.
 - **dev1** (Claude Code on the deployment server, in the main checkout): **the only
   session that builds, deploys or restarts containers**, runs `docker compose`
   up/down/restart/build, runs migrations, changes `.env` (`scripts/set-key`,
   `scripts/update-env`) or restarts a service. It runs every test that needs the running
   server (live tests in Discord, timing, resource use) and maintains the testing logs
   (below).
-- **dev2, dev3, …** (Claude Code on the same server): each works in **its own git
-  worktree** (`git worktree add ../dmbot-dev2 -b <branch> origin/development`), never in
-  dev1's checkout, and runs unit tests, lint and type checks there. **They may look at
-  the running system but never change it:** `docker compose logs` and `ps`,
-  `journalctl`, read-only database queries through the read-only role `dmbot_ro`,
-  checking that an endpoint answers, reading firewall rules and resource use. Nothing
-  read from the live database (players' data, secret names) goes into an issue, a PR or
-  a log file. Their `.claude/settings.local.json` denies the deploy commands, so the
-  rule is enforced, not promised.
+- **dev2, dev3** were archived on 2026-10-12 (owner); assign nothing to them. A future
+  server-side developer would work in **its own git worktree**, never in dev1's checkout,
+  may look at the running system but never change it (logs, `ps`, read-only queries as
+  `dmbot_ro`), never copies live data into GitHub, and has the deploy commands denied in
+  its `.claude/settings.local.json`.
 - **clouddev** (Claude Code in the cloud, its own clone): builds queued issues that need
   no live server. Cloud limits: no server access at all, GitHub only through `gh api`
   (REST; GraphQL is blocked), no deleting branches, and CI is its test runner
