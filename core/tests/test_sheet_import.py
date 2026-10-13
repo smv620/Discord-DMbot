@@ -271,7 +271,7 @@ class Importing(unittest.IsolatedAsyncioTestCase):
     async def test_a_link_is_fetched_with_the_safe_fetcher_and_read(self) -> None:
         it = self.it()
         got = fetch.Fetched(SHEET_TEXT.encode(), "link.txt")
-        with patch.object(ui.fetch, "fetch", AsyncMock(return_value=got)) as opened:
+        with patch.object(fetch, "fetch", AsyncMock(return_value=got)) as opened:
             await ui.import_sheet(it, GUILD, CHARACTER, link="https://docs.google.com/document/d/x")
         opened.assert_awaited_once()
         it.client.sheets.save.assert_awaited_once()
@@ -409,7 +409,7 @@ class Importing(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_panel_offers_both_ways(self) -> None:
         view = sheets_ui.SheetPanel(GUILD, CHARACTER, has_sheet=False)
-        labels = [b.label for b in view.children]
+        labels = [getattr(b, "label", None) for b in view.children]
         self.assertIn(sheets_ui.DOC_LABEL, labels)
         self.assertIn(sheets_ui.FILE_LABEL, labels)
         self.assertTrue(all(len(str(label)) <= 25 for label in labels))
