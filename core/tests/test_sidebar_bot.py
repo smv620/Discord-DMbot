@@ -42,8 +42,9 @@ class Glue(unittest.IsolatedAsyncioTestCase):
     def test_only_the_private_message_intent_is_added(self) -> None:
         bot = make_bot()
         self.assertTrue(bot.intents.dm_messages)
-        self.assertFalse(bot.intents.message_content)  # DMs need no special permission
-        self.assertFalse(bot.intents.guild_messages)
+        # Typed chat at the table (#1118) added these two, and nothing else widened.
+        self.assertTrue(bot.intents.message_content and bot.intents.guild_messages)
+        self.assertFalse(bot.intents.members or bot.intents.presences)
 
     def test_the_answer_engine_is_connected_only_when_the_sidebar_is_switched_on(self) -> None:
         self.assertIsNone(make_bot(ai_key="k").sidebar.answerer)  # off by default
@@ -55,7 +56,7 @@ class Glue(unittest.IsolatedAsyncioTestCase):
     async def test_a_private_message_goes_to_the_sidebar_and_a_failure_is_survived(self) -> None:
         bot = make_bot()
         bot.sidebar.on_dm_message = AsyncMock()  # type: ignore[method-assign]
-        message = object()
+        message = SimpleNamespace(guild=None)  # a private message
         await bot.on_message(message)  # type: ignore[arg-type]
         bot.sidebar.on_dm_message.assert_awaited_once_with(message)
         bot.sidebar.on_dm_message.side_effect = RuntimeError("boom")

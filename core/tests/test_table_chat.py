@@ -175,7 +175,7 @@ class AtTheTableTyped(AtTheTable):
         await self.press("set", set_to=NOON4)
         await self.hear(message("we take a short rest", kind=discord.MessageType.reply))
         self.assertEqual(await self.minute(), NOON4 + 60)  # a reply is read
-        self.bot.user = cast(Any, SimpleNamespace(id=4242))
+        self.bot._connection.user = cast(Any, SimpleNamespace(id=4242))
         before = await self.minute()
         for msg in (
             message("we take a long rest", author=4242),  # DMbot's own words
@@ -189,7 +189,7 @@ class AtTheTableTyped(AtTheTable):
         edge = "y" * table_chat.MAX_CHARS
         self.live.campaign_id = self.a.id
         await self.hear(message(edge, author=PLAYER))
-        self.assertEqual(len(self.live.unsaved), 1)
+        self.assertEqual(len(self.live.unsaved), 2)  # the reply read at the start, and this
 
     async def test_on_message_routes_server_messages_here_and_private_ones_to_the_sidebar(
         self,
@@ -264,7 +264,7 @@ class Panel(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(**{**base, **kw})
 
     def test_the_panel_says_exactly_which_channels_are_read(self) -> None:
-        self.assertIn("voice channel chat. No other channel", panel.panel_text(self.campaign()))
+        self.assertIn("voice channel's chat. No other channel", panel.panel_text(self.campaign()))
         self.assertIn(f"<#{EXTRA}>", panel.panel_text(self.campaign(table_chat_channel_id=EXTRA)))
         self.assertIn("off", panel.panel_text(self.campaign(table_chat=False)).lower())
         self.assertIn("Off", panel.line(self.campaign(table_chat=False)))
