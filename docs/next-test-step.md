@@ -4,30 +4,35 @@
 
 ---
 
-## Test F again: the game clock and a timer, after the fix
+## Test H: typed chat, a fight, and a player's sheet
 
-**People:** 1 (you, as the DM)
-**Time:** about 5 minutes
-**Start only after dev1 says the timer fix is on the server** (it needs a restart that dev1 does).
-**Why:** last time the "has likely ended" line kept the old length after you pressed **Still going**, and nothing said you had extended it. That is fixed. Check it.
+**People:** 2 (you as the DM, and one player)
+**Time:** about 10 minutes
+**Start only after dev1 says the big update is on the server.**
+**Why:** DMbot can now read what you type in the voice channel's chat, keep track of a fight's rounds, and make a player's character from their D&D Beyond sheet. This checks all three once.
+
+**Before you start:** the player needs a D&D Beyond character set to **Public** (on D&D Beyond: the character > Manage > Character Settings > Character Privacy > Public). Have its link ready.
 
 ### Steps
-1. Join your voice channel. Type `/dmbot start`, press **▶ Continue last campaign**, then **▶ Start listening**. (Press **Start listening** once only.)
-2. Open **⚙️ Settings**, press **Game clock**, set a day and a time. On the clock message press **Start a timer**: write **Bless**, a name, and **1 minute**. Submit.
-3. Press **+10 min**. The DM screen says "⏳ Bless on (the name) has likely ended" with **Ended** and **Still going +10 min**.
-4. Press **Still going +10 min**. The DM screen should now say that you extended it.
-5. Press **+10 min** twice more. The ended line should show the **total** time (for example 11 minutes or "1 minute, extended 10 minutes"), not just "1 minute". Press **Ended**.
-6. Type `/dmbot stop`.
+1. Both of you join your voice channel. Type `/dmbot start`, press **▶ Continue last campaign**, then **▶ Start listening** (once only).
+2. **Both of you get a new question from DMbot in a private message**, because the words changed: it now says DMbot also reads the table's chat. Each of you presses **I agree**. Until you do, DMbot doesn't record you.
+3. **Typed chat:** in the voice channel's own text chat, the DM types **we take a long rest**. The game clock on the DM screen moves on, with an **Undo** note.
+4. **A fight:** the DM says out loud **"Roll initiative."** The DM screen says combat started, round 1. Say **"Next round."** It says round 2. Say **"Combat's over."** It says the fight ended.
+5. **The player's sheet:** the player opens DMbot's reminder message (the one with the date they agreed), presses **📜 My character sheet**, then **Link my D&D Beyond sheet**, and pastes their link. The DM screen says DMbot added that character, with an **Open character card** button.
+6. Type `/dmbot stop`. Press the transcript download, and look for the long-rest line marked **(typed)**.
 
 ### It worked if
-- After **Still going**, the DM screen says you extended it.
-- The next "has likely ended" line shows the longer total.
-- All of it shows only on the DM screen.
+- Step 2: you both got the new question, and the bot recorded you after you said yes.
+- Step 3: the clock moved after the typed line.
+- Step 4: the round went 1, 2, then the fight ended.
+- Step 5: the character appeared on the DM screen with the sheet's name.
+- Step 6: the download shows **(typed)** next to the typed line.
+- None of the DM-screen lines showed up anywhere the player can see.
 
-**If not:** type `/dmbot stop`, then tell dev1 what you saw at the step where it went wrong.
+**If not:** type `/dmbot stop`, then tell dev1 the step where it went wrong and what you saw.
 
 ### Tell dev1
-- **Worked** or **didn't work**, and anything that felt confusing.
+- **Worked** or **didn't work** for each of steps 2 to 6, and anything that felt confusing.
 
 ---
 
