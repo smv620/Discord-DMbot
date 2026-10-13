@@ -9,8 +9,10 @@ import hmac
 import json
 import unittest
 from typing import Any, ClassVar
+from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
+import aiohttp
 import httpx
 
 from dmbot import entitlements, plans
@@ -19,7 +21,7 @@ from dmbot.web import entitlements_writer
 from dmbot.web.app import create_app
 from dmbot.web.payments import PaymentError
 from dmbot.web.settings import load_web_settings
-from dmbot.web.stripe import StripeConfig, StripeProvider
+from dmbot.web.stripe import HttpTransport, StripeConfig, StripeProvider
 from tests.pg import DatabaseTest
 from tests.test_web_api import ALICE, API, FakeDiscord, settings
 from tests.test_web_payments import PaymentSettings
@@ -358,8 +360,8 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(live_key._config.live)
         self.assertFalse(self.provider._config.live)
 
-    def test_an_event_to_be_applied_without_a_person_is_unreadable_not_ignored(self) -> None:
-        for metadata in ({}, {"user_id": "nope"}, {"user_id": "0"}, {"user_id": "-4"}):
+    def test_a_user_id_that_is_not_a_number_is_unreadable_not_ignored(self) -> None:
+        for metadata in ({"user_id": "nope"}, {"user_id": "0"}, {"user_id": "-4"}):
             body = event("invoice.paid", invoice(subscription_details={"metadata": metadata}))
             with self.assertRaises((ValueError, KeyError)):
                 self.provider.parse(body)
@@ -383,9 +385,75 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             self.provider.parse(event("checkout.session.completed", session(metadata={})))
         )
 
+    def test_a_subscription_dmbot_did_not_make_is_a_quiet_ignore_for_every_event(self) -> None:
+        # Made by hand in the dashboard, or sold some other way: no user_id, so not ours.
+        # A 400 here would be retried by Stripe for days.
+        nobody = {"metadata": {}}
+        bodies = (
+            event("invoice.paid", invoice(subscription_details=nobody)),
+            event("invoice.payment_failed", invoice(subscription_details=nobody)),
+            event("customer.subscription.deleted", subscription(metadata={})),
+            event(
+                "customer.subscription.updated",
+                subscription(cancel_at_period_end=True, metadata={}),
+            ),
+        )
+        for body in bodies:
+            self.assertIsNone(self.provider.parse(body))
+
+    def test_a_renewal_shown_as_an_update_with_the_same_price_is_not_a_second_renewal(self) -> None:
+        # At renewal Stripe also sends an update whose previous items hold the old period:
+        # the renewal invoice already renewed it, so this must not renew it again.
+        previous = {
+            "items": {"data": [{"price": {"id": "price_table"}, "current_period_end": T0}]},
+            "current_period_end": T0,
+        }
+        body = event("customer.subscription.updated", subscription(), previous=previous)
+        self.assertIsNone(self.provider.parse(body))
+        # An older-API price change names the old plan.
+        older = event(
+            "customer.subscription.updated",
+            subscription(items={"data": [{"price": {"id": "price_two"}}]}),
+            previous={"plan": {"id": "price_table"}},
+        )
+        changed = self.provider.parse(older)
+        assert changed is not None
+        self.assertEqual(changed.plan, "two-tables")
+
+    def test_extra_hours_paid_later_is_credited_when_the_payment_settles(self) -> None:
+        unpaid = event("checkout.session.completed", session(payment_status="unpaid"))
+        self.assertIsNone(self.provider.parse(unpaid))
+        settled = event("checkout.session.async_payment_succeeded", session())
+        parsed = self.provider.parse(settled)
+        assert parsed is not None
+        self.assertEqual(parsed.kind, "extra_hours_bought")
+
+    def test_a_renewal_after_a_plan_change_uses_the_plans_line_not_a_proration(self) -> None:
+        old_dates = {"start": T0 - 1000, "end": T0 - 500}
+        lines = [
+            {"price": {"id": "price_table"}, "proration": True, "period": old_dates},
+            {
+                "pricing": {"price_details": {"price": "price_table"}},
+                "parent": {"subscription_item_details": {"proration": True}},
+                "period": old_dates,
+            },
+            {"price": {"id": "price_two"}, "period": {"start": T0, "end": PERIOD_END}},
+        ]
+        body = event("invoice.paid", invoice("subscription_cycle", lines={"data": lines}))
+        parsed = self.provider.parse(body)
+        assert parsed is not None
+        self.assertEqual((parsed.plan, parsed.period_end), ("two-tables", PERIOD_END))
+
+    def test_a_signature_timestamp_too_long_to_be_a_time_is_a_refusal_not_a_500(self) -> None:
+        body = event("invoice.paid", invoice())
+        digest = sign(body).split("v1=")[1]
+        for stamp in ("9" * 400, "9" * 13, "1" * 4000):
+            header = f"t={stamp},v1={digest}"
+            self.assertFalse(self.provider.verify(body, {"stripe-signature": header}))
+
     def test_a_body_that_is_not_an_object_is_unreadable(self) -> None:
         for body in (b"[]", b"3", b"not json"):
-            with self.assertRaises((ValueError, TypeError, AttributeError)):
+            with self.assertRaises(ValueError):
                 self.provider.parse(body)
         no_object = json.dumps(
             {"id": "e", "type": "invoice.paid", "created": T0, "livemode": False, "data": {}}
@@ -550,10 +618,10 @@ class Provider(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_an_id_that_is_not_stripes_is_never_put_in_a_path(self) -> None:
-        for bad in ("../subscriptions/1", "cus_", "", "sub_1", "cus_1/../x", "cus_é"):
+        for bad in ("../subscriptions/1", "cus_", "", "sub_1", "cus_1/../x", "cus_é", "cus_1\n"):
             with self.assertRaises(PaymentError, msg=bad):
                 await self.provider.billing_url(customer_id=bad, return_url="x")
-        for bad in ("../customers/1", "sub_", "cus_1", "sub_1?x=1", "five"):
+        for bad in ("../customers/1", "sub_", "cus_1", "sub_1?x=1", "five", "sub_1\n"):
             with self.assertRaises(PaymentError, msg=bad):
                 await self.provider.cancel(subscription_id=bad)
         self.assertEqual(self.http.calls, [])
@@ -595,6 +663,54 @@ class Provider(unittest.IsolatedAsyncioTestCase):
 
     def test_the_key_is_not_in_the_configs_repr(self) -> None:
         self.assertNotIn("sk_test_not_real", repr(CONFIG))
+
+
+def _answering(status: int, json_result: Any) -> mock.MagicMock:
+    """What `aiohttp.ClientSession.request(...)` returns: an async context manager."""
+    answer = mock.MagicMock()
+    answer.status = status
+    answer.json = mock.AsyncMock(
+        side_effect=json_result if isinstance(json_result, Exception) else None,
+        return_value=json_result,
+    )
+    context = mock.MagicMock()
+    context.__aenter__ = mock.AsyncMock(return_value=answer)
+    context.__aexit__ = mock.AsyncMock(return_value=False)
+    return context
+
+
+class Transport(unittest.IsolatedAsyncioTestCase):
+    """The real HTTP transport, with the network call patched out."""
+
+    async def test_network_trouble_is_a_payment_error_without_the_key(self) -> None:
+        transport = HttpTransport("sk_test_not_real")
+        for failure in (aiohttp.ClientConnectionError("down"), TimeoutError()):
+            patched = mock.patch.object(aiohttp.ClientSession, "request", side_effect=failure)
+            with patched, self.assertRaises(PaymentError) as caught:
+                await transport("GET", "/v1/subscriptions/sub_1", None)
+            self.assertNotIn("sk_test", str(caught.exception))
+        await transport.close()
+        await transport.close()  # twice is harmless
+
+    async def test_it_sends_the_key_as_a_bearer_form_and_never_follows_redirects(self) -> None:
+        transport = HttpTransport("sk_test_not_real")
+        context = _answering(200, {"ok": True})
+        with mock.patch.object(aiohttp.ClientSession, "request", return_value=context) as sent:
+            got = await transport("POST", "/v1/checkout/sessions", {"mode": "payment"})
+        await transport.close()
+        self.assertEqual(got, (200, {"ok": True}))
+        args, kwargs = sent.call_args
+        self.assertEqual(args, ("POST", "https://api.stripe.com/v1/checkout/sessions"))
+        self.assertEqual(kwargs["headers"], {"Authorization": "Bearer sk_test_not_real"})
+        self.assertEqual(kwargs["data"], {"mode": "payment"})
+        self.assertFalse(kwargs["allow_redirects"])
+
+    async def test_an_answer_that_is_not_json_is_none_not_a_crash(self) -> None:
+        transport = HttpTransport("sk_test_not_real")
+        context = _answering(502, ValueError("not json"))
+        with mock.patch.object(aiohttp.ClientSession, "request", return_value=context):
+            self.assertEqual(await transport("GET", "/v1/x", None), (502, None))
+        await transport.close()
 
 
 class Config(unittest.TestCase):
@@ -785,7 +901,9 @@ class Routes(DatabaseTest):
     async def test_unused_events_are_a_quiet_200_and_unreadable_signed_ones_a_400(self) -> None:
         unused = event("charge.succeeded", {"id": "ch_1"})
         self.assertEqual((await self.deliver(unused)).status_code, 200)
-        no_person = event("invoice.paid", invoice(subscription_details={"metadata": {}}))
+        no_person = event(
+            "invoice.paid", invoice(subscription_details={"metadata": {"user_id": "nope"}})
+        )
         self.assertEqual((await self.deliver(no_person)).status_code, 400)
         self.assertEqual((await self.deliver(b"not json")).status_code, 400)
 

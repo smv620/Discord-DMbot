@@ -63,8 +63,8 @@ TOLERANCE_SECONDS = 300
 # ("line_items[0][price]").
 Transport = Callable[[str, str, "dict[str, str] | None"], Awaitable["tuple[int, Any]"]]
 
-_CUSTOMER = re.compile(r"^cus_[A-Za-z0-9]+$")
-_SUBSCRIPTION = re.compile(r"^sub_[A-Za-z0-9]+$")
+_CUSTOMER = re.compile(r"cus_[A-Za-z0-9]+")
+_SUBSCRIPTION = re.compile(r"sub_[A-Za-z0-9]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,7 +129,7 @@ def _stripe_page(url: object, host: str, what: str) -> str:
 
 def _checked(value: str, pattern: re.Pattern[str], what: str) -> str:
     """An id from the database, checked before it goes into a path."""
-    if not pattern.match(value):
+    if not pattern.fullmatch(value):  # fullmatch: a trailing newline must not pass
         raise PaymentError(f"{what} is not a Stripe id")
     return value
 
@@ -258,11 +258,13 @@ class StripeProvider:
                     stamp = value
                 elif key == "v1":
                     signatures.append(value.encode("ascii"))
-            if not stamp.isascii() or not stamp.isdigit() or not signatures:
+            # At most 12 digits: a longer one is no real time, and int() of a huge one would
+            # overflow the float maths below into a 500 instead of a refusal.
+            if not stamp.isascii() or not stamp.isdigit() or len(stamp) > 12 or not signatures:
                 return False
             if abs(self._clock() - int(stamp)) > TOLERANCE_SECONDS:
                 return False
-        except (UnicodeEncodeError, ValueError):
+        except (UnicodeEncodeError, ValueError, OverflowError):
             return False  # not a signature Stripe could have made
         signed = stamp.encode("ascii") + b"." + body
         expected = hmac.new(self._secret, signed, hashlib.sha256).hexdigest().encode("ascii")
@@ -289,7 +291,7 @@ class StripeProvider:
         # The person is needed only for an event that will be applied: one DMbot ignores (a
         # subscription made outside its checkout, say) must be a quiet 200, not an error
         # someone is asked to look at.
-        if name == "checkout.session.completed":
+        if name in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
             return self._extra_hours(obj, event_id, when)
         if name.startswith("invoice."):
             return self._invoice(name, obj, event_id, when)
@@ -305,11 +307,14 @@ class StripeProvider:
         metadata = session.get("metadata") or {}
         if not isinstance(metadata, dict) or metadata.get("item") != EXTRA_HOURS_ITEM:
             return None
+        user_id = _person(metadata)
+        if user_id is None:
+            return None
         return PaymentEvent(
             provider=self.name,
             event_id=event_id,
             kind="extra_hours_bought",
-            user_id=_person(metadata),
+            user_id=user_id,
             occurred_at=when,
             customer_id=_text(session.get("customer")),
         )
@@ -321,6 +326,10 @@ class StripeProvider:
         subscription_id = _text(details.get("subscription") or invoice.get("subscription"))
         if subscription_id is None:
             return None  # a one-off invoice, not a subscription's
+        user_id = _person(details["metadata"])
+        if user_id is None:
+            log.info("Stripe event %.60s is for a subscription DMbot didn't make", event_id)
+            return None
         common: dict[str, Any] = {
             "provider": self.name,
             "event_id": event_id,
@@ -329,9 +338,7 @@ class StripeProvider:
             "subscription_id": subscription_id,
         }
         if name == "invoice.payment_failed":
-            return PaymentEvent(
-                kind="payment_failed", user_id=_person(details["metadata"]), **common
-            )
+            return PaymentEvent(kind="payment_failed", user_id=user_id, **common)
         reason = invoice.get("billing_reason")
         kind: EventKind
         if reason == "subscription_create":
@@ -342,7 +349,7 @@ class StripeProvider:
             return None  # a plan change's proration invoice, or a manual one
         if invoice.get("status") != "paid":
             return None
-        line = _first(invoice.get("lines"))
+        line = _subscription_line(invoice.get("lines"), self._plan_of_price)
         price = _price_id(line)
         plan = self._plan_of_price.get(price or "")
         if plan is None:
@@ -354,7 +361,7 @@ class StripeProvider:
         period = line.get("period") or {}
         return PaymentEvent(
             kind=kind,
-            user_id=_person(details["metadata"]),
+            user_id=user_id,
             plan=plan,
             period_start=_int(period.get("start")),
             period_end=_int(period.get("end")),
@@ -372,6 +379,10 @@ class StripeProvider:
         metadata = subscription.get("metadata") or {}
         if not isinstance(metadata, dict):
             raise ValueError("a subscription has no metadata")
+        user_id = _person(metadata)
+        if user_id is None:
+            log.info("Stripe event %.60s is for a subscription DMbot didn't make", event_id)
+            return None
         item = _first(subscription.get("items"))
         price = _price_id(item)
         plan = self._plan_of_price.get(price or "")
@@ -385,20 +396,22 @@ class StripeProvider:
             "subscription_id": _text(subscription.get("id")),
         }
         if name == "customer.subscription.deleted":
-            return PaymentEvent(kind="subscription_ended", user_id=_person(metadata), **common)
+            return PaymentEvent(kind="subscription_ended", user_id=user_id, **common)
         if subscription.get("status") != "active":
             return None  # incomplete, past_due, unpaid: a failed payment arrives as its own event
         changed = data.get("previous_attributes") or {}
         if not isinstance(changed, dict):
             changed = {}
         cancel_at = _int(subscription.get("cancel_at"))
+        # (Known limit: a plan change made while a cancel is pending shows as the cancel only;
+        # the writer stores the end date and the new plan applies when they resubscribe.)
         if subscription.get("cancel_at_period_end") is True or cancel_at is not None:
             # Cancelled on the payment page: the plan works to the end of the paid period and
             # then ends (stored so the page can say so, #824). The portal sets either
             # `cancel_at_period_end` or a `cancel_at` date, depending on the API version.
             return PaymentEvent(
                 kind="subscription_cancelled",
-                user_id=_person(metadata),
+                user_id=user_id,
                 plan=plan,
                 period_end=cancel_at or end,
                 **common,
@@ -407,14 +420,14 @@ class StripeProvider:
             changed.get("cancel_at") is not None
         )
         # A price change that has taken effect: Stripe's "previous" holds the old items.
-        if resumed or "items" in changed or "plan" in changed:
+        if resumed or _price_changed(changed, price):
             if plan is None:
                 log.error(
                     "Stripe event %.60s has price %.40r, which no plan is set to", event_id, price
                 )
             return PaymentEvent(
                 kind="subscription_renewed",
-                user_id=_person(metadata),
+                user_id=user_id,
                 plan=plan,
                 period_start=start,
                 period_end=end,
@@ -431,15 +444,32 @@ _USED = (
     "customer.subscription.updated",
     "customer.subscription.deleted",
     "checkout.session.completed",
+    # A payment method that settles later (a bank debit): paid only when this arrives.
+    "checkout.session.async_payment_succeeded",
 )
 
 
-def _person(metadata: object) -> int:
-    """Our Discord user id, from the checkout's (or subscription's) metadata."""
-    user_id = int(metadata["user_id"]) if isinstance(metadata, dict) else 0
+def _person(metadata: object) -> int | None:
+    """Our Discord user id, from the checkout's (or subscription's) metadata. None when there
+    is none: a subscription made outside DMbot (by hand in the dashboard, say) is not ours,
+    and must be a quiet 200 rather than an error Stripe retries for days. A user_id that is
+    there but is not a number is unreadable."""
+    if not isinstance(metadata, dict) or metadata.get("user_id") in (None, ""):
+        return None
+    user_id = int(metadata["user_id"])
     if user_id <= 0:
-        raise ValueError("a payment event has no user_id in its metadata")
+        raise ValueError("a payment event has a bad user_id in its metadata")
     return user_id
+
+
+def _price_changed(changed: dict[str, Any], current: str | None) -> bool:
+    """Whether `previous_attributes` shows the subscription was on another price. A renewal
+    also lists the items (their period moved) with the same price: that is the renewal
+    invoice's business, and counting it here too would renew the period twice."""
+    old = _price_id(_first(changed.get("items")))
+    if old is None and isinstance(changed.get("plan"), dict):
+        old = _text(changed["plan"].get("id"))  # older API versions
+    return old is not None and old != current
 
 
 def _subscription_details(invoice: dict[str, Any]) -> dict[str, Any]:
@@ -451,6 +481,34 @@ def _subscription_details(invoice: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(details, dict):
         details = {}
     return {"metadata": {}, **details}
+
+
+def _subscription_line(listing: object, plans_by_price: Mapping[str, str]) -> dict[str, Any]:
+    """The invoice line for the plan itself. After a mid-period plan change the next renewal
+    invoice also carries proration lines (credit for the old price, charge for the new) with
+    the old dates; taking the first line could renew the wrong plan or period. So: not a
+    proration, a price DMbot sells, and of those the one that runs longest."""
+    rows = listing.get("data") if isinstance(listing, dict) else None
+    best: dict[str, Any] = {}
+    best_end = -1
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or _is_proration(row):
+            continue
+        if (_price_id(row) or "") not in plans_by_price:
+            continue
+        end = _int((row.get("period") or {}).get("end")) or 0
+        if end > best_end:
+            best, best_end = row, end
+    return best or _first(listing)
+
+
+def _is_proration(line: dict[str, Any]) -> bool:
+    """A proration line, under either API shape."""
+    parent = line.get("parent")
+    details = parent.get("subscription_item_details") if isinstance(parent, dict) else None
+    if isinstance(details, dict) and details.get("proration") is True:
+        return True
+    return line.get("proration") is True
 
 
 def _first(listing: object) -> dict[str, Any]:
