@@ -143,6 +143,21 @@ class Payments(DatabaseTest):
         got = await self.plan()
         self.assertEqual((got.status, got.lapsed_at), ("lapsed", self.now + 8 * DAY))
 
+    async def test_a_failed_first_payment_is_remembered_and_me_says_so(self) -> None:
+        self.assertNotIn("firstPaymentFailed", (await self.client.get("/me")).json())
+        response = await self.send(kind="payment_failed", occurred_at=self.now + 10)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(await entitlements.get(self.db, ALICE.id))  # no plan, no grace
+        self.assertTrue((await self.client.get("/me")).json()["firstPaymentFailed"])
+        # A repeat delivery is a duplicate and changes nothing.
+        await self.send(kind="payment_failed", occurred_at=self.now + 10)
+        self.assertTrue((await self.client.get("/me")).json()["firstPaymentFailed"])
+
+    async def test_the_notice_goes_once_a_payment_goes_through(self) -> None:
+        await self.send(kind="payment_failed", occurred_at=self.now + 10)
+        await self.start_table(occurred_at=self.now + 20)
+        self.assertNotIn("firstPaymentFailed", (await self.client.get("/me")).json())
+
     async def test_a_renewal_resets_extra_hours_and_keeps_the_plan_change_time(self) -> None:
         await self.start_table()
         await self.send(kind="extra_hours_bought", occurred_at=self.now + 1)
@@ -252,15 +267,6 @@ class Payments(DatabaseTest):
         )
         self.assertEqual(again.status_code, 200)
         self.assertEqual((await self.plan()).status, "lapsed")
-
-    async def test_a_failure_before_any_plan_is_retried_not_recorded(self) -> None:
-        failed = await self.send(kind="payment_failed", subscription_id="sub_1")
-        self.assertEqual(failed.status_code, 503)
-        async with self.db.user(ALICE.id) as conn:
-            cur = await conn.execute("SELECT count(*) AS n FROM payment_events")
-            row = await cur.fetchone()
-        assert row is not None
-        self.assertEqual(row["n"], 0)
 
     async def test_a_renewal_over_a_stopped_duplicate_is_applied(self) -> None:
         # Two checkout tabs: A then B; support cancels B; A keeps renewing.
@@ -448,9 +454,11 @@ class Payments(DatabaseTest):
 
     async def test_a_failed_first_payment_starts_no_plan_and_gives_no_grace(self) -> None:
         response = await self.send(kind="payment_failed", subscription_id="sub_1")
-        self.assertEqual(response.status_code, 503)  # nothing to apply it to: retried later
+        self.assertEqual(response.status_code, 200)  # recorded, so /me can say so (#922)
         self.assertIsNone(await entitlements.get(self.db, ALICE.id))
-        self.assertIsNone((await self.client.get("/me")).json()["plan"])
+        me = (await self.client.get("/me")).json()
+        self.assertIsNone(me["plan"])
+        self.assertTrue(me["firstPaymentFailed"])
 
     async def test_a_failure_with_no_payment_on_record_gives_no_grace_and_lapses_nothing(
         self,
@@ -705,6 +713,24 @@ class Payments(DatabaseTest):
         await self.send(kind="subscription_ended", subscription_id="sub_1")
         after = (await self.post("/billing/checkout", {"plan": "table"})).json()["url"]
         self.assertNotIn("first_month", after)  # paid before: no second first month
+
+    async def test_only_a_payment_takes_away_the_first_month_price(self) -> None:
+        # A recorded failure is not a payment; a payment is (#922).
+        async with self.db.plan_writer(ALICE.id) as conn:
+            await conn.execute("INSERT INTO try_it_used (user_id) VALUES (%s)", (ALICE.id,))
+            await conn.execute(
+                "INSERT INTO payment_events (provider, event_id, user_id, kind, received_at)"
+                " VALUES ('fake', 'f1', %s, 'payment_failed', %s)",
+                (ALICE.id, self.now),
+            )
+        self.assertTrue(await accounts.first_paid_month_after_trial(self.db, ALICE.id))
+        async with self.db.plan_writer(ALICE.id) as conn:
+            await conn.execute(
+                "INSERT INTO payment_events (provider, event_id, user_id, kind, received_at)"
+                " VALUES ('fake', 'p1', %s, 'subscription_started', %s)",
+                (ALICE.id, self.now),
+            )
+        self.assertFalse(await accounts.first_paid_month_after_trial(self.db, ALICE.id))
 
     async def test_the_billing_page_needs_a_paid_plan(self) -> None:
         none = await self.post("/billing/portal")

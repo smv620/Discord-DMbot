@@ -3,7 +3,7 @@
  * the payment company (checkout, billing). Any other address from the API is refused, so
  * a bug or a tampered response can't send people to a look-alike site.
  */
-const allowedHosts = ["discord.com", "paddle.com", "lemonsqueezy.com"];
+const allowedHosts = ["discord.com", "checkout.stripe.com", "billing.stripe.com"];
 
 /** True only in a preview build with the pretend API (PUBLIC_API_BASE=mock). */
 const mockBuild = import.meta.env.PUBLIC_API_BASE === "mock";

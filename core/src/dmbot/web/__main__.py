@@ -23,9 +23,9 @@ from dmbot.web.admin import HttpGoogle
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
 from dmbot.web.feedback import GitHubDiscussions, Turnstile
-from dmbot.web.lemonsqueezy import LemonSqueezyProvider
 from dmbot.web.payments import FakeProvider, PaymentProvider
 from dmbot.web.settings import WebSettings, load_web_settings
+from dmbot.web.stripe import StripeProvider
 
 log = logging.getLogger("dmbot.web")
 CLEANUP_SECONDS = 3600
@@ -66,8 +66,8 @@ async def serve(settings: WebSettings) -> None:
     payments: PaymentProvider | None = None
     if settings.payment_provider == "fake":
         payments = FakeProvider(settings.payment_webhook_secret, settings.site_url)
-    elif settings.payment_provider == "lemonsqueezy" and settings.lemonsqueezy is not None:
-        payments = LemonSqueezyProvider(settings.lemonsqueezy, settings.payment_webhook_secret)
+    elif settings.payment_provider == "stripe" and settings.stripe is not None:
+        payments = StripeProvider(settings.stripe, settings.payment_webhook_secret)
     discussions = (
         GitHubDiscussions(settings.feedback_token, settings.feedback_repo)
         if settings.feedback_token
@@ -115,7 +115,7 @@ async def serve(settings: WebSettings) -> None:
             await human_check.close()
         if google is not None:
             await google.close()
-        if isinstance(payments, LemonSqueezyProvider):
+        if isinstance(payments, StripeProvider):
             await payments.close()
         await db.close()
 

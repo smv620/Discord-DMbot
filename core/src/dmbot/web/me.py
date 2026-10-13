@@ -14,6 +14,7 @@ from typing import Any
 from dmbot import entitlements, hours
 from dmbot.campaigns.models import HANDOVER_SECONDS
 from dmbot.db import Database
+from dmbot.web.entitlements_writer import PAID_EVENT_SQL, PAID_KINDS
 from dmbot.web.offers import offer_ref
 from dmbot.web.sessions import Session
 
@@ -44,6 +45,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
     incoming: list[dict[str, Any]] = []
     outgoing: list[dict[str, Any]] = []
     names = {g.id: g.name for g in session.guilds}  # for the installs list below
+    plan_works = plan is not None and plan.usable(now) and plan.status != "lapsed"
 
     async with db.user(session.user_id, session=session.id_hash) as conn:
         # One batch (a pipeline), not hundreds of round trips. Each server's statements
@@ -141,6 +143,19 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             cur = await conn.execute("SELECT dmbot_hours_used(%s) AS minutes", (month.start,))
             hours_row = await cur.fetchone()
             used_minutes = int(hours_row["minutes"]) if hours_row else 0
+        # A failed first payment: a recorded failure, no payment on record, and no plan
+        # that works now.
+        cur = await conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM payment_events WHERE user_id = %(u)s"
+            "   AND kind = 'payment_failed') AS failed,"
+            f" EXISTS (SELECT 1 FROM payment_events WHERE user_id = %(u)s AND {PAID_EVENT_SQL})"
+            "   AS paid",
+            {"u": session.user_id, "paid": PAID_KINDS},
+        )
+        payments = await cur.fetchone()
+        first_failed = bool(
+            payments and payments["failed"] and not payments["paid"] and not plan_works
+        )
         # The person's own installs, in the same transaction (one connection per /me).
         # The last server's setting is cleared first, so only the installer rule applies:
         # otherwise that server's installs row would be visible here too.
@@ -162,6 +177,9 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
 
     return {
         "user": {"id": str(session.user_id), "name": session.display_name},
+        # A first payment that failed and no payment since: the page says "try again" (#922).
+        # Left out otherwise, so the common reply is unchanged.
+        **({"firstPaymentFailed": True} if first_failed else {}),
         "plan": None
         if plan is None
         else {

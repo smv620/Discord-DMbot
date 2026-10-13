@@ -842,7 +842,7 @@ so the docs always show names the way Discord does. For the campaign
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
 | Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
-| Game time (clock, effects, rests) | `dmb-time-rmfthfrstmdn` | Phase 4 |
+| Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
 | NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Phase 5 |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
 
@@ -861,7 +861,7 @@ so the docs always show names the way Discord does. For the campaign
   the lowest free number from 2 up, on the screen name and every sub-channel name
   (transcript included). *Example:* "Frozen Sick" and
   "Frozens Cake" both shorten to `frznsck`. "Frozens Cake" was made second, so its
-  channels are `dmb-dm-screen-2frozens-cake` and `dmb-time-2frznsck` (and so on).
+  channels are `dmb-dm-screen-2frozens-cake` and `dmb-gametime-2frznsck` (and so on).
 - Clashes are checked on the **names Discord will actually show**, numbers included. So
   a name that starts with a digit can't land on another campaign's clash number:
   "2 Frozens Cake" next to "Frozens Cake" (already `2frznsck`) gets a number too.
@@ -1891,8 +1891,68 @@ index). Concentration shows as 🧠. The clock message lists the soonest five, o
 button or rest passes an effect's end, the DM screen says once "⏳ Bless on Mira has likely
 ended (1 minute)" with **Ended** and **Still going +10 min** (ten more game minutes from where the
 clock is, then said again); nothing ends silently or by itself. Only the campaign's DMs, checked in
-the transaction. Effects live on the game clock, so a restart keeps them. Not built: split-party
+the transaction. Effects live on the game clock, so a restart keeps them. **Still going** is shown in the next "has likely ended" line as the total with "extended by the DM" (`game_effects.extended`, migration 0049, in backups; #1112), and the press says so on the DM screen only. Not built: split-party
 clocks, reading time from narration, AI.
+*The game-time channel (owner, 2026-10-13, after Test F):*
+- **Players see the clock in its own channel.** The players see the clock in a game-time channel,
+  `dmb-gametime-<slug>`, without needing the DM screen. Like the transcript channel, everyone
+  can read it and only the bot posts in it. `/dmbot start` creates or repairs it, and a failure
+  never blocks the session.
+- **The players' clock.** A message pinned there shows the day and an approximate time only:
+  "🕰️ Day 5, morning". It has no buttons, and no timers (effects stay DM-screen content). It is
+  edited in place when the clock moves. One short line is posted when a rest finishes or a new
+  day begins, and nothing else.
+- **The DM's clock.** The DM screen keeps the exact time ("Day 5, morning (6:20)") and the
+  controls. **Short rest, Long rest and Skip to dawn leave the pinned DM-screen message** for the
+  private Set time… panel. Rests are rare buttons, because DMbot hears them, and players who peek
+  behind the DM screen could take them for D&D Beyond character-sheet links.
+- **Approximate times** (game time, fixed hours, no seasons yet):
+
+  | Time | Word |
+  |---|---|
+  | 03:30–04:59 | pre-dawn |
+  | 05:00–06:14 | dawn |
+  | 06:15–09:59 | morning |
+  | 10:00–11:29 | late morning |
+  | 11:30–12:59 | about noon |
+  | 13:00–14:59 | afternoon |
+  | 15:00–16:59 | late afternoon |
+  | 17:00–17:59 | early evening |
+  | 18:00–18:59 | dusk |
+  | 19:00–20:29 | evening |
+  | 20:30–21:59 | late evening |
+  | 22:00–23:14 | night |
+  | 23:15–00:44 | near midnight |
+  | 00:45–03:29 | late night |
+- **The clock follows what is said** (voice transcripts of people who agreed, as today):
+  - When **the DM** clearly says a rest starts or ends, or how much time passes, the clock moves
+    by itself, with an Undo note on the DM screen. Examples: "you finish your long rest", "an
+    hour later", "the next morning".
+  - When **a player** suggests one ("let's take a short rest"), the DM screen asks the DM with one
+    button. The DM decides.
+  - Vague narration ("you walk for a while") is never guessed. At most it is a suggestion on the
+    DM screen.
+
+  **Typed chat counts too** (owner, 2026-10-13), as described under "Typed chat at the table".
+- **Players see only the approximate time** (owner, 2026-10-13): never `h:mm`, in any message.
+
+**Typed chat at the table (owner, 2026-10-13).** DMbot reads what is typed at the table as well
+as what is said, so the clock and the other listeners hear "we take a long rest" either way.
+- **Where:** only the table voice channel's own text chat, plus at most one text channel the DM
+  picks in ⚙️ Settings ("Table chat"). Never any other channel, and never between campaigns or
+  servers.
+- **When and whose:** only while DMbot is listening, and only messages from people who agreed to
+  be recorded. Bots are never read.
+- **What happens to them:** a typed line goes to the same listeners as a spoken one (clock phrases,
+  house rules, names heard, "Hey DMbot"). It goes into the **raw** transcript tagged `(typed)`,
+  never the cleaned one. Commands and DMbot's own messages are skipped.
+- **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
+  That changes what people agree to, so the consent terms version goes up and everyone is asked
+  again.
+- **Discord:** this needs the guild-messages intent and the privileged **Message Content** intent.
+  The owner switches Message Content on in the Developer Portal (Bot, Privileged Gateway
+  Intents). Once DMbot is in 100 or more servers, Discord must approve that intent, so it is part
+  of the go-live checklist (#498).
 *Built, part 3: the players' game-time channel (2026-10-13, #1116):* `dmb-gametime-<short name>` is made
 or repaired at every `/dmbot start` next to the DM screen (`dm_screen/gametime_channel.py`, on the
 transcript channel's permissions: everyone reads, only DMbot posts; a failure is a note on the DM
@@ -2553,6 +2613,85 @@ and stays a later browser extension in the DM's own session; never a password or
 on our side. Order: part A (link, snapshot, hints, unlink, fallback form; one developer,
 no table work), part B with phase 3 (the rules advisor reads the snapshot), part C later
 (the extension).
+*The D&D Beyond campaign invite (owner, 2026-10-13):* DMbot can't create a D&D Beyond campaign or
+add people to one (there is no official API), so it passes on the DM's own invite.
+- **The DM** pastes the campaign's invite link from D&D Beyond (Campaigns, then the campaign, then
+  the invite link) when creating the DMbot campaign, or later in ⚙️ Settings. Only
+  `dndbeyond.com/campaigns/join/<code>` links are accepted.
+- **Players** see a **Join on D&D Beyond** link button on the consent message and on each
+  session's reminder, and in the transcript channel's pinned card. Nothing more is asked of them
+  there.
+- **Where it shows:** the link stays inside that Discord server and goes into the campaign's
+  backup. The DM can change or remove it.
+- **A character from the sheet.** When a player links a sheet and the DM hasn't added their
+  character yet, DMbot adds it from the sheet's name, as that player's character, and tells the
+  DM on the DM screen. The DM can rename, merge or remove it there.
+- **Part C (the browser extension in the DM's own D&D Beyond session) stays later.**
+
+**Character sheets, part D: any sheet, an import status, live checks; combat and FightBot (owner, 2026-10-13).**
+
+- **Any sheet a player has.** There are three ways in, all reaching the same allow-listed snapshot:
+  - a D&D Beyond link, as today;
+  - a public document link (Google Docs or Drive, or a PDF address);
+  - an uploaded file (Word, PDF or text, at most 5 MB).
+
+  For a document or a file, the AI (CAREFUL tier, once per import) reads the character into the
+  same fields. The file itself is never kept: only the snapshot is. It is the player's own sheet,
+  so there is no IP question, but only the allowed fields are kept, never rules text.
+- **The fields.**
+  - **Basic:** name, species, class(es) and level(s), AC, and HP (current / max + temporary).
+    "Species" is the 2024 word, so DMbot says it instead of "race".
+  - **Full:** also ability scores, active conditions, defenses and immunities, skills
+    (proficient / expertise), proficiencies, features, feats, background, speed, senses,
+    languages, tools, weapon and armor proficiencies, and inventory (count, weight, rarity
+    counts).
+- **The import status.** After every import, and after a re-read that changed something, the
+  player gets one private card, one line per part:
+  - ✅ read and checked;
+  - ⚠️ read, but not in DMbot's rules list (content outside the SRD, a homebrew feat: it may be
+    fine, and DMbot says so plainly);
+  - ⛔ couldn't be read or doesn't add up (a level total over 20, HP over max + temp, an
+    unrecognized name with no close match).
+
+  For example "⛔ Feats: 'clowning' not recognized; 2 others checked". Checks use DMbot's rules
+  index and simple arithmetic, never a guess.
+- **The player's sheet view.** **📜 My character sheet**, then **Show my sheet**, shows the
+  sheet privately, one button per section, which expands it.
+  - A typed or document sheet has **Edit** on each section.
+  - A D&D Beyond sheet has no Edit: a **Open on D&D Beyond** link button instead, since D&D
+    Beyond is the record.
+- **Re-reading D&D Beyond.**
+  - **Change heard:** about **1 minute** after something said or typed changes a character
+    (damage, healing, a condition, a spell slot), DMbot re-reads that sheet once. Several
+    changes within that minute share one read.
+  - **Schedule:** while listening and **out of combat**, every sheet is also read every
+    **15 minutes**. During combat only the change-heard reads run.
+  - **Limits:** at most one read per sheet per minute, and a pause with back-off when D&D Beyond
+    refuses. D&D Beyond has no official API, and more reads raise the risk that the unofficial
+    address is limited.
+  - **A mismatch:** if a sheet doesn't show what was said (the DM said 8 damage, and HP didn't
+    move), DMbot asks the player privately and politely, at most once per change: "The DM
+    mentioned 8 damage to Belleros. Your D&D Beyond sheet still shows 26 HP. Want to update it?"
+    It never changes a D&D Beyond sheet itself, and never tells the DM or the table.
+- **Combat state.**
+  - DMbot knows whether the table is **in combat** and which **round** it is.
+  - From what the DM says ("roll initiative", "round three", "the fight's over") and from DM-screen
+    buttons (**Start combat**, **Next round**, **End combat**) that correct it.
+  - With **side-based initiative** (a campaign setting) it tracks rounds only, not turn order.
+  - Combat state goes on the DM screen. Players see "⚔️ Combat, round 3" in the game-time channel.
+- **FightBot** (one per player character, only while in combat).
+  - **What it says:** private messages to that player only, reminding them of their own character:
+    spell slots left, features and items that could help now ("You still have Hunter's Mark and
+    2 level-1 slots").
+  - **What it uses:** that player's sheet, and what the players can already know (the transcript).
+    Never the DM screen, monster stats or secret names.
+  - **What it never does:** rule on anything, or post publicly.
+  - **How often:** at most one message per **2 minutes** per player, and only when it has
+    something new.
+  - **Silencing:** **Snooze 10 min**, **Quiet until next session**, **Never** (kept per player per
+    campaign; can be turned back on from 📜 My character sheet).
+  - **Cost:** FAST tier, one call per player at most every 2 minutes, only while in combat. It
+    counts toward the hours meter's AI cost like every other job.
 *Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
 just to the character: if the DM gives the character to someone else, the old sheet is
 never shown to the new player (it shows only while that player still plays it). The
@@ -2584,8 +2723,9 @@ ones.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
-email guilds`); payments through a merchant-of-record hosted checkout, **Lemon Squeezy** (owner's
-choice, 2026-10-09, #498) with its customer portal for plan changes; the API is FastAPI in
+email guilds`); payments through a hosted checkout, **Stripe** (owner's
+choice, 2026-10-13, replacing Lemon Squeezy, chosen 2026-10-09, #498) with its customer portal
+for plan changes; the API is FastAPI in
 `core/src/dmbot/web/`, its own container, the only writer of the `entitlements` table via
 the provider's webhook. No D&D or Wizards trademarks or art: "for 5e-compatible tabletop
 games". Terms, privacy and refund pages before launch: **signed off by the owner on
@@ -2599,27 +2739,45 @@ within 30 days, no claim about how the database is encrypted, and the owner's ow
 responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4. The Discord app
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
-**The Lemon Squeezy adapter (2026-10-11, #1083, #498 item 5):** `dmbot.web.lemonsqueezy`
-(`PAYMENT_PROVIDER=lemonsqueezy`; keys and ids in `.env.example`, set through `scripts/set-key`).
-It meets every rule in `payments.py`. **Events** (signature = HMAC-SHA256 of the raw body in
-`X-Signature`, compared as bytes): `subscription_created` with status `active` is
-`subscription_started` (Lemon Squeezy creates it only after the first payment);
-`subscription_updated` with status `active` is `subscription_renewed` (a renewal, or a plan
-change at the moment it takes effect; the plan comes from the variant id); `subscription_payment_failed`
-is `payment_failed` (the writer gives grace only after an earlier payment); `subscription_expired`
-is `subscription_ended` (a cancelled plan runs to its end); a paid `order_created` for the
-extra-hours variant is `extra_hours_bought`; everything else is ignored. `occurred_at` is the
-object's `updated_at`; an event's id is its name, the object's id and that time. The person is the
-`user_id` in the checkout's custom data. A billing period is taken to end at `renews_at` and to
-begin one calendar month before (Lemon Squeezy sends no start). Test events are ignored in live
-mode and live events in test mode. **Checkout** is a call to the API (email server-side, never in
-the address), with the plan's variant; the $1.99 first month of Table is a once-only discount
-code made in Lemon Squeezy, and a first-month checkout for a plan with no code set is refused
-rather than charged in full. The billing page is the customer's portal link; account deletion
-cancels at the end of the paid period (a cancel that is already done succeeds). The +10 hours
-checkout exists in the adapter and has no route until the bot's add-hours button does. A refunded extra-hours order stays credited (`order_refunded` is not used): a refund is a manual
-step for now. The owner's sandbox steps and run (#498 item 5) are a follow-up once the Lemon Squeezy
-account exists.
+**Stripe replaces Lemon Squeezy (owner, 2026-10-13).** The owner moved the payment company
+from Lemon Squeezy to Stripe. The Lemon Squeezy adapter (#1083, #1086: `dmbot.web.lemonsqueezy`)
+is replaced by a Stripe one, `dmbot.web.stripe` (`PAYMENT_PROVIDER=stripe`; keys and ids in
+`.env.example`, set on the server by dev1 through `scripts/set-key`). Every rule in `payments.py`
+stays, and so does the meaning of each event kind:
+- **Signature:** the `Stripe-Signature` header, HMAC-SHA256 of `"<t>.<raw body>"` with the
+  endpoint's signing secret, compared as bytes; an event older than 5 minutes is refused.
+- **Events:** `invoice.paid` with `billing_reason` `subscription_create` is `subscription_started`
+  (a Stripe subscription exists before it is paid; DMbot starts it only on payment);
+  `subscription_cycle` is `subscription_renewed`. A plan change is `customer.subscription.updated`
+  whose price has changed, sent when it takes effect, never when it is scheduled.
+  `invoice.payment_failed` is `payment_failed` (the writer gives grace only after an earlier
+  payment). `customer.subscription.updated` that sets `cancel_at_period_end` is
+  `subscription_cancelled` (#824), and clearing it is a resume. `customer.subscription.deleted` is
+  `subscription_ended`. A paid `checkout.session.completed` in payment mode for the +10 hours
+  price is `extra_hours_bought`. Everything else is ignored.
+- **Ids, times and periods:** an event's id is Stripe's own event `id`, and `occurred_at` is its
+  `created`. The billing period is the subscription's current period start and end.
+- **Who it is:** the person is the `user_id` in the checkout's metadata, copied to the
+  subscription's metadata.
+- **Test and live:** an event whose `livemode` does not match the key's mode is ignored. Test mode
+  is Stripe's test keys, so no separate test switch.
+- **Checkout** is a Checkout Session made by an API call (email server-side, never in the
+  address), with the plan's Price id. The $1.99 first month of Table is a once-only coupon made
+  in Stripe, and a first-month checkout with no coupon set is refused rather than charged in
+  full.
+- **Billing and deletion:** the billing page is a Customer Portal session. Account deletion sets
+  `cancel_at_period_end` (a cancel that is already done succeeds). A refunded extra-hours order
+  stays credited (manual for now).
+
+**Stripe is the seller (owner, 2026-10-13, #1096: answer A).** DMbot sells through Stripe's
+merchant-of-record option, so Stripe stays the seller of record, as Lemon Squeezy was. It handles
+sales tax, invoices and EU/UK withdrawal rights. The signed-off legal pages keep their wording,
+with the payment company's name changed to Stripe (#1111). If Stripe doesn't offer that option
+to this account, this comes back to the owner before anything is sold: a plain Stripe account
+would make DMbot LLC the seller. The owner's account setup and the test-mode run of #498 item 5
+are on #1096.
+**Hosting cost (owner, 2026-10-13):** the server costs **$11 a month**. That is the
+`--hosting-monthly` input for docs/costs.md.
 **Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
 Feedback and Ask a question, posted by the web API as GitHub Discussions in this
 repository (categories Feedback and Questions; a discussions-only token from the

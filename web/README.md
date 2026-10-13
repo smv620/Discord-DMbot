@@ -47,7 +47,7 @@ subdomain of the website's domain (`api.example.com` for `example.com`). The sig
 cookie is `SameSite=Lax`, and browsers don't send it to another site.
 
 Payments are pages on the payment company's site (a redirect), so the CSP needs nothing
-for them. An embedded checkout (Paddle.js or Lemon.js) would need its script in
+for them. An embedded checkout (Stripe.js) would need its script in
 `script-src` and its frame in `frame-src`.
 
 `npm run build` also runs `scripts/csp-hashes.mjs`. It adds the hashes of Astro's small

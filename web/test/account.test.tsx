@@ -624,6 +624,25 @@ describe("safety", () => {
     expect(screen.getByRole("button", { name: text.fixPayment })).toBeTruthy();
   });
 
+  it("a failed first payment says no plan started and offers the plans again (#922)", async () => {
+    const api = mockApi("no-plan");
+    const realMe = api.me.bind(api);
+    api.me = async () => {
+      const me = await realMe();
+      return me ? { ...me, firstPaymentFailed: true } : me;
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    expect(await screen.findByText(text.firstPaymentFailed)).toBeTruthy();
+    expect(screen.queryByText(text.grace(null))).toBeNull(); // no "fix it in 7 days"
+    expect(screen.getByRole("button", { name: text.choose("table") })).toBeTruthy();
+  });
+
+  it("says nothing about a failed first payment when none failed", async () => {
+    show("no-plan");
+    await screen.findByText(text.noPlan);
+    expect(screen.queryByText(text.firstPaymentFailed)).toBeNull();
+  });
+
   it("signed out: Start Try It is the main button, with the plans under it", async () => {
     show("signed-out");
     const links = await screen.findAllByRole("link");
@@ -647,9 +666,10 @@ describe("safety", () => {
 describe("redirects", () => {
   it.each([
     ["https://discord.com/oauth2/authorize?client_id=1", true],
-    ["https://checkout.paddle.com/x", true],
-    ["https://sandbox-checkout.paddle.com/x", true],
-    ["https://dmbot.lemonsqueezy.com/checkout", true],
+    ["https://checkout.stripe.com/c/pay/cs_test_abc", true],
+    ["https://billing.stripe.com/p/session/test_abc", true],
+    ["https://checkout.stripe.com.evil.example/", false],
+    ["https://dashboard.stripe.com/", false],
     ["#demo-billing", true],
     ["http://discord.com/", false],
     ["https://discord.com.evil.example/", false],

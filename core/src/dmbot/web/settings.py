@@ -11,8 +11,8 @@ from urllib.parse import urlsplit
 from dmbot.config import ConfigError
 from dmbot.entitlements import parse_free_users
 from dmbot.web.admin_hash import decode_hash
-from dmbot.web.lemonsqueezy import LemonSqueezyConfig
 from dmbot.web.payments import paid_plan_ids
+from dmbot.web.stripe import StripeConfig
 
 REQUIRED = (
     "DATABASE_URL",
@@ -39,12 +39,12 @@ class WebSettings:
     # Must be on the same site as the website: the sign-in cookie is SameSite=Lax.
     api_url: str = "http://localhost:8080"
     # The payment company: "" (none yet: buying answers payments_off), or "fake" for local
-    # testing only. Paddle or Lemon Squeezy are added once the owner chooses (#435).
+    # testing only. Stripe is the real one (owner, 2026-10-13, #1110).
     payment_provider: str = ""
     # Checks that payment events really come from the payment company.
     payment_webhook_secret: bytes = field(default=b"", repr=False)
-    # Lemon Squeezy's keys and ids, when payment_provider is "lemonsqueezy" (#1083).
-    lemonsqueezy: LemonSqueezyConfig | None = field(default=None, repr=False)
+    # Stripe's key and ids, when payment_provider is "stripe" (#1110).
+    stripe: StripeConfig | None = field(default=None, repr=False)
     # Connect as any database user, not only dmbot_web: for testing on localhost only.
     any_db_role: bool = False
     # The "Say hello" forms (#665): a GitHub token that can only write Discussions in
@@ -134,11 +134,11 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError("WEB_SESSION_DAYS must be between 1 and 90.")
     provider = get("PAYMENT_PROVIDER").lower()
     webhook_secret = get("PAYMENT_WEBHOOK_SECRET")
-    if provider not in ("", "fake", "lemonsqueezy"):
+    if provider not in ("", "fake", "stripe"):
         raise ConfigError(
-            f"PAYMENT_PROVIDER={provider} isn't built. Use lemonsqueezy, or leave it empty."
+            f"PAYMENT_PROVIDER={provider} isn't built. Use stripe, or leave it empty."
         )
-    lemonsqueezy = _lemonsqueezy(get) if provider == "lemonsqueezy" else None
+    stripe = _stripe(get) if provider == "stripe" else None
     if provider == "fake" and urlsplit(get("WEB_API_URL")).hostname not in (
         "localhost",
         "127.0.0.1",
@@ -225,7 +225,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         free_users=free_users,
         payment_provider=provider,
         payment_webhook_secret=webhook_secret.encode("utf-8"),
-        lemonsqueezy=lemonsqueezy,
+        stripe=stripe,
         any_db_role=any_db_role,
         feedback_token=feedback_token,
         feedback_repo=feedback_repo,
@@ -238,39 +238,41 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     )
 
 
-def _lemonsqueezy(get: Callable[[str], str]) -> LemonSqueezyConfig:
-    """Lemon Squeezy's settings (#1083). Every buyable plan needs its variant, so a missing
-    one stops the API starting instead of failing at someone's checkout."""
-    api_key = get("LEMONSQUEEZY_API_KEY")
-    store_id = get("LEMONSQUEEZY_STORE_ID")
-    if not api_key or not store_id.isascii() or not store_id.isdigit():
-        raise ConfigError("LEMONSQUEEZY_API_KEY and a numeric LEMONSQUEEZY_STORE_ID must be set.")
-    variants: dict[str, str] = {}
-    codes: dict[str, str] = {}
+def _stripe(get: Callable[[str], str]) -> StripeConfig:
+    """Stripe's settings (#1110). Every buyable plan needs its price, so a missing one stops
+    the API starting instead of failing at someone's checkout."""
+    key = get("STRIPE_SECRET_KEY")
+    if not key.startswith(("sk_test_", "sk_live_", "rk_test_", "rk_live_")):
+        raise ConfigError(
+            "STRIPE_SECRET_KEY must be set to a Stripe secret key (sk_test_... or sk_live_...)."
+        )
+    prices: dict[str, str] = {}
+    coupons: dict[str, str] = {}
     for plan_id in paid_plan_ids():
         suffix = plan_id.upper().replace("-", "_")
-        variant = get(f"LEMONSQUEEZY_VARIANT_{suffix}")
-        if not variant.isascii() or not variant.isdigit():
+        price = get(f"STRIPE_PRICE_{suffix}")
+        if not price.startswith("price_") or not price.isascii():
             raise ConfigError(
-                f"LEMONSQUEEZY_VARIANT_{suffix} must be the plan's numeric variant id."
+                f"STRIPE_PRICE_{suffix} must be the plan's Stripe price id (price_...)."
             )
-        variants[plan_id] = variant
-        if code := get(f"LEMONSQUEEZY_FIRST_MONTH_CODE_{suffix}"):
-            codes[plan_id] = code
-    extra = get("LEMONSQUEEZY_VARIANT_EXTRA_HOURS")
-    if not extra.isascii() or not extra.isdigit():
-        raise ConfigError("LEMONSQUEEZY_VARIANT_EXTRA_HOURS must be the extra hours' variant id.")
-    ids = [*variants.values(), extra]
+        prices[plan_id] = price
+        if coupon := get(f"STRIPE_FIRST_MONTH_COUPON_{suffix}"):
+            if not coupon.isascii() or not coupon.isprintable() or " " in coupon:
+                raise ConfigError(f"STRIPE_FIRST_MONTH_COUPON_{suffix} isn't a coupon id.")
+            coupons[plan_id] = coupon
+    extra = get("STRIPE_PRICE_EXTRA_HOURS")
+    if not extra.startswith("price_") or not extra.isascii():
+        raise ConfigError("STRIPE_PRICE_EXTRA_HOURS must be the extra hours' Stripe price id.")
+    ids = [*prices.values(), extra]
     if len(set(ids)) != len(ids):
-        raise ConfigError("Each LEMONSQUEEZY_VARIANT_* must be a different variant.")
-    mode = (get("LEMONSQUEEZY_TEST_MODE") or "0").lower()
-    if mode not in ("0", "1", "true", "false", "on", "off"):
-        raise ConfigError(f'LEMONSQUEEZY_TEST_MODE must be 1 (test) or 0 (live), got "{mode}".')
-    return LemonSqueezyConfig(
-        api_key=api_key,
-        store_id=store_id,
-        variants=variants,
-        extra_hours_variant=extra,
-        first_month_codes=codes,
-        test_mode=mode in ("1", "true", "on"),
+        raise ConfigError("Each STRIPE_PRICE_* must be a different price.")
+    managed = (get("STRIPE_MANAGED_PAYMENTS") or "0").lower()
+    if managed not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'STRIPE_MANAGED_PAYMENTS must be 1 or 0, got "{managed}".')
+    return StripeConfig(
+        secret_key=key,
+        managed_payments=managed in ("1", "true", "on"),
+        prices=prices,
+        extra_hours_price=extra,
+        first_month_coupons=coupons,
     )

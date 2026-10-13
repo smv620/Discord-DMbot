@@ -468,6 +468,11 @@ function PlanSection({ me }: { me: Me }) {
       <Notice message={notice} />
       {plan === null ? (
         <>
+          {me.firstPaymentFailed && (
+            <div class="warn-box" role="alert">
+              <p>{text.firstPaymentFailed}</p>
+            </div>
+          )}
           <p>{text.noPlan}</p>
           <ActionButton
             busy={busy}

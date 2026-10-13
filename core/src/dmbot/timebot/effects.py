@@ -38,6 +38,7 @@ class Effect:
     concentration: bool
     ends: int  # game minute
     told: bool  # the "has likely ended" line was said
+    extended: int = 0  # minutes the DM added with "Still going" (#1112)
 
     def line(self, now: int) -> str:
         who = f" on {self.target}" if self.target else ""
@@ -49,7 +50,11 @@ class Effect:
     def ended_line(self) -> str:
         who = f" on {self.target}" if self.target else ""
         mind = " (concentration)" if self.concentration else ""
-        return f"⏳ {self.name}{who} has likely ended ({words(self.minutes)}){mind}."
+        # The total, so a timer the DM kept going doesn't read as if it only ran its first
+        # length, and a plain note that the DM extended it (#1112).
+        total = words(self.minutes + self.extended)
+        how = f"{total}, extended by the DM" if self.extended else total
+        return f"⏳ {self.name}{who} has likely ended ({how}){mind}."
 
 
 def _effect(row: dict[str, Any]) -> Effect:
@@ -61,6 +66,7 @@ def _effect(row: dict[str, Any]) -> Effect:
         bool(row["concentration"]),
         int(row["ends_minute"]),
         bool(row["told"]),
+        int(row["extended"]),
     )
 
 
@@ -122,8 +128,8 @@ class EffectStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE game_effects SET told = TRUE WHERE guild_id = %s AND campaign_id = %s"
-                " AND ends_minute <= %s AND NOT told"
-                " RETURNING number, name, target, minutes, concentration, ends_minute, told",
+                " AND ends_minute <= %s AND NOT told RETURNING number, name, target, minutes,"
+                " concentration, ends_minute, told, extended",
                 (guild_id, campaign_id, now),
             )
             rows = sorted(await cur.fetchall(), key=lambda r: (r["ends_minute"], r["number"]))
@@ -135,7 +141,7 @@ class EffectStore:
             cur = await conn.execute(
                 "DELETE FROM game_effects WHERE guild_id = %s AND campaign_id = %s"
                 " AND number = %s RETURNING number, name, target, minutes, concentration,"
-                " ends_minute, told",
+                " ends_minute, told, extended",
                 (guild_id, campaign_id, number),
             )
             row = await cur.fetchone()
@@ -151,9 +157,18 @@ class EffectStore:
             now = await self._lock_clock(conn, guild_id, campaign_id)
             cur = await conn.execute(
                 "UPDATE game_effects SET ends_minute = LEAST(%s, GREATEST(ends_minute, %s) + %s),"
-                " told = FALSE WHERE guild_id = %s AND campaign_id = %s AND number = %s"
-                " RETURNING number, name, target, minutes, concentration, ends_minute, told",
-                (game.MAX_MINUTE, now, EXTRA_MINUTES, guild_id, campaign_id, number),
+                " extended = extended + %s, told = FALSE WHERE guild_id = %s AND campaign_id = %s"
+                " AND number = %s RETURNING number, name, target, minutes, concentration,"
+                " ends_minute, told, extended",
+                (
+                    game.MAX_MINUTE,
+                    now,
+                    EXTRA_MINUTES,
+                    EXTRA_MINUTES,
+                    guild_id,
+                    campaign_id,
+                    number,
+                ),
             )
             row = await cur.fetchone()
             if row is None:
@@ -194,7 +209,7 @@ class EffectStore:
     @staticmethod
     async def _list(conn: Conn, guild_id: int, campaign_id: str) -> list[Effect]:
         cur = await conn.execute(
-            "SELECT number, name, target, minutes, concentration, ends_minute, told"
+            "SELECT number, name, target, minutes, concentration, ends_minute, told, extended"
             " FROM game_effects WHERE guild_id = %s AND campaign_id = %s"
             " ORDER BY ends_minute, number",
             (guild_id, campaign_id),
@@ -218,6 +233,8 @@ class EffectsSection:
     _KEYS: ClassVar[frozenset[str]] = frozenset(
         {"name", "target", "minutes", "concentration", "ends", "told"}
     )
+    # Added with #1112: backups made before it don't have it, and mean none.
+    _OPTIONAL: ClassVar[frozenset[str]] = frozenset({"extended"})
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         return [
@@ -228,6 +245,7 @@ class EffectsSection:
                 "concentration": e.concentration,
                 "ends": e.ends,
                 "told": e.told,
+                "extended": e.extended,
             }
             for e in await EffectStore._list(conn, guild_id, campaign_id)
         ]
@@ -237,7 +255,10 @@ class EffectsSection:
             raise CampaignError(DAMAGED)
         out: list[dict[str, Any]] = []
         for row in rows:
-            if not isinstance(row, dict) or set(row) != set(self._KEYS):
+            if not isinstance(row, dict) or set(row) - self._OPTIONAL != set(self._KEYS):
+                raise CampaignError(DAMAGED)
+            extended = row.get("extended", 0)
+            if type(extended) is not int or not 0 <= extended <= game.MAX_MINUTE:
                 raise CampaignError(DAMAGED)
             name, target = row["name"], row["target"]
             if not isinstance(name, str) or not 1 <= len(name) <= NAME_MAX:
@@ -255,7 +276,7 @@ class EffectsSection:
                 raise CampaignError(DAMAGED)
             if type(row["told"]) is not bool:
                 raise CampaignError(DAMAGED)
-            out.append({**row, "name": name, "target": target})
+            out.append({**row, "name": name, "target": target, "extended": extended})
         return out
 
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
@@ -263,7 +284,8 @@ class EffectsSection:
         for number, row in enumerate(checked, start=1):
             await conn.execute(
                 "INSERT INTO game_effects (guild_id, campaign_id, number, name, target, minutes,"
-                " concentration, ends_minute, told) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                " concentration, ends_minute, told, extended)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     guild_id,
                     campaign_id,
@@ -274,6 +296,7 @@ class EffectsSection:
                     row["concentration"],
                     row["ends"],
                     row["told"],
+                    row["extended"],
                 ),
             )
 
