@@ -647,9 +647,10 @@ describe("safety", () => {
 describe("redirects", () => {
   it.each([
     ["https://discord.com/oauth2/authorize?client_id=1", true],
-    ["https://checkout.paddle.com/x", true],
-    ["https://sandbox-checkout.paddle.com/x", true],
-    ["https://dmbot.lemonsqueezy.com/checkout", true],
+    ["https://checkout.stripe.com/c/pay/cs_test_abc", true],
+    ["https://billing.stripe.com/p/session/test_abc", true],
+    ["https://checkout.stripe.com.evil.example/", false],
+    ["https://dashboard.stripe.com/", false],
     ["#demo-billing", true],
     ["http://discord.com/", false],
     ["https://discord.com.evil.example/", false],
