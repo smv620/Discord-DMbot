@@ -643,6 +643,43 @@ describe("safety", () => {
     expect(screen.queryByText(text.firstPaymentFailed)).toBeNull();
   });
 
+  it("downloads the person's data from the page, as a file (#1150)", async () => {
+    const saved: string[] = [];
+    URL.createObjectURL = vi.fn(() => "blob:pretend");
+    URL.revokeObjectURL = vi.fn((a: string) => void saved.push(a));
+    const { api } = show("table");
+    fireEvent.click(await screen.findByRole("button", { name: text.exportButton }));
+    await waitFor(() => expect(api.calls).toContain("export"));
+    await waitFor(() => expect(saved).toEqual(["blob:pretend"]), { timeout: 3000 });
+    expect(screen.getByText(text.exportWhat)).toBeTruthy();
+  });
+
+  it("says to wait a minute when the API refuses a second download (#1150)", async () => {
+    const api = mockApi("table");
+    api.downloadExport = async () => {
+      throw new ApiError("slow-down");
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.exportButton }));
+    expect(await screen.findByText(text.exportTooSoon)).toBeTruthy();
+  });
+
+  it("goes back to signed out when the download finds the sign-in has ended (#1150)", async () => {
+    const api = mockApi("table");
+    api.downloadExport = async () => {
+      throw new ApiError("signed-out");
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.exportButton }));
+    expect(await screen.findByRole("link", { name: text.signIn })).toBeTruthy();
+  });
+
+  it("does not offer Download my data to someone signed out", async () => {
+    show("signed-out");
+    await screen.findByRole("link", { name: text.signIn });
+    expect(screen.queryByRole("button", { name: text.exportButton })).toBeNull();
+  });
+
   it("Sign out everywhere calls the API and then shows signed out (#1163)", async () => {
     const { api } = show("table");
     expect(await screen.findByText(text.signOutEverywhereNote)).toBeTruthy();
@@ -785,6 +822,22 @@ describe("the HTTP client", () => {
     expect(call?.init.credentials).toBe("include");
     expect((call?.init.headers as Record<string, string>)["X-DMbot-Request"]).toBe("1");
     expect(call?.url).not.toMatch(/token|code=/i);
+  });
+
+  it("fetches the export as a file, and names a refusal in words (#1150)", async () => {
+    const ok = fakeFetch(200, { about: "x" });
+    const file = await httpApi("https://api.example", ok.fetcher).downloadExport();
+    expect(JSON.parse(await file.text())).toEqual({ about: "x" });
+    expect(ok.calls[0]?.url).toBe("https://api.example/me/export");
+    expect(ok.calls[0]?.init.credentials).toBe("include");
+    const soon = fakeFetch(429, { error: "slow_down" });
+    await expect(httpApi("https://api.example", soon.fetcher).downloadExport()).rejects.toMatchObject({
+      kind: "slow-down",
+    });
+    const out = fakeFetch(401);
+    await expect(httpApi("https://api.example", out.fetcher).downloadExport()).rejects.toMatchObject({
+      kind: "signed-out",
+    });
   });
 
   it("treats 401 on /me as signed out", async () => {

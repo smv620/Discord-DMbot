@@ -266,6 +266,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("extra-hours");
       return "#demo-extra-hours";
     },
+    async downloadExport() {
+      calls.push("export");
+      return new Blob(['{"about":"pretend export"}'], { type: "application/json" });
+    },
     installUrl: (serverId: string) => `#demo-install-${serverId}`,
     async linkServer(serverId: string) {
       calls.push(`link:${serverId}`);

@@ -358,6 +358,7 @@ function SignedIn({
       <PlanSection me={me} />
       <CampaignsSection me={me} />
       <ServersSection me={me} />
+      <ExportSection />
       <DeleteSection
         paidPlan={me.plan !== null && me.plan.id !== "try-it" && me.plan.status !== "lapsed"}
         free={me.access?.kind === "free"}
@@ -894,6 +895,44 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
       {s.hasDmbot && s.canLink && <p class="muted small row-note">{text.linkNote}</p>}
       <Notice message={notice} />
     </li>
+  );
+}
+
+/** Save a file the page fetched, under the name the browser's download offers. */
+function saveFile(file: Blob, name: string): void {
+  const address = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = address;
+  link.download = name;
+  link.click();
+  // Some browsers start the download after the click returns, so the address lives a moment.
+  setTimeout(() => URL.revokeObjectURL(address), 1000);
+}
+
+/** Download my data (#1150): one file with what DMbot holds about this person. Fetched here, so
+ * "once a minute" and "sign in again" are said in words, not shown as a raw error page. */
+function ExportSection() {
+  const { api } = useShared();
+  const { busy, notice, run } = useAction();
+  return (
+    <section aria-labelledby="export-heading" class="panel">
+      <h2 id="export-heading">{text.exportHeading}</h2>
+      <p>{text.exportWhat}</p>
+      <ActionButton
+        busy={busy}
+        kind="secondary"
+        onClick={() =>
+          void run(
+            async () => saveFile(await api.downloadExport(), "dmbot-my-data.json"),
+            (error) => (error.kind === "slow-down" ? text.exportTooSoon : null),
+          )
+        }
+      >
+        {text.exportButton}
+      </ActionButton>
+      <Notice message={notice} />
+      <p class="muted small">{text.exportWait}</p>
+    </section>
   );
 }
 

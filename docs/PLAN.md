@@ -2634,6 +2634,23 @@ add people to one (there is no official API), so it passes on the DM's own invit
   character yet, DMbot adds it from the sheet's name, as that player's character, and tells the
   DM on the DM screen. The DM can rename, merge or remove it there.
 - **Part C (the browser extension in the DM's own D&D Beyond session) stays later.**
+*Built (2026-10-13, #1119):* the DM's invite is `campaigns.dndbeyond_invite` (migration 0051, a CHECK as
+well as `dmbot.campaigns.invite.parse_invite`: only `https://[www.]dndbeyond.com/campaigns/join/<code>`,
+stored in the `www` form; an empty box removes it), set in an optional field on the new-campaign form or
+by ⚙️ Settings, **🔗 D&D Beyond invite** (campaign DMs only), and in the campaign's backup. The
+**Join on D&D Beyond** link button is on the consent request, on each session's reminder and on the
+transcript channel's pinned card (posted again when the link changes), only in that server. A player with
+no character who presses 📜 My character sheet on a session's reminder gets **Link my D&D Beyond sheet**:
+a sheet DMbot can read makes the character from the sheet's name (played by that player, once, even for two
+quick links), and the DM screen gets "Mira's player linked a D&D Beyond sheet; DMbot added Mira." with
+**Open character card** (rename, merge, remove). A sheet it can't read makes nothing and shows the Public steps. The invite is in the backup file, but a *new* campaign
+made from a backup gets none (it is the original DM's join link for the original table), and replacing
+a campaign with a backup keeps the campaign's own link and ignores the backup's (a backup doesn't record
+its server, so its link could belong to another server's table). Only the `/campaigns/join/<code>` shape
+is accepted; if a real invite has another shape, adding it is a one-line change. The Join button stays on a
+consent or reminder message when the player answers it, using the campaign's *current* link while a
+session runs. When the DM changes or removes the link, the running session and the pinned card follow at
+once. The new-campaign form's link is saved in the same step as the campaign.
 
 **Character sheets, part D: any sheet, an import status, live checks; combat and FightBot (owner, 2026-10-13).**
 
@@ -2699,6 +2716,19 @@ add people to one (there is no official API), so it passes on the DM's own invit
     campaign; can be turned back on from 📜 My character sheet).
   - **Cost:** FAST tier, one call per player at most every 2 minutes, only while in combat. It
     counts toward the hours meter's AI cost like every other job.
+*Built, part D1: the fields and the import status (2026-10-13, #1124):* the D&D Beyond snapshot (still version 1; a
+kept snapshot without the new fields reads them as unknown) now also holds hit points now (`hp`: the maximum minus the
+damage taken, never below 0) and temporary hit points, active conditions with the exhaustion level, resistances,
+immunities and vulnerabilities, skill expertise, tool, weapon and armor proficiencies, the background, and the
+inventory's size (`count` of inventory lines, `weight` in pounds as quantity times weight divided by the bundle size,
+and the lines per rarity; a line with no rarity is common). Names and numbers only, through the same allow list, size
+cap and backup path. `memory/sheet_checks.py` gives each part ✅, ⚠️ or ⛔ from the rules index (spells), a short name
+list in `memory/sheet_names.py` (classes, species and feats: names only, in the SRD or a real book's name DMbot has no
+rules for) and arithmetic (levels over 20, hit points over the maximum plus temporary, expertise without proficiency,
+rarity counts that don't add up, a negative number, a part that couldn't be read). A name from D&D Beyond that DMbot
+doesn't know is ⚠️ (it is D&D Beyond's own data); a typed or document name is ⛔ only when it is nothing like a known
+name. The card is one private message after the player's own link or typing (not after the DM links a sheet, and not
+yet after a re-read: `sheet_checks.changed` is ready for D4), and the DM's name card adds only "HP 11 / 26 + 0, AC 18".
 *Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
 just to the character: if the DM gives the character to someone else, the old sheet is
 never shown to the new player (it shows only while that player still plays it). The

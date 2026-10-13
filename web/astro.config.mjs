@@ -25,7 +25,12 @@ if (process.env.CF_PAGES_BRANCH === "development" && !process.env.PUBLIC_DEV_API
 const apiBase = effectiveApiBase(process.env);
 if (apiBase !== undefined) process.env.PUBLIC_API_BASE = apiBase;
 
+// The address pages name as their own (canonical link, share preview). Always the real site, so
+// the dev build (dev.getdmbot.com, which is also kept out of search by a header) points at it.
+const site = process.env.PUBLIC_SITE_URL?.trim() || "https://getdmbot.com";
+
 export default defineConfig({
+  site,
   output: "static",
   // Preact only where a page needs interactivity: the signed-in area (/account).
   integrations: [preact()],
