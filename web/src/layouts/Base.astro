@@ -15,8 +15,15 @@ interface Props {
 
 const { title, description, noindex = false, nofollow = false } = Astro.props;
 const fullTitle = title === "DMbot" ? title : `${title} · DMbot`;
+
 // Built pages see their file name ("/pricing.html", "/index.html"); links don't have it.
 const path = Astro.url.pathname.replace(/(\/index)?\.html$/, "") || "/";
+
+// Link previews (Discord, chat apps) need full addresses, so these come from the configured
+// site (astro.config.mjs), never from the address the page happens to be served at.
+const origin = Astro.site ?? new URL("https://getdmbot.com");
+const canonical = new URL(path, origin).href;
+const shareImage = new URL("/share.png", origin).href;
 
 // Each item is a button-shaped link with a small icon (#558), so it looks clickable. The
 // icons are our own simple line drawings (24 x 24, drawn with currentColor) and hidden
@@ -54,6 +61,15 @@ const menu = [
     <title>{fullTitle}</title>
     <meta name="description" content={description} />
     {noindex && <meta name="robots" content={nofollow ? "noindex, nofollow" : "noindex"} />}
+    <link rel="canonical" href={canonical} />
+    <meta property="og:site_name" content="DMbot" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={shareImage} />
+    <meta property="og:image:alt" content="DMbot: a quiet helper for the game master" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
