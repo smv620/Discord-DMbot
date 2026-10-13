@@ -2,10 +2,11 @@
 // @vitest-environment happy-dom
 // Accessibility of the pages' interactive parts (#1146): axe-core on the account page in every
 // state it can show, and on the "Say hello" forms, including a form with an error.
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { text as accountText } from "../src/content/account";
 import { text as helloText } from "../src/content/hello";
 import Account from "../src/account/Account";
 import { mockApi, scenarios } from "../src/account/mock";
@@ -32,8 +33,9 @@ describe("account page", () => {
 
   it.each(scenarios)("%s has nothing serious or critical", async (s) => {
     render(<Account api={mockApi(s)} go={vi.fn()} />);
-    await screen.findByRole("heading", { level: 1 }).catch(() => undefined);
-    await new Promise((r) => setTimeout(r, 30));
+    // Wait for the state itself, not a fixed time: axe must see the loaded page.
+    await waitFor(() => expect(screen.queryByText(accountText.loading)).toBeNull());
+    expect(document.body.textContent?.length ?? 0).toBeGreaterThan(40);
     expect(await serious()).toEqual([]);
   });
 });
