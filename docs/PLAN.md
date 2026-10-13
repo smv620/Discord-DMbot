@@ -2545,8 +2545,9 @@ ones.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
 with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
-email guilds`); payments through a merchant-of-record hosted checkout, **Lemon Squeezy** (owner's
-choice, 2026-10-09, #498) with its customer portal for plan changes; the API is FastAPI in
+email guilds`); payments through a hosted checkout, **Stripe** (owner's
+choice, 2026-10-13, replacing Lemon Squeezy, chosen 2026-10-09, #498) with its customer portal
+for plan changes; the API is FastAPI in
 `core/src/dmbot/web/`, its own container, the only writer of the `entitlements` table via
 the provider's webhook. No D&D or Wizards trademarks or art: "for 5e-compatible tabletop
 games". Terms, privacy and refund pages before launch: **signed off by the owner on
@@ -2560,27 +2561,42 @@ within 30 days, no claim about how the database is encrypted, and the owner's ow
 responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4. The Discord app
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
-**The Lemon Squeezy adapter (2026-10-11, #1083, #498 item 5):** `dmbot.web.lemonsqueezy`
-(`PAYMENT_PROVIDER=lemonsqueezy`; keys and ids in `.env.example`, set through `scripts/set-key`).
-It meets every rule in `payments.py`. **Events** (signature = HMAC-SHA256 of the raw body in
-`X-Signature`, compared as bytes): `subscription_created` with status `active` is
-`subscription_started` (Lemon Squeezy creates it only after the first payment);
-`subscription_updated` with status `active` is `subscription_renewed` (a renewal, or a plan
-change at the moment it takes effect; the plan comes from the variant id); `subscription_payment_failed`
-is `payment_failed` (the writer gives grace only after an earlier payment); `subscription_expired`
-is `subscription_ended` (a cancelled plan runs to its end); a paid `order_created` for the
-extra-hours variant is `extra_hours_bought`; everything else is ignored. `occurred_at` is the
-object's `updated_at`; an event's id is its name, the object's id and that time. The person is the
-`user_id` in the checkout's custom data. A billing period is taken to end at `renews_at` and to
-begin one calendar month before (Lemon Squeezy sends no start). Test events are ignored in live
-mode and live events in test mode. **Checkout** is a call to the API (email server-side, never in
-the address), with the plan's variant; the $1.99 first month of Table is a once-only discount
-code made in Lemon Squeezy, and a first-month checkout for a plan with no code set is refused
-rather than charged in full. The billing page is the customer's portal link; account deletion
-cancels at the end of the paid period (a cancel that is already done succeeds). The +10 hours
-checkout exists in the adapter and has no route until the bot's add-hours button does. A refunded extra-hours order stays credited (`order_refunded` is not used): a refund is a manual
-step for now. The owner's sandbox steps and run (#498 item 5) are a follow-up once the Lemon Squeezy
-account exists.
+**Stripe replaces Lemon Squeezy (owner, 2026-10-13).** The owner moved the payment company
+from Lemon Squeezy to Stripe. The Lemon Squeezy adapter (#1083, #1086: `dmbot.web.lemonsqueezy`)
+is replaced by a Stripe one, `dmbot.web.stripe` (`PAYMENT_PROVIDER=stripe`; keys and ids in
+`.env.example`, set on the server by dev1 through `scripts/set-key`). Every rule in `payments.py`
+stays, and so does the meaning of each event kind:
+- **Signature:** the `Stripe-Signature` header, HMAC-SHA256 of `"<t>.<raw body>"` with the
+  endpoint's signing secret, compared as bytes; an event older than 5 minutes is refused.
+- **Events:** `invoice.paid` with `billing_reason` `subscription_create` is `subscription_started`
+  (a Stripe subscription exists before it is paid; DMbot starts it only on payment);
+  `subscription_cycle` is `subscription_renewed`. A plan change is `customer.subscription.updated`
+  whose price has changed, sent when it takes effect, never when it is scheduled.
+  `invoice.payment_failed` is `payment_failed` (the writer gives grace only after an earlier
+  payment). `customer.subscription.updated` that sets `cancel_at_period_end` is
+  `subscription_cancelled` (#824), and clearing it is a resume. `customer.subscription.deleted` is
+  `subscription_ended`. A paid `checkout.session.completed` in payment mode for the +10 hours
+  price is `extra_hours_bought`. Everything else is ignored.
+- **Ids, times and periods:** an event's id is Stripe's own event `id`, and `occurred_at` is its
+  `created`. The billing period is the subscription's current period start and end.
+- **Who it is:** the person is the `user_id` in the checkout's metadata, copied to the
+  subscription's metadata.
+- **Test and live:** an event whose `livemode` does not match the key's mode is ignored. Test mode
+  is Stripe's test keys, so no separate test switch.
+- **Checkout** is a Checkout Session made by an API call (email server-side, never in the
+  address), with the plan's Price id. The $1.99 first month of Table is a once-only coupon made
+  in Stripe, and a first-month checkout with no coupon set is refused rather than charged in
+  full.
+- **Billing and deletion:** the billing page is a Customer Portal session. Account deletion sets
+  `cancel_at_period_end` (a cancel that is already done succeeds). A refunded extra-hours order
+  stays credited (manual for now).
+
+**Who the seller is, an owner question (#1096).** Lemon Squeezy was the seller of record (it
+handled tax, invoices and EU/UK withdrawal rights), and the signed-off legal pages say so. Plain
+Stripe makes DMbot LLC the seller. Stripe's own merchant-of-record option would keep the legal
+pages as they are. Until the owner answers, the legal pages keep their signed-off wording, and
+the website names Stripe only where the wording stays true. The owner's account setup and the
+test-mode run of #498 item 5 move to Stripe (#1096).
 **Feedback and questions (owner request 2026-10-08, #665):** a page with two short forms,
 Feedback and Ask a question, posted by the web API as GitHub Discussions in this
 repository (categories Feedback and Questions; a discussions-only token from the
