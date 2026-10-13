@@ -165,25 +165,18 @@ class Follower(unittest.IsolatedAsyncioTestCase):
 
 
 class Cache(DatabaseTest):
-    async def test_a_reload_picks_up_a_stop_saved_by_another_process(self) -> None:
+    async def test_the_database_can_be_read_without_changing_memory(self) -> None:
         bot = ConsentStore(self.db)
         await bot.grant(GUILD, ALICE)
         self.assertTrue(bot.has_consent(GUILD, ALICE))
         async with self.db.guild(GUILD) as conn:  # the website's process deletes the row
             await conn.execute("DELETE FROM consent WHERE guild_id = %s", (GUILD,))
-        self.assertTrue(bot.has_consent(GUILD, ALICE))
         self.assertEqual(bot.cached_guilds(), [GUILD])
         self.assertEqual(await bot.stored(GUILD), frozenset())
-        self.assertTrue(bot.has_consent(GUILD, ALICE))  # reading the database changes no memory
-        await bot.reload(GUILD)
-        self.assertFalse(bot.has_consent(GUILD, ALICE))
-
-    async def test_a_reload_keeps_a_stop_made_here_that_is_not_saved_yet(self) -> None:
-        bot = ConsentStore(self.db)
-        await bot.grant(GUILD, ALICE)
-        bot.stop_now(GUILD, ALICE)
-        await bot.reload(GUILD)
-        self.assertFalse(bot.has_consent(GUILD, ALICE))
+        # Reading the database changes no memory: the bot stops the person itself, so the DM
+        # is told, and only then does memory change.
+        self.assertTrue(bot.has_consent(GUILD, ALICE))
+        self.assertEqual(bot.consenting_now(GUILD), frozenset({ALICE}))
 
     async def test_the_in_transaction_step_runs_only_when_a_row_was_removed(self) -> None:
         bot = ConsentStore(self.db)

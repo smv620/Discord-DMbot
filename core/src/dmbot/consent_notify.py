@@ -2,7 +2,10 @@
 
 The bot checks consent from a cache, so a stop saved only in the database wouldn't reach a
 running session. Notifications skip row-level security, so the payload carries only the server
-and person ids: never names. The bot stops the person itself, as its own Stop button does.
+and person ids: never names. It is only a hint about which server to check again: any database
+role can send one, so the bot never trusts who it names. It reads the server's consent from the
+database and stops whoever it still holds but the database no longer lists, as its own Stop
+button does.
 """
 
 from __future__ import annotations
