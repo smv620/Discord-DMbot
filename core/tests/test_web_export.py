@@ -233,7 +233,7 @@ class ExportRoute(DatabaseTest):
         self.assertEqual(first.headers["cache-control"], "no-store")
         self.assertEqual(first.json()["account"]["discordId"], str(ALICE.id))
         again = await self.client.get("/me/export")
-        self.assertEqual((again.status_code, again.json()), (429, {"detail": "slow_down"}))
+        self.assertEqual((again.status_code, again.json()), (429, {"error": "slow_down"}))
         self.now += 61
         self.assertEqual((await self.client.get("/me/export")).status_code, 200)
 
