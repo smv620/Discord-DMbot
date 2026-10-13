@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import unittest
+from collections.abc import Callable
 from typing import Any, ClassVar
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
@@ -112,6 +113,11 @@ def session(**changes: Any) -> dict[str, Any]:
 def sign(body: bytes, *, at: int = int(NOW), secret: bytes = SECRET) -> str:
     digest = hmac.new(secret, f"{at}.".encode() + body, hashlib.sha256).hexdigest()
     return f"t={at},v1={digest}"
+
+
+def _clock_at(moment: float) -> Callable[[], float]:
+    """A clock that always says `moment`."""
+    return lambda: moment
 
 
 class Fake:
@@ -527,11 +533,11 @@ class Provider(unittest.IsolatedAsyncioTestCase):
     async def test_a_double_click_sends_the_same_idempotency_key_and_expiry(self) -> None:
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
 
-        async def ask(user: int = USER, plan_id: str = "table", email: str | None = None) -> None:
+        async def ask(user: int = USER, email: str | None = None) -> None:
             await self.provider.checkout_url(
                 user_id=user,
                 email=email,
-                plan=plans.load().by_id[plan_id],
+                plan=plans.load().by_id["table"],
                 first_month_cents=None,
                 return_url="https://dmbot.example/account",
             )
@@ -557,7 +563,7 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
         start = (int(NOW) // 300 + 1) * 300.0  # the first second of a window
         for now in (start, start + 299.0, start + 301.0):  # its first, its last, the next's
-            provider = StripeProvider(CONFIG, SECRET, transport=self.http, clock=lambda n=now: n)
+            provider = StripeProvider(CONFIG, SECRET, transport=self.http, clock=_clock_at(now))
             await provider.extra_hours_checkout_url(
                 user_id=USER, email=None, return_url="https://dmbot.example/account"
             )
