@@ -298,7 +298,11 @@ def create_app(
         taken = export_limit.take(f"user-{session.user_id}")
         if taken != "ok":
             raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
-        data = await build_export(db, session, now=clock())
+        try:
+            data = await build_export(db, session, now=clock())
+        except BaseException:
+            export_limit.give_back(f"user-{session.user_id}")  # a failed export costs no turn
+            raise
         log.info("A data export was made")
         return Response(
             content=json.dumps(data, indent=2, ensure_ascii=False),

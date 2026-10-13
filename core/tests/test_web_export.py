@@ -17,7 +17,7 @@ from dmbot.memory import sheets
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
-from dmbot.web import sessions
+from dmbot.web import entitlements_writer, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
 from dmbot.web.export import build_export
@@ -76,13 +76,26 @@ class Export(DatabaseTest):
         await store.save(THURSDAY.id, self.bobs.id, other.value.id, theirs, 6)
         self.alice = await self.sign_in(ALICE)
         self.bob = await self.sign_in(BOB)
-        async with self.db.plan_writer(ALICE.id) as conn:
-            await conn.execute(
-                "INSERT INTO payment_events (provider, event_id, user_id, kind, received_at)"
-                " VALUES ('fake', 'a1', %s, 'subscription_started', %s),"
-                " ('fake', 'b1', %s, 'subscription_started', %s)",
-                (ALICE.id, self.now, BOB.id, self.now),
-            )
+        # One person's payment rows each: the plan writer may only write its own person's.
+        for person in (ALICE, BOB):
+            async with self.db.plan_writer(person.id) as conn:
+                await conn.execute(
+                    "INSERT INTO payment_events (provider, event_id, user_id, kind, received_at)"
+                    " VALUES ('fake', %s, %s, 'subscription_started', %s)",
+                    (f"evt-{person.id}", person.id, self.now),
+                )
+        # Bob plays a character in Alice's campaign without being its DM.
+        self.cameo = await memory.add_entity(
+            THURSDAY.id,
+            self.mine.id,
+            name="Cameo",
+            type="player_character",
+            source="dm",
+            played_by=BOB.id,
+        )
+        cameo = sheets.typed("Cameo", species="Dwarf", class_name="Monk", level=1, names=[])
+        assert cameo is not None
+        await store.save(THURSDAY.id, self.mine.id, self.cameo.value.id, cameo, 7)
 
     async def asyncTearDown(self) -> None:
         await self.web.close()
@@ -109,7 +122,7 @@ class Export(DatabaseTest):
         )
         self.assertEqual([c["name"] for c in data["campaigns"]], [self.mine.name])
         self.assertEqual(data["campaigns"][0]["role"], "owner")
-        (character,) = data["characters"]
+        character = next(c for c in data["characters"] if c["campaign"] == self.mine.name)
         self.assertEqual((character["campaign"], character["typedIn"]), (self.mine.name, True))
         self.assertEqual([p["kind"] for p in data["paymentEvents"]], ["subscription_started"])
 
@@ -128,6 +141,44 @@ class Export(DatabaseTest):
         data = await build_export(self.web, self.alice, now=self.now)
         self.assertNotIn("4444", json.dumps(data))
         self.assertEqual(len(data["recordingConsent"]), 2)
+
+    async def test_a_sheet_in_a_campaign_the_person_does_not_dm_still_names_it(self) -> None:
+        data = await build_export(self.web, self.bob, now=self.now)
+        by_campaign = {c["campaign"] for c in data["characters"]}
+        self.assertEqual(by_campaign, {self.bobs.name, self.mine.name})
+        # Only the campaigns of his own sheets: not the server's other campaigns.
+        self.assertEqual({c["name"] for c in data["campaigns"]}, {self.bobs.name})
+
+    async def test_the_policies_hold_the_role_even_without_a_where_clause(self) -> None:
+        async def rows(user: DiscordUser, session: sessions.Session, guild: int, query: str):
+            async with self.web.user(user.id, session=session.id_hash) as conn:
+                await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(guild),))
+                cur = await conn.execute(query)
+                return [r["who"] for r in await cur.fetchall()]
+
+        sheets_sql = "SELECT player_id AS who FROM character_sheets"
+        consent_sql = "SELECT user_id AS who FROM consent"
+        # Same server, whole table: only the signed-in person's own rows.
+        self.assertEqual(await rows(ALICE, self.alice, THURSDAY.id, consent_sql), [ALICE.id])
+        self.assertEqual(await rows(ALICE, self.alice, THURSDAY.id, sheets_sql), [ALICE.id])
+        self.assertEqual(
+            sorted(await rows(BOB, self.bob, THURSDAY.id, sheets_sql)), [BOB.id, BOB.id]
+        )
+        # A server outside the session's list: nothing, her own consent included.
+        await self.consent.grant(4444, ALICE.id)
+        self.assertEqual(await rows(ALICE, self.alice, 4444, consent_sql), [])
+        # A session whose list leaves Thursday out sees nothing there, with the server set.
+        token = await sessions.sign_in(self.web, ALICE, [GORRAK], now=self.now, days=30)
+        narrow = await sessions.find(self.web, token, now=self.now)
+        assert narrow is not None
+        self.assertEqual(await rows(ALICE, narrow, THURSDAY.id, consent_sql), [])
+        self.assertEqual(await rows(ALICE, narrow, THURSDAY.id, sheets_sql), [])
+
+    async def test_the_plan_is_in_the_export(self) -> None:
+        started = await entitlements_writer.start_try_it(self.web, ALICE.id, now=self.now)
+        self.assertTrue(started.started)
+        data = await build_export(self.web, self.alice, now=self.now)
+        self.assertEqual((data["plan"]["plan"], data["usedTryIt"]), ("try-it", True))
 
     async def test_the_role_reads_only_its_own_consent_and_cannot_write_it(self) -> None:
         async with self.web.user(ALICE.id, session=self.alice.id_hash) as conn:

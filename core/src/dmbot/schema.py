@@ -1062,8 +1062,6 @@ WEB_ROLE_POLICIES = """
                                   AND o.campaign_id = campaign_dms.campaign_id
                                   AND o.to_user_id = dmbot_current_user() AND o.status = 'open'
                                   AND o.created_at + 7 * 86400 > dmbot_now()));
-    -- Hand-over offers (#614): only ones the signed-in person sent or was sent, in the
-    -- session's servers. The store's own checks (owner, recipient, 7 days) come on top.
     -- The person's own consent, in the session's servers (#1150: the data export; #1151: where
     -- DMbot may record them). Read-only here; the right to stop is granted with #1151.
     DROP POLICY IF EXISTS web_own_rows ON consent;
@@ -1072,6 +1070,8 @@ WEB_ROLE_POLICIES = """
                AND guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
         WITH CHECK (user_id = dmbot_current_user()
                     AND guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]));
+    -- Hand-over offers (#614): only ones the signed-in person sent or was sent, in the
+    -- session's servers. The store's own checks (owner, recipient, 7 days) come on top.
     DROP POLICY IF EXISTS web_session_servers ON campaign_handover_offers;
     CREATE POLICY web_session_servers ON campaign_handover_offers AS RESTRICTIVE TO dmbot_web
         USING (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[])

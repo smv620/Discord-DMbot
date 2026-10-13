@@ -88,6 +88,19 @@ class WebRole(DatabaseTest):
         self.web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
         self.assertEqual(await feedback.forget_old(self.web), 0)  # its rights arrived
 
+    async def test_sheets_are_not_open_before_the_rule_that_holds_them_exists(self) -> None:
+        # A database at migration 0028 has the sheets table but not its player column, so the
+        # own-rows policy can't be made yet: the role gets no right to the table either (#1150).
+        await self.web.close()
+        await self.db.close()
+        await drop_schema(TEST_URL, self.schema)
+        before = [m for m in schema.MIGRATIONS if m[0] < "0029"]
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        self.web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
+        async with self.web.unscoped() as conn:
+            with self.assertRaises(errors.InsufficientPrivilege):
+                await conn.execute("SELECT 1 FROM character_sheets")
+
     async def test_it_sees_only_servers_in_the_sessions_own_list(self) -> None:
         session = await self.alice()
         self.assertEqual(await self.campaign_names(session, THURSDAY.id), [self.mine.name])

@@ -60,9 +60,7 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
                 " WHERE c.guild_id = %s AND d.user_id = %s ORDER BY c.name",
                 (guild.id, session.user_id),
             )
-            names: dict[str, str] = {}
             for row in await cur.fetchall():
-                names[row["id"]] = row["name"]
                 campaigns.append(
                     {
                         "name": row["name"],
@@ -77,7 +75,18 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
                 " WHERE guild_id = %s AND player_id = %s ORDER BY campaign_id, entity_id",
                 (guild.id, session.user_id),
             )
-            for row in await cur.fetchall():
+            sheet_rows = await cur.fetchall()
+            # The name of each campaign the person has a sheet in, by id only: they play there
+            # but may not be a DM, so the list above doesn't have it. Ids from their own rows,
+            # never a list of the server's campaigns.
+            names: dict[str, str] = {}
+            if sheet_rows:
+                cur = await conn.execute(
+                    "SELECT id, name FROM campaigns WHERE guild_id = %s AND id = ANY(%s)",
+                    (guild.id, [r["campaign_id"] for r in sheet_rows]),
+                )
+                names = {r["id"]: r["name"] for r in await cur.fetchall()}
+            for row in sheet_rows:
                 characters.append(
                     {
                         "serverName": guild.name,
