@@ -2139,3 +2139,18 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   everything worked. Core log: 3 sidebar answers (0.8 s, 0.9 s, 1.1 s, from the AI), including the quick second question
   asked right after the first (no 1-per-minute limit with the wake phrase); 0 ERROR; session listened 4.6 min.
   Not checked by me: the answer wording ("confident"/"uncertain" ending) and the raw transcript lines; the owner saw no fault.
+
+==============================================================================
+2026-10-13  dev1  Deploy: core + web-api fc09d9c (#1123 timer total, #1130 Start listening, #1131 first-payment notice, #1116 game-time channel)
+==============================================================================
+  Owner ordered "Deploy now" for #1123 / #1130 / #1131; #1116 (the players' game-time channel: /dmbot start creates a public
+  channel dmb-gametime-<name>) had landed on development meanwhile, so I paused and asked; the owner chose "Deploy all".
+  Schema diff read first: 0049 adds one column with default 0 (game_effects.extended), 0050 adds three nullable columns
+  (campaigns.gametime_channel_id, game_clocks players_channel_id and players_message_id): no rows change. Backup first
+  (41 tables with data). Core and web-api rebuilt.
+  Result: core log "Database updated: 0049_game_effects_extended, 0050_gametime_channel", "ears connected", "Connected to 1
+  server(s)", 0 ERROR; web-api healthy, 0 ERROR; /admin/auth/ways 200, /health 200 inside web-api; DMBOT_SIDEBAR=1. A saved
+  session was resumed after the restart ("Resumed 1 session(s)").
+  Also: the owner confirmed Test G's answers ended properly with confident/uncertain (07:10 UTC).
+  Still to check in Discord: Test F again (timer shows the total and says it was extended, a note on Still going), and the
+  new game-time channel after /dmbot start.
