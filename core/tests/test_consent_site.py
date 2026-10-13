@@ -106,6 +106,7 @@ class Follower(unittest.IsolatedAsyncioTestCase):
 
         async def stop(guild_id: int, user_id: int) -> None:
             seen.append(user_id in consent.consenting_now(guild_id))
+            consent.held[guild_id].discard(user_id)  # as the real path does: out of memory
 
         follower = self.build(consent, stop)
         await self.run_follow(follower, listener([consent_notify.payload(GUILD, ALICE)]))
@@ -135,14 +136,19 @@ class Follower(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         consent = FakeConsent({GUILD: {ALICE, BOB}}, {GUILD: set()})
-        stop = AsyncMock(side_effect=[RuntimeError("secret row text"), None])
+        inner = AsyncMock(side_effect=[RuntimeError("secret row text"), None])
+
+        async def stop(guild_id: int, user_id: int) -> None:
+            consent.held[guild_id].discard(user_id)  # stopped in memory whatever the save did
+            await inner(guild_id, user_id)
+
         follower = self.build(consent, stop)
         with self.assertLogs("dmbot.consent_site", "ERROR") as logged:
             await self.run_follow(follower, listener([consent_notify.payload(GUILD, ALICE)]))
         text = " ".join(logged.output)
         self.assertIn("RuntimeError", text)
         self.assertNotIn("secret row text", text)
-        self.assertIn(BOB, [call.args[1] for call in stop.await_args_list])
+        self.assertEqual([call.args[1] for call in inner.await_args_list], [ALICE, BOB])
 
     async def test_a_failed_read_is_logged_and_listening_goes_on(self) -> None:
         consent = FakeConsent({GUILD: {ALICE}}, {GUILD: set()})
