@@ -1380,12 +1380,8 @@ class DMBot(commands.AutoShardedBot):
         table.sheet_task = self._track(
             self._sheet_hints(table, refresh=not table.resumed), "sheets"
         )
-<<<<<<< HEAD
-        table.watch_task = self._track(sheet_reread.run(self, table), "sheet-watch")  # #1128
-        table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
-=======
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
->>>>>>> clouddev-1128
+        table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
         return sent
 
     async def _secret_keys(self, guild_id: int, campaign_id: str) -> frozenset[str] | None:
