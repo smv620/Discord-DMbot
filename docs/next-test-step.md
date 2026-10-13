@@ -4,28 +4,30 @@
 
 ---
 
-## Test G: ask the DM sidebar by voice
+## Test F again: the game clock and a timer, after the fix
 
 **People:** 1 (you, as the DM)
 **Time:** about 5 minutes
-**Why:** you can now call DMbot out loud by starting with **"Hey DMbot"**. Check that it hears you and answers only you, privately, and that it doesn't answer when you don't say the call words.
+**Start only after dev1 says the timer fix is on the server** (it needs a restart that dev1 does).
+**Why:** last time the "has likely ended" line kept the old length after you pressed **Still going**, and nothing said you had extended it. That is fixed. Check it.
 
 ### Steps
-1. Join your voice channel. Type `/dmbot start`, press **▶ Continue last campaign**, then **▶ Start listening**.
-2. Say clearly: **"Hey DMbot, do you need line of sight for fireball?"** Wait for the answer in your private chat with DMbot.
-3. Say a normal game line without the call words, like **"The goblins run into the cave."** Nothing should come back.
-4. Say a second question: **"Hey DMbot, how much damage does fireball do?"** Then ask again right away: **"Hey DMbot, what is the range of fireball?"**
-5. Type `/dmbot stop`.
+1. Join your voice channel. Type `/dmbot start`, press **▶ Continue last campaign**, then **▶ Start listening**. (Press **Start listening** once only.)
+2. Open **⚙️ Settings**, press **Game clock**, set a day and a time. On the clock message press **Start a timer**: write **Bless**, a name, and **1 minute**. Submit.
+3. Press **+10 min**. The DM screen says "⏳ Bless on (the name) has likely ended" with **Ended** and **Still going +10 min**.
+4. Press **Still going +10 min**. The DM screen should now say that you extended it.
+5. Press **+10 min** twice more. The ended line should show the **total** time (for example 11 minutes or "1 minute, extended 10 minutes"), not just "1 minute". Press **Ended**.
+6. Type `/dmbot stop`.
 
 ### It worked if
-- Each "Hey DMbot" question got a short answer in your private chat that ends with **confident** or **uncertain**.
-- The normal line in step 3 got no answer.
-- Nothing was posted in a public channel.
+- After **Still going**, the DM screen says you extended it.
+- The next "has likely ended" line shows the longer total.
+- All of it shows only on the DM screen.
 
 **If not:** type `/dmbot stop`, then tell dev1 what you saw at the step where it went wrong.
 
 ### Tell dev1
-- **Worked** or **didn't work**, and whether the quick second question (step 4) was answered or ignored.
+- **Worked** or **didn't work**, and anything that felt confusing.
 
 ---
 
