@@ -53,6 +53,8 @@ Handler = Callable[[discord.Interaction], Awaitable[None]]
 
 
 RESTORE_FAILED = "Something went wrong, so nothing was restored. Run `/dmbot restore` again."
+START_FAILED = "Something went wrong starting. Pick the channel and press Start listening again."
+STARTING = "⏳ Starting… joining {channel} and getting the DM screen ready."
 STOP_COMMAND_FAILED = "Something went wrong stopping DMbot. Please try `/dmbot stop` again."
 
 
@@ -424,6 +426,8 @@ class VoicePicker(_Menu):
         super().__init__()
         self.campaign = campaign
         self.channel_id = default_id
+        # The words above the picker, kept so it can be shown again after a failed start.
+        self.text = ""
         default = (
             [discord.SelectDefaultValue(id=default_id, type=discord.SelectDefaultValueType.channel)]
             if default_id is not None
@@ -451,16 +455,45 @@ class VoicePicker(_Menu):
         self.start_button.disabled = False
         await interaction.response.edit_message(view=self)
 
+    def _busy(self, busy: bool) -> None:
+        """Starting takes seconds: while it runs the picker and button are shown but cannot
+        be pressed, and say so, instead of looking ready to press again (#1115)."""
+        self.pick.disabled = busy
+        self.start_button.disabled = busy or self.channel_id is None
+        self.start_button.label = "⏳ Starting…" if busy else "▶ Start listening"
+
+    async def _show_picker_again(self, interaction: discord.Interaction) -> None:
+        """Give the picker back, enabled, once the outcome is known."""
+        self._busy(False)
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=self.text or None, view=self, allowed_mentions=NO_PINGS
+            )
+
     async def _start(self, interaction: discord.Interaction) -> None:
         if self.channel_id is None:
             await _tell(interaction, "Pick a voice channel first.")
             return
-        # Starting can take a few seconds (database, voice service, DM screen setup):
-        # acknowledge now so Discord doesn't give up on the button press.
-        await interaction.response.defer()
-        ok, message = await _bot(interaction).start_campaign_session(
-            interaction, self.campaign.id, self.channel_id
+        # Starting takes a few seconds (database, voice service, DM screen setup). The answer
+        # itself is the "starting" state: a bare defer() on a button changes nothing, so
+        # Discord shows the old, pressable button again until the work is done (#1115).
+        self._busy(True)
+        await interaction.response.edit_message(
+            content=STARTING.format(channel=f"<#{self.channel_id}>"),
+            view=self,
+            allowed_mentions=NO_PINGS,
         )
+        self.origin = interaction  # so a timeout can still edit this message
+        try:
+            ok, message = await _bot(interaction).start_campaign_session(
+                interaction, self.campaign.id, self.channel_id
+            )
+        except Exception:
+            # Never leave it on "Starting…": the picker comes back with try-again words.
+            log.exception("Starting a session failed")
+            await self._show_picker_again(interaction)
+            await _tell(interaction, START_FAILED)
+            return
         if ok:
             self.stop()
             await interaction.edit_original_response(
@@ -475,6 +508,7 @@ class VoicePicker(_Menu):
             view = None
             if message == hours.NO_OWNER_ASK:
                 view = handover.take_on_only_view(self.campaign.id)
+            await self._show_picker_again(interaction)  # only now that the outcome is known
             await _tell(interaction, message, view=view)
 
 
@@ -506,6 +540,7 @@ async def show_voice_step(
     if default_id is not None:
         text += f"\nReady to use <#{default_id}>. Pick a different one below if needed."
     view = VoicePicker(campaign, default_id)
+    view.text = text
     if interaction.type is discord.InteractionType.component:
         await _replace(interaction, text, view)
     else:
