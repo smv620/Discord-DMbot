@@ -1891,7 +1891,7 @@ index). Concentration shows as 🧠. The clock message lists the soonest five, o
 button or rest passes an effect's end, the DM screen says once "⏳ Bless on Mira has likely
 ended (1 minute)" with **Ended** and **Still going +10 min** (ten more game minutes from where the
 clock is, then said again); nothing ends silently or by itself. Only the campaign's DMs, checked in
-the transaction. Effects live on the game clock, so a restart keeps them. Not built: split-party
+the transaction. Effects live on the game clock, so a restart keeps them. **Still going** is shown in the next "has likely ended" line as the total with "extended by the DM" (`game_effects.extended`, migration 0049, in backups; #1112), and the press says so on the DM screen only. Not built: split-party
 clocks, reading time from narration, AI.
 *The game-time channel (owner, 2026-10-13, after Test F):*
 - **Players see the clock in its own channel.** The players see the clock in a game-time channel,
