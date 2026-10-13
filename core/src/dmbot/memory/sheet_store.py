@@ -27,6 +27,7 @@ class CharacterSheet:
     url: str | None
     sheet: dict[str, Any] | None  # sheets.clean()'s shape
     fetched_at: int | None
+    asks: bool = True  # may DMbot ask the player when a re-read doesn't match (#1128)
 
     @property
     def character(self) -> int | None:
@@ -118,6 +119,19 @@ class SheetStore:
             )
             return True
 
+    async def set_questions(
+        self, guild_id: int, campaign_id: str, entity_id: str, player: int, on: bool
+    ) -> bool:
+        """The player's switch for DMbot's private questions about their sheet (#1128). Only
+        the person whose sheet it is; False if they have none."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE character_sheets SET ask_mismatch = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s AND player_id = %s",
+                (on, guild_id, campaign_id, entity_id, player),
+            )
+            return cur.rowcount == 1
+
     async def unlink(
         self, guild_id: int, campaign_id: str, entity_id: str, *, player: int | None = None
     ) -> bool:
@@ -142,7 +156,8 @@ class SheetStore:
         or left without a player (an undone merge)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT s.entity_id, e.name, e.played_by, s.url, s.sheet, s.fetched_at"
+                "SELECT s.entity_id, e.name, e.played_by, s.url, s.sheet, s.fetched_at,"
+                " s.ask_mismatch"
                 " FROM character_sheets s JOIN memory_entities e"
                 "  ON e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
                 "  AND e.id = s.entity_id"
@@ -163,6 +178,7 @@ class SheetStore:
                 url=r["url"],
                 sheet=None if r["sheet"] is None else sheets.clean(r["sheet"]),
                 fetched_at=row_int(r, "fetched_at"),
+                asks=bool(r["ask_mismatch"]),
             )
             for r in rows
         ]

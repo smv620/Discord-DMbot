@@ -34,6 +34,7 @@ from dmbot import (
     install,
     plan_rules,
     retention,
+    sheet_reread,
     table_chat,
     usage,
 )
@@ -146,7 +147,8 @@ from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
-from dmbot.memory.sheet_store import SheetStore
+from dmbot.memory.sheet_store import CharacterSheet, SheetStore
+from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
@@ -339,6 +341,11 @@ class Table:
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
+    # Reading linked D&D Beyond sheets again during the session (#1128): the linked sheets as
+    # last read, the schedule, and the loop that runs it (cancelled at the end).
+    sheet_links: dict[str, CharacterSheet] = field(default_factory=dict)
+    sheet_watch: SheetWatch = field(default_factory=SheetWatch)
+    watch_task: asyncio.Task[None] | None = None
     sheet_loads: int = 0  # each load of the names counts up; only the newest one is used
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
@@ -1339,6 +1346,7 @@ class DMBot(commands.AutoShardedBot):
         table.sheet_task = self._track(
             self._sheet_hints(table, refresh=not table.resumed), "sheets"
         )
+        table.watch_task = self._track(sheet_reread.run(self, table), "sheet-watch")  # #1128
         return sent
 
     async def _secret_keys(self, guild_id: int, campaign_id: str) -> frozenset[str] | None:
@@ -1376,6 +1384,7 @@ class DMBot(commands.AutoShardedBot):
                 kept = await self.sheets.sheets(guild_id, campaign_id)
                 if table.sheet_loads == mine:  # a later change already loaded newer ones
                     table.sheet_hints = tuple(sheet_hint_names(kept))
+                    sheet_reread.track(table, kept)
                 if refresh and current():
                     now = int(time.time())
                     found = await refresh_sheets(
@@ -1388,6 +1397,7 @@ class DMBot(commands.AutoShardedBot):
                         self.sheets_changed(guild_id, campaign_id)
                     else:
                         table.sheet_hints = tuple(sheet_hint_names(found))
+                        sheet_reread.track(table, found)
                     linked = sum(s.url is not None for s in found)
                     # Once a session. Only names read from D&D Beyond (game words, at
                     # most 15), never one that is also a secret name: never what a player
@@ -1418,6 +1428,8 @@ class DMBot(commands.AutoShardedBot):
             log.info("Session ended: %s", reason)
         if table.sheet_task is not None:  # no more reading sheets for it (#723)
             table.sheet_task.cancel()
+        if table.watch_task is not None:  # nor re-reading them (#1128)
+            table.watch_task.cancel()
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.
@@ -2789,6 +2801,10 @@ class DMBot(commands.AutoShardedBot):
         """What a line of table talk can set off, said or typed (#1118): a rules card, a house
         rule, the game clock. The one place both ways in share, so a typed "we take a long
         rest" does what the spoken one does. Consent was checked by the caller."""
+        try:  # a change at the table that D&D Beyond should show: read that sheet again (#1128)
+            sheet_reread.note_line(table, user_id, line)
+        except Exception:
+            log.exception("Sheet re-reads: couldn't look at a line")
         try:  # a card is never worth a lost line: nothing below may be skipped
             self._note_rules(table, user_id, line)
         except Exception:

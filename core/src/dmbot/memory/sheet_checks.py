@@ -475,3 +475,21 @@ def card(
 def changed(old: Mapping[str, Any] | None, new: Mapping[str, Any]) -> bool:
     """Whether a re-read found anything different (a card is sent after a re-read only if so)."""
     return old is None or dict(old) != dict(new)
+
+
+def got_worse(
+    old: Mapping[str, Any] | None,
+    new: Mapping[str, Any],
+    *,
+    target: str = "2024",
+    fallback: str = "2014",
+) -> bool:
+    """Whether a part that was ✅ is ⚠️ or ⛔ after a re-read (#1128). Only then is the status
+    card sent again: ordinary changes (hit points, a new level) are silent."""
+    if old is None:
+        return False
+    before = {c.part: c.status for c in checks(old, target=target, fallback=fallback)}
+    return any(
+        before.get(c.part) == OK and c.status != OK
+        for c in checks(new, target=target, fallback=fallback)
+    )

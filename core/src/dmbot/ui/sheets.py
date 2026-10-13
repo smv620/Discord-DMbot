@@ -50,6 +50,13 @@ TELL_LABEL = "Type in my character"
 DOC_LABEL = "Use a document link"  # any public web page or PDF link (#1125)
 FILE_LABEL = "Upload my sheet file"  # a Word, PDF or text file, kept only as names and numbers
 FORGET_LABEL = "Forget my sheet"
+QUESTIONS_ON = "Sheet questions: on"  # DMbot may ask when D&D Beyond doesn't match what was said
+QUESTIONS_OFF = "Sheet questions: off"
+QUESTIONS_NOW_ON = (
+    "✅ DMbot may ask you, privately, when your D&D Beyond sheet doesn't show what was said at "
+    "the table."
+)
+QUESTIONS_NOW_OFF = "✅ DMbot won't ask you about your D&D Beyond sheet any more."
 NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "
     "`/dmbot names`, then **🧑 Add a player's character**."
@@ -567,7 +574,8 @@ async def show_panel(
     text = panel_text(character, sheet, link=True)
     if note:
         text = f"{note}\n\n{text}"
-    view = SheetPanel(guild_id, character, has_sheet=sheet is not None)
+    asks = sheet.asks if sheet is not None and sheet.url is not None else None
+    view = SheetPanel(guild_id, character, has_sheet=sheet is not None, asks=asks)
     if replace:
         await _replace(interaction, text, view)
     else:
@@ -575,9 +583,17 @@ async def show_panel(
 
 
 class SheetPanel(_Menu):
-    def __init__(self, guild_id: int, character: PlayerCharacter, *, has_sheet: bool) -> None:
+    def __init__(
+        self,
+        guild_id: int,
+        character: PlayerCharacter,
+        *,
+        has_sheet: bool,
+        asks: bool | None = None,
+    ) -> None:
         super().__init__()
         self.guild_id, self.character = guild_id, character
+        self.asks = asks
         if has_sheet:  # the player's own view of it, one part at a time (#1126)
             self.add_item(_Button(self._show, label=SHOW_LABEL, style=discord.ButtonStyle.success))
         self.add_item(_Button(self._link, label=LINK_LABEL, style=discord.ButtonStyle.primary))
@@ -585,6 +601,14 @@ class SheetPanel(_Menu):
         # A document or a file the player already has (#1125); the forms live in sheet_import.
         self.add_item(_Button(self._file, label=FILE_LABEL, style=discord.ButtonStyle.secondary))
         self.add_item(_Button(self._doc, label=DOC_LABEL, style=discord.ButtonStyle.secondary))
+        if asks is not None:  # a D&D Beyond sheet is re-read; its player may be asked (#1128)
+            self.add_item(
+                _Button(
+                    self._questions,
+                    label=QUESTIONS_ON if asks else QUESTIONS_OFF,
+                    style=discord.ButtonStyle.secondary,
+                )
+            )
         if has_sheet:
             self.add_item(
                 _Button(self._forget, label=FORGET_LABEL, style=discord.ButtonStyle.secondary)
@@ -620,6 +644,24 @@ class SheetPanel(_Menu):
 
         self.origin = None
         await interaction.response.send_modal(DocumentFileForm(self.guild_id, self.character))
+
+    async def _questions(self, interaction: discord.Interaction) -> None:
+        """Turn DMbot's private questions about this sheet on or off (#1128)."""
+        store = _store(interaction)
+        assert store is not None
+        self.stop()
+        await _answer_first(interaction, in_place=True)
+        if not await _still_member(interaction, self.guild_id):
+            return
+        c = self.character
+        turn_on = not self.asks
+        if await store.set_questions(
+            self.guild_id, c.campaign_id, c.entity_id, interaction.user.id, turn_on
+        ):
+            note = QUESTIONS_NOW_ON if turn_on else QUESTIONS_NOW_OFF
+        else:
+            note = NOT_YOURS
+        await show_panel(interaction, self.guild_id, c, replace=True, note=note)
 
     async def _forget(self, interaction: discord.Interaction) -> None:
         store = _store(interaction)
