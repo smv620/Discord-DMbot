@@ -9,7 +9,9 @@ import { loadRenderers } from "astro:container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { parsePage } from "./dom";
 import { notAffiliated } from "../src/content/legal";
+import { publicPaths } from "../src/content/site";
 
 // Every file in src/pages gets a smoke test; a new page without an entry here fails below.
 const found = import.meta.glob<{ default: AstroComponentFactory }>("../src/pages/**/*.astro", {
@@ -31,6 +33,7 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/legal/terms", "legal/terms.astro", "Terms of use · DMbot", false],
   ["/legal/privacy", "legal/privacy.astro", "Privacy · DMbot", false],
   ["/legal/refunds", "legal/refunds.astro", "Refunds · DMbot", false],
+  ["/help", "help.astro", "Help · DMbot", false],
   ["/hello", "hello.astro", "Say hello · DMbot", false],
   ["/admin", "admin.astro", "Admin · DMbot", true],
   ["/404", "404.astro", "Page not found · DMbot", true],
@@ -122,8 +125,8 @@ describe("menu", () => {
       request: new Request("https://dmbot.example/"),
     });
     const nav = html.slice(html.indexOf('<nav aria-label="Main"'), html.indexOf("</nav>"));
-    expect(nav.match(/<a /g)).toHaveLength(4);
-    expect(nav.match(/<svg[^>]*aria-hidden="true"/g)).toHaveLength(4);
+    expect(nav.match(/<a /g)).toHaveLength(5);
+    expect(nav.match(/<svg[^>]*aria-hidden="true"/g)).toHaveLength(5);
   });
 
   // A static build renders /pricing as pricing.html, and the page sees that path.
@@ -167,7 +170,9 @@ describe("no trademarks", () => {
   // publisher. That file may hold that sentence and nothing else that matches.
   const disclaimerFile = join(root, "src", "content", "legal.ts");
   const sources = [...files(join(root, "src")), ...files(join(root, "public"))].filter(
-    (file) => file !== disclaimerFile,
+    // Pictures are bytes, not words: random bytes can match a pattern. The share image's words
+    // are the ones in this repo's own script of it, checked by eye and in the page text.
+    (file) => file !== disclaimerFile && !/\.(png|webp)$/.test(file),
   );
 
   it("allows the publisher's name only in the not-affiliated sentence", () => {
@@ -193,4 +198,98 @@ it("keeps the admin page out of search engines and their link-following", async 
     request: new Request("https://dmbot.example/admin"),
   });
   expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
+});
+
+// Link previews and search files (#1145).
+const webRoot = fileURLToPath(new URL("..", import.meta.url));
+
+describe("link previews", () => {
+  const rendered = new Map<string, Document>();
+  const meta = (doc: Document, selector: string): string =>
+    doc.querySelector(selector)?.getAttribute("content") ??
+    doc.querySelector(selector)?.getAttribute("href") ??
+    "";
+
+  beforeAll(async () => {
+    for (const [path, file] of pages) {
+      const html = await container.renderToString(page(file), {
+        request: new Request(`https://dmbot.example${path}`),
+      });
+      rendered.set(path, parsePage(html));
+    }
+  });
+
+  const doc = (path: string): Document => {
+    const found = rendered.get(path);
+    if (!found) throw new Error(`not rendered: ${path}`);
+    return found;
+  };
+
+  it("gives every page its own title and description, under 160 characters", () => {
+    const titles = pages.map(([path]) => doc(path).title);
+    const descriptions = pages.map(([path]) =>
+      meta(doc(path), 'meta[name="description"]'),
+    );
+    expect(new Set(titles).size).toBe(pages.length);
+    expect(new Set(descriptions).size).toBe(pages.length);
+    for (const d of descriptions) expect(d.length).toBeLessThanOrEqual(160);
+  });
+
+  it("gives every page the Open Graph tags, a share image and a canonical link", () => {
+    for (const [path] of pages) {
+      const d = doc(path);
+      expect(meta(d, 'meta[property="og:title"]'), path).toBe(d.title);
+      expect(meta(d, 'meta[property="og:description"]'), path).toBe(
+        meta(d, 'meta[name="description"]'),
+      );
+      expect(meta(d, 'meta[property="og:type"]'), path).toBe("website");
+      expect(meta(d, 'meta[property="og:image"]'), path).toBe(
+        "https://getdmbot.com/share.png",
+      );
+      expect(meta(d, 'meta[name="twitter:card"]'), path).toBe(
+        "summary_large_image",
+      );
+      const url = new URL(path, "https://getdmbot.com").href;
+      expect(meta(d, 'meta[property="og:url"]'), path).toBe(url);
+      expect(meta(d, 'link[rel="canonical"]'), path).toBe(url);
+    }
+  });
+
+  it("has a 1200 x 630 share image", () => {
+    const png = readFileSync(join(webRoot, "public/share.png"));
+    expect(png.subarray(1, 4).toString()).toBe("PNG");
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1200, 630]);
+  });
+});
+
+describe("search files", () => {
+  const publicPages = pages
+    .filter(([, , , noindex]) => !noindex)
+    .map(([path]) => path);
+
+  it("lists exactly the public pages in the sitemap", () => {
+    expect([...publicPaths].sort()).toEqual([...publicPages].sort());
+  });
+
+  it("builds the sitemap from that list, with no private page", async () => {
+    const { GET } = await import("../src/pages/sitemap.xml");
+    const res = await (
+      GET as (c: { site: URL }) => Response | Promise<Response>
+    )({
+      site: new URL("https://getdmbot.com"),
+    });
+    const xml = await res.text();
+    const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+    expect(locs).toEqual(
+      publicPaths.map((p) => new URL(p, "https://getdmbot.com").href),
+    );
+    expect(xml).not.toMatch(/\/(account|admin|404)/);
+  });
+
+  it("keeps robots.txt away from the signed-in and admin pages and points at the sitemap", () => {
+    const robots = readFileSync(join(webRoot, "public/robots.txt"), "utf8");
+    expect(robots).toMatch(/^Disallow: \/account$/m);
+    expect(robots).toMatch(/^Disallow: \/admin$/m);
+    expect(robots).toMatch(/^Sitemap: https:\/\/getdmbot\.com\/sitemap\.xml$/m);
+  });
 });
