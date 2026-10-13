@@ -2131,3 +2131,11 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   0 ERROR; /admin/auth/ways 200, /health 200 from inside web-api; DMBOT_SIDEBAR=1. A saved session from the Test F run
   was resumed after the restart ("Resumed 1 session(s)"): /dmbot stop ends it.
   Not run: /me in a signed-in browser (needs the owner's sign-in).
+
+==============================================================================
+2026-10-13  dev1  Test G: the DM sidebar by voice, "Hey DMbot, ..." (owner, 1 person, ~5 minutes) - PASSED
+==============================================================================
+  Live 06:41-06:46 UTC on core + web-api 042ca8d (the resumed Test F session was stopped first). Result (owner): all good,
+  everything worked. Core log: 3 sidebar answers (0.8 s, 0.9 s, 1.1 s, from the AI), including the quick second question
+  asked right after the first (no 1-per-minute limit with the wake phrase); 0 ERROR; session listened 4.6 min.
+  Not checked by me: the answer wording ("confident"/"uncertain" ending) and the raw transcript lines; the owner saw no fault.

@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-13 06:20 UTC by dev1 (core + web-api 042ca8d deployed, migration 0048)
+Last updated: 2026-10-13 07:00 UTC by dev1 (Test G passed; the timer fix waits for the owner go to deploy)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,7 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting; core and web-api 042ca8d (2026-10-13 06:11 UTC) are deployed: see the history)
+- core + web-api, merged 2026-10-13 (#1120, #1123, #1130): deploy runs migration 0049 (a column on game_effects for #1112).
+  Check: Test F again, the Still going +10 min steps: the next "has likely ended" line shows the total ("11 minutes,
+  extended by the DM") and pressing it edits the DM-screen note; /dmbot start and press Start listening: the message
+  says "Starting in ..." and the button cannot be pressed until it is done (#1115). #1110 (Stripe adapter replaces
+  Lemon Squeezy): payments stay off; nothing to change in .env until the owner has made the Stripe account (#1096),
+  then replace the LEMONSQUEEZY_* values with the STRIPE_* ones (.env.example) through scripts/set-key.
 
 ------------------------------------------------------------------------------
 LIVE NOW
@@ -23,10 +28,10 @@ DMBOT_SIDEBAR is 1 (ON since 2026-10-10 05:47 UTC: Supervisor said "sidebar may 
 private (no install link) until the website launches.
 
 ------------------------------------------------------------------------------
-NEXT TEST: the sidebar by voice (docs/next-test-step.md)
+NEXT TEST: the game clock and timers again (docs/next-test-step.md)
 ------------------------------------------------------------------------------
-Test G: the sidebar by voice, "Hey DMbot, ..." (docs/next-test-step.md). Test F (clock and timer) worked; faults in #1112.
-Test E (sidebar) result is in the history.
+Test F again, after the timer fix (docs/next-test-step.md; needs #1123 and #1130 deployed). Test G (sidebar by voice)
+PASSED on 2026-10-13. Test F first run worked except the two timer faults (#1112, fixed in #1123).
 
 SMALL TESTS AFTER THAT (one at a time; each one's "Check:" note is in the history log,
 entry "Status log as it stood before it was trimmed"):
