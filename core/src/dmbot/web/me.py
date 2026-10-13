@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from dmbot import entitlements
+from dmbot import entitlements, hours
 from dmbot.campaigns.models import HANDOVER_SECONDS
 from dmbot.db import Database
 from dmbot.web.offers import offer_ref
@@ -34,7 +34,11 @@ def _iso_date(seconds: int | None) -> str | None:
 
 
 async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any]:
-    plan, access = await entitlements.plan_and_access(db, session.user_id, now)
+    plan, grant, access = await entitlements.plan_grant_access(db, session.user_id, now)
+    # The month whose hours count now (None: no meter), and the minutes used in it, read through
+    # the database door the website's role has to the owner's hours (0048).
+    month = hours.month_for(access, plan, grant.granted_at if grant else None, now)
+    used_minutes = 0
     campaigns: list[dict[str, Any]] = []
     servers: list[dict[str, Any]] = []
     incoming: list[dict[str, Any]] = []
@@ -133,6 +137,10 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                     }
                 )
 
+        if month is not None:
+            cur = await conn.execute("SELECT dmbot_hours_used(%s) AS minutes", (month.start,))
+            hours_row = await cur.fetchone()
+            used_minutes = int(hours_row["minutes"]) if hours_row else 0
         # The person's own installs, in the same transaction (one connection per /me).
         # The last server's setting is cleared first, so only the installer rule applies:
         # otherwise that server's installs row would be visible here too.
@@ -160,19 +168,50 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             "id": plan.plan,
             # An "active" plan whose period ended without a renewal no longer works.
             "status": "lapsed" if plan.status == "active" and not plan.usable(now) else plan.status,
-            # Listening hours are metered by the bot (#437); until then nothing is used.
-            "hoursUsed": 0,
+            # Listening hours are metered by the bot (#437): the minutes used this month, in
+            # hours to one decimal.
+            # Only from the plan's own month (a lapsed plan beside a grant would read the
+            # grant's minutes).
+            "hoursUsed": round(used_minutes / 60, 1) if plan.usable(now) else 0,
             "hoursCap": plan.hours_this_period,
             "renewsOn": _iso_date(plan.period_end),
             "graceEndsOn": _iso_date(plan.grace_ends_at),
-        },
+        }
+        # Cancelled on the payment page: it works to this date and then ends (#824).
+        | ({"endsOn": _iso_date(plan.ends_at)} if plan.ends_at is not None else {}),
         # Free access (#771): "free" (the owner's list or the admin's grant: people see
         # "Free access", never why), "paid" or "none". endsOn: a grant's end date.
         # stillPaying: covered while a paid plan still works, so the page offers to stop
         # paying. Covered people see no price or payment button.
         "access": {"kind": "free" if access.kind in ("free", "grant") else access.kind}
         | ({"endsOn": _iso_date(access.until)} if access.until is not None else {})
-        | ({"stillPaying": True, "paidPlan": access.still_paying} if access.still_paying else {}),
+        | ({"stillPaying": True, "paidPlan": access.still_paying} if access.still_paying else {})
+        # A paid plan under free access that was cancelled: it ends on this date (#824).
+        | (
+            {"paidPlan": access.ending_plan, "paidPlanEndsOn": _iso_date(access.ending_at)}
+            if access.ending_plan
+            else {}
+        )
+        # No limit at all: the page leaves "your hours" and "slots" out of its words (#824).
+        | (
+            {"unlimited": True}
+            if access.kind in ("free", "grant")
+            and access.hours_cap is None
+            and access.campaign_cap is None
+            else {}
+        )
+        # A capped grant ("like Guild") has hours too: the page shows them (#824).
+        | (
+            {
+                "hours": {
+                    "used": round(used_minutes / 60, 1),
+                    "cap": access.hours_cap,
+                    "renewsOn": _iso_date(month.end),
+                }
+            }
+            if access.kind == "grant" and access.hours_cap and month is not None
+            else {}
+        ),
         "campaigns": campaigns,
         "servers": servers,
         "installs": installs,

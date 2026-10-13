@@ -203,6 +203,31 @@ class WebRole(DatabaseTest):
             self.assertNotIn(schema.WEB_ROLE, list(row["roles"]))
             self.assertNotIn("public", list(row["roles"]))
 
+    async def test_the_hours_door_gives_only_ones_own_minutes_and_the_table_stays_closed(
+        self,
+    ) -> None:
+        # #824: the account page's hours come through one function, not the table.
+        for owner, minutes in ((ALICE.id, 95), (OTHER_USER, 400)):
+            async with self.db.meter(THURSDAY.id, owner) as conn:
+                await conn.execute(
+                    "INSERT INTO owner_hours (owner_user_id, month_start, minutes)"
+                    " VALUES (%s, 1000, %s)",
+                    (owner, minutes),
+                )
+        session = await self.alice()
+        async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+            cur = await conn.execute("SELECT dmbot_hours_used(1000) AS n")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 95)  # hers, never the other person's 400
+            cur = await conn.execute("SELECT dmbot_hours_used(2000) AS n")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)  # a month with nothing recorded
+        with self.assertRaises(errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                await conn.execute("SELECT * FROM owner_hours")
+
     async def _grant(self, privilege: str) -> None:
         """Give the website's role `privilege` on the offers table for this test's schema (only
         a superuser can; the schema is dropped afterwards, so nothing carries over)."""

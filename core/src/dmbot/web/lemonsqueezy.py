@@ -364,11 +364,14 @@ class LemonSqueezyProvider:
             # Created only once the first payment has gone through; anything but active
             # (a trial, unpaid) starts nothing.
             return "subscription_started" if state == "active" else None
-        if name == "subscription_updated":
-            # A renewal or a plan change, once it has taken effect. Other states (paused,
-            # past_due, cancelled-until-the-end) change nothing here: a failed payment
-            # arrives as its own event, and a cancelled plan runs to its end.
-            return "subscription_renewed" if state == "active" else None
+        if name in ("subscription_updated", "subscription_resumed", "subscription_cancelled"):
+            # A renewal, a plan change or a resume, once it has taken effect: active again
+            # also clears a cancel. Cancelled (it works until ends_at, then expires) is stored
+            # so the page can say so (#824). Other states (paused, past_due) change nothing
+            # here: a failed payment arrives as its own event.
+            if state == "active":
+                return "subscription_renewed"
+            return "subscription_cancelled" if state == "cancelled" else None
         if name == "subscription_expired":
             return "subscription_ended"
         return None
@@ -377,6 +380,8 @@ class LemonSqueezyProvider:
 _USED = (
     "subscription_created",
     "subscription_updated",
+    "subscription_resumed",
+    "subscription_cancelled",
     "subscription_expired",
     "subscription_payment_failed",
     "order_created",
@@ -410,6 +415,10 @@ def _period(attributes: dict[str, Any]) -> tuple[int | None, int | None]:
     Monthly plans only (all of plans.json): a yearly variant would need its own rule."""
     renews = attributes.get("renews_at")
     if not isinstance(renews, str):
+        # A cancelled subscription has no renewal: it works until `ends_at` (#824).
+        ends = attributes.get("ends_at")
+        if attributes.get("status") == "cancelled" and isinstance(ends, str):
+            return None, int(datetime.fromisoformat(ends.replace("Z", "+00:00")).timestamp())
         return None, None
     end = datetime.fromisoformat(renews.replace("Z", "+00:00")).astimezone(UTC)
     month = end.month - 1 or 12

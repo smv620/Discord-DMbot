@@ -135,9 +135,21 @@ export const text = {
   // would become false. The date is the plan's own end (its next renewal if left alone).
   stillPaying: (plan: string | null, endsOn: string | null): string => {
     const name = plan ? `Your ${plan} plan` : "Your plan";
+    // Stop paying opens the payment company's page, where the plan is cancelled (#824).
     return endsOn
-      ? `${name} runs until ${shortDate(endsOn)}. Tap Stop paying if you don't need it.`
-      : `${name} is still being paid for. Tap Stop paying if you don't need it.`;
+      ? `${name} runs until ${shortDate(endsOn)}. Tap Stop paying, then cancel on the payment page, if you don't need it.`
+      : `${name} is still being paid for. Tap Stop paying, then cancel on the payment page, if you don't need it.`;
+  },
+  /** A plan that was cancelled and works to its end: nothing more to stop (#824). */
+  planEnds: (plan: string | null, iso: string): string =>
+    `${plan ? `Your ${plan} plan` : "Your plan"} ends on ${shortDate(iso)}. You won't be charged again.`,
+  /** Hours for free access with a cap (#824); renewal only, since free people buy no more. */
+  freeHoursLeft: (used: number, cap: number, iso: string | null): string => {
+    if (used < cap) return iso ? `Your hours start again on ${shortDate(iso)}.` : "";
+    // Out of hours: free people can't buy more, so say when they come back, or where to ask.
+    return iso
+      ? `You're out of hours until ${shortDate(iso)}. Then they start again.`
+      : "You're out of hours for now. Write to us if you need more.";
   },
   stopPaying: "Stop paying",
   freeNext: "In Discord, type /dmbot start to play.",
@@ -154,6 +166,8 @@ export const text = {
   active: "Active",
   paused: "Paused",
   youRunIt: "Uses your hours",
+  // Free access with no limits has no hours to use (#824).
+  youRunItFree: "You run it",
   youHelp: "You help run it",
   handOver: "Hand over",
 
@@ -161,6 +175,8 @@ export const text = {
   handOverQuestion: (campaign: string): string => `Who should take over ${campaign}?`,
   handOverNote:
     "Nothing changes until they say yes. They have 7 days to answer. If they say yes, it uses their hours, not yours, and you stay on as a DM.",
+  handOverNoteFree:
+    "Nothing changes until they say yes. They have 7 days to answer. If they say yes, it becomes theirs and you stay on as a DM.",
   handOverNobody:
     "Only someone who helps run this campaign can take it over, and nobody does yet. Add them as a DM in Discord, then tap Hand over again.",
   handOverConfirm: "Offer it",
@@ -172,6 +188,11 @@ export const text = {
   offersHeading: "Campaigns offered to you",
   offerIncoming: (person: string, campaign: string, server: string): string =>
     `${person} wants to hand you ${campaign} in ${server}. If you accept, it uses one of your campaign slots and your plan's hours, and ${person} stays on as a DM. Tap Accept or No thanks.`,
+  /** A capped grant has hours but no "plan" to name (#824). */
+  offerIncomingCapped: (person: string, campaign: string, server: string): string =>
+    `${person} wants to hand you ${campaign} in ${server}. If you accept, it uses one of your campaign slots and your hours, and ${person} stays on as a DM. Tap Accept or No thanks.`,
+  offerIncomingFree: (person: string, campaign: string, server: string): string =>
+    `${person} wants to hand you ${campaign} in ${server}. If you accept, it becomes yours and ${person} stays on as a DM. Tap Accept or No thanks.`,
   offerExpires: (iso: string): string => `Answer by ${shortDateTime(iso)}.`,
   accept: "Accept",
   decline: "No thanks",

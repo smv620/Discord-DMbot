@@ -50,6 +50,11 @@ class Entitlement:
     grace_ends_at: int | None
     lapsed_at: int | None
     plan_changed_at: int
+    # Cancelled: the plan works until this moment and then ends, with no renewal (#824).
+    ends_at: int | None = None
+    # The payment company knows this person (a customer id is stored), so its billing page
+    # can open; a plan set by hand has none (#824).
+    has_customer: bool = False
 
     @property
     def hours_this_period(self) -> int:
@@ -123,6 +128,9 @@ class Access:
     # Covered by free access while a paid plan still works too: its name, so the account
     # page can offer to stop paying (#771).
     still_paying: str | None = None
+    # The same, but cancelled: the paid plan's name and the moment it ends (#824).
+    ending_plan: str | None = None
+    ending_at: int | None = None
 
     @property
     def works(self) -> bool:
@@ -132,15 +140,41 @@ class Access:
 NO_ACCESS = Access("none", None, 0, 0, False)
 
 
-def _paying(plan: Entitlement | None, now: int) -> str | None:
-    """The name of a plan that works and costs money (not Try It, which is free), for
-    "you're still paying for…" under free access."""
+def _priced(plan: Entitlement | None, now: int) -> str | None:
+    """The name of a plan that works and costs money (not Try It, which is free)."""
     if plan is None or not plan.usable(now):
         return None
     known = plans.load().get(plan.plan)
     if known is None or not known.price_cents:
         return None
     return known.name
+
+
+def _paying(plan: Entitlement | None, now: int) -> str | None:
+    """The name of a plan that is still being paid for, for "you're still paying for…" under
+    free access. Not one that was cancelled (it ends on its own: `_ending`), and not one with
+    no payment-company customer, because the billing page that stops it couldn't open (#824)."""
+    if plan is None or plan.ends_at is not None or not plan.has_customer:
+        return None
+    return _priced(plan, now)
+
+
+def _ending(plan: Entitlement | None, now: int) -> tuple[str, int] | None:
+    """A paid plan that was cancelled and still works: its name and when it ends."""
+    if plan is None or plan.ends_at is None:
+        return None
+    name = _priced(plan, now)
+    return None if name is None else (name, plan.ends_at)
+
+
+def _covered(plan: Entitlement | None, now: int) -> dict[str, Any]:
+    """What free access says about a paid plan that still works under it (#771, #824)."""
+    ending = _ending(plan, now)
+    return {
+        "still_paying": _paying(plan, now),
+        "ending_plan": None if ending is None else ending[0],
+        "ending_at": None if ending is None else ending[1],
+    }
 
 
 def _larger(a: int | None, b: int | None) -> int | None:
@@ -151,7 +185,7 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
     """The rule, pure: free list, then an active grant, then the paid plan; a grant and a
     paid plan together give the larger of each cap."""
     if user_id in _free_users:
-        return Access("free", FREE_ACCESS, None, None, True, still_paying=_paying(plan, now))
+        return Access("free", FREE_ACCESS, None, None, True, **_covered(plan, now))
     paid = None
     if plan is not None and plan.usable(now):
         known = plans.load().get(plan.plan)
@@ -177,7 +211,7 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
             campaigns,
             True,
             until=grant.ends_at,
-            still_paying=_paying(plan, now),
+            **_covered(plan, now),
         )
     return paid or NO_ACCESS
 
@@ -201,14 +235,23 @@ async def inputs(
     return plan, grant, access_for(user_id, plan, grant, now)
 
 
-async def plan_and_access(
+async def plan_grant_access(
     db: Database, user_id: int, now: int
-) -> tuple[Entitlement | None, Access]:
-    """The paid plan and what the person may do, from one read (the account page)."""
+) -> tuple[Entitlement | None, Grant | None, Access]:
+    """The paid plan, the grant and what the person may do, from one read (the account page;
+    the grant's start decides which month its hours are counted in)."""
     async with db.user(user_id) as conn:
         plan = await _read_plan(conn, user_id)
         grant = None if user_id in _free_users else await _read_grant(conn, user_id)
-    return plan, access_for(user_id, plan, grant, now)
+    return plan, grant, access_for(user_id, plan, grant, now)
+
+
+async def plan_and_access(
+    db: Database, user_id: int, now: int
+) -> tuple[Entitlement | None, Access]:
+    """The paid plan and what the person may do, from one read."""
+    plan, _grant, access = await plan_grant_access(db, user_id, now)
+    return plan, access
 
 
 async def get(db: Database, user_id: int) -> Entitlement | None:
@@ -268,9 +311,7 @@ async def _read_grant(conn: Conn, user_id: int) -> Grant | None:
 
 async def _read_plan(conn: Conn, user_id: int) -> Entitlement | None:
     cur = await conn.execute(
-        "SELECT user_id, plan, status, hours_cap, extra_hours, campaign_cap, period_start,"
-        " period_end, grace_ends_at, lapsed_at, plan_changed_at"
-        " FROM entitlements WHERE user_id = %s",
+        "SELECT * FROM entitlements WHERE user_id = %s",
         (user_id,),
     )
     row: dict[str, Any] | None = await cur.fetchone()
@@ -288,6 +329,8 @@ async def _read_plan(conn: Conn, user_id: int) -> Entitlement | None:
         grace_ends_at=row["grace_ends_at"],
         lapsed_at=row["lapsed_at"],
         plan_changed_at=row["plan_changed_at"],
+        ends_at=row.get("ends_at"),  # older schemas (tests of a backfill) have none
+        has_customer=row.get("provider_customer_id") is not None,
     )
 
 

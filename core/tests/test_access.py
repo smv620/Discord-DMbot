@@ -28,6 +28,7 @@ def paid(plan: PlanId = "table", hours: int = 18, campaigns: int = 1) -> Entitle
         None,
         None,
         0,
+        has_customer=True,  # a real subscription: the billing page can open (#824)
     )
 
 
