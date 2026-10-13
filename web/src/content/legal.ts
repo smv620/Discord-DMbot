@@ -21,8 +21,8 @@ export const operator = {
   email: "dmbot.admin@gmail.com",
 };
 
-/** The payment company, chosen by the owner (2026-10-09). It is the seller (merchant of record). */
-export const paymentProvider = "Lemon Squeezy";
+/** The payment company, chosen by the owner (2026-10-13, #1096). It is the seller (merchant of record). */
+export const paymentProvider = "Stripe";
 
 /** The day the owner signed the legal pages off (2026-10-09); shown on all three. */
 export const effectiveDate = "9 October 2026";
